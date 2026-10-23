@@ -121,22 +121,16 @@ class Builder:
 
     # -- assets -----------------------------------------------------------------------------------
     def text_png(self, spec, rs):
-        """Render text at render scale rs, padded to a 16:9 canvas >= the frame.
-        Returns (path, canvas factor): MLT fits the canvas into the frame, shrinking by it."""
-        key = _hash("text", spec, rs, self.W, self.H, textlayout.PX_PER_FONT_UNIT)
+        """Text rendered at render scale rs, cropped to its own canvas (centre = box centre).
+        Returns (path, width, height). Tight images keep project loading fast: padding every
+        text to a full frame made MLT decode ~340 frame-sized PNGs on each load."""
+        key = _hash("text2", spec, rs, self.H, textlayout.PX_PER_FONT_UNIT)
         out = os.path.join(self.cache, "text", key + ".png")
-        meta = out + ".json"
-        if not os.path.exists(meta):
-            im = textlayout.render(spec, rs, self.H)
-            c = max(1.0, im.width / self.W, im.height / self.H)
-            cw, ch = math.ceil(self.W * c), math.ceil(self.H * c)
-            canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
-            canvas.paste(im, ((cw - im.width) // 2, (ch - im.height) // 2))
-            canvas.save(out, compress_level=1)
-            with open(meta, "w") as fh:
-                json.dump({"k": min(cw / self.W, ch / self.H)}, fh)
-        with open(meta) as fh:
-            return out, json.load(fh)["k"]
+        if not os.path.exists(out):
+            textlayout.render(spec, rs, self.H).save(out + ".tmp.png", compress_level=1)
+            os.replace(out + ".tmp.png", out)
+        with Image.open(out) as im:
+            return out, im.width, im.height
 
     def matte(self, mask, transform, disp, clip_start_us, f0, f1):
         """Bake a mask to an RGBA resource (white, alpha = coverage) covering frames [f0, f1)."""
@@ -166,17 +160,19 @@ class Builder:
         return single if not animated else movie
 
     # -- effects ----------------------------------------------------------------------------------
-    def visual(self, c, f0, f1, clip_start_us, size_k=1.0, disp=None, off=0):
-        """qtblend (+ shape) effects for a visual clip covering frames [f0, f1)."""
+    def visual(self, c, f0, f1, clip_start_us, base=None, disp=None, off=0):
+        """qtblend (+ shape) effects for a visual clip covering frames [f0, f1).
+        base: on-screen size at scale 1 (default: the frame, which MLT fits media into)."""
         tf = c.get("transform", {})
         x, y, sc = tf.get("x", 0.0), tf.get("y", 0.0), tf.get("scale", 1.0)
         scy = tf.get("scale_y", sc)
         op, rot = tf.get("opacity", 1.0), tf.get("rotation", 0.0)
         W, H = self.W, self.H
+        bw, bh = base or (W, H)
 
         def rect(t):
-            w = W * curves.value(sc, t) * size_k
-            h = H * curves.value(scy, t) * size_k
+            w = bw * curves.value(sc, t)
+            h = bh * curves.value(scy, t)
             px = W / 2 + curves.value(x, t) * W / 2 - w / 2
             py = H / 2 - curves.value(y, t) * H / 2 - h / 2
             o = min(1.0, max(0.0, curves.value(op, t)))
@@ -244,16 +240,16 @@ class Builder:
         if t == "text":
             tf = c.get("transform", {})
             rs = max(curves.max_abs(tf.get("scale", 1.0)), curves.max_abs(tf.get("scale_y", 1.0)), 1.0)
-            png, k = self.text_png(c["text"], rs)
+            png, iw, ih = self.text_png(c["text"], rs)
             self.xml.append(f'<producer id="{pid}" in="0" out="{length - 1}">' + self.props({
                 "mlt_service": "qimage", "resource": png.replace("\\", "/"), "length": length,
                 "ttl": 1, "kdenlive:clipname": c.get("name", "text")}) + "</producer>")
-            return pid, 0, length, f0, self.visual(c, f0, f1, s_us, k / rs)
+            return pid, 0, length, f0, self.visual(c, f0, f1, s_us, (iw / rs, ih / rs))
         if t == "image":
             m = c["media"]
             fit = min(self.W / m["width"], self.H / m["height"])
             pid = self.media_producer(m["path"], "image", track)
-            return pid, 0, length, f0, self.visual(c, f0, f1, s_us, 1.0,
+            return pid, 0, length, f0, self.visual(c, f0, f1, s_us, None,
                                                   (m["width"] * fit, m["height"] * fit))
         if t in ("video", "audio"):
             m = c["media"]
@@ -262,14 +258,14 @@ class Builder:
             fx = self.audio(c, f0, f1, s_us, src_in)
             if t == "video":
                 fit = min(self.W / m["width"], self.H / m["height"])
-                fx = self.visual(c, f0, f1, s_us, 1.0, (m["width"] * fit, m["height"] * fit),
+                fx = self.visual(c, f0, f1, s_us, None, (m["width"] * fit, m["height"] * fit),
                                  src_in) + fx
             return pid, src_in, length, f0, fx
         if t == "compound":
             comp = c["compound"]
             inner = self.tractor(comp["tracks"], s_us - c["source_start_us"], (f0, f1), True)
             k = min(self.W / comp["width"], self.H / comp["height"])
-            return inner, 0, length, f0, self.visual(c, f0, f1, s_us, 1.0,
+            return inner, 0, length, f0, self.visual(c, f0, f1, s_us, None,
                                                      (comp["width"] * k, comp["height"] * k))
         return None
 

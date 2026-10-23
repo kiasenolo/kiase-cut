@@ -142,12 +142,15 @@ class Importer:
                         cc = inner.get("canvas_config", {})
                         c.update(type="compound", name=v.get("material_name") or "compound",
                                  compound={"width": cc.get("width", 1920), "height": cc.get("height", 1080),
+                                           "duration_us": inner.get("duration"),
                                            "tracks": self.tracks(inner)})
                     elif v.get("path"):
                         c.update(type="image" if v["type"] == "photo" else "video",
                                  name=v.get("material_name") or v["path"].split("/")[-1],
                                  media={"path": self._path(v["path"]), "width": v["width"],
                                         "height": v["height"]})
+                        if v["type"] != "photo":
+                            c["media"]["duration_us"] = v.get("duration")
                         if c["type"] == "video":
                             c["volume"] = self._param(kfs, "KFTypeVolume", seg.get("volume", 1.0), shift)
                     else:
@@ -159,7 +162,7 @@ class Importer:
                 elif mid in aud:
                     a = aud[mid]
                     c.update(type="audio", name=a.get("name") or a["path"].split("/")[-1],
-                             media={"path": self._path(a["path"])},
+                             media={"path": self._path(a["path"]), "duration_us": a.get("duration")},
                              volume=self._param(kfs, "KFTypeVolume", seg.get("volume", 1.0), shift))
                     fd = [fades[r] for r in refs if r in fades]
                     if fd:

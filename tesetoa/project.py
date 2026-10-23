@@ -5,14 +5,14 @@ project  {format, version, width, height, fps, duration_us, tracks: [track]}  tr
 track    {id, kind: video | text | audio, name, clips: [clip]}
 clip     {id, type: image | video | audio | text | compound, name,
           start_us, duration_us, source_start_us,
-          media: {path, width, height}                     image / video / audio
+          media: {path, width, height, duration_us}         image / video / audio
           transform: {x, y, scale, rotation, opacity}       visual clips, Jianying units:
                      x, y in half-canvas units (y up), clockwise degrees
           mask: {kind, invert, cx, cy, w, h, rotation, feather} or None
           text: {content, font_path, size, color, letter_spacing, line_spacing,
                  italic_deg, styles}                        text clips
           volume, fade_in_us, fade_out_us                   clips with sound
-          compound: {width, height, tracks}                 compound clips; children use
+          compound: {width, height, duration_us, tracks}    compound clips; children use
                      compound time, clip.source_start_us selects the window}
 Numbers that animate are curve dicts, see curves.py.
 """
@@ -21,6 +21,10 @@ import os
 
 FORMAT = "tesetoa"
 VERSION = 1
+DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
+                                 "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+                                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+                     if os.path.exists(f)), None)
 
 
 def new(width=1920, height=1080, fps=60.0):
@@ -45,6 +49,10 @@ def save(p, path):
 
 def end_us(tracks):
     return max((c["start_us"] + c["duration_us"] for t in tracks for c in t["clips"]), default=0)
+
+
+def refresh_duration(p):
+    p["duration_us"] = end_us(p["tracks"])
 
 
 def walk_clips(tracks):

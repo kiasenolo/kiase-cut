@@ -8,9 +8,10 @@ Click a keyframe to select it; Ctrl / Shift + click adds or removes keyframes, d
 empty space draws a selection box, Ctrl+A selects all. Dragging a selected keyframe moves
 the whole selection (time snaps to frames; hold Shift to keep to one axis). The round
 handles shape the ease of a selected keyframe. Double-click adds a keyframe to the nearest
-curve, Delete removes the selection. Wheel zooms time around the mouse, Ctrl+wheel zooms
-values, Shift+wheel or the middle button pans; "全部顯示" fits everything again. A click on
-the time ruler (or empty space) moves the playhead.
+curve, Delete removes the selection, Ctrl+D clears it. The wheel moves the view up and
+down, Shift+wheel left and right, Ctrl+wheel zooms time around the mouse, Alt+wheel zooms
+values, the middle button drags the view; "全部顯示" fits everything again. A click on the
+time ruler (or empty space) moves the playhead.
 
 The segment after each selected keyframe takes a typed CSS cubic-bezier or a preset. Edits
 show live in the preview while dragging and become one undo step on release.
@@ -496,14 +497,20 @@ class CurveCanvas(QWidget):
             return
         pos = e.position()
         f = 0.8 if d > 0 else 1.25
-        if e.modifiers() & Qt.ShiftModifier:                 # pan time
-            dt = (self.t1 - self.t0) * 0.1 * (-1 if d > 0 else 1)
-            self.t0, self.t1 = self.t0 + dt, self.t1 + dt
-        elif e.modifiers() & Qt.ControlModifier:             # zoom values around the mouse
+        mods = e.modifiers()
+        sideways = e.angleDelta().x() and not e.angleDelta().y() and not mods & Qt.AltModifier
+        if mods & Qt.AltModifier:                            # zoom values around the mouse
             a = self.p_of(pos.y())
             lo, hi = self.vrange
             self.vrange = (a - (a - lo) * f, a + (hi - a) * f)
-        else:                                                # zoom time around the mouse
+        elif mods & Qt.ShiftModifier or sideways:            # left / right
+            dt = (self.t1 - self.t0) * 0.1 * (-1 if d > 0 else 1)
+            self.t0, self.t1 = self.t0 + dt, self.t1 + dt
+        elif not mods & Qt.ControlModifier:                  # up / down
+            lo, hi = self.vrange
+            dv = (hi - lo) * 0.1 * (1 if d > 0 else -1)
+            self.vrange = (lo + dv, hi + dv)
+        else:                                                # Ctrl: zoom time around the mouse
             a = self.t_of(pos.x())
             span = min(max((self.t1 - self.t0) * f, 4 * US / self.fps), max(self.duration, US) * 20)
             k = (a - self.t0) / max(self.t1 - self.t0, 1)
@@ -518,7 +525,7 @@ class CurveCanvas(QWidget):
             if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.sel:
                 e.accept()
                 return True
-            if e.key() == Qt.Key_A and e.modifiers() & Qt.ControlModifier:
+            if e.modifiers() & Qt.ControlModifier and (e.key() == Qt.Key_A or e.key() == Qt.Key_D and self.sel):
                 e.accept()
                 return True
         return super().event(e)
@@ -526,6 +533,9 @@ class CurveCanvas(QWidget):
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.sel:
             self.delete_selected()
+            e.accept()
+        elif e.key() == Qt.Key_D and e.modifiers() & Qt.ControlModifier:
+            self._set_sel(set())
             e.accept()
         elif e.key() == Qt.Key_A and e.modifiers() & Qt.ControlModifier:
             self._set_sel({(ci, i) for ci, c in enumerate(self.curves) for i in range(len(c["keys"]))})
@@ -591,7 +601,8 @@ class CurveEditor(QWidget):
         self.value.setRange(-1e6, 1e6)
         for s in (self.time, self.value):
             s.setKeyboardTracking(False)
-            s.valueChanged.connect(self._fields_changed)
+        self.time.edited.connect(self._time_typed)
+        self.value.edited.connect(self._value_typed)
         row.addWidget(self.time)
         row.addWidget(QLabel("數值"))
         row.addWidget(self.value)
@@ -730,36 +741,46 @@ class CurveEditor(QWidget):
         return ci, i
 
     def _show_key(self):
+        """Time / value fields: a selection's shared value, or "--" where they differ (typing
+        sets every selected keyframe)."""
         cv = self.canvas
+        sel = sorted(cv.sel)
         one = self._single()
-        for wdg in (self.time, self.value):
-            wdg.blockSignals(True)
-        self.time.setEnabled(one is not None)
-        self.value.setEnabled(one is not None and not cv.curves[one[0]]["color"])
+        keys = [cv.curves[ci]["keys"][i] for ci, i in sel]
+        numeric = [(ci, i) for ci, i in sel if not cv.curves[ci]["color"]]
+        one_per_curve = len({ci for ci, _ in sel}) == len(sel)
+        self.time.setEnabled(bool(sel) and one_per_curve)
+        self.value.setEnabled(bool(numeric))
+        if sel:
+            times = {round(k[0] / US, 3) for k in keys}
+            self.time.show_value(times.pop()) if len(times) == 1 else self.time.show_mixed()
+            vals = {round(cv.curves[ci]["keys"][i][1] * cv.curves[ci]["factor"], 3) for ci, i in numeric}
+            if vals:
+                self.value.show_value(vals.pop()) if len(vals) == 1 else self.value.show_mixed()
         if one is not None:
             ci, i = one
-            keys = cv.curves[ci]["keys"]
-            k = keys[i]
-            self.time.setValue(k[0] / US)
-            if not cv.curves[ci]["color"]:
-                self.value.setValue(k[1] * cv.curves[ci]["factor"])
-            if i + 1 < len(keys):
-                x1, y1, x2, y2 = curves.segment_bezier(k, keys[i + 1])
+            ks = cv.curves[ci]["keys"]
+            if i + 1 < len(ks):
+                x1, y1, x2, y2 = curves.segment_bezier(ks[i], ks[i + 1])
                 self.bezier.setText(f"{x1:.3g}, {y1:.3g}, {x2:.3g}, {y2:.3g}")
                 self.hint.setText(f"{cv.curves[ci]['label']}：曲線作用在選取的關鍵幀到下一個關鍵幀之間")
             else:
                 self.bezier.clear()
                 self.hint.setText(f"{cv.curves[ci]['label']}：最後一個關鍵幀之後沒有曲線")
-        elif cv.sel:
-            self.bezier.clear()
-            self.hint.setText(f"選取了 {len(cv.sel)} 個關鍵幀：拖曳一起移動（Shift 鎖定方向），"
-                              "曲線與預設套用到每個關鍵幀之後的那一段")
+        elif sel:
+            segs = {curves.segment_bezier(cv.curves[ci]["keys"][i], cv.curves[ci]["keys"][i + 1])
+                    for ci, i in sel if i + 1 < len(cv.curves[ci]["keys"])}
+            if len(segs) == 1:
+                x1, y1, x2, y2 = segs.pop()
+                self.bezier.setText(f"{x1:.3g}, {y1:.3g}, {x2:.3g}, {y2:.3g}")
+            else:
+                self.bezier.setText("--" if segs else "")
+            self.hint.setText(f"選取了 {len(sel)} 個關鍵幀：拖曳一起移動（Shift 鎖定方向）；"
+                              "輸入的時間、數值、曲線會套用到每一個")
         else:
             self.bezier.clear()
-            self.hint.setText("點選關鍵幀編輯，Ctrl 點選或拖框多選；雙擊新增，Delete 刪除；"
-                              "滾輪縮放時間，Ctrl+滾輪縮放數值，Shift+滾輪或中鍵平移")
-        for wdg in (self.time, self.value):
-            wdg.blockSignals(False)
+            self.hint.setText("點選關鍵幀編輯，Ctrl 點選或拖框多選，Ctrl+D 取消選取；雙擊新增，Delete 刪除；"
+                              "滾輪上下移動，Shift+滾輪左右移動，Ctrl+滾輪縮放時間，Alt+滾輪縮放數值，中鍵拖曳平移")
 
     def select_param(self, group, key):
         """Show this parameter's curve too (e.g. after its ◆ was clicked in the inspector)."""
@@ -788,17 +809,23 @@ class CurveEditor(QWidget):
         if final:
             self._show_key()
 
-    def _fields_changed(self):
-        one = self._single()
-        if one is None:
-            return
-        ci, i = one
+    def _typed(self, change):
+        """Apply change(curve, key) to every selected keyframe, as one edit."""
         cv = self.canvas
-        keys = copy.deepcopy(cv.curves[ci]["keys"])
-        keys[i][0] = int(cv.snap_t(self.time.value() * US))
-        if not cv.curves[ci]["color"]:
-            keys[i][1] = self.value.value() / cv.curves[ci]["factor"]
-        self._emit([(ci, keys)], True)
+        if not cv.sel:
+            return
+        changed = {}
+        for ci, i in sorted(cv.sel):
+            keys = changed.setdefault(ci, copy.deepcopy(cv.curves[ci]["keys"]))
+            change(cv.curves[ci], keys[i])
+        self._emit(sorted(changed.items()), True)
+
+    def _time_typed(self, v):
+        t = int(self.canvas.snap_t(v * US))
+        self._typed(lambda c, k: k.__setitem__(0, t))
+
+    def _value_typed(self, v):
+        self._typed(lambda c, k: None if c["color"] else k.__setitem__(1, v / c["factor"]))
 
     def _set_bezier(self, spec):
         cv = self.canvas
@@ -813,6 +840,8 @@ class CurveEditor(QWidget):
         self._emit(sorted(changed.items()), True)
 
     def _apply_bezier(self):
+        if self.bezier.text().strip() == "--":
+            return
         try:
             self._set_bezier(curves.parse_bezier(self.bezier.text()))
         except ValueError as exc:

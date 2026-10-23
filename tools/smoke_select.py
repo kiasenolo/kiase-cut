@@ -120,6 +120,42 @@ def run():
           tl.selected_ids == in_rows and len({id(r) for r in (i, j)}) == 2 and len(in_rows) >= 4)
     win.grab().save(os.path.join(out, "select_box.png"))
 
+    # the inspector with three text clips: shared values shown, differing ones "--"
+    trio = [edit.find(win.proj, cid)[1] for cid in ("c43", "c44", "c45")]
+    tl.set_selection({c["id"] for c in trio}, "c43")
+    app.processEvents()
+    ins = win.inspector
+    sx, ss = ins.widgets[("transform", "x")], ins.widgets[("transform", "scale")]
+    check(f"inspector: shared X shows '{sx.text()}', differing scale shows '{ss.text()}'",
+          sx.text() == "0.000" and ss.text() == "--" and "3 個片段" in ins.widgets["類型"].text())
+    undo0 = len(win.history.undo_stack)
+
+    def type_into(spin, text):
+        spin.setFocus()
+        spin.lineEdit().selectAll()
+        QTest.keyClicks(spin.lineEdit(), text)
+        QTest.keyClick(spin.lineEdit(), Qt.Key_Return)
+        ins._flush()
+        app.processEvents()
+
+    type_into(ss, "1.5")
+    scales = [edit.find(win.proj, c["id"])[1]["transform"]["scale"] for c in trio]
+    check(f"typing 1.5 over '--' set all three ({scales}) in one undo step",
+          scales == [1.5] * 3 and len(win.history.undo_stack) == undo0 + 1)
+    win.do_undo()
+    tl.set_selection({c["id"] for c in trio}, "c43")
+    app.processEvents()
+    hidden = round(ss.value(), 3)
+    type_into(ss, f"{hidden}")
+    scales = [round(edit.find(win.proj, c["id"])[1]["transform"]["scale"], 3) for c in trio]
+    check(f"typing the number hidden behind '--' ({hidden}) still sets all", scales == [hidden] * 3)
+    win.do_undo()
+    win.timeline.setFocus()
+    QTest.keyClick(win, Qt.Key_D, Qt.ControlModifier)
+    app.processEvents()
+    check("Ctrl+D clears the selection", not tl.selected_ids and tl.selected is None)
+    tl.set_selection({c["id"] for c in trio}, "c43")
+
     # Delete removes the whole selection; undo brings it back
     n = len(tl.selected_ids)
     total = sum(len(t["clips"]) for t in win.proj["tracks"])
@@ -147,10 +183,25 @@ def run():
     other = tl.row_h(j)
     check(f"dragging the header edge resized only that track ({tl.row_h(i)} px, next stays {other})",
           abs(tl.row_h(i) - 108) <= 1 and other == 68)
-    v0 = tl.scroll_y
-    wheel(tl, QPoint(40, 300), Qt.NoModifier)
-    wheel(tl, QPoint(40, 300), Qt.NoModifier)
-    check(f"the wheel over headers scrolls tracks ({v0} -> {tl.scroll_y})", tl.scroll_y != v0)
+    v0, s0, z0 = tl.scroll_y, tl.scroll_s, tl.px_per_s
+    wheel(tl, QPoint(600, 300), Qt.NoModifier)
+    wheel(tl, QPoint(600, 300), Qt.NoModifier)
+    check(f"wheel scrolls the tracks up / down only ({v0} -> {tl.scroll_y})",
+          tl.scroll_y != v0 and tl.scroll_s == s0 and tl.px_per_s == z0)
+    tl.scroll_s = s0 = 30.0
+    wheel(tl, QPoint(600, 300), Qt.ShiftModifier)
+    check(f"Shift+wheel scrolls left / right ({s0} -> {tl.scroll_s:.1f} s)", tl.scroll_s < s0 and tl.px_per_s == z0)
+    at = tl._sec(600)
+    wheel(tl, QPoint(600, 300), Qt.ControlModifier)
+    check(f"Ctrl+wheel zooms time around the mouse ({z0} -> {tl.px_per_s} px/s)",
+          tl.px_per_s > z0 and abs(tl._sec(600) - at) < 1e-6)
+    v0, s0 = tl.scroll_y, tl.scroll_s
+    QTest.mousePress(tl, Qt.MiddleButton, Qt.NoModifier, QPoint(700, 300))
+    QTest.mouseMove(tl, QPoint(650, 280))
+    QTest.mouseMove(tl, QPoint(600, 260))
+    QTest.mouseRelease(tl, Qt.MiddleButton, Qt.NoModifier, QPoint(600, 260))
+    check(f"middle-drag pans the view ({s0:.1f} -> {tl.scroll_s:.1f} s, {v0} -> {tl.scroll_y} px)",
+          tl.scroll_s > s0 and tl.scroll_y != v0)
     win.grab().save(os.path.join(out, "select_tall.png"))
 
     # the compound list

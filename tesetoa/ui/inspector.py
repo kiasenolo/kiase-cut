@@ -4,8 +4,11 @@ Every animatable value has a ◆ button: filled when the playhead sits on one of
 keyframes. Clicking it adds or removes a keyframe there. Changing a value that already
 has keyframes edits the keyframe at the playhead, or adds one, as Jianying does.
 Edits are reported after a short pause so typing or spinning produces one rebuild.
+
+With several clips selected the form shows what they have in common: a value they share
+is shown, one that differs shows "--", and typing a value sets it on all of them.
 """
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
@@ -40,10 +43,50 @@ KEY_ON, KEY_OFF = "◆", "◇"
 
 
 class SpinBox(QDoubleSpinBox):
-    """Number input that ignores the mouse wheel, so scrolling the panel never edits."""
+    """Number input that ignores the mouse wheel, so scrolling the panel never edits.
+    It can show "--" (values that differ across a selection); `edited` fires for the user's
+    changes, including typing the very number that was hidden behind "--"."""
+    edited = Signal(float)
+
+    def __init__(self, *a):
+        super().__init__(*a)
+        self.mixed = False
+        self._typed = False              # the user typed over "--" and has not finished yet
+        self.valueChanged.connect(self._changed)
+        self.lineEdit().textEdited.connect(self._typing)
+        self.editingFinished.connect(self._finished)
 
     def wheelEvent(self, e):
         e.ignore()
+
+    def show_value(self, v):
+        self.blockSignals(True)
+        self.mixed = self._typed = False
+        self.setValue(v)
+        self.blockSignals(False)
+        self.lineEdit().setText(self.textFromValue(self.value()))
+
+    def show_mixed(self):
+        self.mixed, self._typed = True, False
+        self.lineEdit().setText("--")
+
+    def textFromValue(self, v):
+        return "--" if self.mixed else super().textFromValue(v)
+
+    def _typing(self, _text):
+        if self.mixed:
+            self.mixed, self._typed = False, True
+
+    def _changed(self, v):
+        self.mixed = self._typed = False
+        self.edited.emit(v)
+
+    def _finished(self):
+        # typing the very number hidden behind "--" changes no value, so valueChanged is
+        # silent: report it here
+        if self._typed:
+            self._typed = False
+            self.edited.emit(self.value())
 
 
 class ComboBox(QComboBox):
@@ -58,12 +101,13 @@ def section(title):
 
 
 class Inspector(QWidget):
-    textEdited = Signal(str, dict)                  # clip id, {field: value}
-    paramEdited = Signal(str, str, str, object)     # clip id, group, key, value (number or colour)
-    keyToggled = Signal(str, str, str)              # clip id, group, key
-    easingChosen = Signal(str, str)                 # clip id, easing name
-    maskKindChosen = Signal(str, object)            # clip id, kind or None
-    maskInvertChosen = Signal(str, bool)            # clip id, invert
+    # every edit names the clips it applies to (the whole selection)
+    textEdited = Signal(list, dict)                 # clip ids, {field: value}
+    paramEdited = Signal(list, str, str, object)    # clip ids, group, key, value (number or colour)
+    keyToggled = Signal(list, str, str)             # clip ids, group, key
+    easingChosen = Signal(list, str)                # clip ids, easing name
+    maskKindChosen = Signal(list, object)           # clip ids, kind or None
+    maskInvertChosen = Signal(list, bool)           # clip ids, invert
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
 
     def __init__(self, parent=None):
@@ -74,7 +118,7 @@ class Inspector(QWidget):
         self.body = QWidget()
         lay.addWidget(self.body)
         lay.addStretch()
-        self.clip_id = None
+        self.clip_ids = []
         self.shape = None                 # what the form was built for
         self.widgets = {}
         self.pending = {}
@@ -83,6 +127,10 @@ class Inspector(QWidget):
         self._build(None)
 
     # -- form -----------------------------------------------------------------------------------
+    @property
+    def clip_id(self):
+        return self.clip_ids[0] if self.clip_ids else None
+
     def _build(self, c):
         old = self.body
         self.body = QWidget()
@@ -101,6 +149,7 @@ class Inspector(QWidget):
             form.addRow(section("文字"))
             edit_ = QPlainTextEdit()
             edit_.setFixedHeight(80)
+            edit_.setPlaceholderText("--")
             edit_.textChanged.connect(lambda: self._queue("text", "content", edit_.toPlainText()))
             self.widgets["content"] = edit_
             form.addRow("內容", edit_)
@@ -122,6 +171,7 @@ class Inspector(QWidget):
         if c["type"] in ("image", "video", "compound"):
             form.addRow(section("遮罩"))
             kind = ComboBox()
+            kind.setPlaceholderText("--")
             for name, k in MASK_NAMES:
                 kind.addItem(name, k)
             kind.currentIndexChanged.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
@@ -129,6 +179,7 @@ class Inspector(QWidget):
             form.addRow("類型", kind)
             if c.get("mask"):
                 inv = QCheckBox("反轉")
+                inv.setTristate(False)
                 inv.toggled.connect(lambda on: self._emit_now(self.maskInvertChosen, on))
                 self.widgets["mask_invert"] = inv
                 form.addRow("", inv)
@@ -163,7 +214,7 @@ class Inspector(QWidget):
         s.setSingleStep(step)
         s.setDecimals(dec)
         s.setKeyboardTracking(False)
-        s.valueChanged.connect(lambda v: self._queue(key[0], key[1], v / factor))
+        s.edited.connect(lambda v: self._queue(key[0], key[1], v / factor))
         self.widgets[key] = s
         return s
 
@@ -185,62 +236,71 @@ class Inspector(QWidget):
 
     # -- refresh --------------------------------------------------------------------------------
     def show_clip(self, c, t_us, fps):
-        """Show clip c; t_us is the playhead time on the timeline."""
-        shape = None if c is None else (c["id"], c["type"], bool(c.get("text")),
+        self.show_clips([c] if c else [], t_us, fps)
+
+    def show_clips(self, clips, t_us, fps):
+        """Show the selected clips (the first is the primary one); t_us is the playhead time."""
+        c = common(clips)
+        shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")),
                                          (c.get("mask") or {}).get("kind"), "volume" in c)
         if shape != self.shape:
             self._flush()
-            self.clip_id = c["id"] if c else None
+            self.clip_ids = [k["id"] for k in clips]
             self.shape = shape
             self._build(c)
         if c is None:
             return
-        t = t_us - c["start_us"]
         w = self.widgets
-        w["類型"].setText({"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字",
-                          "compound": "複合片段"}.get(c["type"], c["type"]))
-        w["開始"].setText(timecode(c["start_us"], fps))
-        w["長度"].setText(f"{c['duration_us'] / US:.2f} 秒")
+        ts = [t_us - k["start_us"] for k in clips]
+        names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段"}
+        kinds = sorted({names.get(k["type"], k["type"]) for k in clips})
+        w["類型"].setText(kinds[0] if len(clips) == 1 else f"{len(clips)} 個片段（{'、'.join(kinds)}）")
+        same = lambda vals: len(set(vals)) == 1
+        starts = [timecode(k["start_us"], fps) for k in clips]
+        w["開始"].setText(starts[0] if same(starts) else "--")
+        lens = [f"{k['duration_us'] / US:.2f} 秒" for k in clips]
+        w["長度"].setText(lens[0] if same(lens) else "--")
         if c.get("text"):
-            tx = c["text"]
-            if w["content"].toPlainText() != tx["content"] and not w["content"].hasFocus():
+            contents = [k["text"]["content"] for k in clips]
+            text = contents[0] if same(contents) else ""
+            if w["content"].toPlainText() != text and not w["content"].hasFocus():
                 w["content"].blockSignals(True)
-                w["content"].setPlainText(tx["content"])
+                w["content"].setPlainText(text)
                 w["content"].blockSignals(False)
-            col = curves.value(tx.get("color", [1, 1, 1]), t)
-            r, g, b = (int(round(min(1, max(0, v)) * 255)) for v in col[:3])
-            w["color"].setText(f"#{r:02x}{g:02x}{b:02x}")
-            w["color"].setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
-            on = edit.key_at(tx.get("color"), t) is not None
-            kb = w[("key", "text", "color")]
-            kb.setText(KEY_ON if on else KEY_OFF)
-            kb.setStyleSheet("color: #ffb020;" if on else ("color: #8fd9d3;" if curves.is_animated(tx.get("color")) else ""))
-            kb.setEnabled(0 <= t <= c["duration_us"])
-        inside = 0 <= t <= c["duration_us"]
+            cols = []
+            for k, t in zip(clips, ts):
+                col = curves.value(k["text"].get("color", [1, 1, 1]), t)
+                cols.append(tuple(int(round(min(1, max(0, v)) * 255)) for v in col[:3]))
+            if same(cols):
+                r, g, b = cols[0]
+                w["color"].setText(f"#{r:02x}{g:02x}{b:02x}")
+                w["color"].setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
+            else:
+                w["color"].setText("--")
+                w["color"].setStyleSheet("")
+            self._key_state(w[("key", "text", "color")], [k["text"].get("color") for k in clips], clips, ts)
         easings = set()
         for group, rows in PARAMS.items():
-            holder = c if group == "clip" else c.get(group)
-            if holder is None:
+            if (c if group == "clip" else c.get(group)) is None:
                 continue
-            for key, _l, _lo, _hi, _st, _d, factor, default in rows:
+            for key, _l, _lo, _hi, _st, dec, factor, default in rows:
                 if (group, key) not in w:
                     continue
-                p = holder.get(key, default)
-                self._set((group, key), curves.value(p, t) * factor)
-                on = edit.key_at(p, t) is not None
-                btn = w[("key", group, key)]
-                btn.setText(KEY_ON if on else KEY_OFF)
-                btn.setStyleSheet("color: #ffb020;" if on else
-                                  ("color: #8fd9d3;" if curves.is_animated(p) else ""))
-                btn.setEnabled(inside)
-                if on:
-                    easings.add(edit.easing_at(p, t))
+                ps = [(k if group == "clip" else k[group]).get(key, default) for k in clips]
+                vals = [round(curves.value(p, t) * factor, dec) for p, t in zip(ps, ts)]
+                self._set((group, key), vals[0] if same(vals) else None)
+                for p, t in zip(ps, ts):
+                    if edit.key_at(p, t) is not None:
+                        easings.add(edit.easing_at(p, t))
+                self._key_state(w[("key", group, key)], ps, clips, ts)
         if "mask_kind" in w:
-            kind = (c.get("mask") or {}).get("kind")
-            self._set_combo(w["mask_kind"], kind)
+            kinds = {(k.get("mask") or {}).get("kind") for k in clips}
+            self._set_combo(w["mask_kind"], kinds.pop() if len(kinds) == 1 else "--")
         if "mask_invert" in w:
+            inv = {bool(k["mask"].get("invert")) for k in clips}
             w["mask_invert"].blockSignals(True)
-            w["mask_invert"].setChecked(bool(c["mask"].get("invert")))
+            w["mask_invert"].setCheckState(Qt.PartiallyChecked if len(inv) > 1 else
+                                           (Qt.Checked if inv.pop() else Qt.Unchecked))
             w["mask_invert"].blockSignals(False)
         easings.discard(None)
         ease = w["easing"]
@@ -248,18 +308,27 @@ class Inspector(QWidget):
         self._set_combo(ease, easings.pop() if len(easings) == 1 else (None if not easings else "custom"))
 
     @staticmethod
+    def _key_state(btn, ps, clips, ts):
+        """◆ when every clip has a keyframe at the playhead, ◈ when some do."""
+        on = [edit.key_at(p, t) is not None for p, t in zip(ps, ts)]
+        btn.setText(KEY_ON if all(on) else ("◈" if any(on) else KEY_OFF))
+        btn.setStyleSheet("color: #ffb020;" if any(on) else
+                          ("color: #8fd9d3;" if any(curves.is_animated(p) for p in ps) else ""))
+        btn.setEnabled(any(0 <= t <= k["duration_us"] for k, t in zip(clips, ts)))
+
+    @staticmethod
     def _set_combo(combo, data):
         combo.blockSignals(True)
-        combo.setCurrentIndex(max(0, combo.findData(data)))
+        combo.setCurrentIndex(-1 if data == "--" else max(0, combo.findData(data)))   # -1 shows "--"
         combo.blockSignals(False)
 
     def _set(self, key, value):
         s = self.widgets.get(key)
         if s is None or (s.hasFocus() and key in self.pending):
             return
-        s.blockSignals(True)
-        s.setValue(value)
-        s.blockSignals(False)
+        if s.hasFocus() and s.mixed and value is None:
+            return                                       # the user may be typing over "--"
+        s.show_mixed() if value is None else s.show_value(value)
 
     # -- edits ----------------------------------------------------------------------------------
     def _queue(self, group, key, value):
@@ -268,11 +337,11 @@ class Inspector(QWidget):
 
     def _emit_now(self, signal, *args):
         self._flush()
-        if self.clip_id is not None:
-            signal.emit(self.clip_id, *args)
+        if self.clip_ids:
+            signal.emit(list(self.clip_ids), *args)
 
     def _pick_color(self):
-        cur = QColor(self.widgets["color"].text())
+        cur = QColor(self.widgets["color"].text()) if self.widgets["color"].text() != "--" else QColor("white")
         col = QColorDialog.getColor(cur, self, "文字顏色")
         if col.isValid():
             self._queue("text*", "color", [col.redF(), col.greenF(), col.blueF()])
@@ -280,11 +349,34 @@ class Inspector(QWidget):
 
     def _flush(self):
         self.timer.stop()
-        if not self.pending or self.clip_id is None:
+        if not self.pending or not self.clip_ids:
             self.pending.clear()
             return
         pending, self.pending = self.pending, {}
+        ids = list(self.clip_ids)
         if ("text", "content") in pending:                 # the words themselves
-            self.textEdited.emit(self.clip_id, {"content": pending.pop(("text", "content"))})
+            self.textEdited.emit(ids, {"content": pending.pop(("text", "content"))})
         for (g, k), v in pending.items():                    # everything else can animate
-            self.paramEdited.emit(self.clip_id, g.rstrip("*"), k, v)
+            self.paramEdited.emit(ids, g.rstrip("*"), k, v)
+
+
+def common(clips):
+    """A clip-like dict holding only what every clip has (for the form layout), or None."""
+    if not clips:
+        return None
+    if len(clips) == 1:
+        return clips[0]
+    first = clips[0]
+    out = {"id": first["id"], "type": first["type"] if len({k["type"] for k in clips}) == 1 else "mixed"}
+    if all(k.get("text") for k in clips):
+        out["text"] = first["text"]
+    if all(k.get("transform") is not None for k in clips):
+        out["transform"] = first["transform"]
+    if all(k["type"] in ("image", "video", "compound") for k in clips):
+        out["type"] = out["type"] if out["type"] != "mixed" else "video"     # can take masks
+        kinds = {(k.get("mask") or {}).get("kind") for k in clips}
+        if len(kinds) == 1 and None not in kinds:
+            out["mask"] = first["mask"]
+    if all("volume" in k for k in clips):
+        out["volume"] = first["volume"]
+    return out

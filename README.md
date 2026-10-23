@@ -21,15 +21,20 @@ Editing: drag a clip to move it (also onto another track of the same kind), drag
 edges to trim; moves and trims snap to the playhead and clip edges. Ctrl+B splits the
 selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a text,
 Ctrl+Z / Ctrl+Y undo and redo. Right-click a track header or clip to rename it or give it
-a colour (double-click a track name to rename). Ctrl+wheel zooms the timeline.
+a colour (double-click a track name to rename).
+
+Navigation (timeline and curve editor alike): the wheel moves up and down, Shift+wheel
+left and right, Ctrl+wheel zooms time around the mouse, the middle button drags the view.
 
 Selection: Ctrl / Shift + click adds or removes clips, dragging on empty track space draws
-a selection box, Ctrl+A selects every clip of the open timeline. Dragging any selected clip
-moves the whole selection (one undo step); Delete and Ctrl+B act on all of it.
+a selection box, Ctrl+A selects every clip of the open timeline, Ctrl+D clears the
+selection. Dragging any selected clip moves the whole selection (one undo step); Delete and
+Ctrl+B act on all of it. The inspector shows what the selected clips have in common: a
+value they share is shown, one that differs shows "--", and typing a value (or a colour,
+mask, keyframe ◆, curve) sets it on every selected clip as one undo step.
 
 Track height: Alt+wheel or the 軌道高度 slider scales every track; drag the line under a
-track name to size that track alone (double-click it to reset). Shift+wheel, or the wheel
-over the track names, scrolls the tracks up and down.
+track name to size that track alone (double-click it to reset).
 
 Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
 the breadcrumb above the timeline shows where you are, Esc / 返回上一層 goes back.
@@ -57,14 +62,14 @@ Curve editor (the 關鍵幀曲線 tab beside 屬性): tick any parameters of the
 their keyframes show together as value-over-time curves, each in its own colour (colours
 as R/G/B lines). 正規化 gives every curve the same height; untick it to read them on one
 axis. Click a keyframe to select it, Ctrl / Shift + click or a selection box for several,
-Ctrl+A for all; dragging moves the whole selection (time snaps to frames, Shift keeps to
+Ctrl+A for all, Ctrl+D for none; dragging moves the whole selection (time snaps to frames, Shift keeps to
 one direction). Drag the bezier handles to shape a curve, double-click to add a keyframe
-to the nearest curve, Delete to remove the selection. Wheel zooms time around the mouse,
-Ctrl+wheel zooms values, Shift+wheel or the middle button pans, 全部顯示 fits again; a
-click on the time ruler moves the playhead. The preview follows every drag. The segment
+to the nearest curve, Delete to remove the selection. Alt+wheel zooms values, 全部顯示
+fits again; a click on the time ruler moves the playhead. The preview follows every drag. The segment
 after each selected keyframe takes a CSS `cubic-bezier(x1, y1, x2, y2)` typed in (y may
-overshoot, for bounces) or a preset (linear, ease in / out / in-out, back); a single
-keyframe's exact time and value can be typed too.
+overshoot, for bounces) or a preset (linear, ease in / out / in-out, back). Time and value
+can be typed too: with several keyframes selected they show "--" where they differ, and a
+typed number goes to all of them.
 
 Sound and tracks: audio and video clips show their waveform on the timeline (following
 the clip volume and fades). Audio track headers have mute and solo buttons, picture

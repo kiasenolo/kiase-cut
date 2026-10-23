@@ -143,11 +143,11 @@ def run():
     t_at = canvas.t_of(at.x())
     for _ in range(12):
         ev = QWheelEvent(QPointF(at), QPointF(canvas.mapToGlobal(at)), QPoint(), QPoint(0, 120),
-                         Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+                         Qt.NoButton, Qt.ControlModifier, Qt.NoScrollPhase, False)
         app.sendEvent(canvas, ev)
     app.processEvents()
     span1 = canvas.t1 - canvas.t0
-    check(f"wheel zoomed time {span0 / US:.1f}s -> {span1 / US:.2f}s around the mouse",
+    check(f"Ctrl+wheel zoomed time {span0 / US:.1f}s -> {span1 / US:.2f}s around the mouse",
           span1 < span0 / 5 and abs(canvas.t_of(at.x()) - t_at) < 1000)
     win.grab().save(os.path.join(out, "curves_multi.png"))
 
@@ -162,6 +162,20 @@ def run():
                   if canvas.t0 <= cc["keys"][j][0] <= canvas.t1)
     check(f"box selected {len(canvas.sel)} keyframes on two curves",
           len(canvas.sel) == visible >= 2 and {ci for ci, _ in canvas.sel} == {0, 1})
+    # four keys of two curves: values differ -> "--"; typing sets every one of them
+    check(f"value field shows '{cv.value.text()}' for differing keys", cv.value.text() == "--")
+    undo0 = len(win.history.undo_stack)
+    cv.value.setFocus()
+    cv.value.lineEdit().selectAll()
+    QTest.keyClicks(cv.value.lineEdit(), "0.125")
+    QTest.keyClick(cv.value.lineEdit(), Qt.Key_Return)
+    app.processEvents()
+    vals = {round(k[1], 6) for n in ("x", "y") for k in keys(n)}
+    check(f"typing 0.125 set all selected keys ({vals}) in one undo step",
+          vals == {0.125} and len(win.history.undo_stack) == undo0 + 1 and cv.value.text() == "0.125")
+    win.do_undo()
+    app.processEvents()
+    canvas.sel = {(ci, j) for ci, cc in enumerate(canvas.curves) for j in range(len(cc["keys"]))}
     before = {n: [k[0] for k in keys(n)] for n in ("x", "y")}
     undo0 = len(win.history.undo_stack)
     ci, j = sorted(canvas.sel)[0]
@@ -189,6 +203,12 @@ def run():
     segs = [curves.segment_bezier(a_, b) for n in ("x", "y") for a_, b in zip(keys(n), keys(n)[1:])]
     check(f"Ctrl+A ({len(canvas.sel)}/{n_all}) and 緩出 eased all {len(segs)} segments",
           len(canvas.sel) == n_all and all(abs(s[2] - 0.58) < 1e-6 for s in segs))
+
+    canvas.setFocus()
+    QTest.keyClick(canvas, Qt.Key_D, Qt.ControlModifier)
+    app.processEvents()
+    check("Ctrl+D in the curve editor clears the keyframe selection (the clip stays selected)",
+          not canvas.sel and win.timeline.selected is not None)
 
     # click the time ruler: the playhead goes there
     canvas.fit()

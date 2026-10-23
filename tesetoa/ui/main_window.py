@@ -131,8 +131,8 @@ class MainWindow(QMainWindow):
         ins.paramEdited.connect(self.on_param_edited)
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
-        ins.maskKindChosen.connect(lambda cid, kind: self.apply("遮罩", edit.set_mask, cid, kind))
-        ins.maskInvertChosen.connect(lambda cid, on: self.apply("反轉遮罩", edit.set_mask_invert, cid, on))
+        ins.maskKindChosen.connect(lambda ids, kind: self.apply_each("遮罩", edit.set_mask, ids, kind))
+        ins.maskInvertChosen.connect(lambda ids, on: self.apply_each("反轉遮罩", edit.set_mask_invert, ids, on))
         ins.keyJump.connect(self.jump_key)
         scroll = QScrollArea()
         scroll.setWidget(self.inspector)
@@ -264,6 +264,7 @@ class MainWindow(QMainWindow):
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "刪除", "Delete", self.do_delete)
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
+        add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
         add(m, "新增文字", "Ctrl+T", self.do_text)
         m = self.menuBar().addMenu("播放")
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
@@ -571,22 +572,40 @@ class MainWindow(QMainWindow):
         if self.proj:
             self.apply("新增文字", edit.add_text, self.playhead_us(), select=lambda c: c["id"])
 
-    def on_text_edited(self, cid, fields):
-        self.apply("修改文字", lambda lvl: edit.set_text(lvl, cid, **fields),
-                   merge=("text", cid, tuple(sorted(fields))))
+    def apply_each(self, label, fn, ids, *args, merge=None):
+        """fn(level, clip id, *args) for every clip of a selection, as one undo step."""
+        def each(level):
+            for cid in ids:
+                fn(level, cid, *args)
+
+        return self.apply(label, each, merge=merge)
+
+    def on_text_edited(self, ids, fields):
+        self.apply_each("修改文字", lambda lvl, cid: edit.set_text(lvl, cid, **fields), ids,
+                        merge=("text", tuple(ids), tuple(sorted(fields))))
 
     def clip_time(self, cid):
         """Playhead time relative to the start of clip cid."""
         return self.playhead_us() - edit.find(self.container(), cid)[1]["start_us"]
 
-    def on_param_edited(self, cid, group, key, value):
+    def on_param_edited(self, ids, group, key, value):
+        """A value typed in the inspector: set on every selected clip (each at its own
+        playhead time, so keyframed ones get or edit the keyframe there)."""
         label = "調整" + self.PARAM_LABELS.get((group, key), "遮罩")
-        t = self.clip_time(cid)
-        self.apply(label, edit.set_param, cid, group, key, value, t,
-                   merge=("param", cid, group, key, round(t)))
+        times = {cid: self.clip_time(cid) for cid in ids}
+        self.apply_each(label, lambda lvl, cid: edit.set_param(lvl, cid, group, key, value, times[cid]), ids,
+                        merge=("param", tuple(ids), group, key, round(times[ids[0]])))
 
-    def on_key_toggled(self, cid, group, key):
-        self.apply("關鍵幀", edit.toggle_key, cid, group, key, self.clip_time(cid))
+    def on_key_toggled(self, ids, group, key):
+        """◆: when every selected clip has a keyframe here, remove them; else add the missing."""
+        times = {cid: self.clip_time(cid) for cid in ids}
+
+        def has(cid):
+            c = edit.find(self.container(), cid)[1]
+            return edit.key_at((c if group == "clip" else c.get(group) or {}).get(key), times[cid]) is not None
+
+        todo = ids if all(has(cid) for cid in ids) else [cid for cid in ids if not has(cid)]
+        self.apply_each("關鍵幀", lambda lvl, cid: edit.toggle_key(lvl, cid, group, key, times[cid]), todo)
         self.curves.select_param(group, key)
 
     def add_key_at_playhead(self, cid, params):
@@ -632,11 +651,18 @@ class MainWindow(QMainWindow):
                         (c if g == "clip" else c.setdefault(g, {}))[k] = {"keys": keys} if keys else keep
         self.player.worker.set_view(view, self.cache_dir())
 
-    def on_easing(self, cid, easing):
+    def on_easing(self, ids, easing):
         """Apply a curve preset to every parameter with a keyframe at the playhead."""
-        t = self.clip_time(cid)
+        times = {cid: self.clip_time(cid) for cid in ids}
 
         def ease_all(level):
+            done = 0
+            for cid in ids:
+                done += ease_clip(level, cid, times[cid])
+            if not done:
+                raise edit.EditError("需要播放頭上有關鍵幀，而且後面還有下一個")
+
+        def ease_clip(level, cid, t):
             c = edit.find(level, cid)[1]
             done = 0
             for g in ("transform", "mask", "text", "clip"):
@@ -648,8 +674,7 @@ class MainWindow(QMainWindow):
                     if i is not None and i + 1 < len(p["keys"]):
                         edit.set_easing(level, cid, g, k, t, easing)
                         done += 1
-            if not done:
-                raise edit.EditError("需要播放頭上有關鍵幀，而且後面還有下一個")
+            return done
 
         self.apply("曲線", ease_all)
 
@@ -787,7 +812,7 @@ class MainWindow(QMainWindow):
     # -- inspector / preview overlay --------------------------------------------------------------
     def refresh_inspector(self):
         sel = self.timeline.selected
-        self.inspector.show_clip(sel, self.playhead_us(), self.fps)
+        self.inspector.show_clips(self.timeline.selected_clips_primary_first(), self.playhead_us(), self.fps)
         self.curves.set_clip(sel, self.playhead_us() - sel["start_us"] if sel else 0, self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None)
@@ -849,7 +874,7 @@ class MainWindow(QMainWindow):
                               f"{timecode(self.length / self.fps * US, self.fps)}")
         sel = self.timeline.selected
         if sel is not None:
-            self.inspector.show_clip(sel, self.playhead_us(), self.fps)
+            self.inspector.show_clips(self.timeline.selected_clips_primary_first(), self.playhead_us(), self.fps)
             self.curves.set_time(sel, self.playhead_us() - sel["start_us"])
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None)

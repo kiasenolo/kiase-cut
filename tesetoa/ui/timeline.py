@@ -5,9 +5,10 @@ Click to seek or select; Ctrl / Shift + click adds to or removes from the select
 on empty track space draws a selection box, and a selection moves together. Drag a clip to move it (also to another track of the same kind),
 drag its edges to trim. Moves and trims snap to the playhead and to other clips' edges.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
-Ctrl+wheel zooms, wheel scrolls (Shift+wheel, or the wheel over the track headers, scrolls
-the tracks up and down). Alt+wheel or the toolbar slider changes the track height; dragging
-the line under a track header resizes that track alone. Dragging a picture clip above the top row, or a sound clip
+The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
+zooms time around the mouse, the middle button drags the view. Alt+wheel or the toolbar
+slider changes the track height; dragging the line under a track header resizes that track
+alone. Ctrl+D clears the selection. Dragging a picture clip above the top row, or a sound clip
 below the bottom row, puts it on a new track.
 
 Audio and video clips show their waveform (scaled by the clip volume and fades). Track
@@ -119,6 +120,9 @@ class Timeline(QWidget):
 
     def selected_clips(self):
         return [c for t in self.rows for c in t["clips"] if c["id"] in self.selected_ids]
+
+    def selected_clips_primary_first(self):
+        return sorted(self.selected_clips(), key=lambda c: c["id"] != self._primary)
 
     def set_selection(self, ids, primary=None):
         ids = set(ids)
@@ -499,6 +503,11 @@ class Timeline(QWidget):
 
     # -- mouse ----------------------------------------------------------------------------------
     def mousePressEvent(self, e):
+        if self.proj and e.button() == Qt.MiddleButton:     # drag the view
+            self.drag = {"clip": None, "mode": "pan", "moved": False, "pos": e.position(),
+                         "s": self.scroll_s, "y": self.scroll_y}
+            self.setCursor(Qt.ClosedHandCursor)
+            return
         if not self.proj or e.button() != Qt.LeftButton:
             return
         if e.position().x() < HEADER_W:
@@ -550,6 +559,12 @@ class Timeline(QWidget):
                 return
             _, c, zone = self._hit(pos) if self.proj else (None, None, None)
             self.setCursor(Qt.SizeHorCursor if zone in ("start", "end") else Qt.ArrowCursor)
+            return
+        if d["mode"] == "pan":
+            self.scroll_s = max(0.0, d["s"] - (pos.x() - d["pos"].x()) / self.px_per_s)
+            self.vbar.setValue(round(d["y"] - (pos.y() - d["pos"].y())))
+            self._waves.clear()
+            self.update()
             return
         if d["mode"] == "resize":
             h = min(MAX_H, max(MIN_H, round(d["h0"] + pos.y() - d["y0"])))
@@ -619,7 +634,9 @@ class Timeline(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
-        if not d or d["mode"] in ("seek", "resize"):
+        if d and d["mode"] == "pan":
+            self.setCursor(Qt.ArrowCursor)
+        if not d or d["mode"] in ("seek", "resize", "pan"):
             return
         if d["mode"] == "band":
             self.band = None
@@ -742,17 +759,19 @@ class Timeline(QWidget):
     def wheelEvent(self, e):
         if not self.proj:
             return
-        d = e.angleDelta().y() or e.angleDelta().x()     # Alt / Shift may turn the wheel sideways
-        if e.modifiers() & Qt.AltModifier:
+        dy, dx = e.angleDelta().y(), e.angleDelta().x()
+        d = dy or dx                                     # Alt / Shift may turn the wheel sideways
+        mods = e.modifiers()
+        if mods & Qt.AltModifier:                        # track height
             self.set_vzoom(self.vzoom * (1.15 if d > 0 else 1 / 1.15))
-            return
-        if e.modifiers() & Qt.ShiftModifier or e.position().x() < HEADER_W:
-            self.vbar.setValue(self.scroll_y - round(d / 120 * 40))
-            return
-        if e.modifiers() & Qt.ControlModifier:
+        elif mods & Qt.ControlModifier:                  # zoom time around the mouse
             anchor = self._sec(e.position().x())
             self.px_per_s = min(2000.0, max(1.0, self.px_per_s * (1.25 if d > 0 else 0.8)))
             self.scroll_s = max(0.0, anchor - (e.position().x() - HEADER_W) / self.px_per_s)
-        else:
+        elif mods & Qt.ShiftModifier or (dx and not dy):  # left / right (also touchpad sideways)
             self.scroll_s = max(0.0, self.scroll_s - d / 120 * 80 / self.px_per_s)
+        else:                                            # up / down
+            self.vbar.setValue(self.scroll_y - round(d / 120 * 40))
+            return
+        self._waves.clear()
         self.update()

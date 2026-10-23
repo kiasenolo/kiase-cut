@@ -8,6 +8,7 @@ be trimmed past their source; images and texts can be stretched freely.
 import copy
 import json
 import time
+import uuid
 
 from . import curves, project
 
@@ -86,12 +87,10 @@ def track_by_id(proj, track_id):
     raise EditError(f"track {track_id} not found")
 
 
-def new_clip_id(proj):
-    n = 0
-    for c in project.walk_clips(proj["tracks"]):
-        if c["id"][1:].isdigit():
-            n = max(n, int(c["id"][1:]))
-    return f"c{n + 1}"
+def new_clip_id(_proj=None):
+    """Clip ids are unique across the whole project, compound clips included, because
+    edits address clips by id from whichever level is open."""
+    return "c" + uuid.uuid4().hex[:10]
 
 
 def end(c):
@@ -284,10 +283,12 @@ def set_text(proj, clip_id, **fields):
     for k, v in fields.items():
         if k not in TEXT_FIELDS:
             raise EditError(f"unknown text field {k}")
+        if curves.is_animated(c["text"].get(k)):
+            raise EditError(f"{k} has keyframes: edit it at the playhead")
         c["text"][k] = v
     if "color" in fields or "size" in fields:
         c["text"].pop("styles", None)          # a whole-clip style replaces per-range ones
-    if "content" in fields:
+    if "content" in fields and not c.get("named"):
         c["name"] = fields["content"][:20]
     return c
 
@@ -300,8 +301,10 @@ def set_transform(proj, clip_id, key, value, t=None):
 
 
 # -- keyframes ------------------------------------------------------------------------------------
+TEXT_ANIM_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg")
 GROUP_FIELDS = {
     "transform": TRANSFORM_FIELDS,
+    "text": TEXT_ANIM_FIELDS,
     "mask": ("cx", "cy", "w", "h", "rotation", "feather"),
     "clip": ("volume",),
 }
@@ -321,6 +324,10 @@ def _holder(c, group):
         if not c.get("mask"):
             raise EditError("clip has no mask")
         return c["mask"]
+    if group == "text":
+        if not c.get("text"):
+            raise EditError("not a text clip")
+        return c["text"]
     return c.setdefault("transform", {})
 
 
@@ -347,7 +354,9 @@ def set_param(proj, clip_id, group, key, value, t=None):
     _, c = find(proj, clip_id)
     h = _holder(c, group)
     p = h.get(key)
-    value = float(value)
+    value = [float(v) for v in value] if isinstance(value, (list, tuple)) else float(value)
+    if group == "text" and key in ("size", "color"):
+        h.pop("styles", None)                    # a whole-clip style replaces per-range ones
     if not curves.is_animated(p):
         h[key] = value
         if group == "transform" and key == "scale" and "scale_y" in h and not curves.is_animated(h["scale_y"]):
@@ -371,7 +380,8 @@ def toggle_key(proj, clip_id, group, key, t):
     _, c = find(proj, clip_id)
     _check(c, group, key, t)
     h = _holder(c, group)
-    default = 1.0 if key in ("scale", "opacity", "volume", "w", "h") else 0.0
+    default = {"scale": 1.0, "opacity": 1.0, "volume": 1.0, "w": 1.0, "h": 1.0, "size": 5.0,
+               "color": [1.0, 1.0, 1.0]}.get(key, 0.0)
     p = h.get(key, default)
     i = key_at(p, t)
     if i is not None:
@@ -422,7 +432,7 @@ def easing_at(p, t):
 def key_times(c):
     """Sorted clip-time positions of every keyframe in a clip."""
     times = set()
-    for group in ("transform", "mask"):
+    for group in ("transform", "mask", "text"):
         for v in (c.get(group) or {}).values():
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
@@ -471,3 +481,31 @@ def set_mask_invert(proj, clip_id, invert):
         raise EditError("clip has no mask")
     c["mask"]["invert"] = bool(invert)
     return c
+
+
+# -- names and colours ----------------------------------------------------------------------------
+def rename_track(proj, track_id, name):
+    track_by_id(proj, track_id)["name"] = str(name).strip() or track_by_id(proj, track_id)["kind"]
+
+
+def set_track_color(proj, track_id, color):
+    """color: '#rrggbb' or None for the default."""
+    t = track_by_id(proj, track_id)
+    if color:
+        t["color"] = color
+    else:
+        t.pop("color", None)
+
+
+def rename_clip(proj, clip_id, name):
+    _, c = find(proj, clip_id)
+    c["name"] = str(name).strip()
+    c["named"] = bool(c["name"])            # a user name wins over the text content label
+
+
+def set_clip_color(proj, clip_id, color):
+    _, c = find(proj, clip_id)
+    if color:
+        c["color"] = color
+    else:
+        c.pop("color", None)

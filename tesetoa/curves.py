@@ -25,16 +25,21 @@ def value(p, t):
     for a, b in zip(keys, keys[1:]):
         if a[0] <= t <= b[0]:
             break
-    x0, y0, x3, y3 = a[0], a[1], b[0], b[1]
-    x1, y1 = x0 + a[4], y0 + a[5]
-    x2, y2 = x3 + b[2], y3 + b[3]
+    x0, x3 = a[0], b[0]
+    x1, x2 = x0 + a[4], x3 + b[2]
     lo, hi = 0.0, 1.0
     for _ in range(48):
         s = (lo + hi) / 2
         x = (1 - s) ** 3 * x0 + 3 * (1 - s) ** 2 * s * x1 + 3 * (1 - s) * s * s * x2 + s ** 3 * x3
         lo, hi = (s, hi) if x < t else (lo, s)
     s = (lo + hi) / 2
-    return (1 - s) ** 3 * y0 + 3 * (1 - s) ** 2 * s * y1 + 3 * (1 - s) * s * s * y2 + s ** 3 * y3
+
+    def bez(y0, y1, y2, y3):
+        return (1 - s) ** 3 * y0 + 3 * (1 - s) ** 2 * s * y1 + 3 * (1 - s) * s * s * y2 + s ** 3 * y3
+
+    if isinstance(a[1], list):          # colours: each channel follows the same timing,
+        return [bez(p, p, q, q) for p, q in zip(a[1], b[1])]   # with flat handles
+    return bez(a[1], a[1] + a[5], b[1] + b[3], b[1])
 
 
 def span(p):
@@ -48,6 +53,15 @@ def max_abs(p):
     if not is_animated(p):
         return abs(value(p, 0))
     return max(abs(k[1]) for k in p["keys"])
+
+
+def static(spec, t, fields):
+    """Copy of dict spec with the listed animated fields evaluated at t."""
+    out = dict(spec)
+    for k in fields:
+        if k in out:
+            out[k] = value(out[k], t)
+    return out
 
 
 def from_jianying(kf_list, shift_us):

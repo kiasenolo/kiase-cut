@@ -8,7 +8,8 @@ Pixels go through shared memory, audio as base64 PCM (s16, stereo, 48 kHz).
   {"cmd": "load", "xml": path}                          -> {length, fps, width, height}
   {"cmd": "frame", "pos": n, "w": w, "h": h,
    "audio": bool, "shm": name}                          -> {pos, w, h, [pcm]}
-  {"cmd": "export", "xml": path, "out": path, ...}      -> {progress} lines, then {done}
+  {"cmd": "export", "xml": path, "out": path,
+   "opts": {in, out, crf, preset, ...}}                 -> {progress} lines, then {done}
   {"cmd": "quit"}
 """
 import base64
@@ -75,14 +76,19 @@ class Engine:
               preset=opts.get("preset", "medium"), acodec=opts.get("acodec", "aac"),
               ab=opts.get("ab", "320k"), ar=RATE, channels=CHANNELS,
               real_time=-max(1, opts.get("threads", 4)), terminate_on_pause=1)
-        m.set(self.producer, **{"in": 0, "out": info["length"] - 1})
-        m.producer_seek(self.producer, 0)
+        first = max(0, int(opts.get("in", 0)))
+        last = min(info["length"] - 1, int(opts.get("out", info["length"] - 1)))
+        if last < first:
+            raise ValueError("empty export range")
+        m.set(self.producer, **{"in": first, "out": last})
+        m.producer_seek(self.producer, 0)              # positions count from the in point
         m.consumer_connect(cons, self.producer)
         m.consumer_start(cons)
         t0 = time.time()
+        span = last - first + 1
         while not m.consumer_is_stopped(cons):
             time.sleep(0.25)
-            emit({"progress": m.producer_position(self.producer) / info["length"],
+            emit({"progress": min(1.0, m.producer_position(self.producer) / span),
                   "elapsed": time.time() - t0})
         m.consumer_close(cons)
         return {"done": out, "elapsed": time.time() - t0}

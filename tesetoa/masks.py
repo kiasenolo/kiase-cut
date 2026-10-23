@@ -109,4 +109,37 @@ def spline(mask, t, disp_w, disp_h, frame_w, frame_h):
         x, y = q[0] * cb + q[1] * sb, -q[0] * sb + q[1] * cb
         return [0.5 + (cx + x) / frame_w, 0.5 - (cy + y) / frame_h]
 
+    if mask["kind"] in ("line", "mirror"):
+        # half-planes and bands are huge quads; rotoscoping rasterises their whole extent,
+        # which made a line mask cost ~80 ms a frame. Clip them to the frame first.
+        poly = clip_polygon([to_frame(p) for _, p, _ in pts], -0.01, 1.01)
+        poly = (poly + [poly[-1]] * CLIP_POINTS)[:CLIP_POINTS] if poly else [[-1.0, -1.0]] * CLIP_POINTS
+        return [[q, q, q] for q in poly]
     return [[to_frame(h1), to_frame(p), to_frame(h2)] for h1, p, h2 in pts]
+
+
+CLIP_POINTS = 8      # a quad clipped by a rectangle has at most 8 corners; pad to a fixed count
+
+
+def clip_polygon(poly, lo, hi):
+    """Sutherland-Hodgman clip of a polygon to the square [lo, hi]^2."""
+    for axis, bound, keep_above in ((0, lo, True), (0, hi, False), (1, lo, True), (1, hi, False)):
+        if not poly:
+            break
+        out = []
+        for i, cur in enumerate(poly):
+            prev = poly[i - 1]
+            inside = lambda q: q[axis] >= bound if keep_above else q[axis] <= bound
+            if inside(cur):
+                if not inside(prev):
+                    out.append(_cross(prev, cur, axis, bound))
+                out.append(cur)
+            elif inside(prev):
+                out.append(_cross(prev, cur, axis, bound))
+        poly = out
+    return poly
+
+
+def _cross(a, b, axis, bound):
+    k = (bound - a[axis]) / (b[axis] - a[axis])
+    return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k]

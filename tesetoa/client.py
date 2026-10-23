@@ -48,8 +48,10 @@ class EngineClient:
         pixels = bytes(self.shm.buf[: r["w"] * r["h"] * 4])
         return pixels, r["w"], r["h"], base64.b64decode(r["pcm"]) if "pcm" in r else None
 
-    def export(self, xml, out, on_progress=None, **opts):
-        self.proc.stdin.write(json.dumps({"cmd": "export", "xml": xml, "out": out, "opts": opts}) + "\n")
+    def export(self, xml, dest, on_progress=None, **opts):
+        """Render xml to the file dest. opts: encoder settings and the frame range
+        ("in" / "out", inclusive)."""
+        self.proc.stdin.write(json.dumps({"cmd": "export", "xml": xml, "out": dest, "opts": opts}) + "\n")
         self.proc.stdin.flush()
         while True:
             r = self._read()

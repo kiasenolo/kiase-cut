@@ -8,14 +8,15 @@ Ctrl+wheel zooms, wheel scrolls.
 """
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QMenu, QWidget
 
 from .. import edit
 
 US = 1_000_000
+MEDIA_MIME = "application/x-tesetoa-media"
 COLORS = {"video": "#2a7f8f", "image": "#2a7f8f", "compound": "#6b4fa3",
           "text": "#a8742a", "audio": "#3d7f45"}
-RULER_H, TRACK_H, HEADER_W = 26, 34, 70
+RULER_H, TRACK_H, HEADER_W = 26, 34, 120
 EDGE_PX, SNAP_PX, DRAG_PX = 6, 8, 3
 
 
@@ -29,6 +30,9 @@ class Timeline(QWidget):
     clipSelected = Signal(object)                    # clip dict or None
     moveRequested = Signal(str, int, str)            # clip id, start us, track id
     trimRequested = Signal(str, str, int)            # clip id, "start" | "end", time us
+    trackAction = Signal(str, str)                   # action, track id
+    clipAction = Signal(str, str)                    # action, clip id
+    mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -40,9 +44,12 @@ class Timeline(QWidget):
         self.selected_id = None
         self.rows = []
         self.drag = None
+        self.mark_in = self.mark_out = None        # export range, frames
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.ClickFocus)
+        self.setAcceptDrops(True)
+        self.drop_at = None                        # (row, us) while library media hovers
 
     # -- data -----------------------------------------------------------------------------------
     def set_project(self, proj, keep_view=False):
@@ -144,31 +151,61 @@ class Timeline(QWidget):
                 label = timecode(t * US, self.fps)
                 p.drawText(int(x) + 3, RULER_H - 9, label if step < 1 else label[:5])
             t += step
+        if self.mark_in is not None or self.mark_out is not None:
+            a = self._x((self.mark_in or 0) / self.fps)
+            b = self._x(((self.mark_out if self.mark_out is not None else
+                          self.proj["duration_us"] / US * self.fps)) / self.fps)
+            a, b = max(a, HEADER_W), max(b, HEADER_W)
+            p.fillRect(QRectF(a, 0, b - a, RULER_H), QColor(47, 214, 200, 70))
+            p.fillRect(QRectF(a, self.height() - 3, b - a, 3), QColor(47, 214, 200, 160))
+            p.setPen(QPen(QColor("#2fd6c8"), 2))
+            if self.mark_in is not None and a > HEADER_W:
+                p.drawLine(int(a), 0, int(a), RULER_H)
+            if self.mark_out is not None and b > HEADER_W:
+                p.drawLine(int(b), 0, int(b), RULER_H)
         dragged = self.drag["clip"] if self.drag and self.drag["moved"] else None
         for i, tr in enumerate(self.rows):
             y = RULER_H + i * TRACK_H
             p.fillRect(0, y, w, TRACK_H - 2, QColor("#1f1f23"))
-            p.setPen(QColor("#9a9aa0"))
-            p.drawText(QRectF(6, y, HEADER_W - 8, TRACK_H - 2), Qt.AlignVCenter, tr["kind"])
+            if tr.get("color"):
+                p.fillRect(0, y, 4, TRACK_H - 2, QColor(tr["color"]))
+            p.setPen(QColor("#c8c8cc"))
+            p.drawText(QRectF(10, y, HEADER_W - 14, TRACK_H - 2), Qt.AlignVCenter,
+                       p.fontMetrics().elidedText(tr.get("name") or tr["kind"], Qt.ElideRight, HEADER_W - 14))
             for c in tr["clips"]:
                 if c is not dragged:
-                    self._draw_clip(p, c, y, c["start_us"], c["duration_us"])
+                    self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr)
         if dragged:
             d = self.drag
             y = RULER_H + d["row"] * TRACK_H
-            self._draw_clip(p, dragged, y, d["start"], d["end"] - d["start"], ghost=True)
+            self._draw_clip(p, dragged, y, d["start"], d["end"] - d["start"], ghost=True,
+                            track=self.rows[d["row"]])
+        if self.drop_at is not None:
+            row, t = self.drop_at
+            dx = self._x(t / US)
+            p.setPen(QPen(QColor("#2fd6c8"), 2, Qt.DashLine))
+            p.drawLine(int(dx), RULER_H, int(dx), self.height())
+            if row is not None:
+                p.fillRect(QRectF(HEADER_W, RULER_H + row * TRACK_H, w - HEADER_W, TRACK_H - 2),
+                           QColor(47, 214, 200, 30))
         x = self._x(self.pos / self.fps)
         if x >= HEADER_W:
             p.setPen(QPen(QColor("#ff4d4f"), 2))
             p.drawLine(int(x), 0, int(x), self.height())
 
-    def _draw_clip(self, p, c, y, start, dur, ghost=False):
+    @staticmethod
+    def clip_label(c):
+        if c.get("named") or not c.get("text"):
+            return c.get("name") or c["type"]
+        return c["text"]["content"]
+
+    def _draw_clip(self, p, c, y, start, dur, ghost=False, track=None):
         w = self.width()
         x0, x1 = self._x(start / US), self._x((start + dur) / US)
         if x1 < HEADER_W or x0 > w:
             return
         r = QRectF(max(x0, HEADER_W) + 0.5, y + 3, max(1.0, x1 - max(x0, HEADER_W) - 1), TRACK_H - 8)
-        col = QColor(COLORS.get(c["type"], "#555"))
+        col = QColor(c.get("color") or (track or {}).get("color") or COLORS.get(c["type"], "#555"))
         sel = c["id"] == self.selected_id
         if sel:
             col = col.lighter(150)
@@ -179,8 +216,10 @@ class Timeline(QWidget):
         p.drawRoundedRect(r, 3, 3)
         if r.width() > 24:
             p.setPen(QColor("#f2f2f2"))
-            label = (c.get("text") or {}).get("content") or c.get("name") or c["type"]
-            p.drawText(r.adjusted(4, 0, -2, 0), Qt.AlignVCenter, label.replace("\n", " "))
+            label = self.clip_label(c).replace("\n", " ")
+            if c["type"] == "compound":
+                label = "▣ " + label
+            p.drawText(r.adjusted(4, 0, -2, 0), Qt.AlignVCenter, label)
         if sel and not ghost:
             # keyframes of the selected clip, as small diamonds along its bottom edge
             p.setPen(Qt.NoPen)
@@ -252,6 +291,72 @@ class Timeline(QWidget):
         else:
             self.trimRequested.emit(c["id"], "end", int(round(d["end"])))
         self.update()
+
+    # -- drops from the media library -----------------------------------------------------------
+    def dragEnterEvent(self, e):
+        if self.proj and e.mimeData().hasFormat(MEDIA_MIME):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e):
+        if not (self.proj and e.mimeData().hasFormat(MEDIA_MIME)):
+            return
+        pos = e.position()
+        self.drop_at = (self._row_at(pos.y()), max(0.0, self._sec(pos.x())) * US)
+        e.acceptProposedAction()
+        self.update()
+
+    def dragLeaveEvent(self, e):
+        self.drop_at = None
+        self.update()
+
+    def dropEvent(self, e):
+        self.drop_at = None
+        pos = e.position()
+        row = self._row_at(pos.y())
+        tid = self.rows[row]["id"] if row is not None else ""
+        start = int(max(0.0, self._sec(pos.x())) * US)
+        for ident in bytes(e.mimeData().data(MEDIA_MIME)).decode().split(","):
+            if ident.startswith("m"):
+                self.mediaDropped.emit(ident, tid, start)
+        e.acceptProposedAction()
+        self.update()
+
+    def contextMenuEvent(self, e):
+        if not self.proj:
+            return
+        row, c, _ = self._hit(e.pos())
+        if row is None:
+            return
+        menu = QMenu(self)
+        if e.pos().x() < HEADER_W:
+            tid = self.rows[row]["id"]
+            for text, act in (("重新命名軌道…", "rename"), ("軌道顏色…", "color"), ("預設顏色", "nocolor")):
+                menu.addAction(text, lambda a=act: self.trackAction.emit(a, tid))
+        elif c is not None:
+            self.select(c)
+            items = [("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
+                     ("在播放頭分割", "split"), ("刪除", "delete")]
+            if c["type"] == "compound":
+                items = [("編輯複合片段", "enter"), None] + items
+            for it in items:
+                if it is None:
+                    menu.addSeparator()
+                else:
+                    menu.addAction(it[0], lambda a=it[1]: self.clipAction.emit(a, c["id"]))
+        else:
+            return
+        menu.exec(e.globalPos())
+
+    def mouseDoubleClickEvent(self, e):
+        if not self.proj:
+            return
+        row, c, _ = self._hit(e.position())
+        if row is None:
+            return
+        if e.position().x() < HEADER_W:
+            self.trackAction.emit("rename", self.rows[row]["id"])
+        elif c is not None and c["type"] == "compound":
+            self.clipAction.emit("enter", c["id"])
 
     def wheelEvent(self, e):
         if not self.proj:

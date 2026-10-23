@@ -1,19 +1,27 @@
-"""Main window: preview, inspector, transport, edit toolbar and timeline (Jianying-like)."""
+"""Main window (Jianying-like): media library, preview, inspector, timeline.
+
+Editing can happen on the main timeline or inside a compound clip (double-click it);
+`path_ids` is the chain of compound clips that are open. Every edit runs through one undo
+history on the whole project, applied to whichever level is open.
+"""
 import hashlib
 import json
 import os
 
 from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QAction, QColor, QKeySequence, QPainter
-from PySide6.QtWidgets import (QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow,
-                               QMessageBox, QProgressDialog, QPushButton, QScrollArea, QSplitter,
-                               QVBoxLayout, QWidget)
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
+                               QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
+                               QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget)
 
-from .. import build, edit, project
+from .. import build, edit, library, project
 from ..client import EngineClient
 from ..importers import jianying
+from .export_dialog import ExportDialog
 from .inspector import Inspector
+from .library import LibraryPanel
 from .player import Player
+from .preview import FullscreenPreview, Preview
 from .timeline import US, Timeline, timecode
 
 STYLE = """
@@ -24,37 +32,15 @@ QPushButton { background: #2a2a30; border: 1px solid #3a3a42; border-radius: 4px
 QPushButton:hover { background: #33333b; }
 QPushButton:disabled { color: #666; }
 QSplitter::handle { background: #111114; }
-QDoubleSpinBox, QPlainTextEdit { background: #26262c; border: 1px solid #3a3a42; border-radius: 3px; padding: 2px; }
+QDoubleSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #26262c; border: 1px solid #3a3a42; border-radius: 3px; padding: 2px; }
 QDoubleSpinBox:disabled { color: #777; }
+QTreeWidget { background: #1f1f23; border: none; }
+QTreeWidget::item:selected { background: #2c6e72; }
+QHeaderView::section { background: #202024; border: none; padding: 3px; }
 QLabel#time { font-family: Consolas, monospace; color: #cfcfd4; }
 QLabel#title { color: #8fd9d3; font-weight: 600; }
+QLabel#crumb { color: #ffb020; font-weight: 600; }
 """
-
-
-class Preview(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.img = None
-        self.aspect = 16 / 9
-        self.setMinimumSize(320, 180)
-
-    def show_image(self, img):
-        self.img = img
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#111114"))
-        w, h = self.width(), self.height()
-        if w / h > self.aspect:
-            dw, dh = h * self.aspect, h
-        else:
-            dw, dh = w, w / self.aspect
-        x, y = (w - dw) / 2, (h - dh) / 2
-        p.fillRect(int(x), int(y), int(dw), int(dh), QColor("black"))
-        if self.img is not None:
-            p.setRenderHint(QPainter.SmoothPixmapTransform)
-            p.drawImage(self.rect().adjusted(int(x), int(y), -int(x), -int(y)), self.img)
 
 
 class Task(QObject):
@@ -76,13 +62,20 @@ class Task(QObject):
 
 
 class MainWindow(QMainWindow):
+    PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
+                    ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
+                    ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",
+                    ("text", "letter_spacing"): "字距", ("text", "line_spacing"): "行距",
+                    ("text", "italic_deg"): "斜體"}
+
     def __init__(self):
         super().__init__()
-        self.resize(1440, 900)
+        self.resize(1600, 940)
         self.proj = None
         self.history = None
         self.path = None
         self.dirty = False
+        self.path_ids = []              # open compound clips, outermost first
         self.xml = None
         self.xml_slot = 0
         self.length = 0
@@ -93,11 +86,27 @@ class MainWindow(QMainWindow):
         self.building = False
         self.build_again = False
         self.first_build = True
+        self.pending_seek = None
+        self.fullscreen = None
+
+        # library | preview | inspector
+        self.library = LibraryPanel()
+        lb = self.library
+        lb.importRequested.connect(self.import_media)
+        lb.newFolderRequested.connect(self.new_folder)
+        lb.renameRequested.connect(self.rename_library)
+        lb.deleteRequested.connect(self.delete_library)
+        lb.moveRequested.connect(lambda ident, f: self.apply_root("移動素材", library.move, ident, f))
+        lb.addRequested.connect(lambda iid: self.place_media(iid, "", self.playhead_us()))
 
         self.preview = Preview()
+        self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
+        self.preview.moveCommitted.connect(self.on_preview_move)
+        self.preview.doubleClicked.connect(self.toggle_fullscreen)
+
         self.inspector = Inspector()
-        self.inspector.textEdited.connect(self.on_text_edited)
         ins = self.inspector
+        ins.textEdited.connect(self.on_text_edited)
         ins.paramEdited.connect(self.on_param_edited)
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
@@ -111,6 +120,9 @@ class MainWindow(QMainWindow):
         self.play_btn = QPushButton("▶")
         self.play_btn.setFixedWidth(48)
         self.play_btn.clicked.connect(self.toggle_play)
+        full_btn = QPushButton("全螢幕")
+        full_btn.setToolTip("F，或在預覽上按兩下")
+        full_btn.clicked.connect(self.toggle_fullscreen)
         self.time_lbl = QLabel("00:00.00 / 00:00.00")
         self.time_lbl.setObjectName("time")
         bar = QHBoxLayout()
@@ -118,6 +130,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.time_lbl)
         bar.addWidget(self.play_btn)
         bar.addStretch()
+        bar.addWidget(full_btn)
         center = QWidget()
         cl = QVBoxLayout(center)
         cl.setContentsMargins(4, 4, 4, 4)
@@ -125,20 +138,31 @@ class MainWindow(QMainWindow):
         cl.addLayout(bar)
 
         top = QSplitter(Qt.Horizontal)
+        top.addWidget(self.library)
         top.addWidget(center)
         top.addWidget(scroll)
-        top.setStretchFactor(0, 1)
-        top.setSizes([1100, 340])
+        top.setStretchFactor(1, 1)
+        top.setSizes([300, 960, 340])
 
+        # timeline with its toolbar and the compound breadcrumb
         self.timeline = Timeline()
-        self.timeline.seekRequested.connect(self.seek)
-        self.timeline.clipSelected.connect(lambda c: self.refresh_inspector())
-        self.timeline.moveRequested.connect(
-            lambda cid, start, tid: self.apply("移動", edit.move, cid, start, tid))
-        self.timeline.trimRequested.connect(
-            lambda cid, edge, t: self.apply("裁切", edit.trim_start if edge == "start" else edit.trim_end, cid, t))
+        tl = self.timeline
+        tl.seekRequested.connect(self.seek)
+        tl.clipSelected.connect(lambda c: self.refresh_inspector())
+        tl.moveRequested.connect(lambda cid, start, tid: self.apply("移動", edit.move, cid, start, tid))
+        tl.trimRequested.connect(
+            lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
+        tl.trackAction.connect(self.on_track_action)
+        tl.clipAction.connect(self.on_clip_action)
+        tl.mediaDropped.connect(self.place_media)
         tools = QHBoxLayout()
         tools.setContentsMargins(6, 2, 6, 2)
+        self.back_btn = QPushButton("← 返回上一層")
+        self.back_btn.clicked.connect(self.leave_compound)
+        self.crumb = QLabel()
+        self.crumb.setObjectName("crumb")
+        tools.addWidget(self.back_btn)
+        tools.addWidget(self.crumb)
         self.buttons = {}
         for key, label, tip in (("undo", "復原", "Ctrl+Z"), ("redo", "重做", "Ctrl+Y"),
                                 ("split", "分割", "Ctrl+B"), ("delete", "刪除", "Delete"),
@@ -154,12 +178,12 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(0)
         ll.addLayout(tools)
-        ll.addWidget(self.timeline, 1)
+        ll.addWidget(tl, 1)
 
         main = QSplitter(Qt.Vertical)
         main.addWidget(top)
         main.addWidget(lower)
-        main.setSizes([540, 340])
+        main.setSizes([560, 360])
         self.setCentralWidget(main)
 
         self.player = Player(self)
@@ -172,8 +196,9 @@ class MainWindow(QMainWindow):
         self.rebuild_timer.timeout.connect(self.rebuild)
         self._menus()
         self._update_title()
+        self._update_crumb()
         self._update_buttons()
-        self.statusBar().showMessage("檔案 > 匯入剪映草稿")
+        self.statusBar().showMessage("檔案 > 匯入剪映草稿，或從素材庫匯入素材")
 
     # -- menus ------------------------------------------------------------------------------------
     def _menus(self):
@@ -185,10 +210,13 @@ class MainWindow(QMainWindow):
             menu.addAction(a)
 
         m = self.menuBar().addMenu("檔案")
+        add(m, "新專案", "Ctrl+N", self.new_project)
         add(m, "匯入剪映草稿…", "Ctrl+I", self.import_draft)
         add(m, "開啟專案…", "Ctrl+O", self.open_project)
         add(m, "儲存專案", "Ctrl+S", self.save_project)
         add(m, "另存專案…", "Ctrl+Shift+S", lambda: self.save_project(True))
+        m.addSeparator()
+        add(m, "匯入素材…", "Ctrl+Shift+I", lambda: self.import_media(self.library.current_folder()))
         add(m, "匯出影片…", "Ctrl+E", self.export)
         m = self.menuBar().addMenu("編輯")
         add(m, "復原", "Ctrl+Z", self.do_undo)
@@ -197,6 +225,13 @@ class MainWindow(QMainWindow):
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "刪除", "Delete", self.do_delete)
         add(m, "新增文字", "Ctrl+T", self.do_text)
+        m = self.menuBar().addMenu("播放")
+        add(m, "標記入點", "I", lambda: self.set_mark("in"))
+        add(m, "標記出點", "O", lambda: self.set_mark("out"))
+        add(m, "清除標記", "Alt+X", lambda: self.set_mark(None))
+        m.addSeparator()
+        add(m, "全螢幕預覽", "F", self.toggle_fullscreen)
+        add(m, "返回上一層", "Esc", self.leave_compound)
         for key, fn in (("Space", self.toggle_play), ("Left", lambda: self.step(-1)),
                         ("Right", lambda: self.step(1)), ("Home", lambda: self.seek(0)),
                         ("End", lambda: self.seek(self.length - 1)), ("Ctrl+Shift+Z", self.do_redo)):
@@ -219,6 +254,61 @@ class MainWindow(QMainWindow):
             self.buttons[k].setEnabled(has)
         self.buttons["delete"].setEnabled(has and self.timeline.selected is not None)
 
+    def _update_crumb(self):
+        names = ["主時間軸"]
+        node = self.proj
+        for cid in self.path_ids:
+            _, c = edit.find(node, cid)
+            names.append(c.get("name") or "複合片段")
+            node = c["compound"]
+        self.crumb.setText(" › ".join(names) if self.path_ids else "")
+        self.back_btn.setVisible(bool(self.path_ids))
+
+    # -- levels (main timeline / compound clips) ------------------------------------------------
+    def container(self, root=None):
+        """The tracks owner that is open: the project or a compound clip's content."""
+        node = self.proj if root is None else root
+        for cid in self.path_ids:
+            node = edit.find(node, cid)[1]["compound"]
+        return node
+
+    def view(self):
+        """Project-like dict for the open level, for the timeline and the preview build."""
+        if not self.path_ids:
+            return self.proj
+        node = self.container()
+        return {"width": node["width"], "height": node["height"], "fps": self.proj["fps"],
+                "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
+                "tracks": node["tracks"]}
+
+    def enter_compound(self, cid):
+        _, c = edit.find(self.container(), cid)
+        inner = round((self.playhead_us() - c["start_us"] + c.get("source_start_us", 0)) / US * self.fps)
+        self.path_ids.append(cid)
+        self._switch_level(max(0, inner))
+
+    def leave_compound(self):
+        if not self.path_ids:
+            if self.fullscreen:
+                self.fullscreen.close()
+            return
+        cid = self.path_ids.pop()
+        _, c = edit.find(self.container(), cid)
+        outer = round((c["start_us"] - c.get("source_start_us", 0)) / US * self.fps) + self.pos
+        self._switch_level(max(0, outer), select=c)
+
+    def _switch_level(self, pos, select=None):
+        self.player.worker.set_playing(False)
+        self.timeline.set_project(self.view())
+        if select is not None:
+            self.timeline.select(select)
+        self.pos = pos
+        self.pending_seek = pos
+        self._update_crumb()
+        self.refresh_inspector()
+        self.first_build = False
+        self.rebuild()
+
     # -- project ----------------------------------------------------------------------------------
     def cache_dir(self):
         if self.path:
@@ -235,6 +325,11 @@ class MainWindow(QMainWindow):
         if ans == QMessageBox.Save:
             return self.save_project()
         return ans == QMessageBox.Discard
+
+    def new_project(self):
+        if self.maybe_save():
+            self.path = None
+            self.set_project(project.new())
 
     def import_draft(self):
         if not self.maybe_save():
@@ -279,14 +374,19 @@ class MainWindow(QMainWindow):
 
     def set_project(self, proj):
         self.relink(proj)
+        if not library.lib(proj)["items"]:
+            library.add_from_project(proj)         # media already used, e.g. after a draft import
         self.proj = proj
         self.history = edit.History(proj)
         self.dirty = False
+        self.path_ids = []
         self.fps = proj["fps"]
-        self.preview.aspect = proj["width"] / proj["height"]
+        self.timeline.mark_in = self.timeline.mark_out = None
         self.timeline.set_project(proj)
+        self.library.set_library(library.lib(proj))
         self.first_build = True
         self._update_title()
+        self._update_crumb()
         self._update_buttons()
         self.refresh_inspector()
         self.rebuild()
@@ -294,7 +394,9 @@ class MainWindow(QMainWindow):
     def relink(self, proj):
         """Offer to find missing media by file name under a folder the user picks."""
         clips = [c for c in project.walk_clips(proj["tracks"]) if c.get("media")]
-        missing = sorted({c["media"]["path"] for c in clips if not os.path.exists(c["media"]["path"])})
+        items = library.lib(proj)["items"]
+        refs = [c["media"] for c in clips] + items
+        missing = sorted({x["path"] for x in refs if not os.path.exists(x["path"])})
         if not missing:
             return
         ans = QMessageBox.question(self, "找不到素材",
@@ -309,16 +411,23 @@ class MainWindow(QMainWindow):
             for f in files:
                 found.setdefault(f.lower(), os.path.join(d, f).replace("\\", "/"))
         fixed = 0
-        for c in clips:
-            p = c["media"]["path"]
-            if not os.path.exists(p) and os.path.basename(p).lower() in found:
-                c["media"]["path"] = found[os.path.basename(p).lower()]
+        for x in refs:
+            name = os.path.basename(x["path"]).lower()
+            if not os.path.exists(x["path"]) and name in found:
+                x["path"] = found[name]
                 fixed += 1
-        self.statusBar().showMessage(f"已重新連結 {fixed} 個片段的素材", 8000)
+        self.statusBar().showMessage(f"已重新連結 {fixed} 個素材", 8000)
 
     # -- editing ----------------------------------------------------------------------------------
     def apply(self, label, fn, *args, merge=None, select=None):
-        """Run an edit through the undo history, then refresh views and the preview."""
+        """Run fn(open level, *args) through the undo history; refresh views and preview."""
+        return self._do(label, lambda root, *a: fn(self.container(root), *a), args, merge, select)
+
+    def apply_root(self, label, fn, *args, merge=None, select=None):
+        """Same, for edits of the whole project (the media library)."""
+        return self._do(label, fn, args, merge, select)
+
+    def _do(self, label, fn, args, merge, select):
         if not self.history:
             return None
         try:
@@ -327,6 +436,12 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"{label}：{exc}", 4000)
             self.timeline.update()
             return None
+        except Exception as exc:                       # a file that cannot be read, say
+            self.statusBar().showMessage(f"{label}失敗：{exc}", 6000)
+            return None
+        if self.path_ids:                                # content may outgrow the compound
+            node = self.container()
+            node["duration_us"] = max(node.get("duration_us") or 0, project.end_us(node["tracks"]))
         if select is not None:
             self.timeline.selected_id = select(result)
         self.after_edit(label)
@@ -334,11 +449,17 @@ class MainWindow(QMainWindow):
 
     def after_edit(self, label):
         self.dirty = True
+        try:
+            self.container()
+        except edit.EditError:                           # an undo removed an open compound
+            self.path_ids = []
         sel = self.timeline.selected_id
-        self.timeline.set_project(self.proj, keep_view=True)
+        self.timeline.set_project(self.view(), keep_view=True)
         self.timeline.selected_id = sel
         self.timeline.update()
+        self.library.set_library(library.lib(self.proj))
         self._update_title()
+        self._update_crumb()
         self._update_buttons()
         self.refresh_inspector()
         self.statusBar().showMessage(label, 2000)
@@ -360,16 +481,16 @@ class MainWindow(QMainWindow):
             return
         t = self.playhead_us()
         c = self.timeline.selected
-        targets = [c] if c else [k for tr in self.proj["tracks"] for k in tr["clips"]
+        targets = [c] if c else [k for tr in self.container()["tracks"] for k in tr["clips"]
                                  if k["start_us"] < t < k["start_us"] + k["duration_us"]]
         if not targets:
             self.statusBar().showMessage("播放頭下沒有片段", 3000)
             return
         ids = [k["id"] for k in targets]
 
-        def split_all(proj):
+        def split_all(level):
             for cid in ids:
-                edit.split(proj, cid, t)
+                edit.split(level, cid, t)
 
         self.apply("分割", split_all)
 
@@ -384,16 +505,12 @@ class MainWindow(QMainWindow):
             self.apply("新增文字", edit.add_text, self.playhead_us(), select=lambda c: c["id"])
 
     def on_text_edited(self, cid, fields):
-        self.apply("修改文字", lambda p: edit.set_text(p, cid, **fields),
+        self.apply("修改文字", lambda lvl: edit.set_text(lvl, cid, **fields),
                    merge=("text", cid, tuple(sorted(fields))))
-
-    PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置",
-                    ("transform", "scale"): "縮放", ("transform", "rotation"): "旋轉",
-                    ("transform", "opacity"): "不透明度", ("clip", "volume"): "音量"}
 
     def clip_time(self, cid):
         """Playhead time relative to the start of clip cid."""
-        return self.playhead_us() - edit.find(self.proj, cid)[1]["start_us"]
+        return self.playhead_us() - edit.find(self.container(), cid)[1]["start_us"]
 
     def on_param_edited(self, cid, group, key, value):
         label = "調整" + self.PARAM_LABELS.get((group, key), "遮罩")
@@ -407,20 +524,19 @@ class MainWindow(QMainWindow):
     def on_easing(self, cid, easing):
         """Apply a curve preset to every parameter with a keyframe at the playhead."""
         t = self.clip_time(cid)
-        c = edit.find(self.proj, cid)[1]
-        targets = [(g, k) for g in ("transform", "mask") for k, v in (c.get(g) or {}).items()
-                   if edit.key_at(v, t) is not None]
-        if edit.key_at(c.get("volume"), t) is not None:
-            targets.append(("clip", "volume"))
 
-        def ease_all(proj):
+        def ease_all(level):
+            c = edit.find(level, cid)[1]
             done = 0
-            for g, k in targets:
-                p = (edit.find(proj, cid)[1] if g == "clip" else edit.find(proj, cid)[1][g])[k]
-                i = edit.key_at(p, t)
-                if i is not None and i + 1 < len(p["keys"]):
-                    edit.set_easing(proj, cid, g, k, t, easing)
-                    done += 1
+            for g in ("transform", "mask", "text", "clip"):
+                holder = c if g == "clip" else (c.get(g) or {})
+                for k, p in list(holder.items()):
+                    if g == "clip" and k != "volume":
+                        continue
+                    i = edit.key_at(p, t)
+                    if i is not None and i + 1 < len(p["keys"]):
+                        edit.set_easing(level, cid, g, k, t, easing)
+                        done += 1
             if not done:
                 raise edit.EditError("需要播放頭上有關鍵幀，而且後面還有下一個")
 
@@ -439,22 +555,121 @@ class MainWindow(QMainWindow):
         k = min(cands) if direction > 0 else max(cands)
         self.seek(round((c["start_us"] + k) / US * self.fps))
 
+    def on_preview_move(self, cid, x, y):
+        t = self.clip_time(cid)
+
+        def move_xy(level):
+            edit.set_param(level, cid, "transform", "x", round(x, 5), t)
+            edit.set_param(level, cid, "transform", "y", round(y, 5), t)
+
+        self.apply("移動位置", move_xy)
+
+    def on_track_action(self, action, tid):
+        t = edit.track_by_id(self.container(), tid)
+        if action == "rename":
+            name, ok = QInputDialog.getText(self, "軌道名稱", "名稱", text=t.get("name") or t["kind"])
+            if ok:
+                self.apply("重新命名軌道", edit.rename_track, tid, name)
+        elif action == "color":
+            col = QColorDialog.getColor(parent=self, title="軌道顏色")
+            if col.isValid():
+                self.apply("軌道顏色", edit.set_track_color, tid, col.name())
+        elif action == "nocolor":
+            self.apply("軌道顏色", edit.set_track_color, tid, None)
+
+    def on_clip_action(self, action, cid):
+        _, c = edit.find(self.container(), cid)
+        if action == "enter":
+            self.enter_compound(cid)
+        elif action == "rename":
+            name, ok = QInputDialog.getText(self, "片段名稱", "名稱", text=self.timeline.clip_label(c))
+            if ok:
+                self.apply("重新命名片段", edit.rename_clip, cid, name)
+        elif action == "color":
+            col = QColorDialog.getColor(parent=self, title="片段顏色")
+            if col.isValid():
+                self.apply("片段顏色", edit.set_clip_color, cid, col.name())
+        elif action == "nocolor":
+            self.apply("片段顏色", edit.set_clip_color, cid, None)
+        elif action == "split":
+            self.do_split()
+        elif action == "delete":
+            self.do_delete()
+
+    # -- media library ----------------------------------------------------------------------------
+    def import_media(self, folder):
+        if not self.proj:
+            self.set_project(project.new())
+        files, _ = QFileDialog.getOpenFileNames(self, "匯入素材", "",
+                                                "Media (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.mp4 *.mov *.mkv "
+                                                "*.avi *.webm *.mp3 *.wav *.m4a *.aac *.flac *.ogg);;All files (*)")
+        if not files:
+            return
+        self.statusBar().showMessage(f"讀取 {len(files)} 個檔案…")
+
+        def work(_p):
+            out, errors = {}, []
+            for f in files:
+                p = os.path.abspath(f).replace("\\", "/")
+                try:
+                    out[p] = library.probe(p)
+                except Exception as exc:
+                    errors.append(f"{os.path.basename(p)}：{exc}")
+            return out, errors
+
+        def done(result):
+            probes, errors = result
+            if probes:
+                self.apply_root("匯入素材", library.add_files, list(probes), folder, probes)
+            if errors:
+                QMessageBox.warning(self, "部分檔案無法匯入", "\n".join(errors))
+
+        self.run_task(work, done, lambda m: QMessageBox.critical(self, "匯入失敗", m))
+
+    def new_folder(self, parent):
+        if not self.proj:
+            return
+        name, ok = QInputDialog.getText(self, "新資料夾", "名稱", text="新資料夾")
+        if ok:
+            self.apply_root("新資料夾", library.add_folder, name, parent)
+
+    def rename_library(self, ident):
+        target = library.folder(self.proj, ident) if ident.startswith("f") else library.item(self.proj, ident)
+        name, ok = QInputDialog.getText(self, "重新命名", "名稱", text=target["name"])
+        if ok:
+            self.apply_root("重新命名素材", library.rename, ident, name)
+
+    def delete_library(self, ident):
+        what = "資料夾（內容會移到上一層）" if ident.startswith("f") else "素材（時間軸上的片段不受影響）"
+        if QMessageBox.question(self, "刪除", f"要從素材庫刪除這個{what}嗎？") == QMessageBox.Yes:
+            self.apply_root("刪除素材", library.delete, ident)
+
+    def place_media(self, item_id, track_id, start_us):
+        if not self.proj:
+            return
+        self.apply_root("加入素材",
+                        lambda root: library.place(self.container(root), root, item_id, track_id or None, start_us),
+                        select=lambda c: c["id"])
+
+    # -- inspector / preview overlay --------------------------------------------------------------
     def refresh_inspector(self):
-        self.inspector.show_clip(self.timeline.selected, self.playhead_us(), self.fps)
+        sel = self.timeline.selected
+        self.inspector.show_clip(sel, self.playhead_us(), self.fps)
+        self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
+                               sel["id"] if sel else None)
         self._update_buttons()
 
     # -- preview build ----------------------------------------------------------------------------
     def rebuild(self):
-        """Rebuild the MLT document in the background and hand it to the player. Edits made
-        meanwhile queue one more build; the project is copied so the build never sees a
-        half-made edit."""
+        """Rebuild the MLT document of the open level in the background and hand it to the
+        player. Edits made meanwhile queue one more build; the build works on a copy."""
         if self.proj is None:
             return
         if self.building:
             self.build_again = True
             return
         self.building, self.build_again = True, False
-        snapshot = json.loads(json.dumps(self.proj))
+        snapshot = json.loads(json.dumps(self.view()))
         cache = self.cache_dir()
         self.xml_slot ^= 1
         xml = os.path.join(cache, f"preview{self.xml_slot}.mlt")
@@ -468,7 +683,7 @@ class MainWindow(QMainWindow):
 
         def work(_progress):
             os.makedirs(cache, exist_ok=True)
-            return build.build(snapshot, cache, xml)
+            return build.build(snapshot, cache, xml, preview=True)
 
         def finish():
             if dlg:
@@ -480,7 +695,10 @@ class MainWindow(QMainWindow):
 
         def done(path):
             self.xml = path
-            self.player.worker.request_load(path)
+            w = self.player.worker
+            if self.pending_seek is not None:
+                w.pos, self.pending_seek = self.pending_seek, None
+            w.request_load(path)
             finish()
 
         def failed(msg):
@@ -512,11 +730,16 @@ class MainWindow(QMainWindow):
     def on_frame(self, img, pos):
         self.pos = pos
         self.preview.show_image(img)
+        if self.fullscreen:
+            self.fullscreen.canvas.show_image(img)
         self.timeline.set_position(pos)
         self.time_lbl.setText(f"{timecode(pos / self.fps * US, self.fps)} / "
                               f"{timecode(self.length / self.fps * US, self.fps)}")
-        if self.timeline.selected is not None:
-            self.inspector.show_clip(self.timeline.selected, self.playhead_us(), self.fps)
+        sel = self.timeline.selected
+        if sel is not None:
+            self.inspector.show_clip(sel, self.playhead_us(), self.fps)
+        self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
+                               sel["id"] if sel else None)
 
     def on_state(self, playing):
         self.playing = playing
@@ -535,37 +758,81 @@ class MainWindow(QMainWindow):
     def step(self, d):
         self.seek(self.pos + d)
 
-    # -- export -----------------------------------------------------------------------------------
-    def export(self):
-        if not self.xml:
+    def toggle_fullscreen(self):
+        if self.fullscreen:
+            self.fullscreen.close()
             return
-        fn, _ = QFileDialog.getSaveFileName(self, "匯出影片", "", "MP4 (*.mp4)")
-        if not fn:
+        fs = FullscreenPreview()
+        fs.canvas.W, fs.canvas.H = self.preview.W, self.preview.H
+        fs.canvas.show_image(self.preview.img)
+        fs.togglePlay.connect(self.toggle_play)
+        fs.step.connect(self.step)
+        fs.closed.connect(lambda: setattr(self, "fullscreen", None))
+        self.fullscreen = fs
+        fs.showFullScreen()
+
+    # -- range and export -------------------------------------------------------------------------
+    def set_mark(self, which):
+        if self.path_ids:
+            self.statusBar().showMessage("匯出範圍標在主時間軸上", 3000)
+            return
+        tl = self.timeline
+        if which is None:
+            tl.mark_in = tl.mark_out = None
+        elif which == "in":
+            tl.mark_in = self.pos
+            if tl.mark_out is not None and tl.mark_out < self.pos:
+                tl.mark_out = None
+        else:
+            tl.mark_out = self.pos
+            if tl.mark_in is not None and tl.mark_in > self.pos:
+                tl.mark_in = None
+        tl.update()
+
+    def export(self):
+        if not self.proj:
+            return
+        while self.path_ids:
+            self.leave_compound()
+        total = round(self.proj["duration_us"] / US * self.fps)
+        default = (self.path.replace(".tesetoa.json", ".mp4") if self.path
+                   else os.path.join(os.path.expanduser("~"), "Videos", "tesetoa.mp4"))
+        dlg = ExportDialog(self, default, self.fps, total, self.timeline.mark_in, self.timeline.mark_out)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        out, first, last, opts = dlg.result_options()
+        if not out:
             return
         self.player.worker.set_playing(False)
-        dlg = QProgressDialog("匯出中…", None, 0, 1000, self)
-        dlg.setWindowModality(Qt.WindowModal)
-        dlg.setMinimumDuration(0)
-        xml = self.xml
+        prog = QProgressDialog("匯出中…", None, 0, 1000, self)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        snapshot = json.loads(json.dumps(self.proj))
+        cache = self.cache_dir()
 
         def work(progress):
-            eng = EngineClient(16, 16)        # its own process; preview stays usable
+            os.makedirs(cache, exist_ok=True)
+            xml = build.build(snapshot, cache, os.path.join(cache, "export.mlt"))   # originals, no proxies
+            eng = EngineClient(16, 16)        # its own process; the preview stays usable
             try:
-                return eng.export(xml, fn, progress, crf=16, preset="medium", threads=os.cpu_count() or 4)
+                return eng.export(xml, out, progress, threads=os.cpu_count() or 4,
+                                  **{"in": first, "out": last}, **opts)
             finally:
                 eng.close()
 
         def done(r):
-            dlg.close()
-            QMessageBox.information(self, "匯出完成", f"{fn}\n耗時 {r['elapsed']:.0f} 秒")
+            prog.close()
+            QMessageBox.information(self, "匯出完成", f"{out}\n耗時 {r['elapsed']:.0f} 秒")
 
-        self.run_task(work, done, lambda m: (dlg.close(), QMessageBox.critical(self, "匯出失敗", m)),
-                      lambda p: dlg.setValue(int(p * 1000)))
+        self.run_task(work, done, lambda m: (prog.close(), QMessageBox.critical(self, "匯出失敗", m)),
+                      lambda p: prog.setValue(int(p * 1000)))
 
     def closeEvent(self, e):
         if not self.maybe_save():
             e.ignore()
             return
+        if self.fullscreen:
+            self.fullscreen.close()
         self.player.shutdown()
         super().closeEvent(e)
 

@@ -27,6 +27,7 @@ from PIL import Image
 from . import curves, masks, textlayout
 
 US = 1_000_000
+TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg")
 
 
 def _hash(*parts):
@@ -57,14 +58,16 @@ def media_start(p):
 
 
 class Builder:
-    def __init__(self, proj, cache_dir, mask_mode="native"):
+    def __init__(self, proj, cache_dir, mask_mode="native", preview=False):
         """mask_mode: "native" draws masks with MLT's rotoscoping filter (instant, follows
-        the clip like Jianying's); "baked" rasterises screen-space mattes (reference)."""
+        the clip like Jianying's); "baked" rasterises screen-space mattes (reference).
+        preview: use frame-sized proxies of larger images (exports use the originals)."""
         self.p = proj
         self.mask_mode = mask_mode
+        self.preview = preview
         self.W, self.H, self.fps = proj["width"], proj["height"], proj["fps"]
         self.cache = os.path.abspath(cache_dir)
-        for sub in ("text", "matte"):
+        for sub in ("text", "matte", "proxy"):
             os.makedirs(os.path.join(cache_dir, sub), exist_ok=True)
         self.xml = []
         self.n = 0
@@ -135,6 +138,38 @@ class Builder:
         with Image.open(out) as im:
             return out, im.width, im.height
 
+    def text_sequence(self, tx, rs, f0, f1, clip_start_us):
+        """Render a text with animated drawing properties frame by frame (identical frames
+        once) into an RGBA movie. Returns (path, width, height); centre = box centre."""
+        specs = [curves.static(tx, self.us(f) - clip_start_us, TEXT_LAYOUT_FIELDS + ("size",))
+                 for f in range(f0, f1)]
+        for sp in specs:
+            sp["color"] = [round(v, 4) for v in sp["color"]] if isinstance(sp.get("color"), list) else sp.get("color")
+        key = _hash("textseq", specs, rs, self.H, textlayout.PX_PER_FONT_UNIT, self.fps)
+        out = os.path.join(self.cache, "text", key + ".mov")
+        meta = out + ".json"
+        if not os.path.exists(meta):
+            pngs = [self.text_png(sp, rs) for sp in specs]
+            cw = max(w for _, w, _ in pngs) + 2
+            ch = max(h for _, _, h in pngs) + 2
+            cw, ch = cw + cw % 2, ch + ch % 2
+            tmp = os.path.join(self.cache, "text", key + "_frames")
+            os.makedirs(tmp, exist_ok=True)
+            for i, (png, w, h) in enumerate(pngs):
+                canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+                with Image.open(png) as im:
+                    canvas.paste(im, ((cw - w) // 2, (ch - h) // 2))
+                canvas.save(os.path.join(tmp, f"{i:06d}.png"), compress_level=1)
+            subprocess.run([find_ffmpeg(), "-v", "error", "-y", "-framerate", str(self.fps),
+                            "-i", os.path.join(tmp, "%06d.png"), "-c:v", "png", "-pix_fmt", "rgba", out],
+                           check=True)
+            shutil.rmtree(tmp, ignore_errors=True)
+            with open(meta, "w") as fh:
+                json.dump({"w": cw, "h": ch}, fh)
+        with open(meta) as fh:
+            m = json.load(fh)
+        return out.replace("\\", "/"), m["w"], m["h"]
+
     def matte(self, mask, transform, disp, clip_start_us, f0, f1):
         """Bake a mask to an RGBA resource (white, alpha = coverage) covering frames [f0, f1)."""
         animated = masks.Rasterizer.animated(mask, transform)
@@ -163,7 +198,7 @@ class Builder:
         return single if not animated else movie
 
     # -- effects ----------------------------------------------------------------------------------
-    def visual(self, c, f0, f1, clip_start_us, base=None, disp=None, off=0):
+    def visual(self, c, f0, f1, clip_start_us, base=None, disp=None, off=0, size=None):
         """qtblend (+ shape) effects for a visual clip covering frames [f0, f1).
         base: on-screen size at scale 1 (default: the frame, which MLT fits media into)."""
         tf = c.get("transform", {})
@@ -173,9 +208,12 @@ class Builder:
         W, H = self.W, self.H
         bw, bh = base or (W, H)
 
+        size_ref = curves.max_abs(size) if curves.is_animated(size) else None
+
         def rect(t):
-            w = bw * curves.value(sc, t)
-            h = bh * curves.value(scy, t)
+            k = curves.value(size, t) / size_ref if size_ref else 1.0   # animated font size
+            w = bw * curves.value(sc, t) * k
+            h = bh * curves.value(scy, t) * k
             px = W / 2 + curves.value(x, t) * W / 2 - w / 2
             py = H / 2 - curves.value(y, t) * H / 2 - h / 2
             o = min(1.0, max(0.0, curves.value(op, t)))
@@ -185,7 +223,7 @@ class Builder:
         if c.get("mask") and self.mask_mode == "native":
             out += self.native_mask(c["mask"], disp or (W, H), f0, f1, clip_start_us, off)
         out += self.filt("qtblend", {
-            "rect": self.anim([x, y, sc, scy, op], f0, f1, rect, (0.02, 0.02, 0.02, 0.02, 0.0005),
+            "rect": self.anim([x, y, sc, scy, op, size], f0, f1, rect, (0.02, 0.02, 0.02, 0.02, 0.0005),
                               clip_start_us, off),
             "rotation": self.anim([rot], f0, f1, lambda t: (curves.value(rot, t),), 0.005,
                                   clip_start_us, off),
@@ -239,6 +277,23 @@ class Builder:
                                     "kdenlive_id": "volume"})
 
     # -- structure --------------------------------------------------------------------------------
+    def proxy(self, path, w, h):
+        """A copy of a large image scaled to fit the frame; decoding nine 4K stills a frame
+        was the main cost of some compound clips during playback."""
+        if not self.preview or (w <= self.W and h <= self.H):
+            return path
+        try:
+            st = os.stat(path)
+        except OSError:
+            return path
+        out = os.path.join(self.cache, "proxy", _hash(path, st.st_size, st.st_mtime, self.W, self.H) + ".png")
+        if not os.path.exists(out):
+            k = min(self.W / w, self.H / h)
+            with Image.open(path) as im:
+                im.resize((max(1, round(w * k)), max(1, round(h * k))), Image.LANCZOS)                     .save(out + ".tmp.png", compress_level=1)
+            os.replace(out + ".tmp.png", out)
+        return out.replace("\\", "/")
+
     def media_producer(self, path, kind, track):
         """One producer per media file per track; entries cut it with in/out. Opening a long
         recording once per clip made loading take ~30 s."""
@@ -268,15 +323,27 @@ class Builder:
         if t == "text":
             tf = c.get("transform", {})
             rs = max(curves.max_abs(tf.get("scale", 1.0)), curves.max_abs(tf.get("scale_y", 1.0)), 1.0)
-            png, iw, ih = self.text_png(c["text"], rs)
+            tx = c["text"]
+            if any(curves.is_animated(tx.get(k)) for k in TEXT_LAYOUT_FIELDS):
+                # colour / spacing / italic keyframes change the drawing: a frame sequence
+                res, iw, ih = self.text_sequence(tx, rs, f0, f1, s_us)
+                self.xml.append(f'<producer id="{pid}">' + self.props({
+                    "mlt_service": "avformat", "resource": res, "kdenlive:clipname": c.get("name", "text")})
+                                + "</producer>")
+                return pid, 0, length, f0, self.visual(c, f0, f1, s_us, (iw / rs, ih / rs))
+            # font size scales the whole layout linearly, so its keyframes become scale
+            size = tx.get("size", 5.0)
+            spec = curves.static(tx, 0, TEXT_LAYOUT_FIELDS)
+            spec["size"] = curves.max_abs(size)
+            png, iw, ih = self.text_png(spec, rs)
             self.xml.append(f'<producer id="{pid}" in="0" out="{length - 1}">' + self.props({
                 "mlt_service": "qimage", "resource": png.replace("\\", "/"), "length": length,
                 "ttl": 1, "kdenlive:clipname": c.get("name", "text")}) + "</producer>")
-            return pid, 0, length, f0, self.visual(c, f0, f1, s_us, (iw / rs, ih / rs))
+            return pid, 0, length, f0, self.visual(c, f0, f1, s_us, (iw / rs, ih / rs), size=size)
         if t == "image":
             m = c["media"]
             fit = min(self.W / m["width"], self.H / m["height"])
-            pid = self.media_producer(m["path"], "image", track)
+            pid = self.media_producer(self.proxy(m["path"], m["width"], m["height"]), "image", track)
             return pid, 0, length, f0, self.visual(c, f0, f1, s_us, None,
                                                   (m["width"] * fit, m["height"] * fit))
         if t in ("video", "audio"):
@@ -360,9 +427,9 @@ class Builder:
                 f'{profile}\n' + "\n".join(self.xml) + "\n</mlt>\n")
 
 
-def build(proj, cache_dir, out_path, mask_mode="native"):
+def build(proj, cache_dir, out_path, mask_mode="native", preview=False):
     """Write the MLT XML for proj to out_path; returns out_path."""
-    doc = Builder(proj, cache_dir, mask_mode).document()
+    doc = Builder(proj, cache_dir, mask_mode, preview).document()
     tmp = out_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(doc)

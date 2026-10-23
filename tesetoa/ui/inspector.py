@@ -15,14 +15,12 @@ from .timeline import US, timecode
 
 DEBOUNCE_MS = 350
 
-TEXT_SPINS = (  # key, label, min, max, step, decimals
-    ("size", "字號", 0.5, 200.0, 0.1, 2),
-    ("letter_spacing", "字距", -0.5, 5.0, 0.01, 2),
-    ("line_spacing", "行距", -0.5, 5.0, 0.01, 2),
-    ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0),
-)
 # group, key, label, min, max, step, decimals, display factor, default
 PARAMS = {
+    "text": (("size", "字號", 0.5, 200.0, 0.1, 2, 1, 5.0),
+             ("letter_spacing", "字距", -0.5, 5.0, 0.01, 2, 1, 0.0),
+             ("line_spacing", "行距", -0.5, 5.0, 0.01, 2, 1, 0.0),
+             ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0, 1, 0.0)),
     "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("scale", "縮放", 0.01, 50.0, 0.01, 3, 1, 1.0),
@@ -41,6 +39,18 @@ EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_ou
 KEY_ON, KEY_OFF = "◆", "◇"
 
 
+class SpinBox(QDoubleSpinBox):
+    """Number input that ignores the mouse wheel, so scrolling the panel never edits."""
+
+    def wheelEvent(self, e):
+        e.ignore()
+
+
+class ComboBox(QComboBox):
+    def wheelEvent(self, e):
+        e.ignore()
+
+
 def section(title):
     lbl = QLabel(title)
     lbl.setObjectName("title")
@@ -49,7 +59,7 @@ def section(title):
 
 class Inspector(QWidget):
     textEdited = Signal(str, dict)                  # clip id, {field: value}
-    paramEdited = Signal(str, str, str, float)      # clip id, group, key, value
+    paramEdited = Signal(str, str, str, object)     # clip id, group, key, value (number or colour)
     keyToggled = Signal(str, str, str)              # clip id, group, key
     easingChosen = Signal(str, str)                 # clip id, easing name
     maskKindChosen = Signal(str, object)            # clip id, kind or None
@@ -93,19 +103,24 @@ class Inspector(QWidget):
             edit_.textChanged.connect(lambda: self._queue("text", "content", edit_.toPlainText()))
             self.widgets["content"] = edit_
             form.addRow("內容", edit_)
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
             color = QPushButton()
             color.clicked.connect(self._pick_color)
             self.widgets["color"] = color
-            form.addRow("顏色", color)
-            for key, label, lo, hi, step, dec in TEXT_SPINS:
-                form.addRow(label, self._spin(("text", key), lo, hi, step, dec))
+            lay.addWidget(color, 1)
+            lay.addWidget(self._key_button("text", "color"))
+            form.addRow("顏色", row)
+            for r in PARAMS["text"]:
+                form.addRow(r[1], self._param_row("text", *r))
         if c.get("transform") is not None:
             form.addRow(section("畫面"))
             for row in PARAMS["transform"]:
                 form.addRow(row[1], self._param_row("transform", *row))
         if c["type"] in ("image", "video", "compound"):
             form.addRow(section("遮罩"))
-            kind = QComboBox()
+            kind = ComboBox()
             for name, k in MASK_NAMES:
                 kind.addItem(name, k)
             kind.currentIndexChanged.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
@@ -130,7 +145,7 @@ class Inspector(QWidget):
             b.clicked.connect(lambda _=False, d=d: self.keyJump.emit(d))
             nav.addWidget(b)
         form.addRow(nav)
-        ease = QComboBox()
+        ease = ComboBox()
         ease.addItem("—", None)
         for name, k in EASING_NAMES:
             ease.addItem(name, k)
@@ -142,7 +157,7 @@ class Inspector(QWidget):
         form.addRow("曲線", ease)
 
     def _spin(self, key, lo, hi, step, dec, factor=1):
-        s = QDoubleSpinBox()
+        s = SpinBox()
         s.setRange(lo, hi)
         s.setSingleStep(step)
         s.setDecimals(dec)
@@ -156,13 +171,16 @@ class Inspector(QWidget):
         lay = QHBoxLayout(row)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._spin((group, key), lo, hi, step, dec, factor), 1)
+        lay.addWidget(self._key_button(group, key))
+        return row
+
+    def _key_button(self, group, key):
         b = QPushButton(KEY_OFF)
         b.setFixedWidth(30)
         b.setToolTip("在播放頭新增／刪除關鍵幀")
         b.clicked.connect(lambda: self._emit_now(self.keyToggled, group, key))
         self.widgets[("key", group, key)] = b
-        lay.addWidget(b)
-        return row
+        return b
 
     # -- refresh --------------------------------------------------------------------------------
     def show_clip(self, c, t_us, fps):
@@ -188,11 +206,15 @@ class Inspector(QWidget):
                 w["content"].blockSignals(True)
                 w["content"].setPlainText(tx["content"])
                 w["content"].blockSignals(False)
-            r, g, b = (int(round(v * 255)) for v in tx.get("color", [1, 1, 1])[:3])
+            col = curves.value(tx.get("color", [1, 1, 1]), t)
+            r, g, b = (int(round(min(1, max(0, v)) * 255)) for v in col[:3])
             w["color"].setText(f"#{r:02x}{g:02x}{b:02x}")
             w["color"].setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
-            for key, *_ in TEXT_SPINS:
-                self._set(("text", key), tx.get(key, 0.0))
+            on = edit.key_at(tx.get("color"), t) is not None
+            kb = w[("key", "text", "color")]
+            kb.setText(KEY_ON if on else KEY_OFF)
+            kb.setStyleSheet("color: #ffb020;" if on else ("color: #8fd9d3;" if curves.is_animated(tx.get("color")) else ""))
+            kb.setEnabled(0 <= t <= c["duration_us"])
         inside = 0 <= t <= c["duration_us"]
         easings = set()
         for group, rows in PARAMS.items():
@@ -252,7 +274,7 @@ class Inspector(QWidget):
         cur = QColor(self.widgets["color"].text())
         col = QColorDialog.getColor(cur, self, "文字顏色")
         if col.isValid():
-            self._queue("text", "color", [col.redF(), col.greenF(), col.blueF()])
+            self._queue("text*", "color", [col.redF(), col.greenF(), col.blueF()])
             self._flush()
 
     def _flush(self):
@@ -261,9 +283,7 @@ class Inspector(QWidget):
             self.pending.clear()
             return
         pending, self.pending = self.pending, {}
-        text = {k: v for (g, k), v in pending.items() if g == "text"}
-        if text:
-            self.textEdited.emit(self.clip_id, text)
-        for (g, k), v in pending.items():
-            if g != "text":
-                self.paramEdited.emit(self.clip_id, g, k, float(v))
+        if ("text", "content") in pending:                 # the words themselves
+            self.textEdited.emit(self.clip_id, {"content": pending.pop(("text", "content"))})
+        for (g, k), v in pending.items():                    # everything else can animate
+            self.paramEdited.emit(self.clip_id, g.rstrip("*"), k, v)

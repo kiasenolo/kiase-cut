@@ -20,17 +20,31 @@ Space play/pause · ←/→ step a frame · Home/End · Ctrl+I import · Ctrl+S 
 Editing: drag a clip to move it (also onto another track of the same kind), drag its
 edges to trim; moves and trims snap to the playhead and clip edges. Ctrl+B splits the
 selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a text,
-Ctrl+Z / Ctrl+Y undo and redo. The inspector edits text (content, size, colour, letter
-and line spacing, italic) and position / scale / rotation / opacity; keyframed values are
-Ctrl+wheel zooms the timeline.
+Ctrl+Z / Ctrl+Y undo and redo. Right-click a track header or clip to rename it or give it
+a colour (double-click a track name to rename). Ctrl+wheel zooms the timeline.
+
+Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
+the breadcrumb above the timeline shows where you are, Esc / 返回上一層 goes back.
+
+Media library (left): import files (Ctrl+Shift+I), organise them in folders by dragging,
+and drag media onto the timeline (or double-click to add at the playhead). Importing a
+Jianying draft fills the library with the media it uses.
+
+Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
+canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
+freely). F or double-click toggles fullscreen.
 
 Keyframes and masks: every animatable value in the inspector (position, scale, rotation,
-opacity, volume, mask centre / size / rotation / feather) has a ◆ button that adds or
-removes a keyframe at the playhead; changing a value that already has keyframes edits
-or adds the keyframe at the playhead, as in Jianying. ◀/▶ jump between keyframes, and the
-curve menu sets linear / ease-in / ease-out / ease-in-out from the keyframe at the playhead
-to the next. Pictures, videos and compound clips take line, mirror, circle or rectangle
-masks, optionally inverted; the selected clip shows its keyframes on the timeline.
+opacity, volume, text size / colour / letter and line spacing / italic, mask centre / size /
+rotation / feather) has a ◆ button that adds or removes a keyframe at the playhead;
+changing a value that already has keyframes edits or adds the keyframe at the playhead, as
+in Jianying. ◀/▶ jump between keyframes, and the curve menu sets linear / ease-in /
+ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, videos and
+compound clips take line, mirror, circle or rectangle masks, optionally inverted. The
+mouse wheel never changes a number field.
+
+Export (Ctrl+E): the whole film or the range marked with I / O (Alt+X clears), at high,
+standard or small-file quality.
 
 ## How it works
 
@@ -39,7 +53,8 @@ masks, optionally inverted; the selected clip shows its keyframes on the timelin
 | `project.py` | project model (JSON); Jianying units and bezier keyframes |
 | `importers/jianying.py` | draft_content.json → project |
 | `curves.py` | keyframe evaluation (Jianying's bezier handles) |
-| `edit.py` | move / trim / split / delete / text edits with undo |
+| `edit.py` | move / trim / split / delete / keyframe / mask / name edits with undo |
+| `library.py` | media library: folders, probing, placing media on a timeline |
 | `textlayout.py` | text rendering calibrated to Jianying's layout |
 | `masks.py` | line / mirror / circle / rectangle masks as MLT splines (or baked mattes) |
 | `build.py` | project → MLT XML (cached text images and mattes) |
@@ -65,12 +80,15 @@ audio within 1 ms and 0.5 dB.
 python -m unittest discover tests            # edit operations
 python tools/smoke_edit.py PROJECT.tesetoa.json out/   # drives the real window headless
 python tools/smoke_keys.py PROJECT.tesetoa.json out/   # keyframes and masks, headless
+python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
 ```
 
 ## Status
 
 Milestones 1 (import → preview → export), 2 (move, trim, split, text editing) and
-3 (keyframes, easing, masks) work. An edit reaches the preview in about 3 s.
+3 (keyframes, easing, masks) work, plus the media library, compound editing, preview
+dragging with snapping and range export. An edit reaches the preview in about 3 s.
+The preview uses frame-sized proxies of large images; exports use the originals.
 Masks are drawn by MLT's rotoscoping filter before the clip transform, so they follow the
 clip like Jianying's and need no pre-rendering (`build.build(..., mask_mode="baked")`
 still renders the screen-space mattes they were verified against).

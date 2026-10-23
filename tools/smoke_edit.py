@@ -26,7 +26,6 @@ from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
 from tesetoa.ui.timeline import HEADER_W, RULER_H, TRACK_H, US  # noqa: E402
 
 proj_path, out = sys.argv[1], sys.argv[2]
-original = json.dumps(project.load(proj_path), sort_keys=True)
 app = QApplication(sys.argv)
 app.setStyleSheet(STYLE)
 win = MainWindow()
@@ -34,6 +33,7 @@ win.resize(1440, 900)
 win.show()
 win.path = proj_path
 win.set_project(project.load(proj_path))
+original = json.dumps(win.proj, sort_keys=True)     # as opened (the library may be filled in)
 class Log(list):
     def append(self, line):
         super().append(line)

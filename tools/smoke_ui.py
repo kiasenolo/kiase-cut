@@ -32,8 +32,7 @@ win.player.worker.failed.connect(lambda m: log.append("FAILED " + m))
 steps = [
     (lambda: win.xml is not None and win.length > 0, lambda: win.seek(270), "loaded; seek 4.5s"),
     (lambda: win.pos == 270, lambda: win.grab().save(os.path.join(out, "ui_270.png")), "shot at 4.5s"),
-    (lambda: True, lambda: (win.timeline.clipSelected.emit(win.timeline.rows[4]["clips"][3]),
-                            setattr(win.timeline, "selected", win.timeline.rows[4]["clips"][3]),
+    (lambda: True, lambda: (win.timeline.select(win.timeline.rows[4]["clips"][3]),
                             win.seek(7068)), "select clip; seek 117.8s"),
     (lambda: win.pos == 7068, lambda: win.grab().save(os.path.join(out, "ui_7068.png")), "shot at 117.8s"),
     (lambda: True, lambda: (frames.clear(), win.toggle_play()), "play"),

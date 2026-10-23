@@ -43,6 +43,14 @@ ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, 
 compound clips take line, mirror, circle or rectangle masks, optionally inverted. The
 mouse wheel never changes a number field.
 
+Curve editor (the 關鍵幀曲線 tab beside 屬性): pick any parameter of the selected clip and
+its keyframes show as a value-over-time graph (colours as R/G/B lines). Drag a keyframe to
+move it (time snaps to frames, between its neighbours), drag its bezier handles to shape
+the curve, double-click to add a keyframe, Delete to remove one, click the graph to move
+the playhead. The preview follows every drag. The segment after the selected keyframe
+takes a CSS `cubic-bezier(x1, y1, x2, y2)` typed in (y may overshoot, for bounces) or one
+of the presets (linear, ease in / out / in-out, back); exact time and value can be typed too.
+
 Export (Ctrl+E): the whole film or the range marked with I / O (Alt+X clears), at high,
 standard or small-file quality.
 
@@ -85,6 +93,7 @@ audio within 1 ms and 0.5 dB.
 python -m unittest discover tests            # edit operations
 python tools/smoke_edit.py PROJECT.tesetoa.json out/   # drives the real window headless
 python tools/smoke_keys.py PROJECT.tesetoa.json out/   # keyframes and masks, headless
+python tools/smoke_curves.py PROJECT.tesetoa.json out/ # curve editor: drag, cubic-bezier, presets
 python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
 python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
 ```
@@ -93,7 +102,7 @@ python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + pl
 
 Milestones 1 (import → preview → export), 2 (move, trim, split, text editing) and
 3 (keyframes, easing, masks) work, plus the media library, compound editing, preview
-dragging with snapping and range export. Edits and drags show on the next preview frame.
+dragging with snapping, range export and a curve editor with cubic-bezier input. Edits and drags show on the next preview frame.
 Masks are drawn by MLT's rotoscoping filter before the clip transform, so they follow the
 clip like Jianying's and need no pre-rendering (`build.build(..., mask_mode="baked")`
 still renders the screen-space mattes they were verified against).

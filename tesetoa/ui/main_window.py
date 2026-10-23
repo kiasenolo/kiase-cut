@@ -12,11 +12,12 @@ from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
-                               QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
 from .. import build, edit, library, project
 from ..client import EngineClient
 from ..importers import jianying
+from .curve_editor import CurveEditor
 from .export_dialog import ExportDialog
 from .inspector import Inspector
 from .library import LibraryPanel
@@ -40,6 +41,9 @@ QHeaderView::section { background: #202024; border: none; padding: 3px; }
 QLabel#time { font-family: Consolas, monospace; color: #cfcfd4; }
 QLabel#title { color: #8fd9d3; font-weight: 600; }
 QLabel#crumb { color: #ffb020; font-weight: 600; }
+QTabWidget::pane { border: none; }
+QTabBar::tab { background: #202024; padding: 5px 14px; border: none; }
+QTabBar::tab:selected { background: #2c6e72; }
 QMessageBox, QInputDialog, QColorDialog, QDialog { background: #1b1b1f; }
 QMessageBox QLabel { color: #e6e6e6; background: transparent; }
 """
@@ -116,6 +120,15 @@ class MainWindow(QMainWindow):
         scroll = QScrollArea()
         scroll.setWidget(self.inspector)
         scroll.setWidgetResizable(True)
+        self.curves = CurveEditor()
+        cv = self.curves
+        cv.keysChanged.connect(self.on_curve_keys)
+        cv.removeAll.connect(lambda cid, g, k, v: self.apply("刪除關鍵幀", edit.clear_keys, cid, g, k, v))
+        cv.seekRequested.connect(self.seek_clip_time)
+        cv.addAtPlayhead.connect(self.add_key_at_playhead)
+        self.side = QTabWidget()
+        self.side.addTab(scroll, "屬性")
+        self.side.addTab(cv, "關鍵幀曲線")
 
         self.play_btn = QPushButton("▶")
         self.play_btn.setFixedWidth(48)
@@ -140,9 +153,9 @@ class MainWindow(QMainWindow):
         top = QSplitter(Qt.Horizontal)
         top.addWidget(self.library)
         top.addWidget(center)
-        top.addWidget(scroll)
+        top.addWidget(self.side)
         top.setStretchFactor(1, 1)
-        top.setSizes([300, 960, 340])
+        top.setSizes([280, 900, 420])
 
         # timeline with its toolbar and the compound breadcrumb
         self.timeline = Timeline()
@@ -516,6 +529,34 @@ class MainWindow(QMainWindow):
 
     def on_key_toggled(self, cid, group, key):
         self.apply("關鍵幀", edit.toggle_key, cid, group, key, self.clip_time(cid))
+        self.curves.select_param(group, key)
+
+    def add_key_at_playhead(self, cid, group, key):
+        """The curve editor's "add here": a keyframe holding the current value."""
+        t = self.clip_time(cid)
+        c = edit.find(self.container(), cid)[1]
+        p = (c if group == "clip" else c.get(group) or {}).get(key)
+        if edit.key_at(p, t) is not None:
+            self.statusBar().showMessage("播放頭上已經有關鍵幀", 2000)
+            return
+        self.apply("關鍵幀", edit.toggle_key, cid, group, key, t)
+
+    def seek_clip_time(self, t):
+        c = self.timeline.selected
+        if c is not None:
+            self.seek(round((c["start_us"] + t) / US * self.fps))
+
+    def on_curve_keys(self, cid, group, key, keys, final):
+        """Curve editor edits: shown live while dragging, one undo step when released."""
+        if final:
+            self.apply("編輯曲線", edit.set_keys, cid, group, key, keys)
+            return
+        view = self.snapshot()
+        for tr in view["tracks"]:
+            for c in tr["clips"]:
+                if c["id"] == cid:
+                    (c if group == "clip" else c.setdefault(group, {}))[key] = {"keys": keys}
+        self.player.worker.set_view(view, self.cache_dir())
 
     def on_easing(self, cid, easing):
         """Apply a curve preset to every parameter with a keyframe at the playhead."""
@@ -651,6 +692,7 @@ class MainWindow(QMainWindow):
     def refresh_inspector(self):
         sel = self.timeline.selected
         self.inspector.show_clip(sel, self.playhead_us(), self.fps)
+        self.curves.set_clip(sel, self.playhead_us() - sel["start_us"] if sel else 0, self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None)
         self._update_buttons()
@@ -712,6 +754,7 @@ class MainWindow(QMainWindow):
         sel = self.timeline.selected
         if sel is not None:
             self.inspector.show_clip(sel, self.playhead_us(), self.fps)
+            self.curves.set_clip(sel, self.playhead_us() - sel["start_us"], self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None)
 

@@ -73,3 +73,37 @@ def from_jianying(kf_list, shift_us):
                      lc.get("x", 0.0), lc.get("y", 0.0), rc.get("x", 0.0), rc.get("y", 0.0)])
     keys.sort(key=lambda k: k[0])
     return {"keys": keys}
+
+
+# -- CSS cubic-bezier <-> Jianying handles ---------------------------------------------------------
+def segment_bezier(a, b):
+    """The segment from key a to key b as CSS cubic-bezier(x1, y1, x2, y2).
+    y is relative to the value change; a flat segment (no change, or colours) gives y1=0,
+    y2=1 since its handles cannot be expressed that way."""
+    dt = b[0] - a[0] or 1
+    x1, x2 = a[4] / dt, 1 + b[2] / dt
+    dv = None if isinstance(a[1], list) else b[1] - a[1]
+    if not dv:
+        return x1, 0.0, x2, 1.0
+    return x1, a[5] / dv, x2, 1 + b[3] / dv
+
+
+def apply_bezier(a, b, x1, y1, x2, y2):
+    """Shape the segment a -> b (key lists, changed in place) like CSS cubic-bezier.
+    x is clamped to 0..1 so time keeps moving forward; y may overshoot."""
+    x1, x2 = min(1.0, max(0.0, x1)), min(1.0, max(0.0, x2))
+    dt = b[0] - a[0]
+    dv = 0.0 if isinstance(a[1], list) else b[1] - a[1]
+    a[4], a[5] = x1 * dt, y1 * dv
+    b[2], b[3] = (x2 - 1) * dt, (y2 - 1) * dv
+
+
+def parse_bezier(text):
+    """'cubic-bezier(0.42, 0, 0.58, 1)' or '0.42 0 0.58 1' -> four floats."""
+    t = text.strip().lower()
+    if t.startswith("cubic-bezier"):
+        t = t[len("cubic-bezier"):]
+    nums = [x for x in t.replace("(", " ").replace(")", " ").replace(",", " ").split() if x]
+    if len(nums) != 4:
+        raise ValueError("需要四個數字：x1, y1, x2, y2")
+    return tuple(float(n) for n in nums)

@@ -509,3 +509,38 @@ def set_clip_color(proj, clip_id, color):
         c["color"] = color
     else:
         c.pop("color", None)
+
+
+def set_keys(proj, clip_id, group, key, keys):
+    """Replace a parameter's keyframes (the curve editor's edits). Keys are
+    [t, value, l_dt, l_dv, r_dt, r_dv] in clip time; they are sorted, kept inside the
+    clip, and handles are kept from crossing the neighbouring keys."""
+    _, c = find(proj, clip_id)
+    if key not in GROUP_FIELDS.get(group, ()):
+        raise EditError(f"unknown {group} field {key}")
+    if not keys:
+        raise EditError("a curve needs at least one keyframe")
+    h = _holder(c, group)
+    clean = []
+    for k in sorted(keys, key=lambda k: k[0]):
+        t = int(min(max(k[0], 0), c["duration_us"]))
+        if clean and t - clean[-1][0] <= KEY_TOL_US:
+            raise EditError("two keyframes at the same time")
+        v = [float(x) for x in k[1]] if isinstance(k[1], (list, tuple)) else float(k[1])
+        clean.append([t, v] + [float(x) for x in k[2:6]])
+    for i, k in enumerate(clean):
+        prev_dt = k[0] - clean[i - 1][0] if i else 0
+        next_dt = clean[i + 1][0] - k[0] if i + 1 < len(clean) else 0
+        k[2] = min(0.0, max(-prev_dt, k[2]))
+        k[4] = max(0.0, min(next_dt, k[4]))
+    h[key] = {"keys": clean}
+    return c
+
+
+def clear_keys(proj, clip_id, group, key, value):
+    """Drop every keyframe of a parameter, leaving it at `value`."""
+    _, c = find(proj, clip_id)
+    if key not in GROUP_FIELDS.get(group, ()):
+        raise EditError(f"unknown {group} field {key}")
+    _holder(c, group)[key] = [float(x) for x in value] if isinstance(value, (list, tuple)) else float(value)
+    return c

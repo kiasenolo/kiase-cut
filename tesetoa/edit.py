@@ -239,6 +239,30 @@ def delete(proj, clip_id):
     t["clips"].remove(c)
 
 
+def delete_many(proj, clip_ids):
+    for cid in clip_ids:
+        delete(proj, cid)
+
+
+def move_many(proj, clip_ids, d_us):
+    """Shift several clips by d_us, each on its own track. Refuses (changing nothing) when a
+    clip would land on one that is not moving; never moves anything before 0."""
+    ids = set(clip_ids)
+    moving = [find(proj, cid) for cid in clip_ids]
+    if not moving:
+        return []
+    d_us = int(max(d_us, -min(c["start_us"] for _, c in moving)))
+    for t, c in moving:
+        s, e = c["start_us"] + d_us, end(c) + d_us
+        if any(o["id"] not in ids and o["start_us"] < e and end(o) > s for o in t["clips"]):
+            raise EditError("no room there")
+    for t, c in moving:
+        c["start_us"] += d_us
+    for t in {id(t): t for t, _ in moving}.values():
+        _sort(t)
+    return [c for _, c in moving]
+
+
 def add_text(proj, at_us, content="輸入文字", duration_us=3_000_000):
     """New text clip at at_us on the topmost text track with room, else a new track."""
     clip = {

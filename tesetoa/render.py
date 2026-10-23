@@ -29,25 +29,34 @@ class Renderer:
     def __init__(self, video_frame=None, cache_limit=600):
         """video_frame(path, source_us, w, h) -> QImage or None, for video clips."""
         self.video_frame = video_frame
-        self.images = {}            # (path, w, h) -> QImage pre-scaled for the target
+        self.images = {}            # path -> [QImage halved per level] (a mipmap)
         self.texts = {}             # (spec json, scale) -> QImage
         self.cache_limit = cache_limit
         self.errors = []            # clips that could not be drawn, reported by the player
 
     # -- assets -----------------------------------------------------------------------------------
     def image(self, path, w, h):
-        """Image file scaled once to the size it is drawn at (cached)."""
-        key = (path, max(1, round(w)), max(1, round(h)))
-        im = self.images.get(key)
-        if im is None:
+        """The image at the smallest mip level at least w x h; the painter scales it the rest
+        of the way (less than 2x, so bilinear stays clean). Decoding and smooth scaling happen
+        once per file: animated sizes (zooming compounds) used to redo them every frame."""
+        levels = self.images.get(path)
+        if levels is None:
             src = QImage(path)
             if src.isNull():
                 src = QImage(1, 1, QImage.Format_ARGB32_Premultiplied)
                 src.fill(QColor(255, 0, 255))
-            im = src.scaled(key[1], key[2], Qt.IgnoreAspectRatio, Qt.SmoothTransformation) \
-                .convertToFormat(QImage.Format_ARGB32_Premultiplied)
-            self._remember(self.images, key, im)
-        return im
+            levels = [src.convertToFormat(QImage.Format_ARGB32_Premultiplied)]
+            while levels[-1].width() > 64 and levels[-1].height() > 64:
+                im = levels[-1]
+                levels.append(im.scaled(max(1, im.width() // 2), max(1, im.height() // 2),
+                                        Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+            if len(self.images) >= 48:
+                self.images.pop(next(iter(self.images)))
+            self.images[path] = levels
+        for im in reversed(levels):
+            if im.width() >= w and im.height() >= h:
+                return im
+        return levels[0]
 
     def text(self, spec, scale, canvas_h):
         """textlayout image at `scale` px per layout px; its centre is the text box centre."""
@@ -115,6 +124,7 @@ class Renderer:
             # never below 1 px per em (fonts refuse that; it is invisible anyway)
             em_unit = (curves.value(spec.get("size", 5.0), 0) or 1.0) * textlayout.PX_PER_FONT_UNIT * H / 1080
             rs = max(max(abs(sx), abs(sy)) * k_size * px_per_unit, 1.0 / em_unit)
+            rs = quantize(rs)                   # animated scales reuse a few renderings
             pic = self.text(spec, rs, H)
             bw, bh = pic.width() / rs * k_size, pic.height() / rs * k_size
             draw = lambda: p.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
@@ -139,14 +149,29 @@ class Renderer:
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
             k = fit * max(abs(sx), abs(sy), 0.01) * px_per_unit       # layer px per compound unit
-            layer = QImage(max(1, round(cw * k)), max(1, round(ch * k)), QImage.Format_ARGB32_Premultiplied)
-            layer.fill(Qt.transparent)
-            lp = QPainter(layer)
-            lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-            lp.scale(k, k)
-            self.draw_tracks(lp, comp["tracks"], cw, ch, fps, t + c.get("source_start_us", 0), k)
-            lp.end()
-            draw = lambda: p.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), layer)
+
+            def draw():
+                # only the part that lands on the target: a compound zoomed in 6x used to
+                # get a 6000 px layer of which a 960 px window was shown
+                inv, ok = p.worldTransform().inverted()
+                dev = p.device()
+                full = QRectF(-bw / 2, -bh / 2, bw, bh)
+                vis = inv.mapRect(QRectF(0, 0, dev.width(), dev.height())) if ok else full
+                pad = 2 * fit / k
+                vis = vis.adjusted(-pad, -pad, pad, pad).intersected(full)
+                if vis.isEmpty():
+                    return
+                ux, uy = (vis.left() + bw / 2) / fit, (vis.top() + bh / 2) / fit      # compound units
+                layer = QImage(max(1, math.ceil(vis.width() / fit * k)), max(1, math.ceil(vis.height() / fit * k)),
+                               QImage.Format_ARGB32_Premultiplied)
+                layer.fill(Qt.transparent)
+                lp = QPainter(layer)
+                lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+                lp.scale(k, k)
+                lp.translate(-ux, -uy)
+                self.draw_tracks(lp, comp["tracks"], cw, ch, fps, t + c.get("source_start_us", 0), k)
+                lp.end()
+                p.drawImage(QRectF(vis.left(), vis.top(), layer.width() / k * fit, layer.height() / k * fit), layer)
             disp = (bw, bh)
         else:
             return
@@ -159,6 +184,11 @@ class Renderer:
             p.setClipPath(mask_path(c["mask"], t, disp))
         draw()
         p.restore()
+
+
+def quantize(scale):
+    """The next step of 2^(1/4) at or above scale: text drawn at most 19% larger than shown."""
+    return 2 ** (math.ceil(math.log2(scale) * 4 - 1e-9) / 4)
 
 
 def mask_path(mask, t, disp):

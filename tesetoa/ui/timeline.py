@@ -1,10 +1,13 @@
 """Timeline view and its mouse editing.
 
 Layout follows Jianying: the topmost layer is drawn at the top, audio tracks at the bottom.
-Click to seek or select. Drag a clip to move it (also to another track of the same kind),
+Click to seek or select; Ctrl / Shift + click adds to or removes from the selection, dragging
+on empty track space draws a selection box, and a selection moves together. Drag a clip to move it (also to another track of the same kind),
 drag its edges to trim. Moves and trims snap to the playhead and to other clips' edges.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
-Ctrl+wheel zooms, wheel scrolls. Dragging a picture clip above the top row, or a sound clip
+Ctrl+wheel zooms, wheel scrolls (Shift+wheel, or the wheel over the track headers, scrolls
+the tracks up and down). Alt+wheel or the toolbar slider changes the track height; dragging
+the line under a track header resizes that track alone. Dragging a picture clip above the top row, or a sound clip
 below the bottom row, puts it on a new track.
 
 Audio and video clips show their waveform (scaled by the clip volume and fades). Track
@@ -15,7 +18,7 @@ import math
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtWidgets import QMenu, QScrollBar, QWidget
 
 from .. import curves, edit, project, waveform
 
@@ -25,6 +28,7 @@ COLORS = {"video": "#2a7f8f", "image": "#2a7f8f", "compound": "#6b4fa3",
           "text": "#a8742a", "audio": "#3d7f45"}
 RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140
 BTN = 18                                             # header button size
+MIN_H, MAX_H = 22, 240                               # track heights
 EDGE_PX, SNAP_PX, DRAG_PX = 6, 8, 3
 
 
@@ -35,7 +39,8 @@ def timecode(us, fps):
 
 class Timeline(QWidget):
     seekRequested = Signal(int)                      # frame
-    clipSelected = Signal(object)                    # clip dict or None
+    clipSelected = Signal(object)                    # clip dict or None (the primary selection)
+    groupMoveRequested = Signal(list, int)           # clip ids, shift us
     moveRequested = Signal(str, int, str)            # clip id, start us, track id
     trimRequested = Signal(str, str, int)            # clip id, "start" | "end", time us
     trackAction = Signal(str, str)                   # action, track id
@@ -43,6 +48,7 @@ class Timeline(QWidget):
     mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
     peaksReady = Signal(str)                         # emitted from the waveform thread
+    vzoomChanged = Signal(float)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -51,7 +57,9 @@ class Timeline(QWidget):
         self.pos = 0
         self.px_per_s = 40.0
         self.scroll_s = 0.0
-        self.selected_id = None
+        self._primary = None
+        self.selected_ids = set()
+        self.band = None                           # selection box (QRectF) while dragging
         self.rows = []
         self.drag = None
         self.mark_in = self.mark_out = None        # export range, frames
@@ -60,7 +68,13 @@ class Timeline(QWidget):
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
-        self.tops = []                             # y of each row
+        self.tops = []                             # y of each row (on screen)
+        self.vzoom = 1.0                           # track height factor
+        self.heights = {}                          # track id -> height set by dragging its edge
+        self.scroll_y = 0
+        self.vbar = QScrollBar(Qt.Vertical, self)
+        self.vbar.hide()
+        self.vbar.valueChanged.connect(self._on_vscroll)
         self.rows_end = RULER_H
         self.peaks = None                          # waveform.Peaks
         self._waves = {}                           # waveform polygons for the current view
@@ -82,11 +96,7 @@ class Timeline(QWidget):
         visual = [t for t in proj["tracks"] if t["kind"] != "audio"]
         audio = [t for t in proj["tracks"] if t["kind"] == "audio"]
         self.rows = list(reversed(visual)) + audio
-        self.tops, y = [], RULER_H
-        for t in self.rows:
-            self.tops.append(y)
-            y += AUDIO_H if t["kind"] == "audio" else TRACK_H
-        self.rows_end = y
+        self._layout()
         self._waves.clear()
         self.drag = None
         if not keep_view:
@@ -94,8 +104,35 @@ class Timeline(QWidget):
             dur = max(proj["duration_us"] / US, 1)
             self.px_per_s = max(2.0, (self.width() - HEADER_W - 20) / dur)
             self.scroll_s = 0
-        self.setMinimumHeight(self.rows_end + 30)          # room to drop onto a new track
+        self._layout()
         self.update()
+
+    @property
+    def selected_id(self):
+        """The primary selected clip (shown in the inspector); setting it selects only it."""
+        return self._primary
+
+    @selected_id.setter
+    def selected_id(self, cid):
+        self._primary = cid
+        self.selected_ids = {cid} if cid else set()
+
+    def selected_clips(self):
+        return [c for t in self.rows for c in t["clips"] if c["id"] in self.selected_ids]
+
+    def set_selection(self, ids, primary=None):
+        ids = set(ids)
+        if primary not in ids:
+            primary = next((c["id"] for c in self.selected_clips() if c["id"] in ids), None) \
+                or next((c["id"] for t in self.rows for c in t["clips"] if c["id"] in ids), None)
+        self._primary = primary
+        self.selected_ids = ids if primary else set()
+        self.clipSelected.emit(self.selected)
+        self.update()
+
+    def select_all(self):
+        ids = {c["id"] for t in self.rows for c in t["clips"]}
+        self.set_selection(ids, self._primary if self._primary in ids else None)
 
     @property
     def selected(self):
@@ -125,7 +162,59 @@ class Timeline(QWidget):
         return (x - HEADER_W) / self.px_per_s + self.scroll_s
 
     def row_h(self, i):
-        return AUDIO_H if self.rows[i]["kind"] == "audio" else TRACK_H
+        t = self.rows[i]
+        h = self.heights.get(t["id"])
+        return h or round((AUDIO_H if t["kind"] == "audio" else TRACK_H) * self.vzoom)
+
+    def _layout(self):
+        """Row positions for the current heights and vertical scroll; updates the scroll bar."""
+        view = max(1, self.height() - RULER_H)
+        content = sum(self.row_h(i) for i in range(len(self.rows))) + AUDIO_H   # room to drop below
+        top = max(0, content - view)
+        self.scroll_y = min(max(0, self.scroll_y), top)
+        self.vbar.blockSignals(True)
+        self.vbar.setRange(0, top)
+        self.vbar.setPageStep(view)
+        self.vbar.setSingleStep(20)
+        self.vbar.setValue(self.scroll_y)
+        self.vbar.blockSignals(False)
+        self.vbar.setGeometry(self.width() - 12, RULER_H, 12, view)
+        self.vbar.setVisible(top > 0)
+        self.tops, y = [], RULER_H - self.scroll_y
+        for i in range(len(self.rows)):
+            self.tops.append(y)
+            y += self.row_h(i)
+        self.rows_end = y
+
+    def _on_vscroll(self, v):
+        self.scroll_y = v
+        self._layout()
+        self._waves.clear()
+        self.update()
+
+    def set_vzoom(self, z):
+        """Scale every track's height (tracks resized by hand keep their proportion)."""
+        z = min(MAX_H / TRACK_H, max(MIN_H / TRACK_H, z))
+        k = z / self.vzoom
+        self.heights = {tid: min(MAX_H, max(MIN_H, round(h * k))) for tid, h in self.heights.items()}
+        self.vzoom = z
+        self._layout()
+        self._waves.clear()
+        self.vzoomChanged.emit(z)
+        self.update()
+
+    def resizeEvent(self, e):
+        self._layout()
+        super().resizeEvent(e)
+
+    def _edge_at(self, pos):
+        """Row whose bottom edge is under pos in the header (for resizing), or None."""
+        if pos.x() >= HEADER_W:
+            return None
+        for i, top in enumerate(self.tops):
+            if abs(pos.y() - (top + self.row_h(i) - 1)) <= 3 and pos.y() > RULER_H:
+                return i
+        return None
 
     def _row_at(self, y):
         for i, top in enumerate(self.tops):
@@ -165,12 +254,13 @@ class Timeline(QWidget):
         return row, None, None
 
     def _snap(self, t_us, exclude):
-        """Snap a time to the playhead / 0 / clip edges within SNAP_PX."""
+        """Snap a time to the playhead / 0 / clip edges within SNAP_PX; exclude is a clip or
+        a set of clip ids (a moving group)."""
         best, limit = t_us, SNAP_PX / self.px_per_s * US
         cands = [0, self.pos / self.fps * US]
         for tr in self.rows:
             for c in tr["clips"]:
-                if c is not exclude:
+                if c is not exclude and not (isinstance(exclude, set) and c["id"] in exclude):
                     cands += [c["start_us"], c["start_us"] + c["duration_us"]]
         for t in cands:
             if abs(t - t_us) < limit:
@@ -211,9 +301,14 @@ class Timeline(QWidget):
                 p.drawLine(int(a), 0, int(a), RULER_H)
             if self.mark_out is not None and b > HEADER_W:
                 p.drawLine(int(b), 0, int(b), RULER_H)
-        dragged = self.drag["clip"] if self.drag and self.drag["moved"] else None
+        dragged = self.drag["clip"] if self.drag and self.drag["moved"] and self.drag["mode"] != "group" else None
+        group = self.drag["ids"] if self.drag and self.drag["moved"] and self.drag["mode"] == "group" else ()
         tracks = self.proj["tracks"]
+        p.save()
+        p.setClipRect(QRectF(0, RULER_H, w, self.height() - RULER_H))
         for i, tr in enumerate(self.rows):
+            if self.tops[i] > self.height() or self.tops[i] + self.row_h(i) < RULER_H:
+                continue
             y, h = self.tops[i], self.row_h(i)
             p.fillRect(0, y, w, h - 2, QColor("#1f1f23"))
             if tr.get("color"):
@@ -234,13 +329,17 @@ class Timeline(QWidget):
                 self._draw_button(p, flag, r, bool(tr.get(flag)))
             dim = (project.sounds(tr, tracks) <= 0) if tr["kind"] == "audio" else not project.visible(tr)
             for c in tr["clips"]:
-                if c is not dragged:
+                if c is not dragged and c["id"] not in group:
                     self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr, h=h, dim=dim)
+            for c in tr["clips"]:
+                if c["id"] in group:
+                    self._draw_clip(p, c, y, c["start_us"] + self.drag["shift"], c["duration_us"],
+                                    ghost=True, track=tr, h=h, dim=dim)
         if dragged:
             d = self.drag
             h = self.row_h(d["row"])
             if d.get("new") == "top":                   # landing on a new top track
-                p.fillRect(QRectF(HEADER_W, RULER_H - 3, w - HEADER_W, 3), QColor("#2fd6c8"))
+                p.fillRect(QRectF(HEADER_W, RULER_H, w - HEADER_W, 3), QColor("#2fd6c8"))
                 y = RULER_H - h + 2
             elif d.get("new") == "bottom":              # landing on a new last audio track
                 p.fillRect(QRectF(HEADER_W, self.rows_end, w - HEADER_W, 3), QColor("#2fd6c8"))
@@ -249,6 +348,10 @@ class Timeline(QWidget):
                 y = self.tops[d["row"]]
             self._draw_clip(p, dragged, y, d["start"], d["end"] - d["start"], ghost=True,
                             track=self.rows[d["row"]], h=h)
+        if self.band is not None:
+            p.setPen(QPen(QColor("#2fd6c8"), 1, Qt.DashLine))
+            p.setBrush(QColor(47, 214, 200, 35))
+            p.drawRect(self.band)
         if self.drop_at is not None:
             row, t = self.drop_at
             dx = self._x(t / US)
@@ -257,6 +360,7 @@ class Timeline(QWidget):
             if row is not None:
                 p.fillRect(QRectF(HEADER_W, self.tops[row], w - HEADER_W, self.row_h(row) - 2),
                            QColor(47, 214, 200, 30))
+        p.restore()
         x = self._x(self.pos / self.fps)
         if x >= HEADER_W:
             p.setPen(QPen(QColor("#ff4d4f"), 2))
@@ -347,7 +451,7 @@ class Timeline(QWidget):
             return
         r = QRectF(max(x0, HEADER_W) + 0.5, y + 3, max(1.0, x1 - max(x0, HEADER_W) - 1), h - 8)
         col = QColor(c.get("color") or (track or {}).get("color") or COLORS.get(c["type"], "#555"))
-        sel = c["id"] == self.selected_id
+        sel = c["id"] in self.selected_ids
         if sel:
             col = col.lighter(150)
         if dim:
@@ -362,7 +466,9 @@ class Timeline(QWidget):
         if wx1 - wx0 >= 2:
             # sound clips: the waveform under the label; video: a thin strip at the bottom
             wt, wh = (r.top() + 15, r.height() - 17) if audio else (r.bottom() - 10, 9)
-            poly = self._wave(c, start, wx0, wx1, wt, wh)
+            if not audio and r.height() > 40:            # tall video rows: a bigger strip
+                wt, wh = r.top() + r.height() / 2, r.height() / 2 - 1
+            poly = self._wave(c, start, wx0, wx1, wt, wh) if wh >= 4 and (audio or r.height() >= 24) else None
             if poly is not None:
                 p.save()
                 p.setClipRect(r)
@@ -376,12 +482,12 @@ class Timeline(QWidget):
             if c["type"] == "compound":
                 label = "▣ " + label
             lr = r.adjusted(4, 0, -2, 0)
-            if audio:
+            if audio and r.height() > 20:
                 lr.setHeight(16)
-            elif c["type"] == "video":
-                lr.setBottom(r.bottom() - 9)
+            elif c["type"] == "video" and r.height() >= 24:
+                lr.setBottom(wt - 1 if r.height() > 40 else r.bottom() - 9)
             p.drawText(lr, Qt.AlignVCenter, label)
-        if sel and not ghost:
+        if c["id"] == self.selected_id and not ghost:
             # keyframes of the selected clip, as small diamonds along its bottom edge
             p.setPen(Qt.NoPen)
             p.setBrush(QColor("#ffb020"))
@@ -396,31 +502,93 @@ class Timeline(QWidget):
         if not self.proj or e.button() != Qt.LeftButton:
             return
         if e.position().x() < HEADER_W:
+            edge = self._edge_at(e.position())
+            if edge is not None:
+                self.drag = {"clip": None, "mode": "resize", "row": edge, "y0": e.position().y(),
+                             "h0": self.row_h(edge), "moved": False}
+                return
             row = self._row_at(e.position().y())
             if row is not None:
                 for flag, r in self.header_buttons(row):
                     if r.contains(e.position()):
                         self.trackAction.emit("toggle:" + flag, self.rows[row]["id"])
             return
-        row, c, zone = self._hit(e.position())
+        pos = e.position()
+        row, c, zone = self._hit(pos)
+        adding = bool(e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
         if c is None:
-            self.select(None)
-            self.seekRequested.emit(max(0, round(self._sec(e.position().x()) * self.fps)))
-            self.drag = {"clip": None, "mode": "seek", "moved": False}
+            if pos.y() < RULER_H or row is None and pos.y() < self.rows_end:
+                self.seekRequested.emit(max(0, round(self._sec(pos.x()) * self.fps)))
+                self.drag = {"clip": None, "mode": "seek", "moved": False}
+                return
+            # empty track space: a click seeks and clears, a drag draws a selection box
+            self.drag = {"clip": None, "mode": "band", "moved": False, "x0": pos.x(), "y0": pos.y(),
+                         "base": set(self.selected_ids) if adding else set()}
             return
-        self.select(c)
-        self.drag = {"clip": c, "mode": zone, "x0": e.position().x(), "row0": row, "row": row,
+        if adding:
+            ids = set(self.selected_ids) ^ {c["id"]}
+            self.set_selection(ids, c["id"] if c["id"] in ids else None)
+            if c["id"] not in ids:
+                return
+        elif c["id"] not in self.selected_ids or len(self.selected_ids) == 1:
+            self.select(c)
+        else:
+            self.set_selection(self.selected_ids, c["id"])
+        if len(self.selected_ids) > 1 and zone == "body":
+            self.drag = {"clip": c, "mode": "group", "x0": pos.x(), "moved": False, "shift": 0,
+                         "ids": set(self.selected_ids), "adding": adding}
+            return
+        self.drag = {"clip": c, "mode": zone, "x0": pos.x(), "row0": row, "row": row,
                      "start": c["start_us"], "end": c["start_us"] + c["duration_us"], "moved": False}
 
     def mouseMoveEvent(self, e):
         pos = e.position()
         d = self.drag
         if d is None:
+            if self.proj and self._edge_at(pos) is not None:
+                self.setCursor(Qt.SizeVerCursor)
+                return
             _, c, zone = self._hit(pos) if self.proj else (None, None, None)
             self.setCursor(Qt.SizeHorCursor if zone in ("start", "end") else Qt.ArrowCursor)
             return
+        if d["mode"] == "resize":
+            h = min(MAX_H, max(MIN_H, round(d["h0"] + pos.y() - d["y0"])))
+            self.heights[self.rows[d["row"]]["id"]] = h
+            self._layout()
+            self._waves.clear()
+            self.update()
+            return
         if d["mode"] == "seek":
             self.seekRequested.emit(max(0, round(self._sec(pos.x()) * self.fps)))
+            return
+        if d["mode"] == "band":
+            if not d["moved"] and abs(pos.x() - d["x0"]) + abs(pos.y() - d["y0"]) < DRAG_PX:
+                return
+            d["moved"] = True
+            self.band = QRectF(QPointF(d["x0"], d["y0"]), pos).normalized()
+            hit = set()
+            for i, tr in enumerate(self.rows):
+                if self.tops[i] + self.row_h(i) < self.band.top() or self.tops[i] > self.band.bottom():
+                    continue
+                for c in tr["clips"]:
+                    if self._x(c["start_us"] / US) <= self.band.right() and \
+                            self._x((c["start_us"] + c["duration_us"]) / US) >= self.band.left():
+                        hit.add(c["id"])
+            self.set_selection(d["base"] | hit)
+            return
+        if d["mode"] == "group":
+            if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX:
+                return
+            d["moved"] = True
+            c = d["clip"]
+            dt = (pos.x() - d["x0"]) / self.px_per_s * US
+            group = [k for t in self.rows for k in t["clips"] if k["id"] in d["ids"]]
+            dt = max(dt, -min(k["start_us"] for k in group))
+            # snap the clip under the mouse by its start or its end
+            s = self._snap(c["start_us"] + dt, d["ids"]) - c["start_us"]
+            e_ = self._snap(c["start_us"] + c["duration_us"] + dt, d["ids"]) - c["start_us"] - c["duration_us"]
+            d["shift"] = s if abs(s - dt) <= abs(e_ - dt) else e_
+            self.update()
             return
         if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX and self._row_at(pos.y()) == d["row0"]:
             return
@@ -451,7 +619,23 @@ class Timeline(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
-        if not d or d["mode"] == "seek":
+        if not d or d["mode"] in ("seek", "resize"):
+            return
+        if d["mode"] == "band":
+            self.band = None
+            if not d["moved"]:
+                if not d["base"]:
+                    self.select(None)
+                self.seekRequested.emit(max(0, round(self._sec(e.position().x()) * self.fps)))
+            self.update()
+            return
+        if d["mode"] == "group":
+            if d["moved"] and d["shift"]:
+                self.groupMoveRequested.emit(sorted(d["ids"]), int(round(d["shift"])))
+            elif not d["moved"] and not d["adding"]:
+                self.select(d["clip"])                  # a plain click picks one of the group
+                self.seekRequested.emit(max(0, round(self._sec(e.position().x()) * self.fps)))
+            self.update()
             return
         c = d["clip"]
         if not d["moved"]:
@@ -519,7 +703,8 @@ class Timeline(QWidget):
                 else:
                     menu.addAction(it[0], lambda a=it[1]: self.trackAction.emit(a, tid))
         elif c is not None:
-            self.select(c)
+            if c["id"] not in self.selected_ids:
+                self.select(c)
             items = [("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
                      ("在播放頭分割", "split"), ("刪除", "delete")]
             if c["type"] == "compound":
@@ -542,6 +727,13 @@ class Timeline(QWidget):
         if row is None:
             return
         if e.position().x() < HEADER_W:
+            edge = self._edge_at(e.position())
+            if edge is not None:                       # double-click the edge: default height
+                self.heights.pop(self.rows[edge]["id"], None)
+                self._layout()
+                self._waves.clear()
+                self.update()
+                return
             if not any(r.contains(e.position()) for _, r in self.header_buttons(row)):
                 self.trackAction.emit("rename", self.rows[row]["id"])
         elif c is not None and c["type"] == "compound":
@@ -550,7 +742,13 @@ class Timeline(QWidget):
     def wheelEvent(self, e):
         if not self.proj:
             return
-        d = e.angleDelta().y() or e.angleDelta().x()
+        d = e.angleDelta().y() or e.angleDelta().x()     # Alt / Shift may turn the wheel sideways
+        if e.modifiers() & Qt.AltModifier:
+            self.set_vzoom(self.vzoom * (1.15 if d > 0 else 1 / 1.15))
+            return
+        if e.modifiers() & Qt.ShiftModifier or e.position().x() < HEADER_W:
+            self.vbar.setValue(self.scroll_y - round(d / 120 * 40))
+            return
         if e.modifiers() & Qt.ControlModifier:
             anchor = self._sec(e.position().x())
             self.px_per_s = min(2000.0, max(1.0, self.px_per_s * (1.25 if d > 0 else 0.8)))

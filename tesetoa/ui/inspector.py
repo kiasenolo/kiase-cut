@@ -87,6 +87,7 @@ class Inspector(QWidget):
         old = self.body
         self.body = QWidget()
         self.layout().replaceWidget(old, self.body)
+        old.hide()                       # deleteLater waits for the event loop; never show both
         old.deleteLater()
         form = QFormLayout(self.body)
         self.widgets = {}

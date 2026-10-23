@@ -23,8 +23,18 @@ selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a 
 Ctrl+Z / Ctrl+Y undo and redo. Right-click a track header or clip to rename it or give it
 a colour (double-click a track name to rename). Ctrl+wheel zooms the timeline.
 
+Selection: Ctrl / Shift + click adds or removes clips, dragging on empty track space draws
+a selection box, Ctrl+A selects every clip of the open timeline. Dragging any selected clip
+moves the whole selection (one undo step); Delete and Ctrl+B act on all of it.
+
+Track height: Alt+wheel or the 軌道高度 slider scales every track; drag the line under a
+track name to size that track alone (double-click it to reset). Shift+wheel, or the wheel
+over the track names, scrolls the tracks up and down.
+
 Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
 the breadcrumb above the timeline shows where you are, Esc / 返回上一層 goes back.
+The 複合片段 tab beside the media library lists every compound clip, nested ones under
+their parent: click one to select it on its timeline, double-click to open it.
 
 Media library (left): import files (Ctrl+Shift+I), organise them in folders by dragging,
 and drag media onto the timeline (or double-click to add at the playhead). Importing a
@@ -43,13 +53,18 @@ ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, 
 compound clips take line, mirror, circle or rectangle masks, optionally inverted. The
 mouse wheel never changes a number field.
 
-Curve editor (the 關鍵幀曲線 tab beside 屬性): pick any parameter of the selected clip and
-its keyframes show as a value-over-time graph (colours as R/G/B lines). Drag a keyframe to
-move it (time snaps to frames, between its neighbours), drag its bezier handles to shape
-the curve, double-click to add a keyframe, Delete to remove one, click the graph to move
-the playhead. The preview follows every drag. The segment after the selected keyframe
-takes a CSS `cubic-bezier(x1, y1, x2, y2)` typed in (y may overshoot, for bounces) or one
-of the presets (linear, ease in / out / in-out, back); exact time and value can be typed too.
+Curve editor (the 關鍵幀曲線 tab beside 屬性): tick any parameters of the selected clip and
+their keyframes show together as value-over-time curves, each in its own colour (colours
+as R/G/B lines). 正規化 gives every curve the same height; untick it to read them on one
+axis. Click a keyframe to select it, Ctrl / Shift + click or a selection box for several,
+Ctrl+A for all; dragging moves the whole selection (time snaps to frames, Shift keeps to
+one direction). Drag the bezier handles to shape a curve, double-click to add a keyframe
+to the nearest curve, Delete to remove the selection. Wheel zooms time around the mouse,
+Ctrl+wheel zooms values, Shift+wheel or the middle button pans, 全部顯示 fits again; a
+click on the time ruler moves the playhead. The preview follows every drag. The segment
+after each selected keyframe takes a CSS `cubic-bezier(x1, y1, x2, y2)` typed in (y may
+overshoot, for bounces) or a preset (linear, ease in / out / in-out, back); a single
+keyframe's exact time and value can be typed too.
 
 Sound and tracks: audio and video clips show their waveform on the timeline (following
 the clip volume and fades). Audio track headers have mute and solo buttons, picture
@@ -105,6 +120,7 @@ python tools/smoke_edit.py PROJECT.tesetoa.json out/   # drives the real window 
 python tools/smoke_keys.py PROJECT.tesetoa.json out/   # keyframes and masks, headless
 python tools/smoke_curves.py PROJECT.tesetoa.json out/ # curve editor: drag, cubic-bezier, presets
 python tools/smoke_audio.py PROJECT.tesetoa.json out/  # waveforms, mute / solo / hide, new tracks
+python tools/smoke_select.py PROJECT.tesetoa.json out/ # multi-select, track heights, compound list
 python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
 python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
 ```

@@ -58,7 +58,14 @@ def wait(cond, then, limit=60.0, t0=None):
         QTimer.singleShot(100, lambda: wait(cond, then, limit, t0))
 
 
+def show_row(i):
+    """Scroll the timeline so row i is in view."""
+    tl.vbar.setValue(tl.scroll_y + round(tl.tops[i]) - tl.vbar.y() - 4)
+    app.processEvents()
+
+
 def waves_drawn():
+    show_row(audio_rows()[0])
     tl.repaint()
     return len(tl._waves) > 0
 
@@ -68,6 +75,7 @@ def step_waves():
     tl.grab().save(os.path.join(out, "audio_waveforms.png"))
     # click the mute button of the first audio track
     i = audio_rows()[0]
+    show_row(i)
     flag, r = tl.header_buttons(i)[0]
     QTest.mouseClick(tl, Qt.LeftButton, Qt.NoModifier, r.center().toPoint())
     app.processEvents()
@@ -77,6 +85,7 @@ def step_waves():
           flag == "muted" and tr.get("muted") and not any(c["id"] in srcs for c in tr["clips"]))
     # solo the second one: only it sounds
     j = audio_rows()[1]
+    show_row(j)
     flag, r = tl.header_buttons(j)[1]
     QTest.mouseClick(tl, Qt.LeftButton, Qt.NoModifier, r.center().toPoint())
     app.processEvents()
@@ -85,6 +94,7 @@ def step_waves():
     check(f"solo leaves only '{tl.rows[j]['name']}' sounding ({len(srcs)} sources)",
           flag == "solo" and srcs and all(s.clip["id"] in ids for s in srcs))
     # hide the top picture track
+    show_row(0)
     flag, r = tl.header_buttons(0)[0]
     QTest.mouseClick(tl, Qt.LeftButton, Qt.NoModifier, r.center().toPoint())
     app.processEvents()
@@ -93,6 +103,7 @@ def step_waves():
 
     # drag the last audio clip of the bottom row below it: a new audio track
     k = audio_rows()[-1]
+    show_row(k)
     c = tl.rows[k]["clips"][-1]
     n0 = len(win.proj["tracks"])
     tl.scroll_s = max(0.0, c["start_us"] / US - 1)

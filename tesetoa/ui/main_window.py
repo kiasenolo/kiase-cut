@@ -13,11 +13,13 @@ from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
-                               QPushButton, QScrollArea, QSplitter, QTabWidget, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QSlider, QSplitter, QTabWidget, QVBoxLayout,
+                               QWidget)
 
 from .. import build, edit, library, project, waveform
 from ..client import EngineClient
 from ..importers import jianying
+from .compounds import CompoundPanel
 from .curve_editor import CurveEditor
 from .export_dialog import ExportDialog
 from .inspector import Inspector
@@ -68,6 +70,13 @@ class Task(QObject):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+class Slider(QSlider):
+    """A slider the mouse wheel does not move (the wheel scrolls what is under it)."""
+
+    def wheelEvent(self, e):
+        e.ignore()
+
+
 class MainWindow(QMainWindow):
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
@@ -103,6 +112,13 @@ class MainWindow(QMainWindow):
         lb.moveRequested.connect(lambda ident, f: self.apply_root("移動素材", library.move, ident, f))
         lb.addRequested.connect(lambda iid: self.place_media(iid, "", self.playhead_us()))
 
+        self.compounds = CompoundPanel()
+        self.compounds.showRequested.connect(self.show_compound)
+        self.compounds.openRequested.connect(self.open_compound_path)
+        self.left = QTabWidget()
+        self.left.addTab(self.library, "素材庫")
+        self.left.addTab(self.compounds, "複合片段")
+
         self.preview = Preview()
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
         self.preview.moveCommitted.connect(self.on_preview_move)
@@ -124,7 +140,6 @@ class MainWindow(QMainWindow):
         self.curves = CurveEditor()
         cv = self.curves
         cv.keysChanged.connect(self.on_curve_keys)
-        cv.removeAll.connect(lambda cid, g, k, v: self.apply("刪除關鍵幀", edit.clear_keys, cid, g, k, v))
         cv.seekRequested.connect(self.seek_clip_time)
         cv.addAtPlayhead.connect(self.add_key_at_playhead)
         self.side = QTabWidget()
@@ -152,7 +167,7 @@ class MainWindow(QMainWindow):
         cl.addLayout(bar)
 
         top = QSplitter(Qt.Horizontal)
-        top.addWidget(self.library)
+        top.addWidget(self.left)
         top.addWidget(center)
         top.addWidget(self.side)
         top.setStretchFactor(1, 1)
@@ -166,6 +181,7 @@ class MainWindow(QMainWindow):
         tl.moveRequested.connect(lambda cid, start, tid: self.apply("移動", edit.move, cid, start, tid))
         tl.trimRequested.connect(
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
+        tl.groupMoveRequested.connect(lambda ids, dt: self.apply("移動", edit.move_many, ids, dt))
         tl.trackAction.connect(self.on_track_action)
         tl.clipAction.connect(self.on_clip_action)
         tl.mediaDropped.connect(self.place_media)
@@ -189,6 +205,15 @@ class MainWindow(QMainWindow):
             tools.addWidget(b)
             self.buttons[key] = b
         tools.addStretch()
+        tools.addWidget(QLabel("軌道高度"))
+        self.vzoom = Slider(Qt.Horizontal)
+        self.vzoom.setRange(65, 400)
+        self.vzoom.setValue(100)
+        self.vzoom.setFixedWidth(120)
+        self.vzoom.setToolTip("也可以在時間軸上 Alt+滾輪；拖曳軌道名稱下方的線調整單一軌道")
+        self.vzoom.valueChanged.connect(lambda v: abs(tl.vzoom * 100 - v) > 0.5 and tl.set_vzoom(v / 100))
+        tl.vzoomChanged.connect(lambda z: self.vzoom.setValue(round(z * 100)))
+        tools.addWidget(self.vzoom)
         lower = QWidget()
         ll = QVBoxLayout(lower)
         ll.setContentsMargins(0, 0, 0, 0)
@@ -238,6 +263,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "刪除", "Delete", self.do_delete)
+        add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "新增文字", "Ctrl+T", self.do_text)
         m = self.menuBar().addMenu("播放")
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
@@ -276,6 +302,7 @@ class MainWindow(QMainWindow):
             names.append(c.get("name") or "複合片段")
             node = c["compound"]
         self.crumb.setText(" › ".join(names) if self.path_ids else "")
+        self.compounds.set_project(self.proj, self.path_ids)
         self.back_btn.setVisible(bool(self.path_ids))
 
     # -- levels (main timeline / compound clips) ------------------------------------------------
@@ -294,6 +321,30 @@ class MainWindow(QMainWindow):
         return {"width": node["width"], "height": node["height"], "fps": self.proj["fps"],
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"]}
+
+    def show_compound(self, parent_path, cid):
+        """From the compound list: open the level holding the clip, select it, seek to it."""
+        try:
+            node = self.proj
+            for pid in parent_path:
+                node = edit.find(node, pid)[1]["compound"]
+            _, c = edit.find(node, cid)
+        except edit.EditError:
+            return
+        self.path_ids = list(parent_path)
+        self._switch_level(round(c["start_us"] / US * self.fps), select=c)
+
+    def open_compound_path(self, path):
+        """From the compound list: edit that compound, at the start of the part that shows."""
+        try:
+            node, c = self.proj, None
+            for pid in path:
+                c = edit.find(node, pid)[1]
+                node = c["compound"]
+        except edit.EditError:
+            return
+        self.path_ids = list(path)
+        self._switch_level(round(c.get("source_start_us", 0) / US * self.fps))
 
     def enter_compound(self, cid):
         _, c = edit.find(self.container(), cid)
@@ -466,9 +517,12 @@ class MainWindow(QMainWindow):
             self.container()
         except edit.EditError:                           # an undo removed an open compound
             self.path_ids = []
-        sel = self.timeline.selected_id
+        sel, ids = self.timeline.selected_id, set(self.timeline.selected_ids)
         self.timeline.set_project(self.view(), keep_view=True)
         self.timeline.selected_id = sel
+        if sel:                                          # keep a multiple selection too
+            alive = {c["id"] for t in self.timeline.rows for c in t["clips"]}
+            self.timeline.selected_ids = (ids & alive) | {sel}
         self.timeline.update()
         self.library.set_library(library.lib(self.proj))
         self._update_title()
@@ -493,9 +547,9 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         t = self.playhead_us()
-        c = self.timeline.selected
-        targets = [c] if c else [k for tr in self.container()["tracks"] for k in tr["clips"]
-                                 if k["start_us"] < t < k["start_us"] + k["duration_us"]]
+        sel = self.timeline.selected_clips()
+        targets = [k for k in (sel or [k for tr in self.container()["tracks"] for k in tr["clips"]])
+                   if k["start_us"] < t < k["start_us"] + k["duration_us"]]
         if not targets:
             self.statusBar().showMessage("播放頭下沒有片段", 3000)
             return
@@ -508,10 +562,10 @@ class MainWindow(QMainWindow):
         self.apply("分割", split_all)
 
     def do_delete(self):
-        c = self.timeline.selected
-        if c is not None:
+        ids = [c["id"] for c in self.timeline.selected_clips()]
+        if ids:
             self.timeline.selected_id = None
-            self.apply("刪除", edit.delete, c["id"])
+            self.apply("刪除" if len(ids) == 1 else f"刪除 {len(ids)} 個片段", edit.delete_many, ids)
 
     def do_text(self):
         if self.proj:
@@ -535,31 +589,47 @@ class MainWindow(QMainWindow):
         self.apply("關鍵幀", edit.toggle_key, cid, group, key, self.clip_time(cid))
         self.curves.select_param(group, key)
 
-    def add_key_at_playhead(self, cid, group, key):
-        """The curve editor's "add here": a keyframe holding the current value."""
+    def add_key_at_playhead(self, cid, params):
+        """The curve editor's "add here": a keyframe holding the current value, for every
+        shown parameter that has none at the playhead."""
         t = self.clip_time(cid)
         c = edit.find(self.container(), cid)[1]
-        p = (c if group == "clip" else c.get(group) or {}).get(key)
-        if edit.key_at(p, t) is not None:
+        todo = [(g, k) for g, k in params
+                if edit.key_at((c if g == "clip" else c.get(g) or {}).get(k), t) is None]
+        if not todo:
             self.statusBar().showMessage("播放頭上已經有關鍵幀", 2000)
             return
-        self.apply("關鍵幀", edit.toggle_key, cid, group, key, t)
+
+        def add_all(level):
+            for g, k in todo:
+                edit.toggle_key(level, cid, g, k, t)
+
+        self.apply("關鍵幀", add_all)
 
     def seek_clip_time(self, t):
         c = self.timeline.selected
         if c is not None:
             self.seek(round((c["start_us"] + t) / US * self.fps))
 
-    def on_curve_keys(self, cid, group, key, keys, final):
-        """Curve editor edits: shown live while dragging, one undo step when released."""
+    def on_curve_keys(self, cid, changes, final):
+        """Curve editor edits ([(group, key, keys, value if no keys are left)]): shown live
+        while dragging, one undo step when released."""
         if final:
-            self.apply("編輯曲線", edit.set_keys, cid, group, key, keys)
+            def set_all(level):
+                for g, k, keys, keep in changes:
+                    if keys:
+                        edit.set_keys(level, cid, g, k, keys)
+                    else:
+                        edit.clear_keys(level, cid, g, k, keep)
+
+            self.apply("刪除關鍵幀" if all(not ch[2] for ch in changes) else "編輯曲線", set_all)
             return
         view = self.snapshot()
         for tr in view["tracks"]:
             for c in tr["clips"]:
                 if c["id"] == cid:
-                    (c if group == "clip" else c.setdefault(group, {}))[key] = {"keys": keys}
+                    for g, k, keys, keep in changes:
+                        (c if g == "clip" else c.setdefault(g, {}))[k] = {"keys": keys} if keys else keep
         self.player.worker.set_view(view, self.cache_dir())
 
     def on_easing(self, cid, easing):
@@ -780,7 +850,7 @@ class MainWindow(QMainWindow):
         sel = self.timeline.selected
         if sel is not None:
             self.inspector.show_clip(sel, self.playhead_us(), self.fps)
-            self.curves.set_clip(sel, self.playhead_us() - sel["start_us"], self.fps)
+            self.curves.set_time(sel, self.playhead_us() - sel["start_us"])
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None)
 

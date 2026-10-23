@@ -226,9 +226,13 @@ steps = [
 def tick():
     if state["mark"] is not None:
         kind, n0, t0 = state["mark"]
-        if kind == "load" and not (loads[0] > n0 and frames and frames[-1][0] > t0 and not win.building):
+        # the counters are bumped on the worker thread; also wait for the window to have
+        # handled that frame (win.pos), or a step can run against the previous state
+        if kind == "load" and not (loads[0] > n0 and frames and frames[-1][0] > t0
+                                   and win.pos == frames[-1][1]):
             return
-        if kind == "seek" and not (frames and frames[-1][0] > t0 and frames[-1][1] == state.get("want")):
+        if kind == "seek" and not (frames and frames[-1][0] > t0 and frames[-1][1] == state.get("want")
+                                   and win.pos == state.get("want")):
             return
         state["mark"] = None
     if time.time() - T0 > 400:

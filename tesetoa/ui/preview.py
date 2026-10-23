@@ -77,6 +77,7 @@ class Box:
 class Preview(QWidget):
     clipPicked = Signal(object)                 # clip dict
     moveCommitted = Signal(str, float, float)   # clip id, x, y (Jianying units)
+    moveChanged = Signal(str, float, float)     # the same while dragging, for a live preview
     doubleClicked = Signal()
 
     def __init__(self, parent=None, interactive=True):
@@ -222,6 +223,9 @@ class Preview(QWidget):
         else:
             dx, dy, self.guides = self._snap(d["box"], dx, dy, d["others"], tol)
         d["dx"], d["dy"] = dx, dy
+        b = d["box"]
+        self.moveChanged.emit(b.clip["id"], (b.cx + dx - self.W / 2) / (self.W / 2),
+                              (self.H / 2 - (b.cy + dy)) / (self.H / 2))
         self.update()
 
     def mouseReleaseEvent(self, e):

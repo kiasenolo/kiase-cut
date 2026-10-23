@@ -1,8 +1,9 @@
-"""Preview playback: a worker thread that owns an engine process.
+"""Preview playback on a worker thread, drawn by the live renderer (render.py).
 
-Scrubbing coalesces requests (only the newest position is rendered). Playing pulls
-frames in order; audio is written to a QAudioSink and the sink's buffer paces the loop,
-so audio is the clock and video follows it.
+The preview never builds MLT documents: it renders frames straight from a snapshot of
+the project, so an edit or a drag shows on the next frame. Exports still go through MLT.
+Scrubbing coalesces requests (only the newest position is drawn). While playing, audio
+from the mixer goes to a QAudioSink whose buffer paces the loop, so audio is the clock.
 """
 import threading
 import time
@@ -11,10 +12,10 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 
-from ..client import EngineClient
-from ..engine import CHANNELS, RATE
+from .. import render
+from ..audiomix import CHANNELS, RATE, Mixer
 
-PREVIEW_W, PREVIEW_H = 960, 540
+PREVIEW_W = 960
 
 
 class Worker(QObject):
@@ -27,21 +28,23 @@ class Worker(QObject):
         super().__init__()
         self.cv = threading.Condition()
         self.want = None            # newest scrub position
-        self.xml = None             # newest project to load
+        self.new_view = None        # newest project snapshot (view, cache dir)
         self.playing = False
         self.pos = 0
         self.length = 0
         self.quit = False
+        self.engine = None          # started on first use, for video pictures only
 
     # called from the UI thread -----------------------------------------------------------
-    def request_load(self, xml):
+    def set_view(self, view, cache_dir):
+        """Show a new project state (after an edit, or a live drag) from the next frame."""
         with self.cv:
-            self.xml, self.playing = xml, False
+            self.new_view = (view, cache_dir)
             self.cv.notify()
 
     def request_seek(self, pos):
         with self.cv:
-            self.want = max(0, min(pos, self.length - 1)) if self.length else pos
+            self.want = max(0, min(pos, self.length - 1)) if self.length else max(0, pos)
             self.cv.notify()
 
     def set_playing(self, on):
@@ -57,13 +60,20 @@ class Worker(QObject):
             self.cv.notify()
 
     # worker thread -----------------------------------------------------------------------
+    def _video(self, path, us, w, h):
+        try:
+            if self.engine is None:
+                from ..client import EngineClient
+                self.engine = EngineClient(1920, 1080)
+            px, w, h = self.engine.media_frame(path, us, self.view["fps"], w, h)
+            return QImage(px, w, h, w * 4, QImage.Format_RGBA8888).copy()
+        except Exception as exc:
+            self.failed.emit(f"影片畫面：{exc}")
+            return None
+
     @Slot()
     def run(self):
-        try:
-            engine = EngineClient(PREVIEW_W, PREVIEW_H)
-        except Exception as exc:
-            self.failed.emit(f"Engine failed to start: {exc}")
-            return
+        self.view, self.renderer, self.mixer = None, render.Renderer(self._video), None
         fmt = QAudioFormat()
         fmt.setSampleRate(RATE)
         fmt.setChannelCount(CHANNELS)
@@ -74,19 +84,28 @@ class Worker(QObject):
         was_playing = False
         while True:
             with self.cv:
-                while not (self.quit or self.xml or self.want is not None or self.playing):
+                while not (self.quit or self.new_view or self.want is not None or self.playing):
                     self.cv.wait()
                 if self.quit:
                     break
-                xml, self.xml = self.xml, None
+                new, self.new_view = self.new_view, None
                 want, self.want = self.want, None
                 playing = self.playing
             try:
-                if xml:
-                    info = engine.load(xml)
-                    self.length = info["length"]
-                    self.loaded.emit(info)
-                    want = min(self.pos, self.length - 1)
+                if new:
+                    view, cache = new
+                    first = self.view is None
+                    self.view = view
+                    if self.mixer is None:
+                        self.mixer = Mixer(cache)
+                    self.mixer.set_view(view)
+                    self.length = render.frame_count(view)
+                    if first or self.pos >= self.length:
+                        self.pos = min(self.pos, self.length - 1)
+                    self.loaded.emit({"length": self.length, "fps": view["fps"],
+                                      "width": view["width"], "height": view["height"]})
+                    if want is None and not playing:
+                        want = self.pos
                 if playing != was_playing:
                     if playing:
                         out = sink.start()
@@ -96,29 +115,37 @@ class Worker(QObject):
                     was_playing = playing
                     self.stateChanged.emit(playing)
                 if want is not None:
-                    self.pos = want
+                    self.pos = min(want, self.length - 1)
+                if self.view is None:
+                    continue
                 if playing:
-                    self._play_one(engine, out, sink)
+                    self._play_one(out, sink)
                 elif want is not None:
-                    self._show(engine, self.pos, False)
+                    self._show(self.pos)
             except Exception as exc:
-                self.failed.emit(str(exc))
+                self.failed.emit(f"{type(exc).__name__}: {exc}")
                 with self.cv:
                     self.playing = False
         sink.stop()
-        engine.close()
+        if self.engine:
+            self.engine.close()
 
-    def _show(self, engine, pos, audio):
-        px, w, h, pcm = engine.frame(pos, PREVIEW_W, PREVIEW_H, audio)
-        img = QImage(px, w, h, w * 4, QImage.Format_RGBA8888).copy()
-        self.frameReady.emit(img, pos)
-        return pcm
+    def _show(self, pos):
+        v = self.view
+        h = round(PREVIEW_W * v["height"] / v["width"])
+        self.frameReady.emit(self.renderer.render(v, pos, PREVIEW_W, h), pos)
+        if self.renderer.errors:
+            self.failed.emit("；".join(dict.fromkeys(self.renderer.errors)))
+            self.renderer.errors.clear()
 
-    def _play_one(self, engine, out, sink):
-        pcm = self._show(engine, self.pos, True)
-        if pcm and out is not None:
+    def _play_one(self, out, sink):
+        self._show(self.pos)
+        pcm = self.mixer.mix(self.pos, self.view["fps"])
+        if out is not None:
             view = memoryview(pcm)
             while view:
+                if self.new_view or self.want is not None or not self.playing or self.quit:
+                    break                                   # react to edits / seeks at once
                 free = sink.bytesFree()
                 if free <= 0:
                     time.sleep(0.002)

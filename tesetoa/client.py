@@ -48,6 +48,11 @@ class EngineClient:
         pixels = bytes(self.shm.buf[: r["w"] * r["h"] * 4])
         return pixels, r["w"], r["h"], base64.b64decode(r["pcm"]) if "pcm" in r else None
 
+    def media_frame(self, path, us, fps, w, h):
+        """(rgba bytes, w, h) of a media file at source time us."""
+        r = self.call(cmd="media", path=path, us=us, fps=fps, w=w, h=h, shm=self.shm.name)
+        return bytes(self.shm.buf[: r["w"] * r["h"] * 4]), r["w"], r["h"]
+
     def export(self, xml, dest, on_progress=None, **opts):
         """Render xml to the file dest. opts: encoder settings and the frame range
         ("in" / "out", inclusive)."""

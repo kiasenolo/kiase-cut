@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 
-from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
@@ -40,6 +40,8 @@ QHeaderView::section { background: #202024; border: none; padding: 3px; }
 QLabel#time { font-family: Consolas, monospace; color: #cfcfd4; }
 QLabel#title { color: #8fd9d3; font-weight: 600; }
 QLabel#crumb { color: #ffb020; font-weight: 600; }
+QMessageBox, QInputDialog, QColorDialog, QDialog { background: #1b1b1f; }
+QMessageBox QLabel { color: #e6e6e6; background: transparent; }
 """
 
 
@@ -76,16 +78,13 @@ class MainWindow(QMainWindow):
         self.path = None
         self.dirty = False
         self.path_ids = []              # open compound clips, outermost first
-        self.xml = None
-        self.xml_slot = 0
+        self.xml = None                 # truthy once the preview has a project
         self.length = 0
         self.fps = 60.0
         self.pos = 0
         self.playing = False
         self.tasks = []
-        self.building = False
-        self.build_again = False
-        self.first_build = True
+        self.building = False            # kept for tools: previews no longer build anything
         self.pending_seek = None
         self.fullscreen = None
 
@@ -102,6 +101,7 @@ class MainWindow(QMainWindow):
         self.preview = Preview()
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
         self.preview.moveCommitted.connect(self.on_preview_move)
+        self.preview.moveChanged.connect(self.live_move)
         self.preview.doubleClicked.connect(self.toggle_fullscreen)
 
         self.inspector = Inspector()
@@ -190,10 +190,8 @@ class MainWindow(QMainWindow):
         w = self.player.worker
         w.frameReady.connect(self.on_frame)
         w.loaded.connect(self.on_loaded)
-        w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))
+        w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))  # never modal
         w.stateChanged.connect(self.on_state)
-        self.rebuild_timer = QTimer(self, singleShot=True, interval=150)
-        self.rebuild_timer.timeout.connect(self.rebuild)
         self._menus()
         self._update_title()
         self._update_crumb()
@@ -306,7 +304,6 @@ class MainWindow(QMainWindow):
         self.pending_seek = pos
         self._update_crumb()
         self.refresh_inspector()
-        self.first_build = False
         self.rebuild()
 
     # -- project ----------------------------------------------------------------------------------
@@ -384,7 +381,6 @@ class MainWindow(QMainWindow):
         self.timeline.mark_in = self.timeline.mark_out = None
         self.timeline.set_project(proj)
         self.library.set_library(library.lib(proj))
-        self.first_build = True
         self._update_title()
         self._update_crumb()
         self._update_buttons()
@@ -463,7 +459,7 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.refresh_inspector()
         self.statusBar().showMessage(label, 2000)
-        self.rebuild_timer.start()
+        self.rebuild()
 
     def do_undo(self):
         if self.history and (label := self.history.undo()):
@@ -659,53 +655,31 @@ class MainWindow(QMainWindow):
                                sel["id"] if sel else None)
         self._update_buttons()
 
-    # -- preview build ----------------------------------------------------------------------------
+    # -- preview ----------------------------------------------------------------------------------
+    def snapshot(self):
+        """A private copy of the open level for the renderer thread."""
+        return json.loads(json.dumps(self.view()))
+
     def rebuild(self):
-        """Rebuild the MLT document of the open level in the background and hand it to the
-        player. Edits made meanwhile queue one more build; the build works on a copy."""
+        """Hand the current project state to the live renderer: it shows on the next frame.
+        (No MLT document is built for the preview; exports build one.)"""
         if self.proj is None:
             return
-        if self.building:
-            self.build_again = True
-            return
-        self.building, self.build_again = True, False
-        snapshot = json.loads(json.dumps(self.view()))
-        cache = self.cache_dir()
-        self.xml_slot ^= 1
-        xml = os.path.join(cache, f"preview{self.xml_slot}.mlt")
-        dlg = None
-        if self.first_build:
-            dlg = QProgressDialog("準備預覽（第一次要產生文字圖片）…", None, 0, 0, self)
-            dlg.setWindowModality(Qt.WindowModal)
-            dlg.setMinimumDuration(400)
-        else:
-            self.statusBar().showMessage("更新預覽…")
+        w = self.player.worker
+        if self.pending_seek is not None:
+            w.pos, self.pending_seek = self.pending_seek, None
+        w.set_view(self.snapshot(), self.cache_dir())
+        self.xml = True
 
-        def work(_progress):
-            os.makedirs(cache, exist_ok=True)
-            return build.build(snapshot, cache, xml, preview=True)
-
-        def finish():
-            if dlg:
-                dlg.close()
-            self.building = False
-            self.first_build = False
-            if self.build_again:
-                self.rebuild()
-
-        def done(path):
-            self.xml = path
-            w = self.player.worker
-            if self.pending_seek is not None:
-                w.pos, self.pending_seek = self.pending_seek, None
-            w.request_load(path)
-            finish()
-
-        def failed(msg):
-            finish()
-            QMessageBox.critical(self, "建置失敗", msg)
-
-        self.run_task(work, done, failed)
+    def live_move(self, cid, x, y):
+        """While a clip is dragged on the canvas: draw it at (x, y) without editing yet."""
+        view = self.snapshot()
+        for tr in view["tracks"]:
+            for c in tr["clips"]:
+                if c["id"] == cid:
+                    tf = c.setdefault("transform", {})
+                    tf["x"], tf["y"] = x, y            # a keyframed value shows its new key
+        self.player.worker.set_view(view, self.cache_dir())
 
     def run_task(self, fn, done, failed, progress=None):
         th, task = QThread(self), Task(fn)
@@ -746,11 +720,11 @@ class MainWindow(QMainWindow):
         self.play_btn.setText("❚❚" if playing else "▶")
 
     def toggle_play(self):
-        if self.xml:
+        if self.proj is not None:
             self.player.worker.set_playing(not self.playing)
 
     def seek(self, frame):
-        if self.xml:
+        if self.proj is not None:
             if self.playing:
                 self.player.worker.set_playing(False)
             self.player.worker.request_seek(frame)

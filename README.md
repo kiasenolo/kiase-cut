@@ -57,12 +57,17 @@ standard or small-file quality.
 | `library.py` | media library: folders, probing, placing media on a timeline |
 | `textlayout.py` | text rendering calibrated to Jianying's layout |
 | `masks.py` | line / mirror / circle / rectangle masks as MLT splines (or baked mattes) |
-| `build.py` | project → MLT XML (cached text images and mattes) |
+| `render.py`, `audiomix.py` | live preview: frames drawn with QPainter, audio mixed with numpy |
+| `build.py` | project → MLT XML for export (cached text images) |
 | `mltlib.py`, `engine.py`, `client.py` | MLT through ctypes, in its own process |
 | `ui/` | PySide6 window, timeline, preview player |
 
-The engine runs in a separate process: an MLT crash cannot take the editor down, and
-MLT's Qt never shares a process with PySide6's Qt.
+Preview and export read the same project but render it differently. The preview draws
+each frame straight from the project model (render.py, audiomix.py), so edits and drags
+show on the next frame and playback runs at 60 fps; it was checked frame by frame against
+the MLT output. Exports build an MLT document (build.py) and render it in a separate
+engine process: an MLT crash cannot take the editor down, and MLT's Qt never shares a
+process with PySide6's Qt. The engine also supplies video pictures to the preview.
 
 ## Accuracy check
 
@@ -81,14 +86,14 @@ python -m unittest discover tests            # edit operations
 python tools/smoke_edit.py PROJECT.tesetoa.json out/   # drives the real window headless
 python tools/smoke_keys.py PROJECT.tesetoa.json out/   # keyframes and masks, headless
 python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
+python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
 ```
 
 ## Status
 
 Milestones 1 (import → preview → export), 2 (move, trim, split, text editing) and
 3 (keyframes, easing, masks) work, plus the media library, compound editing, preview
-dragging with snapping and range export. An edit reaches the preview in about 3 s.
-The preview uses frame-sized proxies of large images; exports use the originals.
+dragging with snapping and range export. Edits and drags show on the next preview frame.
 Masks are drawn by MLT's rotoscoping filter before the clip transform, so they follow the
 clip like Jianying's and need no pre-rendering (`build.build(..., mask_mode="baked")`
 still renders the screen-space mattes they were verified against).

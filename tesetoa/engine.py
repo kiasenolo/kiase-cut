@@ -8,6 +8,8 @@ Pixels go through shared memory, audio as base64 PCM (s16, stereo, 48 kHz).
   {"cmd": "load", "xml": path}                          -> {length, fps, width, height}
   {"cmd": "frame", "pos": n, "w": w, "h": h,
    "audio": bool, "shm": name}                          -> {pos, w, h, [pcm]}
+  {"cmd": "media", "path": p, "us": t, "fps": f,
+   "w": w, "h": h, "shm": name}                         -> {w, h}   one picture of a file
   {"cmd": "export", "xml": path, "out": path,
    "opts": {in, out, crf, preset, ...}}                 -> {progress} lines, then {done}
   {"cmd": "quit"}
@@ -30,6 +32,7 @@ class Engine:
         self.profile = None
         self.producer = None
         self.shm = {}
+        self.media = {}            # (path, fps) -> (profile, producer) for single media frames
 
     def load(self, xml):
         m = self.m
@@ -67,6 +70,34 @@ class Engine:
             reply["pcm"] = base64.b64encode(C.string_at(abuf, n.value * chans.value * 2)).decode()
         m.frame_close(fr)
         return reply
+
+    def media_frame(self, path, us, fps, w, h, shm):
+        """One picture of a media file at source time us, for the live preview renderer."""
+        m = self.m
+        key = (path, fps)
+        if key not in self.media:
+            prof = m.profile_init(None)
+            num = round(fps * 1000)
+            pr = prof.contents
+            pr.frame_rate_num, pr.frame_rate_den = num, 1000
+            pr.width, pr.height, pr.is_explicit = w, h, 1
+            prod = m.factory_producer(prof, b"avformat", path.encode())
+            if not prod:
+                raise RuntimeError(f"cannot open {path}")
+            self.media[key] = (prof, prod)
+        prof, prod = self.media[key]
+        m.producer_seek(prod, round(us * fps / 1_000_000))
+        fr = P()
+        m.service_get_frame(prod, C.byref(fr), 0)
+        buf = C.POINTER(C.c_uint8)()
+        fmt, cw, ch = C.c_int(IMAGE_RGBA), C.c_int(w), C.c_int(h)
+        m.frame_get_image(fr, C.byref(buf), C.byref(fmt), C.byref(cw), C.byref(ch), 0)
+        size = cw.value * ch.value * 4
+        if shm not in self.shm:
+            self.shm[shm] = shared_memory.SharedMemory(name=shm)
+        C.memmove((C.c_char * size).from_buffer(self.shm[shm].buf), buf, size)
+        m.frame_close(fr)
+        return {"w": cw.value, "h": ch.value}
 
     def export(self, xml, out, opts, emit):
         m = self.m
@@ -111,6 +142,8 @@ def main():
                 emit(eng.load(req["xml"]))
             elif cmd == "frame":
                 emit(eng.frame(req["pos"], req["w"], req["h"], req.get("audio", False), req["shm"]))
+            elif cmd == "media":
+                emit(eng.media_frame(req["path"], req["us"], req["fps"], req["w"], req["h"], req["shm"]))
             elif cmd == "export":
                 emit(eng.export(req["xml"], req["out"], req.get("opts", {}), emit))
             elif cmd == "quit":

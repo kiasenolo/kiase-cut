@@ -121,8 +121,8 @@ class MainWindow(QMainWindow):
 
         self.preview = Preview()
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
-        self.preview.moveCommitted.connect(self.on_preview_move)
-        self.preview.moveChanged.connect(self.live_move)
+        self.preview.paramsCommitted.connect(self.on_preview_params)
+        self.preview.paramsLive.connect(self.live_params)
         self.preview.doubleClicked.connect(self.toggle_fullscreen)
 
         self.inspector = Inspector()
@@ -131,7 +131,7 @@ class MainWindow(QMainWindow):
         ins.paramEdited.connect(self.on_param_edited)
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
-        ins.maskKindChosen.connect(lambda ids, kind: self.apply_each("遮罩", edit.set_mask, ids, kind))
+        ins.maskKindChosen.connect(self.on_mask_kind)
         ins.maskInvertChosen.connect(lambda ids, on: self.apply_each("反轉遮罩", edit.set_mask_invert, ids, on))
         ins.keyJump.connect(self.jump_key)
         scroll = QScrollArea()
@@ -149,6 +149,10 @@ class MainWindow(QMainWindow):
         self.play_btn = QPushButton("▶")
         self.play_btn.setFixedWidth(48)
         self.play_btn.clicked.connect(self.toggle_play)
+        self.mask_btn = QPushButton("編輯遮罩")
+        self.mask_btn.setCheckable(True)
+        self.mask_btn.setToolTip("在預覽上拖曳遮罩：中間移動、方塊調大小、圓點旋轉、箭頭羽化")
+        self.mask_btn.toggled.connect(lambda on: self.preview.set_mask_mode(on))
         full_btn = QPushButton("全螢幕")
         full_btn.setToolTip("F，或在預覽上按兩下")
         full_btn.clicked.connect(self.toggle_fullscreen)
@@ -159,6 +163,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.time_lbl)
         bar.addWidget(self.play_btn)
         bar.addStretch()
+        bar.addWidget(self.mask_btn)
         bar.addWidget(full_btn)
         center = QWidget()
         cl = QVBoxLayout(center)
@@ -691,14 +696,25 @@ class MainWindow(QMainWindow):
         k = min(cands) if direction > 0 else max(cands)
         self.seek(round((c["start_us"] + k) / US * self.fps))
 
-    def on_preview_move(self, cid, x, y):
+    def on_mask_kind(self, ids, kind):
+        self.apply_each("遮罩", edit.set_mask, ids, kind)
+        if kind:
+            self.mask_btn.setChecked(True)          # a new mask is edited on the canvas
+
+    def on_preview_params(self, cid, group, values):
+        """A drag of the clip or its mask on the canvas: one edit (keyframed values get or
+        edit their keyframe at the playhead)."""
         t = self.clip_time(cid)
+        if group == "mask":
+            label = "遮罩"
+        else:
+            label = "旋轉" if "rotation" in values else "縮放" if "scale" in values else "移動位置"
 
-        def move_xy(level):
-            edit.set_param(level, cid, "transform", "x", round(x, 5), t)
-            edit.set_param(level, cid, "transform", "y", round(y, 5), t)
+        def set_all(level):
+            for key, v in values.items():
+                edit.set_param(level, cid, group, key, v, t)
 
-        self.apply("移動位置", move_xy)
+        self.apply(label, set_all)
 
     def on_track_action(self, action, tid):
         t = edit.track_by_id(self.container(), tid)
@@ -816,6 +832,10 @@ class MainWindow(QMainWindow):
         self.curves.set_clip(sel, self.playhead_us() - sel["start_us"] if sel else 0, self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None)
+        has_mask = bool(sel and sel.get("mask"))
+        self.mask_btn.setEnabled(has_mask)
+        if not has_mask and self.mask_btn.isChecked():
+            self.mask_btn.setChecked(False)
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------
@@ -834,14 +854,16 @@ class MainWindow(QMainWindow):
         w.set_view(self.snapshot(), self.cache_dir())
         self.xml = True
 
-    def live_move(self, cid, x, y):
-        """While a clip is dragged on the canvas: draw it at (x, y) without editing yet."""
+    def live_params(self, cid, group, values):
+        """While a clip or its mask is dragged on the canvas: draw it so without editing yet
+        (a keyframed value shows as if its key held the new value)."""
         view = self.snapshot()
-        for tr in view["tracks"]:
-            for c in tr["clips"]:
-                if c["id"] == cid:
-                    tf = c.setdefault("transform", {})
-                    tf["x"], tf["y"] = x, y            # a keyframed value shows its new key
+        for c in project.walk_clips(view["tracks"]):
+            if c["id"] == cid:
+                holder = c if group == "clip" else c.setdefault(group, {})
+                holder.update(values)
+                if group == "transform" and "scale" in values and "scale_y" in holder:
+                    holder["scale_y"] = values["scale"]
         self.player.worker.set_view(view, self.cache_dir())
 
     def run_task(self, fn, done, failed, progress=None):

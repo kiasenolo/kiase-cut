@@ -47,7 +47,13 @@ Jianying draft fills the library with the media it uses.
 
 Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
 canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
-freely). F or double-click toggles fullscreen.
+freely). Drag a corner square to scale it about its centre, the round handle above it to
+rotate it (it settles on right angles; Shift turns in 15° steps). 編輯遮罩 (on by itself
+when a mask is chosen) shows the mask on the clip: drag inside it to move it, the squares
+to size it, the round handle to turn it and the arrow below it for the feather. Every drag
+shows live and is one undo step; keyframed values get their keyframe at the playhead.
+Ctrl+wheel zooms the preview (to reach handles of clips bigger than the canvas), the
+middle button drags it. F or double-click toggles fullscreen.
 
 Keyframes and masks: every animatable value in the inspector (position, scale, rotation,
 opacity, volume, text size / colour / letter and line spacing / italic, mask centre / size /
@@ -126,6 +132,7 @@ python tools/smoke_keys.py PROJECT.tesetoa.json out/   # keyframes and masks, he
 python tools/smoke_curves.py PROJECT.tesetoa.json out/ # curve editor: drag, cubic-bezier, presets
 python tools/smoke_audio.py PROJECT.tesetoa.json out/  # waveforms, mute / solo / hide, new tracks
 python tools/smoke_select.py PROJECT.tesetoa.json out/ # multi-select, track heights, compound list
+python tools/smoke_handles.py PROJECT.tesetoa.json out/ # scale / rotate / mask handles on the preview
 python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
 python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
 ```

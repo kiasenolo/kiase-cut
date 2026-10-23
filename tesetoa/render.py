@@ -18,7 +18,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 
-from . import curves, textlayout
+from . import curves, project, textlayout
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg")
@@ -81,7 +81,7 @@ class Renderer:
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first."""
         f = round(t_us * fps / US)
         for tr in tracks:
-            if tr["kind"] == "audio":
+            if tr["kind"] == "audio" or not project.visible(tr):
                 continue
             for c in tr["clips"]:
                 if round(c["start_us"] * fps / US) <= f < round((c["start_us"] + c["duration_us"]) * fps / US):

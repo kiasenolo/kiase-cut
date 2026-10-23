@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape
 import numpy as np
 from PIL import Image
 
-from . import curves, masks, textlayout
+from . import curves, masks, project, textlayout
 
 US = 1_000_000
 TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg")
@@ -371,12 +371,14 @@ class Builder:
         self.xml.append(f'<producer id="{bg}" in="0" out="{length - 1}">' + self.props({
             "mlt_service": "color", "length": length,
             "resource": "#00000000" if transparent else "#ff000000"}) + "</producer>")
-        ids, kinds = [], []
+        ids, kinds, hides = [], [], []
         bgpl = self.new_id("pl")
         self.xml.append(f'<playlist id="{bgpl}"><entry producer="{bg}" in="0" out="{length - 1}"/></playlist>')
         ids.append(bgpl)
         kinds.append("video")
+        hides.append("")
         for tr in tracks:
+            gain, shown = project.sounds(tr, tracks), project.visible(tr)
             entries, cur = [], win[0]
             for c in sorted(tr["clips"], key=lambda c: c["start_us"]):
                 r = self.clip(c, offset_us, win, id(tr))
@@ -393,10 +395,18 @@ class Builder:
                 entries.append(f'<entry producer="{pid}" in="{src_in}" out="{src_in + ln - 1}">{fx}</entry>')
                 cur = f0 + ln
             pl = self.new_id("pl")
+            if gain > 0 and abs(gain - 1.0) > 1e-6:          # track volume
+                entries.append(self.filt("volume", {"level": f"{20 * math.log10(gain):.3f}"}))
             self.xml.append(f'<playlist id="{pl}">{"".join(entries)}</playlist>')
             ids.append(pl)
             sound = any(c["type"] in ("audio", "video", "compound") for c in tr["clips"])
-            kinds.append("audio" if tr["kind"] == "audio" else ("av" if sound else "video"))
+            kind = "audio" if tr["kind"] == "audio" else ("av" if sound else "video")
+            kinds.append(kind)
+            # MLT's track hide: what of video / audio this track does not contribute
+            no_video = kind == "audio" or not shown
+            no_audio = kind == "video" or gain <= 0
+            hides.append(' hide="both"' if no_video and no_audio else ' hide="video"' if no_video
+                         else ' hide="audio"' if no_audio else "")
         # mix only tracks that can carry sound: asking every image/text track for silence
         # and mixing it cost ~30 ms per frame, too slow for playback
         trans = []
@@ -408,9 +418,7 @@ class Builder:
                 trans.append(self.props({"mlt_service": "mix", "a_track": 0, "b_track": i,
                                          "sum": 1, "always_active": 1}))
         tid = self.new_id("tractor")
-        hide = {"audio": ' hide="video"', "video": ' hide="audio"', "av": ""}
-        tracks_xml = "".join(f'<track producer="{t}"{hide[k] if i else ""}/>'
-                             for i, (t, k) in enumerate(zip(ids, kinds)))
+        tracks_xml = "".join(f'<track producer="{t}"{h}/>' for t, h in zip(ids, hides))
         self.xml.append(f'<tractor id="{tid}" in="0" out="{length - 1}">{tracks_xml}'
                         + "".join(f"<transition>{t}</transition>" for t in trans) + "</tractor>")
         return tid

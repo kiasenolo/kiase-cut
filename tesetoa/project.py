@@ -2,7 +2,10 @@
 
 project  {format, version, width, height, fps, duration_us, tracks: [track]}  tracks[0] is
          the bottom layer; later tracks draw on top (as in Jianying).
-track    {id, kind: video | text | audio, name, clips: [clip]}
+track    {id, kind: video | text | audio, name, clips: [clip],
+          muted, solo, hidden, gain}                        optional: muted / solo tracks
+                     make no sound (solo silences the others), hidden ones draw nothing,
+                     gain multiplies the track's sound
 clip     {id, type: image | video | audio | text | compound, name,
           start_us, duration_us, source_start_us,
           media: {path, width, height, duration_us}         image / video / audio
@@ -62,3 +65,16 @@ def walk_clips(tracks):
             yield c
             if c.get("compound"):
                 yield from walk_clips(c["compound"]["tracks"])
+
+
+def sounds(track, tracks):
+    """Gain of a track's sound (0 when muted, or when another track of its level is solo)."""
+    if track.get("muted"):
+        return 0.0
+    if any(t.get("solo") for t in tracks) and not track.get("solo"):
+        return 0.0
+    return float(track.get("gain", 1.0))
+
+
+def visible(track):
+    return not track.get("hidden")

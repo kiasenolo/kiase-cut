@@ -6,6 +6,7 @@ history on the whole project, applied to whichever level is open.
 """
 import hashlib
 import json
+import math
 import os
 
 from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, Signal, Slot
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog,
                                QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
                                QPushButton, QScrollArea, QSplitter, QTabWidget, QVBoxLayout, QWidget)
 
-from .. import build, edit, library, project
+from .. import build, edit, library, project, waveform
 from ..client import EngineClient
 from ..importers import jianying
 from .curve_editor import CurveEditor
@@ -168,6 +169,8 @@ class MainWindow(QMainWindow):
         tl.trackAction.connect(self.on_track_action)
         tl.clipAction.connect(self.on_clip_action)
         tl.mediaDropped.connect(self.place_media)
+        tl.newTrackRequested.connect(
+            lambda cid, start, top: self.apply("移到新軌道", edit.move_to_new_track, cid, start, top))
         tools = QHBoxLayout()
         tools.setContentsMargins(6, 2, 6, 2)
         self.back_btn = QPushButton("← 返回上一層")
@@ -392,6 +395,7 @@ class MainWindow(QMainWindow):
         self.path_ids = []
         self.fps = proj["fps"]
         self.timeline.mark_in = self.timeline.mark_out = None
+        self.timeline.set_peaks(waveform.Peaks(self.cache_dir(), on_ready=self.timeline.peaksReady.emit))
         self.timeline.set_project(proj)
         self.library.set_library(library.lib(proj))
         self._update_title()
@@ -613,6 +617,26 @@ class MainWindow(QMainWindow):
                 self.apply("軌道顏色", edit.set_track_color, tid, col.name())
         elif action == "nocolor":
             self.apply("軌道顏色", edit.set_track_color, tid, None)
+        elif action.startswith("toggle:"):
+            flag = action.split(":", 1)[1]
+            label = {"muted": "靜音", "solo": "獨奏", "hidden": "隱藏"}[flag]
+            self.apply(("取消" if t.get(flag) else "") + label + "軌道", edit.set_track_flag, tid, flag,
+                       not t.get(flag))
+        elif action == "gain":
+            g = t.get("gain", 1.0)
+            db, ok = QInputDialog.getDouble(self, "軌道音量", "音量（dB，-60 以下為靜音）",
+                                            20 * math.log10(g) if g > 0 else -60.0, -60.0, 12.0, 1)
+            if ok:
+                self.apply("軌道音量", edit.set_track_gain, tid, 0.0 if db <= -60 else 10 ** (db / 20))
+        elif action in ("up", "down"):
+            self.apply("移動軌道", edit.move_track, tid, action == "up")
+        elif action.startswith("add:"):
+            self.apply("新增軌道", edit.add_track, action.split(":", 1)[1], tid)
+        elif action == "delete":
+            if t["clips"] and QMessageBox.question(
+                    self, "刪除軌道", f"軌道上有 {len(t['clips'])} 個片段，一起刪除嗎？") != QMessageBox.Yes:
+                return
+            self.apply("刪除軌道", edit.delete_track, tid)
 
     def on_clip_action(self, action, cid):
         _, c = edit.find(self.container(), cid)
@@ -628,6 +652,8 @@ class MainWindow(QMainWindow):
                 self.apply("片段顏色", edit.set_clip_color, cid, col.name())
         elif action == "nocolor":
             self.apply("片段顏色", edit.set_clip_color, cid, None)
+        elif action == "detach_audio":
+            self.apply("分離音訊", edit.detach_audio, cid)
         elif action == "split":
             self.do_split()
         elif action == "delete":

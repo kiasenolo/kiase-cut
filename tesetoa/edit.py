@@ -544,3 +544,113 @@ def clear_keys(proj, clip_id, group, key, value):
         raise EditError(f"unknown {group} field {key}")
     _holder(c, group)[key] = [float(x) for x in value] if isinstance(value, (list, tuple)) else float(value)
     return c
+
+
+# -- tracks -----------------------------------------------------------------------------------------
+TRACK_FLAGS = ("muted", "solo", "hidden")
+
+
+def set_track_flag(proj, track_id, flag, on):
+    if flag not in TRACK_FLAGS:
+        raise EditError(f"unknown track flag {flag}")
+    t = track_by_id(proj, track_id)
+    if on:
+        t[flag] = True
+    else:
+        t.pop(flag, None)
+
+
+def set_track_gain(proj, track_id, gain):
+    t = track_by_id(proj, track_id)
+    g = min(4.0, max(0.0, float(gain)))
+    if abs(g - 1.0) < 1e-6:
+        t.pop("gain", None)
+    else:
+        t["gain"] = round(g, 4)
+
+
+def _visual_slot(proj, top=True):
+    """Index in proj['tracks'] for a new picture track: the topmost layer or the bottom one."""
+    audio_at = next((i for i, t in enumerate(proj["tracks"]) if t["kind"] == "audio"), len(proj["tracks"]))
+    return audio_at if top else 0
+
+
+def add_track(proj, kind, near_id=None):
+    """New empty track of kind: next to near_id (above it on screen), else on top of the
+    pictures / below the audio."""
+    if kind not in ("video", "text", "audio"):
+        raise EditError(f"unknown track kind {kind}")
+    n = sum(1 for t in proj["tracks"] if t["kind"] == kind) + 1
+    track = {"id": new_track_id(proj), "kind": kind, "name": f"{kind} {n}", "clips": []}
+    near = next((i for i, t in enumerate(proj["tracks"]) if t["id"] == near_id), None)
+    if near is not None and (proj["tracks"][near]["kind"] == "audio") == (kind == "audio"):
+        # pictures: a later index is a higher layer (higher on screen); audio rows go down
+        proj["tracks"].insert(near + 1 if kind != "audio" else near, track)
+    elif kind == "audio":
+        proj["tracks"].append(track)
+    else:
+        proj["tracks"].insert(_visual_slot(proj), track)
+    return track
+
+
+def delete_track(proj, track_id):
+    t = track_by_id(proj, track_id)
+    proj["tracks"].remove(t)
+
+
+def move_track(proj, track_id, up):
+    """Move a track one row up or down on screen, among tracks of its group (pictures / audio)."""
+    t = track_by_id(proj, track_id)
+    audio = t["kind"] == "audio"
+    group = [i for i, x in enumerate(proj["tracks"]) if (x["kind"] == "audio") == audio]
+    pos = group.index(proj["tracks"].index(t))
+    step = (1 if up else -1) if not audio else (-1 if up else 1)     # pictures: up = later
+    j = pos + step
+    if not 0 <= j < len(group):
+        raise EditError("already at the edge")
+    a, b = group[pos], group[j]
+    proj["tracks"][a], proj["tracks"][b] = proj["tracks"][b], proj["tracks"][a]
+
+
+def move_to_new_track(proj, clip_id, start_us, top):
+    """Move a clip onto a new track: for pictures a new top layer (top) or bottom layer,
+    for sound a new last audio row (top=False) or first one."""
+    src, c = find(proj, clip_id)
+    kind = src["kind"]
+    n = sum(1 for t in proj["tracks"] if t["kind"] == kind) + 1
+    track = {"id": new_track_id(proj), "kind": kind, "name": f"{kind} {n}", "clips": []}
+    if kind == "audio":
+        first = next(i for i, t in enumerate(proj["tracks"]) if t["kind"] == "audio")
+        proj["tracks"].insert(first if top else len(proj["tracks"]), track)
+    else:
+        proj["tracks"].insert(_visual_slot(proj, top), track)
+    src["clips"].remove(c)
+    track["clips"].append(c)
+    c["start_us"] = max(0, int(start_us))
+    return c
+
+
+def detach_audio(proj, clip_id):
+    """Split a video clip's sound onto an audio track (as Jianying's 分離音訊): the new audio
+    clip takes the volume and fades, the video clip is silenced."""
+    _, c = find(proj, clip_id)
+    if c["type"] != "video":
+        raise EditError("only video clips have sound to detach")
+    m = c["media"]
+    a = {"id": new_clip_id(proj), "type": "audio", "name": c.get("name") or "audio",
+         "start_us": c["start_us"], "duration_us": c["duration_us"],
+         "source_start_us": c.get("source_start_us", 0),
+         "media": {"path": m["path"], "duration_us": m.get("duration_us")},
+         "volume": copy.deepcopy(c.get("volume", 1.0))}
+    for k in ("fade_in_us", "fade_out_us"):
+        if c.get(k):
+            a[k] = c.pop(k)
+    c["volume"] = 0.0
+    # the first audio track with room for it (free_range is None where it overlaps a clip)
+    dst = next((t for t in proj["tracks"] if t["kind"] == "audio"
+                and free_range(t, a["start_us"], end(a)) is not None), None)
+    if dst is None:
+        dst = add_track(proj, "audio")
+    dst["clips"].append(a)
+    _sort(dst)
+    return a

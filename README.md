@@ -51,6 +51,15 @@ the playhead. The preview follows every drag. The segment after the selected key
 takes a CSS `cubic-bezier(x1, y1, x2, y2)` typed in (y may overshoot, for bounces) or one
 of the presets (linear, ease in / out / in-out, back); exact time and value can be typed too.
 
+Sound and tracks: audio and video clips show their waveform on the timeline (following
+the clip volume and fades). Audio track headers have mute and solo buttons, picture
+tracks an eye to hide them (and mute, when they hold videos or compound clips); muted /
+hidden tracks are dimmed. The track menu (right-click a header) sets a track volume in dB,
+moves tracks up or down, adds video / text / audio tracks and deletes them. Drag a picture
+clip above the top row, or a sound clip below the bottom row, to put it on a new track.
+分離音訊 in a video clip's menu moves its sound onto an audio track. Preview and export
+follow the same rules (a solo track silences the others on its level).
+
 Export (Ctrl+E): the whole film or the range marked with I / O (Alt+X clears), at high,
 standard or small-file quality.
 
@@ -66,6 +75,7 @@ standard or small-file quality.
 | `textlayout.py` | text rendering calibrated to Jianying's layout |
 | `masks.py` | line / mirror / circle / rectangle masks as MLT splines (or baked mattes) |
 | `render.py`, `audiomix.py` | live preview: frames drawn with QPainter, audio mixed with numpy |
+| `waveform.py` | cached audio peaks for timeline waveforms |
 | `build.py` | project → MLT XML for export (cached text images) |
 | `mltlib.py`, `engine.py`, `client.py` | MLT through ctypes, in its own process |
 | `ui/` | PySide6 window, timeline, preview player |
@@ -94,6 +104,7 @@ python -m unittest discover tests            # edit operations
 python tools/smoke_edit.py PROJECT.tesetoa.json out/   # drives the real window headless
 python tools/smoke_keys.py PROJECT.tesetoa.json out/   # keyframes and masks, headless
 python tools/smoke_curves.py PROJECT.tesetoa.json out/ # curve editor: drag, cubic-bezier, presets
+python tools/smoke_audio.py PROJECT.tesetoa.json out/  # waveforms, mute / solo / hide, new tracks
 python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
 python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
 ```
@@ -102,7 +113,8 @@ python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + pl
 
 Milestones 1 (import → preview → export), 2 (move, trim, split, text editing) and
 3 (keyframes, easing, masks) work, plus the media library, compound editing, preview
-dragging with snapping, range export and a curve editor with cubic-bezier input. Edits and drags show on the next preview frame.
+dragging with snapping, range export, a curve editor with cubic-bezier input, waveforms and per-track
+mute / solo / hide / volume. Edits and drags show on the next preview frame.
 Masks are drawn by MLT's rotoscoping filter before the clip transform, so they follow the
 clip like Jianying's and need no pre-rendering (`build.build(..., mask_mode="baked")`
 still renders the screen-space mattes they were verified against).

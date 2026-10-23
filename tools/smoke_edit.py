@@ -23,7 +23,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from tesetoa import project  # noqa: E402
 from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import HEADER_W, RULER_H, TRACK_H, US  # noqa: E402
+from tesetoa.ui.timeline import HEADER_W, US  # noqa: E402
 
 proj_path, out = sys.argv[1], sys.argv[2]
 app = QApplication(sys.argv)
@@ -65,7 +65,7 @@ def clip_rect(c):
     row = next(i for i, t in enumerate(tl.rows) if c in t["clips"])
     x0 = tl._x(c["start_us"] / US)
     x1 = tl._x((c["start_us"] + c["duration_us"]) / US)
-    return row, x0, x1, RULER_H + row * TRACK_H + TRACK_H // 2
+    return row, x0, x1, tl.tops[row] + tl.row_h(row) // 2
 
 
 def drag(x0, y, x1, y1=None):

@@ -12,7 +12,7 @@ import threading
 
 import numpy as np
 
-from . import curves
+from . import curves, project
 from .build import find_ffmpeg, media_start
 
 RATE, CHANNELS = 48000, 2
@@ -20,8 +20,9 @@ US = 1_000_000
 
 
 class Source:
-    def __init__(self, clip, start_us, win):
+    def __init__(self, clip, start_us, win, gain=1.0):
         self.clip = clip
+        self.gain = gain                      # track gains (and mute / solo) above it
         self.start_us = start_us              # clip start on the mixed timeline
         self.win = win                        # (lo, hi) us where it may sound
         self.pcm = None                       # int16 [n, 2] once decoded
@@ -32,10 +33,13 @@ class Source:
         return (c["media"]["path"], c.get("source_start_us", 0), c["duration_us"])
 
 
-def sources(tracks, offset_us=0, win=(0, float("inf"))):
+def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0):
     """Every clip that makes sound, compound clips included, with its timeline placement."""
     out = []
     for tr in tracks:
+        g = gain * project.sounds(tr, tracks)
+        if g <= 0:
+            continue
         for c in tr["clips"]:
             s = offset_us + c["start_us"]
             e = s + c["duration_us"]
@@ -43,9 +47,9 @@ def sources(tracks, offset_us=0, win=(0, float("inf"))):
             if hi <= lo:
                 continue
             if c["type"] in ("audio", "video") and c.get("media"):
-                out.append(Source(c, s, (lo, hi)))
+                out.append(Source(c, s, (lo, hi), g))
             elif c["type"] == "compound":
-                out += sources(c["compound"]["tracks"], s - c.get("source_start_us", 0), (lo, hi))
+                out += sources(c["compound"]["tracks"], s - c.get("source_start_us", 0), (lo, hi), g)
     return out
 
 
@@ -121,7 +125,7 @@ class Mixer:
                 continue
             c = s.clip
             t = t_frame - s.start_us                    # time into the clip
-            g = curves.value(c.get("volume", 1.0), t)
+            g = curves.value(c.get("volume", 1.0), t) * s.gain
             fi, fo, dur = c.get("fade_in_us", 0), c.get("fade_out_us", 0), c["duration_us"]
             if fi and t < fi:
                 g *= max(0.0, t / fi)

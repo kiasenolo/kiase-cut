@@ -1,0 +1,56 @@
+"""Project model: plain JSON-able dicts, saved as *.tesetoa.json.
+
+project  {format, version, width, height, fps, duration_us, tracks: [track]}  tracks[0] is
+         the bottom layer; later tracks draw on top (as in Jianying).
+track    {id, kind: video | text | audio, name, clips: [clip]}
+clip     {id, type: image | video | audio | text | compound, name,
+          start_us, duration_us, source_start_us,
+          media: {path, width, height}                     image / video / audio
+          transform: {x, y, scale, rotation, opacity}       visual clips, Jianying units:
+                     x, y in half-canvas units (y up), clockwise degrees
+          mask: {kind, invert, cx, cy, w, h, rotation, feather} or None
+          text: {content, font_path, size, color, letter_spacing, line_spacing,
+                 italic_deg, styles}                        text clips
+          volume, fade_in_us, fade_out_us                   clips with sound
+          compound: {width, height, tracks}                 compound clips; children use
+                     compound time, clip.source_start_us selects the window}
+Numbers that animate are curve dicts, see curves.py.
+"""
+import json
+import os
+
+FORMAT = "tesetoa"
+VERSION = 1
+
+
+def new(width=1920, height=1080, fps=60.0):
+    return {"format": FORMAT, "version": VERSION, "width": width, "height": height,
+            "fps": fps, "duration_us": 0, "tracks": []}
+
+
+def load(path):
+    with open(path, encoding="utf-8") as fh:
+        p = json.load(fh)
+    if p.get("format") != FORMAT:
+        raise ValueError(f"{path} is not a tesetoa project")
+    return p
+
+
+def save(p, path):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(p, fh, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)          # never leave a half-written project behind
+
+
+def end_us(tracks):
+    return max((c["start_us"] + c["duration_us"] for t in tracks for c in t["clips"]), default=0)
+
+
+def walk_clips(tracks):
+    """Yield every clip, descending into compound clips."""
+    for t in tracks:
+        for c in t["clips"]:
+            yield c
+            if c.get("compound"):
+                yield from walk_clips(c["compound"]["tracks"])

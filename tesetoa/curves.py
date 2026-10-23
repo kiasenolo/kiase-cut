@@ -1,0 +1,61 @@
+"""Animatable parameters.
+
+A parameter is either a plain number or {"keys": [[t, v, ldt, ldv, rdt, rdv], ...]}:
+t is microseconds from the clip's start on the timeline, v the value, and (ldt, ldv) /
+(rdt, rdv) the left/right bezier handle offsets, exactly as Jianying stores them.
+Zero handles give a straight line; before the first and after the last key the value holds.
+"""
+
+US = 1_000_000
+
+
+def is_animated(p):
+    return isinstance(p, dict) and bool(p.get("keys"))
+
+
+def value(p, t):
+    """Value of parameter p at t (us from clip start)."""
+    if not is_animated(p):
+        return p if not isinstance(p, dict) else p.get("value", 0.0)
+    keys = p["keys"]
+    if t <= keys[0][0]:
+        return keys[0][1]
+    if t >= keys[-1][0]:
+        return keys[-1][1]
+    for a, b in zip(keys, keys[1:]):
+        if a[0] <= t <= b[0]:
+            break
+    x0, y0, x3, y3 = a[0], a[1], b[0], b[1]
+    x1, y1 = x0 + a[4], y0 + a[5]
+    x2, y2 = x3 + b[2], y3 + b[3]
+    lo, hi = 0.0, 1.0
+    for _ in range(48):
+        s = (lo + hi) / 2
+        x = (1 - s) ** 3 * x0 + 3 * (1 - s) ** 2 * s * x1 + 3 * (1 - s) * s * s * x2 + s ** 3 * x3
+        lo, hi = (s, hi) if x < t else (lo, s)
+    s = (lo + hi) / 2
+    return (1 - s) ** 3 * y0 + 3 * (1 - s) ** 2 * s * y1 + 3 * (1 - s) * s * s * y2 + s ** 3 * y3
+
+
+def span(p):
+    """(first, last) key time, or None for a constant."""
+    if not is_animated(p):
+        return None
+    return p["keys"][0][0], p["keys"][-1][0]
+
+
+def max_abs(p):
+    if not is_animated(p):
+        return abs(value(p, 0))
+    return max(abs(k[1]) for k in p["keys"])
+
+
+def from_jianying(kf_list, shift_us):
+    """Jianying keyframe_list -> parameter; shift_us moves its time base to the clip start."""
+    keys = []
+    for k in kf_list:
+        lc, rc = k.get("left_control", {}), k.get("right_control", {})
+        keys.append([k.get("time_offset", 0) + shift_us, k["values"][0],
+                     lc.get("x", 0.0), lc.get("y", 0.0), rc.get("x", 0.0), rc.get("y", 0.0)])
+    keys.sort(key=lambda k: k[0])
+    return {"keys": keys}

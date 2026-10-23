@@ -6,9 +6,11 @@ drag its edges to trim. Moves and trims snap to the playhead and to other clips'
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 Ctrl+wheel zooms, wheel scrolls.
 """
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QWidget
+
+from .. import edit
 
 US = 1_000_000
 COLORS = {"video": "#2a7f8f", "image": "#2a7f8f", "compound": "#6b4fa3",
@@ -179,6 +181,15 @@ class Timeline(QWidget):
             p.setPen(QColor("#f2f2f2"))
             label = (c.get("text") or {}).get("content") or c.get("name") or c["type"]
             p.drawText(r.adjusted(4, 0, -2, 0), Qt.AlignVCenter, label.replace("\n", " "))
+        if sel and not ghost:
+            # keyframes of the selected clip, as small diamonds along its bottom edge
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#ffb020"))
+            for k in edit.key_times(c):
+                kx = self._x((start + k) / US)
+                if HEADER_W <= kx <= w:
+                    ky = r.bottom() - 4
+                    p.drawPolygon([QPointF(kx, ky - 4), QPointF(kx + 4, ky), QPointF(kx, ky + 4), QPointF(kx - 4, ky)])
 
     # -- mouse ----------------------------------------------------------------------------------
     def mousePressEvent(self, e):

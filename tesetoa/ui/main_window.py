@@ -97,7 +97,13 @@ class MainWindow(QMainWindow):
         self.preview = Preview()
         self.inspector = Inspector()
         self.inspector.textEdited.connect(self.on_text_edited)
-        self.inspector.transformEdited.connect(self.on_transform_edited)
+        ins = self.inspector
+        ins.paramEdited.connect(self.on_param_edited)
+        ins.keyToggled.connect(self.on_key_toggled)
+        ins.easingChosen.connect(self.on_easing)
+        ins.maskKindChosen.connect(lambda cid, kind: self.apply("遮罩", edit.set_mask, cid, kind))
+        ins.maskInvertChosen.connect(lambda cid, on: self.apply("反轉遮罩", edit.set_mask_invert, cid, on))
+        ins.keyJump.connect(self.jump_key)
         scroll = QScrollArea()
         scroll.setWidget(self.inspector)
         scroll.setWidgetResizable(True)
@@ -381,10 +387,57 @@ class MainWindow(QMainWindow):
         self.apply("修改文字", lambda p: edit.set_text(p, cid, **fields),
                    merge=("text", cid, tuple(sorted(fields))))
 
-    def on_transform_edited(self, cid, key, value):
-        self.apply("調整" + {"x": "位置", "y": "位置", "scale": "縮放", "rotation": "旋轉",
-                             "opacity": "不透明度"}[key],
-                   edit.set_transform, cid, key, value, merge=("tf", cid, key))
+    PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置",
+                    ("transform", "scale"): "縮放", ("transform", "rotation"): "旋轉",
+                    ("transform", "opacity"): "不透明度", ("clip", "volume"): "音量"}
+
+    def clip_time(self, cid):
+        """Playhead time relative to the start of clip cid."""
+        return self.playhead_us() - edit.find(self.proj, cid)[1]["start_us"]
+
+    def on_param_edited(self, cid, group, key, value):
+        label = "調整" + self.PARAM_LABELS.get((group, key), "遮罩")
+        t = self.clip_time(cid)
+        self.apply(label, edit.set_param, cid, group, key, value, t,
+                   merge=("param", cid, group, key, round(t)))
+
+    def on_key_toggled(self, cid, group, key):
+        self.apply("關鍵幀", edit.toggle_key, cid, group, key, self.clip_time(cid))
+
+    def on_easing(self, cid, easing):
+        """Apply a curve preset to every parameter with a keyframe at the playhead."""
+        t = self.clip_time(cid)
+        c = edit.find(self.proj, cid)[1]
+        targets = [(g, k) for g in ("transform", "mask") for k, v in (c.get(g) or {}).items()
+                   if edit.key_at(v, t) is not None]
+        if edit.key_at(c.get("volume"), t) is not None:
+            targets.append(("clip", "volume"))
+
+        def ease_all(proj):
+            done = 0
+            for g, k in targets:
+                p = (edit.find(proj, cid)[1] if g == "clip" else edit.find(proj, cid)[1][g])[k]
+                i = edit.key_at(p, t)
+                if i is not None and i + 1 < len(p["keys"]):
+                    edit.set_easing(proj, cid, g, k, t, easing)
+                    done += 1
+            if not done:
+                raise edit.EditError("需要播放頭上有關鍵幀，而且後面還有下一個")
+
+        self.apply("曲線", ease_all)
+
+    def jump_key(self, direction):
+        c = self.timeline.selected
+        if c is None:
+            return
+        t = self.clip_time(c["id"])
+        times = edit.key_times(c)
+        cands = [k for k in times if (k > t + edit.KEY_TOL_US if direction > 0 else k < t - edit.KEY_TOL_US)]
+        if not cands:
+            self.statusBar().showMessage("沒有更多關鍵幀", 2000)
+            return
+        k = min(cands) if direction > 0 else max(cands)
+        self.seek(round((c["start_us"] + k) / US * self.fps))
 
     def refresh_inspector(self):
         self.inspector.show_clip(self.timeline.selected, self.playhead_us(), self.fps)
@@ -407,7 +460,7 @@ class MainWindow(QMainWindow):
         xml = os.path.join(cache, f"preview{self.xml_slot}.mlt")
         dlg = None
         if self.first_build:
-            dlg = QProgressDialog("準備預覽（第一次需要計算遮罩，可能要幾分鐘）…", None, 0, 0, self)
+            dlg = QProgressDialog("準備預覽（第一次要產生文字圖片）…", None, 0, 0, self)
             dlg.setWindowModality(Qt.WindowModal)
             dlg.setMinimumDuration(400)
         else:

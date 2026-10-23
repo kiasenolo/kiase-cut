@@ -22,7 +22,15 @@ edges to trim; moves and trims snap to the playhead and clip edges. Ctrl+B split
 selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a text,
 Ctrl+Z / Ctrl+Y undo and redo. The inspector edits text (content, size, colour, letter
 and line spacing, italic) and position / scale / rotation / opacity; keyframed values are
-shown at the playhead but locked. Ctrl+wheel zooms the timeline.
+Ctrl+wheel zooms the timeline.
+
+Keyframes and masks: every animatable value in the inspector (position, scale, rotation,
+opacity, volume, mask centre / size / rotation / feather) has a ◆ button that adds or
+removes a keyframe at the playhead; changing a value that already has keyframes edits
+or adds the keyframe at the playhead, as in Jianying. ◀/▶ jump between keyframes, and the
+curve menu sets linear / ease-in / ease-out / ease-in-out from the keyframe at the playhead
+to the next. Pictures, videos and compound clips take line, mirror, circle or rectangle
+masks, optionally inverted; the selected clip shows its keyframes on the timeline.
 
 ## How it works
 
@@ -33,7 +41,7 @@ shown at the playhead but locked. Ctrl+wheel zooms the timeline.
 | `curves.py` | keyframe evaluation (Jianying's bezier handles) |
 | `edit.py` | move / trim / split / delete / text edits with undo |
 | `textlayout.py` | text rendering calibrated to Jianying's layout |
-| `masks.py` | line / circle / rectangle / mirror masks baked to mattes |
+| `masks.py` | line / mirror / circle / rectangle masks as MLT splines (or baked mattes) |
 | `build.py` | project → MLT XML (cached text images and mattes) |
 | `mltlib.py`, `engine.py`, `client.py` | MLT through ctypes, in its own process |
 | `ui/` | PySide6 window, timeline, preview player |
@@ -56,14 +64,16 @@ audio within 1 ms and 0.5 dB.
 ```
 python -m unittest discover tests            # edit operations
 python tools/smoke_edit.py PROJECT.tesetoa.json out/   # drives the real window headless
+python tools/smoke_keys.py PROJECT.tesetoa.json out/   # keyframes and masks, headless
 ```
 
 ## Status
 
-Milestones 1 (import → preview → export) and 2 (move, trim, split, text editing) work.
-An edit reaches the preview in about 3 s. Keyframe and mask editing are next.
-Masks are baked mattes, so the first preview of a project takes a few minutes; later
-loads use the cache.
+Milestones 1 (import → preview → export), 2 (move, trim, split, text editing) and
+3 (keyframes, easing, masks) work. An edit reaches the preview in about 3 s.
+Masks are drawn by MLT's rotoscoping filter before the clip transform, so they follow the
+clip like Jianying's and need no pre-rendering (`build.build(..., mask_mode="baked")`
+still renders the screen-space mattes they were verified against).
 
 Known: on the first frame of a clip that starts exactly on a frame boundary, Jianying can
 show a slightly different picture (max frame difference 4.9 at two such frames).

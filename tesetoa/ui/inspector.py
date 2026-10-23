@@ -1,15 +1,16 @@
-"""Inspector: the selected clip's properties, editable where they are not keyframed.
+"""Inspector: the selected clip's properties, with keyframes and masks (Jianying-style).
 
-Edits are reported through signals after a short pause, so typing or spinning a value
-produces one rebuild instead of one per keystroke. The form is rebuilt only when the
-selection changes; otherwise values are refreshed in place without firing edits.
+Every animatable value has a ◆ button: filled when the playhead sits on one of its
+keyframes. Clicking it adds or removes a keyframe there. Changing a value that already
+has keyframes edits the keyframe at the playhead, or adds one, as Jianying does.
+Edits are reported after a short pause so typing or spinning produces one rebuild.
 """
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QColorDialog, QDoubleSpinBox, QFormLayout, QLabel, QPlainTextEdit,
-                               QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
+                               QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
-from .. import curves
+from .. import curves, edit
 from .timeline import US, timecode
 
 DEBOUNCE_MS = 350
@@ -20,30 +21,51 @@ TEXT_SPINS = (  # key, label, min, max, step, decimals
     ("line_spacing", "行距", -0.5, 5.0, 0.01, 2),
     ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0),
 )
-TRANSFORM_SPINS = (  # key, label, min, max, step, decimals, display factor
-    ("x", "位置 X", -10.0, 10.0, 0.01, 3, 1),
-    ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1),
-    ("scale", "縮放", 0.01, 50.0, 0.01, 3, 1),
-    ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1),
-    ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100),
-)
+# group, key, label, min, max, step, decimals, display factor, default
+PARAMS = {
+    "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
+                  ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
+                  ("scale", "縮放", 0.01, 50.0, 0.01, 3, 1, 1.0),
+                  ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
+                  ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0)),
+    "mask": (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0),
+             ("cy", "中心 Y", -5.0, 5.0, 0.01, 3, 1, 0.0),
+             ("w", "寬", 0.0, 10.0, 0.01, 3, 1, 1.0),
+             ("h", "高", 0.0, 10.0, 0.01, 3, 1, 1.0),
+             ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
+             ("feather", "羽化", 0.0, 1.0, 0.01, 2, 1, 0.0)),
+    "clip": (("volume", "音量 %", 0.0, 1000.0, 1.0, 0, 100, 1.0),),
+}
+MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"))
+EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
+KEY_ON, KEY_OFF = "◆", "◇"
+
+
+def section(title):
+    lbl = QLabel(title)
+    lbl.setObjectName("title")
+    return lbl
 
 
 class Inspector(QWidget):
-    textEdited = Signal(str, dict)            # clip id, {field: value}
-    transformEdited = Signal(str, str, float)  # clip id, field, value
+    textEdited = Signal(str, dict)                  # clip id, {field: value}
+    paramEdited = Signal(str, str, str, float)      # clip id, group, key, value
+    keyToggled = Signal(str, str, str)              # clip id, group, key
+    easingChosen = Signal(str, str)                 # clip id, easing name
+    maskKindChosen = Signal(str, object)            # clip id, kind or None
+    maskInvertChosen = Signal(str, bool)            # clip id, invert
+    keyJump = Signal(int)                           # -1 previous keyframe, +1 next
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumWidth(280)
+        self.setMinimumWidth(300)
         lay = QVBoxLayout(self)
-        title = QLabel("屬性")
-        title.setObjectName("title")
-        lay.addWidget(title)
+        lay.addWidget(section("屬性"))
         self.body = QWidget()
         lay.addWidget(self.body)
         lay.addStretch()
         self.clip_id = None
+        self.shape = None                 # what the form was built for
         self.widgets = {}
         self.pending = {}
         self.timer = QTimer(self, singleShot=True, interval=DEBOUNCE_MS)
@@ -65,11 +87,12 @@ class Inspector(QWidget):
             self.widgets[key] = QLabel()
             form.addRow(key, self.widgets[key])
         if c.get("text"):
-            edit = QPlainTextEdit()
-            edit.setFixedHeight(80)
-            edit.textChanged.connect(lambda: self._queue("text", "content", edit.toPlainText()))
-            self.widgets["content"] = edit
-            form.addRow("文字", edit)
+            form.addRow(section("文字"))
+            edit_ = QPlainTextEdit()
+            edit_.setFixedHeight(80)
+            edit_.textChanged.connect(lambda: self._queue("text", "content", edit_.toPlainText()))
+            self.widgets["content"] = edit_
+            form.addRow("內容", edit_)
             color = QPushButton()
             color.clicked.connect(self._pick_color)
             self.widgets["color"] = color
@@ -77,11 +100,46 @@ class Inspector(QWidget):
             for key, label, lo, hi, step, dec in TEXT_SPINS:
                 form.addRow(label, self._spin(("text", key), lo, hi, step, dec))
         if c.get("transform") is not None:
-            for key, label, lo, hi, step, dec, k in TRANSFORM_SPINS:
-                form.addRow(label, self._spin(("transform", key), lo, hi, step, dec, k))
-        for key in ("遮罩", "音量", "關鍵幀"):
-            self.widgets[key] = QLabel()
-            form.addRow(key, self.widgets[key])
+            form.addRow(section("畫面"))
+            for row in PARAMS["transform"]:
+                form.addRow(row[1], self._param_row("transform", *row))
+        if c["type"] in ("image", "video", "compound"):
+            form.addRow(section("遮罩"))
+            kind = QComboBox()
+            for name, k in MASK_NAMES:
+                kind.addItem(name, k)
+            kind.currentIndexChanged.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
+            self.widgets["mask_kind"] = kind
+            form.addRow("類型", kind)
+            if c.get("mask"):
+                inv = QCheckBox("反轉")
+                inv.toggled.connect(lambda on: self._emit_now(self.maskInvertChosen, on))
+                self.widgets["mask_invert"] = inv
+                form.addRow("", inv)
+                for row in PARAMS["mask"]:
+                    if c["mask"]["kind"] == "line" and row[0] in ("w", "h"):
+                        continue
+                    form.addRow(row[1], self._param_row("mask", *row))
+        if "volume" in c:
+            form.addRow(section("聲音"))
+            form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
+        form.addRow(section("關鍵幀"))
+        nav = QHBoxLayout()
+        for label, d in (("◀ 上一個", -1), ("下一個 ▶", 1)):
+            b = QPushButton(label)
+            b.clicked.connect(lambda _=False, d=d: self.keyJump.emit(d))
+            nav.addWidget(b)
+        form.addRow(nav)
+        ease = QComboBox()
+        ease.addItem("—", None)
+        for name, k in EASING_NAMES:
+            ease.addItem(name, k)
+        ease.addItem("自訂", "custom")
+        ease.activated.connect(lambda i: ease.itemData(i) not in (None, "custom") and
+                               self._emit_now(self.easingChosen, ease.itemData(i)))
+        ease.setToolTip("從播放頭上的關鍵幀到下一個關鍵幀之間的速度曲線")
+        self.widgets["easing"] = ease
+        form.addRow("曲線", ease)
 
     def _spin(self, key, lo, hi, step, dec, factor=1):
         s = QDoubleSpinBox()
@@ -93,12 +151,28 @@ class Inspector(QWidget):
         self.widgets[key] = s
         return s
 
+    def _param_row(self, group, key, _label, lo, hi, step, dec, factor, _default):
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self._spin((group, key), lo, hi, step, dec, factor), 1)
+        b = QPushButton(KEY_OFF)
+        b.setFixedWidth(30)
+        b.setToolTip("在播放頭新增／刪除關鍵幀")
+        b.clicked.connect(lambda: self._emit_now(self.keyToggled, group, key))
+        self.widgets[("key", group, key)] = b
+        lay.addWidget(b)
+        return row
+
     # -- refresh --------------------------------------------------------------------------------
     def show_clip(self, c, t_us, fps):
         """Show clip c; t_us is the playhead time on the timeline."""
-        if c is None or c["id"] != self.clip_id:
+        shape = None if c is None else (c["id"], c["type"], bool(c.get("text")),
+                                         (c.get("mask") or {}).get("kind"), "volume" in c)
+        if shape != self.shape:
             self._flush()
             self.clip_id = c["id"] if c else None
+            self.shape = shape
             self._build(c)
         if c is None:
             return
@@ -118,35 +192,61 @@ class Inspector(QWidget):
             w["color"].setText(f"#{r:02x}{g:02x}{b:02x}")
             w["color"].setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
             for key, *_ in TEXT_SPINS:
-                self._set(("text", key), tx.get(key, 0.0), False)
-        keyed = []
-        if c.get("transform") is not None:
-            tf = c["transform"]
-            for key, _l, _lo, _hi, _st, _d, k in TRANSFORM_SPINS:
-                default = 1.0 if key in ("scale", "opacity") else 0.0
-                anim = curves.is_animated(tf.get(key))
-                if anim:
-                    keyed.append(key)
-                self._set(("transform", key), curves.value(tf.get(key, default), t) * k, anim)
-        w["遮罩"].setText((c["mask"]["kind"] + ("（反轉）" if c["mask"].get("invert") else ""))
-                          if c.get("mask") else "—")
-        w["音量"].setText(f"{curves.value(c['volume'], t):.2f}" if "volume" in c else "—")
-        w["關鍵幀"].setText("、".join(keyed) if keyed else "—")
+                self._set(("text", key), tx.get(key, 0.0))
+        inside = 0 <= t <= c["duration_us"]
+        easings = set()
+        for group, rows in PARAMS.items():
+            holder = c if group == "clip" else c.get(group)
+            if holder is None:
+                continue
+            for key, _l, _lo, _hi, _st, _d, factor, default in rows:
+                if (group, key) not in w:
+                    continue
+                p = holder.get(key, default)
+                self._set((group, key), curves.value(p, t) * factor)
+                on = edit.key_at(p, t) is not None
+                btn = w[("key", group, key)]
+                btn.setText(KEY_ON if on else KEY_OFF)
+                btn.setStyleSheet("color: #ffb020;" if on else
+                                  ("color: #8fd9d3;" if curves.is_animated(p) else ""))
+                btn.setEnabled(inside)
+                if on:
+                    easings.add(edit.easing_at(p, t))
+        if "mask_kind" in w:
+            kind = (c.get("mask") or {}).get("kind")
+            self._set_combo(w["mask_kind"], kind)
+        if "mask_invert" in w:
+            w["mask_invert"].blockSignals(True)
+            w["mask_invert"].setChecked(bool(c["mask"].get("invert")))
+            w["mask_invert"].blockSignals(False)
+        easings.discard(None)
+        ease = w["easing"]
+        ease.setEnabled(bool(easings))
+        self._set_combo(ease, easings.pop() if len(easings) == 1 else (None if not easings else "custom"))
 
-    def _set(self, key, value, locked):
+    @staticmethod
+    def _set_combo(combo, data):
+        combo.blockSignals(True)
+        combo.setCurrentIndex(max(0, combo.findData(data)))
+        combo.blockSignals(False)
+
+    def _set(self, key, value):
         s = self.widgets.get(key)
-        if s is None or (s.hasFocus() and key not in self.pending):
+        if s is None or (s.hasFocus() and key in self.pending):
             return
         s.blockSignals(True)
         s.setValue(value)
         s.blockSignals(False)
-        s.setEnabled(not locked)
-        s.setToolTip("有關鍵幀：數值隨時間變化，目前不能直接修改" if locked else "")
 
     # -- edits ----------------------------------------------------------------------------------
     def _queue(self, group, key, value):
         self.pending[(group, key)] = value
         self.timer.start()
+
+    def _emit_now(self, signal, *args):
+        self._flush()
+        if self.clip_id is not None:
+            signal.emit(self.clip_id, *args)
 
     def _pick_color(self):
         cur = QColor(self.widgets["color"].text())
@@ -165,5 +265,5 @@ class Inspector(QWidget):
         if text:
             self.textEdited.emit(self.clip_id, text)
         for (g, k), v in pending.items():
-            if g == "transform":
-                self.transformEdited.emit(self.clip_id, k, float(v))
+            if g != "text":
+                self.paramEdited.emit(self.clip_id, g, k, float(v))

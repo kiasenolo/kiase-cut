@@ -68,3 +68,45 @@ class Rasterizer:
     def animated(mask, transform):
         return any(curves.is_animated(mask.get(k)) for k in ("cx", "cy", "w", "h", "rotation", "feather")) \
             or any(curves.is_animated(transform.get(k)) for k in ("x", "y", "scale", "rotation"))
+
+
+# -- native masks: the same shapes as bezier splines for MLT's rotoscoping filter ----------
+K_CIRCLE = 0.5522847498          # bezier handle length for a quarter circle
+
+
+def _shape(kind, w, h, big):
+    """Bezier points [(h1, p, h2)] in mask space (origin at the mask centre, y up), covering
+    the visible area: line keeps y >= 0, mirror |y| <= h/2."""
+    def corners(x0, y0, x1, y1):
+        return [((x, y), (x, y), (x, y)) for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+
+    if kind == "line":
+        return corners(-big, 0, big, big)
+    if kind == "mirror":
+        return corners(-big, -h / 2, big, h / 2)
+    if kind == "rectangle":
+        return corners(-w / 2, -h / 2, w / 2, h / 2)
+    if kind == "circle":
+        rx, ry = w / 2, h / 2
+        kx, ky = K_CIRCLE * rx, K_CIRCLE * ry
+        return [((rx, -ky), (rx, 0), (rx, ky)), ((kx, ry), (0, ry), (-kx, ry)),
+                ((-rx, ky), (-rx, 0), (-rx, -ky)), ((-kx, -ry), (0, -ry), (kx, -ry))]
+    raise ValueError(f"unsupported mask {kind!r}")
+
+
+def spline(mask, t, disp_w, disp_h, frame_w, frame_h):
+    """Mask at t as a rotoscoping spline in the clip's own frame (0-1 coordinates).
+    The filter runs before the clip transform, so this is material space, as in Jianying."""
+    v = lambda k, d: curves.value(mask.get(k, d), t)
+    cx, cy = v("cx", 0.0) * disp_w / 2, v("cy", 0.0) * disp_h / 2
+    b = math.radians(v("rotation", 0.0))
+    cb, sb = math.cos(b), math.sin(b)
+    big = 8 * (frame_w + frame_h)
+    pts = _shape(mask["kind"], v("w", 1.0) * disp_w, v("h", 1.0) * disp_h, big)
+
+    def to_frame(q):
+        # rotate clockwise by b (y up), move to the centre, then to 0-1 image coordinates
+        x, y = q[0] * cb + q[1] * sb, -q[0] * sb + q[1] * cb
+        return [0.5 + (cx + x) / frame_w, 0.5 - (cy + y) / frame_h]
+
+    return [[to_frame(h1), to_frame(p), to_frame(h2)] for h1, p, h2 in pts]

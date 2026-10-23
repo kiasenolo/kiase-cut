@@ -129,11 +129,63 @@ class EditTests(unittest.TestCase):
         h.undo()
         self.assertEqual(edit.find(p, "c1")[1]["transform"]["x"], 0.0)
 
-    def test_set_transform_refuses_keyframed(self):
+    def test_keyframed_value_edits_or_adds_key_at_playhead(self):
         p = proj()
-        animated(edit.find(p, "c1")[1])
+        c1 = animated(edit.find(p, "c1")[1])
         with self.assertRaises(edit.EditError):
-            edit.set_transform(p, "c1", "x", 0.3)
+            edit.set_transform(p, "c1", "x", 0.3)          # needs a time
+        edit.set_transform(p, "c1", "x", 0.5, t=S)          # existing key at 1 s
+        self.assertEqual(c1["transform"]["x"]["keys"][1][1], 0.5)
+        edit.set_transform(p, "c1", "x", 0.2, t=1_500_000)  # no key there: adds one
+        self.assertEqual([k[0] for k in c1["transform"]["x"]["keys"]], [0, S, 1_500_000])
+        self.assertAlmostEqual(curves.value(c1["transform"]["x"], 1_500_000), 0.2)
+
+    def test_toggle_key(self):
+        p = proj()
+        c1 = edit.find(p, "c1")[1]
+        edit.toggle_key(p, "c1", "transform", "y", 500_000)
+        self.assertTrue(curves.is_animated(c1["transform"]["y"]))
+        edit.set_transform(p, "c1", "y", 0.4, t=1_500_000)
+        self.assertAlmostEqual(curves.value(c1["transform"]["y"], 1_000_000), 0.2)  # linear
+        edit.toggle_key(p, "c1", "transform", "y", 500_000)
+        edit.toggle_key(p, "c1", "transform", "y", 1_500_000)
+        self.assertEqual(c1["transform"]["y"], 0.4)          # back to a plain value
+        self.assertEqual(edit.key_times(c1), [])
+
+    def test_easing_presets(self):
+        p = proj()
+        c1 = edit.find(p, "c1")[1]
+        edit.toggle_key(p, "c1", "transform", "opacity", 0)
+        edit.set_transform(p, "c1", "opacity", 0.0, t=S)
+        x = c1["transform"]["opacity"]
+        mid = lambda: curves.value(x, 250_000)
+        self.assertAlmostEqual(mid(), 0.75)
+        edit.set_easing(p, "c1", "transform", "opacity", 0, "ease_in")
+        self.assertGreater(mid(), 0.75)                       # starts slowly
+        self.assertEqual(edit.easing_at(x, 0), "ease_in")
+        edit.set_easing(p, "c1", "transform", "opacity", 0, "ease_out")
+        self.assertLess(mid(), 0.75)
+        edit.set_easing(p, "c1", "transform", "opacity", 0, "linear")
+        self.assertAlmostEqual(mid(), 0.75)
+
+    def test_masks(self):
+        p = proj()
+        c1 = edit.find(p, "c1")[1]
+        edit.set_mask(p, "c1", "circle")
+        m = c1["mask"]
+        self.assertAlmostEqual(m["w"] * 1920, m["h"] * 1080)  # round on a 16:9 picture
+        edit.set_param(p, "c1", "mask", "cx", 0.3)
+        edit.set_mask(p, "c1", "rectangle")                     # keeps the position
+        self.assertEqual(c1["mask"]["cx"], 0.3)
+        edit.toggle_key(p, "c1", "mask", "w", 0)
+        edit.set_param(p, "c1", "mask", "w", 0.9, t=S)
+        self.assertEqual(edit.key_times(c1), [0, S])
+        edit.set_mask_invert(p, "c1", True)
+        self.assertTrue(c1["mask"]["invert"])
+        edit.set_mask(p, "c1", None)
+        self.assertNotIn("mask", c1)
+        with self.assertRaises(edit.EditError):
+            edit.set_mask(p, "c3", "line")                      # audio
 
 
 if __name__ == "__main__":

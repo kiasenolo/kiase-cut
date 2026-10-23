@@ -57,8 +57,11 @@ def media_start(p):
 
 
 class Builder:
-    def __init__(self, proj, cache_dir):
+    def __init__(self, proj, cache_dir, mask_mode="native"):
+        """mask_mode: "native" draws masks with MLT's rotoscoping filter (instant, follows
+        the clip like Jianying's); "baked" rasterises screen-space mattes (reference)."""
         self.p = proj
+        self.mask_mode = mask_mode
         self.W, self.H, self.fps = proj["width"], proj["height"], proj["fps"]
         self.cache = os.path.abspath(cache_dir)
         for sub in ("text", "matte"):
@@ -86,7 +89,7 @@ class Builder:
     def filt(self, service, d):
         return f'<filter>{self.props({"mlt_service": service, **d})}</filter>'
 
-    def anim(self, params, f0, f1, fn, tol, clip_start_us, off=0):
+    def anim(self, params, f0, f1, fn, tol, clip_start_us, off=0, digits=4):
         """Sample fn(t_rel) -> tuple over frames [f0, f1) into an MLT animation string.
 
         Keys are thinned (Ramer-Douglas-Peucker) to those MLT's linear interpolation needs
@@ -94,7 +97,7 @@ class Builder:
         ~30 ms a frame re-reading a 2000-key curve."""
         spans = [curves.span(p) for p in params if curves.span(p)]
         t_of = lambda f: self.us(f) - clip_start_us
-        fmt = lambda v: " ".join(f"{x:.4f}" for x in v)
+        fmt = lambda v: " ".join(f"{x:.{digits}f}" for x in v)
         if not spans:
             return fmt(fn(t_of(f0)))
         a = max(f0, math.floor(self.fr(clip_start_us + min(s[0] for s in spans))))
@@ -178,18 +181,43 @@ class Builder:
             o = min(1.0, max(0.0, curves.value(op, t)))
             return px, py, w, h, o
 
-        out = self.filt("qtblend", {
+        out = ""
+        if c.get("mask") and self.mask_mode == "native":
+            out += self.native_mask(c["mask"], disp or (W, H), f0, f1, clip_start_us, off)
+        out += self.filt("qtblend", {
             "rect": self.anim([x, y, sc, scy, op], f0, f1, rect, (0.02, 0.02, 0.02, 0.02, 0.0005),
                               clip_start_us, off),
             "rotation": self.anim([rot], f0, f1, lambda t: (curves.value(rot, t),), 0.005,
                                   clip_start_us, off),
             "rotate_center": 1, "compositing": 0, "distort": 1, "kdenlive_id": "qtblend"})
-        if c.get("mask"):
+        if c.get("mask") and self.mask_mode == "baked":
             res = self.matte(c["mask"], tf, disp or (W, H), clip_start_us, f0, f1)
             out += self.filt("shape", {"resource": res.replace("\\", "/"), "use_luminance": 0,
                                        "use_mix": 0, "alpha_operation": "minimum",
                                        "audio_match": 0, "kdenlive_id": "shape"})
         return out
+
+    def native_mask(self, mask, disp, f0, f1, clip_start_us, off=0):
+        """rotoscoping effect, placed before qtblend so the mask lives in material space."""
+        W, H = self.W, self.H
+        spl = lambda t: masks.spline(mask, t, disp[0], disp[1], W, H)
+        params = [mask.get(k) for k in ("cx", "cy", "w", "h", "rotation")]
+        if not any(curves.is_animated(p) for p in params):
+            data = json.dumps(spl(self.us(f0) - clip_start_us))
+        else:
+            flat = lambda t: tuple(c for pt in spl(t) for xy in pt for c in xy)
+            tol = 0.05 / max(W, H)            # 0.05 px
+            keys = self.anim(params, f0, f1, flat, tol, clip_start_us, off, digits=7).split(";")
+            frames = {}
+            for k in keys:
+                pos, vals = k.split("=")
+                v = [float(x) for x in vals.split()]
+                frames[pos] = [[v[i:i + 2], v[i + 2:i + 4], v[i + 4:i + 6]] for i in range(0, len(v), 6)]
+            data = json.dumps(frames)
+        return self.filt("rotoscoping", {
+            "spline": data, "mode": "alpha", "alpha_operation": "min", "invert": int(bool(mask.get("invert"))),
+            "feather": round(curves.value(mask.get("feather", 0.0), 0) * min(disp) / 2),
+            "feather_passes": 1, "kdenlive_id": "rotoscoping"})
 
     def audio(self, c, f0, f1, clip_start_us, src_in):
         vol = c.get("volume", 1.0)
@@ -332,9 +360,9 @@ class Builder:
                 f'{profile}\n' + "\n".join(self.xml) + "\n</mlt>\n")
 
 
-def build(proj, cache_dir, out_path):
+def build(proj, cache_dir, out_path, mask_mode="native"):
     """Write the MLT XML for proj to out_path; returns out_path."""
-    doc = Builder(proj, cache_dir).document()
+    doc = Builder(proj, cache_dir, mask_mode).document()
     tmp = out_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(doc)

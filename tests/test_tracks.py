@@ -102,3 +102,22 @@ class TrackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MaskToggleTests(unittest.TestCase):
+    def test_enable_disable(self):
+        p = proj()
+        edit.set_mask_enabled(p, "vid", True)                     # no mask yet: a rectangle
+        _, c = edit.find(p, "vid")
+        self.assertEqual(c["mask"]["kind"], "rectangle")
+        b = build.Builder(p, ".")
+        self.assertIn("rotoscoping", b.visual(c, 0, 60, 0, None, (1920, 1080)))
+        edit.set_param(p, "vid", "mask", "w", 0.3)
+        edit.set_mask_enabled(p, "vid", False)
+        self.assertIsNone(project.active_mask(c))
+        self.assertNotIn("rotoscoping", b.visual(c, 0, 60, 0, None, (1920, 1080)))
+        edit.set_mask(p, "vid", "circle")                         # a new shape stays off
+        self.assertIs(c["mask"]["enabled"], False)
+        edit.set_mask_enabled(p, "vid", True)
+        self.assertEqual((c["mask"]["kind"], c["mask"]["w"]), ("circle", 0.3))
+        self.assertNotIn("enabled", c["mask"])

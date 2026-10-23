@@ -11,7 +11,8 @@ clip     {id, type: image | video | audio | text | compound, name,
           media: {path, width, height, duration_us}         image / video / audio
           transform: {x, y, scale, rotation, opacity}       visual clips, Jianying units:
                      x, y in half-canvas units (y up), clockwise degrees
-          mask: {kind, invert, cx, cy, w, h, rotation, feather} or None
+          mask: {kind, invert, cx, cy, w, h, rotation, feather, enabled} or None;
+                a mask with enabled: false keeps its settings but cuts nothing
           text: {content, font_path, size, color, letter_spacing, line_spacing,
                  italic_deg, styles}                        text clips
           volume, fade_in_us, fade_out_us                   clips with sound
@@ -74,6 +75,12 @@ def sounds(track, tracks):
     if any(t.get("solo") for t in tracks) and not track.get("solo"):
         return 0.0
     return float(track.get("gain", 1.0))
+
+
+def active_mask(c):
+    """The clip's mask if it is switched on, else None."""
+    m = c.get("mask")
+    return m if m and m.get("enabled", True) else None
 
 
 def visible(track):

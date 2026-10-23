@@ -496,6 +496,23 @@ def set_mask(proj, clip_id, kind):
                  "w": old.get("w", size[0]) if kind != "line" else 1.0,
                  "h": old.get("h", size[1]) if kind != "line" else 1.0,
                  "rotation": old.get("rotation", 0.0), "feather": old.get("feather", 0.0)}
+    if old.get("enabled") is False:
+        c["mask"]["enabled"] = False
+    return c
+
+
+def set_mask_enabled(proj, clip_id, on):
+    """Switch a clip's mask on or off, keeping its settings; switching on a clip without
+    a mask gives it a rectangle."""
+    _, c = find(proj, clip_id)
+    if not c.get("mask"):
+        if not on:
+            return c
+        set_mask(proj, clip_id, "rectangle")
+    if on:
+        c["mask"].pop("enabled", None)
+    else:
+        c["mask"]["enabled"] = False
     return c
 
 

@@ -220,7 +220,7 @@ class Builder:
             return px, py, w, h, o
 
         out = ""
-        if c.get("mask") and self.mask_mode == "native":
+        if project.active_mask(c) and self.mask_mode == "native":
             out += self.native_mask(c["mask"], disp or (W, H), f0, f1, clip_start_us, off)
         out += self.filt("qtblend", {
             "rect": self.anim([x, y, sc, scy, op, size], f0, f1, rect, (0.02, 0.02, 0.02, 0.02, 0.0005),
@@ -228,7 +228,7 @@ class Builder:
             "rotation": self.anim([rot], f0, f1, lambda t: (curves.value(rot, t),), 0.005,
                                   clip_start_us, off),
             "rotate_center": 1, "compositing": 0, "distort": 1, "kdenlive_id": "qtblend"})
-        if c.get("mask") and self.mask_mode == "baked":
+        if project.active_mask(c) and self.mask_mode == "baked":
             res = self.matte(c["mask"], tf, disp or (W, H), clip_start_us, f0, f1)
             out += self.filt("shape", {"resource": res.replace("\\", "/"), "use_luminance": 0,
                                        "use_mix": 0, "alpha_operation": "minimum",

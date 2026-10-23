@@ -131,8 +131,19 @@ class MainWindow(QMainWindow):
         ins.paramEdited.connect(self.on_param_edited)
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
-        ins.maskKindChosen.connect(self.on_mask_kind)
-        ins.maskInvertChosen.connect(lambda ids, on: self.apply_each("反轉遮罩", edit.set_mask_invert, ids, on))
+        self.mask_panel = Inspector(part="mask")
+        mp = self.mask_panel
+        mp.paramEdited.connect(self.on_param_edited)
+        mp.keyToggled.connect(self.on_key_toggled)
+        mp.easingChosen.connect(self.on_easing)
+        mp.maskKindChosen.connect(self.on_mask_kind)
+        mp.maskInvertChosen.connect(lambda ids, on: self.apply_each("反轉遮罩", edit.set_mask_invert, ids, on))
+        mp.maskEnabledChosen.connect(
+            lambda ids, on: self.apply_each("啟用遮罩" if on else "停用遮罩", edit.set_mask_enabled, ids, on))
+        mp.keyJump.connect(self.jump_key)
+        mask_scroll = QScrollArea()
+        mask_scroll.setWidget(mp)
+        mask_scroll.setWidgetResizable(True)
         ins.keyJump.connect(self.jump_key)
         scroll = QScrollArea()
         scroll.setWidget(self.inspector)
@@ -144,15 +155,14 @@ class MainWindow(QMainWindow):
         cv.addAtPlayhead.connect(self.add_key_at_playhead)
         self.side = QTabWidget()
         self.side.addTab(scroll, "屬性")
+        self.side.addTab(mask_scroll, "遮罩")
+        # the 遮罩 tab turns the preview into the mask editor
+        self.side.currentChanged.connect(lambda _: self.preview.set_mask_mode(self.side.currentWidget() is mask_scroll))
         self.side.addTab(cv, "關鍵幀曲線")
 
         self.play_btn = QPushButton("▶")
         self.play_btn.setFixedWidth(48)
         self.play_btn.clicked.connect(self.toggle_play)
-        self.mask_btn = QPushButton("編輯遮罩")
-        self.mask_btn.setCheckable(True)
-        self.mask_btn.setToolTip("在預覽上拖曳遮罩：中間移動、方塊調大小、圓點旋轉、箭頭羽化")
-        self.mask_btn.toggled.connect(lambda on: self.preview.set_mask_mode(on))
         full_btn = QPushButton("全螢幕")
         full_btn.setToolTip("F，或在預覽上按兩下")
         full_btn.clicked.connect(self.toggle_fullscreen)
@@ -163,7 +173,6 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.time_lbl)
         bar.addWidget(self.play_btn)
         bar.addStretch()
-        bar.addWidget(self.mask_btn)
         bar.addWidget(full_btn)
         center = QWidget()
         cl = QVBoxLayout(center)
@@ -656,8 +665,13 @@ class MainWindow(QMainWindow):
                         (c if g == "clip" else c.setdefault(g, {}))[k] = {"keys": keys} if keys else keep
         self.player.worker.set_view(view, self.cache_dir())
 
-    def on_easing(self, ids, easing):
-        """Apply a curve preset to every parameter with a keyframe at the playhead."""
+    def show_selection_props(self):
+        clips, t = self.timeline.selected_clips_primary_first(), self.playhead_us()
+        self.inspector.show_clips(clips, t, self.fps)
+        self.mask_panel.show_clips(clips, t, self.fps)
+
+    def on_easing(self, ids, easing, groups):
+        """Apply a curve preset to every parameter (of these groups) with a keyframe at the playhead."""
         times = {cid: self.clip_time(cid) for cid in ids}
 
         def ease_all(level):
@@ -670,7 +684,7 @@ class MainWindow(QMainWindow):
         def ease_clip(level, cid, t):
             c = edit.find(level, cid)[1]
             done = 0
-            for g in ("transform", "mask", "text", "clip"):
+            for g in groups:
                 holder = c if g == "clip" else (c.get(g) or {})
                 for k, p in list(holder.items()):
                     if g == "clip" and k != "volume":
@@ -697,9 +711,7 @@ class MainWindow(QMainWindow):
         self.seek(round((c["start_us"] + k) / US * self.fps))
 
     def on_mask_kind(self, ids, kind):
-        self.apply_each("遮罩", edit.set_mask, ids, kind)
-        if kind:
-            self.mask_btn.setChecked(True)          # a new mask is edited on the canvas
+        self.apply_each("遮罩" if kind else "移除遮罩", edit.set_mask, ids, kind)
 
     def on_preview_params(self, cid, group, values):
         """A drag of the clip or its mask on the canvas: one edit (keyframed values get or
@@ -828,14 +840,10 @@ class MainWindow(QMainWindow):
     # -- inspector / preview overlay --------------------------------------------------------------
     def refresh_inspector(self):
         sel = self.timeline.selected
-        self.inspector.show_clips(self.timeline.selected_clips_primary_first(), self.playhead_us(), self.fps)
+        self.show_selection_props()
         self.curves.set_clip(sel, self.playhead_us() - sel["start_us"] if sel else 0, self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None)
-        has_mask = bool(sel and sel.get("mask"))
-        self.mask_btn.setEnabled(has_mask)
-        if not has_mask and self.mask_btn.isChecked():
-            self.mask_btn.setChecked(False)
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------
@@ -896,7 +904,7 @@ class MainWindow(QMainWindow):
                               f"{timecode(self.length / self.fps * US, self.fps)}")
         sel = self.timeline.selected
         if sel is not None:
-            self.inspector.show_clips(self.timeline.selected_clips_primary_first(), self.playhead_us(), self.fps)
+            self.show_selection_props()
             self.curves.set_time(sel, self.playhead_us() - sel["start_us"])
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None)

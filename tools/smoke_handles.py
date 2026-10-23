@@ -134,9 +134,28 @@ def step_transform():
     check(f"zooming back in fits the canvas again ({pv.zoom:.2f})", pv.zoom == 1.0 and pv.pan == QPointF(0, 0))
 
     # a rectangle mask, edited on the canvas of the turned and scaled picture
-    win.inspector.maskKindChosen.emit(["c2"], "rectangle")
+    # the 遮罩 tab: the preview edits masks only
+    mp = win.mask_panel
+    win.side.setCurrentWidget(mp.parentWidget().parentWidget())
     app.processEvents()
-    check("choosing a mask turns on 編輯遮罩", win.mask_btn.isChecked() and pv.mask_mode)
+    check("the 遮罩 tab turns the preview into the mask editor", pv.mask_mode)
+    tf0 = dict(clip()["transform"])
+    box = pv.selected_box()
+    drag(QPointF(box.cx, box.cy), QPointF(box.cx + 100, box.cy + 40))
+    drag(box.corners()[2], QPointF(box.cx, box.cy))
+    check("there the clip itself cannot be moved or scaled", clip()["transform"] == tf0)
+    mp.widgets["mask_on"].click()                    # no mask yet: switching on adds a rectangle
+    app.processEvents()
+    check("啟用遮罩 on a clip without one gives it a rectangle",
+          (clip().get("mask") or {}).get("kind") == "rectangle" and "mask_invert" in mp.widgets)
+    mp.widgets["mask_on"].click()
+    app.processEvents()
+    m = clip()["mask"]
+    check("switching it off keeps the settings, and preview / export skip it",
+          m.get("enabled") is False and m["kind"] == "rectangle" and project.active_mask(clip()) is None)
+    mp.widgets["mask_on"].click()
+    app.processEvents()
+    check("and back on", project.active_mask(clip()) is not None)
     QTimer.singleShot(300, step_mask)
 
 
@@ -181,7 +200,14 @@ def step_mask():
     finish()
 
 
+def step_back():
+    win.side.setCurrentIndex(0)
+    app.processEvents()
+    check("back on 屬性 the transform handles return", not pv.mask_mode)
+
+
 def finish():
+    step_back()
     while win.history.undo_stack:
         win.do_undo()
     check("undo restores the project", json.dumps(win.proj, sort_keys=True) == original)

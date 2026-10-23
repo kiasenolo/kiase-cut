@@ -5,6 +5,9 @@ keyframes. Clicking it adds or removes a keyframe there. Changing a value that a
 has keyframes edits the keyframe at the playhead, or adds one, as Jianying does.
 Edits are reported after a short pause so typing or spinning produces one rebuild.
 
+One class serves two tabs: part="main" (type, text, picture, sound) and part="mask" (the
+mask: on / off, shape, invert and its values), each with its own keyframe controls.
+
 With several clips selected the form shows what they have in common: a value they share
 is shown, one that differs shows "--", and typing a value sets it on all of them.
 """
@@ -13,7 +16,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit
+from .. import curves, edit, project
 from .timeline import US, timecode
 
 DEBOUNCE_MS = 350
@@ -105,16 +108,19 @@ class Inspector(QWidget):
     textEdited = Signal(list, dict)                 # clip ids, {field: value}
     paramEdited = Signal(list, str, str, object)    # clip ids, group, key, value (number or colour)
     keyToggled = Signal(list, str, str)             # clip ids, group, key
-    easingChosen = Signal(list, str)                # clip ids, easing name
+    easingChosen = Signal(list, str, list)          # clip ids, easing name, parameter groups
     maskKindChosen = Signal(list, object)           # clip ids, kind or None
     maskInvertChosen = Signal(list, bool)           # clip ids, invert
+    maskEnabledChosen = Signal(list, bool)          # clip ids, on
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, part="main"):
         super().__init__(parent)
+        self.part = part
+        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip"]
         self.setMinimumWidth(300)
         lay = QVBoxLayout(self)
-        lay.addWidget(section("屬性"))
+        lay.addWidget(section("遮罩" if part == "mask" else "屬性"))
         self.body = QWidget()
         lay.addWidget(self.body)
         lay.addStretch()
@@ -142,6 +148,9 @@ class Inspector(QWidget):
         if c is None:
             form.addRow(QLabel("在時間軸上選一個片段"))
             return
+        if self.part == "mask":
+            self._build_mask(form, c)
+            return
         for key in ("類型", "開始", "長度"):
             self.widgets[key] = QLabel()
             form.addRow(key, self.widgets[key])
@@ -168,28 +177,59 @@ class Inspector(QWidget):
             form.addRow(section("畫面"))
             for row in PARAMS["transform"]:
                 form.addRow(row[1], self._param_row("transform", *row))
-        if c["type"] in ("image", "video", "compound"):
-            form.addRow(section("遮罩"))
-            kind = ComboBox()
-            kind.setPlaceholderText("--")
-            for name, k in MASK_NAMES:
-                kind.addItem(name, k)
-            kind.currentIndexChanged.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
-            self.widgets["mask_kind"] = kind
-            form.addRow("類型", kind)
-            if c.get("mask"):
-                inv = QCheckBox("反轉")
-                inv.setTristate(False)
-                inv.toggled.connect(lambda on: self._emit_now(self.maskInvertChosen, on))
-                self.widgets["mask_invert"] = inv
-                form.addRow("", inv)
-                for row in PARAMS["mask"]:
-                    if c["mask"]["kind"] == "line" and row[0] in ("w", "h"):
-                        continue
-                    form.addRow(row[1], self._param_row("mask", *row))
         if "volume" in c:
             form.addRow(section("聲音"))
             form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
+        self._key_section(form)
+
+    def _build_mask(self, form, c):
+        if c["type"] not in ("image", "video", "compound"):
+            note = QLabel("只有圖片、影片和複合片段可以加遮罩")
+            note.setStyleSheet("color: #9a9aa0;")
+            form.addRow(note)
+            return
+        on = QCheckBox("啟用遮罩")
+        on.setToolTip("關掉時保留遮罩的設定，只是不裁切")
+        on.toggled.connect(lambda v: self._emit_now(self.maskEnabledChosen, v))
+        self.widgets["mask_on"] = on
+        form.addRow(on)
+        row = QHBoxLayout()
+        kind = ComboBox()
+        kind.setPlaceholderText("選擇形狀…")
+        for name, k in MASK_NAMES:
+            if k is not None:
+                kind.addItem(name, k)
+        kind.activated.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
+        self.widgets["mask_kind"] = kind
+        row.addWidget(kind, 1)
+        if c.get("mask"):
+            drop = QPushButton("移除")
+            drop.setToolTip("刪除遮罩和它的設定")
+            drop.clicked.connect(lambda: self._emit_now(self.maskKindChosen, None))
+            row.addWidget(drop)
+        form.addRow("形狀", row)
+        if not c.get("mask"):
+            hint = QLabel("選一個形狀，或勾選「啟用遮罩」加上矩形遮罩")
+            hint.setStyleSheet("color: #9a9aa0;")
+            hint.setWordWrap(True)
+            form.addRow(hint)
+            return
+        inv = QCheckBox("反轉")
+        inv.setTristate(False)
+        inv.toggled.connect(lambda v: self._emit_now(self.maskInvertChosen, v))
+        self.widgets["mask_invert"] = inv
+        form.addRow("", inv)
+        for r in PARAMS["mask"]:
+            if c["mask"]["kind"] == "line" and r[0] in ("w", "h"):
+                continue
+            form.addRow(r[1], self._param_row("mask", *r))
+        hint = QLabel("在預覽上拖曳：中間移動、方塊調大小、圓點旋轉、箭頭羽化")
+        hint.setStyleSheet("color: #9a9aa0;")
+        hint.setWordWrap(True)
+        form.addRow(hint)
+        self._key_section(form)
+
+    def _key_section(self, form):
         form.addRow(section("關鍵幀"))
         nav = QHBoxLayout()
         for label, d in (("◀ 上一個", -1), ("下一個 ▶", 1)):
@@ -203,7 +243,7 @@ class Inspector(QWidget):
             ease.addItem(name, k)
         ease.addItem("自訂", "custom")
         ease.activated.connect(lambda i: ease.itemData(i) not in (None, "custom") and
-                               self._emit_now(self.easingChosen, ease.itemData(i)))
+                               self._emit_now(self.easingChosen, ease.itemData(i), list(self.groups)))
         ease.setToolTip("從播放頭上的關鍵幀到下一個關鍵幀之間的速度曲線")
         self.widgets["easing"] = ease
         form.addRow("曲線", ease)
@@ -254,13 +294,14 @@ class Inspector(QWidget):
         ts = [t_us - k["start_us"] for k in clips]
         names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段"}
         kinds = sorted({names.get(k["type"], k["type"]) for k in clips})
-        w["類型"].setText(kinds[0] if len(clips) == 1 else f"{len(clips)} 個片段（{'、'.join(kinds)}）")
         same = lambda vals: len(set(vals)) == 1
-        starts = [timecode(k["start_us"], fps) for k in clips]
-        w["開始"].setText(starts[0] if same(starts) else "--")
-        lens = [f"{k['duration_us'] / US:.2f} 秒" for k in clips]
-        w["長度"].setText(lens[0] if same(lens) else "--")
-        if c.get("text"):
+        if "類型" in w:
+            w["類型"].setText(kinds[0] if len(clips) == 1 else f"{len(clips)} 個片段（{'、'.join(kinds)}）")
+            starts = [timecode(k["start_us"], fps) for k in clips]
+            w["開始"].setText(starts[0] if same(starts) else "--")
+            lens = [f"{k['duration_us'] / US:.2f} 秒" for k in clips]
+            w["長度"].setText(lens[0] if same(lens) else "--")
+        if "content" in w:
             contents = [k["text"]["content"] for k in clips]
             text = contents[0] if same(contents) else ""
             if w["content"].toPlainText() != text and not w["content"].hasFocus():
@@ -281,7 +322,7 @@ class Inspector(QWidget):
             self._key_state(w[("key", "text", "color")], [k["text"].get("color") for k in clips], clips, ts)
         easings = set()
         for group, rows in PARAMS.items():
-            if (c if group == "clip" else c.get(group)) is None:
+            if group not in self.groups or (c if group == "clip" else c.get(group)) is None:
                 continue
             for key, _l, _lo, _hi, _st, dec, factor, default in rows:
                 if (group, key) not in w:
@@ -293,6 +334,13 @@ class Inspector(QWidget):
                     if edit.key_at(p, t) is not None:
                         easings.add(edit.easing_at(p, t))
                 self._key_state(w[("key", group, key)], ps, clips, ts)
+        if "mask_on" in w:
+            on = {bool(project.active_mask(k)) for k in clips}
+            w["mask_on"].blockSignals(True)
+            w["mask_on"].setTristate(len(on) > 1)
+            w["mask_on"].setCheckState(Qt.PartiallyChecked if len(on) > 1 else
+                                       (Qt.Checked if on.pop() else Qt.Unchecked))
+            w["mask_on"].blockSignals(False)
         if "mask_kind" in w:
             kinds = {(k.get("mask") or {}).get("kind") for k in clips}
             self._set_combo(w["mask_kind"], kinds.pop() if len(kinds) == 1 else "--")
@@ -303,6 +351,8 @@ class Inspector(QWidget):
                                            (Qt.Checked if inv.pop() else Qt.Unchecked))
             w["mask_invert"].blockSignals(False)
         easings.discard(None)
+        if "easing" not in w:
+            return
         ease = w["easing"]
         ease.setEnabled(bool(easings))
         self._set_combo(ease, easings.pop() if len(easings) == 1 else (None if not easings else "custom"))
@@ -319,7 +369,8 @@ class Inspector(QWidget):
     @staticmethod
     def _set_combo(combo, data):
         combo.blockSignals(True)
-        combo.setCurrentIndex(-1 if data == "--" else max(0, combo.findData(data)))   # -1 shows "--"
+        i = combo.findData(data)
+        combo.setCurrentIndex(-1 if data == "--" or i < 0 else i)   # -1 shows the placeholder
         combo.blockSignals(False)
 
     def _set(self, key, value):

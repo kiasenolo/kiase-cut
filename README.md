@@ -48,9 +48,15 @@ Jianying draft fills the library with the media it uses.
 Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
 canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
 freely). Drag a corner square to scale it about its centre, the round handle above it to
-rotate it (it settles on right angles; Shift turns in 15° steps). 編輯遮罩 (on by itself
-when a mask is chosen) shows the mask on the clip: drag inside it to move it, the squares
-to size it, the round handle to turn it and the arrow below it for the feather. Every drag
+rotate it (it settles on right angles; Shift turns in 15° steps).
+
+Masks have their own tab (遮罩, beside 屬性): switch the mask on or off (off keeps its
+settings; on for a clip without one adds a rectangle), pick its shape, invert it, remove
+it, and set its centre, size, rotation and feather with keyframes. While that tab is open
+the preview is the mask editor and only masks can be changed there: drag inside the mask
+to move it, the squares to size it, the round handle to turn it and the arrow below it for
+the feather (a switched-off mask is drawn dimmed). Back on 屬性 the preview edits the clip
+again. Every drag
 shows live and is one undo step; keyframed values get their keyframe at the playhead.
 Ctrl+wheel zooms the preview (to reach handles of clips bigger than the canvas), the
 middle button drags it. F or double-click toggles fullscreen.
@@ -61,7 +67,7 @@ rotation / feather) has a ◆ button that adds or removes a keyframe at the play
 changing a value that already has keyframes edits or adds the keyframe at the playhead, as
 in Jianying. ◀/▶ jump between keyframes, and the curve menu sets linear / ease-in /
 ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, videos and
-compound clips take line, mirror, circle or rectangle masks, optionally inverted. The
+compound clips take line, mirror, circle or rectangle masks (see the 遮罩 tab). The
 mouse wheel never changes a number field.
 
 Curve editor (the 關鍵幀曲線 tab beside 屬性): tick any parameters of the selected clip and

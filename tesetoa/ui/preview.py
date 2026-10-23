@@ -5,8 +5,9 @@ other visible clips' centres and edges; Alt moves freely), drag a corner square 
 it about its centre, drag the round handle above it to rotate (Shift: 15° steps; it also
 settles on 0 / 90 / 180 / 270).
 
-Mask mode (`mask_mode`, for a clip with a mask): the mask outline is drawn where it cuts
-the clip. Drag inside it to move it, the squares on its edges / corner to size it, the
+Mask mode (`mask_mode`, while the 遮罩 tab is open) edits only masks: the clip itself
+cannot be moved, scaled or turned there, and a click on another clip just selects it. The
+mask outline is drawn where it cuts the clip (dimmed while the mask is switched off). Drag inside it to move it, the squares on its edges / corner to size it, the
 round handle to rotate it and the arrow below it for the feather.
 
 Ctrl+wheel zooms the view around the mouse (to reach handles of clips larger than the
@@ -314,6 +315,10 @@ class Preview(QWidget):
         if box is not None:
             if self.masking(box):
                 self._paint_mask(p, box, k)
+            elif self.mask_mode:                         # no mask: just where the clip is
+                p.setBrush(Qt.NoBrush)
+                p.setPen(QPen(QColor(255, 255, 255, 120), 1 * k, Qt.DashLine))
+                p.drawPolygon(QPolygonF(box.corners()))
             else:
                 self._paint_transform(p, box, k)
         if self.guides:
@@ -360,13 +365,15 @@ class Preview(QWidget):
         p.drawPolygon(QPolygonF(box.corners()))
         g = MaskGeo(box)
         path = g.outline()
+        on = box.clip["mask"].get("enabled", True)
+        edge = QColor("#ffb020") if on else QColor(255, 176, 32, 110)
         p.save()
         clip = QPainterPath()
         clip.addPolygon(QPolygonF(box.corners()))
         p.setClipPath(clip)                    # the mask only matters inside the clip
         p.setPen(QPen(QColor("#111114"), 3.5 * k))
         p.drawPath(path)
-        p.setPen(QPen(QColor("#ffb020"), 2 * k))
+        p.setPen(QPen(edge, 2 * k, Qt.SolidLine if on else Qt.DashLine))
         p.drawPath(path)
         p.restore()
         c = g.centre()
@@ -415,7 +422,7 @@ class Preview(QWidget):
             if hit is not None:
                 self.drag = {"kind": hit, "box": box, "geo": g, "m0": m, "moved": False}
                 return
-        elif box is not None:
+        elif box is not None and not self.mask_mode:
             if self._near(box.rot_handle(k), m, k):
                 self.drag = {"kind": "rotate", "box": box, "m0": m, "moved": False}
                 return
@@ -430,6 +437,9 @@ class Preview(QWidget):
         if hit.clip["id"] != self.selected_id:
             self.selected_id = hit.clip["id"]
             self.clipPicked.emit(hit.clip)
+        if self.mask_mode:                               # masks only: the clip stays put
+            self.update()
+            return
         others = [b for b in boxes if b is not hit]
         self.drag = {"kind": "move", "box": hit, "x0": x, "y0": y, "moved": False, "others": others}
         self.update()
@@ -547,7 +557,7 @@ class Preview(QWidget):
                 cur = Qt.PointingHandCursor
             elif g.contains(m):
                 cur = Qt.SizeAllCursor
-        elif box is not None:
+        elif box is not None and not self.mask_mode:
             if self._near(box.rot_handle(k), m, k):
                 cur = Qt.PointingHandCursor
             elif any(self._near(pt, m, k) for pt in box.corners()):

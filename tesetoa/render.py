@@ -180,7 +180,7 @@ class Renderer:
         p.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
         p.rotate(v("rotation", 0.0))                       # clockwise on a y-down canvas
         p.scale(sx * (-1 if tf.get("flip_h") else 1), sy * (-1 if tf.get("flip_v") else 1))
-        if c.get("mask"):
+        if project.active_mask(c):
             p.setClipPath(mask_path(c["mask"], t, disp))
         draw()
         p.restore()

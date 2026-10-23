@@ -151,20 +151,22 @@ def s_jumped():
 
 
 def s_mask_rect():
-    w = win.inspector.widgets["mask_kind"]
+    win.side.setCurrentWidget(win.mask_panel.parentWidget().parentWidget())     # the 遮罩 tab
+    w = win.mask_panel.widgets["mask_kind"]
     w.setCurrentIndex(w.findData("rectangle"))
+    w.activated.emit(w.currentIndex())
 
 
 def s_verify_rect():
     check("mask is now a rectangle", white_clip()["mask"]["kind"] == "rectangle")
     state["rect_img"] = win.preview.img.copy()
     win.grab().save(os.path.join(out, "keys_rect.png"))
-    win.inspector.widgets["mask_invert"].click()
+    win.mask_panel.widgets["mask_invert"].click()
 
 
 def s_verify_invert():
     check("mask inverted", white_clip()["mask"]["invert"] is True)
-    win.inspector.widgets[("key", "mask", "w")].click()
+    win.mask_panel.widgets[("key", "mask", "w")].click()
 
 
 def s_mask_seek():
@@ -172,7 +174,7 @@ def s_mask_seek():
 
 
 def s_mask_w():
-    win.inspector.widgets[("mask", "w")].setValue(0.2)
+    win.mask_panel.widgets[("mask", "w")].setValue(0.2)
 
 
 def s_verify_mask_keys():

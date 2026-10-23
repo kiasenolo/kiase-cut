@@ -93,7 +93,12 @@ clip above the top row, or a sound clip below the bottom row, to put it on a new
 follow the same rules (a solo track silences the others on its level).
 
 Export (Ctrl+E): the whole film or the range marked with I / O (Alt+X clears), at high,
-standard or small-file quality.
+standard or small-file quality, at any frame rate (10 / 25 / 30 / 40 / 60 / 100 fps or a
+custom one) and any size as a multiple of the project's resolution (0.25× / 0.5× / 1× / 2× /
+4× or custom; sizes are rounded to even numbers). A project is not tied to a frame rate or
+a pixel size: times are microseconds and positions, text sizes and masks are fractions of
+the canvas, so every rate and size renders the same picture. The project's own fps only
+sets the timeline's frame grid, and its width and height the canvas shape.
 
 ## How it works
 

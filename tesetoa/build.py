@@ -58,14 +58,19 @@ def media_start(p):
 
 
 class Builder:
-    def __init__(self, proj, cache_dir, mask_mode="native", preview=False):
+    def __init__(self, proj, cache_dir, mask_mode="native", preview=False, size=None, fps=None):
         """mask_mode: "native" draws masks with MLT's rotoscoping filter (instant, follows
         the clip like Jianying's); "baked" rasterises screen-space mattes (reference).
-        preview: use frame-sized proxies of larger images (exports use the originals)."""
+        preview: use frame-sized proxies of larger images (exports use the originals).
+        size / fps: render at another (width, height) or frame rate than the project's.
+        Nothing in a project is in pixels or frames (positions are canvas fractions, text
+        sizes follow the canvas height, times are microseconds), so this only changes the
+        output grid; size should keep the project's shape."""
         self.p = proj
         self.mask_mode = mask_mode
         self.preview = preview
-        self.W, self.H, self.fps = proj["width"], proj["height"], proj["fps"]
+        self.W, self.H = size or (proj["width"], proj["height"])
+        self.fps = float(fps or proj["fps"])
         self.cache = os.path.abspath(cache_dir)
         for sub in ("text", "matte", "proxy"):
             os.makedirs(os.path.join(cache_dir, sub), exist_ok=True)
@@ -435,9 +440,9 @@ class Builder:
                 f'{profile}\n' + "\n".join(self.xml) + "\n</mlt>\n")
 
 
-def build(proj, cache_dir, out_path, mask_mode="native", preview=False):
+def build(proj, cache_dir, out_path, mask_mode="native", preview=False, size=None, fps=None):
     """Write the MLT XML for proj to out_path; returns out_path."""
-    doc = Builder(proj, cache_dir, mask_mode, preview).document()
+    doc = Builder(proj, cache_dir, mask_mode, preview, size, fps).document()
     tmp = out_path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write(doc)

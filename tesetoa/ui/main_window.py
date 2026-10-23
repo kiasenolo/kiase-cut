@@ -965,10 +965,14 @@ class MainWindow(QMainWindow):
         total = round(self.proj["duration_us"] / US * self.fps)
         default = (self.path.replace(".tesetoa.json", ".mp4") if self.path
                    else os.path.join(os.path.expanduser("~"), "Videos", "tesetoa.mp4"))
-        dlg = ExportDialog(self, default, self.fps, total, self.timeline.mark_in, self.timeline.mark_out)
+        dlg = ExportDialog(self, default, self.fps, total, self.timeline.mark_in, self.timeline.mark_out,
+                           self.proj["width"], self.proj["height"])
         if dlg.exec() != QDialog.Accepted:
             return
-        out, first, last, opts = dlg.result_options()
+        out, t0, t1, fmt, opts = dlg.result_options()
+        fps = fmt["fps"]
+        first = round(t0 / US * fps)                    # frames of the export's own rate
+        last = max(first, round(t1 / US * fps) - 1)
         if not out:
             return
         self.player.worker.set_playing(False)
@@ -980,7 +984,8 @@ class MainWindow(QMainWindow):
 
         def work(progress):
             os.makedirs(cache, exist_ok=True)
-            xml = build.build(snapshot, cache, os.path.join(cache, "export.mlt"))   # originals, no proxies
+            xml = build.build(snapshot, cache, os.path.join(cache, "export.mlt"),   # originals, no proxies
+                              size=(fmt["width"], fmt["height"]), fps=fps)
             eng = EngineClient(16, 16)        # its own process; the preview stays usable
             try:
                 return eng.export(xml, out, progress, threads=os.cpu_count() or 4,
@@ -990,7 +995,8 @@ class MainWindow(QMainWindow):
 
         def done(r):
             prog.close()
-            QMessageBox.information(self, "匯出完成", f"{out}\n耗時 {r['elapsed']:.0f} 秒")
+            QMessageBox.information(self, "匯出完成", f"{out}\n{fmt['width']}×{fmt['height']}，{fps:g} fps\n"
+                                    f"耗時 {r['elapsed']:.0f} 秒")
 
         self.run_task(work, done, lambda m: (prog.close(), QMessageBox.critical(self, "匯出失敗", m)),
                       lambda p: prog.setValue(int(p * 1000)))

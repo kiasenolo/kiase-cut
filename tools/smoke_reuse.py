@@ -64,7 +64,8 @@ def run():
     names = [tree.topLevelItem(i).text(0) for i in range(tree.topLevelItemCount())]
     tic = kid_named("TextInvColor")
     check(f"browser lists the shared compounds: {names}",
-          len(names) == len(win.proj["compounds"]) and any("TextInvColor  ×5" == n for n in names))
+          len(names) == len(win.proj["compounds"]) + len(win.proj["timelines"])
+          and any(n.endswith("TextInvColor  ×5") for n in names))
 
     # drag TextInvColor from the browser onto the timeline (a real drop event)
     it = next(tree.topLevelItem(i) for i in range(tree.topLevelItemCount())

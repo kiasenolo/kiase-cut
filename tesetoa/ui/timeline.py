@@ -542,7 +542,7 @@ class Timeline(QWidget):
             p.setPen(QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
             label = self.clip_label(c).replace("\n", " ")
             if c["type"] == "compound":
-                label = "▣ " + label
+                label = ("⧉ " if c.get("timeline_id") else "▣ ") + label
             lr = r.adjusted(4, 0, -2, 0)
             if audio and r.height() > 20:
                 lr.setHeight(16)

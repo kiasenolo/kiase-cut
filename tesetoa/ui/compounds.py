@@ -1,4 +1,7 @@
-"""Compound browser: the project's shared compounds (reusable like media).
+"""Compound browser: the project's timelines and shared compounds (reusable like media).
+
+Timelines are listed first: drag one into another timeline to nest it (as in DaVinci
+Resolve; the clip shows that timeline live), double-click to open it.
 
 Each compound is listed once with how many clips show it; under it, where it is used.
 Drag a compound onto the timeline to place another clip showing it (every clip shows the
@@ -43,6 +46,7 @@ class CompoundPanel(QWidget):
     openRequested = Signal(str, list)            # timeline id, path of the compound clip to open
     renameRequested = Signal(str)                # compound id
     deleteRequested = Signal(str)                # compound id
+    timelineRequested = Signal(str)              # timeline id to open
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -76,19 +80,24 @@ class CompoundPanel(QWidget):
         if proj and self.open_path:
             for tl, path, c in (u for us in self.uses.values() for u in us):
                 if tl == proj.get("active_timeline") and path + [c["id"]] == self.open_path:
-                    open_ids.add(c["compound_id"])
-        for kid, comp in sorted(comps.items(), key=lambda kv: kv[1].get("name") or ""):
+                    open_ids.add(project.ref_of(c))
+        timelines = [(t["id"], t) for t in proj.get("timelines", [])] if proj else []
+        rows = timelines + sorted(comps.items(), key=lambda kv: kv[1].get("name") or "")
+        for kid, comp in rows:
             uses = self.uses.get(kid, [])
-            it = QTreeWidgetItem([f"{comp.get('name') or '複合片段'}  ×{len(uses)}", "",
+            is_tl = kid.startswith("tl")
+            label = ("⧉ " if is_tl else "▣ ") + (comp.get("name") or "複合片段")
+            it = QTreeWidgetItem([label + (f"  ×{len(uses)}" if uses or not is_tl else ""), "",
                                   f"{(comp.get('duration_us') or 0) / US:.2f}s"])
             it.setData(0, Qt.UserRole, ("def", kid))
-            it.setToolTip(0, "拖到時間軸上使用；按兩下進入編輯")
+            it.setToolTip(0, "時間線：拖進另一條時間線使用（巢狀）；按兩下打開" if is_tl
+                          else "拖到時間軸上使用；按兩下進入編輯")
             it.setFlags(it.flags() | Qt.ItemIsDragEnabled)
             if kid in open_ids:
                 f = it.font(0)
                 f.setBold(True)
                 it.setFont(0, f)
-            if not uses:
+            if not uses and not is_tl:
                 it.setForeground(0, Qt.gray)
             names = {t["id"]: t["name"] for t in proj.get("timelines", [])}
             for tl, path, c in uses:
@@ -105,8 +114,8 @@ class CompoundPanel(QWidget):
             self.tree.addTopLevelItem(it)
             if kid in expanded or kid in open_ids:
                 it.setExpanded(True)
-        self.tree.setVisible(bool(comps))
-        self.empty.setVisible(not comps)
+        self.tree.setVisible(bool(rows))
+        self.empty.setVisible(not rows)
 
     def _items(self):
         for i in range(self.tree.topLevelItemCount()):
@@ -121,6 +130,8 @@ class CompoundPanel(QWidget):
         d = it.data(0, Qt.UserRole)
         if d[0] == "use":
             self.openRequested.emit(d[3], list(d[2]) + [d[1]])
+        elif d[1].startswith("tl"):
+            self.timelineRequested.emit(d[1])
         elif self.uses.get(d[1]):
             tl, path, c = self.uses[d[1]][0]
             self.openRequested.emit(tl, path + [c["id"]])
@@ -132,6 +143,7 @@ class CompoundPanel(QWidget):
         kid = it.data(0, Qt.UserRole)[1]
         menu = QMenu(self)
         menu.addAction("重新命名…", lambda: self.renameRequested.emit(kid))
-        a = menu.addAction("刪除（沒有使用時）", lambda: self.deleteRequested.emit(kid))
-        a.setEnabled(not self.uses.get(kid))
+        if not kid.startswith("tl"):                    # (timelines are deleted from their tab)
+            a = menu.addAction("刪除（沒有使用時）", lambda: self.deleteRequested.emit(kid))
+            a.setEnabled(not self.uses.get(kid))
         menu.exec(self.tree.viewport().mapToGlobal(pos))

@@ -139,7 +139,7 @@ def s_ease():
 def s_verify_ease():
     c = text_clip()
     check("ease-in starts slowly", curves.value(c["transform"]["x"], 2 * US) < 0.3)
-    win.inspector.keyJump.emit(1)
+    win.curves.keyJump.emit(1)                                   # (◀ ▶ live in the curve editor)
 
 
 def s_jumped():

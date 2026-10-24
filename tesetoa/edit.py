@@ -726,19 +726,35 @@ def detach_audio(proj, clip_id):
 
 
 # -- shared compounds -------------------------------------------------------------------------------
-def place_compound(root, container, compound_id, track_id, start_us):
-    """A new clip showing shared compound compound_id in container (the project or an open
-    compound) at start_us: on track_id when it has room, else a new picture track."""
-    comp = root["compounds"].get(compound_id)
-    if comp is None:
-        raise EditError("unknown compound")
-    if container is not root and any(project.contains(root, compound_id, k)
-                                     for k, v in root["compounds"].items() if v is container):
-        raise EditError("a compound cannot show itself")
-    dur = int(comp.get("duration_us") or project.end_us(comp["tracks"]) or MIN_US)
+def _container_id(root, container):
+    """The id of the timeline or compound whose tracks `container` holds."""
+    if container is root:
+        return root["active_timeline"]
+    for k, v in root["compounds"].items():
+        if v is container:
+            return k
+    for t in root["timelines"]:
+        if t is container:
+            return t["id"]
+    return None
+
+
+def place_compound(root, container, ref, track_id, start_us):
+    """A new clip showing shared compound (or another timeline, nested as in Resolve) ref in
+    container (the open timeline or an open compound) at start_us: on track_id when it has
+    room, else a new picture track. A timeline or compound can never show itself."""
+    try:
+        comp = project.content(root, ref)
+    except StopIteration:
+        raise EditError("unknown compound or timeline") from None
+    if project.contains(root, ref, _container_id(root, container)):
+        raise EditError("a timeline or compound cannot show itself")
+    # a timeline is as long as its content; a compound keeps its own length
+    dur = int((project.end_us(comp["tracks"]) if ref.startswith("tl")
+               else comp.get("duration_us") or project.end_us(comp["tracks"])) or MIN_US)
     clip = {"id": new_clip_id(), "type": "compound", "name": comp.get("name") or "複合片段",
             "start_us": max(0, int(start_us)), "duration_us": dur, "source_start_us": 0,
-            "compound_id": compound_id, "compound": comp,
+            ("timeline_id" if ref.startswith("tl") else "compound_id"): ref, "compound": comp,
             "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
     track = None
     if track_id:
@@ -764,13 +780,15 @@ def place_compound(root, container, compound_id, track_id, start_us):
 def make_unique(root, container, clip_id):
     """Give one compound clip its own copy of its compound (edits no longer reach the others)."""
     _, c = find(container, clip_id)
-    if "compound_id" not in c:
+    if not project.ref_of(c):
         raise EditError("not a compound clip")
-    src = c["compound"]
-    copy_ = json.loads(json.dumps(project.detached({"tracks": [], "compounds": {"x": src}})["compounds"]["x"]))
+    src = c["compound"]                                  # a compound, or a nested timeline
+    copy_ = {k: v for k, v in src.items() if k not in ("id", "tracks")}
+    copy_["tracks"] = json.loads(json.dumps(project._tracks_out(src["tracks"])))
     kid = project.new_compound_id(root)
     copy_["name"] = (src.get("name") or "複合片段") + " 副本"
     root["compounds"][kid] = copy_
+    c.pop("timeline_id", None)
     c["compound_id"] = kid
     project.link(root)
     return c
@@ -839,6 +857,8 @@ def rename_timeline(proj, tl_id, name):
 def delete_timeline(proj, tl_id):
     if len(proj["timelines"]) < 2:
         raise EditError("a project keeps at least one timeline")
+    if project.compound_uses(proj).get(tl_id):
+        raise EditError("this timeline is used inside another one")
     tl = project.timeline(proj, tl_id)
     i = proj["timelines"].index(tl)
     proj["timelines"].remove(tl)

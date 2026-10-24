@@ -9,8 +9,8 @@ import json
 import math
 import os
 
-from PySide6.QtCore import QObject, QSize, QStandardPaths, Qt, QThread, Signal, Slot
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QMimeData, QObject, QSize, QStandardPaths, Qt, QThread, Signal, Slot
+from PySide6.QtGui import QAction, QDrag, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
@@ -28,7 +28,7 @@ from .player import Player
 from . import icons
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
-from .timeline import US, Timeline, timecode
+from .timeline import MEDIA_MIME, US, Timeline, timecode
 
 # DaVinci Resolve-like: charcoal panels on a near-black frame, flat controls, light grey
 # text; colour is left to clips, keyframes, the playhead and the meter
@@ -110,6 +110,26 @@ class Task(QObject):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+class TimelineTabs(QTabBar):
+    """Timeline tabs; dragging a tab onto the timeline nests that timeline (as in Resolve)."""
+
+    def mousePressEvent(self, e):
+        self._press = (e.position(), self.tabAt(e.position().toPoint())) if e.button() == Qt.LeftButton else None
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        press = getattr(self, "_press", None)
+        if press and press[1] >= 0 and (e.buttons() & Qt.LeftButton) and                 (e.position() - press[0]).manhattanLength() > QApplication.startDragDistance() * 2:
+            self._press = None
+            md = QMimeData()
+            md.setData(MEDIA_MIME, f"cmp:{self.tabData(press[1])}".encode())
+            drag = QDrag(self)
+            drag.setMimeData(md)
+            drag.exec(Qt.CopyAction)
+            return
+        super().mouseMoveEvent(e)
+
+
 class Slider(QSlider):
     """A slider the mouse wheel does not move (the wheel scrolls what is under it)."""
 
@@ -158,6 +178,7 @@ class MainWindow(QMainWindow):
         self.compounds.showRequested.connect(self.show_compound)
         self.compounds.openRequested.connect(self.open_compound_path)
         self.compounds.renameRequested.connect(self.rename_compound)
+        self.compounds.timelineRequested.connect(self.switch_timeline)
         self.compounds.deleteRequested.connect(lambda kid: self.apply_root("刪除複合片段", edit.delete_compound, kid))
         self.left = QTabWidget()
         self.left.addTab(self.library, "素材庫")
@@ -197,6 +218,7 @@ class MainWindow(QMainWindow):
         cv.keysChanged.connect(self.on_curve_keys)
         cv.seekRequested.connect(self.seek_clip_time)
         cv.addAtPlayhead.connect(self.add_key_at_playhead)
+        cv.keyJump.connect(self.jump_key)
         self.side = QTabWidget()
         self.side.addTab(scroll, "屬性")
         self.side.addTab(mask_scroll, "遮罩")
@@ -283,7 +305,7 @@ class MainWindow(QMainWindow):
         tabs_row = QHBoxLayout()
         tabs_row.setContentsMargins(6, 2, 6, 0)
         tabs_row.setSpacing(2)
-        self.tl_tabs = QTabBar()
+        self.tl_tabs = TimelineTabs()
         self.tl_tabs.setObjectName("timelines")
         self.tl_tabs.setExpanding(False)
         self.tl_tabs.setDrawBase(False)
@@ -1023,11 +1045,15 @@ class MainWindow(QMainWindow):
     def place_compound(self, kid, track_id, start_us):
         if not self.proj:
             return
-        self.apply_root("加入複合片段",
+        self.apply_root("加入時間線" if kid.startswith("tl") else "加入複合片段",
                         lambda root: edit.place_compound(root, self.container(root), kid, track_id or None, start_us),
                         select=lambda c: c["id"])
 
     def rename_compound(self, kid):
+        if kid.startswith("tl"):                                    # a timeline row
+            i = next(i for i in range(self.tl_tabs.count()) if self.tl_tabs.tabData(i) == kid)
+            self.timeline_action("rename", i)
+            return
         comp = self.proj["compounds"][kid]
         name, ok = QInputDialog.getText(self, "複合片段名稱", "名稱", text=comp.get("name") or "")
         if ok:

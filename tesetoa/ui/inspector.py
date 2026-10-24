@@ -11,7 +11,7 @@ mask: on / off, shape, invert and its values), each with its own keyframe contro
 With several clips selected the form shows what they have in common: a value they share
 is shown, one that differs shows "--", and typing a value sets it on all of them.
 """
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
@@ -47,17 +47,62 @@ KEY_ON, KEY_OFF = "◆", "◇"
 
 class SpinBox(QDoubleSpinBox):
     """Number input that ignores the mouse wheel, so scrolling the panel never edits.
-    It can show "--" (values that differ across a selection); `edited` fires for the user's
-    changes, including typing the very number that was hidden behind "--"."""
+
+    Press and drag up / down to change the value (a step per 2 px; Shift for tenths, Ctrl
+    for tens of steps); a click without dragging starts typing. It can show "--" (values
+    that differ across a selection); `edited` fires for the user's changes, including
+    typing the very number that was hidden behind "--"."""
     edited = Signal(float)
+    SCRUB_PX = 3
 
     def __init__(self, *a):
         super().__init__(*a)
         self.mixed = False
         self._typed = False              # the user typed over "--" and has not finished yet
+        self._scrub = None               # press position / value while dragging the number
+        self.editing = False             # typing (after a click), until Enter / leaving
         self.valueChanged.connect(self._changed)
         self.lineEdit().textEdited.connect(self._typing)
         self.editingFinished.connect(self._finished)
+        self.lineEdit().installEventFilter(self)
+        self.lineEdit().setCursor(Qt.SizeVerCursor)
+        self.setFocusPolicy(Qt.ClickFocus)
+        self.setButtonSymbols(QDoubleSpinBox.NoButtons)    # dragging replaces the arrows
+
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if obj is not self.lineEdit() or not self.isEnabled():
+            return False
+        if t == QEvent.FocusOut:
+            self.editing = False
+            return False
+        if self.editing:                                 # typing: the field behaves normally
+            return False
+        if t == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
+            self._scrub = {"y": e.globalPosition().y(), "v": self.value(), "moved": False}
+            return True
+        if t == QEvent.MouseMove and self._scrub is not None:
+            dy = self._scrub["y"] - e.globalPosition().y()
+            if not self._scrub["moved"] and abs(dy) < self.SCRUB_PX:
+                return True
+            self._scrub["moved"] = True
+            k = 0.1 if e.modifiers() & Qt.ShiftModifier else 10 if e.modifiers() & Qt.ControlModifier else 1
+            v = self._scrub["v"] + round(dy / 2) * self.singleStep() * k
+            v = min(max(v, self.minimum()), self.maximum())
+            if abs(v - self.value()) > 1e-12 or self.mixed:
+                self.mixed = False
+                self.setValue(v)
+            return True
+        if t == QEvent.MouseButtonRelease and self._scrub is not None:
+            moved, self._scrub = self._scrub["moved"], None
+            if not moved:                                # a click: edit the number
+                self.editing = True
+                self.lineEdit().setFocus(Qt.MouseFocusReason)
+                QTimer.singleShot(0, self.lineEdit().selectAll)    # after Qt's own focus handling
+            else:
+                self.lineEdit().clearFocus()             # (Qt focused it on the press)
+            return True
+        return False
 
     def wheelEvent(self, e):
         e.ignore()
@@ -85,6 +130,7 @@ class SpinBox(QDoubleSpinBox):
         self.edited.emit(v)
 
     def _finished(self):
+        self.editing = False
         # typing the very number hidden behind "--" changes no value, so valueChanged is
         # silent: report it here
         if self._typed:
@@ -175,8 +221,7 @@ class Inspector(QWidget):
                 form.addRow(r[1], self._param_row("text", *r))
         if c.get("transform") is not None:
             form.addRow(section("畫面"))
-            for row in PARAMS["transform"]:
-                form.addRow(row[1], self._param_row("transform", *row))
+            self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"),))
         if "volume" in c:
             form.addRow(section("聲音"))
             form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
@@ -219,10 +264,8 @@ class Inspector(QWidget):
         inv.toggled.connect(lambda v: self._emit_now(self.maskInvertChosen, v))
         self.widgets["mask_invert"] = inv
         form.addRow("", inv)
-        for r in PARAMS["mask"]:
-            if c["mask"]["kind"] == "line" and r[0] in ("w", "h"):
-                continue
-            form.addRow(r[1], self._param_row("mask", *r))
+        rows = [r for r in PARAMS["mask"] if not (c["mask"]["kind"] == "line" and r[0] in ("w", "h"))]
+        self._rows(form, "mask", rows, (("cx", "cy", "中心"), ("w", "h", "大小")))
         hint = QLabel("在預覽上拖曳：中間移動、方塊調大小、圓點旋轉、箭頭羽化")
         hint.setStyleSheet("color: #9a9aa0;")
         hint.setWordWrap(True)
@@ -230,13 +273,7 @@ class Inspector(QWidget):
         self._key_section(form)
 
     def _key_section(self, form):
-        form.addRow(section("關鍵幀"))
-        nav = QHBoxLayout()
-        for label, d in (("◀ 上一個", -1), ("下一個 ▶", 1)):
-            b = QPushButton(label)
-            b.clicked.connect(lambda _=False, d=d: self.keyJump.emit(d))
-            nav.addWidget(b)
-        form.addRow(nav)
+        form.addRow(section("關鍵幀"))                  # (previous / next: in the curve editor)
         ease = ComboBox()
         ease.addItem("—", None)
         for name, k in EASING_NAMES:
@@ -258,6 +295,30 @@ class Inspector(QWidget):
         self.widgets[key] = s
         return s
 
+    def _rows(self, form, group, rows, pairs):
+        """Form rows for PARAMS rows; each (a, b, label) of pairs shares one row (X | Y)."""
+        by_key = {r[0]: r for r in rows}
+        paired = {a: (b, lab) for a, b, lab in pairs if a in by_key and b in by_key}
+        skip = {b for b, _ in paired.values()}
+        for r in rows:
+            if r[0] in skip:
+                continue
+            if r[0] in paired:
+                b, lab = paired[r[0]]
+                row = QWidget()
+                lay = QHBoxLayout(row)
+                lay.setContentsMargins(0, 0, 0, 0)
+                lay.setSpacing(3)
+                for rr in (r, by_key[b]):
+                    tag = QLabel(rr[1].split()[-1])                  # "位置 X" -> "X"
+                    tag.setStyleSheet("color: #8e8e94;")
+                    lay.addWidget(tag)
+                    lay.addWidget(self._spin((group, rr[0]), *rr[2:7]), 1)
+                    lay.addWidget(self._key_button(group, rr[0]))
+                form.addRow(lab, row)
+            else:
+                form.addRow(r[1], self._param_row(group, *r))
+
     def _param_row(self, group, key, _label, lo, hi, step, dec, factor, _default):
         row = QWidget()
         lay = QHBoxLayout(row)
@@ -268,7 +329,7 @@ class Inspector(QWidget):
 
     def _key_button(self, group, key):
         b = QPushButton(KEY_OFF)
-        b.setFixedWidth(30)
+        b.setFixedWidth(26)
         b.setToolTip("在播放頭新增／刪除關鍵幀")
         b.clicked.connect(lambda: self._emit_now(self.keyToggled, group, key))
         self.widgets[("key", group, key)] = b

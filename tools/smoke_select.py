@@ -208,7 +208,8 @@ def run():
     win.left.setCurrentWidget(win.compounds)
     tree = win.compounds.tree
     rows = [tree.topLevelItem(k) for k in range(tree.topLevelItemCount())]
-    check(f"compound browser lists {len(rows)} shared compounds", len(rows) == len(win.proj["compounds"]))
+    check(f"compound browser lists {len(rows)} timelines and shared compounds",
+          len(rows) == len(win.proj["compounds"]) + len(win.proj["timelines"]))
     nested = next(r for r in rows if r.childCount() and r.child(0).data(0, Qt.UserRole)[2])
     win.compounds._double(nested.child(0), 0)
     app.processEvents()

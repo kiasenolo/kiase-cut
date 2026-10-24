@@ -24,6 +24,8 @@ clip     {id, type: image | video | audio | text | compound, name,
           volume, fade_in_us, fade_out_us                   clips with sound
           compound_id                                       compound clips: which entry of
                      project.compounds they show; clip.source_start_us selects the window}
+          timeline_id                                       nested timeline clips (as in
+                     DaVinci Resolve): they show another timeline of the project, live
 compound {name, width, height, duration_us, tracks}   reusable content: any number of compound
          clips (anywhere, nested too) show the same one, so editing it changes all of them.
          Its children use compound time.
@@ -72,6 +74,8 @@ def end_us(tracks):
 
 def refresh_duration(p):
     p["duration_us"] = end_us(p["tracks"])
+    for tl in p.get("timelines", []):                    # (for clips that show a timeline)
+        tl["duration_us"] = end_us(tl["tracks"])
 
 
 def walk_clips(tracks):
@@ -109,7 +113,7 @@ def _tracks_out(tracks):
     for t in tracks:
         clips = []
         for c in t["clips"]:
-            if "compound_id" in c and "compound" in c:
+            if ("compound_id" in c or "timeline_id" in c) and "compound" in c:
                 c = {k: v for k, v in c.items() if k != "compound"}
             clips.append(c)
         out.append(dict(t, clips=clips))
@@ -149,11 +153,18 @@ def link(p):
         p["active_timeline"] = tl["id"]
         p["tracks"] = tl["tracks"]
 
+    by_id = {tl["id"]: tl for tl in tls}
+    for tl in tls:                                       # a timeline shown by a clip is content
+        tl["width"], tl["height"] = p.get("width", 1920), p.get("height", 1080)
+        tl["duration_us"] = end_us(tl["tracks"])
+
     def visit(tracks):
         for t in tracks:
             for c in t["clips"]:
                 if "compound_id" in c:
                     c["compound"] = comps[c["compound_id"]]
+                elif "timeline_id" in c:
+                    c["compound"] = by_id[c["timeline_id"]]
     for tl in tls or [{"tracks": p.get("tracks", [])}]:
         visit(tl["tracks"])
     for comp in comps.values():
@@ -209,7 +220,7 @@ def normalize(p):
     def visit(tracks):
         for t in tracks:
             for c in t["clips"]:
-                if c.get("type") != "compound" or "compound_id" in c:
+                if c.get("type") != "compound" or "compound_id" in c or "timeline_id" in c:
                     continue
                 comp = c.pop("compound")
                 visit(comp["tracks"])                        # nested ones first
@@ -230,16 +241,28 @@ def normalize(p):
     return link(p)
 
 
+def ref_of(c):
+    """The compound id or timeline id a clip shows, or None."""
+    return c.get("compound_id") or c.get("timeline_id")
+
+
+def content(p, ref):
+    """The compound or timeline with id ref (compounds are k…, timelines tl…)."""
+    return p["compounds"][ref] if ref in p.get("compounds", {}) else timeline(p, ref)
+
+
 def compound_uses(p):
-    """{compound id: [(timeline id, parent path (clip ids), clip)]} for every compound clip
-    of every timeline, nested ones reached through every clip that shows their parent."""
+    """{compound or timeline id: [(timeline id, parent path (clip ids), clip)]} for every
+    clip showing one, on every timeline, nested ones reached through every clip that shows
+    their parent."""
     uses = {k: [] for k in p.get("compounds", {})}
+    uses.update({t["id"]: [] for t in p.get("timelines", [])})
 
     def visit(tl, tracks, path):
         for t in tracks:
             for c in t["clips"]:
-                if "compound_id" in c:
-                    uses.setdefault(c["compound_id"], []).append((tl, list(path), c))
+                if ref_of(c):
+                    uses.setdefault(ref_of(c), []).append((tl, list(path), c))
                     if len(path) < 16:                    # (a loop cannot be made, but stay safe)
                         visit(tl, c["compound"]["tracks"], path + [c["id"]])
     for tl in p.get("timelines") or [{"id": None, "tracks": p["tracks"]}]:
@@ -248,7 +271,7 @@ def compound_uses(p):
 
 
 def contains(p, outer_id, inner_id):
-    """Whether compound outer_id shows compound inner_id (at any depth), or is it."""
+    """Whether compound / timeline outer_id shows inner_id (at any depth), or is it."""
     if outer_id == inner_id:
         return True
     stack, seen = [outer_id], set()
@@ -257,10 +280,10 @@ def contains(p, outer_id, inner_id):
         if k in seen:
             continue
         seen.add(k)
-        for t in p["compounds"][k]["tracks"]:
+        for t in content(p, k)["tracks"]:
             for c in t["clips"]:
-                if "compound_id" in c:
-                    if c["compound_id"] == inner_id:
+                if ref_of(c):
+                    if ref_of(c) == inner_id:
                         return True
-                    stack.append(c["compound_id"])
+                    stack.append(ref_of(c))
     return False

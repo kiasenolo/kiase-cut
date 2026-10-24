@@ -559,6 +559,7 @@ class CurveEditor(QWidget):
     keysChanged = Signal(str, list, bool)          # clip id, [(group, key, keys, value if none)], final
     seekRequested = Signal(float)                  # clip time, us
     addAtPlayhead = Signal(str, list)              # clip id, [(group, key)]
+    keyJump = Signal(int)                          # -1 previous keyframe, +1 next (playhead)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -624,6 +625,12 @@ class CurveEditor(QWidget):
         form.addRow("", grid)
         lay.addLayout(form)
         acts = QHBoxLayout()
+        for text, d, tip in (("◀", -1, "上一個關鍵幀"), ("▶", 1, "下一個關鍵幀")):
+            b = QPushButton(text)
+            b.setFixedWidth(30)
+            b.setToolTip(tip + "（播放頭跳過去）")
+            b.clicked.connect(lambda _=False, d=d: self.keyJump.emit(d))
+            acts.addWidget(b)
         add = QPushButton("在播放頭新增")
         add.setToolTip("替勾選的每個參數在播放頭加一個關鍵幀")
         add.clicked.connect(lambda: self.clip and self.addAtPlayhead.emit(

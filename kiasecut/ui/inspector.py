@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, curves, edit, project
+from .. import fonts as fontlib
 from . import icons
 from .timeline import US, timecode
 
@@ -544,7 +545,8 @@ class Inspector(QWidget):
         if "content" in w:
             contents = [k["text"]["content"] for k in clips]
             text = contents[0] if same(contents) else ""
-            fonts = {curves.value(k["text"].get("font_path"), t) for k, t in zip(clips, ts)}
+            fonts = {fontlib.resolve(curves.value(k["text"].get("font_path"), t))   # (its stand-in here)
+                     for k, t in zip(clips, ts)}
             self._show_font(fonts.pop() if len(fonts) == 1 else "--")
             self._key_state(w[("key", "text", "font_path")], [k["text"].get("font_path") for k in clips], clips, ts)
             if w["content"].toPlainText() != text and not w["content"].hasFocus():

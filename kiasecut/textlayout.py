@@ -12,6 +12,8 @@ import os
 
 from PIL import Image, ImageDraw, ImageFont
 
+from . import fonts
+
 PX_PER_FONT_UNIT = 11.13
 FALLBACK_FONTS = [
     r"C:\Windows\Fonts\GenSekiGothic2-M.ttc", r"C:\Windows\Fonts\msjh.ttc",
@@ -22,6 +24,7 @@ _fonts = {}
 
 
 def font(path, size):
+    path = fonts.resolve(path)                  # a font this system lacks: its stand-in (font map)
     key = (path, round(size * 100))
     if key not in _fonts:
         for p in [path] + FALLBACK_FONTS:

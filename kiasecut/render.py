@@ -22,7 +22,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 
-from . import assets, curves, fx, masks, project, svgimage, textlayout
+from . import assets, curves, fonts, fx, masks, project, svgimage, textlayout
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
@@ -108,7 +108,7 @@ class Renderer:
 
     def text(self, spec, scale, canvas_h):
         """textlayout image at `scale` px per layout px; its centre is the text box centre."""
-        key = (json.dumps(spec, sort_keys=True, default=str), round(scale, 3), canvas_h)
+        key = (json.dumps(spec, sort_keys=True, default=str), round(scale, 3), canvas_h, fonts.map_key())
         im = self.texts.get(key)
         if im is None:
             im = QImage(ImageQt(textlayout.render(spec, scale, canvas_h))).convertToFormat(

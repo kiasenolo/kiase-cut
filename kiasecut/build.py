@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape
 import numpy as np
 from PIL import Image
 
-from . import assets, curves, masks, project, svgimage, textlayout
+from . import assets, curves, fonts, masks, project, svgimage, textlayout
 
 US = 1_000_000
 TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
@@ -141,7 +141,7 @@ class Builder:
         """Text rendered at render scale rs, cropped to its own canvas (centre = box centre).
         Returns (path, width, height). Tight images keep project loading fast: padding every
         text to a full frame made MLT decode ~340 frame-sized PNGs on each load."""
-        key = _hash("text2", spec, rs, self.H, textlayout.PX_PER_FONT_UNIT)
+        key = _hash("text2", spec, rs, self.H, textlayout.PX_PER_FONT_UNIT, fonts.map_key())
         out = os.path.join(self.cache, "text", key + ".png")
         if not os.path.exists(out):
             textlayout.render(spec, rs, self.H).save(out + ".tmp.png", compress_level=1)
@@ -156,7 +156,7 @@ class Builder:
                  for f in range(f0, f1)]
         for sp in specs:
             sp["color"] = [round(v, 4) for v in sp["color"]] if isinstance(sp.get("color"), list) else sp.get("color")
-        key = _hash("textseq", specs, rs, self.H, textlayout.PX_PER_FONT_UNIT, self.fps)
+        key = _hash("textseq", specs, rs, self.H, textlayout.PX_PER_FONT_UNIT, self.fps, fonts.map_key())
         out = os.path.join(self.cache, "text", key + ".mov")
         meta = out + ".json"
         if not os.path.exists(meta):

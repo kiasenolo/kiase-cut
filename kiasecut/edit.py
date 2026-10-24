@@ -26,8 +26,10 @@ class History:
     """Snapshot undo stack: copies the project before each change (a few hundred KB).
     The media library and the project info mirror the project folder, not the edit, so
     they are left out of the snapshots: undo never brings back or hides a file. Nor is
-    the saved view (playhead, scroll, track heights): undo leaves the view alone."""
-    SIDE = ("library", "info", "view")
+    the saved view (playhead, scroll, track heights): undo leaves the view alone, and the
+    font map (which installed font stands in for a missing one: fonts.py), which belongs
+    to the computer the project is opened on, not to the edit."""
+    SIDE = ("library", "info", "view", "font_map")
 
     def __init__(self, proj, limit=200):
         self.proj = proj

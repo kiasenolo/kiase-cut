@@ -6,7 +6,9 @@ project  {format, version, width, height, fps, duration_us, timelines: [timeline
          "tracks" is the open timeline's track list (the very list in timelines), so every
          edit works on the open timeline.  master_gain (optional, 1) scales the
          whole output  tracks[0] is the bottom layer; later tracks draw on top
-         (as in Jianying).
+         (as in Jianying).  font_map (optional): {"windows" | "linux" | "mac": {font file:
+         installed font file}} - per operating system, the font that stands in for one
+         the texts name but that system does not have (fonts.py); not part of undo.
 timeline {id, name, tracks: [track]}
 track    {id, kind: video | text | audio, name, clips: [clip],
           muted, solo, hidden, gain}                        optional: muted / solo tracks

@@ -31,7 +31,7 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import QWidget
 
-from .. import curves, edit, project, render, textlayout
+from .. import curves, edit, fonts, project, render, textlayout
 
 US = 1_000_000
 SNAP_PX = 7
@@ -44,7 +44,7 @@ _text_sizes = {}
 
 def text_size(spec, canvas_h):
     """Text box (w, h) in canvas px at scale 1."""
-    key = json.dumps([spec, canvas_h], sort_keys=True, default=str)
+    key = json.dumps([spec, canvas_h, fonts.map_key()], sort_keys=True, default=str)
     if key not in _text_sizes:
         im = textlayout.render(spec, 1.0, canvas_h)
         _text_sizes[key] = (im.width, im.height)

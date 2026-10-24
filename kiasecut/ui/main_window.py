@@ -25,6 +25,7 @@ from .. import assets, build, curves, edit, fonts, fx, gpu, library, project, re
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
+from .font_dialog import FontMapDialog
 from .compounds import CompoundPanel
 from .curve_editor import CurveEditor
 from .beat_panel import BeatPanel
@@ -198,6 +199,8 @@ class MainWindow(QMainWindow):
         self.ul_busy = False
         self.ul_prober = None
         self.fonts = []                 # installed fonts for the text font picker
+        self.font_check = None          # 字體對應 waiting for the font list (auto or not), or None
+        self.font_dlg = None            # the 字體對應 window while it is open
         self.closing = False
         self.sync_busy = False
         self.sync_retries = 0
@@ -600,6 +603,8 @@ class MainWindow(QMainWindow):
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
         add(m, "新增文字", "Ctrl+T", self.do_text)
+        m.addSeparator()
+        add(m, "字體對應…", None, lambda: self.check_fonts(auto=False))
         m = self.menuBar().addMenu("濾鏡")
         self.filter_menu = m.addMenu("新增濾鏡片段（在播放頭）")
         self.filter_menu.aboutToShow.connect(lambda: self._fill_filter_menu(self.filter_menu, self.add_filter_clip))
@@ -1059,6 +1064,7 @@ class MainWindow(QMainWindow):
         if not library.lib(proj)["items"]:
             library.add_from_project(proj)         # media already used, e.g. after a draft import
         self.proj = proj
+        fonts.use_map(self.font_map_here())          # before anything draws its texts
         self.history = edit.History(proj)
         self.meter.set_gain(proj.get("master_gain", 1.0))
         self.dirty = False
@@ -1090,6 +1096,7 @@ class MainWindow(QMainWindow):
         self._last_tick = time.monotonic()
         self.watch_media()
         self.request_sync(0)
+        self.check_fonts(auto=True)
 
     # -- project folder: info, time spent, backups -----------------------------------------------
     def show_project_info(self):
@@ -2686,6 +2693,87 @@ class MainWindow(QMainWindow):
         self.fonts = found
         self.inspector.set_fonts(found)
         self.refresh_inspector()
+        if self.font_check is not None:             # a project opened before the list was read
+            self.check_fonts(self.font_check)
+
+    # 字體對應: a font the project names that this operating system does not have gets a stand-in,
+    # kept per system in project["font_map"] (fonts.py)
+    def font_map_here(self):
+        """This system's part of the project's font map."""
+        m = (self.proj or {}).get("font_map") or {}
+        return dict(m.get(fonts.os_key()) or {}) if isinstance(m, dict) else {}
+
+    def remembered_fonts(self):
+        """Stand-ins chosen on this computer before (any project), offered first."""
+        try:
+            v = json.loads(str(self.settings().value("font_map_" + fonts.os_key(), "{}")))
+        except ValueError:
+            v = {}
+        return v if isinstance(v, dict) else {}
+
+    def check_fonts(self, auto=True):
+        """Open 字體對應: auto (a project was opened) only when fonts are missing here, without
+        waiting for an answer; from the menu also with the stand-ins already chosen. Waits for
+        the list of installed fonts when it is still being read."""
+        self.font_check = None
+        if auto and self.font_dlg is not None:         # (one left open for another project)
+            self.font_dlg.close()
+        if not self.proj:
+            return
+        if not self.fonts:
+            self.font_check = auto
+            if not auto:
+                self.statusBar().showMessage("還在讀取這台電腦的字體清單，讀完就會打開字體對應", 4000)
+            return
+        mapping = self.font_map_here()
+        gone = fonts.missing(self.proj, mapping)
+        known = self.remembered_fonts()
+        rows = [(p, fonts.guess(p, self.fonts, known), True) for p in gone]
+        if not auto:
+            used = fonts.used(self.proj)
+            rows += [(p, mapping[p], False) for p in sorted(mapping) if p in used and p not in gone]
+            if not rows:
+                self.statusBar().showMessage("專案用到的字體這台電腦都有", 4000)
+                return
+        if not rows:
+            return
+        if self.font_dlg is not None:
+            self.font_dlg.close()
+        dlg = FontMapDialog(self, rows, self.fonts)
+        dlg.applied.connect(self.apply_font_map)
+        dlg.destroyed.connect(lambda *_: setattr(self, "font_dlg", None) if self.font_dlg is dlg else None)
+        self.font_dlg = dlg
+        dlg.show()
+
+    def apply_font_map(self, choices):
+        """字體對應 answered: {font file: stand-in, or None to forget its stand-in} for this
+        system; the texts are drawn again with them. Not an edit (undo leaves it alone)."""
+        if not self.proj:
+            return
+        mapping = self.font_map_here()
+        for p, repl in choices.items():
+            if repl:
+                mapping[p] = repl
+            else:
+                mapping.pop(p, None)
+        whole = self.proj.setdefault("font_map", {})
+        if mapping:
+            whole[fonts.os_key()] = mapping
+        else:
+            whole.pop(fonts.os_key(), None)
+        if not whole:
+            self.proj.pop("font_map", None)
+        known = self.remembered_fonts()
+        known.update({p: r for p, r in choices.items() if r})
+        self.settings().setValue("font_map_" + fonts.os_key(), json.dumps(known, ensure_ascii=False))
+        fonts.use_map(mapping)
+        self.dirty = True
+        self._update_title()
+        self.rebuild()
+        self.refresh_inspector()
+        self.timeline.update()
+        n = sum(1 for r in choices.values() if r)
+        self.statusBar().showMessage(f"已設定 {n} 個字體對應（只用在這個系統）", 4000)
 
     def apply_text_style(self, path, new_if_none=True, force_new=False):
         try:

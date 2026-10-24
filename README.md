@@ -145,6 +145,17 @@ parameters at every frame (an export with asset keyframes goes through KiaseCut'
 renderer); the SVG written into Media/.內建素材 when it is made (hidden from the media
 library, drawn again if missing) only gives it a file like any picture.
 
+Fonts across Windows and Linux (字體對應): texts name font files, and a project made on one
+system names fonts the other does not have. When a project opens with such fonts, a window
+lists them with a stand-in to pick for each (one is suggested: what was picked for it
+before on this computer, a font with the same file name, or the usual equivalent, such as
+Noto Sans CJK for 微軟正黑體 or Liberation Sans for Arial). It does not block the editor;
+closing it (or 之後再說) leaves those texts in a default font, and it comes back the next
+time the project opens. 編輯 > 字體對應… opens it any time, the fonts already given a
+stand-in included. The choice is kept in the project per operating system: the clips keep
+their own font, Linux uses its stand-in and Windows its own font (or its own stand-in for a
+font picked on Linux). It is not an edit, so undo leaves it alone.
+
 Replacing a clip's source (替換素材): hold Alt while dropping media (from the library, the
 Library tab or the 複合片段 tab) on a clip: the clip lights up with 替換素材, and on release
 it shows the new media in its place, keeping its position, length, transform, mask,

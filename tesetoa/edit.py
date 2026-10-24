@@ -263,22 +263,42 @@ def delete_many(proj, clip_ids):
         delete(proj, cid)
 
 
-def move_many(proj, clip_ids, d_us):
-    """Shift several clips by d_us, each on its own track. Refuses (changing nothing) when a
-    clip would land on one that is not moving; never moves anything before 0."""
+def display_groups(proj):
+    """(pictures, sound) tracks as the timeline lists them, top row first."""
+    visual = [t for t in proj["tracks"] if t["kind"] != "audio"]
+    return list(reversed(visual)), [t for t in proj["tracks"] if t["kind"] == "audio"]
+
+
+def move_many(proj, clip_ids, d_us, d_rows=0):
+    """Shift several clips by d_us in time and d_rows rows down the screen (negative: up). Every
+    clip keeps its row distance to the others and stays among pictures / among sound. Refuses
+    (changing nothing) when a clip would land on one that is not moving or outside the tracks;
+    never moves anything before 0."""
     ids = set(clip_ids)
     moving = [find(proj, cid) for cid in clip_ids]
     if not moving:
         return []
     d_us = int(max(d_us, -min(c["start_us"] for _, c in moving)))
+    pictures, sound = display_groups(proj)
+    plan = []                                         # (clip, from track, to track)
     for t, c in moving:
+        group = sound if t["kind"] == "audio" else pictures
+        j = next(i for i, x in enumerate(group) if x is t) + int(d_rows)
+        if not 0 <= j < len(group):
+            raise EditError("no track there")
+        plan.append((c, t, group[j]))
+    for c, _, dst in plan:
         s, e = c["start_us"] + d_us, end(c) + d_us
-        if any(o["id"] not in ids and o["start_us"] < e and end(o) > s for o in t["clips"]):
+        if any(o["id"] not in ids and o["start_us"] < e and end(o) > s for o in dst["clips"]):
             raise EditError("no room there")
-    for t, c in moving:
+    for c, src, dst in plan:
         c["start_us"] += d_us
-    for t in {id(t): t for t, _ in moving}.values():
-        _sort(t)
+        if dst is not src:
+            src["clips"].remove(c)
+            dst["clips"].append(c)
+    for _, src, dst in plan:
+        _sort(src)
+        _sort(dst)
     return [c for _, c in moving]
 
 

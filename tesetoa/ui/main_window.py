@@ -15,7 +15,7 @@ import time
 
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
-from PySide6.QtGui import QAction, QDesktopServices, QDrag, QKeySequence
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QTextBrowser,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
@@ -34,6 +34,7 @@ from .player import Player
 from .project_dialogs import NewProjectDialog, ProjectInfoDialog
 from .settings_dialog import SettingsDialog
 from .userlib_panel import UserLibraryPanel
+from .vfx_panel import VfxPanel
 from . import icons
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -238,9 +239,14 @@ class MainWindow(QMainWindow):
             panel.addRequested.connect(lambda ident: self.place_media(ident, "", self.playhead_us()))
             panel.filesDropped.connect(lambda paths, folder, k=key: self.ul_drop(k, paths, folder))
             panel.extra_menu = lambda menu, ident, k=key: self.ul_menu(k, menu, ident)
+        self.vfx = VfxPanel()
+        self.vfx.addClipRequested.connect(lambda ref: self.add_filter_clip(ref))
+        self.vfx.applyRequested.connect(self.apply_filter_to_selected)
+        self.vfx.docRequested.connect(self.show_filter_doc)
         self.left = QTabWidget()
         self.left.addTab(self.library, "專案素材")
         self.left.addTab(self.ulpanel, "Library")
+        self.left.addTab(self.vfx, "VFX")
         self.left.addTab(self.compounds, "複合片段")
 
         self.preview = Preview()
@@ -374,7 +380,7 @@ class MainWindow(QMainWindow):
         tl.moveRequested.connect(lambda cid, start, tid: self.apply("移動", edit.move, cid, start, tid))
         tl.trimRequested.connect(
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
-        tl.groupMoveRequested.connect(lambda ids, dt: self.apply("移動", edit.move_many, ids, dt))
+        tl.groupMoveRequested.connect(lambda ids, dt, dr: self.apply("移動", edit.move_many, ids, dt, dr))
         tl.marksChanged.connect(self.marks_changed)
         tl.clipDragging.connect(lambda cid, start, dur: self.inspector.show_live_time(cid, start, dur, self.fps))
         tl.volumeEdited.connect(self.on_volume_line)
@@ -383,6 +389,7 @@ class MainWindow(QMainWindow):
         tl.clipAction.connect(self.on_clip_action)
         tl.mediaDropped.connect(self.place_media)
         tl.compoundDropped.connect(self.place_compound)
+        tl.filterDropped.connect(self.on_filter_dropped)
         tl.filesDropped.connect(lambda paths, tid, start: self.drop_files(
             paths, self.library.current_folder(), (tid, start)))
         tl.newTrackRequested.connect(
@@ -1488,12 +1495,15 @@ class MainWindow(QMainWindow):
             name, ok = QInputDialog.getText(self, "片段名稱", "名稱", text=self.timeline.clip_label(c))
             if ok:
                 self.apply("重新命名片段", edit.rename_clip, cid, name)
-        elif action == "color":
-            col = QColorDialog.getColor(parent=self, title="片段顏色")
-            if col.isValid():
-                self.apply("片段顏色", edit.set_clip_color, cid, col.name())
-        elif action == "nocolor":
-            self.apply("片段顏色", edit.set_clip_color, cid, None)
+        elif action in ("color", "nocolor"):
+            sel = self.timeline.selected_ids                  # a multi-selection is coloured together
+            ids = sorted(sel) if cid in sel else [cid]
+            if action == "nocolor":
+                self.apply_each("片段顏色", edit.set_clip_color, ids, None)
+            else:
+                col = QColorDialog.getColor(QColor(c.get("color") or "#888888"), self, "片段顏色")
+                if col.isValid():
+                    self.apply_each("片段顏色", edit.set_clip_color, ids, col.name())
         elif action == "unique":
             self.apply_root("設為獨立", lambda root: edit.make_unique(root, self.container(root), cid))
         elif action == "detach_audio":
@@ -2057,6 +2067,7 @@ class MainWindow(QMainWindow):
         for it in sorted(self.ulib.lib("filters")["items"], key=lambda i: i["name"].lower()):
             mine.append((fx.get(it["path"]).name or it["name"], it["path"]))
         self.effects.set_user_filters(mine)
+        self.vfx.set_user_filters(mine)
 
     def ul_item(self, key, ident):
         return next((it for it in self.ulib.lib(key)["items"] if it["id"] == ident), None)
@@ -2268,6 +2279,18 @@ class MainWindow(QMainWindow):
         start = self.playhead_us() if start_us is None else start_us
         self.apply("新增濾鏡片段", lambda lvl: edit.add_filter_clip(lvl, ref, start, track_id=track_id or None),
                    select=lambda c: c["id"])
+
+    def on_filter_dropped(self, ref, cid, track_id, start_us):
+        """A filter dragged from the VFX tab: onto a clip it joins that clip's effects (all the
+        selected ones when it is one of them), elsewhere it becomes a filter clip."""
+        if not cid:
+            self.add_filter_clip(ref, track_id, start_us)
+            return
+        sel = self.timeline.selected_ids
+        ids = [c["id"] for c in self.timeline.selected_clips_primary_first()
+               if c["type"] in edit.VISUAL] if cid in sel else [cid]
+        self.apply("新增效果", lambda lvl: [edit.add_effect(lvl, k, ref) for k in ids])
+        self.side.setCurrentIndex(1)
 
     def apply_filter_to_selected(self, ref):
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]

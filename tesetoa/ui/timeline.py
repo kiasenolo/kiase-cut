@@ -40,6 +40,7 @@ from .. import curves, edit, project, waveform
 
 US = 1_000_000
 MEDIA_MIME = "application/x-tesetoa-media"
+FX_MIME = "application/x-tesetoa-fx"                # a filter dragged from the VFX tab: its ref
 COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
           "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e"}                              # DaVinci Resolve
 ROW_BG = QColor("#1f1f21")
@@ -67,7 +68,7 @@ def timecode(us, fps):
 class Timeline(QWidget):
     seekRequested = Signal(int)                      # frame
     clipSelected = Signal(object)                    # clip dict or None (the primary selection)
-    groupMoveRequested = Signal(list, int)           # clip ids, shift us
+    groupMoveRequested = Signal(list, int, int)      # clip ids, shift us, rows down (negative: up)
     keyMoveRequested = Signal(str, int, int)         # clip id, keyframe clip time from, to (us)
     marksChanged = Signal()                          # the time selection (mark_in / mark_out) changed
     volumeEdited = Signal(str, object)               # clip id, new volume (number or {"keys": ...})
@@ -77,6 +78,7 @@ class Timeline(QWidget):
     clipAction = Signal(str, str)                    # action, clip id
     mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
     compoundDropped = Signal(str, str, int)          # compound id, track id or "", start us
+    filterDropped = Signal(str, str, str, int)       # filter ref, clip id or "", track id or "", start us
     filesDropped = Signal(list, str, int)            # file manager paths, track id or "", start us
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
     clipDragging = Signal(str, int, int)             # clip id, start us, duration us: while dragging
@@ -102,6 +104,7 @@ class Timeline(QWidget):
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
+        self.drop_clip = None                      # clip a filter from the VFX tab would go onto
         self.tops = []                             # y of each row (on screen)
         self.vzoom = 1.0                           # track height factor
         self.heights = {}                          # track id -> height set by dragging its edge
@@ -393,10 +396,14 @@ class Timeline(QWidget):
             for c in tr["clips"]:
                 if c is not dragged and c["id"] not in group:
                     self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr, h=h, dim=dim)
-            for c in tr["clips"]:
-                if c["id"] in group:
-                    self._draw_clip(p, c, y, c["start_us"] + self.drag["shift"], c["duration_us"],
-                                    ghost=True, track=tr, h=h, dim=dim)
+        if group:                                         # the moving clips, on the rows they will land on
+            dr = self.drag.get("drow", 0)
+            for i, tr in enumerate(self.rows):
+                for c in tr["clips"]:
+                    if c["id"] in group and 0 <= i + dr < len(self.rows):
+                        j = i + dr
+                        self._draw_clip(p, c, self.tops[j], c["start_us"] + self.drag["shift"], c["duration_us"],
+                                        ghost=True, track=self.rows[j], h=self.row_h(j))
         if dragged:
             d = self.drag
             h = self.row_h(d["row"])
@@ -414,6 +421,14 @@ class Timeline(QWidget):
             p.setPen(QPen(QColor("#e6e6e6"), 1, Qt.DashLine))
             p.setBrush(QColor(255, 255, 255, 35))
             p.drawRect(self.band)
+        if self.drop_clip is not None:
+            row = next((i for i, t in enumerate(self.rows) if self.drop_clip in t["clips"]), None)
+            if row is not None:
+                x0 = max(self._x(self.drop_clip["start_us"] / US), HEADER_W)
+                x1 = self._x((self.drop_clip["start_us"] + self.drop_clip["duration_us"]) / US)
+                p.setPen(QPen(QColor("#ffb020"), 2))
+                p.setBrush(QColor(255, 176, 32, 40))
+                p.drawRoundedRect(QRectF(x0, self.tops[row] + 2, max(2.0, x1 - x0), self.row_h(row) - 6), 3, 3)
         if self.drop_at is not None:
             row, t = self.drop_at
             dx = self._x(t / US)
@@ -738,7 +753,7 @@ class Timeline(QWidget):
             self.set_selection(self.selected_ids, c["id"])
         if len(self.selected_ids) > 1 and zone == "body":
             self.drag = {"clip": c, "mode": "group", "x0": pos.x(), "moved": False, "shift": 0,
-                         "ids": set(self.selected_ids), "adding": adding}
+                         "ids": set(self.selected_ids), "adding": adding, "row0": row, "drow": 0}
             return
         self.drag = {"clip": c, "mode": zone, "x0": pos.x(), "row0": row, "row": row,
                      "start": c["start_us"], "end": c["start_us"] + c["duration_us"], "moved": False}
@@ -848,9 +863,10 @@ class Timeline(QWidget):
             self.set_selection(d["base"] | hit)
             return
         if d["mode"] == "group":
-            if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX:
+            if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX and self._row_at(pos.y()) == d["row0"]:
                 return
             d["moved"] = True
+            d["drow"] = self._group_rows(d, pos.y())
             c = d["clip"]
             dt = (pos.x() - d["x0"]) / self.px_per_s * US
             group = [k for t in self.rows for k in t["clips"] if k["id"] in d["ids"]]
@@ -891,6 +907,21 @@ class Timeline(QWidget):
         self.clipDragging.emit(c["id"], int(round(s1)), int(round(e1 - s1)))
         self.update()
 
+    def _group_rows(self, d, y):
+        """How many rows down (negative: up) the dragged group goes with the mouse at y: the row
+        under the mouse, held to what every moving clip can reach among its own kind of track."""
+        row = self._row_at(y)
+        if row is None:
+            row = 0 if y < RULER_H else len(self.rows) - 1
+        n_vis = sum(1 for t in self.rows if t["kind"] != "audio")
+        lo, hi = -len(self.rows), len(self.rows)
+        for i, t in enumerate(self.rows):
+            if not any(c["id"] in d["ids"] for c in t["clips"]):
+                continue
+            a, b = (n_vis, len(self.rows) - 1) if t["kind"] == "audio" else (0, n_vis - 1)
+            lo, hi = max(lo, a - i), min(hi, b - i)
+        return min(max(row - d["row0"], lo), hi)
+
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
         if d and d["mode"] == "region":
@@ -922,8 +953,8 @@ class Timeline(QWidget):
             self.update()
             return
         if d["mode"] == "group":
-            if d["moved"] and d["shift"]:
-                self.groupMoveRequested.emit(sorted(d["ids"]), int(round(d["shift"])))
+            if d["moved"] and (d["shift"] or d["drow"]):
+                self.groupMoveRequested.emit(sorted(d["ids"]), int(round(d["shift"])), d["drow"])
             elif not d["moved"] and not d["adding"]:
                 self.select(d["clip"])                  # a plain click picks one of the group
             self.update()
@@ -944,7 +975,7 @@ class Timeline(QWidget):
 
     # -- drops from the media library -----------------------------------------------------------
     def _accepts(self, md):
-        return (bool(self.proj) and md.hasFormat(MEDIA_MIME)) or md.hasUrls()
+        return (bool(self.proj) and (md.hasFormat(MEDIA_MIME) or md.hasFormat(FX_MIME))) or md.hasUrls()
 
     def dragEnterEvent(self, e):
         if self._accepts(e.mimeData()):
@@ -956,16 +987,34 @@ class Timeline(QWidget):
         pos = e.position()
         if self.proj:
             self.drop_at = (self._row_at(pos.y()), max(0.0, self._sec(pos.x())) * US)
+            self.drop_clip = self._fx_target(pos) if e.mimeData().hasFormat(FX_MIME) else None
+            if self.drop_clip is not None:                 # onto a clip: no time line, the clip is lit
+                self.drop_at = None
         e.acceptProposedAction()
         self.update()
 
+    def _fx_target(self, pos):
+        """The clip a filter dropped at pos goes onto (pictures, texts, compounds, filter clips)."""
+        _, c, _ = self._hit(pos)
+        return c if c is not None and c["type"] in edit.VISUAL else None
+
     def dragLeaveEvent(self, e):
-        self.drop_at = None
+        self.drop_at = self.drop_clip = None
         self.update()
 
     def dropEvent(self, e):
-        self.drop_at = None
+        self.drop_at = self.drop_clip = None
         pos = e.position()
+        if e.mimeData().hasFormat(FX_MIME):                  # a filter from the VFX tab
+            if self.proj:
+                ref = bytes(e.mimeData().data(FX_MIME)).decode("utf-8")
+                row = self._row_at(pos.y())
+                c = self._fx_target(pos)
+                tid = self.rows[row]["id"] if row is not None and self.rows[row]["kind"] != "audio" else ""
+                self.filterDropped.emit(ref, c["id"] if c else "", tid, int(max(0.0, self._sec(pos.x())) * US))
+                e.acceptProposedAction()
+            self.update()
+            return
         row = self._row_at(pos.y()) if self.proj else None
         tid = self.rows[row]["id"] if row is not None else ""
         start = int(max(0.0, self._sec(pos.x())) * US) if self.proj else 0

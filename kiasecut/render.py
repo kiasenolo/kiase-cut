@@ -11,6 +11,8 @@ follows the same rules as build.py:
   * compound clips render their tracks into a layer first, at time - start + source start;
     a static compound (靜態片段) always at its still_us, drawn once and reused like a picture.
 QPainter on QImage is usable from any thread, so the player renders off the UI thread.
+glrender.py draws the same frames on the GPU (and is used when it can be); this one is the
+reference and the fallback.
 """
 import json
 import math

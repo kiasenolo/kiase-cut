@@ -237,22 +237,29 @@ def shader_source(d):
     return PRELUDE % {"params": decl} + d.code + EPILOGUE
 
 
-class Engine:
-    """Runs filters on the GPU (any OpenGL 3.3 context; a hidden one is made)."""
+def make_context():
+    """(moderngl, a hidden OpenGL 3.3 context of this thread); FilterError when there is none."""
+    try:
+        import moderngl
+    except ImportError as exc:
+        raise FilterError("濾鏡需要 moderngl：pip install moderngl") from exc
+    try:
+        return moderngl, moderngl.create_standalone_context()
+    except Exception:
+        try:
+            return moderngl, moderngl.create_standalone_context(backend="egl")
+        except Exception as exc:
+            raise FilterError(f"無法建立 OpenGL（{exc}）") from exc
 
-    def __init__(self):
-        try:
-            import moderngl
-        except ImportError as exc:
-            raise FilterError("濾鏡需要 moderngl：pip install moderngl") from exc
-        self.mgl = moderngl
-        try:
-            self.ctx = moderngl.create_standalone_context()
-        except Exception:
-            try:
-                self.ctx = moderngl.create_standalone_context(backend="egl")
-            except Exception as exc:
-                raise FilterError(f"無法建立 OpenGL（{exc}）") from exc
+
+class Engine:
+    """Runs filters on the GPU (any OpenGL 3.3 context; a hidden one is made, or the GPU
+    compositor's own is shared: glrender.py)."""
+
+    def __init__(self, mgl=None, ctx=None):
+        if ctx is None:
+            mgl, ctx = make_context()
+        self.mgl, self.ctx = mgl, ctx
         quad = np.array([-1, -1, 1, -1, -1, 1, 1, 1], dtype="f4")
         self.quad = self.ctx.buffer(quad.tobytes())
         self.programs = {}
@@ -292,9 +299,18 @@ class Engine:
         """Filter rgba (H x W x 4, uint8, premultiplied) with filter d. values: {param: value
         for the shader}. Returns the same kind of array."""
         h, w = rgba.shape[:2]
+        with self.ctx:                           # this engine's context, whatever else the thread uses
+            (ta, _), _ = self._targets(w, h)
+            ta.write(np.ascontiguousarray(rgba).tobytes())
+            out = self.run_tex(d, values, ta, w, h, time, progress, frame)
+            data = out.read()
+        return np.frombuffer(data, np.uint8).reshape(h, w, 4)
+
+    def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0):
+        """Filter the w x h texture src (premultiplied RGBA) on the card; returns the texture
+        holding the result, one of this engine's own (valid until its next run at that size)."""
         prog, vao = self._program(d)
         (ta, fa), (tb, fb) = self._targets(w, h)
-        ta.write(np.ascontiguousarray(rgba).tobytes())
         for name, v in (("resolution", (float(w), float(h))), ("time", float(time)), ("progress", float(progress)),
                         ("frame", int(frame)), ("scale", h / 1080.0)):
             if name in prog:
@@ -304,20 +320,18 @@ class Engine:
                 prog[p.name].value = values[p.name]
         if "source" in prog:
             prog["source"].value = 0
-        src_tex, dst = ta, (tb, fb)
-        out_fbo = fb
+        self.ctx.disable(self.mgl.BLEND)
+        read = src
         for i in range(d.passes):
             if "pass_index" in prog:
                 prog["pass_index"].value = i
-            dst_tex, dst_fbo = (tb, fb) if i % 2 == 0 else (ta, fa)
-            src_tex = ta if i % 2 == 0 else tb
+            dst_tex, dst_fbo = (ta, fa) if read is not ta else (tb, fb)
             dst_fbo.use()
             self.ctx.viewport = (0, 0, w, h)
-            src_tex.use(0)
+            read.use(0)
             vao.render(self.mgl.TRIANGLE_STRIP)
-            out_fbo = dst_fbo
-        data = out_fbo.read(components=4)
-        return np.frombuffer(data, np.uint8).reshape(h, w, 4)
+            read = dst_tex
+        return read
 
     def close(self):
         try:

@@ -178,12 +178,19 @@ clip above the top row, or a sound clip below the bottom row, to put it on a new
 分離音訊 in a video clip's menu moves its sound onto an audio track. Preview and export
 follow the same rules (a solo track silences the others on its level).
 
-GPU acceleration (設定 > GPU 加速, on by default): with an NVIDIA card, exports are encoded
-with NVENC (several times faster than x264 on real footage; pictures larger than 4096 px,
-or a card that refuses, fall back to x264), and HEVC / AV1 / VP9 videos are decoded and
-scaled on the card. Videos play from ffmpeg streams (videoreader.py) that read the file
-front to back instead of seeking for every frame: a 4K clip went from ~15 to 30 fps in the
-preview, and the filter export twice as fast. Filters already ran on the GPU.
+GPU acceleration (設定 > GPU 加速, on by default): frames are composited on the graphics
+card (glrender.py, any OpenGL 3.3 card): every clip is a textured quad whose transform,
+opacity, mask, feather and blend mode are worked out per pixel, compounds and static clips
+are drawn into layers there and filters run on them without leaving the card; only the
+finished frame is read back. A busy scene (feathered masks, blend modes, a filter) went
+from 3 to 250 fps at preview size and from 0.7 to 92 fps at 1080p; the two renderers are
+compared frame by frame in tests/test_glrender.py (within 1/255 on average). Without
+OpenGL, or with the switch off, the QPainter renderer (render.py) does it. With an NVIDIA
+card, exports are also encoded with NVENC (several times faster than x264 on real footage;
+pictures larger than 4096 px, or a card that refuses, fall back to x264), and HEVC / AV1 /
+VP9 videos are decoded and scaled on the card. Videos play from ffmpeg streams
+(videoreader.py) that read the file front to back instead of seeking for every frame: a 4K
+clip went from ~15 to 30 fps in the preview.
 
 Export (Ctrl+E): the whole film or the range marked with I / O (Alt+X clears), at high,
 standard or small-file quality, at any frame rate (10 / 25 / 30 / 40 / 60 / 100 fps or a
@@ -228,6 +235,7 @@ folder (File > Save as).
 | `textlayout.py` | text rendering calibrated to Jianying's layout |
 | `masks.py` | line / mirror / circle / rectangle masks as MLT splines (or baked mattes) |
 | `render.py`, `audiomix.py` | live preview: frames drawn with QPainter, audio mixed with numpy |
+| `glrender.py` | the same frames composited with OpenGL (GPU) |
 | `waveform.py` | cached audio peaks for timeline waveforms |
 | `videoreader.py`, `gpu.py` | streamed video pictures for the preview; GPU decoding / NVENC |
 | `svgimage.py` | SVG pictures drawn at the size they are shown |

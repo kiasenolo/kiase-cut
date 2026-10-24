@@ -16,7 +16,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 
-from .. import render, videoreader
+from .. import glrender, gpu, render, videoreader
 from ..audiomix import CHANNELS, RATE, Mixer
 
 PREVIEW_W = 960            # until the preview reports its size
@@ -110,7 +110,7 @@ class Worker(QObject):
 
     @Slot()
     def run(self):
-        self.view, self.renderer, self.mixer = None, render.Renderer(self._video), None
+        self.view, self.renderer, self.mixer = None, self._renderer(), None
         self.readers = videoreader.Readers()
         fmt = QAudioFormat()
         fmt.setSampleRate(RATE)
@@ -179,6 +179,10 @@ class Worker(QObject):
         if self.engine:
             self.engine.close()
 
+    def _renderer(self):
+        """The GPU compositor when GPU acceleration is on (and works here), else QPainter."""
+        return glrender.make(self._video) if gpu.enabled else render.Renderer(self._video)
+
     def _start_sink(self, sink):
         """Start the sound output with room for LEAD frames and a few more: a buffer shorter
         than the lead (30 fps: 6 frames are 200 ms) kept every picture late, so most were
@@ -189,6 +193,8 @@ class Worker(QObject):
 
     def _show(self, pos):
         v = self.view
+        if gpu.enabled != isinstance(self.renderer, glrender.GLRenderer):     # the 設定 switch changed
+            self.renderer = self._renderer()
         w = max(2, min(self.render_w, v["width"]))
         h = max(2, round(w * v["height"] / v["width"]))
         self.frameReady.emit(self.renderer.render(v, pos, w, h), pos)

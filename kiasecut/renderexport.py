@@ -12,7 +12,7 @@ import wave
 
 from PySide6.QtGui import QImage
 
-from . import audiomix, curves, gpu, project, render, videoreader
+from . import audiomix, curves, glrender, gpu, project, render, videoreader
 from .build import find_ffmpeg
 
 US = 1_000_000
@@ -77,7 +77,7 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
         return QImage(px, rw, rh, rw * 4, QImage.Format_RGBA8888).copy()
 
     CAP_W, CAP_H = max(W, 3840), max(H, 2160)      # (the engine sends pictures at their own size)
-    renderer = render.Renderer(video)
+    renderer = glrender.make(video) if gpu.enabled else render.Renderer(video)
     cmd = [ffmpeg, "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}", "-r", f"{fps:g}",
            "-i", "-", "-i", wav, "-map", "0:v", "-map", "1:a", *gpu.ffmpeg_video_args(opts, (W, H)),
            "-c:a", "aac", "-b:a", "320k", "-shortest", "-movflags", "+faststart", out]

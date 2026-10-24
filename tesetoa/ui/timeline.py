@@ -41,7 +41,7 @@ from .. import curves, edit, project, waveform
 US = 1_000_000
 MEDIA_MIME = "application/x-tesetoa-media"
 COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
-          "text": "#7c5574", "audio": "#3e7055"}                              # DaVinci Resolve
+          "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e"}                              # DaVinci Resolve
 ROW_BG = QColor("#1f1f21")
 
 
@@ -545,6 +545,10 @@ class Timeline(QWidget):
             label = self.clip_label(c).replace("\n", " ")
             if c["type"] == "compound":
                 label = ("⧉ " if c.get("timeline_id") else "▣ ") + label
+            elif c["type"] == "filter":
+                label = "✦ " + label
+            elif c.get("effects"):
+                label += "  ✦" + (str(len(c["effects"])) if len(c["effects"]) > 1 else "")
             lr = r.adjusted(4, 0, -2, 0)
             if audio and r.height() > 20:
                 lr.setHeight(16)

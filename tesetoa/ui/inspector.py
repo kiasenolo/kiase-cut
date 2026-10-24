@@ -13,7 +13,9 @@ is shown, one that differs shows "--", and typing a value sets it on all of them
 """
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFormLayout,
+import os
+
+from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from .. import curves, edit, project
@@ -171,6 +173,8 @@ class Inspector(QWidget):
         self.body = QWidget()
         lay.addWidget(self.body)
         lay.addStretch()
+        self._last_font = None
+        self.fonts = []                   # [{path, name}] installed fonts (fonts.py), for the picker
         self.clip_ids = []
         self.shape = None                 # what the form was built for
         self.widgets = {}
@@ -209,6 +213,13 @@ class Inspector(QWidget):
             edit_.textChanged.connect(lambda: self._queue("text", "content", edit_.toPlainText()))
             self.widgets["content"] = edit_
             form.addRow("內容", edit_)
+            font = ComboBox()
+            font.setPlaceholderText("--")
+            font.setMaxVisibleItems(20)
+            font.activated.connect(self._font_chosen)
+            self.widgets["font"] = font
+            self._fill_fonts()
+            form.addRow("字體", font)
             row = QWidget()
             lay = QHBoxLayout(row)
             lay.setContentsMargins(0, 0, 0, 0)
@@ -221,16 +232,71 @@ class Inspector(QWidget):
             for r in PARAMS["text"]:
                 form.addRow(r[1], self._param_row("text", *r))
         if c.get("transform") is not None:
-            form.addRow(section("畫面"))
-            self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"),))
+            if c["type"] == "filter":                     # a filter has no place of its own: only how strongly it works
+                form.addRow(section("濾鏡"))
+                rows = [("opacity", "強度 %") + r[2:] for r in PARAMS["transform"] if r[0] == "opacity"]
+                self._rows(form, "transform", rows, ())
+            else:
+                form.addRow(section("畫面"))
+                self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"),))
         if "volume" in c:
             form.addRow(section("聲音"))
             form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
         self._key_section(form)
 
+    BROWSE = "__browse__"
+
+    def set_fonts(self, fonts):
+        """The installed fonts arrived (or changed)."""
+        self.fonts = list(fonts)
+        self._fill_fonts()
+        self.shape = None                 # rebuild shows the current clip's font in the list
+
+    def _fill_fonts(self):
+        box = self.widgets.get("font")
+        if box is None:
+            return
+        box.blockSignals(True)
+        box.clear()
+        for f in self.fonts:
+            box.addItem(f["name"], f["path"])
+        box.addItem("瀏覽字型檔…", self.BROWSE)
+        box.setCurrentIndex(-1)
+        box.blockSignals(False)
+
+    def _font_chosen(self, i):
+        box = self.widgets["font"]
+        path = box.itemData(i)
+        if path == self.BROWSE:
+            path, _ = QFileDialog.getOpenFileName(self, "選擇字型檔", "", "字型 (*.ttf *.otf *.ttc *.otc)")
+            if not path:
+                self._show_font(self._last_font)
+                return
+            path = path.replace("\\", "/")
+        self._emit_text({"font_path": path})
+
+    def _emit_text(self, fields):
+        self._flush()
+        if self.clip_ids:
+            self.textEdited.emit(list(self.clip_ids), fields)
+
+    def _show_font(self, path):
+        """Show the font of the clip(s): `path`, "--" when they differ."""
+        box = self.widgets.get("font")
+        if box is None:
+            return
+        self._last_font = path
+        box.blockSignals(True)
+        i = box.findData(path) if path != "--" else -1
+        if i < 0 and path not in (None, "--"):          # a font that is not in the list: show its file name
+            box.insertItem(0, os.path.splitext(os.path.basename(path))[0], path)
+            i = 0
+        box.setCurrentIndex(i)
+        box.blockSignals(False)
+
     def _build_mask(self, form, c):
-        if c["type"] not in ("image", "video", "compound"):
-            note = QLabel("只有圖片、影片和複合片段可以加遮罩")
+        if c["type"] not in ("image", "video", "compound", "filter"):
+            note = QLabel("只有圖片、影片、複合片段和濾鏡片段可以加遮罩")
             note.setStyleSheet("color: #9a9aa0;")
             form.addRow(note)
             return
@@ -354,7 +420,8 @@ class Inspector(QWidget):
             return
         w = self.widgets
         ts = [t_us - k["start_us"] for k in clips]
-        names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段"}
+        names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段",
+                 "filter": "濾鏡片段"}
         kinds = sorted({names.get(k["type"], k["type"]) for k in clips})
         same = lambda vals: len(set(vals)) == 1
         if "類型" in w:
@@ -366,6 +433,8 @@ class Inspector(QWidget):
         if "content" in w:
             contents = [k["text"]["content"] for k in clips]
             text = contents[0] if same(contents) else ""
+            fonts = {k["text"].get("font_path") for k in clips}
+            self._show_font(fonts.pop() if len(fonts) == 1 else "--")
             if w["content"].toPlainText() != text and not w["content"].hasFocus():
                 w["content"].blockSignals(True)
                 w["content"].setPlainText(text)
@@ -505,7 +574,7 @@ def common(clips):
         out["text"] = first["text"]
     if all(k.get("transform") is not None for k in clips):
         out["transform"] = first["transform"]
-    if all(k["type"] in ("image", "video", "compound") for k in clips):
+    if all(k["type"] in ("image", "video", "compound", "filter") for k in clips):
         out["type"] = out["type"] if out["type"] != "mixed" else "video"     # can take masks
         kinds = {(k.get("mask") or {}).get("kind") for k in clips}
         if len(kinds) == 1 and None not in kinds:

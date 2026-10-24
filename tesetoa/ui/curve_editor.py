@@ -24,7 +24,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
-from .. import curves
+from .. import curves, edit, fx
 from .inspector import PARAMS, SpinBox
 
 US = 1_000_000
@@ -48,10 +48,23 @@ def param_rows(c):
         out += [("mask", r[0], "遮罩" + r[1], r[6], r[7]) for r in PARAMS["mask"]]
     if "volume" in c:
         out.append(("clip", "volume", "音量 %", 100, 1.0))
+    for e in c.get("effects") or []:                    # the numbers of the clip's filters and their masks
+        d = fx.get(e["filter"])
+        name = d.name if len(c["effects"]) == 1 else f"{d.name} #{c['effects'].index(e) + 1}"
+        for p in d.params:
+            if p.type in ("float", "int"):
+                out.append(("fx:" + e["id"], p.name, f"{name}·{p.label}", 1, p.default))
+        if e.get("mask"):
+            out += [("fxmask:" + e["id"], r[0], f"{name}·遮罩{r[1]}", r[6], r[7]) for r in PARAMS["mask"]]
     return out
 
 
 def holder(c, group):
+    if group.startswith(("fx:", "fxmask:")):
+        try:
+            return edit.holder(c, group)
+        except edit.EditError:
+            return {}
     return c if group == "clip" else (c.get(group) or {})
 
 

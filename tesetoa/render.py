@@ -19,7 +19,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 
-from . import curves, masks, project, textlayout
+from . import curves, fx, masks, project, textlayout
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg")
@@ -34,6 +34,8 @@ class Renderer:
         self.texts = {}             # (spec json, scale) -> QImage
         self.cache_limit = cache_limit
         self.errors = []            # clips that could not be drawn, reported by the player
+        self._fx = None             # filter engine (an OpenGL context of the thread that renders)
+        self._fx_error = None
 
     # -- assets -----------------------------------------------------------------------------------
     def image(self, path, w, h):
@@ -96,7 +98,10 @@ class Renderer:
             for c in tr["clips"]:
                 if round(c["start_us"] * fps / US) <= f < round((c["start_us"] + c["duration_us"]) * fps / US):
                     try:
-                        self.draw_clip(p, c, W, H, fps, t_us, px_per_unit)
+                        if c["type"] == "filter":
+                            self.draw_filter_clip(p, c, W, H, fps, t_us)
+                        else:
+                            self.draw_clip(p, c, W, H, fps, t_us, px_per_unit)
                     except Exception as exc:          # one bad clip must not blank the preview
                         self.errors.append(f"{c.get('name') or c['type']}: {exc}")
 
@@ -176,6 +181,11 @@ class Renderer:
             disp = (bw, bh)
         else:
             return
+        if any(not e.get("disabled") for e in c.get("effects") or []):
+            plain = draw
+
+            def draw(q=p):
+                self.draw_filtered(q, plain, c, t, disp, fps)
         p.save()
         p.setOpacity(p.opacity() * opacity)
         p.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
@@ -197,8 +207,7 @@ class Renderer:
         dev = p.device()
         W, H = dev.width(), dev.height()
         wt = p.worldTransform()
-        inv, ok = wt.inverted()
-        if not ok:
+        if not wt.isInvertible():
             return
         layer = QImage(W, H, QImage.Format_ARGB32_Premultiplied)
         layer.fill(Qt.transparent)
@@ -207,25 +216,138 @@ class Renderer:
         lp.setTransform(wt)
         draw(lp)
         lp.end()
-        v = lambda k, d: curves.value(mask.get(k, d), t)
-        dw, dh = disp
-        gx, gy = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
-        lx = inv.m11() * gx + inv.m21() * gy + inv.dx()                 # clip-local, y down
-        ly = inv.m12() * gx + inv.m22() * gy + inv.dy()
-        mx, my = lx - v("cx", 0.0) * dw / 2, ly + v("cy", 0.0) * dh / 2
-        b = math.radians(v("rotation", 0.0))
-        fx = mx * math.cos(b) + my * math.sin(b)                        # the mask's own frame
-        fy = -mx * math.sin(b) + my * math.cos(b)
-        m = masks.alpha(mask["kind"], v("w", 1.0) * dw, v("h", 1.0) * dh, feather, fx, -fy)
-        if mask.get("invert"):
-            m = 1 - m
-        m8 = (m * 255 + 0.5).astype(np.uint16)
+        m8 = (coverage(mask, t, disp, wt, W, H, feather) * 255 + 0.5).astype(np.uint16)
         px = np.ndarray((H, W, 4), np.uint8, buffer=layer.bits(), strides=(layer.bytesPerLine(), 4, 1))
         px[...] = ((px.astype(np.uint16) * m8[..., None] + 127) // 255).astype(np.uint8)
         p.save()
         p.resetTransform()
         p.drawImage(0, 0, layer)
         p.restore()
+
+    # -- filters ----------------------------------------------------------------------------------
+    def engine(self):
+        """The filter engine of this thread, or None (the reason goes to errors, once)."""
+        if self._fx is None and self._fx_error is None:
+            try:
+                self._fx = fx.Engine()
+            except fx.FilterError as exc:
+                self._fx_error = str(exc)
+                self.errors.append(f"濾鏡：{exc}")
+        return self._fx
+
+    def run_effects(self, effects, img, t, duration, fps, wt, disp):
+        """Apply a chain of effects to img (QImage ARGB32 premultiplied) at clip time t; each
+        effect's own mask (clip-local, through world transform wt) limits where it shows."""
+        todo = [e for e in effects if not e.get("disabled")]
+        eng = self.engine() if todo else None
+        if eng is None:
+            return img
+        arr = image_to_array(img)
+        for e in todo:
+            d = fx.get(e["filter"])
+            vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
+            try:
+                out = eng.run(d, vals, arr, time=t / US, progress=min(1.0, max(0.0, t / max(1, duration))),
+                              frame=max(0, round(t * fps / US)))
+            except fx.FilterError as exc:
+                self.errors.append(f"濾鏡「{d.name}」：{exc}")
+                continue
+            mk = e.get("mask")
+            if mk:
+                h, w = arr.shape[:2]
+                m = coverage(mk, t, disp, wt, w, h, curves.value(mk.get("feather", 0.0), t))[..., None]
+                out = (arr * (1 - m) + out * m).round().astype(np.uint8)
+            arr = np.ascontiguousarray(out)
+        return array_to_image(arr)
+
+    def draw_filtered(self, q, plain, c, t, disp, fps):
+        """Draw a clip's picture, run its effects over it, and put the result on q."""
+        dev = q.device()
+        W, H = dev.width(), dev.height()
+        wt = q.worldTransform()
+        layer = QImage(W, H, QImage.Format_ARGB32_Premultiplied)
+        layer.fill(Qt.transparent)
+        lp = QPainter(layer)
+        lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        lp.setTransform(wt)
+        plain(lp)
+        lp.end()
+        layer = self.run_effects(c["effects"], layer, t, c["duration_us"], fps, wt, disp)
+        q.save()
+        q.resetTransform()
+        q.drawImage(0, 0, layer)
+        q.restore()
+
+    def draw_filter_clip(self, p, c, W, H, fps, t_us):
+        """A filter clip: what has been drawn so far (the tracks below) goes through its
+        effects, inside its mask and at its opacity."""
+        tf = c.get("transform") or {}
+        t = t_us - c["start_us"]
+        v = lambda k, d: curves.value(tf.get(k, d), t)
+        strength = min(1.0, max(0.0, v("opacity", 1.0)))
+        if strength <= 0 or not any(not e.get("disabled") for e in c.get("effects") or []):
+            return
+        dev = p.device()
+        w, h = dev.width(), dev.height()
+        p.save()
+        p.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
+        p.rotate(v("rotation", 0.0))
+        p.scale(v("scale", 1.0), curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t))
+        wt = p.worldTransform()
+        p.restore()
+        if not wt.isInvertible():
+            return
+        base = dev.copy() if isinstance(dev, QImage) else None
+        if base is None:
+            return
+        base = base.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        out = self.run_effects(c["effects"], base, t, c["duration_us"], fps, wt, (W, H))
+        cov = np.full((h, w), strength, np.float32)
+        if project.active_mask(c):
+            mk = c["mask"]
+            cov = cov * coverage(mk, t, (W, H), wt, w, h, curves.value(mk.get("feather", 0.0), t))
+        a, b = image_to_array(base).astype(np.float32), image_to_array(out).astype(np.float32)
+        res = np.ascontiguousarray((a + (b - a) * cov[..., None]).round().astype(np.uint8))
+        p.save()
+        p.resetTransform()
+        p.setClipping(False)
+        p.setOpacity(1.0)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.drawImage(0, 0, array_to_image(res))
+        p.restore()
+
+
+def coverage(mask, t, disp, wt, W, H, feather):
+    """How much of each device pixel (H x W) a mask lets through, 0..1. The mask lives in the
+    clip's own space (centre origin, y up, disp = the clip's size there); wt maps that space
+    to the device."""
+    inv, ok = wt.inverted()
+    v = lambda k, d: curves.value(mask.get(k, d), t)
+    dw, dh = disp
+    gx, gy = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
+    lx = inv.m11() * gx + inv.m21() * gy + inv.dx()                 # clip-local, y down
+    ly = inv.m12() * gx + inv.m22() * gy + inv.dy()
+    mx, my = lx - v("cx", 0.0) * dw / 2, ly + v("cy", 0.0) * dh / 2
+    b = math.radians(v("rotation", 0.0))
+    fx_ = mx * math.cos(b) + my * math.sin(b)                       # the mask's own frame
+    fy_ = -mx * math.sin(b) + my * math.cos(b)
+    m = masks.alpha(mask["kind"], v("w", 1.0) * dw, v("h", 1.0) * dh, feather, fx_, -fy_)
+    if mask.get("invert"):
+        m = 1 - m
+    return m.astype(np.float32)
+
+
+def image_to_array(img):
+    """QImage -> H x W x 4 uint8 RGBA, premultiplied (a copy)."""
+    im = img.convertToFormat(QImage.Format_RGBA8888_Premultiplied)
+    w, h = im.width(), im.height()
+    return np.ndarray((h, w, 4), np.uint8, buffer=im.constBits(), strides=(im.bytesPerLine(), 4, 1)).copy()
+
+
+def array_to_image(arr):
+    h, w = arr.shape[:2]
+    im = QImage(np.ascontiguousarray(arr).data, w, h, w * 4, QImage.Format_RGBA8888_Premultiplied).copy()
+    return im.convertToFormat(QImage.Format_ARGB32_Premultiplied)
 
 
 def quantize(scale):

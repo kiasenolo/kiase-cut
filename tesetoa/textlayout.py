@@ -33,6 +33,35 @@ def font(path, size):
     return _fonts[key]
 
 
+_has = {}
+
+
+def has_glyph(f, ch):
+    """Whether font f draws ch (a font without it draws its "missing" box, the same one it
+    draws for a code point no font has)."""
+    if ch.isspace() or ord(ch) < 128:
+        return True
+    key = (f.path, ch)
+    if key not in _has:
+        try:
+            _has[key] = bytes(f.getmask(ch)) != bytes(f.getmask("\uffff"))
+        except (OSError, ValueError):
+            _has[key] = True
+    return _has[key]
+
+
+def with_fallback(f, ch, em):
+    """f, or a font that has ch (a Latin-only font picked for Chinese text, say)."""
+    if has_glyph(f, ch):
+        return f
+    for p in FALLBACK_FONTS:
+        if os.path.exists(p) and p != f.path:
+            g = font(p, em)
+            if has_glyph(g, ch):
+                return g
+    return f
+
+
 def _style_at(spec, i):
     for st in spec.get("styles") or []:
         a, b = st.get("range", [0, len(spec["content"])])
@@ -60,7 +89,7 @@ def render(spec, scale, canvas_h=1080):
             continue
         st = _style_at(spec, i)
         em = st.get("size", spec.get("size", 5.0)) * unit
-        f = font(st.get("font_path") or path, em)
+        f = with_fallback(font(st.get("font_path") or path, em), ch, em)
         col = st.get("color") or spec.get("color") or [1, 1, 1]
         rgba = tuple(int(round(v * 255)) for v in col[:3]) + (255,)
         if cur:

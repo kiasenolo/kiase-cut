@@ -17,20 +17,23 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QDesktopServices, QDrag, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
-                               QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog,
+                               QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QTextBrowser,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
 
-from .. import build, curves, edit, library, project, waveform, workspace
+from .. import build, curves, edit, fonts, fx, library, project, renderexport, userlib, waveform, workspace
 from ..client import EngineClient
 from ..importers import jianying
 from .compounds import CompoundPanel
 from .curve_editor import CurveEditor
+from .effects_panel import EffectsPanel
 from .export_dialog import ExportDialog
 from .inspector import Inspector
 from .library import LibraryPanel
 from .player import Player
 from .project_dialogs import NewProjectDialog, ProjectInfoDialog
+from .settings_dialog import SettingsDialog
+from .userlib_panel import UserLibraryPanel
 from . import icons
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -144,6 +147,19 @@ class Slider(QSlider):
         e.ignore()
 
 
+def group_holder(c, group, create=False):
+    """The dict of clip c that holds the parameters of `group` ("transform", "mask", "clip", ...,
+    or "fx:<effect id>" / "fxmask:<effect id>" for a filter's own)."""
+    if group.startswith(("fx:", "fxmask:")):
+        try:
+            return edit.holder(c, group)
+        except edit.EditError:
+            return {}
+    if group == "clip":
+        return c
+    return c.setdefault(group, {}) if create else (c.get(group) or {})
+
+
 class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
@@ -161,6 +177,12 @@ class MainWindow(QMainWindow):
         self.root = None                # the project folder (the folder of the project file)
         self.dirty = False
         self.fs_epoch = 0               # counts changes made to the Media folder from here
+        self.ulib = None                # the user's Library (userlib.UserLibrary)
+        self.ul_epoch = 0               # counts changes made to the Library folder from here
+        self.ul_busy = False
+        self.ul_prober = None
+        self.fonts = []                 # installed fonts for the text font picker
+        self.closing = False
         self.sync_busy = False
         self.sync_retries = 0
         self._last_tick = time.monotonic()
@@ -200,8 +222,25 @@ class MainWindow(QMainWindow):
         self.compounds.timelineRequested.connect(self.switch_timeline)
         self.compounds.deleteRequested.connect(self.delete_compound_item)
         self.compounds.useDeleteRequested.connect(self.delete_use)
+        self.ulpanel = UserLibraryPanel()
+        self.ulpanel.settingsRequested.connect(self.open_settings)
+        self.ulpanel.newFilterRequested.connect(self.new_filter_file)
+        self.ulpanel.saveStyleRequested.connect(self.save_text_style)
+        self.ulpanel.docRequested.connect(self.show_filter_doc)
+        self.ulpanel.checkRequested.connect(self.check_filters)
+        for key, panel in self.ulpanel.panels.items():
+            panel.importRequested.connect(lambda folder, k=key: self.ul_import(k, folder))
+            panel.newFolderRequested.connect(lambda parent, k=key: self.ul_new_folder(k, parent))
+            panel.renameRequested.connect(lambda ident, k=key: self.ul_rename(k, ident))
+            panel.deleteRequested.connect(lambda ident, k=key: self.ul_delete(k, ident))
+            panel.moveRequested.connect(lambda ident, to, k=key: self.ul_move(k, ident, to))
+            panel.revealRequested.connect(lambda ident, k=key: self.ul_reveal(k, ident))
+            panel.addRequested.connect(lambda ident: self.place_media(ident, "", self.playhead_us()))
+            panel.filesDropped.connect(lambda paths, folder, k=key: self.ul_drop(k, paths, folder))
+            panel.extra_menu = lambda menu, ident, k=key: self.ul_menu(k, menu, ident)
         self.left = QTabWidget()
-        self.left.addTab(self.library, "素材庫")
+        self.left.addTab(self.library, "專案素材")
+        self.left.addTab(self.ulpanel, "Library")
         self.left.addTab(self.compounds, "複合片段")
 
         self.preview = Preview()
@@ -243,8 +282,28 @@ class MainWindow(QMainWindow):
         cv.seekRequested.connect(self.seek_clip_time)
         cv.addAtPlayhead.connect(self.add_key_at_playhead)
         cv.keyJump.connect(self.jump_key)
+        self.effects = EffectsPanel()
+        ef = self.effects
+        ef.addRequested.connect(lambda cid, ref: self.apply("新增效果", edit.add_effect, cid, ref, select=lambda c: c["id"]))
+        ef.browseRequested.connect(self.browse_effect)
+        ef.removeRequested.connect(lambda cid, eid: self.apply("移除效果", edit.remove_effect, cid, eid))
+        ef.enabledChosen.connect(lambda cid, eid, on: self.apply(
+            "啟用效果" if on else "停用效果", edit.set_effect_enabled, cid, eid, on))
+        ef.moveRequested.connect(lambda cid, eid, d: self.apply("調整效果順序", edit.move_effect, cid, eid, d))
+        ef.maskKindChosen.connect(lambda cid, eid, kind: self.apply(
+            "效果範圍" if kind else "移除效果範圍", edit.set_effect_mask, cid, eid, kind))
+        ef.maskInvertChosen.connect(lambda cid, eid, on: self.apply("反轉效果範圍", edit.set_effect_mask_invert, cid, eid, on))
+        ef.paramEdited.connect(self.on_param_edited)
+        ef.keyToggled.connect(self.on_key_toggled)
+        ef.liveEdited.connect(self.on_live_edit)
+        ef.docRequested.connect(self.show_filter_doc)
+        ef.revealFilter.connect(self.reveal_path)
+        fx_scroll = QScrollArea()
+        fx_scroll.setWidget(ef)
+        fx_scroll.setWidgetResizable(True)
         self.side = QTabWidget()
         self.side.addTab(scroll, "屬性")
+        self.side.addTab(fx_scroll, "效果")
         self.side.addTab(mask_scroll, "遮罩")
         # the 遮罩 tab turns the preview into the mask editor
         self.side.currentChanged.connect(lambda _: self.preview.set_mask_mode(self.side.currentWidget() is mask_scroll))
@@ -305,7 +364,7 @@ class MainWindow(QMainWindow):
         top.addWidget(center)
         top.addWidget(self.side)
         top.setStretchFactor(1, 1)
-        top.setSizes([280, 900, 420])
+        top.setSizes([360, 840, 420])
 
         # timeline with its toolbar and the compound breadcrumb
         self.timeline = Timeline()
@@ -421,14 +480,20 @@ class MainWindow(QMainWindow):
         # this window comes back to the front, and after our own file operations
         self.watcher = QFileSystemWatcher(self)
         self.watcher.directoryChanged.connect(lambda _p: self.request_sync(700))
+        self.ul_watcher = QFileSystemWatcher(self)         # the same for the user's Library folder
+        self.ul_watcher.directoryChanged.connect(lambda _p: self.request_ul_sync(700))
+        self.ul_timer = QTimer(self, singleShot=True)
+        self.ul_timer.timeout.connect(self.sync_userlib)
         self.sync_timer = QTimer(self, singleShot=True)
         self.sync_timer.timeout.connect(self.sync_library)
         self.clock = QTimer(self, interval=5000)        # time spent on the project; autosave
         self.clock.timeout.connect(self._tick)
         self.clock.start()
-        self.autosave_timer = QTimer(self, interval=5 * 60 * 1000)
+        self.autosave_timer = QTimer(self, interval=self.autosave_min() * 60 * 1000)
         self.autosave_timer.timeout.connect(self._autosave)
         self.autosave_timer.start()
+        self.apply_library_root(self.library_root())
+        self.start_font_scan()
         self._menus()
         self._update_title()
         self._update_crumb()
@@ -456,6 +521,8 @@ class MainWindow(QMainWindow):
         add(m, "開啟專案資料夾", None, lambda: self.reveal(None))
         add(m, "整理素材到專案資料夾", None, self.collect_external)
         m.addSeparator()
+        add(m, "設定…", "Ctrl+,", self.open_settings)
+        m.addSeparator()
         add(m, "匯入剪映草稿…", "Ctrl+I", self.import_draft)
         add(m, "匯入素材…", "Ctrl+Shift+I", lambda: self.import_media(self.library.current_folder()))
         add(m, "匯出影片…", "Ctrl+E", self.export)
@@ -473,6 +540,15 @@ class MainWindow(QMainWindow):
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
         add(m, "新增文字", "Ctrl+T", self.do_text)
+        m = self.menuBar().addMenu("濾鏡")
+        self.filter_menu = m.addMenu("新增濾鏡片段（在播放頭）")
+        self.filter_menu.aboutToShow.connect(lambda: self._fill_filter_menu(self.filter_menu, self.add_filter_clip))
+        self.apply_menu = m.addMenu("套用到選取的片段")
+        self.apply_menu.aboutToShow.connect(lambda: self._fill_filter_menu(self.apply_menu, self.apply_filter_to_selected))
+        m.addSeparator()
+        add(m, "新增自訂濾鏡檔…", None, lambda: self.new_filter_file(None))
+        add(m, "濾鏡寫法說明…", None, self.show_filter_doc)
+        add(m, "檢查所有濾鏡", None, self.check_filters)
         m = self.menuBar().addMenu("播放")
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
         add(m, "標記出點", "O", lambda: self.set_mark("out"))
@@ -997,6 +1073,7 @@ class MainWindow(QMainWindow):
     def changeEvent(self, e):
         if e.type() == QEvent.ActivationChange and self.isActiveWindow():
             self.request_sync(300)
+            self.request_ul_sync(300)
         super().changeEvent(e)
 
     def paths_changed(self, pairs, label):
@@ -1240,7 +1317,7 @@ class MainWindow(QMainWindow):
     def on_param_edited(self, ids, group, key, value):
         """A value typed in the inspector: set on every selected clip (each at its own
         playhead time, so keyframed ones get or edit the keyframe there)."""
-        label = "調整" + self.PARAM_LABELS.get((group, key), "遮罩")
+        label = "調整效果" if group.startswith("fx") else "調整" + self.PARAM_LABELS.get((group, key), "遮罩")
         times = {cid: self.clip_time(cid) for cid in ids}
         self.apply_each(label, lambda lvl, cid: edit.set_param(lvl, cid, group, key, value, times[cid]), ids,
                         merge=("param", tuple(ids), group, key, round(times[ids[0]])))
@@ -1251,7 +1328,7 @@ class MainWindow(QMainWindow):
 
         def has(cid):
             c = edit.find(self.container(), cid)[1]
-            return edit.key_at((c if group == "clip" else c.get(group) or {}).get(key), times[cid]) is not None
+            return edit.key_at(group_holder(c, group).get(key), times[cid]) is not None
 
         todo = ids if all(has(cid) for cid in ids) else [cid for cid in ids if not has(cid)]
         self.apply_each("關鍵幀", lambda lvl, cid: edit.toggle_key(lvl, cid, group, key, times[cid]), todo)
@@ -1263,7 +1340,7 @@ class MainWindow(QMainWindow):
         t = self.clip_time(cid)
         c = edit.find(self.container(), cid)[1]
         todo = [(g, k) for g, k in params
-                if edit.key_at((c if g == "clip" else c.get(g) or {}).get(k), t) is None]
+                if edit.key_at(group_holder(c, g).get(k), t) is None]
         if not todo:
             self.statusBar().showMessage("播放頭上已經有關鍵幀", 2000)
             return
@@ -1297,12 +1374,13 @@ class MainWindow(QMainWindow):
             for c in tr["clips"]:
                 if c["id"] == cid:
                     for g, k, keys, keep in changes:
-                        (c if g == "clip" else c.setdefault(g, {}))[k] = {"keys": keys} if keys else keep
+                        group_holder(c, g, create=True)[k] = {"keys": keys} if keys else keep
         self.player.worker.set_view(view, self.cache_dir())
 
     def show_selection_props(self):
         clips, t = self.timeline.selected_clips_primary_first(), self.playhead_us()
         self.inspector.show_clips(clips, t, self.fps)
+        self.effects.show_clips(clips, t, self.fps)
         self.mask_panel.show_clips(clips, t, self.fps)
 
     def on_easing(self, ids, easing, groups):
@@ -1453,6 +1531,14 @@ class MainWindow(QMainWindow):
         if not files:
             self.statusBar().showMessage("沒有可以匯入的圖片、影片或音訊檔案", 4000)
             return
+        mine = [f for f in files if library.in_user_library(f)]      # in the Library: used where they are
+        if mine:
+            self.ul_use_files(mine, place)
+            files = [f for f in files if f not in mine]
+            if not files:
+                return
+            if place is not None:
+                place = None                  # (the rest only joins the project's media library)
         self.import_files(files, folder, place)
 
     def import_files(self, files, folder, place=None):
@@ -1583,6 +1669,18 @@ class MainWindow(QMainWindow):
     def place_media(self, item_id, track_id, start_us):
         if not self.proj:
             return
+        if item_id.startswith("mu"):                         # an item of the user's Library
+            key, it = self.ulib.find(item_id)
+            if it is None:
+                return
+            if key == "filters":
+                self.add_filter_clip(it["path"], track_id, start_us)
+            elif key == "textstyles":
+                self.apply_text_style(it["path"])
+            else:
+                self.apply_root("加入素材", lambda root: library.place_item(
+                    self.container(root), it, track_id or None, start_us), select=lambda c: c["id"])
+            return
         self.apply_root("加入素材",
                         lambda root: library.place(self.container(root), root, item_id, track_id or None, start_us),
                         select=lambda c: c["id"])
@@ -1618,7 +1716,7 @@ class MainWindow(QMainWindow):
         view = self.snapshot()
         for c in project.walk_clips(view["tracks"]):
             if c["id"] == cid:
-                holder = c if group == "clip" else c.setdefault(group, {})
+                holder = group_holder(c, group, create=True)
                 holder.update(values)
                 if group == "transform" and "scale" in values and "scale_y" in holder:
                     holder["scale_y"] = values["scale"]
@@ -1632,7 +1730,7 @@ class MainWindow(QMainWindow):
         view = self.snapshot()
         for c in project.walk_clips(view["tracks"]):
             if c["id"] in ids:
-                holder = c if group == "clip" else c.setdefault(group, {})
+                holder = group_holder(c, group, create=True)
                 holder[key] = value
                 if group == "transform" and key == "scale" and "scale_y" in holder:
                     holder["scale_y"] = value
@@ -1802,6 +1900,9 @@ class MainWindow(QMainWindow):
         def work(progress):
             os.makedirs(cache, exist_ok=True)
             os.makedirs(os.path.dirname(out), exist_ok=True)
+            if renderexport.uses_filters(snapshot):        # filters run in our own renderer
+                return renderexport.export(snapshot, out, (fmt["width"], fmt["height"]), fps, first, last, opts,
+                                           progress, cache)
             xml = build.build(snapshot, cache, os.path.join(cache, "export.mlt"),   # originals, no proxies
                               size=(fmt["width"], fmt["height"]), fps=fps)
             eng = EngineClient(16, 16)        # its own process; the preview stays usable
@@ -1813,19 +1914,501 @@ class MainWindow(QMainWindow):
 
         def done(r):
             prog.close()
+            extra = ("\n\n" + "\n".join(r["errors"])) if r.get("errors") else ""
             QMessageBox.information(self, "匯出完成", f"{out}\n{fmt['width']}×{fmt['height']}，{fps:g} fps\n"
-                                    f"耗時 {r['elapsed']:.0f} 秒")
+                                    f"耗時 {r['elapsed']:.0f} 秒{extra}")
 
         self.run_task(work, done, lambda m: (prog.close(), QMessageBox.critical(self, "匯出失敗", m)),
                       lambda p: prog.setValue(int(p * 1000)))
+
+    # -- settings ---------------------------------------------------------------------------------
+    def documents_dir(self):
+        return QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or os.path.expanduser("~")
+
+    def default_library_root(self):
+        return userlib.default_root(self.documents_dir())
+
+    def library_root(self):
+        s = self.settings().value("library_dir")
+        return library.norm(str(s)) if s else self.default_library_root()
+
+    def autosave_min(self):
+        try:
+            return max(1, int(self.settings().value("autosave_min", 5)))
+        except (TypeError, ValueError):
+            return 5
+
+    def open_settings(self):
+        dlg = SettingsDialog(self, self.ulib.root if self.ulib else self.library_root(), self.default_library_root(),
+                             self.default_location(), self.autosave_min())
+        if dlg.exec() != QDialog.Accepted:
+            return
+        v = dlg.values()
+        s = self.settings()
+        s.setValue("project_dir", v["project_dir"])
+        s.setValue("autosave_min", v["autosave_min"])
+        self.autosave_timer.setInterval(v["autosave_min"] * 60 * 1000)
+        if v["library"] != (self.ulib.root if self.ulib else None):
+            self.change_library_root(v["library"], v["copy_library"])
+
+    def change_library_root(self, new, copy):
+        old = self.ulib.root if self.ulib else None
+        if copy and old and library.within(new, old):
+            QMessageBox.warning(self, "Library", "新的位置不能放在目前的 Library 資料夾裡面。")
+            return
+        prog = None
+        if copy and old and os.path.isdir(old):
+            prog = QProgressDialog("複製 Library…", None, 0, 0, self)
+            prog.setWindowModality(Qt.WindowModal)
+            prog.setMinimumDuration(0)
+
+        def work(_progress):
+            if prog is not None:
+                shutil.copytree(old, new, dirs_exist_ok=True)
+
+        def done(_r):
+            if prog is not None:
+                prog.close()
+            self.settings().setValue("library_dir", new)
+            was = self.ulib.root if self.ulib else None
+            if not self.apply_library_root(new):
+                return
+            if was and self.proj:                  # clips that use Library files follow it
+                library.retarget(self.proj, was, new, True)
+                self.paths_changed([(was, new, True)], "變更 Library 位置")
+            self.statusBar().showMessage(f"Library 已改為 {new}", 5000)
+
+        def failed(msg):
+            if prog is not None:
+                prog.close()
+            QMessageBox.critical(self, "無法複製 Library", msg)
+
+        self.run_task(work, done, failed)
+
+    # -- the user's Library -----------------------------------------------------------------------
+    def apply_library_root(self, root):
+        root = library.norm(root)
+        try:
+            os.makedirs(root, exist_ok=True)
+            userlib.ensure_layout(root)
+        except OSError as exc:
+            QMessageBox.warning(self, "Library", f"無法使用這個資料夾：\n{root}\n{exc}")
+            return False
+        project.LIBRARY_ROOT = root
+        self.ulib = userlib.UserLibrary(root)
+        self.ul_prober = userlib.Prober(root)
+        self.ulpanel.set_root(root)
+        for key, _ in userlib.CATEGORIES:
+            self.ulpanel.panels[key].set_library(self.ulib.lib(key))
+        self.refresh_user_filters()
+        self.watch_userlib()
+        self.request_ul_sync(0)
+        return True
+
+    def watch_userlib(self):
+        old = self.ul_watcher.directories()
+        if old:
+            self.ul_watcher.removePaths(old)
+        if self.ulib and os.path.isdir(self.ulib.root):
+            root = self.ulib.root
+            dirs = [d for d, _, _ in os.walk(root) if not any(p.startswith(".") for p in d[len(root):].split(os.sep))]
+            self.ul_watcher.addPaths(dirs)
+
+    def request_ul_sync(self, delay=500):
+        if self.ulib:
+            self.ul_timer.start(delay)
+
+    def sync_userlib(self):
+        """Read the Library folder (off the UI thread) and make the panel match it."""
+        if not self.ulib:
+            return
+        if self.ul_busy:
+            self.request_ul_sync(300)
+            return
+        self.ul_busy, ulib, epoch, prober = True, self.ulib, self.ul_epoch, self.ul_prober
+        known = {key: library.known_paths(ulib.proj(key)) for key, _ in userlib.CATEGORIES}
+
+        def work(_p):
+            return {key: ulib.scan(key, prober, known[key]) for key, _ in userlib.CATEGORIES}
+
+        def done(res):
+            self.ul_busy = False
+            if self.ulib is not ulib:
+                return
+            if epoch != self.ul_epoch:                    # one of our own file operations came in between
+                self.request_ul_sync(100)
+                return
+            for key, r in res.items():
+                if ulib.apply(key, r):
+                    self.ulpanel.panels[key].set_library(ulib.lib(key))
+            self.refresh_user_filters()
+            self.watch_userlib()
+
+        def failed(msg):
+            self.ul_busy = False
+            self.statusBar().showMessage(f"整理 Library 失敗：{msg}", 6000)
+
+        self.run_task(work, done, failed)
+
+    def refresh_user_filters(self):
+        if not self.ulib:
+            return
+        mine = []
+        for it in sorted(self.ulib.lib("filters")["items"], key=lambda i: i["name"].lower()):
+            mine.append((fx.get(it["path"]).name or it["name"], it["path"]))
+        self.effects.set_user_filters(mine)
+
+    def ul_item(self, key, ident):
+        return next((it for it in self.ulib.lib(key)["items"] if it["id"] == ident), None)
+
+    def ul_do(self, key, fn, label):
+        """A file operation in the Library: done on the disk at once (not part of undo)."""
+        try:
+            result = fn()
+        except (edit.EditError, OSError, shutil.Error) as exc:
+            QMessageBox.warning(self, label, str(exc))
+            return False, None
+        finally:
+            self.ul_epoch += 1
+            self.ulpanel.panels[key].set_library(self.ulib.lib(key))
+            self.refresh_user_filters()
+            self.watch_userlib()
+        return True, result
+
+    def ul_paths_changed(self, pairs, label):
+        """Library files were renamed / moved: clips that use them follow."""
+        if not pairs:
+            return
+        if self.proj:
+            for old, new, is_dir in pairs:
+                library.retarget(self.proj, old, new, is_dir)
+            self.paths_changed(pairs, label)
+        self.request_ul_sync(300)
+
+    def ul_new_folder(self, key, parent):
+        name, ok = QInputDialog.getText(self, "新資料夾", "名稱", text="新資料夾")
+        if ok:
+            self.ul_do(key, lambda: library.make_folder(self.ulib.proj(key), self.ulib.mirror(key), name, parent), "新資料夾")
+
+    def ul_rename(self, key, ident):
+        proj = self.ulib.proj(key)
+        target = library.folder(proj, ident) if ident.startswith("f") else library.item(proj, ident)
+        name, ok = QInputDialog.getText(self, "重新命名", "名稱（檔案會一起改名）", text=target["name"])
+        if ok:
+            _ok, pairs = self.ul_do(key, lambda: library.rename_on_disk(proj, self.ulib.mirror(key), ident, name), "重新命名")
+            self.ul_paths_changed(pairs, "重新命名 Library 檔案")
+
+    def ul_move(self, key, ident, to_folder):
+        proj = self.ulib.proj(key)
+        _ok, pairs = self.ul_do(key, lambda: library.move_on_disk(proj, self.ulib.mirror(key), ident, to_folder), "移動")
+        self.ul_paths_changed(pairs, "移動 Library 檔案")
+
+    def ul_delete(self, key, ident):
+        proj = self.ulib.proj(key)
+        if ident.startswith("f"):
+            what = "資料夾和裡面所有的檔案"
+            gone = {it["path"] for it in library.lib(proj)["items"] if it.get("folder") in library.descendants(proj, ident)}
+        else:
+            what = "檔案"
+            gone = {library.item(proj, ident)["path"]}
+        used = 0
+        if self.proj:
+            for c in project.all_clips(self.proj):
+                used += bool(c.get("media") and c["media"]["path"] in gone)
+                used += sum(1 for e in c.get("effects") or [] if e["filter"] in gone)
+        note = f"\n\n目前的專案有 {used} 個地方用到，刪除後它們會找不到檔案。" if used else ""
+        if QMessageBox.question(self, "刪除", f"要刪除這個{what}嗎？它們會被移到資源回收筒。\n"
+                                f"（Library 是所有專案共用的）{note}") != QMessageBox.Yes:
+            return
+        ok, _ = self.ul_do(key, lambda: library.delete_on_disk(proj, self.ulib.mirror(key), ident, self.trash), "刪除")
+        if ok:
+            if self.proj:
+                self.after_edit("刪除 Library 檔案")
+            self.request_ul_sync(300)
+
+    def ul_reveal(self, key, ident):
+        target = self.ulib.mirror(key)
+        select = False
+        if ident:
+            proj = self.ulib.proj(key)
+            if ident.startswith("f"):
+                target = library.folder_dir(proj, self.ulib.mirror(key), ident)
+            else:
+                target, select = library.item(proj, ident)["path"], True
+        self.reveal_path(target, select)
+
+    def reveal_path(self, target, select=True):
+        """Show a file in the file manager (a folder: open it)."""
+        if not os.path.exists(target):
+            return
+        if os.path.isdir(target):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(target))
+        elif select and sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", target.replace("/", "\\")])
+        else:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(target)))
+
+    IMPORT_FILTERS = {
+        "videos": "影片 (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.flv *.wmv *.ts *.mts)",
+        "images": "圖片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)",
+        "sounds": "音效 (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus *.wma)",
+        "filters": "GLSL 濾鏡 (*.glsl)", "textstyles": "文字樣式 (*.json)"}
+
+    def ul_import(self, key, folder):
+        files, _ = QFileDialog.getOpenFileNames(self, "加入 Library", "", self.IMPORT_FILTERS[key] + ";;All files (*)")
+        if files:
+            self.ul_add_files(key, files, folder)
+
+    def ul_drop(self, key, paths, folder):
+        self.ul_add_files(key, userlib.expand(paths), folder)
+
+    def ul_add_files(self, key, files, folder):
+        """Copy files into the Library (sorted into their own category; into `folder` of the open
+        tab's category). Files that are already in the Library stay where they are."""
+        todo = {}
+        for f in files:
+            cat = userlib.category_for(f, prefer=key)
+            if cat is not None and not userlib.inside(f, self.ulib.root):
+                todo.setdefault(cat, []).append(f)
+        if not todo:
+            self.statusBar().showMessage("沒有可以加入的檔案（或它們已經在 Library 裡了）", 4000)
+            return
+        ulib = self.ulib
+        dests = {cat: library.folder_dir(ulib.proj(cat), ulib.mirror(cat), folder if cat == key else None)
+                 for cat in todo}
+
+        def work(progress):
+            n = sum(len(v) for v in todo.values())
+            done = 0
+            for cat, fs in todo.items():
+                library.import_copy(ulib.mirror(cat), fs, dests[cat])
+                done += len(fs)
+                progress(done / n)
+            return True
+
+        def done(_r):
+            self.ul_epoch += 1
+            self.request_ul_sync(0)
+            self.left.setCurrentWidget(self.ulpanel)
+            self.ulpanel.show_category(key if key in todo else next(iter(todo)))
+            self.statusBar().showMessage(f"已加入 {sum(len(v) for v in todo.values())} 個檔案到 Library", 4000)
+
+        self.run_task(work, done, lambda m: QMessageBox.critical(self, "加入失敗", m),
+                      lambda p: self.statusBar().showMessage(f"複製中… {int(p * 100)}%"))
+
+    def ul_use_files(self, files, place):
+        """Files that are in the Library are used where they are: onto the timeline when
+        dropped there (place = (track id, start us)), else just shown in the Library."""
+        items = []
+        for f in files:
+            it = self.ulib.item_for_path(f)
+            if it["kind"] in ("image", "video", "audio"):
+                items.append(it)
+        if not items:
+            return
+        self.left.setCurrentWidget(self.ulpanel)
+        cat = userlib.category_of(items[0]["path"], self.ulib.root)
+        if cat in dict(userlib.CATEGORIES):
+            self.ulpanel.show_category(cat)
+        if place is None:
+            self.statusBar().showMessage(f"{len(items)} 個檔案已經在 Library 裡，不需要複製到專案", 5000)
+            return
+        track_id, start = place
+
+        def add(root):
+            level = self.container(root)
+            tracks, nxt, clip = {}, {}, None
+            for it in items:
+                want = "audio" if it["kind"] == "audio" else "video"
+                clip = library.place_item(level, it, tracks.get(want, track_id), nxt.get(want, start))
+                tracks[want] = edit.find(level, clip["id"])[0]["id"]
+                nxt[want] = clip["start_us"] + clip["duration_us"]
+            return clip
+
+        self.apply_root("加入 Library 素材", add, select=lambda c: c["id"])
+
+    def ul_menu(self, key, menu, ident):
+        if not ident or ident.startswith("f"):
+            return
+        it = self.ul_item(key, ident)
+        if it is None:
+            return
+        if key == "filters":
+            menu.addAction("放成濾鏡片段（播放頭位置）", lambda: self.add_filter_clip(it["path"]))
+            menu.addAction("套用到選取的片段", lambda: self.apply_filter_to_selected(it["path"]))
+            menu.addAction("用編輯器開啟（改完存檔就會更新）", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(it["path"])))
+        elif key == "textstyles":
+            menu.addAction("套用到選取的文字", lambda: self.apply_text_style(it["path"], new_if_none=False))
+            menu.addAction("用這個樣式新增文字", lambda: self.apply_text_style(it["path"], force_new=True))
+
+    # -- filters ----------------------------------------------------------------------------------
+    def _fill_filter_menu(self, menu, fn):
+        menu.clear()
+        cats = {}
+        for ref in fx.builtin_refs():
+            d = fx.get(ref)
+            cats.setdefault(d.category or "其他", []).append((d.name, ref))
+        for cat, items in cats.items():
+            sub = menu.addMenu(cat)
+            for name, ref in items:
+                sub.addAction(name, lambda _=False, ref=ref: fn(ref))
+        menu.addSeparator()
+        mine = menu.addMenu("我的濾鏡（Library）")
+        n = 0
+        for it in sorted(self.ulib.lib("filters")["items"], key=lambda i: i["name"].lower()) if self.ulib else []:
+            mine.addAction(fx.get(it["path"]).name, lambda _=False, p=it["path"]: fn(p))
+            n += 1
+        if not n:
+            mine.addAction("（Library 的「濾鏡」頁還沒有檔案）").setEnabled(False)
+
+    def add_filter_clip(self, ref, track_id="", start_us=None):
+        """A filter as a clip of its own: it works on everything below it while it lasts."""
+        if not self.proj:
+            return
+        start = self.playhead_us() if start_us is None else start_us
+        self.apply("新增濾鏡片段", lambda lvl: edit.add_filter_clip(lvl, ref, start, track_id=track_id or None),
+                   select=lambda c: c["id"])
+
+    def apply_filter_to_selected(self, ref):
+        ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]
+        if not ids:
+            self.statusBar().showMessage("先在時間軸選一個畫面片段（圖片、影片、文字、複合片段）", 4000)
+            return
+        self.apply("新增效果", lambda lvl: [edit.add_effect(lvl, cid, ref) for cid in ids])
+        self.side.setCurrentIndex(1)
+
+    def browse_effect(self, cid):
+        start = self.ulib.mirror("filters") if self.ulib else ""
+        path, _ = QFileDialog.getOpenFileName(self, "選擇濾鏡檔案", str(start), "GLSL 濾鏡 (*.glsl)")
+        if path:
+            self.apply("新增效果", edit.add_effect, cid, library.norm(path))
+
+    def new_filter_file(self, folder):
+        """A new filter file made from the template, opened in the user's editor."""
+        if not self.ulib:
+            return
+        name, ok = QInputDialog.getText(self, "新增濾鏡", "名稱", text="我的濾鏡")
+        if not ok or not name.strip():
+            return
+        base = library.folder_dir(self.ulib.proj("filters"), self.ulib.mirror("filters"), folder)
+        os.makedirs(base, exist_ok=True)
+        dst = os.path.join(base, library.unique_name(base, workspace.safe_name(name, "我的濾鏡") + ".glsl"))
+        with open(fx.TEMPLATE_PATH, encoding="utf-8") as fh:
+            text = fh.read()
+        text = text.replace("// @filter 我的濾鏡", f"// @filter {name.strip()}", 1)
+        with open(dst, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        self.ul_epoch += 1
+        self.request_ul_sync(0)
+        self.left.setCurrentWidget(self.ulpanel)
+        self.ulpanel.show_category("filters")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(dst))
+        self.statusBar().showMessage("已建立濾鏡檔，用編輯器改完存檔，預覽會自動更新（說明：Library > 濾鏡 > 說明）", 8000)
+
+    def show_filter_doc(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("濾鏡寫法說明")
+        dlg.resize(760, 640)
+        view = QTextBrowser()
+        view.setOpenExternalLinks(True)
+        try:
+            with open(fx.DOC_PATH, encoding="utf-8") as fh:
+                view.setMarkdown(fh.read())
+        except OSError as exc:
+            view.setPlainText(f"找不到說明文件：{exc}")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(view)
+        row = QHBoxLayout()
+        if self.ulib:
+            open_dir = QPushButton("開啟 Library 的濾鏡資料夾")
+            open_dir.clicked.connect(lambda: self.reveal_path(self.ulib.mirror("filters")))
+            row.addWidget(open_dir)
+        row.addStretch(1)
+        close = QPushButton("關閉")
+        close.clicked.connect(dlg.accept)
+        row.addWidget(close)
+        lay.addLayout(row)
+        dlg.exec()
+
+    def check_filters(self):
+        """Compile the built-in filters and the ones in the Library; list the ones with mistakes."""
+        refs = fx.builtin_refs() + [it["path"] for it in self.ulib.lib("filters")["items"]] if self.ulib else []
+        bad = []
+        for ref in refs:
+            err = fx.check(ref)
+            if err:
+                bad.append(f"{fx.get(ref).name}\n    {err.strip().splitlines()[0] if err.strip() else err}")
+        if bad:
+            QMessageBox.warning(self, "濾鏡檢查", f"{len(bad)} / {len(refs)} 個濾鏡有問題：\n\n" + "\n\n".join(bad))
+        else:
+            QMessageBox.information(self, "濾鏡檢查", f"{len(refs)} 個濾鏡都可以使用。")
+
+    # -- text: styles and fonts -------------------------------------------------------------------
+    def start_font_scan(self):
+        cache = os.path.join(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation) or
+                             os.path.expanduser("~"), "fonts.json")
+        cached = fonts.load_cache(cache, time.time())
+        if cached:
+            self.set_fonts(cached)
+            return
+
+        def work(_p):
+            found = fonts.scan(cancelled=lambda: self.closing)
+            if not self.closing:
+                fonts.save_cache(cache, found, time.time())
+            return found
+
+        self.run_task(work, self.set_fonts, lambda m: self.statusBar().showMessage(f"讀取字體失敗：{m}", 5000))
+
+    def set_fonts(self, found):
+        self.fonts = found
+        self.inspector.set_fonts(found)
+        self.refresh_inspector()
+
+    def apply_text_style(self, path, new_if_none=True, force_new=False):
+        try:
+            style = userlib.load_style(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "文字樣式", f"讀不到樣式：{exc}")
+            return
+        ids = [] if force_new else [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] == "text"]
+        if ids:
+            self.apply("套用文字樣式", lambda lvl: [edit.apply_text_style(lvl, cid, style) for cid in ids])
+        elif new_if_none or force_new:
+            def make(level):
+                c = edit.add_text(level, self.playhead_us())
+                return edit.apply_text_style(level, c["id"], style)
+            self.apply("用樣式新增文字", make, select=lambda c: c["id"])
+        else:
+            self.statusBar().showMessage("先在時間軸選一個文字片段", 4000)
+
+    def save_text_style(self, folder):
+        clips = [c for c in self.timeline.selected_clips_primary_first() if c["type"] == "text"]
+        if not clips:
+            self.statusBar().showMessage("先在時間軸選一個文字片段，再把它的樣式存進 Library", 5000)
+            return
+        name, ok = QInputDialog.getText(self, "存成文字樣式", "樣式名稱", text="我的樣式")
+        if not ok or not name.strip():
+            return
+        base = library.folder_dir(self.ulib.proj("textstyles"), self.ulib.mirror("textstyles"), folder)
+        userlib.save_style(base, name.strip(), clips[0])
+        self.ul_epoch += 1
+        self.request_ul_sync(0)
+        self.left.setCurrentWidget(self.ulpanel)
+        self.ulpanel.show_category("textstyles")
+        self.statusBar().showMessage(f"已存到 Library > 文字樣式：{name.strip()}", 4000)
 
     def closeEvent(self, e):
         if not self.maybe_save():
             e.ignore()
             return
+        self.closing = True
         if self.fullscreen:
             self.fullscreen.close()
         self.player.shutdown()
+        for th, _task in list(self.tasks):               # background work still running: let it end
+            th.quit()
+            th.wait(4000)
         super().closeEvent(e)
 
 

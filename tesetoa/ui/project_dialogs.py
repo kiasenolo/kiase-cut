@@ -2,8 +2,8 @@
 import os
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout)
+from PySide6.QtWidgets import (QWidget, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+                               QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout)
 
 from .. import workspace
 
@@ -39,7 +39,24 @@ class NewProjectDialog(QDialog):
         else:
             for label, w, h in PRESETS:
                 self.preset.addItem(label, (w, h))
+            self.preset.addItem("自訂…", None)
             form.addRow("解析度", self.preset)
+            self.custom = QWidget()
+            cl = QHBoxLayout(self.custom)
+            cl.setContentsMargins(0, 0, 0, 0)
+            self.cw, self.ch = QSpinBox(), QSpinBox()
+            for sb, v in ((self.cw, 1920), (self.ch, 1080)):
+                sb.setRange(16, 16384)
+                sb.setSingleStep(2)
+                sb.setValue(v)
+            cl.addWidget(self.cw)
+            cl.addWidget(QLabel("×"))
+            cl.addWidget(self.ch)
+            cl.addWidget(QLabel("像素"))
+            cl.addStretch(1)
+            form.addRow("自訂大小", self.custom)
+            self.custom.setVisible(False)
+            self.preset.currentIndexChanged.connect(lambda _i: self.custom.setVisible(self.preset.currentData() is None))
             for f in FPS:
                 self.fps.addItem(f"{f} fps", f)
             self.fps.setCurrentIndex(FPS.index(60))
@@ -55,9 +72,6 @@ class NewProjectDialog(QDialog):
         self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
         lay = QVBoxLayout(self)
         lay.addLayout(form)
-        hint = QLabel("專案會是一個資料夾：專案檔、素材庫（Media）、匯出（Exports）、備份（Backup）都在裡面。")
-        hint.setWordWrap(True)
-        lay.addWidget(hint)
         lay.addWidget(self.buttons)
         self.name.textChanged.connect(self._check)
         self.location.textChanged.connect(self._check)
@@ -90,7 +104,8 @@ class NewProjectDialog(QDialog):
         if self.fixed:
             w, h, fps = self.fixed
         else:
-            (w, h), fps = self.preset.currentData(), float(self.fps.currentData())
+            size = self.preset.currentData() or (self.cw.value() // 2 * 2, self.ch.value() // 2 * 2)   # even sizes
+            (w, h), fps = size, float(self.fps.currentData())
         return self.location.text().strip(), self.name.text().strip(), w, h, fps
 
 

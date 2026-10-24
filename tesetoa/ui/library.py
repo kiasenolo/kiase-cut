@@ -1,12 +1,31 @@
 """Media library panel: folders and media, drag into folders or onto the timeline."""
 from PySide6.QtCore import QMimeData, QSize, Qt, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMenu, QPushButton, QStyle,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 MIME = "application/x-tesetoa-media"
 ROLE_ID = Qt.UserRole
-KIND_NAMES = {"image": "圖片", "video": "影片", "audio": "音訊"}
+KIND_NAMES = {"image": "圖片", "video": "影片", "audio": "音訊", "filter": "濾鏡", "textstyle": "文字樣式"}
+
+
+def glyph_icon(text, color):
+    """A small round-cornered tile with a few letters (for items that have no picture)."""
+    pm = QPixmap(48, 28)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(color))
+    p.drawRoundedRect(0, 0, 48, 28, 5, 5)
+    p.setPen(QColor("#ffffff"))
+    f = QFont()
+    f.setBold(True)
+    f.setPixelSize(15)
+    p.setFont(f)
+    p.drawText(pm.rect(), Qt.AlignCenter, text)
+    p.end()
+    return QIcon(pm)
 
 
 def fmt_dur(us):
@@ -84,8 +103,9 @@ class LibraryPanel(QWidget):
     filesDropped = Signal(list, object)       # paths, folder id or None (dragged in from outside)
     revealRequested = Signal(object)          # item / folder id, or None for the Media folder itself
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, import_label="匯入素材"):
         super().__init__(parent)
+        self.extra_menu = None                  # fn(menu, ident or None): more context menu entries
         self.setMinimumWidth(240)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
@@ -93,13 +113,16 @@ class LibraryPanel(QWidget):
         self.head.setStyleSheet("color: #9a9aa0;")
         lay.addWidget(self.head)
         bar = QHBoxLayout()
-        for label, fn in (("匯入素材", lambda: self.importRequested.emit(self.current_folder())),
+        for label, fn in ((import_label, lambda: self.importRequested.emit(self.current_folder())),
                           ("新資料夾", lambda: self.newFolderRequested.emit(self.current_folder())),
                           ("開啟資料夾", lambda: self.revealRequested.emit(None))):
             b = QPushButton(label)
             b.clicked.connect(fn)
             bar.addWidget(b)
         lay.addLayout(bar)
+        self.bar = bar
+        self.bar2 = QHBoxLayout()               # a second row for panels with more buttons
+        lay.addLayout(self.bar2)
         self.tree = Tree()
         self.tree.moved.connect(self.moveRequested)
         self.tree.filesDropped.connect(self.filesDropped)
@@ -123,6 +146,10 @@ class LibraryPanel(QWidget):
         return it.parent().data(0, ROLE_ID) if it.parent() else None
 
     def _icon(self, it):
+        if it["kind"] == "filter":
+            return self.icons.setdefault("#filter", glyph_icon("fx", "#8a6f2e"))
+        if it["kind"] == "textstyle":
+            return self.icons.setdefault("#textstyle", glyph_icon("Aa", "#7c5574"))
         if it["kind"] == "image":
             if it["path"] not in self.icons:
                 pm = QPixmap(it["path"])
@@ -194,4 +221,7 @@ class LibraryPanel(QWidget):
             menu.addSeparator()
         menu.addAction("新資料夾", lambda: self.newFolderRequested.emit(self.current_folder()))
         menu.addAction("匯入素材…", lambda: self.importRequested.emit(self.current_folder()))
+        if self.extra_menu:
+            menu.addSeparator()
+            self.extra_menu(menu, node.data(0, ROLE_ID) if node is not None else None)
         menu.exec(self.tree.viewport().mapToGlobal(pos))

@@ -161,7 +161,7 @@ def add_from_project(proj, folder_name="匯入的素材"):
     f = None
     for c in project.all_clips(proj):
         m = c.get("media")
-        if not m or m["path"] in seen:
+        if not m or m["path"] in seen or in_user_library(m["path"]):
             continue
         seen.add(m["path"])
         if f is None:
@@ -191,7 +191,11 @@ def clip_from(it, start_us):
 def place(container, root, item_id, track_id, start_us):
     """Add a library item to a timeline (root or an open compound) at start_us on track_id,
     or on a new track when track_id is None or of the wrong kind. Returns the clip."""
-    it = item(root, item_id)
+    return place_item(container, item(root, item_id), track_id, start_us)
+
+
+def place_item(container, it, track_id, start_us):
+    """place() for an item dict that is not in the project's library (the user's Library)."""
     c = clip_from(it, max(0, start_us))
     want = "audio" if it["kind"] == "audio" else "video"
     track = None
@@ -239,6 +243,15 @@ def within(path, folder):
     return a.startswith(b + "/")
 
 
+class Mirror(str):
+    """A folder that a library mirrors, given where a project root is expected (the global
+    Library's category folders; a project's own is <root>/Media)."""
+
+
+def mroot_of(root):
+    return str(root) if isinstance(root, Mirror) else workspace.media_dir(root)
+
+
 def folder_rel(proj, folder_id):
     """Path of a library folder below Media ("" for the top level)."""
     parts = []
@@ -251,7 +264,7 @@ def folder_rel(proj, folder_id):
 
 def folder_dir(proj, root, folder_id):
     rel = folder_rel(proj, folder_id)
-    return workspace.media_dir(root) + ("/" + rel if rel else "")
+    return mroot_of(root) + ("/" + rel if rel else "")
 
 
 def unique_name(directory, name):
@@ -269,7 +282,7 @@ def import_copy(root, files, dest_dir, progress=None):
     """Copy files into dest_dir (a folder of Media). Files already inside Media stay where they
     are; a copy that was imported before (same name, size and time) is reused. Returns
     {source path: path in the project}. Runs on a worker thread."""
-    mroot = workspace.media_dir(root)
+    mroot = mroot_of(root)
     os.makedirs(dest_dir, exist_ok=True)
     out = {}
     for i, f in enumerate(files):
@@ -295,10 +308,10 @@ def _same_file(a, b):
     return sa.st_size == sb.st_size and abs(sa.st_mtime - sb.st_mtime) < 2
 
 
-def scan(root, known=(), prober=probe):
+def scan(root, known=(), prober=probe, exts=None):
     """Read the Media folder: {"dirs": [relative paths], "files": [paths], "probes": {path: info
     for files not in `known`}, "failed": [paths that could not be read]}. Runs on a worker thread."""
-    mroot = norm(workspace.media_dir(root))
+    mroot = norm(mroot_of(root))
     res = {"dirs": [], "files": [], "probes": {}, "failed": []}
     if not os.path.isdir(mroot):
         return res
@@ -308,7 +321,7 @@ def scan(root, known=(), prober=probe):
         if rel != ".":
             res["dirs"].append(rel)
         for f in sorted(fnames):
-            if os.path.splitext(f)[1].lower() not in MEDIA_EXT or f.startswith("."):
+            if os.path.splitext(f)[1].lower() not in (exts or MEDIA_EXT) or f.startswith("."):
                 continue
             path = norm(os.path.join(d, f))
             res["files"].append(path)
@@ -342,7 +355,7 @@ def apply_scan(proj, root, res):
     """Make the library match a scan of Media. Returns whether anything changed. Items outside
     Media (older projects, until their media are collected) are left alone."""
     L = lib(proj)
-    mroot = norm(workspace.media_dir(root))
+    mroot = norm(mroot_of(root))
     changed = dedupe(proj)
     byrel = {folder_rel(proj, f["id"]): f for f in L["folders"]}
     for rel in res["dirs"]:
@@ -382,7 +395,7 @@ def apply_scan(proj, root, res):
             info = res["probes"].get(path)
             if not info:
                 continue
-            it = {"id": _id("m"), "name": os.path.basename(path), "path": path, "folder": fid, **info}
+            it = {"id": _id(L.get("prefix", "m")), "name": os.path.basename(path), "path": path, "folder": fid, **info}
             L["items"].append(it)
             changed = True
         if it.get("folder") != fid:
@@ -409,6 +422,9 @@ def retarget(proj, old, new, is_dir=False):
         m = c.get("media")
         if m and m.get("path"):
             m["path"] = fix(m["path"])
+        for e in c.get("effects") or []:                 # a filter file of the user's
+            if not e["filter"].startswith("builtin:"):
+                e["filter"] = fix(e["filter"])
     dedupe(proj)
 
 
@@ -419,16 +435,21 @@ def retarget_text(text, old, new, is_dir=False):
     return text.replace(esc(old) + tail, esc(new) + tail)
 
 
+def in_user_library(path):
+    """Whether a file is in the user's Library folder (those are used where they are)."""
+    return bool(path and project.LIBRARY_ROOT and within(norm(path), norm(project.LIBRARY_ROOT)))
+
+
 def external_media(proj, root):
     """{path outside Media: where a copy would go}: the library items and clips that use files
     from elsewhere. Items keep their library folder as a sub-folder of Media."""
-    mroot = norm(workspace.media_dir(root))
+    mroot = norm(mroot_of(root))
     plan, taken = {}, {}
     todo = [(it["path"], folder_rel(proj, it["folder"]) if it.get("folder") else "") for it in lib(proj)["items"]]
     todo += [(c["media"]["path"], "匯入的素材") for c in project.all_clips(proj) if c.get("media")]
     for path, rel in todo:
         path = slash(path)
-        if within(path, mroot) or path in plan or not path:
+        if within(path, mroot) or path in plan or not path or in_user_library(path):
             continue
         d = mroot + ("/" + rel if rel else "")
         stem, ext = os.path.splitext(os.path.basename(path))
@@ -472,7 +493,7 @@ def make_folder(proj, root, name, parent=None):
 
 def _inside(proj, root, ident):
     """Files and folders of the project's Media may be changed; others belong to the user."""
-    mroot = norm(workspace.media_dir(root))
+    mroot = norm(mroot_of(root))
     if ident.startswith("f"):
         ok = os.path.isdir(folder_dir(proj, root, ident))
     else:
@@ -554,7 +575,7 @@ def delete_on_disk(proj, root, ident, trash=None):
     Clips that used the files stay on the timeline, offline."""
     trash = trash or (lambda p: shutil.rmtree(p) if os.path.isdir(p) else os.remove(p))
     L = lib(proj)
-    if not ident.startswith("f") and not within(item(proj, ident)["path"], norm(workspace.media_dir(root))):
+    if not ident.startswith("f") and not within(item(proj, ident)["path"], norm(mroot_of(root))):
         L["items"].remove(item(proj, ident))             # a link to a file elsewhere: only the link goes
         return
     if ident.startswith("f"):

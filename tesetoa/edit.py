@@ -10,7 +10,7 @@ import json
 import time
 import uuid
 
-from . import curves, project
+from . import curves, fx, project
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -155,6 +155,8 @@ def _params(c):
             out += [v for v in group.values() if curves.is_animated(v)]
     if curves.is_animated(c.get("volume")):
         out.append(c["volume"])
+    for e in c.get("effects") or []:
+        out += [v for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) if curves.is_animated(v)]
     return out
 
 
@@ -384,6 +386,25 @@ def set_text(proj, clip_id, **fields):
     return c
 
 
+STYLE_TEXT_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg")
+
+
+def apply_text_style(proj, clip_id, style):
+    """Give a text clip a saved look (userlib.style_from_clip): font, size, colour, spacing,
+    slant and scale. The words stay; keyframes of the replaced values are dropped."""
+    _, c = find(proj, clip_id)
+    if c["type"] != "text":
+        raise EditError("not a text clip")
+    for k, v in (style.get("text") or {}).items():
+        if k in STYLE_TEXT_FIELDS:
+            c["text"][k] = copy.deepcopy(v)
+    c["text"].pop("styles", None)
+    for k, v in (style.get("transform") or {}).items():
+        if k in ("scale", "scale_y") and c.get("transform") is not None:
+            c["transform"][k] = v
+    return c
+
+
 def set_transform(proj, clip_id, key, value, t=None):
     """Set a transform value; keyframed ones are edited at clip time t (see set_param)."""
     if key not in TRANSFORM_FIELDS:
@@ -408,7 +429,36 @@ EASINGS = {                        # CSS-style cubic-bezier control x positions
 }
 
 
+def _effect(c, effect_id):
+    for e in c.get("effects") or []:
+        if e["id"] == effect_id:
+            return e
+    raise EditError("effect not found")
+
+
+def _valid_key(c, group, key):
+    """Whether `key` is a parameter of `group` (groups "fx:<effect id>" and
+    "fxmask:<effect id>" are an effect's own parameters and mask)."""
+    if group.startswith("fx:"):
+        return key in _effect(c, group[3:])["params"]
+    if group.startswith("fxmask:"):
+        return key in GROUP_FIELDS["mask"]
+    return key in GROUP_FIELDS.get(group, ())
+
+
+def holder(c, group):
+    """The dict that holds the parameters of `group` of clip c."""
+    return _holder(c, group)
+
+
 def _holder(c, group):
+    if group.startswith("fx:"):
+        return _effect(c, group[3:])["params"]
+    if group.startswith("fxmask:"):
+        e = _effect(c, group[7:])
+        if not e.get("mask"):
+            raise EditError("effect has no mask")
+        return e["mask"]
     if group == "clip":
         return c
     if group == "mask":
@@ -423,7 +473,7 @@ def _holder(c, group):
 
 
 def _check(c, group, key, t):
-    if key not in GROUP_FIELDS.get(group, ()):
+    if not _valid_key(c, group, key):
         raise EditError(f"unknown {group} field {key}")
     if not (0 <= t <= c["duration_us"]):
         raise EditError("the playhead is not inside the clip")
@@ -529,6 +579,10 @@ def key_times(c):
                 times |= {k[0] for k in v["keys"]}
     if curves.is_animated(c.get("volume")):
         times |= {k[0] for k in c["volume"]["keys"]}
+    for e in c.get("effects") or []:
+        for v in list(e["params"].values()) + list((e.get("mask") or {}).values()):
+            if curves.is_animated(v):
+                times |= {k[0] for k in v["keys"]}
     return sorted(times)
 
 
@@ -573,8 +627,8 @@ def _aspect(c):
 def set_mask(proj, clip_id, kind):
     """Give a clip a mask of `kind` (keeping its position), or remove it with None."""
     _, c = find(proj, clip_id)
-    if c["type"] not in ("image", "video", "compound"):
-        raise EditError("masks go on pictures, videos and compound clips")
+    if c["type"] not in ("image", "video", "compound", "filter"):
+        raise EditError("masks go on pictures, videos, compound clips and filters")
     if kind is None:
         c.pop("mask", None)
         return c
@@ -616,6 +670,116 @@ def set_mask_invert(proj, clip_id, invert):
     return c
 
 
+# -- filters ----------------------------------------------------------------------------------------
+VISUAL = ("image", "video", "text", "compound", "filter")
+FILTER_DEFAULT_US = 5_000_000
+
+
+def new_effect_id():
+    return "e" + uuid.uuid4().hex[:8]
+
+
+def add_effect(proj, clip_id, ref):
+    """Put filter `ref` ("builtin:blur" or a filter file) on a clip, after the others."""
+    _, c = find(proj, clip_id)
+    if c["type"] not in VISUAL:
+        raise EditError("filters go on pictures, videos, texts, compound clips and filter clips")
+    e = fx.new_effect(ref, new_effect_id())
+    c.setdefault("effects", []).append(e)
+    return e
+
+
+def remove_effect(proj, clip_id, effect_id):
+    _, c = find(proj, clip_id)
+    c["effects"].remove(_effect(c, effect_id))
+    if not c["effects"]:
+        del c["effects"]
+        if c["type"] == "filter":
+            pass                                # a filter clip without effects does nothing, but stays
+
+
+def set_effect_enabled(proj, clip_id, effect_id, on):
+    _, c = find(proj, clip_id)
+    e = _effect(c, effect_id)
+    if on:
+        e.pop("disabled", None)
+    else:
+        e["disabled"] = True
+
+
+def move_effect(proj, clip_id, effect_id, delta):
+    """Move an effect earlier (-1) or later (+1) in the clip's chain."""
+    _, c = find(proj, clip_id)
+    es = c["effects"]
+    i = es.index(_effect(c, effect_id))
+    j = i + (1 if delta > 0 else -1)
+    if 0 <= j < len(es):
+        es[i], es[j] = es[j], es[i]
+
+
+def set_effect_mask(proj, clip_id, effect_id, kind):
+    """Limit an effect to a shape (None removes it): coverage in the clip's own space."""
+    _, c = find(proj, clip_id)
+    e = _effect(c, effect_id)
+    if kind is None:
+        e.pop("mask", None)
+        return e
+    if kind not in MASK_KINDS:
+        raise EditError(f"unknown mask {kind}")
+    old = e.get("mask") or {}
+    size = {"line": (1.0, 1.0), "mirror": (1.0, 0.3), "circle": (0.5, 0.5), "rectangle": (0.5, 0.5)}[kind]
+    e["mask"] = {"kind": kind, "invert": bool(old.get("invert")), "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
+                 "w": old.get("w", size[0]) if kind != "line" else 1.0,
+                 "h": old.get("h", size[1]) if kind != "line" else 1.0,
+                 "rotation": old.get("rotation", 0.0), "feather": old.get("feather", 0.0)}
+    return e
+
+
+def set_effect_mask_invert(proj, clip_id, effect_id, invert):
+    _, c = find(proj, clip_id)
+    e = _effect(c, effect_id)
+    if not e.get("mask"):
+        raise EditError("effect has no mask")
+    e["mask"]["invert"] = bool(invert)
+
+
+def add_filter_clip(proj, ref, at_us, duration_us=FILTER_DEFAULT_US, track_id=None):
+    """A filter as a clip of its own: it filters everything on the tracks below it while it
+    lasts. It goes on the given track, else on a track that only holds filters (topmost with
+    room), else on a new top picture track."""
+    clip = {"id": new_clip_id(proj), "type": "filter", "name": fx.label(ref), "start_us": int(at_us),
+            "duration_us": int(duration_us), "source_start_us": 0,
+            "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0},
+            "effects": [fx.new_effect(ref, new_effect_id())]}
+    cands = []
+    if track_id:
+        t = track_by_id(proj, track_id)
+        if t["kind"] != "audio":
+            cands = [t]
+    if not cands:
+        cands = [t for t in reversed(proj["tracks"]) if t["kind"] == "video" and t["clips"] and
+                 all(k["type"] == "filter" for k in t["clips"])]
+    for t in cands:
+        rng = free_range(t, clip["start_us"], end(clip))
+        if rng is not None:
+            t["clips"].append(clip)
+            _sort(t)
+            return clip
+        gap = next(((lo, hi) for lo, hi in gaps(t) if hi - lo >= MIN_US and hi > clip["start_us"]), None)
+        if gap and track_id is None:
+            clip["start_us"] = int(max(gap[0], min(clip["start_us"], gap[1] - MIN_US)))
+            clip["duration_us"] = int(min(clip["duration_us"], gap[1] - clip["start_us"]))
+            t["clips"].append(clip)
+            _sort(t)
+            return clip
+    n = sum(1 for t in proj["tracks"] if t["kind"] == "video" and t["clips"] and
+            all(k["type"] == "filter" for k in t["clips"])) + 1
+    track = {"id": new_track_id(proj), "kind": "video", "name": f"filter {n}", "clips": [clip]}
+    audio_at = next((i for i, t in enumerate(proj["tracks"]) if t["kind"] == "audio"), len(proj["tracks"]))
+    proj["tracks"].insert(audio_at, track)
+    return clip
+
+
 # -- names and colours ----------------------------------------------------------------------------
 def rename_track(proj, track_id, name):
     track_by_id(proj, track_id)["name"] = str(name).strip() or track_by_id(proj, track_id)["kind"]
@@ -649,7 +813,7 @@ def set_keys(proj, clip_id, group, key, keys):
     [t, value, l_dt, l_dv, r_dt, r_dv] in clip time; they are sorted, kept inside the
     clip, and handles are kept from crossing the neighbouring keys."""
     _, c = find(proj, clip_id)
-    if key not in GROUP_FIELDS.get(group, ()):
+    if not _valid_key(c, group, key):
         raise EditError(f"unknown {group} field {key}")
     if not keys:
         raise EditError("a curve needs at least one keyframe")
@@ -673,7 +837,7 @@ def set_keys(proj, clip_id, group, key, keys):
 def clear_keys(proj, clip_id, group, key, value):
     """Drop every keyframe of a parameter, leaving it at `value`."""
     _, c = find(proj, clip_id)
-    if key not in GROUP_FIELDS.get(group, ()):
+    if not _valid_key(c, group, key):
         raise EditError(f"unknown {group} field {key}")
     _holder(c, group)[key] = [float(x) for x in value] if isinstance(value, (list, tuple)) else float(value)
     return c

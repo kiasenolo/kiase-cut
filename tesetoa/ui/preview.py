@@ -282,6 +282,8 @@ class Preview(QWidget):
             if tr["kind"] == "audio" or tr.get("hidden"):
                 continue
             for c in tr["clips"]:
+                if c["type"] == "filter" and not (self.mask_mode and c["id"] == self.selected_id):
+                    continue                    # a filter covers the whole picture: only its mask is edited here
                 if c["start_us"] <= self.t_us < c["start_us"] + c["duration_us"] and c.get("transform") is not None:
                     out.append(Box(c, self.W, self.H, self.t_us - c["start_us"]))
         return out
@@ -304,7 +306,7 @@ class Preview(QWidget):
 
     def masking(self, box):
         return self.mask_mode and box is not None and box.clip.get("mask") and \
-            box.clip["type"] in ("image", "video", "compound")
+            box.clip["type"] in ("image", "video", "compound", "filter")
 
     # -- painting ---------------------------------------------------------------------------------
     def paintEvent(self, _):

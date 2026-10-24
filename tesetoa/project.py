@@ -89,14 +89,29 @@ def _fold(s):
     return s.lower() if os.name == "nt" else s
 
 
+LIBRARY_ROOT = None            # the user's Library folder (set by the program from its settings)
+LIB_TAG = "@library/"
+
+
 def to_rel(path, root):
-    """path relative to root when it is inside it, else unchanged."""
+    """path relative to root when it is inside it; "@library/…" when it is in the user's
+    Library; else unchanged."""
     p, r = _slash(path), _slash(root).rstrip("/")
-    return p[len(r) + 1:] if is_abs(p) and _fold(p).startswith(_fold(r) + "/") else path
+    if is_abs(p) and _fold(p).startswith(_fold(r) + "/"):
+        return p[len(r) + 1:]
+    if LIBRARY_ROOT and is_abs(p):
+        lr = _slash(LIBRARY_ROOT).rstrip("/")
+        if _fold(p).startswith(_fold(lr) + "/"):
+            return LIB_TAG + p[len(lr) + 1:]
+    return path
 
 
 def to_abs(path, root):
-    return path if not path or is_abs(path) else _slash(root).rstrip("/") + "/" + _slash(path)
+    if not path:
+        return path
+    if path.startswith(LIB_TAG):
+        return _slash(LIBRARY_ROOT).rstrip("/") + "/" + path[len(LIB_TAG):] if LIBRARY_ROOT else path
+    return path if is_abs(path) else _slash(root).rstrip("/") + "/" + _slash(path)
 
 
 def _map_paths(data, fn):
@@ -114,6 +129,9 @@ def _map_paths(data, fn):
                 m = c.get("media")
                 if m and m.get("path"):
                     m["path"] = fn(m["path"])
+                for e in c.get("effects") or []:              # filter files (the built-in ones are not paths)
+                    if e.get("filter") and not e["filter"].startswith("builtin:"):
+                        e["filter"] = fn(e["filter"])
 
 
 def end_us(tracks):

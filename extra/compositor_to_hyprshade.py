@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Compositor to Hyprshade (GLSL)",
     "author": "Claude",
-    "version": (2, 1, 0),
+    "version": (2, 2, 0),
     "blender": (4, 2, 0),
     "location": "Compositor > Node menu > Export as Shader / Filter",
     "description": "Convert compositor node trees / node groups into screen shaders (Hyprshade, OBS, ShaderGlass) or KiaseCut filters",
@@ -16,10 +16,14 @@ bl_info = {
 #    their upstream functions with a different uv.  Single pass, no buffers.
 #  * Node groups are inlined; every instance gets its own context so group
 #    inputs are bound to the parent's expressions.
-#  * Menu / bool inputs that decide structure (Switch, Interpolation, ...)
+#  * Menu / bool inputs that decide structure (Interpolation, Menu Switch, ...)
 #    are resolved statically at export time, dead Switch branches are dropped.
-#  * An Image node called "Input" (or the group-input socket "Image" when a
-#    node group is exported as root) is the screen texture `tex`.
+#    A Switch / Index Switch driven by a computed value or a group input
+#    (a KiaseCut parameter) stays switchable: it becomes a GLSL branch.
+#  * The screen texture `tex` is: an Image node called "Input"; the group-input
+#    color socket "Image" or "Input" of the exported tree / group (else its
+#    first color input); and the "Image" / "Input" color socket of a group
+#    node left unconnected.  So no image has to stay loaded in Blender.
 #  * The result is taken from the Group Output node.
 #
 # Internal convention: uv in [0,1]^2 with Y UP (like Blender). Hyprland's
@@ -28,7 +32,7 @@ bl_info = {
 # KiaseCut format: the same code wrapped as a filter for the KiaseCut editor.  The exported node group's
 # inputs (other than the picture) become parameters you can change and keyframe in the editor:
 #   Float -> float,  Integer -> int (IN_x_i),  Boolean -> bool (IN_x_b),  Color -> color (IN_x_c),
-#   Vector -> vec3.  Min / Max of the group socket become the range of the editor's field.
+#   Vector -> vec3 (2D vector -> vec2, IN_x_v).  Min / Max of the group socket become the range of the editor's field.
 #   Put the .glsl in <KiaseCut Library>/filters.  See kiasecut/filters/FORMAT.md in KiaseCut.
 # ---------------------------------------------------------------------------
 
@@ -151,6 +155,11 @@ def norm(s):
     return re.sub(r"[^a-z0-9]+", "_", str(s).lower()).strip("_")
 
 
+def is_picture_name(name):
+    """Group-input sockets called 'Image' or 'Input' carry the picture (screen / clip)."""
+    return norm(name) in ("image", "input")
+
+
 def valid_link(sock):
     for l in sock.links:
         if getattr(l, "is_muted", False) or not getattr(l, "is_valid", True):
@@ -170,7 +179,7 @@ def _bound(v):
 
 def param_spec(it, name, t, val):
     """Description of a node-group input as an adjustable parameter (KiaseCut filters), or None.
-    kind: float / int / bool / color / vec3 (see kiasecut/filters/FORMAT.md)."""
+    kind: float / int / bool / color / vec2 / vec3 (see kiasecut/filters/FORMAT.md)."""
     st = it.socket_type
     spec = {"name": name, "label": it.name, "t": t}
     if st.startswith("NodeSocketFloat"):
@@ -182,7 +191,7 @@ def param_spec(it, name, t, val):
     elif st == "NodeSocketColor":
         spec["kind"] = "color"
     elif st.startswith("NodeSocketVector") and t == "vec3":
-        spec["kind"] = "vec3"
+        spec["kind"] = "vec2" if isinstance(val, (tuple, list)) and len(val) == 2 else "vec3"   # Blender 5: 2D vectors
     else:
         return None
     spec["default"] = val
@@ -322,7 +331,41 @@ class Converter:
                 ps = ctx.pnode.inputs[j] if j < len(ctx.pnode.inputs) else None
                 return self.static_sock(ctx.parent, ps) if ps is not None else None
             return self.root_defaults.get(j, self._dv(sock))
+        if src.bl_idname in SWITCHES and not src.mute and link.from_socket == src.outputs[0]:
+            k = switch_pick(self, ctx, src)
+            if k is not None and k >= 0:
+                return self.static_sock(ctx, src.inputs[k])
         return self._dv(sock)
+
+    def const_sock(self, ctx, sock):
+        """Like static_sock(), but None when the value is computed per pixel or comes from a parameter
+        (a root group input, adjustable in the KiaseCut editor)."""
+        link, src = self.resolve_link(sock)
+        if link is None:
+            return self._dv(src.inputs[0] if src is not None else sock)
+        if src.bl_idname == "NodeGroupInput":
+            j = list(src.outputs).index(link.from_socket)
+            if ctx.parent is not None:
+                ps = ctx.pnode.inputs[j] if j < len(ctx.pnode.inputs) else None
+                if ps is None or self.screen_sock(ps):
+                    return None
+                return self.const_sock(ctx.parent, ps)
+            expr = self.root_exprs.get(j)          # the picture, a parameter, or zero (menus, strings)
+            return self.root_defaults.get(j) if expr in (None, zero(gtype(link.from_socket))) else None
+        if src.mute:
+            return None
+        if src.bl_idname in ("CompositorNodeValue", "ShaderNodeValue"):
+            return self._dv(link.from_socket)
+        if src.bl_idname in SWITCHES and link.from_socket == src.outputs[0]:
+            k = switch_pick(self, ctx, src)
+            if k is not None:
+                return self.const_sock(ctx, src.inputs[k]) if k >= 0 else 0.0
+        return None
+
+    def screen_sock(self, sock):
+        """An unconnected 'Image' / 'Input' color socket of a group node: the group reads the picture."""
+        return (sock.node.bl_idname == "CompositorNodeGroup" and sock.type == "RGBA"
+                and is_picture_name(sock.name) and self.resolve_link(sock)[0] is None)
 
     @staticmethod
     def _dv(sock):
@@ -411,9 +454,9 @@ class Converter:
         image_j = None
         for j, it in enumerate(items):
             if it.socket_type == "NodeSocketColor":
-                if image_j is None or norm(it.name) == "image":
+                if image_j is None or is_picture_name(it.name):
                     image_j = j
-                    if norm(it.name) == "image":
+                    if is_picture_name(it.name):
                         break
         used = set()
         for j, it in enumerate(items):
@@ -764,7 +807,12 @@ def _group_input(h):
         if o.type == "CUSTOM":
             res.append(None)
         elif ctx.parent is not None:
-            res.append("return %s;" % c.inp(ctx.parent, ctx.pnode, j, t))
+            ps = ctx.pnode.inputs[j] if j < len(ctx.pnode.inputs) else None
+            if ps is not None and c.screen_sock(ps):
+                c.uses_input = True
+                res.append("return %s;" % coerce("input_tex(uv)", "vec4", t))
+            else:
+                res.append("return %s;" % c.inp(ctx.parent, ctx.pnode, j, t))
         else:
             res.append("return %s;" % c.root_exprs.get(j, zero(t)))
     return res
@@ -801,12 +849,71 @@ def _reroute(h):
     return [h.i(0, gtype(h.node.outputs[0]))]
 
 
+SWITCHES = ("GeometryNodeSwitch", "CompositorNodeSwitch", "GeometryNodeIndexSwitch", "GeometryNodeMenuSwitch",
+            "CompositorNodeSwitchView")
+
+
+def _num(v):
+    if isinstance(v, (tuple, str)) or v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _switch_items(node):
+    """Indices of the data inputs of an Index / Menu Switch (without the selector and the '+' socket)."""
+    return [k for k, s in enumerate(node.inputs) if k > 0 and s.type != "CUSTOM"]
+
+
+def switch_pick(c, ctx, node):
+    """Input index a switch-type node passes to its output when the choice is known at export time;
+    -1 when it passes nothing (output 0), None when the choice is made per pixel / by a parameter."""
+    idn = node.bl_idname
+    if idn == "CompositorNodeSwitchView":
+        return 0                                  # no multi-view in a screen shader: the first (left) view
+    if idn == "GeometryNodeMenuSwitch":
+        v = c.static_sock(ctx, node.inputs[0])    # menus are always fixed at export
+        names = [it.name for it in node.enum_items]
+        items = _switch_items(node)
+        if v in names and names.index(v) < len(items):
+            return items[names.index(v)]
+        return -1
+    if idn == "GeometryNodeIndexSwitch":
+        v = _num(c.const_sock(ctx, node.inputs[0]))
+        if v is None:
+            return None
+        items = _switch_items(node)
+        k = int(math.floor(v + 0.5))
+        return items[k] if 0 <= k < len(items) else -1
+    sw = c.find_input(node, "Switch")
+    if sw is None:                                # Blender < 4.5: 'check' property, inputs Off / On
+        return 1 if getattr(node, "check", False) else 0
+    v = _num(c.const_sock(ctx, sw))
+    if v is None:
+        return None
+    j = list(node.inputs).index(sw)
+    return j + 2 if v > 0.0 else j + 1
+
+
 def _switch(h):
-    t = gtype(h.node.outputs[0])
-    cond = h.c.static_sock(h.ctx, h.c.find_input(h.node, 0))
-    if cond is not None and not isinstance(cond, (tuple, str)):
-        return [h.i(2 if cond else 1, t)]
-    return ["(%s) > 0.5 ? %s : %s" % (h.i(0, "float"), h.i(2, t), h.i(1, t))]
+    """Switch (bool), Index Switch, Menu Switch, Switch View.  A choice fixed at export only emits the chosen
+    branch; one made by a computed value or a group-input parameter becomes a GLSL branch."""
+    node, t = h.node, gtype(h.node.outputs[0])
+    k = switch_pick(h.c, h.ctx, node)
+    flags = []
+    if node.bl_idname == "GeometryNodeMenuSwitch":   # extra outputs: one boolean per item, 1 for the chosen one
+        flags = ["1.0" if k == j else "0.0" for j in _switch_items(node)]
+    if k is not None:
+        return [h.i(k, t) if k >= 0 else zero(t)] + flags
+    if node.bl_idname == "GeometryNodeIndexSwitch":
+        lines = ["int i = int(floor(%s + 0.5));" % h.i(0, "float")]
+        lines += ["if (i == %d) return %s;" % (n, h.i(j, t)) for n, j in enumerate(_switch_items(node))]
+        lines.append("return %s;" % zero(t))
+        return ["\n".join(lines)]
+    j = list(node.inputs).index(h.c.find_input(node, "Switch"))
+    return ["(%s) > 0.0 ? %s : %s" % (h.i(j, "float"), h.i(j + 2, t), h.i(j + 1, t))]
 
 
 # ---- inputs -----------------------------------------------------------------
@@ -1682,7 +1789,7 @@ HANDLERS = {
     "NodeGroupInput": _group_input,
     "CompositorNodeGroup": _group,
     "NodeReroute": _reroute,
-    "GeometryNodeSwitch": _switch,
+    **{k: _switch for k in SWITCHES},
     "CompositorNodeImage": _image_node,
     "CompositorNodeRLayers": _render_layers,
     "CompositorNodeRGB": _rgb,
@@ -2004,11 +2111,14 @@ def kc_param(p):
         hexv = "#" + "".join("%02x" % round(_lin_to_srgb_py(x) * 255) for x in v[:3]) + "%02x" % round(min(max(v[3], 0.0), 1.0) * 255)
         return ('// @param %s_c color %s "%s"' % (n, hexv, lab),
                 "#if LINEARIZE\n#define %s vec4(srgb_to_lin(%s_c.rgb), %s_c.a)\n#else\n#define %s %s_c\n#endif" % (n, n, n, n, n))
-    v = [float(x) for x in d][:3]                         # vec3
+    v = ([float(x) for x in d] + [0.0, 0.0, 0.0])[:2 if kind == "vec2" else 3]     # vec2 / vec3
     m = max(10.0, 10.0 * max(abs(x) for x in v))
     lo = -m if lo is None else lo
     hi = m if hi is None else hi
-    return '// @param %s vec3 %s %s %s "%s"' % (n, ",".join("%.6g" % x for x in v), "%.6g" % lo, "%.6g" % hi, lab), ""
+    vals = "%s %s %s" % (",".join("%.6g" % x for x in v), "%.6g" % lo, "%.6g" % hi)
+    if kind == "vec2":                                    # the shader works on vec3: vec2 uniform plus a macro
+        return ('// @param %s_v vec2 %s "%s"' % (n, vals, lab), "#define %s vec3(%s_v, 0.0)" % (n, n))
+    return '// @param %s vec3 %s "%s"' % (n, vals, lab), ""
 
 
 def to_kiasecut(code, conv, name):
@@ -2122,6 +2232,48 @@ def export_all(folder, settings=None, fmt="HYPRSHADE"):
     return report
 
 
+_DEFAULT_GROUP_NAME = re.compile(r"^(Group|Node ?Group)([ .]\d+)?$", re.I)
+
+
+def child_groups(parent):
+    """Group nodes directly inside `parent` (one per distinct node tree, unmuted), as (export name, node tree).
+    The name is the node's label, else its name, else (default 'Group.001' names) the node tree's name."""
+    res, seen_trees, seen_names = [], set(), set()
+    for n in parent.nodes:
+        if n.bl_idname != "CompositorNodeGroup" or getattr(n, "mute", False):
+            continue
+        sub = getattr(n, "node_tree", None)
+        if sub is None or sub.name in seen_trees:
+            continue
+        seen_trees.add(sub.name)
+        name = n.label or (sub.name if _DEFAULT_GROUP_NAME.match(n.name) else n.name)
+        name = re.sub(r'[\\/:*?"<>|]+', "_", name).strip() or sub.name
+        base, k = name, 1
+        while name.lower() in seen_names:
+            k += 1
+            name = "%s_%d" % (base, k)
+        seen_names.add(name.lower())
+        res.append((name, sub))
+    return res
+
+
+def export_children(parent, folder, settings=None, fmt="HYPRSHADE"):
+    """Batch export: every effect group node inside `parent` becomes its own shader file in `folder`.
+    Returns {name: warnings}."""
+    import os
+    os.makedirs(folder, exist_ok=True)
+    report = {}
+    for name, sub in child_groups(parent):
+        fn = re.sub(r"\s+", "_", name) if fmt == "SHADERGLASS" else name
+        try:
+            _, warns = write_shader(sub, os.path.join(folder, fn), settings, fmt)
+        except Exception as e:
+            report[name] = ["skipped: %s" % e]
+            continue
+        report[name] = warns
+    return report
+
+
 if bpy:
     _enum_cache = []
     _D = {k: d for k, _, _, _, d in SETTING_DEFS}
@@ -2142,6 +2294,9 @@ if bpy:
         tree: EnumProperty(name="Tree / Group", items=_tree_items)
         all_groups: BoolProperty(name="Export every tree to a folder", default=False,
                                  description="Use the folder of the file path; one .glsl per tree")
+        batch_children: BoolProperty(name="Batch: export each group inside the tree", default=False,
+                                     description="Export every group node inside the selected tree / group as its own shader "
+                                                 "(use the folder of the file path; files are named after the node's label / name)")
         # ---- shader settings (written into the #define block of the shader) ----
         flip_y: BoolProperty(name="Flip Y", default=True, description=_D["flip_y"])
         linearize: BoolProperty(name="Linear light", default=True, description=_D["linearize"])
@@ -2164,6 +2319,7 @@ if bpy:
             col = self.layout.column()
             col.prop(self, "format", expand=True)
             col.prop(self, "tree")
+            col.prop(self, "batch_children")
             col.prop(self, "all_groups")
             box = self.layout.box()
             box.label(text="Shader settings")
@@ -2173,6 +2329,22 @@ if bpy:
         def execute(self, context):
             import os
             path = bpy.path.abspath(self.filepath)
+            if self.batch_children:
+                parent = bpy.data.node_groups.get(self.tree)
+                if parent is None:
+                    parent = next((t for t in compositor_trees() if t.name == self.tree), None)
+                if parent is None:
+                    self.report({"ERROR"}, "No compositor tree selected")
+                    return {"CANCELLED"}
+                report = export_children(parent, os.path.dirname(path) or ".", self.settings(), self.format)
+                if not report:
+                    self.report({"WARNING"}, "No group nodes found inside '%s'" % parent.name)
+                    return {"CANCELLED"}
+                for name, ws in report.items():
+                    for w in ws:
+                        self.report({"WARNING"}, "%s: %s" % (name, w))
+                self.report({"INFO"}, "Exported %d effects from '%s'" % (len(report), parent.name))
+                return {"FINISHED"}
             if self.all_groups:
                 report = export_all(os.path.dirname(path) or ".", self.settings(), self.format)
                 for name, ws in report.items():
@@ -2232,6 +2404,8 @@ def _cli():
     ap.add_argument("--tree", help="tree / group name (default: scene compositor)")
     ap.add_argument("--out", required=True, help="output .glsl file, or folder with --all")
     ap.add_argument("--all", action="store_true")
+    ap.add_argument("--children", action="store_true",
+                    help="batch: export every group node inside --tree (default: scene compositor) as its own shader into the folder --out")
     ap.add_argument("--format", choices=[f[0].lower() for f in FORMATS], default="hyprshade",
                     help="kiasecut (.glsl filter for the KiaseCut editor), hyprshade (.glsl), shaderglass (.slang + .slangp) or hlsl (.shader for obs-shaderfilter)")
     for key, define, default, label, desc in SETTING_DEFS:
@@ -2244,6 +2418,11 @@ def _cli():
             ap.add_argument(opt, type=type(default), default=default, help=desc)
     a = ap.parse_args(argv)
     st = {k: getattr(a, k) for k in DEFAULT_SETTINGS}
+    if a.children:
+        parent = bpy.data.node_groups.get(a.tree) if a.tree else compositor_trees()[0]
+        for k, v in export_children(parent, a.out, st, a.format.upper()).items():
+            print(k, "->", len(v), "warnings")
+        return True
     if a.all:
         for k, v in export_all(a.out, st, a.format.upper()).items():
             print(k, "->", len(v), "warnings")

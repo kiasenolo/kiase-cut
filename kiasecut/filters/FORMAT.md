@@ -84,9 +84,11 @@ vec4 effect(vec2 uv) {
 `tools/converters/compositor_to_hyprshade.py` 是 Blender 插件。在合成器（Compositor）裡把效果做成**節點群組**，
 選單 Node →「Export as Shader / Filter」→ 格式選「KiaseCut filter (.glsl)」，把輸出的 `.glsl` 放進 Library 的 `filters` 資料夾即可。
 
-- 群組的輸入（Image 以外）會變成參數，面板上可以調、可以打關鍵幀：Float → `float`、Integer → `int`、Boolean → `bool`、
-  Color → `color`、Vector → `vec3`。群組輸入的最小／最大值就是欄位範圍。
+- 畫面（片段的圖）從哪裡來：群組輸入裡叫 `Image` 或 `Input` 的 Color 插槽（沒有就用第一個 Color 輸入）、
+  沒接線的群組節點的 `Image`／`Input` 插槽，或叫「Input」的 Image 節點。所以 Blender 裡不需要一直載著一張圖片。
+- 群組的輸入（Image／Input 以外）會變成參數，面板上可以調、可以打關鍵幀：Float → `float`、Integer → `int`、Boolean → `bool`、
+  Color → `color`、Vector → `vec3`（2D 向量 → `vec2`）。群組輸入的最小／最大值就是欄位範圍。
 - `Scene Time` 節點用片段時間（`time`）；`Blur`、`Glare`、`Dilate/Erode`、`Pixelate` 的取樣數等寫在檔案裡的 `#define` 區，可以自己改。
 - `#define LINEARIZE 1`：照 Blender 的方式在線性光裡運算（預設）；`FLIP_Y`、`COMPOSITE_OVER_SCREEN` 同樣在 `#define` 區。
-- 限制：決定結構的選項（Switch 節點、Interpolation 等）在匯出時就固定了；`String to Image` 不支援（文字請用編輯器的文字片段）。
+- 限制：決定結構的選項（Menu Switch、Interpolation 等）在匯出時就固定了；Switch / Index Switch 若接到群組輸入（參數）或計算出來的值，匯出後仍可切換；`String to Image` 不支援（文字請用編輯器的文字片段）。
 

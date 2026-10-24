@@ -164,5 +164,19 @@ class GpuMatchesCpu(unittest.TestCase):
         self.check("filter clip", self.view([self.bg()], [clip]))
 
 
+@unittest.skipUnless(HAVE_GL, "needs OpenGL 3.3")
+class BuiltinFilters(unittest.TestCase):
+    def test_every_builtin_compiles_and_runs(self):
+        eng = fx.Engine()
+        rgba = np.zeros((36, 64, 4), np.uint8)
+        rgba[..., 1], rgba[..., 3] = 200, 255
+        for ref in fx.builtin_refs():
+            self.assertIsNone(fx.check(ref), ref)
+            d = fx.get(ref)
+            out = eng.run(d, {p.name: fx.uniform_value(p, None, 0) for p in d.params}, rgba, 0.5, 0.5, 15)
+            self.assertEqual(out.shape, rgba.shape, ref)
+            self.assertTrue((out[..., :3] <= out[..., 3:4]).all(), f"{ref}: not premultiplied")
+
+
 if __name__ == "__main__":
     unittest.main()

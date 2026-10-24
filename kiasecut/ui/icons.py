@@ -96,6 +96,13 @@ def _draw(p, name):
         p.drawLine(QPointF(12, 4), QPointF(12, 20))
         p.drawPolyline(QPolygonF([QPointF(8, 8), QPointF(12, 4), QPointF(16, 8)]))
         p.drawPolyline(QPolygonF([QPointF(8, 16), QPointF(12, 20), QPointF(16, 16)]))
+    elif name == "link":                                   # two chain links (X / Y scale linked)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(pen.color(), 2))
+        p.translate(12, 12)
+        p.rotate(-45)
+        p.drawRoundedRect(QRectF(-9, -3.2, 10, 6.4), 3.2, 3.2)
+        p.drawRoundedRect(QRectF(-1, -3.2, 10, 6.4), 3.2, 3.2)
     elif name == "timeline":
         for y, x0, x1 in ((6, 4, 14), (11, 8, 20), (16, 4, 17)):
             p.drawRoundedRect(QRectF(x0, y - 1.6, x1 - x0, 3.2), 1, 1)

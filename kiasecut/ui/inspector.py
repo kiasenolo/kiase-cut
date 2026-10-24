@@ -6,6 +6,10 @@ has keyframes edits the keyframe at the playhead, or adds one, as Jianying does.
 (font, blend mode, mask shape, invert) have ◆ too: their keyframes hold until the next one.
 Edits are reported after a short pause so typing or spinning produces one rebuild.
 
+Scale has an X and a Y value with a link button between them: linked (the default), changing
+one changes the other in proportion and keyframes go on both. Built-in assets (assets.py)
+add a 素材參數 section: size in canvas pixels, colours and the shape's own settings.
+
 One class serves two tabs: part="main" (type, text, picture, sound) and part="mask" (the
 mask: on / off, shape, invert and its values), each with its own keyframe controls.
 
@@ -19,7 +23,8 @@ import os
 from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, project
+from .. import assets, curves, edit, project
+from . import icons
 from .timeline import US, timecode
 
 DEBOUNCE_MS = 350
@@ -32,7 +37,8 @@ PARAMS = {
              ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0, 1, 0.0)),
     "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
-                  ("scale", "縮放", 0.01, 50.0, 0.01, 3, 1, 1.0),
+                  ("scale", "縮放 X", 0.01, 50.0, 0.01, 3, 1, 1.0),
+                  ("scale_y", "縮放 Y", 0.01, 50.0, 0.01, 3, 1, 1.0),
                   ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
                   ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0)),
     "mask": (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0),
@@ -167,6 +173,7 @@ class Inspector(QWidget):
     maskEnabledChosen = Signal(list, bool)          # clip ids, on
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
+    assetEdited = Signal(list, dict)                # clip ids, {asset field: value} (assets.py)
 
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
@@ -242,8 +249,10 @@ class Inspector(QWidget):
                 rows = [("opacity", "強度 %") + r[2:] for r in PARAMS["transform"] if r[0] == "opacity"]
                 self._rows(form, "transform", rows, ())
             else:
+                if c.get("asset"):
+                    self._build_asset(form, c["asset"]["family"])
                 form.addRow(section("畫面"))
-                self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"),))
+                self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"), ("scale", "scale_y", "縮放")))
                 blend = ComboBox()
                 blend.setPlaceholderText("--")
                 for name, k in BLEND_NAMES:
@@ -386,6 +395,8 @@ class Inspector(QWidget):
                 lay.setContentsMargins(0, 0, 0, 0)
                 lay.setSpacing(3)
                 for rr in (r, by_key[b]):
+                    if rr is not r and (group, r[0]) == ("transform", "scale"):
+                        lay.addWidget(self._link_button())
                     tag = QLabel(rr[1].split()[-1])                  # "位置 X" -> "X"
                     tag.setStyleSheet("color: #8e8e94;")
                     lay.addWidget(tag)
@@ -412,6 +423,76 @@ class Inspector(QWidget):
         lay.addWidget(self._key_button(group, key))
         return row
 
+    def _link_button(self):
+        b = QPushButton()
+        b.setIcon(icons.icon("link", 16))
+        b.setCheckable(True)
+        b.setFixedWidth(26)
+        b.setToolTip("X / Y 縮放連動：開＝一起調整（保持比例），關＝分開調整")
+        b.clicked.connect(lambda on: self._emit_now(self.paramEdited, "transform", "scale_link", on))
+        self.widgets["scale_link"] = b
+        return b
+
+    def _build_asset(self, form, family):
+        """素材參數: size, colours and the family's own fields (assets.FIELDS); not keyframed."""
+        form.addRow(section("素材參數"))
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(3)
+        for f, tag in (("w", "寬"), ("h", "高")):
+            info = assets.FIELD_INFO[f]
+            t = QLabel(tag)
+            t.setStyleSheet("color: #8e8e94;")
+            lay.addWidget(t)
+            lay.addWidget(self._spin(("asset", f), *info[2:6]), 1)
+        form.addRow("大小 px", row)
+        for f in ("color",) + assets.FIELDS[family]:
+            info = assets.FIELD_INFO[f]
+            if info[1] == "color":
+                b = QPushButton()
+                b.clicked.connect(lambda _=False, f=f: self._pick_asset_color(f))
+                self.widgets[("asset", f)] = b
+                form.addRow(info[0], b)
+            elif info[1] == "choice":
+                box = ComboBox()
+                box.setPlaceholderText("--")
+                for i, (name, _v) in enumerate(info[2]):
+                    box.addItem(name, i)
+                box.activated.connect(lambda i, f=f: (self._queue("asset", f, assets.FIELD_INFO[f][2][i][1]),
+                                                      self._flush()))
+                self.widgets[("asset", f)] = box
+                form.addRow(info[0], box)
+            else:
+                form.addRow(info[0], self._spin(("asset", f), *info[2:6]))
+
+    def _show_asset(self, clips):
+        for (_g, f), wid in [(k, v) for k, v in self.widgets.items() if isinstance(k, tuple) and k[0] == "asset"]:
+            vals = {k["asset"].get(f) for k in clips}
+            v = vals.pop() if len(vals) == 1 else None
+            kind = assets.FIELD_INFO[f][1]
+            if kind == "color":
+                if v is None:
+                    wid.setText("--")
+                    wid.setStyleSheet("")
+                else:
+                    rgb = QColor(v[:7])
+                    wid.setText(v)
+                    wid.setStyleSheet(f"background: {v[:7]}; color: {'#000' if rgb.lightness() > 140 else '#fff'};")
+            elif kind == "choice":
+                opts = [x for _n, x in assets.FIELD_INFO[f][2]]
+                self._set_combo(wid, opts.index(v) if v in opts else "--")
+            else:
+                self._set(("asset", f), v)
+
+    def _pick_asset_color(self, f):
+        cur = self.widgets[("asset", f)].text()
+        col = QColorDialog.getColor(QColor(cur[:7]) if cur.startswith("#") else QColor("white"), self, "顏色",
+                                    QColorDialog.ShowAlphaChannel)
+        if col.isValid():
+            self._queue("asset", f, col.name() + (f"{col.alpha():02x}" if col.alpha() < 255 else ""))
+            self._flush()
+
     def _key_button(self, group, key):
         b = QPushButton(KEY_OFF)
         b.setFixedWidth(26)
@@ -428,7 +509,7 @@ class Inspector(QWidget):
         """Show the selected clips (the first is the primary one); t_us is the playhead time."""
         c = common(clips)
         shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")),
-                                         kind_tag(c.get("mask")), "volume" in c)
+                                         kind_tag(c.get("mask")), "volume" in c, (c.get("asset") or {}).get("family"))
         if shape != self.shape:
             self._flush()
             self.clip_ids = [k["id"] for k in clips]
@@ -477,13 +558,23 @@ class Inspector(QWidget):
             for key, _l, _lo, _hi, _st, dec, factor, default in rows:
                 if (group, key) not in w:
                     continue
-                ps = [(k if group == "clip" else k[group]).get(key, default) for k in clips]
+                hs = [k if group == "clip" else k[group] for k in clips]
+                if (group, key) == ("transform", "scale_y"):            # absent: follows X
+                    ps = [h.get("scale_y", h.get("scale", default)) for h in hs]
+                else:
+                    ps = [h.get(key, default) for h in hs]
                 vals = [round(curves.value(p, t) * factor, dec) for p, t in zip(ps, ts)]
                 self._set((group, key), vals[0] if same(vals) else None)
                 for p, t in zip(ps, ts):
                     if edit.key_at(p, t) is not None:
                         easings.add(edit.easing_at(p, t))
                 self._key_state(w[("key", group, key)], ps, clips, ts)
+        if "scale_link" in w:
+            w["scale_link"].blockSignals(True)
+            w["scale_link"].setChecked(all(edit.linked(k["transform"]) for k in clips))
+            w["scale_link"].blockSignals(False)
+        if ("asset", "w") in w:
+            self._show_asset(clips)
         if "mask_on" in w:
             on = {bool(project.active_mask(k)) for k in clips}
             w["mask_on"].blockSignals(True)
@@ -584,6 +675,9 @@ class Inspector(QWidget):
         ids = list(self.clip_ids)
         if ("text", "content") in pending:                 # the words themselves
             self.textEdited.emit(ids, {"content": pending.pop(("text", "content"))})
+        fields = {k: pending.pop((g, k)) for g, k in list(pending) if g == "asset"}
+        if fields:                                           # a built-in asset's parameters
+            self.assetEdited.emit(ids, fields)
         for (g, k), v in pending.items():                    # everything else can animate
             self.paramEdited.emit(ids, g.rstrip("*"), k, v)
 
@@ -615,4 +709,6 @@ def common(clips):
             out["mask"] = first["mask"]
     if all("volume" in k for k in clips):
         out["volume"] = first["volume"]
+    if all(k.get("asset") for k in clips) and len({k["asset"]["family"] for k in clips}) == 1:
+        out["asset"] = first["asset"]
     return out

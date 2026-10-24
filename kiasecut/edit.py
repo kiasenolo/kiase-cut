@@ -390,7 +390,7 @@ def new_track_id(proj):
 
 
 TEXT_FIELDS = ("content", "font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg")
-TRANSFORM_FIELDS = ("x", "y", "scale", "rotation", "opacity")
+TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity")
 
 
 def set_text(proj, clip_id, **fields):
@@ -535,11 +535,50 @@ def _check_choice(c, group, key, value):
             raise EditError(f"unknown blend mode {value}")
 
 
+def linked(h):
+    """Whether a transform's X and Y scale change together (the default)."""
+    return h.get("scale_link", True) is not False
+
+
+def with_linked_scale(h, values, t):
+    """A transform edit (values at clip time t) plus what X / Y scale linking adds: the other
+    scale keeps their ratio. While Y has no curve of its own it follows X; unlinked, it keeps
+    its value instead."""
+    out = dict(values)
+    if "scale_y" not in h:
+        if linked(h) and "scale_y" in out:
+            out.setdefault("scale", out.pop("scale_y"))
+        elif not linked(h) and "scale" in out and "scale_y" not in out:
+            out["scale_y"] = curves.value(h.get("scale", 1.0), t)
+        return out
+    if linked(h):
+        for key, other in (("scale", "scale_y"), ("scale_y", "scale")):
+            if key in out and other not in out:
+                cur = curves.value(h.get(key, 1.0), t)
+                out[other] = curves.value(h.get(other, 1.0), t) * out[key] / cur if cur else out[key]
+    return out
+
+
 def set_param(proj, clip_id, group, key, value, t=None):
     """Set a parameter. Static ones change outright; keyframed ones get their key at t
-    (clip time) updated, or a new key there - as Jianying does when you change a value."""
+    (clip time) updated, or a new key there - as Jianying does when you change a value.
+    Transform scales follow X / Y linking (with_linked_scale)."""
     _, c = find(proj, clip_id)
     h = _holder(c, group)
+    if group == "transform" and key in ("scale", "scale_y"):
+        if "scale_y" not in h and not linked(h):
+            h["scale_y"] = copy.deepcopy(h.get("scale", 1.0))     # Y gets a curve of its own
+        for k, v in with_linked_scale(h, {key: value}, t).items():
+            _set_one(c, h, group, k, v, t)
+        return c
+    if group == "transform" and key == "scale_link":
+        h[key] = bool(value)
+        return c
+    _set_one(c, h, group, key, value, t)
+    return c
+
+
+def _set_one(c, h, group, key, value, t):
     p = h.get(key)
     value = _coerce(value)
     _check_choice(c, group, key, value)
@@ -547,8 +586,6 @@ def set_param(proj, clip_id, group, key, value, t=None):
         h.pop("styles", None)                    # a whole-clip style replaces per-range ones
     if not curves.is_animated(p):
         h[key] = value
-        if group == "transform" and key == "scale" and "scale_y" in h and not curves.is_animated(h["scale_y"]):
-            h["scale_y"] = value
         return c
     if t is None:
         raise EditError(f"{key} has keyframes: give the time to edit")
@@ -564,10 +601,24 @@ def set_param(proj, clip_id, group, key, value, t=None):
 
 def toggle_key(proj, clip_id, group, key, t):
     """Add a key at t holding the current value, or remove the key that is there.
-    Removing the last key leaves the parameter at that key's value."""
+    Removing the last key leaves the parameter at that key's value. Linked X / Y scales
+    get or lose their keys together."""
     _, c = find(proj, clip_id)
     _check(c, group, key, t)
     h = _holder(c, group)
+    if group == "transform" and key in ("scale", "scale_y"):
+        if key == "scale_y" and "scale_y" not in h:
+            h["scale_y"] = copy.deepcopy(h.get("scale", 1.0))
+        other = "scale_y" if key == "scale" else "scale"
+        adding = key_at(h.get(key, 1.0), t) is None
+        _toggle_one(c, h, group, key, t)
+        if linked(h) and other in h and (key_at(h[other], t) is None) == adding:
+            _toggle_one(c, h, group, other, t)
+        return c
+    return _toggle_one(c, h, group, key, t)
+
+
+def _toggle_one(c, h, group, key, t):
     if key in DISCRETE_DEFAULTS and not group.startswith("fx:"):
         _check_choice(c, group, key, DISCRETE_DEFAULTS[key])
         default = DISCRETE_DEFAULTS[key]
@@ -932,16 +983,19 @@ def _fit_source(c, length):
         raise EditError("素材太短")
 
 
-def replace_media(proj, clip_id, it):
+def replace_media(proj, clip_id, it, asset=None):
     """Give a clip another source (a media library item {kind, path, name, width, height,
     duration_us}), keeping its place, length, look, mask, effects and keyframes (Jianying's
     替換素材). A picture or video replaces a picture, video or compound clip; a sound
-    replaces a sound. A clip longer than its new source is shortened to it."""
+    replaces a sound. A clip longer than its new source is shortened to it. asset: the
+    parameters when the new source is a built-in asset (assets.py)."""
     _, c = find(proj, clip_id)
     kind = it["kind"]
     _source_check(c, kind in ("image", "video"))
-    for k in ("compound", "compound_id", "timeline_id"):
+    for k in ("compound", "compound_id", "timeline_id", "asset"):
         c.pop(k, None)
+    if asset is not None:
+        c["asset"] = copy.deepcopy(asset)
     c["type"] = kind
     c["media"] = {"path": it["path"]}
     if kind in ("image", "video"):
@@ -959,6 +1013,17 @@ def replace_media(proj, clip_id, it):
     return c
 
 
+def set_asset(proj, clip_id, asset, path):
+    """Give a built-in asset clip (assets.py) new parameters: asset is its whole new dict,
+    path the SVG drawn from it."""
+    _, c = find(proj, clip_id)
+    if not c.get("asset"):
+        raise EditError("not a built-in asset")
+    c["asset"] = copy.deepcopy(asset)
+    c["media"] = {"path": path, "width": asset["w"], "height": asset["h"]}
+    return c
+
+
 def replace_with_compound(root, container, clip_id, ref):
     """Make a picture, video or compound clip show compound (or timeline) ref instead,
     keeping its place, length and look. A static compound fits any length."""
@@ -970,7 +1035,7 @@ def replace_with_compound(root, container, clip_id, ref):
         raise EditError("unknown compound or timeline") from None
     if project.contains(root, ref, _container_id(root, container)):
         raise EditError("a timeline or compound cannot show itself")
-    for k in ("media", "volume", "fade_in_us", "fade_out_us", "compound_id", "timeline_id"):
+    for k in ("media", "volume", "fade_in_us", "fade_out_us", "compound_id", "timeline_id", "asset"):
         c.pop(k, None)
     c["type"] = "compound"
     c["timeline_id" if ref.startswith("tl") else "compound_id"] = ref

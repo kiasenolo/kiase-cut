@@ -189,8 +189,7 @@ class Renderer:
             disp = (bw, bh)
         elif kind in ("image", "video"):
             m = c["media"]
-            fit = min(W / m["width"], H / m["height"])
-            bw, bh = m["width"] * fit, m["height"] * fit
+            bw, bh = project.picture_size(c, W, H)
             tw, th = bw * abs(sx) * px_per_unit, bh * abs(sy) * px_per_unit
             if kind == "image":
                 pic = self.image(m["path"], tw, th)

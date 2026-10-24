@@ -45,10 +45,11 @@ class Rasterizer:
         px = curves.value(transform.get("x", 0.0), t) * W / 2
         py = curves.value(transform.get("y", 0.0), t) * H / 2
         a = math.radians(curves.value(transform.get("rotation", 0.0), t))
-        sc = curves.value(transform.get("scale", 1.0), t) or 1e-6
+        sx = curves.value(transform.get("scale", 1.0), t) or 1e-6
+        sy = curves.value(transform.get("scale_y", transform.get("scale", 1.0)), t) or 1e-6
         dx, dy = self.gx - px, self.gy - py
-        lx = (dx * math.cos(a) - dy * math.sin(a)) / sc
-        ly = (dx * math.sin(a) + dy * math.cos(a)) / sc
+        lx = (dx * math.cos(a) - dy * math.sin(a)) / sx
+        ly = (dx * math.sin(a) + dy * math.cos(a)) / sy
         if transform.get("flip_h"):
             lx = -lx
         if transform.get("flip_v"):
@@ -67,7 +68,7 @@ class Rasterizer:
     @staticmethod
     def animated(mask, transform):
         return any(curves.is_animated(mask.get(k)) for k in ("cx", "cy", "w", "h", "rotation", "feather")) \
-            or any(curves.is_animated(transform.get(k)) for k in ("x", "y", "scale", "rotation"))
+            or any(curves.is_animated(transform.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation"))
 
 
 # -- native masks: the same shapes as bezier splines for MLT's rotoscoping filter ----------

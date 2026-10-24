@@ -40,7 +40,8 @@ def param_rows(c):
     """(group, key, label, factor, default) of every parameter clip c can animate."""
     out = []
     if c.get("transform") is not None:
-        out += [("transform", r[0], r[1], r[6], r[7]) for r in PARAMS["transform"]]
+        out += [("transform", r[0], r[1], r[6], r[7]) for r in PARAMS["transform"]
+                if r[0] != "scale_y" or "scale_y" in c["transform"]]       # (absent: Y follows X)
     if c.get("text"):
         out += [("text", r[0], r[1], r[6], r[7]) for r in PARAMS["text"]]
         out.append(("text", "color", "文字顏色", 1, [1.0, 1.0, 1.0]))

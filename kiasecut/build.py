@@ -305,11 +305,10 @@ class Builder:
             os.replace(out + ".tmp.png", out)
         return out.replace("\\", "/")
 
-    def svg_png(self, path, w, h, zoom):
-        """An SVG drawn as a PNG at the size it is shown (fitted to the frame, times the clip's
-        largest scale), so MLT gets a sharp picture."""
+    def svg_png(self, path, w, h, k):
+        """An SVG drawn as a PNG at the size it is shown (k: px per SVG unit: its size on the
+        frame times the clip's largest scale), so MLT gets a sharp picture."""
         st = os.stat(path)
-        k = min(self.W / w, self.H / h) * max(1.0, zoom)
         out = os.path.join(self.cache, "proxy", _hash("svg", path, st.st_size, st.st_mtime, round(w * k), round(h * k))
                            + ".png")
         if not os.path.exists(out):
@@ -365,16 +364,15 @@ class Builder:
             return pid, 0, length, f0, self.visual(c, f0, f1, s_us, (iw / rs, ih / rs), size=size)
         if t == "image":
             m = c["media"]
-            fit = min(self.W / m["width"], self.H / m["height"])
+            bw, bh = project.picture_size(c, self.W, self.H, self.W / self.p["width"])
             if svgimage.is_svg(m["path"]):
                 tf = c.get("transform", {})
                 zoom = max(curves.max_abs(tf.get("scale", 1.0)), curves.max_abs(tf.get("scale_y", 1.0)))
-                src = self.svg_png(m["path"], m["width"], m["height"], zoom)
+                src = self.svg_png(m["path"], m["width"], m["height"], bw / m["width"] * max(1.0, zoom))
             else:
                 src = self.proxy(m["path"], m["width"], m["height"])
             pid = self.media_producer(src, "image", track)
-            return pid, 0, length, f0, self.visual(c, f0, f1, s_us, None,
-                                                  (m["width"] * fit, m["height"] * fit))
+            return pid, 0, length, f0, self.visual(c, f0, f1, s_us, None, (bw, bh))
         if t in ("video", "audio"):
             m = c["media"]
             src_in = self.fr(c["source_start_us"]) + head

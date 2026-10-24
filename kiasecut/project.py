@@ -16,7 +16,11 @@ clip     {id, type: image | video | audio | text | compound, name,
           start_us, duration_us, source_start_us,
           media: {path, width, height, duration_us}         image / video / audio
           transform: {x, y, scale, rotation, opacity}       visual clips, Jianying units:
-                     x, y in half-canvas units (y up), clockwise degrees
+                     x, y in half-canvas units (y up), clockwise degrees; scale is the
+                     X scale, optional scale_y the Y one (absent: same as X), optional
+                     scale_link (default true): X and Y change together, keeping their ratio
+          asset: {key, family, w, h, color, ...}            built-in assets (assets.py): an
+                     image clip drawn from these parameters, at its own size (picture_size)
           mask: {kind, invert, cx, cy, w, h, rotation, feather, enabled} or None;
                 a mask with enabled: false keeps its settings but cuts nothing
           text: {content, font_path, size, color, letter_spacing, line_spacing,
@@ -180,6 +184,17 @@ def active_mask(c):
     """The clip's mask if it is switched on, else None."""
     m = c.get("mask")
     return m if m and m.get("enabled", True) else None
+
+
+def picture_size(c, W, H, k=1.0):
+    """On-canvas size at scale 1 of an image or video clip on a W x H level: fitted into it,
+    as Jianying does. A built-in asset (clip["asset"]) has its own size in canvas pixels;
+    k converts those to the units W and H are in."""
+    m = c["media"]
+    if c.get("asset"):
+        return m["width"] * k, m["height"] * k
+    fit = min(W / m["width"], H / m["height"])
+    return m["width"] * fit, m["height"] * fit
 
 
 def visible(track):

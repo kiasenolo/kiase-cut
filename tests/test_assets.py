@@ -1,5 +1,5 @@
-"""Built-in assets (內建素材): every one makes a valid SVG of the right size, idents round-trip,
-writing reuses an identical file."""
+"""Built-in assets (內建素材): every preset makes a valid SVG of its size, parameters can be
+edited, asset clips are drawn at their own size; X / Y scale, linked and not."""
 import os
 import shutil
 import sys
@@ -7,13 +7,19 @@ import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from kiasecut import assets, library, svgimage  # noqa: E402
+from kiasecut import assets, curves, edit, library, project, svgimage  # noqa: E402
+from test_edit import S, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
+
+
+def pixel(path, x, y, w):
+    return svgimage.raster(path, w).pixelColor(x, y)
 
 
 class AssetTests(unittest.TestCase):
@@ -23,28 +29,61 @@ class AssetTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def test_every_asset_is_a_picture(self):
+    def test_every_preset_is_a_picture(self):
         for a in assets.ASSETS:
-            path = assets.write(self.dir, a, "#3366ff", "#ff336680", 1920, 1080)
+            p = assets.make(a, "#3366ff", "#ff336680", 1920, 1080)
+            path = assets.store(self.dir, p)
             info = library.probe(path)
             self.assertEqual(info["kind"], "image", a.key)
+            self.assertEqual((info["width"], info["height"]), (p["w"], p["h"]), a.key)
             if a.cat != "shape":                            # fills the canvas
-                self.assertEqual((info["width"], info["height"]), (1920, 1080), a.key)
+                self.assertEqual((p["w"], p["h"]), (1920, 1080), a.key)
             img = svgimage.raster(path, 64)
             self.assertGreater(sum(img.pixelColor(x, y).alpha() for x in range(0, 64, 4)
                                    for y in range(0, img.height(), 2)), 0, a.key)
+            for out in (True, False):                     # outlines too
+                if "outline" in p:
+                    q = assets.updated(p, {"outline": out, "stroke": 30, "w": 300, "h": 120})
+                    self.assertTrue(svgimage.size(assets.store(self.dir, q)) == (300, 120), a.key)
 
-    def test_colours(self):
-        a = assets.get("solid.custom")
-        img = svgimage.raster(assets.write(self.dir, a, "#ff0000", "#000000", 16, 9), 16)
-        self.assertEqual(img.pixelColor(8, 4).name(), "#ff0000")
-        red = assets.get("solid.3")                         # a preset keeps its own colour
-        img = svgimage.raster(assets.write(self.dir, red, "#00ff00", "#000000", 16, 9), 16)
-        self.assertEqual(img.pixelColor(8, 4).name(), "#e53935")
-        g = assets.get("gradient.custom.h")
-        img = svgimage.raster(assets.write(self.dir, g, "#000000", "#ffffff", 100, 10), 100)
-        self.assertLess(img.pixelColor(2, 5).red(), 30)
-        self.assertGreater(img.pixelColor(97, 5).red(), 225)
+    def test_colours_and_parameters(self):
+        p = assets.make(assets.get("solid.custom"), "#ff0000", "#000000", 16, 9)
+        self.assertEqual(pixel(assets.store(self.dir, p), 8, 4, 16).name(), "#ff0000")
+        red = assets.make(assets.get("solid.3"), "#00ff00", "#000000", 16, 9)   # a preset keeps its colour
+        self.assertEqual(pixel(assets.store(self.dir, red), 8, 4, 16).name(), "#e53935")
+        g = assets.updated(assets.make(assets.get("gradient.custom.0"), "#000000", "#ffffff", 100, 10), {})
+        self.assertLess(pixel(assets.store(self.dir, g), 2, 5, 100).red(), 30)
+        self.assertGreater(pixel(assets.store(self.dir, g), 97, 5, 100).red(), 225)
+        flipped = assets.updated(g, {"angle": 180})
+        self.assertGreater(pixel(assets.store(self.dir, flipped), 2, 5, 100).red(), 225)
+        ring = assets.updated(assets.make(assets.get("shape.circle"), "#ffffff", "", 1920, 1080),
+                              {"w": 100, "h": 100, "outline": True, "stroke": 10})
+        self.assertEqual(pixel(assets.store(self.dir, ring), 50, 50, 100).alpha(), 0)    # hollow
+        self.assertEqual(pixel(assets.store(self.dir, ring), 50, 3, 100).alpha(), 255)
+        disc = assets.updated(ring, {"outline": False})
+        self.assertEqual(pixel(assets.store(self.dir, disc), 50, 50, 100).alpha(), 255)
+
+    def test_normalize(self):
+        p = assets.updated(assets.make(assets.get("shape.star"), "#fff", "", 1920, 1080),
+                           {"points": 99, "w": -5, "color": "nope", "radius": 3})
+        self.assertEqual((p["points"], p["w"], p["color"]), (24, 1, "#ffffff"))
+        self.assertNotIn("radius", p)                     # stars have no corners
+
+    def test_store_reuses(self):
+        p = assets.make(assets.get("shape.circle"), "#ffffff", "#000000", 1920, 1080)
+        a, b = assets.store(self.dir, p), assets.store(self.dir, dict(p))
+        self.assertEqual(a, b)
+        self.assertNotEqual(a, assets.store(self.dir, assets.updated(p, {"w": 401})))
+        self.assertEqual(len(os.listdir(os.path.join(self.dir, assets.FOLDER))), 2)
+
+    def test_restore(self):
+        p = assets.make(assets.get("shape.heart"), "#ff0000", "", 1920, 1080)
+        c = {"id": "c", "asset": p, "media": {"path": "/gone/heart.svg", "width": 1, "height": 1}}
+        changed = assets.restore([c], self.dir)
+        self.assertEqual(changed[0][0], "/gone/heart.svg")
+        self.assertTrue(os.path.exists(c["media"]["path"]))
+        self.assertEqual((c["media"]["width"], c["media"]["height"]), (400, 400))
+        self.assertEqual(assets.restore([c], self.dir), [])
 
     def test_ident(self):
         a, c1, c2 = assets.parse(assets.ident("shape.star", "#AABBCC", "#11223344"))
@@ -53,19 +92,22 @@ class AssetTests(unittest.TestCase):
         self.assertIsNone(assets.parse("asset:nope"))
         self.assertIsNone(assets.parse("mabc"))
 
-    def test_write_reuses(self):
-        a = assets.get("shape.circle")
-        p1 = assets.write(self.dir, a, "#ffffff", "#000000", 1920, 1080)
-        p2 = assets.write(self.dir, a, "#ffffff", "#000000", 1280, 720)     # shapes do not depend on the canvas
-        self.assertEqual(p1, p2)
-        with open(p1, "w", encoding="utf-8") as fh:
-            fh.write("changed")
-        p3 = assets.write(self.dir, a, "#ffffff", "#000000", 1920, 1080)
-        self.assertNotEqual(p1, p3)
-        self.assertEqual(len(os.listdir(self.dir)), 2)
-        s = assets.get("solid.0")
-        self.assertNotEqual(assets.write(self.dir, s, "", "", 1920, 1080),
-                            assets.write(self.dir, s, "", "", 1080, 1920))
+    def test_asset_clip_edits(self):
+        p = proj()
+        params = assets.make(assets.get("shape.rect"), "#ffffff", "", 1920, 1080)
+        c = edit.find(p, "c1")[1]
+        edit.replace_media(p, "c1", assets.item(params, "/a.svg"), params)
+        self.assertEqual(c["asset"]["family"], "rect")
+        self.assertEqual(project.picture_size(c, 1920, 1080), (400, 400))      # own size, not fitted
+        self.assertEqual(project.picture_size(c, 1920, 1080, 2.0), (800, 800))
+        q = assets.updated(params, {"w": 600})
+        edit.set_asset(p, "c1", q, "/b.svg")
+        self.assertEqual((c["media"]["path"], c["media"]["width"]), ("/b.svg", 600))
+        edit.replace_media(p, "c1", {"kind": "image", "path": "/x.png", "width": 100, "height": 50})
+        self.assertNotIn("asset", c)
+        self.assertEqual(project.picture_size(c, 1920, 1080), (1920, 960))
+        with self.assertRaises(edit.EditError):
+            edit.set_asset(p, "c1", q, "/b.svg")
 
     def test_panel(self):
         from kiasecut.ui.assets_panel import AssetsPanel
@@ -81,6 +123,80 @@ class AssetTests(unittest.TestCase):
         panel.refresh()
         lst.itemDoubleClicked.emit(lst.item(0))
         self.assertEqual(got, ["asset:shape.rect:#ff0000:#00ff00"])
+
+    def test_inspector(self):
+        from kiasecut.ui.inspector import Inspector
+        p = proj()
+        params = assets.make(assets.get("shape.star"), "#ff0000", "", 1920, 1080)
+        edit.replace_media(p, "c1", assets.item(params, "/a.svg"), params)
+        ins = Inspector()
+        got = []
+        ins.assetEdited.connect(lambda ids, f: got.append((ids, f)))
+        ins.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        self.assertEqual(ins.widgets[("asset", "points")].value(), 5)
+        self.assertEqual(ins.widgets[("asset", "color")].text(), "#ff0000")
+        self.assertTrue(ins.widgets["scale_link"].isChecked())
+        ins.widgets[("asset", "w")].setValue(640)
+        ins._flush()
+        self.assertEqual(got, [(["c1"], {"w": 640.0})])
+        ins.show_clips([edit.find(p, "c2")[1]], 0, 30)     # a plain picture: no asset section
+        self.assertNotIn(("asset", "w"), ins.widgets)
+
+
+class ScaleTests(unittest.TestCase):
+    def tf(self, p, cid="c1"):
+        return edit.find(p, cid)[1]["transform"]
+
+    def test_linked_without_y(self):
+        p = proj()
+        edit.set_param(p, "c1", "transform", "scale", 2.0, 0)
+        self.assertNotIn("scale_y", self.tf(p))           # Y follows X
+        edit.set_param(p, "c1", "transform", "scale_y", 3.0, 0)
+        self.assertEqual(self.tf(p)["scale"], 3.0)
+        self.assertNotIn("scale_y", self.tf(p))
+
+    def test_linked_keeps_ratio(self):
+        p = proj()
+        self.tf(p)["scale_y"] = 0.5
+        edit.set_param(p, "c1", "transform", "scale", 2.0, 0)
+        self.assertEqual((self.tf(p)["scale"], self.tf(p)["scale_y"]), (2.0, 1.0))
+        edit.set_param(p, "c1", "transform", "scale_y", 3.0, 0)
+        self.assertEqual((self.tf(p)["scale"], self.tf(p)["scale_y"]), (6.0, 3.0))
+
+    def test_unlinked(self):
+        p = proj()
+        edit.set_param(p, "c1", "transform", "scale_link", False)
+        edit.set_param(p, "c1", "transform", "scale", 2.0, 0)
+        self.assertEqual((self.tf(p)["scale"], self.tf(p)["scale_y"]), (2.0, 1.0))
+        edit.set_param(p, "c1", "transform", "scale_y", 0.25, 0)
+        self.assertEqual((self.tf(p)["scale"], self.tf(p)["scale_y"]), (2.0, 0.25))
+        edit.set_param(p, "c1", "transform", "scale_link", True)
+        edit.set_param(p, "c1", "transform", "scale", 4.0, 0)
+        self.assertEqual((self.tf(p)["scale"], self.tf(p)["scale_y"]), (4.0, 0.5))
+
+    def test_keys(self):
+        p = proj()
+        self.tf(p)["scale_y"] = 0.5
+        edit.toggle_key(p, "c1", "transform", "scale", S // 2)      # linked: both get a key
+        self.assertTrue(curves.is_animated(self.tf(p)["scale"]))
+        self.assertTrue(curves.is_animated(self.tf(p)["scale_y"]))
+        edit.set_param(p, "c1", "transform", "scale", 2.0, S // 2)
+        self.assertAlmostEqual(curves.value(self.tf(p)["scale_y"], S // 2), 1.0)
+        edit.toggle_key(p, "c1", "transform", "scale_y", S // 2)    # and lose it together
+        self.assertFalse(curves.is_animated(self.tf(p)["scale"]))
+        self.assertFalse(curves.is_animated(self.tf(p)["scale_y"]))
+        edit.set_param(p, "c1", "transform", "scale_link", False)
+        edit.toggle_key(p, "c1", "transform", "scale", S // 2)      # unlinked: only X
+        self.assertTrue(curves.is_animated(self.tf(p)["scale"]))
+        self.assertFalse(curves.is_animated(self.tf(p)["scale_y"]))
+
+    def test_live_values(self):
+        h = {"scale": 2.0, "scale_y": 1.0}
+        self.assertEqual(edit.with_linked_scale(h, {"scale": 4.0}, 0), {"scale": 4.0, "scale_y": 2.0})
+        h["scale_link"] = False
+        self.assertEqual(edit.with_linked_scale(h, {"scale": 4.0}, 0), {"scale": 4.0})
+        self.assertEqual(edit.with_linked_scale({"scale": 2.0, "scale_link": False}, {"scale": 3.0}, 0),
+                         {"scale": 3.0, "scale_y": 2.0})
 
 
 if __name__ == "__main__":

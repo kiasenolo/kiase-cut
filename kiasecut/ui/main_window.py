@@ -166,6 +166,7 @@ def group_holder(c, group, create=False):
 class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
+                    ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",
                     ("text", "letter_spacing"): "字距", ("text", "line_spacing"): "行距",
@@ -266,6 +267,7 @@ class MainWindow(QMainWindow):
         self.inspector = Inspector()
         ins = self.inspector
         ins.textEdited.connect(self.on_text_edited)
+        ins.assetEdited.connect(self.on_asset_edited)
         ins.paramEdited.connect(self.on_param_edited)
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
@@ -1013,6 +1015,8 @@ class MainWindow(QMainWindow):
 
     def set_project(self, proj):
         self.root = workspace.root_of(self.path) if self.path else None
+        if self.root:                       # built-in assets are drawn again rather than looked for
+            assets.restore(project.all_clips(proj), workspace.media_dir(self.root))
         self.relink(proj)
         workspace.ensure_info(proj, self.path)
         if self.root:
@@ -1671,9 +1675,9 @@ class MainWindow(QMainWindow):
                 place = None                  # (the rest only joins the project's media library)
         self.import_files(files, folder, place)
 
-    def import_files(self, files, folder, place=None, then=None):
+    def import_files(self, files, folder, place=None):
         """Copy the files into Media (in `folder`), add them to the library and, with place,
-        to the timeline; with then, hand their library items to then(items) instead."""
+        to the timeline."""
         if not self.ensure_project():
             return
         root = self.root
@@ -1710,11 +1714,8 @@ class MainWindow(QMainWindow):
             by_path = {it["path"]: it for it in library.lib(self.proj)["items"]}
             items = [by_path[p] for p in dict.fromkeys(got.values()) if p in by_path]
             bad = [os.path.basename(p) for p in dict.fromkeys(got.values()) if p not in by_path]
-            if then is None:
-                self.left.setCurrentWidget(self.library)
-            if items and then is not None:
-                then(items)
-            elif items and place is not None:
+            self.left.setCurrentWidget(self.library)
+            if items and place is not None:
                 self.apply_root("匯入素材並加入時間軸", add_and_place, [it["id"] for it in items],
                                 select=lambda c: c["id"])
             elif items:
@@ -1818,30 +1819,55 @@ class MainWindow(QMainWindow):
                         lambda root: library.place(self.container(root), root, item_id, track_id or None, start_us),
                         select=lambda c: c["id"])
 
-    def use_asset(self, ident, then):
-        """Write a built-in asset (assets.py) into Media/內建素材, as big as the open level's
-        canvas, and hand its library item and definition to then(item, asset)."""
-        got = assets.parse(ident)
-        if got is None or not self.ensure_project():
-            return
-        a, c1, c2 = got
-        level = self.container()
-        w, h = level.get("width") or self.proj["width"], level.get("height") or self.proj["height"]
+    def store_asset(self, params):
+        """Draw built-in asset parameters (assets.py) into the project's Media/.內建素材;
+        the file's path, or None after telling the user why not."""
         try:
-            path = assets.write(os.path.join(workspace.media_dir(self.root), assets.FOLDER), a, c1, c2, w, h)
+            return assets.store(workspace.media_dir(self.root), params)
         except OSError as exc:
             QMessageBox.critical(self, "無法建立素材", str(exc))
-            return
-        self.import_files([path], None, then=lambda items: then(items[0], a))
+            return None
+
+    def new_asset(self, ident):
+        """(parameters, file path) of a new clip of the 內建素材 preset ident, sized for the
+        open level's canvas; None when there is nothing to make."""
+        got = assets.parse(ident)
+        if got is None or not self.ensure_project():
+            return None
+        level = self.container()
+        params = assets.make(*got, level.get("width") or self.proj["width"],
+                             level.get("height") or self.proj["height"])
+        path = self.store_asset(params)
+        return (params, path) if path else None
 
     def place_asset(self, ident, track_id, start_us):
-        def put(it, a):
-            def fn(root):
-                c = library.place_item(self.container(root), it, track_id or None, start_us)
-                c["transform"]["scale"] = a.scale
-                return c
-            self.apply_root("加入內建素材", fn, select=lambda c: c["id"])
-        self.use_asset(ident, put)
+        made = self.new_asset(ident)
+        if made is None:
+            return
+        params, path = made
+
+        def fn(level):
+            c = library.place_item(level, assets.item(params, path), track_id or None, start_us)
+            c["asset"] = params
+            return c
+        self.apply("加入內建素材", fn, select=lambda c: c["id"])
+
+    def on_asset_edited(self, ids, fields):
+        """素材參數 changed in the inspector: each clip gets its parameters with these fields and
+        a file drawn from them."""
+        level = self.container()
+        todo = {}
+        for cid in ids:
+            c = edit.find(level, cid)[1]
+            if c.get("asset"):
+                params = assets.updated(c["asset"], fields)
+                path = self.store_asset(params)
+                if path is None:
+                    return
+                todo[cid] = (params, path)
+        if todo:
+            self.apply_each("調整素材", lambda lvl, cid: edit.set_asset(lvl, cid, *todo[cid]), list(todo),
+                            merge=("asset", tuple(todo), tuple(sorted(fields))))
 
     def replace_source(self, ident, cid):
         """Media dropped on a clip with Alt held: the clip shows (or plays) it instead, keeping
@@ -1849,8 +1875,11 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         if ident.startswith(assets.PREFIX):
-            self.use_asset(ident, lambda it, _a: self.apply("替換素材", edit.replace_media, cid, dict(it),
-                                                            select=lambda c: c["id"]))
+            made = self.new_asset(ident)
+            if made is not None:
+                params, path = made
+                self.apply("替換素材", edit.replace_media, cid, assets.item(params, path), params,
+                           select=lambda c: c["id"])
             return
         if ident.startswith("cmp:"):
             self.apply_root("替換素材", lambda root: edit.replace_with_compound(root, self.container(root), cid, ident[4:]),
@@ -1900,9 +1929,9 @@ class MainWindow(QMainWindow):
         for c in project.walk_clips(view["tracks"]):
             if c["id"] == cid:
                 holder = group_holder(c, group, create=True)
+                if group == "transform":
+                    values = edit.with_linked_scale(holder, values, self.playhead_us() - c["start_us"])
                 holder.update(values)
-                if group == "transform" and "scale" in values and "scale_y" in holder:
-                    holder["scale_y"] = values["scale"]
         self.player.worker.set_view(view, self.cache_dir())
         for panel in (self.inspector, self.mask_panel):         # the numbers follow the drag
             panel.show_live(cid, group, values)
@@ -1910,13 +1939,16 @@ class MainWindow(QMainWindow):
     def on_live_edit(self, ids, group, key, value):
         """A value being typed or scrubbed in the inspector: the preview shows it at once
         (the edit itself follows after a short pause)."""
+        if group == "asset" or key == "scale_link":
+            return                                  # (drawn when the edit is made)
         view = self.snapshot()
         for c in project.walk_clips(view["tracks"]):
             if c["id"] in ids:
                 holder = group_holder(c, group, create=True)
-                holder[key] = value
-                if group == "transform" and key == "scale" and "scale_y" in holder:
-                    holder["scale_y"] = value
+                if group == "transform":
+                    holder.update(edit.with_linked_scale(holder, {key: value}, self.playhead_us() - c["start_us"]))
+                else:
+                    holder[key] = value
         self.player.worker.set_view(view, self.cache_dir())
 
     @Slot(object, object)

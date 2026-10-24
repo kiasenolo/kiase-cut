@@ -118,9 +118,15 @@ Built-in assets (內建素材 tab): solid colours, gradients (presets, plus hori
 vertical / diagonal / radial ones, a subtitle backing and a vignette) and basic shapes
 (rectangle, circle, triangle, star, heart, arrow, ring, frames, line…). The two colours at
 the top of the tab paint the shapes and the 自訂 ones (alpha works too). Drag one onto the
-timeline or double-click it: it is written as an SVG into Media/內建素材, so it is a picture
-like any other; solids and gradients have the canvas's size and fill the frame, shapes come
-in at 40 % scale. Alt + drop on a picture clip replaces its source.
+timeline or double-click it (Alt + drop on a picture clip replaces its source). The clip
+keeps its parameters: select it and the inspector's 素材參數 sets its size in canvas pixels
+(寬 / 高), its colours and what its kind has: gradient type and angle, corner radius,
+polygon sides, star points and inner radius, filled or outline and outline width. Unlike
+other pictures it is not fitted to the canvas but drawn at that size, so resizing it keeps
+corners and outlines as they are (scaling stretches them). Solids and gradients start at
+the canvas's size, shapes at 400 px (on a 1080-high canvas). Each change draws an SVG into
+Media/.內建素材 (hidden from the media library; missing ones are drawn again when the
+project opens).
 
 Replacing a clip's source (替換素材): hold Alt while dropping media (from the library, the
 Library tab or the 複合片段 tab) on a clip: the clip lights up with 替換素材, and on release
@@ -131,7 +137,7 @@ shortened to it.
 
 Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
 canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
-freely). Drag a corner square to scale it about its centre, the round handle above it to
+freely). Drag a corner square to scale it about its centre (X and Y alike), the round handle above it to
 rotate it (it settles on right angles; Shift turns in 15° steps).
 
 Beat alignment (節拍 tab, for a selected sound clip): switch on BPM 對齊 and enter the
@@ -157,6 +163,10 @@ again. Every drag
 shows live and is one undo step; keyframed values get their keyframe at the playhead.
 Ctrl+wheel zooms the preview (to reach handles of clips bigger than the canvas), the
 middle button drags it. F or double-click toggles fullscreen.
+
+Scale has an X and a Y value with a link button between them: linked (the default), changing
+one changes the other in the same proportion and their keyframes are added and removed
+together; unlinked, each changes alone (the curve editor then shows 縮放 Y on its own).
 
 Keyframes and masks: every animatable value in the inspector (position, scale, rotation,
 opacity, volume, text size / colour / letter and line spacing / italic, mask centre / size /

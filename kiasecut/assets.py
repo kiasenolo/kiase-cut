@@ -1,33 +1,73 @@
 """Built-in assets (內建素材): solid colours, gradients and basic shapes, made as SVG pictures.
 
-An asset is drawn from its definition and one or two colours: presets carry their own,
-the "custom" ones and every shape use the colours picked in the 內建素材 tab. Using one
-writes the SVG into the project's Media folder (Media/內建素材), so from then on it is a
-picture like any imported one. Solids and gradients have the canvas's size, so they fill
-the frame; shapes are drawn on their own (transparent) box and placed smaller.
+A clip made from one is a picture clip that also holds its parameters:
 
-An asset is named on the timeline's drag data as "asset:<key>:<colour 1>:<colour 2>".
+clip["asset"] = {key, family, w, h, color, ...}   key: the preset it came from; family: what
+                is drawn (solid, gradient, rect, ellipse, polygon, star, heart, arrow, line);
+                w, h: its size in canvas pixels; the rest depends on the family (FIELDS)
+
+Unlike other pictures, which are fitted into the canvas, an asset clip is drawn at its own
+size (project.picture_size), so 寬 / 高 are canvas pixels and corners or outlines keep their
+thickness when it is resized. Every change of parameters draws a new SVG into the project's
+Media/.內建素材 folder (hidden from the media library), named after its content, so undo
+only has to point the clip back at the earlier file.
+
+The 內建素材 tab names a preset on its drag data as "asset:<key>:<colour 1>:<colour 2>":
+presets carry their own colours, the 自訂 ones and every shape take the tab's two colours.
 """
+import copy
+import hashlib
 import math
 import os
 import re
 
-FOLDER = "內建素材"
+FOLDER = ".內建素材"
 PREFIX = "asset:"
 CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎形狀")]
 DEFAULT_COLORS = ("#ffffff", "#000000")
-SHAPE_SCALE = 0.4                          # a shape's scale when placed (1 = as tall as the canvas)
-SHAPE_BOX = 1000                           # a shape's drawing size (its SVG units)
+SHAPE_PX = 400                             # a new shape's size on a 1080-high canvas
+
+# field: label, kind, min, max, step, decimals
+FIELD_INFO = {
+    "w": ("寬", "number", 1, 16384, 1, 0),
+    "h": ("高", "number", 1, 16384, 1, 0),
+    "color": ("顏色", "color"),
+    "color2": ("顏色 2", "color"),
+    "gtype": ("漸變類型", "choice", (("線性", "linear"), ("放射", "radial"))),
+    "angle": ("角度 °", "number", -360, 360, 1, 0),
+    "radius": ("圓角", "number", 0, 8192, 1, 0),
+    "sides": ("邊數", "number", 3, 24, 1, 0),
+    "points": ("角數", "number", 3, 24, 1, 0),
+    "inner": ("內徑 %", "number", 5, 95, 1, 0),
+    "outline": ("樣式", "choice", (("填滿", False), ("外框", True))),
+    "stroke": ("邊框粗細", "number", 1, 2000, 1, 0),
+}
+_OUTLINE = ("outline", "stroke")
+FIELDS = {                                 # what each family has besides w, h and color
+    "solid": (),
+    "gradient": ("color2", "gtype", "angle"),
+    "rect": ("radius",) + _OUTLINE,
+    "ellipse": _OUTLINE,
+    "polygon": ("sides",) + _OUTLINE,
+    "star": ("points", "inner") + _OUTLINE,
+    "heart": _OUTLINE,
+    "arrow": _OUTLINE,
+    "line": (),
+}
+NAMES = {"solid": "純色", "gradient": "漸變", "rect": "矩形", "ellipse": "橢圓", "polygon": "多邊形",
+         "star": "星形", "heart": "心形", "arrow": "箭頭", "line": "線條"}
 
 
 class Asset:
-    def __init__(self, key, cat, name, colors=None, kind="", scale=1.0):
+    """A preset of the 內建素材 tab."""
+
+    def __init__(self, key, cat, name, family, colors=None, **params):
         self.key = key
         self.cat = cat
         self.name = name
-        self.colors = colors               # fixed (c1, c2), or None: the picked colours
-        self.kind = kind                   # gradient direction / shape name
-        self.scale = scale
+        self.family = family
+        self.colors = colors               # fixed (c1, c2), or None: the tab's colours
+        self.params = params               # family parameters; sizes in px of a 1080-high canvas
 
     @property
     def custom(self):
@@ -37,24 +77,32 @@ class Asset:
 _SOLIDS = [("白", "#ffffff"), ("黑", "#000000"), ("灰", "#808080"), ("紅", "#e53935"), ("橙", "#fb8c00"),
            ("黃", "#fdd835"), ("綠", "#43a047"), ("青", "#00acc1"), ("藍", "#1e88e5"), ("紫", "#8e24aa"),
            ("粉", "#ec407a")]
-_GRADIENTS = [("日落", "#ff5f6d", "#ffc371", "d"), ("海洋", "#2193b0", "#6dd5ed", "v"),
-              ("森林", "#134e5e", "#71b280", "d"), ("紫霞", "#8e2de2", "#4a00e0", "d"),
-              ("桃粉", "#ee9ca7", "#ffdde1", "v"), ("夜空", "#0f2027", "#2c5364", "v"),
-              ("黑白", "#000000", "#ffffff", "h"),
-              ("底部黑色漸層", "#00000000", "#000000cc", "v"),      # behind subtitles
-              ("暗角", "#00000000", "#000000d9", "r")]
-_CUSTOM_GRADIENTS = [("橫向漸變", "h"), ("直向漸變", "v"), ("斜向漸變", "d"), ("放射漸變", "r")]
-_SHAPES = [("矩形", "rect"), ("圓角矩形", "roundrect"), ("圓形", "circle"), ("三角形", "triangle"),
-           ("菱形", "diamond"), ("五邊形", "pentagon"), ("六邊形", "hexagon"), ("星形", "star"),
-           ("心形", "heart"), ("箭頭", "arrow"), ("圓環", "ring"), ("外框矩形", "rectframe"),
-           ("外框圓形", "circleframe"), ("線條", "line")]
+_GRADIENTS = [("日落", "#ff5f6d", "#ffc371", "linear", 30), ("海洋", "#2193b0", "#6dd5ed", "linear", 90),
+              ("森林", "#134e5e", "#71b280", "linear", 30), ("紫霞", "#8e2de2", "#4a00e0", "linear", 30),
+              ("桃粉", "#ee9ca7", "#ffdde1", "linear", 90), ("夜空", "#0f2027", "#2c5364", "linear", 90),
+              ("黑白", "#000000", "#ffffff", "linear", 0),
+              ("底部黑色漸層", "#00000000", "#000000cc", "linear", 90),      # behind subtitles
+              ("暗角", "#00000000", "#000000d9", "radial", 0)]
+_CUSTOM_GRADIENTS = [("橫向漸變", "linear", 0), ("直向漸變", "linear", 90), ("斜向漸變", "linear", 30),
+                     ("放射漸變", "radial", 0)]
+S = SHAPE_PX
+_SHAPES = [("rect", "矩形", "rect", {}), ("roundrect", "圓角矩形", "rect", {"radius": 64}),
+           ("circle", "圓形", "ellipse", {}), ("triangle", "三角形", "polygon", {"sides": 3}),
+           ("diamond", "菱形", "polygon", {"sides": 4}), ("pentagon", "五邊形", "polygon", {"sides": 5}),
+           ("hexagon", "六邊形", "polygon", {"sides": 6}), ("star", "星形", "star", {"points": 5, "inner": 40}),
+           ("heart", "心形", "heart", {}), ("arrow", "箭頭", "arrow", {"w": 480, "h": 300}),
+           ("ring", "圓環", "ellipse", {"outline": True, "stroke": 64}),
+           ("rectframe", "外框矩形", "rect", {"outline": True, "stroke": 24}),
+           ("circleframe", "外框圓形", "ellipse", {"outline": True, "stroke": 24}),
+           ("line", "線條", "line", {"w": 800, "h": 16})]
 
-ASSETS = ([Asset(f"solid.{i}", "solid", name, (c, c)) for i, (name, c) in enumerate(_SOLIDS)]
-          + [Asset("solid.custom", "solid", "自訂純色")]
-          + [Asset(f"gradient.{i}", "gradient", name, (a, b), d) for i, (name, a, b, d) in enumerate(_GRADIENTS)]
-          + [Asset(f"gradient.custom.{d}", "gradient", name, None, d) for name, d in _CUSTOM_GRADIENTS]
-          + [Asset(f"shape.{k}", "shape", name, None, k, SHAPE_SCALE * (1.5 if k == "line" else 1))
-             for name, k in _SHAPES])
+ASSETS = ([Asset(f"solid.{i}", "solid", name, "solid", (c, c)) for i, (name, c) in enumerate(_SOLIDS)]
+          + [Asset("solid.custom", "solid", "自訂純色", "solid")]
+          + [Asset(f"gradient.{i}", "gradient", name, "gradient", (a, b), gtype=g, angle=ang)
+             for i, (name, a, b, g, ang) in enumerate(_GRADIENTS)]
+          + [Asset(f"gradient.custom.{i}", "gradient", name, "gradient", gtype=g, angle=ang)
+             for i, (name, g, ang) in enumerate(_CUSTOM_GRADIENTS)]
+          + [Asset(f"shape.{k}", "shape", name, fam, **p) for k, name, fam, p in _SHAPES])
 _BY_KEY = {a.key: a for a in ASSETS}
 
 
@@ -67,7 +115,7 @@ _HEX = re.compile(r"#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 
 def clean_color(c, default="#ffffff"):
     """#rrggbb or #rrggbbaa (lower case), else the default."""
-    c = (c or "").strip()
+    c = (c or "").strip() if isinstance(c, str) else ""
     return c.lower() if _HEX.match(c) else default
 
 
@@ -76,7 +124,7 @@ def ident(key, c1, c2):
 
 
 def parse(text):
-    """(asset, colour 1, colour 2) from an ident(), or None."""
+    """(preset, colour 1, colour 2) from an ident(), or None."""
     if not text.startswith(PREFIX):
         return None
     parts = text[len(PREFIX):].split(":")
@@ -88,23 +136,71 @@ def parse(text):
     return a, c1, c2
 
 
-def colors_of(a, c1, c2):
-    return a.colors if a.colors else (clean_color(c1), clean_color(c2, "#000000"))
+# -- parameters -------------------------------------------------------------------------------------
+def make(a, c1, c2, canvas_w, canvas_h):
+    """The parameters (clip["asset"]) of a new clip of preset a on a canvas_w x canvas_h canvas:
+    solids and gradients fill it, shapes keep their size relative to its height."""
+    c1, c2 = a.colors if a.colors else (c1, c2)
+    p = {"key": a.key, "family": a.family, "color": clean_color(c1)}
+    if a.family == "gradient":
+        p.update(color2=clean_color(c2, "#000000"), gtype="linear", angle=0)
+    for f in FIELDS[a.family]:
+        p.setdefault(f, {"outline": False, "stroke": 24, "radius": 0, "sides": 6, "points": 5,
+                         "inner": 40}.get(f))
+    k = canvas_h / 1080
+    if a.cat == "shape":
+        p.update(w=S, h=S)
+    for f, v in a.params.items():
+        p[f] = v
+    if a.cat == "shape":
+        for f in ("w", "h", "radius", "stroke"):
+            if f in p:
+                p[f] = max(1, round(p[f] * k)) if f in ("w", "h") else round(p[f] * k)
+    else:
+        p.update(w=int(canvas_w), h=int(canvas_h))
+    return normalize(p)
 
 
+def normalize(p):
+    """Parameters made valid: known family, numbers in range, colours as #rrggbb[aa]; fields
+    the family does not have are dropped."""
+    fam = p.get("family") if p.get("family") in FIELDS else "rect"
+    out = {"key": str(p.get("key") or fam), "family": fam}
+    for f in ("w", "h", "color") + FIELDS[fam]:
+        info = FIELD_INFO[f]
+        v = p.get(f)
+        if info[1] == "color":
+            out[f] = clean_color(v, "#000000" if f == "color2" else "#ffffff")
+        elif info[1] == "choice":
+            vals = [x for _n, x in info[2]]
+            out[f] = v if v in vals else vals[0]
+        else:
+            try:
+                v = float(v)
+            except (TypeError, ValueError):
+                v = info[2]
+            v = min(max(v, info[2]), info[3])
+            out[f] = int(round(v)) if info[5] == 0 else v
+    return out
+
+
+def name_of(p):
+    preset = get(p.get("key", ""))
+    return preset.name if preset else NAMES.get(p.get("family"), "素材")
+
+
+# -- drawing --------------------------------------------------------------------------------------
 def _alpha(c):
     """(#rrggbb, opacity) of #rrggbb[aa] (Qt's SVG reader wants the alpha apart)."""
     return c[:7], (int(c[7:], 16) / 255 if len(c) == 9 else 1.0)
 
 
-def _fill(c):
+def _paint(c, outline, stroke):
     rgb, op = _alpha(c)
+    if outline:
+        return (f'fill="none" stroke="{rgb}" stroke-width="{stroke:g}" stroke-linejoin="round"'
+                + (f' stroke-opacity="{op:.3f}"' if op < 1 else ""))
     return f'fill="{rgb}"' + (f' fill-opacity="{op:.3f}"' if op < 1 else "")
-
-
-def _stroke(c, width):
-    rgb, op = _alpha(c)
-    return f'fill="none" stroke="{rgb}" stroke-width="{width:.0f}"' + (f' stroke-opacity="{op:.3f}"' if op < 1 else "")
 
 
 def _stop(offset, c):
@@ -117,91 +213,110 @@ def _svg(w, h, body, defs=""):
             + (f"<defs>{defs}</defs>\n" if defs else "") + body + "\n</svg>\n")
 
 
-def _gradient(kind, a, b, w, h):
-    if kind == "r":                        # from the centre to the corners; the middle third holds colour 1
-        g = (f'<radialGradient id="g" cx="{w / 2:.1f}" cy="{h / 2:.1f}" r="{math.hypot(w, h) / 2:.1f}" '
+def _gradient(p, w, h):
+    a, b = p["color"], p["color2"]
+    if p["gtype"] == "radial":            # from the centre to the corners; the middle third holds colour 1
+        g = (f'<radialGradient id="g" cx="{w / 2:g}" cy="{h / 2:g}" r="{math.hypot(w, h) / 2:.1f}" '
              f'gradientUnits="userSpaceOnUse">{_stop(0.35, a)}{_stop(1, b)}</radialGradient>')
-    else:
-        x2, y2 = {"h": (w, 0), "v": (0, h), "d": (w, h)}[kind]
-        g = (f'<linearGradient id="g" x1="0" y1="0" x2="{x2}" y2="{y2}" gradientUnits="userSpaceOnUse">'
-             f'{_stop(0, a)}{_stop(1, b)}</linearGradient>')
+    else:                                  # 0° left to right, 90° top to bottom, across the whole box
+        r = math.radians(p["angle"])
+        dx, dy = math.cos(r), math.sin(r)
+        half = (abs(dx) * w + abs(dy) * h) / 2
+        x1, y1, x2, y2 = w / 2 - dx * half, h / 2 - dy * half, w / 2 + dx * half, h / 2 + dy * half
+        g = (f'<linearGradient id="g" x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
+             f'gradientUnits="userSpaceOnUse">{_stop(0, a)}{_stop(1, b)}</linearGradient>')
     return _svg(w, h, f'<rect width="{w}" height="{h}" fill="url(#g)"/>', g)
 
 
-def _poly(n, r, cx, cy, start=-90.0, inner=None):
-    pts = []
-    for i in range(n * (2 if inner else 1)):
-        ang = math.radians(start + i * 360 / (n * (2 if inner else 1)))
-        rr = inner if inner and i % 2 else r
-        pts.append(f"{cx + rr * math.cos(ang):.1f},{cy + rr * math.sin(ang):.1f}")
-    return " ".join(pts)
+def _star_points(n, inner):
+    """Unit-circle points of a regular polygon (inner None) or star, the first at the top."""
+    m = n * (2 if inner else 1)
+    return [((inner if inner and i % 2 else 1.0) * math.cos(math.radians(-90 + i * 360 / m)),
+             (inner if inner and i % 2 else 1.0) * math.sin(math.radians(-90 + i * 360 / m))) for i in range(m)]
 
 
-def _shape(kind, c):
-    S = SHAPE_BOX
-    f = _fill(c)
-    if kind == "line":
-        return _svg(S, 40, f'<rect width="{S}" height="40" {f}/>')
-    body = {
-        "rect": f'<rect width="{S}" height="{S}" {f}/>',
-        "roundrect": f'<rect width="{S}" height="{S}" rx="{S * 0.16:.0f}" {f}/>',
-        "circle": f'<circle cx="{S / 2}" cy="{S / 2}" r="{S / 2}" {f}/>',
-        "triangle": f'<polygon points="{S / 2},0 {S},{S} 0,{S}" {f}/>',
-        "diamond": f'<polygon points="{S / 2},0 {S},{S / 2} {S / 2},{S} 0,{S / 2}" {f}/>',
-        "pentagon": f'<polygon points="{_poly(5, S / 2, S / 2, S * 0.53)}" {f}/>',
-        "hexagon": f'<polygon points="{_poly(6, S / 2, S / 2, S / 2, 0)}" {f}/>',
-        "star": f'<polygon points="{_poly(5, S / 2, S / 2, S * 0.53, inner=S * 0.2)}" {f}/>',
-        "heart": f'<path d="M500 920 C 120 660 0 470 0 290 C 0 130 120 40 260 40 C 370 40 450 110 500 200 '
-                 f'C 550 110 630 40 740 40 C 880 40 1000 130 1000 290 C 1000 470 880 660 500 920 Z" {f}/>',
-        "arrow": f'<polygon points="0,350 600,350 600,120 1000,500 600,880 600,650 0,650" {f}/>',
-        "ring": f'<circle cx="{S / 2}" cy="{S / 2}" r="{S * 0.42}" {_stroke(c, S * 0.16)}/>',
-        "rectframe": f'<rect x="30" y="30" width="{S - 60}" height="{S - 60}" {_stroke(c, 60)}/>',
-        "circleframe": f'<circle cx="{S / 2}" cy="{S / 2}" r="{S / 2 - 30}" {_stroke(c, 60)}/>',
-    }[kind]
-    return _svg(S, S, body)
+def _fit(pts, x0, y0, bw, bh):
+    """Points stretched to fill the box (x0, y0, bw, bh)."""
+    xs, ys = [x for x, _ in pts], [y for _, y in pts]
+    lx, ly = (max(xs) - min(xs)) or 1, (max(ys) - min(ys)) or 1
+    return [(x0 + (x - min(xs)) / lx * bw, y0 + (y - min(ys)) / ly * bh) for x, y in pts]
 
 
-def svg(a, c1, c2, w, h):
-    """The SVG text of asset a; solids and gradients are w x h (the canvas)."""
-    a1, a2 = colors_of(a, c1, c2)
-    if a.cat == "solid":
-        return _svg(w, h, f'<rect width="{w}" height="{h}" {_fill(a1)}/>')
-    if a.cat == "gradient":
-        return _gradient(a.kind, a1, a2, w, h)
-    return _shape(a.kind, a1)
+_HEART = [(0.5, 0.92), (0.12, 0.66), (0.0, 0.47), (0.0, 0.29), (0.0, 0.13), (0.12, 0.04), (0.26, 0.04),
+          (0.37, 0.04), (0.45, 0.11), (0.5, 0.2), (0.55, 0.11), (0.63, 0.04), (0.74, 0.04), (0.88, 0.04),
+          (1.0, 0.13), (1.0, 0.29), (1.0, 0.47), (0.88, 0.66), (0.5, 0.92)]
+_ARROW = [(0, 0.35), (0.6, 0.35), (0.6, 0.12), (1, 0.5), (0.6, 0.88), (0.6, 0.65), (0, 0.65)]
 
 
-def file_name(a, c1, c2, w, h):
-    a1, a2 = colors_of(a, c1, c2)
-    if a.cat == "shape":
-        stem = f"{a.name} {a1}"
-    elif not a.custom:
-        stem = a.name
-    elif a.cat == "solid":
-        stem = f"純色 {a1}"
-    else:
-        stem = f"{a.name} {a1}-{a2}"
-    if a.cat != "shape":
-        stem += f" {w}x{h}"
-    return stem.replace("#", "") + ".svg"
+def _shape(p, w, h):
+    fam, c = p["family"], p["color"]
+    outline = p.get("outline", False)
+    s = min(p.get("stroke", 0), w / 2, h / 2) if outline else 0
+    paint = _paint(c, outline, s)
+    x0, y0, bw, bh = s / 2, s / 2, w - s, h - s           # an outline stays inside the box
+    pts = lambda q: " ".join(f"{x:.1f},{y:.1f}" for x, y in q)
+    if fam in ("rect", "line"):
+        r = min(p.get("radius", 0), bw / 2, bh / 2)
+        body = f'<rect x="{x0:g}" y="{y0:g}" width="{bw:g}" height="{bh:g}"' + (f' rx="{r:g}"' if r else "") + f" {paint}/>"
+    elif fam == "ellipse":
+        body = f'<ellipse cx="{w / 2:g}" cy="{h / 2:g}" rx="{bw / 2:g}" ry="{bh / 2:g}" {paint}/>'
+    elif fam in ("polygon", "star"):
+        unit = _star_points(p["points"], p["inner"] / 100) if fam == "star" else _star_points(p["sides"], None)
+        body = f'<polygon points="{pts(_fit(unit, x0, y0, bw, bh))}" {paint}/>'
+    elif fam == "arrow":
+        body = f'<polygon points="{pts([(x0 + x * bw, y0 + y * bh) for x, y in _ARROW])}" {paint}/>'
+    else:                                  # heart: cubic segments through _HEART
+        q = [(x0 + x * bw, y0 + (y - 0.04) / 0.88 * bh) for x, y in _HEART]
+        d = f"M{q[0][0]:.1f} {q[0][1]:.1f} " + " ".join(
+            "C " + " ".join(f"{x:.1f} {y:.1f}" for x, y in q[i:i + 3]) for i in range(1, len(q), 3)) + " Z"
+        body = f'<path d="{d}" {paint}/>'
+    return _svg(w, h, body)
 
 
-def write(directory, a, c1, c2, w, h):
-    """Write asset a into directory; an identical file already there is reused. Returns its path."""
-    text = svg(a, c1, c2, w, h)
-    os.makedirs(directory, exist_ok=True)
-    name = file_name(a, c1, c2, w, h)
-    stem, ext = os.path.splitext(name)
-    path, n = os.path.join(directory, name), 2
-    while os.path.exists(path):
-        try:
-            with open(path, encoding="utf-8") as fh:
-                if fh.read() == text:
-                    return path
-        except OSError:
-            pass
-        path = os.path.join(directory, f"{stem} ({n}){ext}")
-        n += 1
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    return path
+def svg(p):
+    """The SVG text of asset parameters p (normalized)."""
+    w, h = p["w"], p["h"]
+    if p["family"] == "solid":
+        return _svg(w, h, f'<rect width="{w}" height="{h}" {_paint(p["color"], False, 0)}/>')
+    if p["family"] == "gradient":
+        return _gradient(p, w, h)
+    return _shape(p, w, h)
+
+
+def store(media_dir, p):
+    """Write the SVG of p into media_dir/.內建素材, named after its content (an identical one
+    is reused). Returns its path."""
+    text = svg(p)
+    d = os.path.join(media_dir, FOLDER)
+    os.makedirs(d, exist_ok=True)
+    path = os.path.join(d, f"{p['family']}-{hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]}.svg")
+    if not os.path.exists(path):
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(path + ".tmp", path)
+    return path.replace("\\", "/")
+
+
+def item(p, path):
+    """A library-item-like dict for placing or replacing with asset p (stored at path)."""
+    return {"kind": "image", "name": name_of(p), "path": path, "width": p["w"], "height": p["h"]}
+
+
+def restore(clips, media_dir):
+    """Draw again the asset files that are missing (a cleaned Media folder, a project copied
+    without hidden files). Returns [(old path, new path)] of the clips that changed."""
+    out = []
+    for c in clips:
+        p = c.get("asset")
+        if p and not os.path.exists((c.get("media") or {}).get("path") or ""):
+            new = store(media_dir, normalize(p))
+            out.append((c["media"].get("path"), new))
+            c["media"] = {"path": new, "width": p["w"], "height": p["h"]}
+    return out
+
+
+def updated(p, fields):
+    """p with fields changed (a deep copy, normalized)."""
+    q = copy.deepcopy(p)
+    q.update(fields)
+    return normalize(q)

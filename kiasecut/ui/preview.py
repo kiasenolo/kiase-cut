@@ -27,7 +27,7 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import QWidget
 
-from .. import curves, render, textlayout
+from .. import curves, edit, project, render, textlayout
 
 US = 1_000_000
 SNAP_PX = 7
@@ -54,8 +54,10 @@ def base_size(c, W, H, t):
         return text_size(spec, H)
     if c["type"] == "compound":
         w, h = c["compound"]["width"], c["compound"]["height"]
+    elif c.get("media", {}).get("width"):
+        return project.picture_size(c, W, H)
     else:
-        w, h = (c.get("media") or {}).get("width") or W, (c.get("media") or {}).get("height") or H
+        w, h = W, H
     k = min(W / w, H / h)
     return w * k, h * k
 
@@ -299,9 +301,7 @@ class Preview(QWidget):
         group, vals = self.live
         c = json.loads(json.dumps(box.clip))
         holder = c.setdefault(group, {}) if group != "clip" else c
-        holder.update(vals)
-        if group == "transform" and "scale" in vals and "scale_y" in holder:
-            holder["scale_y"] = vals["scale"]
+        holder.update(edit.with_linked_scale(holder, vals, box.t) if group == "transform" else vals)
         return Box(c, self.W, self.H, box.t)
 
     def masking(self, box):
@@ -578,7 +578,8 @@ class Preview(QWidget):
         if kind == "scale":
             r0 = math.hypot(d["m0"].x() - c.x(), d["m0"].y() - c.y()) or 1.0
             r1 = math.hypot(m.x() - c.x(), m.y() - c.y())
-            return "transform", {"scale": round(max(0.01, box.s * r1 / r0), 4)}
+            k = r1 / r0                                          # a corner scales X and Y alike
+            return "transform", {"scale": round(max(0.01, box.s * k), 4), "scale_y": round(max(0.01, box.sy * k), 4)}
         if kind == "rotate":
             a0 = math.degrees(math.atan2(d["m0"].y() - c.y(), d["m0"].x() - c.x()))
             a1 = math.degrees(math.atan2(m.y() - c.y(), m.x() - c.x()))

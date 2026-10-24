@@ -2,7 +2,8 @@
 
 Drag one onto the timeline (hold Alt over a picture clip to replace its source), or
 double-click to add it at the playhead. The two colours at the top paint the shapes and the
-自訂 solid / gradients; presets keep their own colours."""
+自訂 solid / gradients; presets keep their own colours. Once placed, everything about it
+(size, colours, corners, outline…) is set in the inspector's 素材參數."""
 from PySide6.QtCore import QByteArray, QMimeData, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
@@ -27,7 +28,7 @@ def thumbnail(a, c1, c2):
         for x in range(0, w, 6):
             if (x // 6 + y // 6) % 2:
                 p.fillRect(x, y, 6, 6, QColor("#38383d"))
-    r = QSvgRenderer(QByteArray(assets.svg(a, c1, c2, 160, 90).encode("utf-8")))
+    r = QSvgRenderer(QByteArray(assets.svg(assets.make(a, c1, c2, 160, 90)).encode("utf-8")))
     r.setAspectRatioMode(Qt.KeepAspectRatio)
     pad = 5 if a.cat == "shape" else 0
     r.render(p, QRectF(pad, pad, w - 2 * pad, h - 2 * pad))
@@ -81,7 +82,7 @@ class AssetsPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
         hint = QLabel("把素材拖到時間軸（按住 Alt 放到圖片片段上＝替換素材），雙擊＝在播放頭加入。"
-                      "顏色 1 / 2 用在形狀和「自訂」素材。")
+                      "顏色 1 / 2 用在形狀和「自訂」素材；放上去之後在「屬性」的素材參數裡調大小、顏色、圓角、外框等。")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #9a9aa0;")
         row = QHBoxLayout()

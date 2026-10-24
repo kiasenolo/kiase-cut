@@ -7,6 +7,7 @@ be trimmed past their source; images and texts can be stretched freely.
 """
 import copy
 import json
+import math
 import time
 import uuid
 
@@ -14,6 +15,7 @@ from . import curves, fx, project
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
+US = 1_000_000
 
 
 class EditError(Exception):
@@ -23,8 +25,9 @@ class EditError(Exception):
 class History:
     """Snapshot undo stack: copies the project before each change (a few hundred KB).
     The media library and the project info mirror the project folder, not the edit, so
-    they are left out of the snapshots: undo never brings back or hides a file."""
-    SIDE = ("library", "info")
+    they are left out of the snapshots: undo never brings back or hides a file. Nor is
+    the saved view (playhead, scroll, track heights): undo leaves the view alone."""
+    SIDE = ("library", "info", "view")
 
     def __init__(self, proj, limit=200):
         self.proj = proj
@@ -720,6 +723,50 @@ def set_mask_enabled(proj, clip_id, on):
     else:
         c["mask"]["enabled"] = False
     return c
+
+
+BEAT_DEFAULT = {"on": False, "bpm": 120.0, "offset_us": 0}
+
+
+def set_beat(proj, clip_id, **fields):
+    """Change a sound clip's BPM grid (on, bpm, offset_us); a clip without one gets the
+    defaults first. Switching it off keeps the numbers."""
+    _, c = find(proj, clip_id)
+    if c["type"] != "audio":
+        raise EditError("只有聲音片段可以 BPM 對齊")
+    beat = c.setdefault("beat", dict(BEAT_DEFAULT))
+    for k, v in fields.items():
+        if k not in BEAT_DEFAULT:
+            raise EditError(f"unknown beat field {k}")
+        beat[k] = bool(v) if k == "on" else int(round(v)) if k == "offset_us" else min(999.0, max(1.0, float(v)))
+    return c
+
+
+def clear_beat(proj, clip_id):
+    """Remove a clip's BPM grid altogether (it is off afterwards)."""
+    _, c = find(proj, clip_id)
+    c.pop("beat", None)
+    return c
+
+
+def beat_times(c, lo=None, hi=None):
+    """Timeline times (us) of the beats of a clip with BPM alignment on, inside the clip
+    (and inside lo..hi when given). The grid belongs to the sound: offset_us is the first
+    beat's time in the source, so trimming or splitting the clip keeps beats on the music."""
+    beat = c.get("beat")
+    if not beat or not beat.get("on") or not beat.get("bpm"):
+        return []
+    period = 60 * US / beat["bpm"]
+    zero = c["start_us"] - c.get("source_start_us", 0) + beat.get("offset_us", 0)   # timeline time of beat 0
+    a, b = c["start_us"], end(c)
+    if lo is not None:
+        a = max(a, lo)
+    if hi is not None:
+        b = min(b, hi)
+    if b < a:
+        return []
+    k0, k1 = math.ceil((a - zero) / period - 1e-9), math.floor((b - zero) / period + 1e-9)
+    return [zero + k * period for k in range(k0, k1 + 1)]
 
 
 def set_mask_invert(proj, clip_id, invert, t=None):

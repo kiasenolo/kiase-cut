@@ -22,6 +22,9 @@ clip     {id, type: image | video | audio | text | compound, name,
           text: {content, font_path, size, color, letter_spacing, line_spacing,
                  italic_deg, styles}                        text clips
           volume, fade_in_us, fade_out_us                   clips with sound
+          beat: {on, bpm, offset_us}                        sound clips, optional: BPM alignment
+                     (節拍): with on, its beats are snap targets; offset_us is the first
+                     beat's time in the source. Off keeps the numbers.
           compound_id                                       compound clips: which entry of
                      project.compounds they show; clip.source_start_us selects the window}
           timeline_id                                       nested timeline clips (as in
@@ -32,6 +35,11 @@ compound {name, width, height, duration_us, tracks}   reusable content: any numb
          (靜態片段) always shows its content at still_us, like a picture: its clips can be
          any length and make no sound.
 Numbers that animate are curve dicts, see curves.py.
+
+view     {vzoom, timelines: {timeline id: {pos, path, scroll_s, px_per_s, scroll_y, heights}}}
+         optional: where the editor was looking when the project was saved (playhead frame,
+         open compound clips, timeline scroll and zoom, track heights by track id). It is
+         not part of the edit: undo leaves it alone.
 
 In memory every compound clip also has "compound": the very dict in project.compounds (so
 code can walk into it). On disk, and in undo snapshots, only compound_id is kept: dumps()

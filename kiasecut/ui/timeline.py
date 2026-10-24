@@ -4,7 +4,9 @@ Layout follows Jianying: the topmost layer is drawn at the top, audio tracks at 
 Click to seek or select; Ctrl / Shift + click adds to or removes from the selection, dragging
 on empty track space draws a selection box, and a selection moves together. Drag a clip to move it (also to another track of the same kind),
 drag its edges to trim. Moves and trims snap to the playhead and to other clips' starts,
-ends and keyframes; a yellow line shows where a drag has snapped.
+ends and keyframes, and to the beats of sound clips with BPM alignment on (drawn as ticks
+along the clip's top); a yellow line shows where a drag has snapped. Dragging the playhead
+snaps to the same places.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
 zooms time around the mouse, the middle button drags the view. Alt+wheel or the toolbar
@@ -198,6 +200,25 @@ class Timeline(QWidget):
         self.clipSelected.emit(clip)
         self.update()
 
+    def view_state(self):
+        """Where the view is (scroll, zoom, track heights), to save with the project."""
+        return {"scroll_s": round(self.scroll_s, 4), "px_per_s": round(self.px_per_s, 4),
+                "scroll_y": self.scroll_y, "heights": dict(self.heights)}
+
+    def set_view_state(self, v):
+        """Put the view back where view_state() was (missing parts stay as they are)."""
+        if not v:
+            return
+        self.scroll_s = max(0.0, float(v.get("scroll_s", self.scroll_s)))
+        self.px_per_s = min(2000.0, max(1.0, float(v.get("px_per_s", self.px_per_s))))
+        if isinstance(v.get("heights"), dict):
+            self.heights = {k: min(MAX_H, max(MIN_H, int(h))) for k, h in v["heights"].items()
+                            if isinstance(h, (int, float))}
+        self.scroll_y = int(v.get("scroll_y", self.scroll_y))
+        self._layout()
+        self._waves.clear()
+        self.update()
+
     def set_position(self, frame, follow=True):
         """Move the playhead; with follow, scroll so it stays in view (playback, keys)."""
         self.pos = frame
@@ -305,25 +326,27 @@ class Timeline(QWidget):
                     return row, c, "body"
         return row, None, None
 
-    def _snap_targets(self, exclude):
-        """Times a drag snaps to: 0, the playhead, and every other clip's start, end and
-        keyframes; exclude is a clip or a set of clip ids (a moving group)."""
-        cands = [0, self.pos / self.fps * US]
+    def _snap_targets(self, exclude, playhead=True):
+        """Times a drag snaps to: 0, the playhead (unless it is what moves), and every other
+        clip's start, end, keyframes and beats (BPM alignment); exclude is a clip or a set of
+        clip ids (a moving group)."""
+        cands = [0, self.pos / self.fps * US] if playhead else [0]
         for tr in self.rows:
             for c in tr["clips"]:
                 if c is not exclude and not (isinstance(exclude, set) and c["id"] in exclude):
                     s = c["start_us"]
                     cands += [s, s + c["duration_us"]]
                     cands += [s + k for k in edit.key_times(c) if 0 <= k <= c["duration_us"]]
+                    cands += edit.beat_times(c)
         return cands
 
-    def _snap(self, t_us, exclude):
+    def _snap(self, t_us, exclude, playhead=True):
         """Snap a time to the nearest _snap_targets within SNAP_PX. With snapping off, times
         are left as they are."""
         if not self.snapping:
             return t_us
         best, limit = t_us, SNAP_PX / self.px_per_s * US
-        for t in self._snap_targets(exclude):
+        for t in self._snap_targets(exclude, playhead):
             if abs(t - t_us) < limit:
                 best, limit = t, abs(t - t_us)
         return best
@@ -335,9 +358,19 @@ class Timeline(QWidget):
                  if x != start and x >= 0]
         return min(moved, key=lambda x: abs(x - start)) if moved else start
 
+    def _seek_to(self, x):
+        """Move the playhead to screen x, snapped like a dragged clip (but not to itself)."""
+        t = self._snap(max(0.0, self._sec(x)) * US, None, playhead=False)
+        if self.drag and self.drag["mode"] == "seek":
+            self.drag["t"] = t
+        self.seekRequested.emit(max(0, round(t / US * self.fps)))
+
     def _snap_guides(self):
         """Times where the current drag sits on a snap target (drawn as guide lines)."""
         d = self.drag
+        if self.snapping and d and d["mode"] == "seek" and "t" in d:
+            t = d["t"]
+            return [t] if any(abs(t - k) < 1 for k in self._snap_targets(None, playhead=False)) else []
         if not (self.snapping and d and d.get("moved") and d.get("clip")):
             return []
         c = d["clip"]
@@ -633,6 +666,20 @@ class Timeline(QWidget):
         row = next((i for i, t in enumerate(self.rows) if c in t["clips"]), None)
         if row is not None and not ghost and abs(self.tops[row] - y) < 0.5:
             self._draw_volume(p, c, row, r)
+        if c.get("beat", {}).get("on") and r.height() > 10:
+            # BPM alignment: a tick per beat along the top (the grid moves with a dragged clip)
+            shift = start - c["start_us"]
+            lo, hi = self._sec(HEADER_W) * US - shift, self._sec(w) * US - shift
+            beats = edit.beat_times(c, lo, hi)
+            period = 60 * US / c["beat"]["bpm"]
+            if beats and period / US * self.px_per_s >= 4:
+                p.save()
+                p.setClipRect(r)
+                p.setPen(QPen(QColor(255, 211, 77, 110 if dim else 220), 1))
+                for b in beats:
+                    bx = self._x((b + shift) / US)
+                    p.drawLine(QPointF(bx, r.top() + 1), QPointF(bx, r.top() + 6))
+                p.restore()
         if c["id"] == self.selected_id and not ghost:
             # keyframes of the selected clip, as diamonds along its bottom edge
             d = self.drag if self.drag and self.drag["mode"] == "key" and self.drag["clip"] is c else None
@@ -795,8 +842,9 @@ class Timeline(QWidget):
         adding = bool(e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
         if c is None:
             if pos.y() < RULER_H or row is None and pos.y() < self.rows_end:
-                self.seekRequested.emit(max(0, round(self._sec(pos.x()) * self.fps)))
                 self.drag = {"clip": None, "mode": "seek", "moved": False}
+                self._seek_to(pos.x())
+                self.update()
                 return
             # empty track space: a click seeks and clears, a drag draws a selection box
             self.drag = {"clip": None, "mode": "band", "moved": False, "x0": pos.x(), "y0": pos.y(),
@@ -904,7 +952,8 @@ class Timeline(QWidget):
             self.update()
             return
         if d["mode"] == "seek":
-            self.seekRequested.emit(max(0, round(self._sec(pos.x()) * self.fps)))
+            self._seek_to(pos.x())
+            self.update()
             return
         if d["mode"] == "band":
             if not d["moved"] and abs(pos.x() - d["x0"]) + abs(pos.y() - d["y0"]) < DRAG_PX:
@@ -996,6 +1045,8 @@ class Timeline(QWidget):
             return
         if d and d["mode"] == "pan":
             self.setCursor(Qt.ArrowCursor)
+        if d and d["mode"] == "seek":
+            self.update()                               # (its guide line goes)
         if not d or d["mode"] in ("seek", "resize", "pan"):
             return
         if d["mode"] == "band":
@@ -1003,7 +1054,7 @@ class Timeline(QWidget):
             if not d["moved"]:
                 if not d["base"]:
                     self.select(None)
-                self.seekRequested.emit(max(0, round(self._sec(e.position().x()) * self.fps)))
+                self._seek_to(e.position().x())
             self.update()
             return
         if d["mode"] == "group":

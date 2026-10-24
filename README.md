@@ -27,7 +27,8 @@ Space play/pause · ←/→ step a frame · Home/End · Ctrl+I import · Ctrl+S 
 Editing: drag a clip to move it (also onto another track of the same kind), drag its
 edges to trim; moves and trims snap to the playhead and to other clips' starts, ends and
 keyframes while 吸附 (N, in the timeline toolbar) is on, as Jianying's auto-snap; a yellow
-line marks where the drag has snapped. Clicking a clip only selects it: the
+line marks where the drag has snapped. Dragging the playhead snaps to the same clip edges,
+keyframes and beats. Clicking a clip only selects it: the
 playhead and the view stay where they are (the view follows the playhead during playback
 and for jumps such as Home / End / keyframes). Ctrl+B splits the
 selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a text,
@@ -120,6 +121,15 @@ Preview: click a clip on the canvas to select it and drag it to move it; it snap
 canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
 freely). Drag a corner square to scale it about its centre, the round handle above it to
 rotate it (it settles on right angles; Shift turns in 15° steps).
+
+Beat alignment (節拍 tab, for a selected sound clip): switch on BPM 對齊 and enter the
+BPM and the start offset (the first beat's time in the sound). The beats show as yellow
+ticks along the clip's top and everything that snaps (clips, trims, keyframes, the
+playhead) lands on them. Switching it off keeps the numbers; 重置 deletes them (after
+asking) and switches it off.
+
+Saving also stores the view: the playhead, the open compound clip, the timeline's scroll
+and zoom and the track heights of each timeline come back when the project is opened.
 
 Masks have their own tab (遮罩, beside 屬性): switch the mask on or off (off keeps its
 settings; on for a clip without one adds a rectangle), pick its shape, invert it, remove

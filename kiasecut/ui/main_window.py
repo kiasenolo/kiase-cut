@@ -26,6 +26,7 @@ from ..client import EngineClient
 from ..importers import jianying
 from .compounds import CompoundPanel
 from .curve_editor import CurveEditor
+from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
 from .export_dialog import ExportDialog
 from .inspector import Inspector
@@ -189,7 +190,7 @@ class MainWindow(QMainWindow):
         self.sync_retries = 0
         self._last_tick = time.monotonic()
         self.path_ids = []              # open compound clips, outermost first
-        self.tl_pos = {}                # playhead of each timeline while another is open
+        self.tl_views = {}              # playhead / scroll / zoom of each timeline while another is open
         self.clipboard = None           # clips copied with 複製 / 剪下 (edit.copy_clips)
         self.open_tls = None            # timelines with a tab (None: all, until the first tab update)
         self.xml = None                 # truthy once the preview has a project
@@ -313,6 +314,13 @@ class MainWindow(QMainWindow):
         self.side.addTab(scroll, "屬性")
         self.side.addTab(fx_scroll, "效果")
         self.side.addTab(mask_scroll, "遮罩")
+        self.beats = BeatPanel()
+        self.beats.beatEdited.connect(self.on_beat_edited)
+        self.beats.resetRequested.connect(lambda cid: self.apply("重置 BPM 對齊", edit.clear_beat, cid))
+        beat_scroll = QScrollArea()
+        beat_scroll.setWidget(self.beats)
+        beat_scroll.setWidgetResizable(True)
+        self.side.addTab(beat_scroll, "節拍")
         # the 遮罩 tab turns the preview into the mask editor
         self.side.currentChanged.connect(lambda _: self.preview.set_mask_mode(self.side.currentWidget() is mask_scroll))
         self.side.addTab(cv, "關鍵幀曲線")
@@ -642,12 +650,45 @@ class MainWindow(QMainWindow):
         """Open another timeline of the project (not an edit: undo does not step through it)."""
         if not self.proj or tl_id == self.proj["active_timeline"]:
             return
-        self.tl_pos[self.proj["active_timeline"]] = self.pos
+        self.tl_views[self.proj["active_timeline"]] = self.level_view()
         edit.open_timeline(self.proj, tl_id)
         self.dirty = True
-        self.path_ids = []
-        self._switch_level(self.tl_pos.get(tl_id, 0))
+        self.open_view(self.tl_views.get(tl_id, {}))
         self._update_title()
+
+    def level_view(self):
+        """Where the open timeline is looked at: playhead, open compounds, scroll, zoom,
+        track heights."""
+        v = dict(self.timeline.view_state(), pos=self.pos)
+        if self.path_ids:
+            v["path"] = list(self.path_ids)
+        return v
+
+    def view_state(self):
+        """Every timeline's level_view, stored in the project file when it is saved."""
+        tls = dict(self.tl_views)
+        tls[self.proj["active_timeline"]] = self.level_view()
+        return {"vzoom": round(self.timeline.vzoom, 4), "timelines": tls}
+
+    def open_view(self, v):
+        """Open the active timeline as level_view() left it (a compound that is gone opens
+        the timeline itself)."""
+        path = v.get("path") if isinstance(v.get("path"), list) else []
+        try:
+            node = self.proj
+            for cid in path:
+                node = edit.find(node, cid)[1]["compound"]
+        except (edit.EditError, KeyError, TypeError):
+            path = []
+        self.path_ids = list(path)
+        try:
+            pos = max(0, int(v.get("pos", 0)))
+        except (TypeError, ValueError):
+            pos = 0
+        self._switch_level(pos)
+        if v.get("px_per_s"):
+            self.timeline.set_view_state(v)
+            self.follow = False                          # (the saved scroll, not one around the playhead)
 
     def _timeline_menu(self, pos):
         i = self.tl_tabs.tabAt(pos)
@@ -935,6 +976,7 @@ class MainWindow(QMainWindow):
             if os.path.exists(fn) and QMessageBox.question(self, "覆蓋", f"「{name}」已經存在，要覆蓋嗎？") != QMessageBox.Yes:
                 return False
             self.path = fn
+        self.proj["view"] = self.view_state()
         try:
             workspace.save(self.proj, self.path)
         except OSError as exc:
@@ -978,6 +1020,7 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.path_ids = []
         self.open_tls = None
+        self.tl_views = {}
         self.fps = proj["fps"]
         self.timeline.mark_in = self.timeline.mark_out = None
         self.player.worker.set_loop(None)
@@ -989,6 +1032,13 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.refresh_inspector()
         self.rebuild()
+        saved = proj.get("view") if isinstance(proj.get("view"), dict) else {}
+        if saved.get("vzoom"):
+            self.timeline.set_vzoom(float(saved["vzoom"]))
+        views = saved.get("timelines") if isinstance(saved.get("timelines"), dict) else {}
+        self.tl_views = {k: v for k, v in views.items() if isinstance(v, dict) and k != proj["active_timeline"]}
+        if isinstance(views.get(proj["active_timeline"]), dict):
+            self.open_view(views[proj["active_timeline"]])
         self._last_tick = time.monotonic()
         self.watch_media()
         self.request_sync(0)
@@ -1026,6 +1076,7 @@ class MainWindow(QMainWindow):
 
     def _autosave(self):
         if self.proj and self.path and self.dirty:
+            self.proj["view"] = self.view_state()
             try:
                 workspace.autosave(self.proj, self.path)
             except OSError:
@@ -1437,6 +1488,7 @@ class MainWindow(QMainWindow):
         self.inspector.show_clips(clips, t, self.fps)
         self.effects.show_clips(clips, t, self.fps)
         self.mask_panel.show_clips(clips, t, self.fps)
+        self.beats.show_clips(clips)
 
     def on_easing(self, ids, easing, groups):
         """Apply a curve preset to every parameter (of these groups) with a keyframe at the playhead."""
@@ -1935,6 +1987,13 @@ class MainWindow(QMainWindow):
             self.player.worker.mixer.master = gain
         if final and self.proj is not None and abs(gain - self.proj.get("master_gain", 1.0)) > 1e-6:
             self.apply_root("主音量", edit.set_master_gain, gain, merge=("master",))
+
+    def on_beat_edited(self, cid, fields):
+        if "on" in fields:
+            label = "啟用 BPM 對齊" if fields["on"] else "關閉 BPM 對齊"
+        else:
+            label = "調整 BPM" if "bpm" in fields else "調整起頭偏移"
+        self.apply(label, lambda level: edit.set_beat(level, cid, **fields), merge=None if "on" in fields else ("beat", cid, tuple(fields)))
 
     def set_snapping(self, on):
         self.timeline.snapping = on

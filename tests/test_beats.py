@@ -51,7 +51,7 @@ class BeatEdits(unittest.TestCase):
         edit.set_beat(p, "a1", on=True, bpm=95.5, offset_us=S)
         edit.set_beat(p, "a1", on=False)
         _, a = edit.find(p, "a1")
-        self.assertEqual(a["beat"], {"on": False, "bpm": 95.5, "offset_us": S})
+        self.assertEqual(a["beat"], {"on": False, "bpm": 95.5, "offset_us": S, "div": 1})
         self.assertEqual(edit.beat_times(a), [])
         edit.set_beat(p, "a1", on=True)
         self.assertEqual(a["beat"]["bpm"], 95.5)
@@ -59,6 +59,33 @@ class BeatEdits(unittest.TestCase):
         self.assertNotIn("beat", a)
         with self.assertRaises(edit.EditError):
             edit.set_beat(p, "v1", on=True)                          # pictures have no beat
+
+    def test_subdivisions(self):
+        p = proj()
+        edit.set_beat(p, "a1", on=True, bpm=60, offset_us=2 * S, div=4)   # beats at 10, 11, ... s
+        _, a = edit.find(p, "a1")
+        grid = edit.beat_grid(a, 10 * S, 11 * S)
+        self.assertEqual([round(t) for t, _ in grid], [10 * S, 10.25 * S, 10.5 * S, 10.75 * S, 11 * S])
+        self.assertEqual([d for _, d in grid], [1, 4, 2, 4, 1])
+        edit.set_beat(p, "a1", div=6)
+        self.assertEqual([d for _, d in edit.beat_grid(a, 10 * S, 11 * S)], [1, 6, 3, 2, 3, 6, 1])
+        edit.set_beat(p, "a1", div=3)
+        self.assertEqual([d for _, d in edit.beat_grid(a, 10 * S, 11 * S)], [1, 3, 3, 1])
+        with self.assertRaises(edit.EditError):
+            edit.set_beat(p, "a1", div=5)
+
+    def test_bpm_divided_in_the_list(self):
+        p = proj()
+        edit.set_beat(p, "a1", on=True, bpm=180, offset_us=0.3 * S, div=0.5)   # 180 -> 90
+        _, a = edit.find(p, "a1")
+        self.assertEqual(a["beat"]["bpm"], 180.0)                    # the BPM typed in stays
+        beats = edit.beat_times(a)
+        self.assertAlmostEqual(beats[1] - beats[0], 60 / 90 * S)
+        self.assertAlmostEqual(beats[0], 10.3 * S)                   # beat 0 at 8.3 s, every 2nd beat after it
+        self.assertEqual({d for _, d in edit.beat_grid(a)}, {1})
+        edit.set_beat(p, "a1", div=0.25)
+        beats = edit.beat_times(a)
+        self.assertAlmostEqual(beats[1] - beats[0], 60 / 45 * S)
 
     def test_undo_and_view_stay_apart(self):
         p = proj()
@@ -108,6 +135,21 @@ class TimelineSnaps(unittest.TestCase):
         self.assertNotIn(10.5 * S, self.tl._snap_targets(a))
         edit.set_beat(self.p, "a1", on=False)
         self.assertNotIn(10.5 * S, self.tl._snap_targets(None))
+
+    def test_dense_lines_drop_out(self):
+        edit.set_beat(self.p, "a1", on=True, bpm=120, offset_us=0, div=4)   # a beat every 0.5 s
+        _, a = edit.find(self.p, "a1")
+        self.tl.px_per_s = 50.0                                      # quarters 6.25 px apart: all show
+        self.assertEqual({d for _, d in self.tl._beat_lines(a)}, {1, 2, 4})
+        self.tl.px_per_s = 15.0                                      # quarters 1.9 px, halves 3.75 px
+        self.assertEqual({d for _, d in self.tl._beat_lines(a)}, {1})
+        self.tl.px_per_s = 30.0                                      # halves 7.5 px
+        self.assertEqual({d for _, d in self.tl._beat_lines(a)}, {1, 2})
+        edit.set_beat(self.p, "a1", div=0.5)                         # a line every beat pair: 1 s
+        self.tl.px_per_s = 6.0
+        self.assertTrue(self.tl._beat_lines(a))
+        self.tl.px_per_s = 4.0
+        self.assertEqual(self.tl._beat_lines(a), [])
 
     def test_view_state_round_trip(self):
         self.tl.px_per_s, self.tl.scroll_s = 123.0, 4.5

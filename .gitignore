@@ -4,3 +4,4 @@ __pycache__/
 *.kiasecut-cache/
 *.tesetoa-cache/
 /out/
+.venv/

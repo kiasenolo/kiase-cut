@@ -22,9 +22,11 @@ clip     {id, type: image | video | audio | text | compound, name,
           text: {content, font_path, size, color, letter_spacing, line_spacing,
                  italic_deg, styles}                        text clips
           volume, fade_in_us, fade_out_us                   clips with sound
-          beat: {on, bpm, offset_us}                        sound clips, optional: BPM alignment
-                     (節拍): with on, its beats are snap targets; offset_us is the first
-                     beat's time in the source. Off keeps the numbers.
+          beat: {on, bpm, offset_us, div}                   sound clips, optional: BPM alignment
+                     (節拍): with on, its beats, split into div (1, 2, 3, 4, 6) lines per
+                     beat or thinned to one line every 2 / 4 beats (div 0.5 / 0.25: BPM
+                     ÷2 / ÷4), are snap targets; offset_us is the first beat's time in the
+                     source. Off keeps the numbers.
           compound_id                                       compound clips: which entry of
                      project.compounds they show; clip.source_start_us selects the window}
           timeline_id                                       nested timeline clips (as in

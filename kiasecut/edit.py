@@ -725,12 +725,16 @@ def set_mask_enabled(proj, clip_id, on):
     return c
 
 
-BEAT_DEFAULT = {"on": False, "bpm": 120.0, "offset_us": 0}
+BEAT_DEFAULT = {"on": False, "bpm": 120.0, "offset_us": 0, "div": 1}
+# grid lines per beat: 0.25 / 0.5 a line every 4 / 2 beats (the BPM ÷4 / ÷2: 180 -> 90, the
+# BPM itself unchanged), 1 on every beat, 2 / 3 / 4 / 6 the beat split into halves ... sixths
+BEAT_DIVS = (0.25, 0.5, 1, 2, 3, 4, 6)
+BPM_MIN, BPM_MAX = 1.0, 999.0
 
 
 def set_beat(proj, clip_id, **fields):
-    """Change a sound clip's BPM grid (on, bpm, offset_us); a clip without one gets the
-    defaults first. Switching it off keeps the numbers."""
+    """Change a sound clip's BPM grid (on, bpm, offset_us, div); a clip without one gets
+    the defaults first. Switching it off keeps the numbers."""
     _, c = find(proj, clip_id)
     if c["type"] != "audio":
         raise EditError("只有聲音片段可以 BPM 對齊")
@@ -738,7 +742,12 @@ def set_beat(proj, clip_id, **fields):
     for k, v in fields.items():
         if k not in BEAT_DEFAULT:
             raise EditError(f"unknown beat field {k}")
-        beat[k] = bool(v) if k == "on" else int(round(v)) if k == "offset_us" else min(999.0, max(1.0, float(v)))
+        if k == "div" and v not in BEAT_DIVS:
+            raise EditError(f"細分只能是 {BEAT_DIVS}")
+        if k == "div":
+            v = int(v) if v >= 1 else float(v)
+        beat[k] = (bool(v) if k == "on" else v if k == "div" else int(round(v)) if k == "offset_us"
+                   else min(BPM_MAX, max(BPM_MIN, float(v))))
     return c
 
 
@@ -750,13 +759,22 @@ def clear_beat(proj, clip_id):
 
 
 def beat_times(c, lo=None, hi=None):
-    """Timeline times (us) of the beats of a clip with BPM alignment on, inside the clip
-    (and inside lo..hi when given). The grid belongs to the sound: offset_us is the first
-    beat's time in the source, so trimming or splitting the clip keeps beats on the music."""
+    """Timeline times (us) of the grid lines (beats and their subdivisions) of a clip with
+    BPM alignment on, inside the clip (and inside lo..hi when given)."""
+    return [t for t, _ in beat_grid(c, lo, hi)]
+
+
+def beat_grid(c, lo=None, hi=None):
+    """[(time us, d)] of a clip's grid lines: d is the line's place in the beat as the
+    denominator of a reduced fraction - 1 on the beat, 2 on the half, 3 / 4 / 6 on thirds,
+    quarters, sixths (a grid of every 2 or 4 beats is all on beats). The grid belongs to the
+    sound: offset_us is the first beat's time in the source, so trimming or splitting the
+    clip keeps it on the music."""
     beat = c.get("beat")
     if not beat or not beat.get("on") or not beat.get("bpm"):
         return []
-    period = 60 * US / beat["bpm"]
+    div = beat.get("div", 1) if beat.get("div", 1) in BEAT_DIVS else 1
+    period = 60 * US / beat["bpm"] / div
     zero = c["start_us"] - c.get("source_start_us", 0) + beat.get("offset_us", 0)   # timeline time of beat 0
     a, b = c["start_us"], end(c)
     if lo is not None:
@@ -766,7 +784,9 @@ def beat_times(c, lo=None, hi=None):
     if b < a:
         return []
     k0, k1 = math.ceil((a - zero) / period - 1e-9), math.floor((b - zero) / period + 1e-9)
-    return [zero + k * period for k in range(k0, k1 + 1)]
+    if div < 1:
+        return [(zero + k * period, 1) for k in range(k0, k1 + 1)]
+    return [(zero + k * period, div // math.gcd(k % div, div)) for k in range(k0, k1 + 1)]
 
 
 def set_mask_invert(proj, clip_id, invert, t=None):

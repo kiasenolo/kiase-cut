@@ -16,6 +16,10 @@ preview and the export), ffmpeg on PATH, and MLT 7:
 on Windows the copy inside Kdenlive or Shotcut (found automatically, or set
 `KIASECUT_MLT` to the install folder); on Linux the system package (`mlt` / `libmlt7`).
 
+Or start it with `start_kiasecut.bat` (Windows: installs the packages if missing) or
+`./start_kiasecut.sh` (Linux: installs them into `.venv` on the first run, warns when
+ffmpeg or MLT is missing, passes its arguments on).
+
 ```
 python -m kiasecut                         # empty window: File > Import Jianying draft
 python -m kiasecut draft_content.dec.json  # import a decrypted Jianying draft
@@ -123,10 +127,14 @@ freely). Drag a corner square to scale it about its centre, the round handle abo
 rotate it (it settles on right angles; Shift turns in 15° steps).
 
 Beat alignment (節拍 tab, for a selected sound clip): switch on BPM 對齊 and enter the
-BPM and the start offset (the first beat's time in the sound). The beats show as yellow
-ticks along the clip's top and everything that snaps (clips, trims, keyframes, the
-playhead) lands on them. Switching it off keeps the numbers; 重置 deletes them (after
-asking) and switches it off.
+BPM and the start offset (the first beat's time in the sound); 細分 splits each beat into
+1, 1/2, 1/3, 1/4 or 1/6, or thins it to a line every 2 or 4 beats (BPM ÷2 / ÷4: 180 → 90,
+the BPM typed in stays as it is).
+The grid shows as ticks along the clip's top, coloured by where in the beat they fall
+(yellow beat, orange half, pink third, cyan quarter, violet sixth; lines too close at the
+zoom are left out), and everything that snaps (clips, trims, keyframes, the playhead)
+lands on them. Switching it off keeps the numbers; 重置 deletes them (after asking) and
+switches it off.
 
 Saving also stores the view: the playhead, the open compound clip, the timeline's scroll
 and zoom and the track heights of each timeline come back when the project is opened.

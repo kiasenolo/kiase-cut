@@ -1992,7 +1992,7 @@ class MainWindow(QMainWindow):
         if "on" in fields:
             label = "啟用 BPM 對齊" if fields["on"] else "關閉 BPM 對齊"
         else:
-            label = "調整 BPM" if "bpm" in fields else "調整起頭偏移"
+            label = "調整 BPM" if "bpm" in fields else "BPM 細分" if "div" in fields else "調整起頭偏移"
         self.apply(label, lambda level: edit.set_beat(level, cid, **fields), merge=None if "on" in fields else ("beat", cid, tuple(fields)))
 
     def set_snapping(self, on):

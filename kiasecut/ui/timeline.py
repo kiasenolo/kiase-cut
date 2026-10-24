@@ -4,8 +4,10 @@ Layout follows Jianying: the topmost layer is drawn at the top, audio tracks at 
 Click to seek or select; Ctrl / Shift + click adds to or removes from the selection, dragging
 on empty track space draws a selection box, and a selection moves together. Drag a clip to move it (also to another track of the same kind),
 drag its edges to trim. Moves and trims snap to the playhead and to other clips' starts,
-ends and keyframes, and to the beats of sound clips with BPM alignment on (drawn as ticks
-along the clip's top); a yellow line shows where a drag has snapped. Dragging the playhead
+ends and keyframes, and to the beat grid of sound clips with BPM alignment on (drawn as
+ticks along the clip's top, coloured by where in the beat they fall: BEAT_COLORS; lines
+too close together at the zoom are neither drawn nor snapped to); a yellow line shows
+where a drag has snapped. Dragging the playhead
 snaps to the same places.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
@@ -69,6 +71,10 @@ RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140
 BTN = 18                                             # header button size
 MIN_H, MAX_H = 22, 240                               # track heights
 EDGE_PX, SNAP_PX, DRAG_PX = 6, 8, 3
+BEAT_PX = 5                                          # beat grid lines at least this far apart show
+# beat grid lines by their place in the beat (edit.beat_grid): colour, tick length
+BEAT_COLORS = {1: "#ffd34d", 2: "#ff8a3d", 3: "#ff6bd5", 4: "#4dd2ff", 6: "#b48cff"}
+BEAT_TICKS = {1: 7, 2: 5, 3: 4, 4: 4, 6: 3}
 
 
 def timecode(us, fps):
@@ -337,8 +343,20 @@ class Timeline(QWidget):
                     s = c["start_us"]
                     cands += [s, s + c["duration_us"]]
                     cands += [s + k for k in edit.key_times(c) if 0 <= k <= c["duration_us"]]
-                    cands += edit.beat_times(c)
+                    cands += [t for t, _ in self._beat_lines(c)]
         return cands
+
+    def _beat_lines(self, c, lo=None, hi=None):
+        """A clip's beat grid lines [(time us, place in the beat)] that are far enough apart
+        at this zoom to be seen (halves can show while sixths are too dense)."""
+        beat = c.get("beat")
+        if not beat or not beat.get("on"):
+            return []
+        period_px = 60 / beat["bpm"] * self.px_per_s
+        div = beat.get("div", 1)
+        if div < 1:                                      # a line every 2 / 4 beats
+            return edit.beat_grid(c, lo, hi) if period_px / div >= BEAT_PX else []
+        return [(t, d) for t, d in edit.beat_grid(c, lo, hi) if period_px / d >= BEAT_PX]
 
     def _snap(self, t_us, exclude, playhead=True):
         """Snap a time to the nearest _snap_targets within SNAP_PX. With snapping off, times
@@ -667,18 +685,23 @@ class Timeline(QWidget):
         if row is not None and not ghost and abs(self.tops[row] - y) < 0.5:
             self._draw_volume(p, c, row, r)
         if c.get("beat", {}).get("on") and r.height() > 10:
-            # BPM alignment: a tick per beat along the top (the grid moves with a dragged clip)
+            # BPM alignment: a tick per grid line along the top, longer and yellow on the beat
+            # (the grid moves with a dragged clip)
             shift = start - c["start_us"]
             lo, hi = self._sec(HEADER_W) * US - shift, self._sec(w) * US - shift
-            beats = edit.beat_times(c, lo, hi)
-            period = 60 * US / c["beat"]["bpm"]
-            if beats and period / US * self.px_per_s >= 4:
+            lines = self._beat_lines(c, lo, hi)
+            if lines:
                 p.save()
                 p.setClipRect(r)
-                p.setPen(QPen(QColor(255, 211, 77, 110 if dim else 220), 1))
-                for b in beats:
-                    bx = self._x((b + shift) / US)
-                    p.drawLine(QPointF(bx, r.top() + 1), QPointF(bx, r.top() + 6))
+                pens = {}
+                for d, col in BEAT_COLORS.items():
+                    col = QColor(col)
+                    col.setAlpha(110 if dim else 235)
+                    pens[d] = QPen(col, 1.5 if d == 1 else 1)
+                for t, d in lines:
+                    bx = self._x((t + shift) / US)
+                    p.setPen(pens.get(d, pens[1]))
+                    p.drawLine(QPointF(bx, r.top() + 1), QPointF(bx, r.top() + 1 + BEAT_TICKS.get(d, 3)))
                 p.restore()
         if c["id"] == self.selected_id and not ghost:
             # keyframes of the selected clip, as diamonds along its bottom edge

@@ -300,8 +300,8 @@ class CurveCanvas(QWidget):
                 p.setBrush(QColor("#ffb020") if on else QColor("#26262b"))
                 p.drawPolygon(QPolygonF([pt + QPointF(0, -r), pt + QPointF(r, 0), pt + QPointF(0, r), pt + QPointF(-r, 0)]))
         if self.band is not None:
-            p.setPen(QPen(QColor("#2fd6c8"), 1, Qt.DashLine))
-            p.setBrush(QColor(47, 214, 200, 35))
+            p.setPen(QPen(QColor("#e6e6e6"), 1, Qt.DashLine))
+            p.setBrush(QColor(255, 255, 255, 35))
             p.drawRect(self.band)
         # playhead
         if self.t0 <= self.t <= self.t1:

@@ -34,6 +34,7 @@ class Worker(QObject):
         self.length = 0
         self.quit = False
         self.engine = None          # started on first use, for video pictures only
+        self.loop = None            # (first, last) frame: playback stays inside (time selection)
 
     # called from the UI thread -----------------------------------------------------------
     def set_view(self, view, cache_dir):
@@ -47,10 +48,17 @@ class Worker(QObject):
             self.want = max(0, min(pos, self.length - 1)) if self.length else max(0, pos)
             self.cv.notify()
 
+    def set_loop(self, span):
+        """Loop playback inside frames (first, last), or None (FL Studio's time selection)."""
+        with self.cv:
+            self.loop = span
+
     def set_playing(self, on):
         with self.cv:
             self.playing = on and self.length > 0
-            if self.playing and self.pos >= self.length - 1:
+            if self.playing and self.loop and not self.loop[0] <= self.pos <= self.loop[1]:
+                self.pos = self.loop[0]                 # start at the selection
+            elif self.playing and self.pos >= self.length - 1:
                 self.pos = 0
             self.cv.notify()
 
@@ -153,6 +161,8 @@ class Worker(QObject):
                 n = out.write(bytes(view[:free]))
                 view = view[n:]
         self.pos += 1
+        if self.loop and self.pos > self.loop[1] and self.pos - 1 <= self.loop[1]:
+            self.pos = self.loop[0]
         if self.pos >= self.length:
             self.pos = self.length - 1
             with self.cv:

@@ -31,7 +31,7 @@ class History:
     def do(self, label, fn, *args, merge=None, **kw):
         """Apply fn(proj, *args, **kw) as one undoable step. Repeated edits with the same
         merge key within MERGE_S seconds (spinning a value, typing) share one step."""
-        before = json.dumps(self.proj, ensure_ascii=False)
+        before = project.dumps(self.proj)              # shared compounds stored once
         try:
             result = fn(self.proj, *args, **kw)
         except Exception:
@@ -52,12 +52,13 @@ class History:
         data = json.loads(snapshot)
         self.proj.clear()
         self.proj.update(data)
+        project.link(self.proj)
 
     def undo(self):
         if not self.undo_stack:
             return None
         label, snap, _, _ = self.undo_stack.pop()
-        self.redo_stack.append((label, json.dumps(self.proj, ensure_ascii=False)))
+        self.redo_stack.append((label, project.dumps(self.proj)))
         self._restore(snap)
         return label
 
@@ -65,7 +66,7 @@ class History:
         if not self.redo_stack:
             return None
         label, snap = self.redo_stack.pop()
-        self.undo_stack.append((label, json.dumps(self.proj, ensure_ascii=False), None, 0.0))
+        self.undo_stack.append((label, project.dumps(self.proj), None, 0.0))
         self._restore(snap)
         return label
 
@@ -135,7 +136,7 @@ def source_length(c):
 def _params(c):
     """Every animatable parameter dict in a clip, for shifting keyframes."""
     out = []
-    for group in (c.get("transform"), c.get("mask")):
+    for group in (c.get("transform"), c.get("mask"), c.get("text")):
         if group:
             out += [v for v in group.values() if curves.is_animated(v)]
     if curves.is_animated(c.get("volume")):
@@ -219,7 +220,9 @@ def split(proj, clip_id, at_us):
         raise EditError("the playhead is not inside the clip")
     at_us = int(at_us)
     d = at_us - c["start_us"]
-    right = copy.deepcopy(c)
+    right = copy.deepcopy({k: v for k, v in c.items() if k != "compound"})
+    if "compound" in c:
+        right["compound"] = c["compound"]      # both halves show the same shared compound
     right["id"] = new_clip_id(proj)
     right["start_us"] = at_us
     right["duration_us"] = end(c) - at_us
@@ -465,6 +468,31 @@ def key_times(c):
     return sorted(times)
 
 
+def move_keys_at(proj, clip_id, t_from, t_to):
+    """Move every keyframe of a clip at clip time t_from to t_to (the timeline's ◆)."""
+    _, c = find(proj, clip_id)
+    t_to = int(min(max(t_to, 0), c["duration_us"]))
+    moved = 0
+    for p in _params(c):
+        i = key_at(p, t_from)
+        if i is None:
+            continue
+        if any(j != i and abs(k[0] - t_to) <= KEY_TOL_US for j, k in enumerate(p["keys"])):
+            raise EditError("another keyframe is already there")
+        p["keys"][i][0] = t_to
+        p["keys"].sort(key=lambda k: k[0])
+        # keep the bezier handles inside their (new) neighbours
+        for j, k in enumerate(p["keys"]):
+            prev_dt = k[0] - p["keys"][j - 1][0] if j else 0
+            next_dt = p["keys"][j + 1][0] - k[0] if j + 1 < len(p["keys"]) else 0
+            k[2] = min(0.0, max(k[2], -prev_dt))
+            k[4] = max(0.0, min(k[4], next_dt))
+        moved += 1
+    if not moved:
+        raise EditError("no keyframe there")
+    return c
+
+
 # -- masks ----------------------------------------------------------------------------------------
 MASK_KINDS = ("line", "mirror", "circle", "rectangle")
 
@@ -695,3 +723,64 @@ def detach_audio(proj, clip_id):
     dst["clips"].append(a)
     _sort(dst)
     return a
+
+
+# -- shared compounds -------------------------------------------------------------------------------
+def place_compound(root, container, compound_id, track_id, start_us):
+    """A new clip showing shared compound compound_id in container (the project or an open
+    compound) at start_us: on track_id when it has room, else a new picture track."""
+    comp = root["compounds"].get(compound_id)
+    if comp is None:
+        raise EditError("unknown compound")
+    if container is not root and any(project.contains(root, compound_id, k)
+                                     for k, v in root["compounds"].items() if v is container):
+        raise EditError("a compound cannot show itself")
+    dur = int(comp.get("duration_us") or project.end_us(comp["tracks"]) or MIN_US)
+    clip = {"id": new_clip_id(), "type": "compound", "name": comp.get("name") or "複合片段",
+            "start_us": max(0, int(start_us)), "duration_us": dur, "source_start_us": 0,
+            "compound_id": compound_id, "compound": comp,
+            "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
+    track = None
+    if track_id:
+        t = track_by_id(container, track_id)
+        if t["kind"] != "audio":
+            best = None
+            for lo, hi in gaps(t):
+                if hi - lo >= dur:
+                    s = min(max(clip["start_us"], lo), hi - dur)
+                    if best is None or abs(s - clip["start_us"]) < abs(best - clip["start_us"]):
+                        best = s
+            if best is not None:
+                track, clip["start_us"] = t, int(best)
+    if track is None:
+        n = sum(1 for t in container["tracks"] if t["kind"] == "video") + 1
+        track = {"id": new_track_id(container), "kind": "video", "name": f"video {n}", "clips": []}
+        container["tracks"].insert(_visual_slot(container), track)
+    track["clips"].append(clip)
+    _sort(track)
+    return clip
+
+
+def make_unique(root, container, clip_id):
+    """Give one compound clip its own copy of its compound (edits no longer reach the others)."""
+    _, c = find(container, clip_id)
+    if "compound_id" not in c:
+        raise EditError("not a compound clip")
+    src = c["compound"]
+    copy_ = json.loads(json.dumps(project.detached({"tracks": [], "compounds": {"x": src}})["compounds"]["x"]))
+    kid = project.new_compound_id(root)
+    copy_["name"] = (src.get("name") or "複合片段") + " 副本"
+    root["compounds"][kid] = copy_
+    c["compound_id"] = kid
+    project.link(root)
+    return c
+
+
+def rename_compound(root, compound_id, name):
+    root["compounds"][compound_id]["name"] = str(name).strip() or "複合片段"
+
+
+def delete_compound(root, compound_id):
+    if project.compound_uses(root).get(compound_id):
+        raise EditError("still used on a timeline")
+    del root["compounds"][compound_id]

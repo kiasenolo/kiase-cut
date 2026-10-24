@@ -204,20 +204,20 @@ def run():
           tl.scroll_s > s0 and tl.scroll_y != v0)
     win.grab().save(os.path.join(out, "select_tall.png"))
 
-    # the compound list
+    # the compound browser: one row per shared compound, its uses under it
     win.left.setCurrentWidget(win.compounds)
     tree = win.compounds.tree
-    names = [tree.topLevelItem(k).text(0) for k in range(tree.topLevelItemCount())]
-    comps = [c for c in project.walk_clips(win.proj["tracks"]) if c["type"] == "compound"]
-    nested = sum(tree.topLevelItem(k).childCount() for k in range(tree.topLevelItemCount()))
-    check(f"compound tab lists {len(names)} + {nested} nested of {len(comps)}", len(names) + nested == len(comps))
-    part = next(k for k in range(tree.topLevelItemCount()) if tree.topLevelItem(k).childCount())
-    win.compounds._double(tree.topLevelItem(part).child(0), 0)
+    rows = [tree.topLevelItem(k) for k in range(tree.topLevelItemCount())]
+    check(f"compound browser lists {len(rows)} shared compounds", len(rows) == len(win.proj["compounds"]))
+    nested = next(r for r in rows if r.childCount() and r.child(0).data(0, Qt.UserRole)[2])
+    win.compounds._double(nested.child(0), 0)
     app.processEvents()
-    check(f"double-click opened the nested compound ({len(win.path_ids)} levels deep)", len(win.path_ids) == 2)
-    win.compounds._clicked(tree.topLevelItem(0), 0)
+    check(f"double-clicking a nested use opened it ({len(win.path_ids)} levels deep)", len(win.path_ids) == 2)
+    rows = [tree.topLevelItem(k) for k in range(tree.topLevelItemCount())]     # (rebuilt on opening)
+    top = next(r for r in rows if r.childCount() and not r.child(0).data(0, Qt.UserRole)[2])
+    win.compounds._clicked(top.child(0), 0)
     app.processEvents()
-    check("click went back to the main timeline with that compound selected",
+    check("clicking a use went back to the main timeline with that compound selected",
           win.path_ids == [] and tl.selected is not None and tl.selected["type"] == "compound")
     finish()
 

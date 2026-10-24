@@ -11,6 +11,15 @@ slider changes the track height; dragging the line under a track header resizes 
 alone. Ctrl+D clears the selection. Dragging a picture clip above the top row, or a sound clip
 below the bottom row, puts it on a new track.
 
+Time selection (as in FL Studio): drag with the right button anywhere on the timeline to
+select a span of time (it snaps like clips do); playback then starts at its beginning and
+loops inside it, and it is the range a marked export uses. Ctrl+Shift+D clears it. A right
+click without dragging opens the menu.
+
+The selected clip shows its keyframes as diamonds along its bottom edge; drag one sideways
+to move every keyframe at that time (it snaps to frames and to the playhead), click it to
+go there.
+
 Audio and video clips show their waveform (scaled by the clip volume and fades). Track
 headers have mute / solo buttons (sound) and a hide button (pictures).
 """
@@ -25,8 +34,8 @@ from .. import curves, edit, project, waveform
 
 US = 1_000_000
 MEDIA_MIME = "application/x-tesetoa-media"
-COLORS = {"video": "#2a7f8f", "image": "#2a7f8f", "compound": "#6b4fa3",
-          "text": "#a8742a", "audio": "#3d7f45"}
+COLORS = {"video": "#5c5c64", "image": "#5c5c64", "compound": "#6e6e78",     # greys: colour is kept
+          "text": "#4c4c54", "audio": "#46464d"}                                # for keyframes / playhead
 RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140
 BTN = 18                                             # header button size
 MIN_H, MAX_H = 22, 240                               # track heights
@@ -42,11 +51,14 @@ class Timeline(QWidget):
     seekRequested = Signal(int)                      # frame
     clipSelected = Signal(object)                    # clip dict or None (the primary selection)
     groupMoveRequested = Signal(list, int)           # clip ids, shift us
+    keyMoveRequested = Signal(str, int, int)         # clip id, keyframe clip time from, to (us)
+    marksChanged = Signal()                          # the time selection (mark_in / mark_out) changed
     moveRequested = Signal(str, int, str)            # clip id, start us, track id
     trimRequested = Signal(str, str, int)            # clip id, "start" | "end", time us
     trackAction = Signal(str, str)                   # action, track id
     clipAction = Signal(str, str)                    # action, clip id
     mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
+    compoundDropped = Signal(str, str, int)          # compound id, track id or "", start us
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
     peaksReady = Signal(str)                         # emitted from the waveform thread
     vzoomChanged = Signal(float)
@@ -298,9 +310,9 @@ class Timeline(QWidget):
             b = self._x(((self.mark_out if self.mark_out is not None else
                           self.proj["duration_us"] / US * self.fps)) / self.fps)
             a, b = max(a, HEADER_W), max(b, HEADER_W)
-            p.fillRect(QRectF(a, 0, b - a, RULER_H), QColor(47, 214, 200, 70))
-            p.fillRect(QRectF(a, self.height() - 3, b - a, 3), QColor(47, 214, 200, 160))
-            p.setPen(QPen(QColor("#2fd6c8"), 2))
+            p.fillRect(QRectF(a, 0, b - a, RULER_H), QColor(255, 255, 255, 70))
+            p.fillRect(QRectF(a, self.height() - 3, b - a, 3), QColor(255, 255, 255, 160))
+            p.setPen(QPen(QColor("#e6e6e6"), 2))
             if self.mark_in is not None and a > HEADER_W:
                 p.drawLine(int(a), 0, int(a), RULER_H)
             if self.mark_out is not None and b > HEADER_W:
@@ -343,27 +355,27 @@ class Timeline(QWidget):
             d = self.drag
             h = self.row_h(d["row"])
             if d.get("new") == "top":                   # landing on a new top track
-                p.fillRect(QRectF(HEADER_W, RULER_H, w - HEADER_W, 3), QColor("#2fd6c8"))
+                p.fillRect(QRectF(HEADER_W, RULER_H, w - HEADER_W, 3), QColor("#e6e6e6"))
                 y = RULER_H - h + 2
             elif d.get("new") == "bottom":              # landing on a new last audio track
-                p.fillRect(QRectF(HEADER_W, self.rows_end, w - HEADER_W, 3), QColor("#2fd6c8"))
+                p.fillRect(QRectF(HEADER_W, self.rows_end, w - HEADER_W, 3), QColor("#e6e6e6"))
                 y = self.rows_end + 2
             else:
                 y = self.tops[d["row"]]
             self._draw_clip(p, dragged, y, d["start"], d["end"] - d["start"], ghost=True,
                             track=self.rows[d["row"]], h=h)
         if self.band is not None:
-            p.setPen(QPen(QColor("#2fd6c8"), 1, Qt.DashLine))
-            p.setBrush(QColor(47, 214, 200, 35))
+            p.setPen(QPen(QColor("#e6e6e6"), 1, Qt.DashLine))
+            p.setBrush(QColor(255, 255, 255, 35))
             p.drawRect(self.band)
         if self.drop_at is not None:
             row, t = self.drop_at
             dx = self._x(t / US)
-            p.setPen(QPen(QColor("#2fd6c8"), 2, Qt.DashLine))
+            p.setPen(QPen(QColor("#e6e6e6"), 2, Qt.DashLine))
             p.drawLine(int(dx), RULER_H, int(dx), self.height())
             if row is not None:
                 p.fillRect(QRectF(HEADER_W, self.tops[row], w - HEADER_W, self.row_h(row) - 2),
-                           QColor(47, 214, 200, 30))
+                           QColor(255, 255, 255, 30))
         p.restore()
         x = self._x(self.pos / self.fps)
         if x >= HEADER_W:
@@ -372,6 +384,8 @@ class Timeline(QWidget):
 
     @staticmethod
     def clip_label(c):
+        if c.get("compound") and not c.get("named"):
+            return c["compound"].get("name") or c.get("name") or "複合片段"
         if c.get("named") or not c.get("text"):
             return c.get("name") or c["type"]
         return c["text"]["content"]
@@ -380,10 +394,10 @@ class Timeline(QWidget):
     def _draw_button(p, flag, r, on):
         p.save()
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor({"muted": "#c0453f", "solo": "#d0a020", "hidden": "#c0453f"}[flag]) if on
+        p.setBrush(QColor("#e6e6e6") if on
                    else QColor("#2c2c31"))
         p.drawRoundedRect(r, 3, 3)
-        ink = QColor("#ffffff") if on else QColor("#a0a0a6")
+        ink = QColor("#111114") if on else QColor("#a0a0a6")
         p.setPen(QPen(ink, 1.3))
         cx, cy = r.center().x(), r.center().y()
         if flag == "solo":
@@ -492,17 +506,42 @@ class Timeline(QWidget):
                 lr.setBottom(wt - 1 if r.height() > 40 else r.bottom() - 9)
             p.drawText(lr, Qt.AlignVCenter, label)
         if c["id"] == self.selected_id and not ghost:
-            # keyframes of the selected clip, as small diamonds along its bottom edge
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor("#ffb020"))
+            # keyframes of the selected clip, as diamonds along its bottom edge
+            d = self.drag if self.drag and self.drag["mode"] == "key" and self.drag["clip"] is c else None
+            p.setPen(QPen(QColor("#111114"), 1))
             for k in edit.key_times(c):
-                kx = self._x((start + k) / US)
+                moving = d is not None and abs(k - d["t0"]) <= edit.KEY_TOL_US
+                kx = self._x((start + (d["t"] if moving else k)) / US)
                 if HEADER_W <= kx <= w:
-                    ky = r.bottom() - 4
-                    p.drawPolygon([QPointF(kx, ky - 4), QPointF(kx + 4, ky), QPointF(kx, ky + 4), QPointF(kx - 4, ky)])
+                    ky = r.bottom() - 5
+                    p.setBrush(QColor("#ffffff") if moving else QColor("#ffb020"))
+                    p.drawPolygon([QPointF(kx, ky - 5), QPointF(kx + 5, ky), QPointF(kx, ky + 5), QPointF(kx - 5, ky)])
 
     # -- mouse ----------------------------------------------------------------------------------
+    def _key_hit(self, pos):
+        """(clip, keyframe clip time) of the selected clip's diamond under pos, or (None, None)."""
+        c = self.selected
+        if c is None:
+            return None, None
+        row = next((i for i, t in enumerate(self.rows) if c in t["clips"]), None)
+        if row is None:
+            return None, None
+        ky = self.tops[row] + 3 + (self.row_h(row) - 8) - 5
+        if abs(pos.y() - ky) > 7:
+            return None, None
+        best = None
+        for k in edit.key_times(c):
+            dx = abs(pos.x() - self._x((c["start_us"] + k) / US))
+            if dx <= 7 and (best is None or dx < best[0]):
+                best = (dx, k)
+        return (c, best[1]) if best else (None, None)
+
     def mousePressEvent(self, e):
+        if self.proj and e.button() == Qt.RightButton and e.position().x() >= HEADER_W:
+            # right-drag selects time; a right click without moving opens the menu (on release)
+            self.drag = {"clip": None, "mode": "region", "moved": False, "pos": e.position(),
+                         "t0": self._snap(max(0.0, self._sec(e.position().x())) * US, None)}
+            return
         if self.proj and e.button() == Qt.MiddleButton:     # drag the view
             self.drag = {"clip": None, "mode": "pan", "moved": False, "pos": e.position(),
                          "s": self.scroll_s, "y": self.scroll_y}
@@ -523,6 +562,10 @@ class Timeline(QWidget):
                         self.trackAction.emit("toggle:" + flag, self.rows[row]["id"])
             return
         pos = e.position()
+        kc, kt = self._key_hit(pos)
+        if kc is not None and not e.modifiers():
+            self.drag = {"clip": kc, "mode": "key", "t0": kt, "t": kt, "x0": pos.x(), "moved": False}
+            return
         row, c, zone = self._hit(pos)
         adding = bool(e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
         if c is None:
@@ -557,8 +600,38 @@ class Timeline(QWidget):
             if self.proj and self._edge_at(pos) is not None:
                 self.setCursor(Qt.SizeVerCursor)
                 return
+            if self.proj and self._key_hit(pos)[0] is not None:
+                self.setCursor(Qt.SizeHorCursor)
+                return
             _, c, zone = self._hit(pos) if self.proj else (None, None, None)
             self.setCursor(Qt.SizeHorCursor if zone in ("start", "end") else Qt.ArrowCursor)
+            return
+        if d["mode"] == "region":
+            if not d["moved"] and abs(pos.x() - d["pos"].x()) < DRAG_PX:
+                return
+            d["moved"] = True
+            t = self._snap(max(0.0, self._sec(pos.x())) * US, None)
+            a, b = sorted((d["t0"], t))
+            self.mark_in = round(a / US * self.fps)
+            self.mark_out = max(self.mark_in, round(b / US * self.fps) - 1)
+            self.marksChanged.emit()
+            self.update()
+            return
+        if d["mode"] == "key":
+            if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX:
+                return
+            d["moved"] = True
+            c = d["clip"]
+            frame = US / self.fps
+            t = d["t0"] + (pos.x() - d["x0"]) / self.px_per_s * US
+            g = c["start_us"] + t                                   # snap on the timeline's frames
+            play = self.pos / self.fps * US
+            g = play if abs(g - play) < SNAP_PX / self.px_per_s * US else round(g / frame) * frame
+            others = [k for k in edit.key_times(c) if abs(k - d["t0"]) > edit.KEY_TOL_US]
+            lo = max([k + frame for k in others if k < d["t0"]], default=0)
+            hi = min([k - frame for k in others if k > d["t0"]], default=c["duration_us"])
+            d["t"] = int(round(min(max(g - c["start_us"], lo), hi)))
+            self.update()
             return
         if d["mode"] == "pan":
             self.scroll_s = max(0.0, d["s"] - (pos.x() - d["pos"].x()) / self.px_per_s)
@@ -634,6 +707,17 @@ class Timeline(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
+        if d and d["mode"] == "region":
+            if not d["moved"]:
+                self._menu(e.position().toPoint(), e.globalPosition().toPoint())
+            return
+        if d and d["mode"] == "key":
+            if d["moved"] and d["t"] != d["t0"]:
+                self.keyMoveRequested.emit(d["clip"]["id"], int(d["t0"]), int(d["t"]))
+            elif not d["moved"]:                        # a click goes to the keyframe
+                self.seekRequested.emit(round((d["clip"]["start_us"] + d["t0"]) / US * self.fps))
+            self.update()
+            return
         if d and d["mode"] == "pan":
             self.setCursor(Qt.ArrowCursor)
         if not d or d["mode"] in ("seek", "resize", "pan"):
@@ -693,19 +777,34 @@ class Timeline(QWidget):
         tid = self.rows[row]["id"] if row is not None else ""
         start = int(max(0.0, self._sec(pos.x())) * US)
         for ident in bytes(e.mimeData().data(MEDIA_MIME)).decode().split(","):
-            if ident.startswith("m"):
+            if ident.startswith("cmp:"):                 # from the compound browser
+                self.compoundDropped.emit(ident[4:], tid, start)
+            elif ident.startswith("m"):
                 self.mediaDropped.emit(ident, tid, start)
         e.acceptProposedAction()
         self.update()
 
+    def clear_marks(self):
+        if self.mark_in is not None or self.mark_out is not None:
+            self.mark_in = self.mark_out = None
+            self.marksChanged.emit()
+            self.update()
+
     def contextMenuEvent(self, e):
+        # menus from the mouse open on the right button's release (a right drag selects
+        # time instead); the keyboard's menu key still opens one here
+        if e.reason() == e.Reason.Mouse and e.pos().x() >= HEADER_W:
+            return
+        self._menu(e.pos(), e.globalPos())
+
+    def _menu(self, pos, global_pos):
         if not self.proj:
             return
-        row, c, _ = self._hit(e.pos())
+        row, c, _ = self._hit(QPointF(pos))
         if row is None:
             return
         menu = QMenu(self)
-        if e.pos().x() < HEADER_W:
+        if pos.x() < HEADER_W:
             tr = self.rows[row]
             tid = tr["id"]
             items = [("重新命名軌道…", "rename"), ("軌道顏色…", "color"), ("預設顏色", "nocolor"), None]
@@ -725,7 +824,7 @@ class Timeline(QWidget):
             items = [("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
                      ("在播放頭分割", "split"), ("刪除", "delete")]
             if c["type"] == "compound":
-                items = [("編輯複合片段", "enter"), None] + items
+                items = [("編輯複合片段", "enter"), ("設為獨立（不再共用）", "unique"), None] + items
             if c["type"] == "video":
                 items = [("分離音訊", "detach_audio"), None] + items
             for it in items:
@@ -735,7 +834,7 @@ class Timeline(QWidget):
                     menu.addAction(it[0], lambda a=it[1]: self.clipAction.emit(a, c["id"]))
         else:
             return
-        menu.exec(e.globalPos())
+        menu.exec(global_pos)
 
     def mouseDoubleClickEvent(self, e):
         if not self.proj:

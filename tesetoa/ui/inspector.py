@@ -363,7 +363,7 @@ class Inspector(QWidget):
         on = [edit.key_at(p, t) is not None for p, t in zip(ps, ts)]
         btn.setText(KEY_ON if all(on) else ("◈" if any(on) else KEY_OFF))
         btn.setStyleSheet("color: #ffb020;" if any(on) else
-                          ("color: #8fd9d3;" if any(curves.is_animated(p) for p in ps) else ""))
+                          ("color: #c9933a;" if any(curves.is_animated(p) for p in ps) else ""))
         btn.setEnabled(any(0 <= t <= k["duration_us"] for k, t in zip(clips, ts)))
 
     @staticmethod

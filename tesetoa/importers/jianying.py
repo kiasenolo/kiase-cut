@@ -179,7 +179,7 @@ class Importer:
                         float(self.d["fps"]))
         p["tracks"] = self.tracks(self.d)
         p["duration_us"] = self.d.get("duration") or project.end_us(p["tracks"])
-        return p
+        return project.normalize(p)
 
 
 def import_draft(path, remap=()):

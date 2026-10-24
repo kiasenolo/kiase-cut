@@ -322,7 +322,7 @@ class Preview(QWidget):
             else:
                 self._paint_transform(p, box, k)
         if self.guides:
-            p.setPen(QPen(QColor("#2fd6c8"), 1.5 * k, Qt.DashLine))
+            p.setPen(QPen(QColor("#e6e6e6"), 1.5 * k, Qt.DashLine))
             for axis, v in self.guides:
                 if axis == "x":
                     p.drawLine(QPointF(v, 0), QPointF(v, self.H))
@@ -343,7 +343,7 @@ class Preview(QWidget):
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(QColor("#ffffff"), 2 * k))
         p.drawPolygon(QPolygonF(pts))
-        p.setPen(QPen(QColor("#2fd6c8"), 1 * k))
+        p.setPen(QPen(QColor("#e6e6e6"), 1 * k))
         p.drawPolygon(QPolygonF(pts))
         top = (pts[0] + pts[1]) / 2
         rh = box.rot_handle(k)
@@ -351,7 +351,7 @@ class Preview(QWidget):
         p.drawLine(top, rh)
         for pt in pts:
             self._handle(p, pt, k)
-        self._handle(p, rh, k, round_=True, color="#2fd6c8")
+        self._handle(p, rh, k, round_=True, color="#e6e6e6")
         if self.drag and self.drag["kind"] == "rotate":
             p.setPen(QColor("#ffffff"))
             f = p.font()

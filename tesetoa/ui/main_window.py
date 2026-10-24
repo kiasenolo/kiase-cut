@@ -31,7 +31,7 @@ from .timeline import US, Timeline, timecode
 STYLE = """
 QWidget { background: #1b1b1f; color: #e6e6e6; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC', sans-serif; }
 QMenuBar, QMenu { background: #202024; }
-QMenu::item:selected, QMenuBar::item:selected { background: #2c6e72; }
+QMenu::item:selected, QMenuBar::item:selected { background: #4a4a52; }
 QPushButton { background: #2a2a30; border: 1px solid #3a3a42; border-radius: 4px; padding: 4px 12px; }
 QPushButton:hover { background: #33333b; }
 QPushButton:disabled { color: #666; }
@@ -39,16 +39,25 @@ QSplitter::handle { background: #111114; }
 QDoubleSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #26262c; border: 1px solid #3a3a42; border-radius: 3px; padding: 2px; }
 QDoubleSpinBox:disabled { color: #777; }
 QTreeWidget { background: #1f1f23; border: none; }
-QTreeWidget::item:selected { background: #2c6e72; }
+QTreeWidget::item:selected { background: #4a4a52; }
 QHeaderView::section { background: #202024; border: none; padding: 3px; }
 QLabel#time { font-family: Consolas, monospace; color: #cfcfd4; }
-QLabel#title { color: #8fd9d3; font-weight: 600; }
-QLabel#crumb { color: #ffb020; font-weight: 600; }
+QLabel#title { color: #ffffff; font-weight: 600; }
+QLabel#crumb { color: #e6e6e6; font-weight: 600; }
 QTabWidget::pane { border: none; }
-QTabBar::tab { background: #202024; padding: 5px 14px; border: none; }
-QTabBar::tab:selected { background: #2c6e72; }
+QTabBar::tab { background: #202024; color: #9a9aa0; padding: 5px 14px; border: none; }
+QTabBar::tab:selected { background: #3a3a42; color: #ffffff; }
 QMessageBox, QInputDialog, QColorDialog, QDialog { background: #1b1b1f; }
 QMessageBox QLabel { color: #e6e6e6; background: transparent; }
+QSlider::groove:horizontal { height: 4px; background: #3a3a42; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #9a9aa0; border-radius: 2px; }
+QSlider::handle:horizontal { background: #e6e6e6; width: 10px; margin: -4px 0; border-radius: 5px; }
+QScrollBar { background: #1b1b1f; }
+QScrollBar::handle { background: #3a3a42; border-radius: 3px; min-height: 20px; min-width: 20px; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QCheckBox::indicator:checked { background: #e6e6e6; border: 1px solid #e6e6e6; }
+QCheckBox::indicator:unchecked { background: #26262c; border: 1px solid #4a4a52; }
+QCheckBox::indicator { width: 12px; height: 12px; border-radius: 2px; }
 """
 
 
@@ -115,6 +124,8 @@ class MainWindow(QMainWindow):
         self.compounds = CompoundPanel()
         self.compounds.showRequested.connect(self.show_compound)
         self.compounds.openRequested.connect(self.open_compound_path)
+        self.compounds.renameRequested.connect(self.rename_compound)
+        self.compounds.deleteRequested.connect(lambda kid: self.apply_root("刪除複合片段", edit.delete_compound, kid))
         self.left = QTabWidget()
         self.left.addTab(self.library, "素材庫")
         self.left.addTab(self.compounds, "複合片段")
@@ -196,9 +207,12 @@ class MainWindow(QMainWindow):
         tl.trimRequested.connect(
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
         tl.groupMoveRequested.connect(lambda ids, dt: self.apply("移動", edit.move_many, ids, dt))
+        tl.marksChanged.connect(self.marks_changed)
+        tl.keyMoveRequested.connect(lambda cid, a, b: self.apply("移動關鍵幀", edit.move_keys_at, cid, a, b))
         tl.trackAction.connect(self.on_track_action)
         tl.clipAction.connect(self.on_clip_action)
         tl.mediaDropped.connect(self.place_media)
+        tl.compoundDropped.connect(self.place_compound)
         tl.newTrackRequested.connect(
             lambda cid, start, top: self.apply("移到新軌道", edit.move_to_new_track, cid, start, top))
         tools = QHBoxLayout()
@@ -284,6 +298,7 @@ class MainWindow(QMainWindow):
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
         add(m, "標記出點", "O", lambda: self.set_mark("out"))
         add(m, "清除標記", "Alt+X", lambda: self.set_mark(None))
+        add(m, "取消選區", "Ctrl+Shift+D", lambda: self.set_mark(None))
         m.addSeparator()
         add(m, "全螢幕預覽", "F", self.toggle_fullscreen)
         add(m, "返回上一層", "Esc", self.leave_compound)
@@ -379,6 +394,8 @@ class MainWindow(QMainWindow):
 
     def _switch_level(self, pos, select=None):
         self.player.worker.set_playing(False)
+        self.timeline.mark_in = self.timeline.mark_out = None      # selections belong to a level
+        self.marks_changed()
         self.timeline.set_project(self.view())
         if select is not None:
             self.timeline.select(select)
@@ -461,6 +478,7 @@ class MainWindow(QMainWindow):
         self.path_ids = []
         self.fps = proj["fps"]
         self.timeline.mark_in = self.timeline.mark_out = None
+        self.player.worker.set_loop(None)
         self.timeline.set_peaks(waveform.Peaks(self.cache_dir(), on_ready=self.timeline.peaksReady.emit))
         self.timeline.set_project(proj)
         self.library.set_library(library.lib(proj))
@@ -775,6 +793,8 @@ class MainWindow(QMainWindow):
                 self.apply("片段顏色", edit.set_clip_color, cid, col.name())
         elif action == "nocolor":
             self.apply("片段顏色", edit.set_clip_color, cid, None)
+        elif action == "unique":
+            self.apply_root("設為獨立", lambda root: edit.make_unique(root, self.container(root), cid))
         elif action == "detach_audio":
             self.apply("分離音訊", edit.detach_audio, cid)
         elif action == "split":
@@ -829,6 +849,19 @@ class MainWindow(QMainWindow):
         what = "資料夾（內容會移到上一層）" if ident.startswith("f") else "素材（時間軸上的片段不受影響）"
         if QMessageBox.question(self, "刪除", f"要從素材庫刪除這個{what}嗎？") == QMessageBox.Yes:
             self.apply_root("刪除素材", library.delete, ident)
+
+    def place_compound(self, kid, track_id, start_us):
+        if not self.proj:
+            return
+        self.apply_root("加入複合片段",
+                        lambda root: edit.place_compound(root, self.container(root), kid, track_id or None, start_us),
+                        select=lambda c: c["id"])
+
+    def rename_compound(self, kid):
+        comp = self.proj["compounds"][kid]
+        name, ok = QInputDialog.getText(self, "複合片段名稱", "名稱", text=comp.get("name") or "")
+        if ok:
+            self.apply_root("重新命名複合片段", edit.rename_compound, kid, name)
 
     def place_media(self, item_id, track_id, start_us):
         if not self.proj:
@@ -940,10 +973,17 @@ class MainWindow(QMainWindow):
         fs.showFullScreen()
 
     # -- range and export -------------------------------------------------------------------------
+    def marks_changed(self):
+        """The time selection: playback loops inside it."""
+        tl = self.timeline
+        if tl.mark_in is None and tl.mark_out is None:
+            self.player.worker.set_loop(None)
+        else:
+            a = tl.mark_in or 0
+            b = tl.mark_out if tl.mark_out is not None else max(a, self.length - 1)
+            self.player.worker.set_loop((a, b))
+
     def set_mark(self, which):
-        if self.path_ids:
-            self.statusBar().showMessage("匯出範圍標在主時間軸上", 3000)
-            return
         tl = self.timeline
         if which is None:
             tl.mark_in = tl.mark_out = None
@@ -956,6 +996,7 @@ class MainWindow(QMainWindow):
             if tl.mark_in is not None and tl.mark_in > self.pos:
                 tl.mark_in = None
         tl.update()
+        self.marks_changed()
 
     def export(self):
         if not self.proj:

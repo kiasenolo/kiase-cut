@@ -23,6 +23,15 @@ selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a 
 Ctrl+Z / Ctrl+Y undo and redo. Right-click a track header or clip to rename it or give it
 a colour (double-click a track name to rename).
 
+Time selection, as in FL Studio: drag with the right button anywhere on the timeline to
+select a span (it snaps to clip edges and the playhead); playback starts at it and loops
+inside it, and a marked export uses it. Ctrl+Shift+D (or Alt+X) clears it; a right click
+without dragging opens the menu. I / O still set its ends at the playhead.
+
+Keyframes on the timeline: the selected clip shows its keyframes as orange diamonds; drag
+one sideways to move every keyframe at that time (snapping to frames and the playhead),
+click it to go there.
+
 Navigation (timeline and curve editor alike): the wheel moves up and down, Shift+wheel
 left and right, Ctrl+wheel zooms time around the mouse, the middle button drags the view.
 
@@ -38,8 +47,13 @@ track name to size that track alone (double-click it to reset).
 
 Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
 the breadcrumb above the timeline shows where you are, Esc / 返回上一層 goes back.
-The 複合片段 tab beside the media library lists every compound clip, nested ones under
-their parent: click one to select it on its timeline, double-click to open it.
+Compounds are reusable: each one is stored once in the project and any number of compound
+clips (on any timeline, nested too) show it, so editing it inside one clip changes every
+clip that shows it. The 複合片段 tab beside the media library lists them with how often
+they are used and where; drag one onto the timeline to use it again, click a use to select
+it, double-click to open it, right-click to rename (or delete an unused one). A clip's
+「設為獨立（不再共用）」 gives it its own copy. Older projects and Jianying drafts are
+converted on opening: identical copies become one shared compound.
 
 Media library (left): import files (Ctrl+Shift+I), organise them in folders by dragging,
 and drag media onto the timeline (or double-click to add at the playhead). Importing a
@@ -144,6 +158,7 @@ python tools/smoke_curves.py PROJECT.tesetoa.json out/ # curve editor: drag, cub
 python tools/smoke_audio.py PROJECT.tesetoa.json out/  # waveforms, mute / solo / hide, new tracks
 python tools/smoke_select.py PROJECT.tesetoa.json out/ # multi-select, track heights, compound list
 python tools/smoke_handles.py PROJECT.tesetoa.json out/ # scale / rotate / mask handles on the preview
+python tools/smoke_reuse.py PROJECT.tesetoa.json out/  # shared compounds, timeline ◆ drag, time selection
 python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
 python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
 ```

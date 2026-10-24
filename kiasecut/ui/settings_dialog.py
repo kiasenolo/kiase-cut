@@ -1,5 +1,5 @@
-"""Settings: where the Library lives, the default place for new projects, backups, and a
-check that the filter engine works on this computer."""
+"""Settings: where the Library lives, the default place for new projects, backups, GPU
+acceleration, and a check that the filter engine works on this computer."""
 import os
 
 from PySide6.QtCore import QUrl
@@ -7,11 +7,11 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout)
 
-from .. import fx, library
+from .. import fx, gpu, library
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent, library_dir, default_library, project_dir, autosave_min):
+    def __init__(self, parent, library_dir, default_library, project_dir, autosave_min, use_gpu=True):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(600)
@@ -58,6 +58,14 @@ class SettingsDialog(QDialog):
         self.autosave.setSuffix(" 分鐘")
         form.addRow("自動備份間隔", self.autosave)
 
+        self.gpu = QCheckBox("使用 GPU 加速（NVIDIA：匯出用 NVENC 編碼，HEVC / AV1 / VP9 影片用 GPU 解碼）")
+        self.gpu.setChecked(use_gpu)
+        self.gpu_note = QLabel(gpu.describe())
+        self.gpu_note.setStyleSheet("color: #9a9aa0;")
+        self.gpu.toggled.connect(self._gpu_toggled)
+        form.addRow("GPU 加速", self.gpu)
+        form.addRow("", self.gpu_note)
+
         row = QHBoxLayout()
         self.engine = QLabel("")
         self.engine.setWordWrap(True)
@@ -97,6 +105,11 @@ class SettingsDialog(QDialog):
         self.copy.setVisible(moved)
         self.buttons.button(QDialogButtonBox.Ok).setEnabled(bool(new))
 
+    def _gpu_toggled(self, on):
+        was, gpu.enabled = gpu.enabled, on
+        self.gpu_note.setText(gpu.describe())
+        gpu.enabled = was                         # (applied on 確定)
+
     def _test_engine(self):
         try:
             err = fx.check("builtin:blur")
@@ -115,4 +128,5 @@ class SettingsDialog(QDialog):
     def values(self):
         return {"library": library.norm(self.library.text().strip()),
                 "copy_library": self.copy.isVisible() and self.copy.isChecked(),
-                "project_dir": self.projects.text().strip(), "autosave_min": self.autosave.value()}
+                "project_dir": self.projects.text().strip(), "autosave_min": self.autosave.value(),
+                "gpu": self.gpu.isChecked()}

@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
 
-from .. import build, curves, edit, fonts, fx, library, project, renderexport, userlib, waveform, workspace
+from .. import build, curves, edit, fonts, fx, gpu, library, project, renderexport, userlib, waveform, workspace
 from ..client import EngineClient
 from ..importers import jianying
 from .compounds import CompoundPanel
@@ -391,6 +391,7 @@ class MainWindow(QMainWindow):
         tl.clipAction.connect(self.on_clip_action)
         tl.mediaDropped.connect(self.place_media)
         tl.compoundDropped.connect(self.place_compound)
+        tl.replaceDropped.connect(self.replace_source)
         tl.filterDropped.connect(self.on_filter_dropped)
         tl.filesDropped.connect(lambda paths, tid, start: self.drop_files(
             paths, self.library.current_folder(), (tid, start)))
@@ -498,6 +499,7 @@ class MainWindow(QMainWindow):
         self.clock = QTimer(self, interval=5000)        # time spent on the project; autosave
         self.clock.timeout.connect(self._tick)
         self.clock.start()
+        gpu.enabled = str(self.settings().value("gpu", True)).lower() not in ("false", "0")
         self.autosave_timer = QTimer(self, interval=self.autosave_min() * 60 * 1000)
         self.autosave_timer.timeout.connect(self._autosave)
         self.autosave_timer.start()
@@ -740,7 +742,10 @@ class MainWindow(QMainWindow):
 
     def enter_compound(self, cid):
         _, c = edit.find(self.container(), cid)
-        inner = round((self.playhead_us() - c["start_us"] + c.get("source_start_us", 0)) / US * self.fps)
+        if project.is_static(c):                         # its picture is the moment still_us
+            inner = round(c["compound"].get("still_us", 0) / US * self.fps)
+        else:
+            inner = round((self.playhead_us() - c["start_us"] + c.get("source_start_us", 0)) / US * self.fps)
         self.path_ids.append(cid)
         self._switch_level(max(0, inner))
 
@@ -751,7 +756,10 @@ class MainWindow(QMainWindow):
             return
         cid = self.path_ids.pop()
         _, c = edit.find(self.container(), cid)
-        outer = round((c["start_us"] - c.get("source_start_us", 0)) / US * self.fps) + self.pos
+        if project.is_static(c):                         # (its time does not map onto the outer one)
+            outer = round(c["start_us"] / US * self.fps)
+        else:
+            outer = round((c["start_us"] - c.get("source_start_us", 0)) / US * self.fps) + self.pos
         self._switch_level(max(0, outer), select=c)
 
     def _switch_level(self, pos, select=None):
@@ -1530,6 +1538,19 @@ class MainWindow(QMainWindow):
         if action in ("copy", "cut", "duplicate"):
             {"copy": self.do_copy, "cut": lambda: self.do_copy(cut=True), "duplicate": self.do_duplicate}[action]()
             return
+        if action == "new_static":                            # (cid is the track's id here)
+            at = self.playhead_us()
+            self.apply_root("新增靜態片段", lambda root: edit.new_static(root, self.container(root), at, cid),
+                            select=lambda c: c["id"])
+            return
+        if action in ("make_static", "make_compound"):
+            sel = self.timeline.selected_ids
+            ids = sorted(sel) if cid in sel else [cid]
+            static, at = action == "make_static", self.playhead_us()
+            self.apply_root("建立靜態片段" if static else "建立複合片段",
+                            lambda root: edit.make_compound(root, self.container(root), ids, at, static),
+                            select=lambda c: c["id"])
+            return
         _, c = edit.find(self.container(), cid)
         if action == "enter":
             self.enter_compound(cid)
@@ -1560,7 +1581,7 @@ class MainWindow(QMainWindow):
         if not self.ensure_project():
             return
         files, _ = QFileDialog.getOpenFileNames(self, "匯入素材", "",
-                                                "Media (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.mp4 *.mov *.mkv "
+                                                "Media (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.svg *.mp4 *.mov *.mkv "
                                                 "*.avi *.webm *.mp3 *.wav *.m4a *.aac *.flac *.ogg);;All files (*)")
         if files:
             self.import_files(files, folder)
@@ -1736,6 +1757,27 @@ class MainWindow(QMainWindow):
         self.apply_root("加入素材",
                         lambda root: library.place(self.container(root), root, item_id, track_id or None, start_us),
                         select=lambda c: c["id"])
+
+    def replace_source(self, ident, cid):
+        """Media dropped on a clip with Alt held: the clip shows (or plays) it instead, keeping
+        its place, length, look and keyframes."""
+        if not self.proj:
+            return
+        if ident.startswith("cmp:"):
+            self.apply_root("替換素材", lambda root: edit.replace_with_compound(root, self.container(root), cid, ident[4:]),
+                            select=lambda c: c["id"])
+            return
+        if ident.startswith("mu"):                         # an item of the user's Library
+            key, it = self.ulib.find(ident)
+            if it is None or key not in ("videos", "images", "sounds"):
+                self.statusBar().showMessage("替換素材：只能換成圖片、影片或聲音", 4000)
+                return
+        else:
+            try:
+                it = library.item(self.proj, ident)
+            except edit.EditError:
+                return
+        self.apply("替換素材", edit.replace_media, cid, dict(it), select=lambda c: c["id"])
 
     # -- inspector / preview overlay --------------------------------------------------------------
     def refresh_inspector(self):
@@ -1958,17 +2000,26 @@ class MainWindow(QMainWindow):
                                            progress, cache)
             xml = build.build(snapshot, cache, os.path.join(cache, "export.mlt"),   # originals, no proxies
                               size=(fmt["width"], fmt["height"]), fps=fps)
-            eng = EngineClient(16, 16)        # its own process; the preview stays usable
-            try:
-                return eng.export(xml, out, progress, threads=os.cpu_count() or 4,
-                                  **{"in": first, "out": last}, **opts)
-            finally:
-                eng.close()
+            enc = gpu.mlt_video_opts(opts, (fmt["width"], fmt["height"]))
+            for attempt in ([enc] if enc else []) + [None]:          # NVENC first; x264 if it fails
+                eng = EngineClient(16, 16)        # its own process; the preview stays usable
+                try:
+                    r = eng.export(xml, out, progress, threads=os.cpu_count() or 4,
+                                   **{"in": first, "out": last}, **dict(opts, **(attempt or {})))
+                except RuntimeError:
+                    if attempt is None:
+                        raise
+                    continue
+                finally:
+                    eng.close()
+                if attempt is None or (os.path.exists(out) and os.path.getsize(out) > 1024):
+                    return dict(r, encoder="NVENC (GPU)" if attempt else "x264 (CPU)")
 
         def done(r):
             prog.close()
             extra = ("\n\n" + "\n".join(r["errors"])) if r.get("errors") else ""
-            QMessageBox.information(self, "匯出完成", f"{out}\n{fmt['width']}×{fmt['height']}，{fps:g} fps\n"
+            enc = f"，{r['encoder']}" if r.get("encoder") else ""
+            QMessageBox.information(self, "匯出完成", f"{out}\n{fmt['width']}×{fmt['height']}，{fps:g} fps{enc}\n"
                                     f"耗時 {r['elapsed']:.0f} 秒{extra}")
 
         self.run_task(work, done, lambda m: (prog.close(), QMessageBox.critical(self, "匯出失敗", m)),
@@ -1993,13 +2044,15 @@ class MainWindow(QMainWindow):
 
     def open_settings(self):
         dlg = SettingsDialog(self, self.ulib.root if self.ulib else self.library_root(), self.default_library_root(),
-                             self.default_location(), self.autosave_min())
+                             self.default_location(), self.autosave_min(), gpu.enabled)
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
         s = self.settings()
         s.setValue("project_dir", v["project_dir"])
         s.setValue("autosave_min", v["autosave_min"])
+        s.setValue("gpu", v["gpu"])
+        gpu.enabled = v["gpu"]
         self.autosave_timer.setInterval(v["autosave_min"] * 60 * 1000)
         if v["library"] != (self.ulib.root if self.ulib else None):
             self.change_library_root(v["library"], v["copy_library"])
@@ -2204,7 +2257,7 @@ class MainWindow(QMainWindow):
 
     IMPORT_FILTERS = {
         "videos": "影片 (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.flv *.wmv *.ts *.mts)",
-        "images": "圖片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff)",
+        "images": "圖片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff *.svg)",
         "sounds": "音效 (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus *.wma)",
         "filters": "GLSL 濾鏡 (*.glsl)", "textstyles": "文字樣式 (*.json)"}
 

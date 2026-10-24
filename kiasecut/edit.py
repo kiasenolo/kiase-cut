@@ -142,7 +142,7 @@ def source_length(c):
     """How long the clip's source runs, or None when it can be stretched freely."""
     if c["type"] in ("video", "audio"):
         return (c.get("media") or {}).get("duration_us")
-    if c["type"] == "compound":
+    if c["type"] == "compound" and not project.is_static(c):       # a static one is a picture
         return c["compound"].get("duration_us")
     return None
 
@@ -206,7 +206,7 @@ def trim_start(proj, clip_id, new_start_us):
     e = end(c)
     rng = free_range(t, c["start_us"], e, ignore=c)
     lo = rng[0]
-    if c["type"] in ("video", "audio", "compound"):
+    if c["type"] in ("video", "audio", "compound") and not project.is_static(c):
         lo = max(lo, c["start_us"] - c.get("source_start_us", 0))    # cannot go before the source
     new_start_us = int(min(max(new_start_us, lo), e - MIN_US))
     d = new_start_us - c["start_us"]
@@ -839,6 +839,84 @@ def add_filter_clip(proj, ref, at_us, duration_us=FILTER_DEFAULT_US, track_id=No
     return clip
 
 
+# -- replacing a clip's source ----------------------------------------------------------------------
+REPLACEABLE = ("image", "video", "compound")          # clips whose picture can be swapped
+
+
+def _source_check(c, picture):
+    if c["type"] == "audio" and picture:
+        raise EditError("聲音片段只能換成聲音")
+    if c["type"] in REPLACEABLE and not picture:
+        raise EditError("畫面片段只能換成圖片、影片或複合片段")
+    if c["type"] not in REPLACEABLE + ("audio",):
+        raise EditError("文字和濾鏡片段沒有素材可以替換")
+
+
+def _fit_source(c, length):
+    """Keep a clip inside a source `length` us long: its cut point stays when it fits, else
+    it starts at the source's start and is shortened to the source."""
+    if not length:
+        return
+    s = c.get("source_start_us", 0)
+    if s + c["duration_us"] > length:
+        c["source_start_us"] = int(max(0, min(s, length - c["duration_us"])))
+        c["duration_us"] = int(min(c["duration_us"], length - c["source_start_us"]))
+    if c["duration_us"] < MIN_US:
+        raise EditError("素材太短")
+
+
+def replace_media(proj, clip_id, it):
+    """Give a clip another source (a media library item {kind, path, name, width, height,
+    duration_us}), keeping its place, length, look, mask, effects and keyframes (Jianying's
+    替換素材). A picture or video replaces a picture, video or compound clip; a sound
+    replaces a sound. A clip longer than its new source is shortened to it."""
+    _, c = find(proj, clip_id)
+    kind = it["kind"]
+    _source_check(c, kind in ("image", "video"))
+    for k in ("compound", "compound_id", "timeline_id"):
+        c.pop(k, None)
+    c["type"] = kind
+    c["media"] = {"path": it["path"]}
+    if kind in ("image", "video"):
+        c["media"].update(width=it["width"], height=it["height"])
+    if kind == "image":
+        c["source_start_us"] = 0
+        for k in ("volume", "fade_in_us", "fade_out_us"):
+            c.pop(k, None)
+    else:
+        c["media"]["duration_us"] = it.get("duration_us")
+        c.setdefault("volume", 1.0)
+        _fit_source(c, it.get("duration_us"))
+    if not c.get("named"):
+        c["name"] = it.get("name") or c["media"]["path"].replace("\\", "/").rsplit("/", 1)[-1]
+    return c
+
+
+def replace_with_compound(root, container, clip_id, ref):
+    """Make a picture, video or compound clip show compound (or timeline) ref instead,
+    keeping its place, length and look. A static compound fits any length."""
+    _, c = find(container, clip_id)
+    _source_check(c, True)
+    try:
+        comp = project.content(root, ref)
+    except (StopIteration, KeyError):
+        raise EditError("unknown compound or timeline") from None
+    if project.contains(root, ref, _container_id(root, container)):
+        raise EditError("a timeline or compound cannot show itself")
+    for k in ("media", "volume", "fade_in_us", "fade_out_us", "compound_id", "timeline_id"):
+        c.pop(k, None)
+    c["type"] = "compound"
+    c["timeline_id" if ref.startswith("tl") else "compound_id"] = ref
+    c["compound"] = comp
+    c["source_start_us"] = 0
+    if not comp.get("static"):
+        _fit_source(c, project.end_us(comp["tracks"]) if ref.startswith("tl") else
+                    comp.get("duration_us") or project.end_us(comp["tracks"]))
+    if not c.get("named"):
+        c["name"] = comp.get("name") or "複合片段"
+    return c
+
+
 # -- names and colours ----------------------------------------------------------------------------
 def rename_track(proj, track_id, name):
     track_by_id(proj, track_id)["name"] = str(name).strip() or track_by_id(proj, track_id)["kind"]
@@ -1035,9 +1113,13 @@ def place_compound(root, container, ref, track_id, start_us):
         raise EditError("unknown compound or timeline") from None
     if project.contains(root, ref, _container_id(root, container)):
         raise EditError("a timeline or compound cannot show itself")
-    # a timeline is as long as its content; a compound keeps its own length
-    dur = int((project.end_us(comp["tracks"]) if ref.startswith("tl")
-               else comp.get("duration_us") or project.end_us(comp["tracks"])) or MIN_US)
+    # a timeline is as long as its content; a compound keeps its own length; a static one is
+    # placed like a picture
+    if comp.get("static"):
+        dur = STILL_DEFAULT_US
+    else:
+        dur = int((project.end_us(comp["tracks"]) if ref.startswith("tl")
+                   else comp.get("duration_us") or project.end_us(comp["tracks"])) or MIN_US)
     clip = {"id": new_clip_id(), "type": "compound", "name": comp.get("name") or "複合片段",
             "start_us": max(0, int(start_us)), "duration_us": dur, "source_start_us": 0,
             ("timeline_id" if ref.startswith("tl") else "compound_id"): ref, "compound": comp,
@@ -1061,6 +1143,68 @@ def place_compound(root, container, ref, track_id, start_us):
     track["clips"].append(clip)
     _sort(track)
     return clip
+
+
+STILL_DEFAULT_US = 5_000_000          # a new static clip lasts as long as a new picture
+
+
+def make_compound(root, container, clip_ids, at_us=None, static=False):
+    """Move clips of the open level into a new shared compound and leave one clip showing it
+    in their place: over their whole span, on the topmost picture track they used (or a new
+    one above it when that has no room). The tracks they were on come along, in order.
+    static makes a static compound (靜態片段): its clip shows the content as it is at at_us
+    (the playhead, kept inside the span) and works like a picture from then on."""
+    picked = [find(container, cid) for cid in dict.fromkeys(clip_ids)]
+    if not picked:
+        raise EditError("先在時間軸上選取片段")
+    if static and any(c["type"] == "audio" for _, c in picked):
+        raise EditError("靜態片段只放畫面：選取裡有聲音片段")
+    ids = {c["id"] for _, c in picked}
+    s0 = min(c["start_us"] for _, c in picked)
+    span = max(end(c) for _, c in picked) - s0
+    used = [t for t in container["tracks"] if any(t is tt for tt, _ in picked)]       # bottom first
+    inner = []
+    for t in used:
+        moved = [c for c in t["clips"] if c["id"] in ids]
+        t["clips"] = [c for c in t["clips"] if c["id"] not in ids]
+        for c in moved:
+            c["start_us"] -= s0
+        inner.append(dict({k: v for k, v in t.items() if k != "clips"}, clips=moved))
+    size = root if container is root or "width" not in container else container
+    comps = root.setdefault("compounds", {})
+    n = sum(1 for k in comps.values() if bool(k.get("static")) == static) + 1
+    comp = {"name": f"{'靜態片段' if static else '複合片段'} {n}", "width": size.get("width", 1920),
+            "height": size.get("height", 1080), "duration_us": int(span), "tracks": inner}
+    if static:
+        t = span // 2 if at_us is None else at_us - s0
+        comp.update(static=True, still_us=int(min(max(t, 0), max(0, span - 1))))
+    kid = project.new_compound_id(root)
+    comps[kid] = comp
+    clip = {"id": new_clip_id(), "type": "compound", "name": comp["name"], "start_us": int(s0),
+            "duration_us": int(span), "source_start_us": 0, "compound_id": kid, "compound": comp,
+            "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
+    top = next((t for t in reversed(used) if t["kind"] != "audio"), None)
+    if top is None or free_range(top, s0, s0 + span) is None:
+        at = container["tracks"].index(top) + 1 if top is not None else _visual_slot(container)
+        n = sum(1 for t in container["tracks"] if t["kind"] == "video") + 1
+        top = {"id": new_track_id(container), "kind": "video", "name": f"video {n}", "clips": []}
+        container["tracks"].insert(at, top)
+    top["clips"].append(clip)
+    _sort(top)
+    project.link(root)
+    return clip
+
+
+def new_static(root, container, at_us, track_id=None):
+    """An empty static clip at at_us (enter it to build its picture)."""
+    comps = root.setdefault("compounds", {})
+    n = sum(1 for k in comps.values() if k.get("static")) + 1
+    size = root if container is root or "width" not in container else container
+    kid = project.new_compound_id(root)
+    comps[kid] = {"name": f"靜態片段 {n}", "width": size.get("width", 1920), "height": size.get("height", 1080),
+                  "duration_us": STILL_DEFAULT_US, "static": True, "still_us": 0,
+                  "tracks": [{"id": "t0", "kind": "video", "name": "V1", "clips": []}]}
+    return place_compound(root, container, kid, track_id, at_us)
 
 
 def make_unique(root, container, clip_id):

@@ -10,7 +10,8 @@ The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ct
 zooms time around the mouse, the middle button drags the view. Alt+wheel or the toolbar
 slider changes the track height; dragging the line under a track header resizes that track
 alone. Ctrl+D clears the selection. Dragging a picture clip above the top row, or a sound clip
-below the bottom row, puts it on a new track.
+below the bottom row, puts it on a new track. Media dropped on a clip with Alt held replaces
+that clip's source (the clip lights up while it would).
 
 Time selection (as in FL Studio): drag with the right button anywhere on the timeline to
 select a span of time (it snaps like clips do); playback then starts at its beginning and
@@ -35,7 +36,7 @@ import math
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
-from PySide6.QtWidgets import QMenu, QScrollBar, QWidget
+from PySide6.QtWidgets import QApplication, QMenu, QScrollBar, QWidget
 
 from .. import curves, edit, project, waveform
 
@@ -43,7 +44,7 @@ US = 1_000_000
 MEDIA_MIME = "application/x-kiasecut-media"
 FX_MIME = "application/x-kiasecut-fx"                # a filter dragged from the VFX tab: its ref
 COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
-          "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e"}                              # DaVinci Resolve
+          "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e", "static": "#3f7378"}                              # DaVinci Resolve
 ROW_BG = QColor("#1f1f21")
 
 
@@ -88,6 +89,7 @@ class Timeline(QWidget):
     compoundDropped = Signal(str, str, int)          # compound id, track id or "", start us
     filterDropped = Signal(str, str, str, int)       # filter ref, clip id or "", track id or "", start us
     filesDropped = Signal(list, str, int)            # file manager paths, track id or "", start us
+    replaceDropped = Signal(str, str)                # media id (library item, or "cmp:<id>"), clip id: Alt + drop
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
     clipDragging = Signal(str, int, int)             # clip id, start us, duration us: while dragging
     peaksReady = Signal(str)                         # emitted from the waveform thread
@@ -113,6 +115,7 @@ class Timeline(QWidget):
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
         self.drop_clip = None                      # clip a filter from the VFX tab would go onto
+        self.drop_replace = False                  # drop_clip would get the dragged media as its source (Alt)
         self.tops = []                             # y of each row (on screen)
         self.vzoom = 1.0                           # track height factor
         self.heights = {}                          # track id -> height set by dragging its edge
@@ -469,7 +472,12 @@ class Timeline(QWidget):
                 x1 = self._x((self.drop_clip["start_us"] + self.drop_clip["duration_us"]) / US)
                 p.setPen(QPen(QColor("#ffb020"), 2))
                 p.setBrush(QColor(255, 176, 32, 40))
-                p.drawRoundedRect(QRectF(x0, self.tops[row] + 2, max(2.0, x1 - x0), self.row_h(row) - 6), 3, 3)
+                box = QRectF(x0, self.tops[row] + 2, max(2.0, x1 - x0), self.row_h(row) - 6)
+                p.drawRoundedRect(box, 3, 3)
+                if self.drop_replace:                   # (written on the part of the clip in view)
+                    shown = box.intersected(QRectF(HEADER_W, box.top(), w - HEADER_W, box.height()))
+                    p.setPen(QColor("#ffd34d"))
+                    p.drawText(shown.adjusted(6, 0, -8, 0), Qt.AlignVCenter | Qt.AlignRight, "替換素材")
         if self.drop_at is not None:
             row, t = self.drop_at
             dx = self._x(t / US)
@@ -577,7 +585,8 @@ class Timeline(QWidget):
         if x1 < HEADER_W or x0 > w:
             return
         r = QRectF(max(x0, HEADER_W) + 0.5, y + 3, max(1.0, x1 - max(x0, HEADER_W) - 1), h - 8)
-        col = QColor(c.get("color") or COLORS.get(c["type"], "#555"))      # (not the track's colour)
+        kind = "static" if project.is_static(c) else c["type"]
+        col = QColor(c.get("color") or COLORS.get(kind, "#555"))      # (not the track's colour)
         sel = c["id"] in self.selected_ids
         # a light colour gets dark writing (decided on the plain colour, so
         # selecting a clip never flips it; dimmed clips are dark anyway)
@@ -610,7 +619,7 @@ class Timeline(QWidget):
             p.setPen(QColor("#141416") if bright else QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
             label = self.clip_label(c).replace("\n", " ")
             if c["type"] == "compound":
-                label = ("⧉ " if c.get("timeline_id") else "▣ ") + label
+                label = ("⧉ " if c.get("timeline_id") else "◧ " if kind == "static" else "▣ ") + label
             elif c["type"] == "filter":
                 label = "✦ " + label
             elif c.get("effects"):
@@ -1024,7 +1033,8 @@ class Timeline(QWidget):
 
     def dragEnterEvent(self, e):
         if self._accepts(e.mimeData()):
-            e.acceptProposedAction()
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
 
     def dragMoveEvent(self, e):
         if not self._accepts(e.mimeData()):
@@ -1032,11 +1042,27 @@ class Timeline(QWidget):
         pos = e.position()
         if self.proj:
             self.drop_at = (self._row_at(pos.y()), max(0.0, self._sec(pos.x())) * US)
-            self.drop_clip = self._fx_target(pos) if e.mimeData().hasFormat(FX_MIME) else None
+            self.drop_replace = self._alt(e) and e.mimeData().hasFormat(MEDIA_MIME)
+            if e.mimeData().hasFormat(FX_MIME):
+                self.drop_clip = self._fx_target(pos)
+            elif self.drop_replace:
+                self.drop_clip = self._replace_target(pos)
+            else:
+                self.drop_clip = None
             if self.drop_clip is not None:                 # onto a clip: no time line, the clip is lit
                 self.drop_at = None
-        e.acceptProposedAction()
+        e.setDropAction(Qt.CopyAction)                     # (Alt must not turn the drop into a link)
+        e.accept()
         self.update()
+
+    @staticmethod
+    def _alt(e):
+        return bool((e.modifiers() | QApplication.queryKeyboardModifiers()) & Qt.AltModifier)
+
+    def _replace_target(self, pos):
+        """The clip whose source media dropped at pos with Alt would replace."""
+        _, c, _ = self._hit(pos)
+        return c if c is not None and c["type"] in edit.REPLACEABLE + ("audio",) else None
 
     def _fx_target(self, pos):
         """The clip a filter dropped at pos goes onto (pictures, texts, compounds, filter clips)."""
@@ -1045,11 +1071,21 @@ class Timeline(QWidget):
 
     def dragLeaveEvent(self, e):
         self.drop_at = self.drop_clip = None
+        self.drop_replace = False
         self.update()
 
     def dropEvent(self, e):
         self.drop_at = self.drop_clip = None
+        self.drop_replace = False
         pos = e.position()
+        target = self._replace_target(pos) if self.proj and self._alt(e) else None
+        if target is not None and e.mimeData().hasFormat(MEDIA_MIME):     # Alt: replace that clip's source
+            ident = bytes(e.mimeData().data(MEDIA_MIME)).decode().split(",")[0]
+            self.replaceDropped.emit(ident, target["id"])
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+            self.update()
+            return
         if e.mimeData().hasFormat(FX_MIME):                  # a filter from the VFX tab
             if self.proj:
                 ref = bytes(e.mimeData().data(FX_MIME)).decode("utf-8")
@@ -1119,7 +1155,12 @@ class Timeline(QWidget):
                      ("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
                      ("在播放頭分割", "split"), ("刪除", "delete")]
             if c["type"] == "compound":
-                items = [("編輯複合片段", "enter"), ("設為獨立（不再共用）", "unique"), None] + items
+                items = [("編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
+                         ("設為獨立（不再共用）", "unique"), None] + items
+            if all(k["type"] != "audio" for k in self.selected_clips()):
+                items += [None, ("建立靜態片段", "make_static"), ("建立複合片段", "make_compound")]
+            else:
+                items += [None, ("建立複合片段", "make_compound")]
             if c["type"] == "video":
                 items = [("分離音訊", "detach_audio"), None] + items
             for it in items:
@@ -1129,6 +1170,9 @@ class Timeline(QWidget):
                     menu.addAction(it[0], lambda a=it[1]: self.clipAction.emit(a, c["id"]))
         else:                                          # a free spot on a track
             menu.addAction("貼上到播放頭", lambda: self.clipAction.emit("paste", ""))
+            if row is not None and self.rows[row]["kind"] != "audio":
+                tid = self.rows[row]["id"]
+                menu.addAction("新增空白靜態片段（在播放頭）", lambda: self.clipAction.emit("new_static", tid))
         menu.exec(global_pos)
 
     def mouseDoubleClickEvent(self, e):

@@ -15,9 +15,9 @@ import uuid
 
 from PIL import Image
 
-from . import edit, project, workspace
+from . import edit, project, svgimage, workspace
 
-IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
+IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".svg"}
 IMAGE_DEFAULT_US = 5_000_000
 MEDIA_EXT = IMAGE_EXT | {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".ts", ".mts",
                          ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
@@ -47,6 +47,12 @@ def _id(prefix):
 def probe(path):
     """kind / size / duration of a media file."""
     ext = os.path.splitext(path)[1].lower()
+    if svgimage.is_svg(path):                        # vector: its own size, drawn sharp at any scale
+        try:
+            w, h = svgimage.size(path)
+        except ValueError as exc:
+            raise edit.EditError(str(exc)) from None
+        return {"kind": "image", "width": w, "height": h}
     if ext in IMAGE_EXT:
         with Image.open(path) as im:
             return {"kind": "image", "width": im.width, "height": im.height}

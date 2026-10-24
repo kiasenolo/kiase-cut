@@ -28,7 +28,9 @@ clip     {id, type: image | video | audio | text | compound, name,
                      DaVinci Resolve): they show another timeline of the project, live
 compound {name, width, height, duration_us, tracks}   reusable content: any number of compound
          clips (anywhere, nested too) show the same one, so editing it changes all of them.
-         Its children use compound time.
+         Its children use compound time. optional: static, still_us - a static compound
+         (靜態片段) always shows its content at still_us, like a picture: its clips can be
+         any length and make no sound.
 Numbers that animate are curve dicts, see curves.py.
 
 In memory every compound clip also has "compound": the very dict in project.compounds (so
@@ -307,6 +309,12 @@ def normalize(p):
         visit(tl["tracks"])
     p["version"] = VERSION
     return link(p)
+
+
+def is_static(c):
+    """Whether clip c shows a static compound (靜態片段): one still moment of its content,
+    used like a picture."""
+    return c.get("type") == "compound" and bool((c.get("compound") or {}).get("static"))
 
 
 def ref_of(c):

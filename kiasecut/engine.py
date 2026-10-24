@@ -24,6 +24,7 @@ from multiprocessing import shared_memory
 from .mltlib import AUDIO_S16, IMAGE_RGBA, P, Mlt
 
 RATE, CHANNELS = 48000, 2
+ENCODER_KEYS = ("rc", "cq", "vb", "tune")      # more encoder settings passed through (NVENC's)
 
 
 class Engine:
@@ -72,7 +73,9 @@ class Engine:
         return reply
 
     def media_frame(self, path, us, fps, w, h, shm):
-        """One picture of a media file at source time us, for the live preview renderer."""
+        """One picture of a media file at source time us, for the live preview renderer. It
+        comes at the file's own size (MLT's scaler shifts the colours of scaled pictures); the
+        caller's shared buffer must hold it."""
         m = self.m
         key = (path, fps)
         if key not in self.media:
@@ -95,6 +98,9 @@ class Engine:
         size = cw.value * ch.value * 4
         if shm not in self.shm:
             self.shm[shm] = shared_memory.SharedMemory(name=shm)
+        if size > self.shm[shm].size:
+            m.frame_close(fr)
+            raise ValueError(f"{cw.value}×{ch.value} 的影片超過預覽能顯示的大小")
         C.memmove((C.c_char * size).from_buffer(self.shm[shm].buf), buf, size)
         m.frame_close(fr)
         return {"w": cw.value, "h": ch.value}
@@ -107,6 +113,7 @@ class Engine:
               preset=opts.get("preset", "medium"), acodec=opts.get("acodec", "aac"),
               ab=opts.get("ab", "320k"), ar=RATE, channels=CHANNELS,
               real_time=-max(1, opts.get("threads", 4)), terminate_on_pause=1)
+        m.set(cons, **{k: opts[k] for k in ENCODER_KEYS if k in opts})
         first = max(0, int(opts.get("in", 0)))
         last = min(info["length"] - 1, int(opts.get("out", info["length"] - 1)))
         if last < first:

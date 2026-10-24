@@ -93,11 +93,28 @@ clip that shows it. The 複合片段 tab beside the media library lists them wit
 they are used and where; drag one onto the timeline to use it again, click a use to select
 it, double-click to open it, right-click to rename (or delete an unused one). A clip's
 「設為獨立（不再共用）」 gives it its own copy. Older projects and Jianying drafts are
-converted on opening: identical copies become one shared compound.
+converted on opening: identical copies become one shared compound. Right-click selected
+clips > 建立複合片段 puts them into a new compound (one clip takes their place).
+
+Static clips (靜態片段, ◧): a picture built in the editor. Right-click selected picture
+clips > 建立靜態片段 turns them into one, frozen as they look at the playhead; right-click
+a free spot on a picture track > 新增空白靜態片段 starts an empty one. On the timeline it
+behaves like a picture: any length, no sound, drawn once and reused. Double-click it to
+edit its content (the playhead opens at its frozen moment); every clip that uses it
+changes with it, as with compounds.
 
 Media library (left): import files (Ctrl+Shift+I), organise them in folders by dragging,
 and drag media onto the timeline (or double-click to add at the playhead). Importing a
-Jianying draft fills the library with the media it uses.
+Jianying draft fills the library with the media it uses. SVG files work like any picture
+and are drawn at the size they are shown, so they stay sharp at any zoom (the MLT export
+gets a PNG drawn at the clip's largest size).
+
+Replacing a clip's source (替換素材): hold Alt while dropping media (from the library, the
+Library tab or the 複合片段 tab) on a clip: the clip lights up with 替換素材, and on release
+it shows the new media in its place, keeping its position, length, transform, mask,
+effects and keyframes. Pictures, videos and compounds replace pictures, videos and
+compound clips; sounds replace sounds. A clip longer than a new video or sound is
+shortened to it.
 
 Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
 canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
@@ -161,6 +178,13 @@ clip above the top row, or a sound clip below the bottom row, to put it on a new
 分離音訊 in a video clip's menu moves its sound onto an audio track. Preview and export
 follow the same rules (a solo track silences the others on its level).
 
+GPU acceleration (設定 > GPU 加速, on by default): with an NVIDIA card, exports are encoded
+with NVENC (several times faster than x264 on real footage; pictures larger than 4096 px,
+or a card that refuses, fall back to x264), and HEVC / AV1 / VP9 videos are decoded and
+scaled on the card. Videos play from ffmpeg streams (videoreader.py) that read the file
+front to back instead of seeking for every frame: a 4K clip went from ~15 to 30 fps in the
+preview, and the filter export twice as fast. Filters already ran on the GPU.
+
 Export (Ctrl+E): the whole film or the range marked with I / O (Alt+X clears), at high,
 standard or small-file quality, at any frame rate (10 / 25 / 30 / 40 / 60 / 100 fps or a
 custom one) and any size as a multiple of the project's resolution (0.25× / 0.5× / 1× / 2× /
@@ -205,6 +229,8 @@ folder (File > Save as).
 | `masks.py` | line / mirror / circle / rectangle masks as MLT splines (or baked mattes) |
 | `render.py`, `audiomix.py` | live preview: frames drawn with QPainter, audio mixed with numpy |
 | `waveform.py` | cached audio peaks for timeline waveforms |
+| `videoreader.py`, `gpu.py` | streamed video pictures for the preview; GPU decoding / NVENC |
+| `svgimage.py` | SVG pictures drawn at the size they are shown |
 | `build.py` | project → MLT XML for export (cached text images) |
 | `mltlib.py`, `engine.py`, `client.py` | MLT through ctypes, in its own process |
 | `ui/` | PySide6 window, timeline, preview player |
@@ -214,7 +240,8 @@ each frame straight from the project model (render.py, audiomix.py), so edits an
 show on the next frame and playback runs at 60 fps; it was checked frame by frame against
 the MLT output. Exports build an MLT document (build.py) and render it in a separate
 engine process: an MLT crash cannot take the editor down, and MLT's Qt never shares a
-process with PySide6's Qt. The engine also supplies video pictures to the preview.
+process with PySide6's Qt. The engine also supplies single video pictures to the preview
+(after a jump); while playing, they come from ffmpeg streams (videoreader.py).
 
 ## Accuracy check
 

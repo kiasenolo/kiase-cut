@@ -48,7 +48,7 @@ def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0):
                 continue
             if c["type"] in ("audio", "video") and c.get("media"):
                 out.append(Source(c, s, (lo, hi), g))
-            elif c["type"] == "compound":
+            elif c["type"] == "compound" and not project.is_static(c):     # a static one is a picture
                 out += sources(c["compound"]["tracks"], s - c.get("source_start_us", 0), (lo, hi), g)
     return out
 

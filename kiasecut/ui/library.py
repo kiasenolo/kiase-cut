@@ -4,9 +4,19 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMenu, QPushButton, QStyle,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
+from .. import svgimage
+
 MIME = "application/x-kiasecut-media"
 ROLE_ID = Qt.UserRole
 KIND_NAMES = {"image": "圖片", "video": "影片", "audio": "音訊", "filter": "濾鏡", "textstyle": "文字樣式"}
+
+
+def svg_pixmap(path, w):
+    """A thumbnail of an SVG (an empty pixmap when it cannot be read)."""
+    try:
+        return QPixmap.fromImage(svgimage.raster(path, w))
+    except ValueError:
+        return QPixmap()
 
 
 def glyph_icon(text, color):
@@ -152,7 +162,7 @@ class LibraryPanel(QWidget):
             return self.icons.setdefault("#textstyle", glyph_icon("Aa", "#7c5574"))
         if it["kind"] == "image":
             if it["path"] not in self.icons:
-                pm = QPixmap(it["path"])
+                pm = svg_pixmap(it["path"], 160) if svgimage.is_svg(it["path"]) else QPixmap(it["path"])
                 self.icons[it["path"]] = QIcon(pm.scaled(80, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                                                if not pm.isNull() else QPixmap())
             return self.icons[it["path"]]

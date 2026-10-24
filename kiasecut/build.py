@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape
 import numpy as np
 from PIL import Image
 
-from . import curves, masks, project, textlayout
+from . import curves, masks, project, svgimage, textlayout
 
 US = 1_000_000
 TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
@@ -34,11 +34,17 @@ def _hash(*parts):
     return hashlib.sha1(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
+_ffmpeg = []
+
+
 def find_ffmpeg():
-    for c in ("ffmpeg", r"C:\Program Files\Kdenlive\bin\ffmpeg.exe", "/usr/bin/ffmpeg"):
-        if shutil.which(c) or os.path.exists(c):
-            return shutil.which(c) or c
-    return None
+    """ffmpeg's path, or None. Searching PATH takes ~30 ms on Windows, so a find is kept."""
+    if not _ffmpeg:
+        for c in ("ffmpeg", r"C:\Program Files\Kdenlive\bin\ffmpeg.exe", "/usr/bin/ffmpeg"):
+            if shutil.which(c) or os.path.exists(c):
+                _ffmpeg.append(shutil.which(c) or c)
+                break
+    return _ffmpeg[0] if _ffmpeg else None
 
 
 _starts = {}
@@ -299,6 +305,18 @@ class Builder:
             os.replace(out + ".tmp.png", out)
         return out.replace("\\", "/")
 
+    def svg_png(self, path, w, h, zoom):
+        """An SVG drawn as a PNG at the size it is shown (fitted to the frame, times the clip's
+        largest scale), so MLT gets a sharp picture."""
+        st = os.stat(path)
+        k = min(self.W / w, self.H / h) * max(1.0, zoom)
+        out = os.path.join(self.cache, "proxy", _hash("svg", path, st.st_size, st.st_mtime, round(w * k), round(h * k))
+                           + ".png")
+        if not os.path.exists(out):
+            svgimage.raster(path, w * k, h * k).save(out + ".tmp.png")
+            os.replace(out + ".tmp.png", out)
+        return out.replace("\\", "/")
+
     def media_producer(self, path, kind, track):
         """One producer per media file per track; entries cut it with in/out. Opening a long
         recording once per clip made loading take ~30 s."""
@@ -348,7 +366,13 @@ class Builder:
         if t == "image":
             m = c["media"]
             fit = min(self.W / m["width"], self.H / m["height"])
-            pid = self.media_producer(self.proxy(m["path"], m["width"], m["height"]), "image", track)
+            if svgimage.is_svg(m["path"]):
+                tf = c.get("transform", {})
+                zoom = max(curves.max_abs(tf.get("scale", 1.0)), curves.max_abs(tf.get("scale_y", 1.0)))
+                src = self.svg_png(m["path"], m["width"], m["height"], zoom)
+            else:
+                src = self.proxy(m["path"], m["width"], m["height"])
+            pid = self.media_producer(src, "image", track)
             return pid, 0, length, f0, self.visual(c, f0, f1, s_us, None,
                                                   (m["width"] * fit, m["height"] * fit))
         if t in ("video", "audio"):

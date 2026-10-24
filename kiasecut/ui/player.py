@@ -4,6 +4,8 @@ The preview never builds MLT documents: it renders frames straight from a snapsh
 the project, so an edit or a drag shows on the next frame. Exports still go through MLT.
 Scrubbing coalesces requests (only the newest position is drawn). While playing, audio
 from the mixer goes to a QAudioSink whose buffer paces the loop, so audio is the clock.
+Video pictures come from ffmpeg streams while playing (videoreader.py, on the GPU for
+heavy codecs) and from the engine for a single jump.
 """
 import threading
 import time
@@ -14,7 +16,7 @@ from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 
-from .. import render
+from .. import render, videoreader
 from ..audiomix import CHANNELS, RATE, Mixer
 
 PREVIEW_W = 960            # until the preview reports its size
@@ -91,10 +93,15 @@ class Worker(QObject):
 
     # worker thread -----------------------------------------------------------------------
     def _video(self, path, us, w, h):
+        """A video picture: from a streaming reader while playing (videoreader.py), from the
+        engine for a single jump."""
+        img = self.readers.get(path, us, w, h)
+        if img is not None:
+            return img
         try:
             if self.engine is None:
                 from ..client import EngineClient
-                self.engine = EngineClient(1920, 1080)
+                self.engine = EngineClient(3840, 2160)          # the engine sends pictures at their own size (4K fits)
             px, w, h = self.engine.media_frame(path, us, self.view["fps"], w, h)
             return QImage(px, w, h, w * 4, QImage.Format_RGBA8888).copy()
         except Exception as exc:
@@ -104,6 +111,7 @@ class Worker(QObject):
     @Slot()
     def run(self):
         self.view, self.renderer, self.mixer = None, render.Renderer(self._video), None
+        self.readers = videoreader.Readers()
         fmt = QAudioFormat()
         fmt.setSampleRate(RATE)
         fmt.setChannelCount(CHANNELS)
@@ -139,7 +147,7 @@ class Worker(QObject):
                         want = self.pos
                 if playing != was_playing:
                     if playing:
-                        out = sink.start()
+                        out = self._start_sink(sink)
                         self.t0 = time.monotonic()
                         self.shown_n = self.audio_n = 0
                         self.audio_f, self.peaks = None, {}
@@ -152,7 +160,7 @@ class Worker(QObject):
                     self.pos = min(want, self.length - 1)
                     if playing and was_playing:           # a jump while playing: sound and clock start over
                         sink.stop()
-                        out = sink.start()
+                        out = self._start_sink(sink)
                         self.t0 = time.monotonic()
                         self.shown_n = self.audio_n = 0
                         self.audio_f, self.peaks = None, {}
@@ -167,8 +175,17 @@ class Worker(QObject):
                 with self.cv:
                     self.playing = False
         sink.stop()
+        self.readers.close()
         if self.engine:
             self.engine.close()
+
+    def _start_sink(self, sink):
+        """Start the sound output with room for LEAD frames and a few more: a buffer shorter
+        than the lead (30 fps: 6 frames are 200 ms) kept every picture late, so most were
+        skipped (~8 fps)."""
+        per_frame = RATE * CHANNELS * 2 / max(1.0, self.view["fps"] if self.view else 30.0)
+        sink.setBufferSize(max(RATE * CHANNELS * 2 // 8, int(per_frame * (LEAD + 3))))
+        return sink.start()
 
     def _show(self, pos):
         v = self.view

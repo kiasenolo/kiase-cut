@@ -8,7 +8,8 @@ follows the same rules as build.py:
   * position in half-canvas units (y up), clockwise rotation, uniform scale about the
     clip centre; pictures are fitted into the canvas, texts are textlayout images;
   * masks live in material space (they move with the clip), drawn as clip paths;
-  * compound clips render their tracks into a layer first, at time - start + source start.
+  * compound clips render their tracks into a layer first, at time - start + source start;
+    a static compound (靜態片段) always at its still_us, drawn once and reused like a picture.
 QPainter on QImage is usable from any thread, so the player renders off the UI thread.
 """
 import json
@@ -19,7 +20,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 
-from . import curves, fx, masks, project, textlayout
+from . import curves, fx, masks, project, svgimage, textlayout
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
@@ -40,6 +41,7 @@ class Renderer:
         self.video_frame = video_frame
         self.images = {}            # path -> [QImage halved per level] (a mipmap)
         self.texts = {}             # (spec json, scale) -> QImage
+        self.stills = {}            # (static compound content, scale) -> QImage
         self.cache_limit = cache_limit
         self.errors = []            # clips that could not be drawn, reported by the player
         self._fx = None             # filter engine (an OpenGL context of the thread that renders)
@@ -49,7 +51,25 @@ class Renderer:
     def image(self, path, w, h):
         """The image at the smallest mip level at least w x h; the painter scales it the rest
         of the way (less than 2x, so bilinear stays clean). Decoding and smooth scaling happen
-        once per file: animated sizes (zooming compounds) used to redo them every frame."""
+        once per file: animated sizes (zooming compounds) used to redo them every frame.
+        An SVG is drawn afresh at the next power of two at or above the size asked for, so it
+        stays sharp however far it is zoomed."""
+        if svgimage.is_svg(path):
+            side = 2 ** max(6, math.ceil(math.log2(max(w, h, 1))))
+            key = (path, side)
+            im = self.images.get(key)
+            if im is None:
+                try:
+                    sw, sh = svgimage.size(path)
+                    k = side / max(sw, sh)
+                    im = svgimage.raster(path, sw * k, sh * k)
+                except ValueError:
+                    im = QImage(1, 1, QImage.Format_ARGB32_Premultiplied)
+                    im.fill(QColor(255, 0, 255))
+                if len(self.images) >= 48:
+                    self.images.pop(next(iter(self.images)))
+                self.images[key] = im
+            return im
         levels = self.images.get(path)
         if levels is None:
             src = QImage(path)
@@ -77,6 +97,28 @@ class Renderer:
             im = QImage(ImageQt(textlayout.render(spec, scale, canvas_h))).convertToFormat(
                 QImage.Format_ARGB32_Premultiplied)
             self._remember(self.texts, key, im)
+        return im
+
+    STILL_MAX_PX = 4096
+
+    def still(self, comp, k, fps):
+        """A static compound's picture at k px per compound unit (rounded up to a few steps,
+        at most STILL_MAX_PX on its long side): drawn once, then reused while it is unchanged."""
+        cw, ch = comp["width"], comp["height"]
+        k = min(quantize(k), self.STILL_MAX_PX / max(cw, ch))
+        key = (json.dumps(comp["tracks"], sort_keys=True, default=str), comp.get("still_us", 0), cw, ch, round(k, 4))
+        im = self.stills.get(key)
+        if im is None:
+            im = QImage(max(1, math.ceil(cw * k)), max(1, math.ceil(ch * k)), QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent)
+            lp = QPainter(im)
+            lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+            lp.scale(k, k)
+            self.draw_tracks(lp, comp["tracks"], cw, ch, fps, comp.get("still_us", 0), k)
+            lp.end()
+            if len(self.stills) >= 24:
+                self.stills.pop(next(iter(self.stills)))
+            self.stills[key] = im
         return im
 
     def _remember(self, cache, key, value):
@@ -163,8 +205,14 @@ class Renderer:
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
             k = fit * max(abs(sx), abs(sy), 0.01) * px_per_unit       # layer px per compound unit
+            if comp.get("static"):
+                pic = self.still(comp, k, fps)
+                draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
+                disp = (bw, bh)
+            else:
+                draw = None
 
-            def draw(q=p):
+            def draw_live(q=p):
                 # only the part that lands on the target: a compound zoomed in 6x used to
                 # get a 6000 px layer of which a 960 px window was shown
                 inv, ok = q.worldTransform().inverted()
@@ -186,6 +234,7 @@ class Renderer:
                 self.draw_tracks(lp, comp["tracks"], cw, ch, fps, t + c.get("source_start_us", 0), k)
                 lp.end()
                 q.drawImage(QRectF(vis.left(), vis.top(), layer.width() / k * fit, layer.height() / k * fit), layer)
+            draw = draw or draw_live
             disp = (bw, bh)
         else:
             return

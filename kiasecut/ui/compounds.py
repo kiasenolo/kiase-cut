@@ -4,6 +4,8 @@ Timelines are listed first: drag one into another timeline to nest it (as in DaV
 Resolve; the clip shows that timeline live), double-click to open it.
 
 Each compound is listed once with how many clips show it; under it, where it is used.
+Static compounds (◧ 靜態片段) are pictures built in the editor: their clips show one moment
+of the content and can be any length.
 Drag a compound onto the timeline to place another clip showing it (every clip shows the
 same content, so editing one edits all). Click a use to select it on its timeline,
 double-click a use (or the compound) to open it. Right-click to rename or delete a compound
@@ -85,11 +87,13 @@ class CompoundPanel(QWidget):
         for kid, comp in rows:
             uses = self.uses.get(kid, [])
             is_tl = kid.startswith("tl")
-            label = ("⧉ " if is_tl else "▣ ") + (comp.get("name") or "複合片段")
+            static = bool(comp.get("static"))
+            label = ("⧉ " if is_tl else "◧ " if static else "▣ ") + (comp.get("name") or "複合片段")
             it = QTreeWidgetItem([label + (f"  ×{len(uses)}" if uses or not is_tl else ""), "",
-                                  f"{(comp.get('duration_us') or 0) / US:.2f}s"])
+                                  "靜態" if static else f"{(comp.get('duration_us') or 0) / US:.2f}s"])
             it.setData(0, Qt.UserRole, ("def", kid))
             it.setToolTip(0, "時間線：拖進另一條時間線使用（巢狀）；按兩下打開" if is_tl
+                          else "靜態片段：像圖片一樣使用，長度隨意；按兩下進入編輯它的畫面" if static
                           else "拖到時間軸上使用；按兩下進入編輯")
             it.setFlags(it.flags() | Qt.ItemIsDragEnabled)
             if kid in open_ids:

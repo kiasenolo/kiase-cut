@@ -1,7 +1,7 @@
 """Export through the live renderer (the same picture as the preview), for projects with filters.
 
-The MLT export (build.py) cannot run GLSL filters, blend modes or keyframed mask shapes /
-inverts, so a project that uses any of them is rendered here:
+The MLT export (build.py) cannot run GLSL filters, blend modes, keyframed mask shapes /
+inverts or static clips, so a project that uses any of them is rendered here:
 every frame is drawn by render.Renderer (filters run on the GPU), piped to ffmpeg together
 with the mixed sound (audiomix.Mixer, as in the preview). Runs on a worker thread.
 """
@@ -12,7 +12,7 @@ import wave
 
 from PySide6.QtGui import QImage
 
-from . import audiomix, curves, project, render
+from . import audiomix, curves, gpu, project, render, videoreader
 from .build import find_ffmpeg
 
 US = 1_000_000
@@ -29,8 +29,9 @@ def _blend_or_mask_keys(c):
 
 def needs_renderer(proj):
     """Whether the project needs this export rather than MLT's: a clip has an effect, is a
-    filter clip, has a blend mode or a keyframed mask shape / invert."""
-    return any(c["type"] == "filter" or c.get("effects") or _blend_or_mask_keys(c) for c in project.all_clips(proj))
+    filter clip or a static clip, has a blend mode or a keyframed mask shape / invert."""
+    return any(c["type"] == "filter" or c.get("effects") or project.is_static(c) or _blend_or_mask_keys(c)
+               for c in project.all_clips(proj))
 
 
 def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=None, cancelled=lambda: False):
@@ -61,9 +62,13 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
             wf.writeframes(mix.mix(f, fps))
 
     engine = None
+    readers = videoreader.Readers()          # an export reads every video front to back: streamed
 
     def video(path, us, w, h):
         nonlocal engine
+        img = readers.get(path, us, w, h)
+        if img is not None:
+            return img
         if engine is None:
             from .client import EngineClient
             engine = EngineClient(CAP_W, CAP_H)
@@ -71,12 +76,11 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
         px, rw, rh = engine.media_frame(path, us, fps, max(1, int(w * k)), max(1, int(h * k)))
         return QImage(px, rw, rh, rw * 4, QImage.Format_RGBA8888).copy()
 
-    CAP_W, CAP_H = max(W, 1920), max(H, 1080)
+    CAP_W, CAP_H = max(W, 3840), max(H, 2160)      # (the engine sends pictures at their own size)
     renderer = render.Renderer(video)
     cmd = [ffmpeg, "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{W}x{H}", "-r", f"{fps:g}",
-           "-i", "-", "-i", wav, "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-crf", str(opts.get("crf", 18)),
-           "-preset", opts.get("preset", "medium"), "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "320k",
-           "-shortest", "-movflags", "+faststart", out]
+           "-i", "-", "-i", wav, "-map", "0:v", "-map", "1:a", *gpu.ffmpeg_video_args(opts, (W, H)),
+           "-c:a", "aac", "-b:a", "320k", "-shortest", "-movflags", "+faststart", out]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for i, f in enumerate(range(first, last + 1)):
@@ -95,6 +99,7 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
         proc.kill()
         raise
     finally:
+        readers.close()
         if engine is not None:
             engine.close()
         try:
@@ -105,4 +110,5 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
         errors = sorted(set(renderer.errors))[:5]
     else:
         errors = []
-    return {"done": out, "elapsed": time.time() - t0, "errors": errors}
+    return {"done": out, "elapsed": time.time() - t0, "errors": errors,
+            "encoder": "NVENC (GPU)" if gpu.nvenc_for((W, H)) else "x264 (CPU)"}

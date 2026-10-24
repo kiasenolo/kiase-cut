@@ -69,7 +69,9 @@ def run():
     check(f"a volume line is drawn on the voice clip at {db(v0):+.1f} dB", tl._vol_hit(QPoint(x, y)) is not None)
     QTest.mousePress(tl, Qt.LeftButton, Qt.NoModifier, QPoint(x, y))
     QTest.mouseMove(tl, QPoint(x, y - 2))
+    tl.repaint()                                        # (painting mid-drag used to crash)
     QTest.mouseMove(tl, QPoint(x, y - 4))
+    tl.repaint()
     QTest.mouseRelease(tl, Qt.LeftButton, Qt.NoModifier, QPoint(x, y - 4))
     app.processEvents()
     v1 = edit.find(win.proj, voice["id"])[1]["volume"]
@@ -106,6 +108,7 @@ def run():
     hit = tl._vol_hit(QPoint(kx, ky))
     QTest.mousePress(tl, Qt.LeftButton, Qt.NoModifier, QPoint(kx, ky))
     QTest.mouseMove(tl, QPoint(kx, ky - 5))
+    tl.repaint()
     QTest.mouseMove(tl, QPoint(kx, ky - 10))
     QTest.mouseRelease(tl, Qt.LeftButton, Qt.NoModifier, QPoint(kx, ky - 10))
     app.processEvents()

@@ -63,20 +63,22 @@ class Bars(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         w, h = self.width(), self.height()
-        p.fillRect(self.rect(), QColor("#18181b"))
+        p.fillRect(self.rect(), QColor("#1c1c1e"))
         top, hh = 4, h - 8
         bw = (w - 6) / 2
         for i in range(2):
             x = 2 + i * (bw + 2)
-            p.fillRect(QRectF(x, top, bw, hh), QColor("#232328"))
+            p.fillRect(QRectF(x, top, bw, hh), QColor("#101012"))
+            # the usual meter colours: green, yellow from -12 dB, red from -3 dB (and clipping)
             y = self._y(self.level[i], top, hh)
-            y0 = self._y(0.0, top, hh)
-            p.fillRect(QRectF(x, max(y, y0), bw, top + hh - max(y, y0)), QColor("#cfcfd4"))
-            if y < y0:                                      # above 0 dB: clipping
-                p.fillRect(QRectF(x, y, bw, y0 - y), QColor("#ff4d4f"))
+            for lo, hi, col in ((DB_LO, -12.0, "#3fbf5a"), (-12.0, -3.0, "#e0c23a"), (-3.0, DB_HI, "#e8463c")):
+                if self.level[i] <= lo:
+                    break
+                ya, yb = self._y(min(self.level[i], hi), top, hh), self._y(lo, top, hh)
+                p.fillRect(QRectF(x, ya, bw, yb - ya), QColor(col))
             if self.hold[i] > DB_LO:
                 hy = self._y(self.hold[i], top, hh)
-                p.fillRect(QRectF(x, hy, bw, 2), QColor("#ff4d4f") if self.hold[i] > 0 else QColor("#ffffff"))
+                p.fillRect(QRectF(x, hy, bw, 2), QColor("#e8463c") if self.hold[i] > -3 else QColor("#e0e0e2"))
         f = p.font()
         f.setPixelSize(9)
         p.setFont(f)

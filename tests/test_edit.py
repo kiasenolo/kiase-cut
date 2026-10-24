@@ -28,7 +28,7 @@ def proj():
              "source_start_us": 1 * S, "media": {"path": "a.mp3", "duration_us": 10 * S}, "volume": 1.0}]},
     ]
     project.refresh_duration(p)
-    return p
+    return project.link(p)                     # the tracks become the open timeline's
 
 
 def animated(c):

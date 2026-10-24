@@ -9,11 +9,11 @@ import json
 import math
 import os
 
-from PySide6.QtCore import QObject, QStandardPaths, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QSize, QStandardPaths, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
-                               QPushButton, QScrollArea, QSlider, QSplitter, QTabWidget, QVBoxLayout,
+                               QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
 
 from .. import build, curves, edit, library, project, waveform
@@ -25,44 +25,70 @@ from .export_dialog import ExportDialog
 from .inspector import Inspector
 from .library import LibraryPanel
 from .player import Player
+from . import icons
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .timeline import US, Timeline, timecode
 
+# DaVinci Resolve-like: charcoal panels on a near-black frame, flat controls, light grey
+# text; colour is left to clips, keyframes, the playhead and the meter
 STYLE = """
-QWidget { background: #1b1b1f; color: #e6e6e6; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC', sans-serif; }
-QMenuBar, QMenu { background: #202024; }
-QMenu::item:selected, QMenuBar::item:selected { background: #4a4a52; }
-QPushButton { background: #2a2a30; border: 1px solid #3a3a42; border-radius: 4px; padding: 4px 12px; }
-QPushButton:hover { background: #33333b; }
-QPushButton:checked { background: #d8d8dc; color: #111114; border-color: #d8d8dc; }
-QPushButton:disabled { color: #666; }
-QSplitter::handle { background: #111114; }
-QDoubleSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #26262c; border: 1px solid #3a3a42; border-radius: 3px; padding: 2px; }
-QDoubleSpinBox:disabled { color: #777; }
-QTreeWidget { background: #1f1f23; border: none; }
-QTreeWidget::item:selected { background: #4a4a52; }
-QHeaderView::section { background: #202024; border: none; padding: 3px; }
-QLabel#time { font-family: Consolas, monospace; color: #cfcfd4; }
-QLabel#title { color: #ffffff; font-weight: 600; }
-QLabel#crumb { color: #e6e6e6; font-weight: 600; }
-QTabWidget::pane { border: none; }
-QTabBar::tab { background: #202024; color: #9a9aa0; padding: 5px 14px; border: none; }
-QTabBar::tab:selected { background: #3a3a42; color: #ffffff; }
-QMessageBox, QInputDialog, QColorDialog, QDialog { background: #1b1b1f; }
-QMessageBox QLabel { color: #e6e6e6; background: transparent; }
-QSlider::groove:horizontal { height: 4px; background: #3a3a42; border-radius: 2px; }
-QSlider::sub-page:horizontal { background: #9a9aa0; border-radius: 2px; }
-QSlider::handle:horizontal { background: #e6e6e6; width: 10px; margin: -4px 0; border-radius: 5px; }
-QSlider::groove:vertical { width: 4px; background: #3a3a42; border-radius: 2px; }
-QSlider::add-page:vertical { background: #9a9aa0; border-radius: 2px; }
-QSlider::handle:vertical { background: #e6e6e6; height: 10px; margin: 0 -5px; border-radius: 5px; }
-QScrollBar { background: #1b1b1f; }
-QScrollBar::handle { background: #3a3a42; border-radius: 3px; min-height: 20px; min-width: 20px; }
-QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
-QCheckBox::indicator:checked { background: #e6e6e6; border: 1px solid #e6e6e6; }
-QCheckBox::indicator:unchecked { background: #26262c; border: 1px solid #4a4a52; }
+QWidget { background: #1c1c1e; color: #d0d0d2; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC', sans-serif; font-size: 12px; }
+QMainWindow { background: #111113; }
+QMenuBar { background: #18181a; border-bottom: 1px solid #0e0e10; }
+QMenu { background: #26262a; border: 1px solid #0e0e10; }
+QMenu::item { padding: 4px 22px; }
+QMenu::item:selected, QMenuBar::item:selected { background: #3d3d43; }
+QMenu::separator { height: 1px; background: #3a3a40; margin: 3px 6px; }
+QPushButton { background: #2b2b2f; border: 1px solid #141416; border-radius: 3px; padding: 4px 10px; }
+QPushButton:hover { background: #36363b; }
+QPushButton:pressed { background: #1f1f22; }
+QPushButton:checked { background: #c9c9cd; color: #121214; border-color: #c9c9cd; }
+QPushButton:disabled { color: #5c5c62; }
+QPushButton#tool { background: transparent; border: 1px solid transparent; padding: 3px; }
+QPushButton#tool:hover { background: #33333a; border-color: #141416; }
+QPushButton#tool:checked { background: #4a4a52; border-color: #5c5c64; }
+QPushButton#tool:disabled { background: transparent; }
+QSplitter::handle { background: #0e0e10; }
+QSplitter::handle:horizontal { width: 3px; }
+QSplitter::handle:vertical { height: 3px; }
+QDoubleSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #141416; border: 1px solid #2c2c31; border-radius: 3px; padding: 2px 4px; selection-background-color: #4a4a52; }
+QDoubleSpinBox:focus, QPlainTextEdit:focus, QLineEdit:focus, QComboBox:focus { border-color: #6a6a72; }
+QDoubleSpinBox:disabled { color: #5c5c62; }
+QComboBox QAbstractItemView { background: #26262a; selection-background-color: #3d3d43; }
+QTreeWidget, QListWidget { background: #1c1c1e; border: none; alternate-background-color: #202023; }
+QTreeWidget::item, QListWidget::item { padding: 2px; }
+QTreeWidget::item:selected, QListWidget::item:selected { background: #3d3d43; color: #ffffff; }
+QHeaderView::section { background: #232326; color: #8e8e94; border: none; border-bottom: 1px solid #0e0e10; padding: 4px; }
+QLabel#time { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 15px; color: #e8e8ea; }
+QLabel#viewer { color: #8e8e94; }
+QLabel#title { color: #8e8e94; font-weight: 600; font-size: 11px; }
+QLabel#crumb { color: #d0d0d2; font-weight: 600; }
+QWidget#bar { background: #232326; border-top: 1px solid #0e0e10; border-bottom: 1px solid #0e0e10; }
+QTabWidget::pane { border: none; border-top: 1px solid #0e0e10; }
+QTabBar { background: #18181a; }
+QTabBar::tab { background: #18181a; color: #8e8e94; padding: 6px 14px; border: none; border-right: 1px solid #0e0e10; }
+QTabBar::tab:selected { background: #232326; color: #ffffff; }
+QTabBar::tab:hover:!selected { color: #c0c0c4; }
+QTabBar#timelines::tab { padding: 4px 14px; border-top-left-radius: 3px; border-top-right-radius: 3px; }
+QTabBar#timelines::tab:selected { background: #2b2b2f; }
+QMessageBox, QInputDialog, QColorDialog, QDialog { background: #1c1c1e; }
+QMessageBox QLabel { color: #d0d0d2; background: transparent; }
+QStatusBar { background: #18181a; color: #8e8e94; border-top: 1px solid #0e0e10; }
+QSlider::groove:horizontal { height: 4px; background: #34343a; border-radius: 2px; }
+QSlider::sub-page:horizontal { background: #8e8e94; border-radius: 2px; }
+QSlider::handle:horizontal { background: #d0d0d2; width: 10px; margin: -4px 0; border-radius: 5px; }
+QSlider::groove:vertical { width: 4px; background: #34343a; border-radius: 2px; }
+QSlider::add-page:vertical { background: #8e8e94; border-radius: 2px; }
+QSlider::handle:vertical { background: #d0d0d2; height: 10px; margin: 0 -5px; border-radius: 5px; }
+QScrollBar { background: #1c1c1e; width: 10px; height: 10px; }
+QScrollBar::handle { background: #3a3a40; border-radius: 4px; min-height: 20px; min-width: 20px; }
+QScrollBar::handle:hover { background: #4a4a52; }
+QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { width: 0; height: 0; background: none; }
 QCheckBox::indicator { width: 12px; height: 12px; border-radius: 2px; }
+QCheckBox::indicator:checked { background: #c9c9cd; border: 1px solid #c9c9cd; }
+QCheckBox::indicator:unchecked { background: #141416; border: 1px solid #4a4a52; }
+QToolTip { background: #2b2b2f; color: #e0e0e2; border: 1px solid #0e0e10; }
 """
 
 
@@ -106,6 +132,7 @@ class MainWindow(QMainWindow):
         self.path = None
         self.dirty = False
         self.path_ids = []              # open compound clips, outermost first
+        self.tl_pos = {}                # playhead of each timeline while another is open
         self.xml = None                 # truthy once the preview has a project
         self.length = 0
         self.fps = 60.0
@@ -177,25 +204,55 @@ class MainWindow(QMainWindow):
         self.side.currentChanged.connect(lambda _: self.preview.set_mask_mode(self.side.currentWidget() is mask_scroll))
         self.side.addTab(cv, "關鍵幀曲線")
 
-        self.play_btn = QPushButton("▶")
-        self.play_btn.setFixedWidth(48)
-        self.play_btn.clicked.connect(self.toggle_play)
-        full_btn = QPushButton("全螢幕")
-        full_btn.setToolTip("F，或在預覽上按兩下")
-        full_btn.clicked.connect(self.toggle_fullscreen)
-        self.time_lbl = QLabel("00:00.00 / 00:00.00")
+        def tool(name, tip, fn, checkable=False):
+            b = QPushButton()
+            b.setObjectName("tool")
+            b.setIcon(icons.icon(name))
+            b.setIconSize(QSize(18, 18))
+            b.setToolTip(tip)
+            b.setCheckable(checkable)
+            b.clicked.connect(fn)
+            return b
+        self.tool = tool
+
+        self.play_btn = tool("play", "播放 / 暫停（空白鍵）", self.toggle_play)
+        self.play_btn.setIconSize(QSize(22, 22))
+        full_btn = tool("fullscreen", "全螢幕（F，或在預覽上按兩下）", self.toggle_fullscreen)
+        self.time_lbl = QLabel("00:00.00")
         self.time_lbl.setObjectName("time")
+        self.dur_lbl = QLabel("")
+        self.dur_lbl.setObjectName("viewer")
+        self.viewer_lbl = QLabel("")
+        self.viewer_lbl.setObjectName("viewer")
         bar = QHBoxLayout()
+        bar.setContentsMargins(6, 2, 6, 2)
+        bar.addWidget(self.dur_lbl)
         bar.addStretch()
-        bar.addWidget(self.time_lbl)
+        for name, tip, fn in (("start", "到開頭（Home）", lambda: self.seek(0)),
+                              ("prev", "上一幀（←）", lambda: self.step(-1))):
+            bar.addWidget(tool(name, tip, fn))
         bar.addWidget(self.play_btn)
+        for name, tip, fn in (("next", "下一幀（→）", lambda: self.step(1)),
+                              ("end", "到結尾（End）", lambda: self.seek(self.length - 1))):
+            bar.addWidget(tool(name, tip, fn))
         bar.addStretch()
         bar.addWidget(full_btn)
+        head = QHBoxLayout()
+        head.setContentsMargins(8, 3, 8, 3)
+        head.addWidget(self.viewer_lbl)
+        head.addStretch()
+        head.addWidget(self.time_lbl)
         center = QWidget()
         cl = QVBoxLayout(center)
         cl.setContentsMargins(4, 4, 4, 4)
+        head_w, bar_w = QWidget(), QWidget()
+        head_w.setObjectName("bar")
+        bar_w.setObjectName("bar")
+        head_w.setLayout(head)
+        bar_w.setLayout(bar)
+        cl.addWidget(head_w)
         cl.addWidget(self.preview, 1)
-        cl.addLayout(bar)
+        cl.addWidget(bar_w)
 
         top = QSplitter(Qt.Horizontal)
         top.addWidget(self.left)
@@ -222,31 +279,58 @@ class MainWindow(QMainWindow):
         tl.compoundDropped.connect(self.place_compound)
         tl.newTrackRequested.connect(
             lambda cid, start, top: self.apply("移到新軌道", edit.move_to_new_track, cid, start, top))
+        # timelines (as in DaVinci Resolve: several per project, one open), as tabs
+        tabs_row = QHBoxLayout()
+        tabs_row.setContentsMargins(6, 2, 6, 0)
+        tabs_row.setSpacing(2)
+        self.tl_tabs = QTabBar()
+        self.tl_tabs.setObjectName("timelines")
+        self.tl_tabs.setExpanding(False)
+        self.tl_tabs.setDrawBase(False)
+        self.tl_tabs.currentChanged.connect(self._tab_switched)
+        self.tl_tabs.tabBarDoubleClicked.connect(lambda i: self.timeline_action("rename", i))
+        self.tl_tabs.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tl_tabs.customContextMenuRequested.connect(self._timeline_menu)
+        add_tl = tool("plus", "新增時間線", lambda: self.proj and self.apply_root("新增時間線", edit.add_timeline))
+        tl_icon = QLabel()
+        tl_icon.setPixmap(icons.icon("timeline").pixmap(16, 16))
+        tabs_row.addWidget(tl_icon)
+        tabs_row.addWidget(self.tl_tabs)
+        tabs_row.addWidget(add_tl)
+        tabs_row.addStretch()
+        self._tabs_updating = False
+
         tools = QHBoxLayout()
         tools.setContentsMargins(6, 2, 6, 2)
-        self.back_btn = QPushButton("← 返回上一層")
+        self.back_btn = QPushButton(" 返回上一層")
+        self.back_btn.setIcon(icons.icon("back"))
         self.back_btn.clicked.connect(self.leave_compound)
         self.crumb = QLabel()
         self.crumb.setObjectName("crumb")
         tools.addWidget(self.back_btn)
         tools.addWidget(self.crumb)
         self.buttons = {}
-        for key, label, tip in (("undo", "復原", "Ctrl+Z"), ("redo", "重做", "Ctrl+Y"),
-                                ("split", "分割", "Ctrl+B"), ("delete", "刪除", "Delete"),
-                                ("text", "新增文字", "Ctrl+T")):
-            b = QPushButton(label)
-            b.setToolTip(tip)
-            b.clicked.connect(getattr(self, "do_" + key))
+        for key, ic, tip in (("undo", "undo", "復原（Ctrl+Z）"), ("redo", "redo", "重做（Ctrl+Y）"),
+                             (None, None, None),
+                             ("split", "blade", "在播放頭分割（Ctrl+B）"), ("delete", "trash", "刪除（Delete）"),
+                             ("text", "text", "新增文字（Ctrl+T）")):
+            if key is None:
+                tools.addSpacing(10)
+                continue
+            b = tool(ic, tip, getattr(self, "do_" + key))
             tools.addWidget(b)
             self.buttons[key] = b
         tools.addStretch()
-        self.snap_btn = QPushButton("吸附")
-        self.snap_btn.setCheckable(True)
+        self.snap_btn = tool("magnet", "自動吸附（N）：移動、裁切時對齊播放頭和其他片段的邊緣",
+                             lambda: None, checkable=True)
         self.snap_btn.setChecked(True)
-        self.snap_btn.setToolTip("自動吸附（N）：移動、裁切時對齊播放頭和其他片段的邊緣")
         self.snap_btn.toggled.connect(self.set_snapping)
         tools.addWidget(self.snap_btn)
-        tools.addWidget(QLabel("軌道高度"))
+        tools.addSpacing(10)
+        hl = QLabel()
+        hl.setPixmap(icons.icon("height").pixmap(16, 16))
+        hl.setToolTip("軌道高度")
+        tools.addWidget(hl)
         self.vzoom = Slider(Qt.Horizontal)
         self.vzoom.setRange(65, 400)
         self.vzoom.setValue(100)
@@ -259,6 +343,7 @@ class MainWindow(QMainWindow):
         ll = QVBoxLayout(lower)
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(0)
+        ll.addLayout(tabs_row)
         ll.addLayout(tools)
         tl_row = QHBoxLayout()
         tl_row.setContentsMargins(0, 0, 0, 0)
@@ -346,8 +431,64 @@ class MainWindow(QMainWindow):
             self.buttons[k].setEnabled(has)
         self.buttons["delete"].setEnabled(has and self.timeline.selected is not None)
 
+    def _update_timeline_tabs(self):
+        self._tabs_updating = True
+        while self.tl_tabs.count():
+            self.tl_tabs.removeTab(0)
+        if self.proj:
+            for tl in self.proj["timelines"]:
+                i = self.tl_tabs.addTab(tl["name"])
+                self.tl_tabs.setTabData(i, tl["id"])
+                if tl["id"] == self.proj["active_timeline"]:
+                    self.tl_tabs.setCurrentIndex(i)
+        self._tabs_updating = False
+
+    def _tab_switched(self, i):
+        if not self._tabs_updating and i >= 0:
+            self.switch_timeline(self.tl_tabs.tabData(i))
+
+    def switch_timeline(self, tl_id):
+        """Open another timeline of the project (not an edit: undo does not step through it)."""
+        if not self.proj or tl_id == self.proj["active_timeline"]:
+            return
+        self.tl_pos[self.proj["active_timeline"]] = self.pos
+        edit.open_timeline(self.proj, tl_id)
+        self.dirty = True
+        self.path_ids = []
+        self._switch_level(self.tl_pos.get(tl_id, 0))
+        self._update_title()
+
+    def _timeline_menu(self, pos):
+        i = self.tl_tabs.tabAt(pos)
+        if i < 0:
+            return
+        menu = QMenu(self)
+        menu.addAction("重新命名…", lambda: self.timeline_action("rename", i))
+        menu.addAction("建立副本", lambda: self.timeline_action("duplicate", i))
+        menu.addSeparator()
+        a = menu.addAction("刪除時間線", lambda: self.timeline_action("delete", i))
+        a.setEnabled(self.tl_tabs.count() > 1)
+        menu.exec(self.tl_tabs.mapToGlobal(pos))
+
+    def timeline_action(self, action, i):
+        if i < 0 or not self.proj:
+            return
+        tid = self.tl_tabs.tabData(i)
+        tl = project.timeline(self.proj, tid)
+        if action == "rename":
+            name, ok = QInputDialog.getText(self, "時間線名稱", "名稱", text=tl["name"])
+            if ok:
+                self.apply_root("重新命名時間線", edit.rename_timeline, tid, name)
+        elif action == "duplicate":
+            self.apply_root("複製時間線", lambda root: edit.add_timeline(root, copy_of=tid))
+        elif action == "delete":
+            if QMessageBox.question(self, "刪除時間線", f"刪除「{tl['name']}」和上面的片段？") == QMessageBox.Yes:
+                self.apply_root("刪除時間線", edit.delete_timeline, tid)
+
     def _update_crumb(self):
-        names = ["主時間軸"]
+        self._update_timeline_tabs()
+        self.viewer_lbl.setText(project.timeline(self.proj)["name"] if self.proj else "")
+        names = [project.timeline(self.proj)["name"] if self.proj else "主時間軸"]
         node = self.proj
         for cid in self.path_ids:
             _, c = edit.find(node, cid)
@@ -375,8 +516,10 @@ class MainWindow(QMainWindow):
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"]}
 
-    def show_compound(self, parent_path, cid):
+    def show_compound(self, tl_id, parent_path, cid):
         """From the compound list: open the level holding the clip, select it, seek to it."""
+        if tl_id and tl_id != self.proj["active_timeline"]:
+            self.switch_timeline(tl_id)
         try:
             node = self.proj
             for pid in parent_path:
@@ -387,8 +530,10 @@ class MainWindow(QMainWindow):
         self.path_ids = list(parent_path)
         self._switch_level(round(c["start_us"] / US * self.fps), select=c)
 
-    def open_compound_path(self, path):
+    def open_compound_path(self, tl_id, path):
         """From the compound list: edit that compound, at the start of the part that shows."""
+        if tl_id and tl_id != self.proj["active_timeline"]:
+            self.switch_timeline(tl_id)
         try:
             node, c = self.proj, None
             for pid in path:
@@ -514,7 +659,7 @@ class MainWindow(QMainWindow):
 
     def relink(self, proj):
         """Offer to find missing media by file name under a folder the user picks."""
-        clips = [c for c in project.walk_clips(proj["tracks"]) if c.get("media")]
+        clips = [c for c in project.all_clips(proj) if c.get("media")]
         items = library.lib(proj)["items"]
         refs = [c["media"] for c in clips] + items
         missing = sorted({x["path"] for x in refs if not os.path.exists(x["path"])})
@@ -958,8 +1103,8 @@ class MainWindow(QMainWindow):
         if self.fullscreen:
             self.fullscreen.canvas.show_image(img)
         self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True))
-        self.time_lbl.setText(f"{timecode(pos / self.fps * US, self.fps)} / "
-                              f"{timecode(self.length / self.fps * US, self.fps)}")
+        self.time_lbl.setText(timecode(pos / self.fps * US, self.fps))
+        self.dur_lbl.setText("長度 " + timecode(self.length / self.fps * US, self.fps))
         sel = self.timeline.selected
         if sel is not None:
             self.show_selection_props()
@@ -969,7 +1114,7 @@ class MainWindow(QMainWindow):
 
     def on_state(self, playing):
         self.playing = playing
-        self.play_btn.setText("❚❚" if playing else "▶")
+        self.play_btn.setIcon(icons.icon("pause" if playing else "play"))
 
     def toggle_play(self):
         if self.proj is not None:
@@ -1053,6 +1198,8 @@ class MainWindow(QMainWindow):
         total = round(self.proj["duration_us"] / US * self.fps)
         default = (self.path.replace(".tesetoa.json", ".mp4") if self.path
                    else os.path.join(os.path.expanduser("~"), "Videos", "tesetoa.mp4"))
+        if len(self.proj["timelines"]) > 1:              # one file per timeline
+            default = default[:-4] + f" - {project.timeline(self.proj)['name']}.mp4"
         dlg = ExportDialog(self, default, self.fps, total, self.timeline.mark_in, self.timeline.mark_out,
                            self.proj["width"], self.proj["height"])
         if dlg.exec() != QDialog.Accepted:

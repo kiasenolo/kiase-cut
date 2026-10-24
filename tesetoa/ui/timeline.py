@@ -40,8 +40,19 @@ from .. import curves, edit, project, waveform
 
 US = 1_000_000
 MEDIA_MIME = "application/x-tesetoa-media"
-COLORS = {"video": "#5c5c64", "image": "#5c5c64", "compound": "#6e6e78",     # greys: colour is kept
-          "text": "#4c4c54", "audio": "#46464d"}                                # for keyframes / playhead
+COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
+          "text": "#7c5574", "audio": "#3e7055"}                              # DaVinci Resolve
+ROW_BG = QColor("#1f1f21")
+
+
+def row_color(track):
+    """A track's row background: its colour, mixed far down into the dark row grey."""
+    if not track.get("color"):
+        return ROW_BG
+    c, k = QColor(track["color"]), 0.22
+    return QColor(round(ROW_BG.red() + (c.red() - ROW_BG.red()) * k),
+                  round(ROW_BG.green() + (c.green() - ROW_BG.green()) * k),
+                  round(ROW_BG.blue() + (c.blue() - ROW_BG.blue()) * k))
 RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140
 BTN = 18                                             # header button size
 MIN_H, MAX_H = 22, 240                               # track heights
@@ -297,14 +308,21 @@ class Timeline(QWidget):
     # -- painting -------------------------------------------------------------------------------
     def paintEvent(self, _):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#18181b"))
+        try:
+            self._paint(p)
+        finally:
+            p.end()                                  # never leave the painter open on an error
+
+    def _paint(self, p):
+        p.fillRect(self.rect(), QColor("#161618"))
         if not self.proj:
             p.setPen(QColor("#777"))
             p.drawText(self.rect(), Qt.AlignCenter, "檔案 > 匯入剪映草稿")
             return
         p.setRenderHint(QPainter.Antialiasing)
         w = self.width()
-        p.fillRect(0, 0, w, RULER_H, QColor("#202024"))
+        p.fillRect(0, 0, w, RULER_H, QColor("#1e1e21"))
+        p.fillRect(0, RULER_H - 1, w, 1, QColor("#0e0e10"))
         step = next(s for s in (0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300) if s * self.px_per_s >= 70)
         p.setPen(QColor("#8a8a90"))
         p.setFont(QFont("Segoe UI", 8))
@@ -328,7 +346,8 @@ class Timeline(QWidget):
                 p.drawLine(int(a), 0, int(a), RULER_H)
             if self.mark_out is not None and b > HEADER_W:
                 p.drawLine(int(b), 0, int(b), RULER_H)
-        dragged = self.drag["clip"] if self.drag and self.drag["moved"] and self.drag["mode"] != "group" else None
+        # a clip being moved / trimmed is drawn at its new place (other drags have no ghost)
+        dragged = self.drag["clip"] if self.drag and self.drag["moved"] and self.drag["mode"] in ("body", "start", "end")             else None
         group = self.drag["ids"] if self.drag and self.drag["moved"] and self.drag["mode"] == "group" else ()
         tracks = self.proj["tracks"]
         p.save()
@@ -337,21 +356,35 @@ class Timeline(QWidget):
             if self.tops[i] > self.height() or self.tops[i] + self.row_h(i) < RULER_H:
                 continue
             y, h = self.tops[i], self.row_h(i)
-            p.fillRect(0, y, w, h - 2, QColor("#1f1f23"))
+            p.fillRect(0, y, w, h - 1, row_color(tr))       # the track colour tints its row only
+            p.fillRect(0, y, HEADER_W, h - 1, QColor("#242427"))     # header column, as in Resolve
+            p.fillRect(HEADER_W - 1, y, 1, h - 1, QColor("#0e0e10"))
             if tr.get("color"):
-                p.fillRect(0, y, 4, h - 2, QColor(tr["color"]))
+                p.fillRect(0, y, 3, h - 1, QColor(tr["color"]))
+            # V1 is the bottom picture track, A1 the first sound track (Resolve's numbering)
+            if tr["kind"] == "audio":
+                label = f"A{sum(1 for t in self.rows[:i] if t['kind'] == 'audio') + 1}"
+            else:
+                label = f"V{sum(1 for t in self.rows[i:] if t['kind'] != 'audio')}"
+            p.setPen(QColor("#8e8e94"))
+            f0 = p.font()
+            fb = QFont(f0)
+            fb.setBold(True)
+            p.setFont(fb)
+            p.drawText(QRectF(8, y, 26, min(h - 1, 26)), Qt.AlignVCenter, label)
+            p.setFont(f0)
             btns = self.header_buttons(i)
-            name_w = (btns[0][1].left() if btns else HEADER_W) - 14
+            name_w = (btns[0][1].left() if btns else HEADER_W) - 40
             p.setPen(QColor("#c8c8cc"))
             name = p.fontMetrics().elidedText(tr.get("name") or tr["kind"], Qt.ElideRight, int(name_w))
             gain = tr.get("gain", 1.0)
             if abs(gain - 1.0) > 1e-6:
-                p.drawText(QRectF(10, y + 6, name_w, 16), Qt.AlignVCenter, name)
+                p.drawText(QRectF(34, y + 5, name_w, 16), Qt.AlignVCenter, name)
                 p.setPen(QColor("#8a8a90"))
                 db = "-∞" if gain <= 0 else f"{20 * math.log10(gain):+.1f}"
-                p.drawText(QRectF(10, y + 22, name_w, 16), Qt.AlignVCenter, f"{db} dB")
+                p.drawText(QRectF(34, y + 21, name_w, 16), Qt.AlignVCenter, f"{db} dB")
             else:
-                p.drawText(QRectF(10, y, name_w, h - 2), Qt.AlignVCenter, name)
+                p.drawText(QRectF(34, y, name_w, min(h - 1, 26)), Qt.AlignVCenter, name)
             for flag, r in btns:
                 self._draw_button(p, flag, r, bool(tr.get(flag)))
             dim = (project.sounds(tr, tracks) <= 0) if tr["kind"] == "audio" else not project.visible(tr)
@@ -479,7 +512,7 @@ class Timeline(QWidget):
         if x1 < HEADER_W or x0 > w:
             return
         r = QRectF(max(x0, HEADER_W) + 0.5, y + 3, max(1.0, x1 - max(x0, HEADER_W) - 1), h - 8)
-        col = QColor(c.get("color") or (track or {}).get("color") or COLORS.get(c["type"], "#555"))
+        col = QColor(c.get("color") or COLORS.get(c["type"], "#555"))      # (not the track's colour)
         sel = c["id"] in self.selected_ids
         if sel:
             col = col.lighter(150)

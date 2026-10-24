@@ -793,3 +793,54 @@ def set_master_gain(proj, gain):
         proj.pop("master_gain", None)
     else:
         proj["master_gain"] = round(g, 5)
+
+
+# -- timelines ------------------------------------------------------------------------------------
+def _timeline_id(proj):
+    ids = {t["id"] for t in proj["timelines"]}
+    n = len(ids) + 1
+    while f"tl{n}" in ids:
+        n += 1
+    return f"tl{n}"
+
+
+def add_timeline(proj, name=None, copy_of=None):
+    """A new timeline (empty with V1 / A1, or a copy of timeline copy_of), opened."""
+    tid = _timeline_id(proj)
+    if copy_of:
+        src = project.timeline(proj, copy_of)
+        tracks = json.loads(json.dumps(project._tracks_out(src["tracks"])))
+        for t in tracks:
+            for c in t["clips"]:
+                c["id"] = new_clip_id()                  # (compound content stays shared)
+        name = name or f"{src['name']} 副本"
+    else:
+        tracks = [{"id": "t0", "kind": "video", "name": "video 1", "clips": []},
+                  {"id": "t1", "kind": "audio", "name": "audio 1", "clips": []}]
+    tl = {"id": tid, "name": name or f"時間線 {len(proj['timelines']) + 1}", "tracks": tracks}
+    proj["timelines"].append(tl)
+    open_timeline(proj, tid)
+    return tl
+
+
+def open_timeline(proj, tl_id):
+    project.link(proj)                                   # settle the open timeline first
+    tl = project.timeline(proj, tl_id)                   # (raises for an unknown id)
+    proj["active_timeline"] = tl_id
+    proj["tracks"] = tl["tracks"]
+    project.link(proj)
+    project.refresh_duration(proj)
+
+
+def rename_timeline(proj, tl_id, name):
+    project.timeline(proj, tl_id)["name"] = str(name).strip() or "時間線"
+
+
+def delete_timeline(proj, tl_id):
+    if len(proj["timelines"]) < 2:
+        raise EditError("a project keeps at least one timeline")
+    tl = project.timeline(proj, tl_id)
+    i = proj["timelines"].index(tl)
+    proj["timelines"].remove(tl)
+    if proj["active_timeline"] == tl_id:
+        open_timeline(proj, proj["timelines"][max(0, i - 1)]["id"])

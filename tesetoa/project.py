@@ -1,9 +1,13 @@
 """Project model: plain JSON-able dicts, saved as *.tesetoa.json.
 
-project  {format, version, width, height, fps, duration_us, tracks: [track],
-          compounds: {id: compound}, master_gain}  master_gain (optional, 1) scales the
+project  {format, version, width, height, fps, duration_us, timelines: [timeline],
+          active_timeline, tracks, compounds: {id: compound}, master_gain}
+         Several timelines share the media and the compounds (as in DaVinci Resolve);
+         "tracks" is the open timeline's track list (the very list in timelines), so every
+         edit works on the open timeline.  master_gain (optional, 1) scales the
          whole output  tracks[0] is the bottom layer; later tracks draw on top
          (as in Jianying).
+timeline {id, name, tracks: [track]}
 track    {id, kind: video | text | audio, name, clips: [clip],
           muted, solo, hidden, gain}                        optional: muted / solo tracks
                      make no sound (solo silences the others), hidden ones draw nothing,
@@ -33,7 +37,7 @@ import json
 import os
 
 FORMAT = "tesetoa"
-VERSION = 2                     # 2: compounds are shared entries of project.compounds
+VERSION = 3                     # 2: shared compounds; 3: several timelines
 DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
                                  "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
                                  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
@@ -41,8 +45,10 @@ DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
 
 
 def new(width=1920, height=1080, fps=60.0):
-    return {"format": FORMAT, "version": VERSION, "width": width, "height": height,
-            "fps": fps, "duration_us": 0, "tracks": [], "compounds": {}}
+    p = {"format": FORMAT, "version": VERSION, "width": width, "height": height,
+         "fps": fps, "duration_us": 0, "compounds": {},
+         "timelines": [{"id": "tl1", "name": "時間線 1", "tracks": []}], "active_timeline": "tl1"}
+    return link(p)
 
 
 def load(path):
@@ -110,9 +116,20 @@ def _tracks_out(tracks):
     return out
 
 
+def _sync(p):
+    """A list assigned to p["tracks"] becomes the open timeline's tracks."""
+    tls = p.get("timelines")
+    if tls and "tracks" in p:
+        tl = next((t for t in tls if t["id"] == p.get("active_timeline")), tls[0])
+        if tl["tracks"] is not p["tracks"]:
+            tl["tracks"] = p["tracks"]
+
+
 def detached(p):
-    """The project as stored: links to shared compounds left out."""
-    out = dict(p, tracks=_tracks_out(p["tracks"]))
+    """The project as stored: links to shared compounds and the open timeline left out."""
+    _sync(p)
+    out = {k: v for k, v in p.items() if k != "tracks"}
+    out["timelines"] = [dict(t, tracks=_tracks_out(t["tracks"])) for t in p.get("timelines", [])]
     out["compounds"] = {k: dict(v, tracks=_tracks_out(v["tracks"])) for k, v in p.get("compounds", {}).items()}
     return out
 
@@ -122,18 +139,40 @@ def dumps(p, **kw):
 
 
 def link(p):
-    """Point every compound clip at its shared entry (after loading or restoring a snapshot)."""
+    """Point every compound clip at its shared entry and p.tracks at the open timeline (after
+    loading or restoring a snapshot)."""
     comps = p.setdefault("compounds", {})
+    _sync(p)
+    tls = p.get("timelines") or []
+    if tls:
+        tl = next((t for t in tls if t["id"] == p.get("active_timeline")), tls[0])
+        p["active_timeline"] = tl["id"]
+        p["tracks"] = tl["tracks"]
 
     def visit(tracks):
         for t in tracks:
             for c in t["clips"]:
                 if "compound_id" in c:
                     c["compound"] = comps[c["compound_id"]]
-    visit(p["tracks"])
+    for tl in tls or [{"tracks": p.get("tracks", [])}]:
+        visit(tl["tracks"])
     for comp in comps.values():
         visit(comp["tracks"])
     return p
+
+
+def timeline(p, tl_id=None):
+    return next(t for t in p["timelines"] if t["id"] == (tl_id or p["active_timeline"]))
+
+
+def all_clips(p):
+    """Every clip of every timeline, compound content included (each compound once)."""
+    for tl in p.get("timelines") or [{"tracks": p["tracks"]}]:
+        for t in tl["tracks"]:
+            yield from t["clips"]
+    for comp in p.get("compounds", {}).values():
+        for t in comp["tracks"]:
+            yield from t["clips"]
 
 
 def new_compound_id(p):
@@ -156,6 +195,10 @@ def normalize(p):
     """Bring a loaded or imported project to the current model: compound content written
     inside clips (version 1, Jianying imports) becomes shared entries of p.compounds, one
     per distinct content (copies that differ only in ids are merged), and is linked."""
+    if "timelines" not in p:                               # versions 1 and 2: one timeline
+        p["timelines"] = [{"id": "tl1", "name": "時間線 1", "tracks": p.get("tracks", [])}]
+        p["active_timeline"] = "tl1"
+    _sync(p)
     comps = p.setdefault("compounds", {})
 
     def key_of(comp):
@@ -181,24 +224,26 @@ def normalize(p):
     for cid, comp in list(comps.items()):                  # entries saved before
         visit(comp["tracks"])
         seen.setdefault(key_of(comp), cid)
-    visit(p["tracks"])
+    for tl in p["timelines"]:
+        visit(tl["tracks"])
     p["version"] = VERSION
     return link(p)
 
 
 def compound_uses(p):
-    """{compound id: [(parent path (clip ids), clip)]} for every compound clip, nested ones
-    reached through every clip that shows their parent."""
+    """{compound id: [(timeline id, parent path (clip ids), clip)]} for every compound clip
+    of every timeline, nested ones reached through every clip that shows their parent."""
     uses = {k: [] for k in p.get("compounds", {})}
 
-    def visit(tracks, path):
+    def visit(tl, tracks, path):
         for t in tracks:
             for c in t["clips"]:
                 if "compound_id" in c:
-                    uses.setdefault(c["compound_id"], []).append((list(path), c))
+                    uses.setdefault(c["compound_id"], []).append((tl, list(path), c))
                     if len(path) < 16:                    # (a loop cannot be made, but stay safe)
-                        visit(c["compound"]["tracks"], path + [c["id"]])
-    visit(p["tracks"], [])
+                        visit(tl, c["compound"]["tracks"], path + [c["id"]])
+    for tl in p.get("timelines") or [{"id": None, "tracks": p["tracks"]}]:
+        visit(tl["id"], tl["tracks"], [])
     return uses
 
 

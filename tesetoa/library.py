@@ -136,7 +136,7 @@ def add_from_project(proj, folder_name="匯入的素材"):
     """Fill the library with the media a project already uses (after importing a draft)."""
     seen = {it["path"] for it in lib(proj)["items"]}
     f = None
-    for c in project.walk_clips(proj["tracks"]):
+    for c in project.all_clips(proj):
         m = c.get("media")
         if not m or m["path"] in seen:
             continue

@@ -49,13 +49,13 @@ def kid_named(name):
 
 
 def instances(kid):
-    return [c for _, c in project.compound_uses(win.proj)[kid]]
+    return [c for _, _, c in project.compound_uses(win.proj)[kid]]
 
 
 def linked():
     """Every compound clip points at its shared entry (the same dict)."""
     return all(c["compound"] is win.proj["compounds"][c["compound_id"]]
-               for uses in project.compound_uses(win.proj).values() for _, c in uses)
+               for uses in project.compound_uses(win.proj).values() for _, _, c in uses)
 
 
 def run():
@@ -116,10 +116,38 @@ def run():
     back = project.load(path)
     check("save / load keeps one shared entry per compound",
           project.dumps(back) == project.dumps(win.proj)
-          and len({id(c["compound"]) for _, c in project.compound_uses(back)[tic]}) == 1)
+          and len({id(c["compound"]) for _, _, c in project.compound_uses(back)[tic]}) == 1)
     with open(path, encoding="utf-8") as fh:
         raw = json.load(fh)
-    check("on disk clips hold only compound_id", all("compound" not in c for t in raw["tracks"] for c in t["clips"]))
+    check("on disk clips hold only compound_id", all("compound" not in c for tl in raw["timelines"] for t in tl["tracks"] for c in t["clips"])
+          and "tracks" not in raw)
+    step_timelines()
+
+
+def step_timelines():
+    # a second timeline: new tab, its own tracks, the shared compounds usable there too
+    tabs = win.tl_tabs
+    first = win.proj["active_timeline"]
+    n_tracks = len(win.proj["tracks"])
+    win.apply_root("新增時間線", edit.add_timeline)
+    app.processEvents()
+    second = win.proj["active_timeline"]
+    check(f"新增時間線 opened a second, empty timeline (tabs {[tabs.tabText(i) for i in range(tabs.count())]})",
+          tabs.count() == 2 and second != first and tabs.tabData(tabs.currentIndex()) == second
+          and all(not t["clips"] for t in win.proj["tracks"]) and len(tl.rows) == 2)
+    tic = kid_named("TextInvColor")
+    win.place_compound(tic, "", 2 * US)
+    uses = project.compound_uses(win.proj)[tic]
+    check(f"a shared compound placed on it is used on both timelines ({len(uses)} uses)",
+          {u[0] for u in uses} == {first, second})
+    tabs.setCurrentIndex(0)
+    app.processEvents()
+    check("clicking the first tab switches back to it",
+          win.proj["active_timeline"] == first and len(win.proj["tracks"]) == n_tracks
+          and win.proj["tracks"] is project.timeline(win.proj)["tracks"])
+    win.do_undo()                                   # the placing on the second timeline
+    win.do_undo()                                   # the new timeline
+    check("undo removes it again", len(win.proj["timelines"]) == 1 and tabs.count() == 1)
     step_keys()
 
 

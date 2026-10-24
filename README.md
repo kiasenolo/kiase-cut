@@ -58,6 +58,19 @@ mask, keyframe ◆, curve) sets it on every selected clip as one undo step.
 Track height: Alt+wheel or the 軌道高度 slider scales every track; drag the line under a
 track name to size that track alone (double-click it to reset).
 
+Timelines: a project holds several timelines (as in DaVinci Resolve) sharing its media
+and compounds; they are tabs above the timeline: click to open one, + for a new one (with
+V1 / A1), double-click to rename, right-click to duplicate or delete. Each keeps its own
+tracks; edits, playback and export work on the open one. Older projects open as one
+timeline.
+
+Look: a DaVinci Resolve-like dark layout: the viewer has the timeline name and timecode
+above it and icon transport controls below (start, previous frame, play, next frame, end,
+fullscreen); the timeline toolbar uses icons (undo, redo, blade, delete, text, snapping,
+track height); tracks are labelled V1… (from the bottom) and A1…. Clips are coloured by
+type (pictures blue, compound violet, text mauve, sound green, or a colour you set); a
+track's colour tints its row and header edge and leaves its clips alone.
+
 Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
 the breadcrumb above the timeline shows where you are, Esc / 返回上一層 goes back.
 Compounds are reusable: each one is stored once in the project and any number of compound

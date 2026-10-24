@@ -1,3 +1,4 @@
+import json
 import unittest
 
 import numpy as np
@@ -121,3 +122,36 @@ class MaskToggleTests(unittest.TestCase):
         edit.set_mask_enabled(p, "vid", True)
         self.assertEqual((c["mask"]["kind"], c["mask"]["w"]), ("circle", 0.3))
         self.assertNotIn("enabled", c["mask"])
+
+
+class TimelineTests(unittest.TestCase):
+    def test_add_switch_delete(self):
+        p = project.link(proj())
+        h = edit.History(p)
+        first = p["active_timeline"]
+        h.do("new", edit.add_timeline)
+        second = p["active_timeline"]
+        self.assertNotEqual(first, second)
+        self.assertEqual([t["kind"] for t in p["tracks"]], ["video", "audio"])   # V1 / A1
+        self.assertIs(p["tracks"], project.timeline(p)["tracks"])
+        edit.open_timeline(p, first)
+        self.assertEqual(len(p["tracks"]), 3)
+        h.do("copy", edit.add_timeline, None, first)
+        copy_ = project.timeline(p)
+        self.assertEqual(len(copy_["tracks"]), 3)
+        self.assertNotEqual(copy_["tracks"][0]["clips"][0]["id"], project.timeline(p, first)["tracks"][0]["clips"][0]["id"])
+        h.undo()
+        h.undo()
+        self.assertEqual([t["id"] for t in p["timelines"]], [first])
+        self.assertIs(p["tracks"], p["timelines"][0]["tracks"])
+        with self.assertRaises(edit.EditError):
+            edit.delete_timeline(p, first)
+
+    def test_stored_without_open_tracks(self):
+        p = project.link(proj())
+        edit.add_timeline(p, "B")
+        raw = json.loads(project.dumps(p))
+        self.assertNotIn("tracks", raw)
+        back = project.normalize(raw)
+        self.assertEqual(back["active_timeline"], p["active_timeline"])
+        self.assertIs(back["tracks"], project.timeline(back)["tracks"])

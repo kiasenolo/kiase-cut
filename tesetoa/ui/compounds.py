@@ -39,8 +39,8 @@ class CompoundTree(QTreeWidget):
 
 
 class CompoundPanel(QWidget):
-    showRequested = Signal(list, str)            # parent path (clip ids), clip id
-    openRequested = Signal(list)                 # path of the compound clip to open (clip ids)
+    showRequested = Signal(str, list, str)       # timeline id, parent path (clip ids), clip id
+    openRequested = Signal(str, list)            # timeline id, path of the compound clip to open
     renameRequested = Signal(str)                # compound id
     deleteRequested = Signal(str)                # compound id
 
@@ -74,8 +74,8 @@ class CompoundPanel(QWidget):
         self.uses = project.compound_uses(proj) if proj else {}
         open_ids = set()
         if proj and self.open_path:
-            for path, c in (u for us in self.uses.values() for u in us):
-                if path + [c["id"]] == self.open_path:
+            for tl, path, c in (u for us in self.uses.values() for u in us):
+                if tl == proj.get("active_timeline") and path + [c["id"]] == self.open_path:
                     open_ids.add(c["compound_id"])
         for kid, comp in sorted(comps.items(), key=lambda kv: kv[1].get("name") or ""):
             uses = self.uses.get(kid, [])
@@ -90,11 +90,15 @@ class CompoundPanel(QWidget):
                 it.setFont(0, f)
             if not uses:
                 it.setForeground(0, Qt.gray)
-            for path, c in uses:
-                where = "主時間軸" if not path else f"{len(path)} 層內"
+            names = {t["id"]: t["name"] for t in proj.get("timelines", [])}
+            for tl, path, c in uses:
+                where = names.get(tl, "") + ("" if not path else f"，{len(path)} 層內")
                 sub = QTreeWidgetItem([c.get("name") or comp.get("name") or "片段", stamp(c["start_us"]),
                                        f"{c['duration_us'] / US:.2f}s"])
-                sub.setData(0, Qt.UserRole, ("use", c["id"], path))
+                sub.setData(0, Qt.UserRole, ("use", c["id"], path, tl))
+                if len(names) > 1:
+                    sub.setText(1, f"{stamp(c['start_us'])}")
+                    sub.setToolTip(1, names.get(tl, ""))
                 sub.setToolTip(0, f"{where}：按一下選取，按兩下進入編輯")
                 sub.setFlags(sub.flags() & ~Qt.ItemIsDragEnabled)
                 it.addChild(sub)
@@ -111,15 +115,15 @@ class CompoundPanel(QWidget):
     def _clicked(self, it, _col):
         d = it.data(0, Qt.UserRole)
         if d[0] == "use":
-            self.showRequested.emit(list(d[2]), d[1])
+            self.showRequested.emit(d[3], list(d[2]), d[1])
 
     def _double(self, it, _col):
         d = it.data(0, Qt.UserRole)
         if d[0] == "use":
-            self.openRequested.emit(list(d[2]) + [d[1]])
+            self.openRequested.emit(d[3], list(d[2]) + [d[1]])
         elif self.uses.get(d[1]):
-            path, c = self.uses[d[1]][0]
-            self.openRequested.emit(path + [c["id"]])
+            tl, path, c = self.uses[d[1]][0]
+            self.openRequested.emit(tl, path + [c["id"]])
 
     def _menu(self, pos):
         it = self.tree.itemAt(pos)

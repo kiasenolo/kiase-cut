@@ -1,0 +1,153 @@
+"""New project and project information dialogs (the project is a folder, as in FL Studio)."""
+import os
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+                               QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout)
+
+from .. import workspace
+
+PRESETS = (("1920 × 1080 橫式", 1920, 1080), ("3840 × 2160 橫式（4K）", 3840, 2160),
+           ("1280 × 720 橫式", 1280, 720), ("1080 × 1920 直式", 1080, 1920),
+           ("1080 × 1080 方形", 1080, 1080), ("2560 × 1440 橫式", 2560, 1440))
+FPS = (24, 25, 30, 50, 60)
+
+
+class NewProjectDialog(QDialog):
+    """Name + where to put the project folder (+ size and frame rate for an empty project)."""
+
+    def __init__(self, parent, location, name="新專案", fixed_format=None, title="新專案"):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(520)
+        form = QFormLayout()
+        self.name = QLineEdit(name)
+        form.addRow("專案名稱", self.name)
+        row = QHBoxLayout()
+        self.location = QLineEdit(location)
+        browse = QPushButton("瀏覽…")
+        browse.clicked.connect(self._browse)
+        row.addWidget(self.location, 1)
+        row.addWidget(browse)
+        form.addRow("存放位置", row)
+        self.preset = QComboBox()
+        self.fps = QComboBox()
+        self.fixed = fixed_format
+        if fixed_format:
+            w, h, fps = fixed_format
+            form.addRow("格式", QLabel(f"{w} × {h}，{fps:g} fps（沿用匯入的草稿）"))
+        else:
+            for label, w, h in PRESETS:
+                self.preset.addItem(label, (w, h))
+            form.addRow("解析度", self.preset)
+            for f in FPS:
+                self.fps.addItem(f"{f} fps", f)
+            self.fps.setCurrentIndex(FPS.index(60))
+            form.addRow("影格率", self.fps)
+        self.where = QLabel()
+        self.where.setWordWrap(True)
+        self.where.setStyleSheet("color: #9a9aa0;")
+        form.addRow("", self.where)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.buttons.button(QDialogButtonBox.Ok).setText("建立專案")
+        self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        hint = QLabel("專案會是一個資料夾：專案檔、素材庫（Media）、匯出（Exports）、備份（Backup）都在裡面。")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        lay.addWidget(self.buttons)
+        self.name.textChanged.connect(self._check)
+        self.location.textChanged.connect(self._check)
+        self._check()
+
+    def _browse(self):
+        d = QFileDialog.getExistingDirectory(self, "選擇存放位置", self.location.text() or "")
+        if d:
+            self.location.setText(d)
+
+    def folder(self):
+        return os.path.join(self.location.text().strip(), workspace.safe_name(self.name.text(), ""))
+
+    def _check(self):
+        ok, msg = True, ""
+        if not self.name.text().strip() or not self.location.text().strip():
+            ok, msg = False, "請輸入名稱和位置"
+        else:
+            f = self.folder()
+            if os.path.isdir(f) and os.listdir(f):
+                ok, msg = False, f"「{os.path.basename(f)}」已經存在，請換一個名稱"
+            else:
+                msg = f"將建立：{f}"
+        self.where.setText(msg)
+        self.where.setStyleSheet("color: " + ("#9a9aa0;" if ok else "#e0605a;"))
+        self.buttons.button(QDialogButtonBox.Ok).setEnabled(ok)
+
+    def values(self):
+        """(location, name, width, height, fps)"""
+        if self.fixed:
+            w, h, fps = self.fixed
+        else:
+            (w, h), fps = self.preset.currentData(), float(self.fps.currentData())
+        return self.location.text().strip(), self.name.text().strip(), w, h, fps
+
+
+class ProjectInfoDialog(QDialog):
+    """File > Project info: title, author, genre, comments, and the project's history."""
+    openFolder = Signal()
+
+    def __init__(self, parent, proj, path, stats):
+        super().__init__(parent)
+        self.setWindowTitle("專案資訊")
+        self.setMinimumWidth(560)
+        info = workspace.info(proj)
+        form = QFormLayout()
+        self.title = QLineEdit(info.get("title", ""))
+        self.author = QLineEdit(info.get("author", ""))
+        self.genre = QLineEdit(info.get("genre", ""))
+        self.url = QLineEdit(info.get("url", ""))
+        self.comments = QPlainTextEdit(info.get("comments", ""))
+        self.comments.setFixedHeight(96)
+        form.addRow("標題", self.title)
+        form.addRow("作者", self.author)
+        form.addRow("類型 / 標籤", self.genre)
+        form.addRow("網址", self.url)
+        form.addRow("備註", self.comments)
+
+        def ro(text):
+            lab = QLabel(text)
+            lab.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            lab.setWordWrap(True)
+            return lab
+        form.addRow(QLabel(""), QLabel(""))
+        form.addRow("開始於", ro(workspace.show_time(info.get("created"))))
+        form.addRow("最後開啟", ro(workspace.show_time(info.get("last_opened"))))
+        form.addRow("最後儲存", ro(workspace.show_time(info.get("last_saved"))))
+        form.addRow("累計編輯時間", ro(workspace.show_duration(info.get("time_spent_s"))))
+        form.addRow("開啟次數", ro(str(info.get("opens", 1))))
+        form.addRow("", QLabel(""))
+        folder = QHBoxLayout()
+        where = ro(workspace.root_of(path) if path else "—")
+        open_btn = QPushButton("開啟資料夾")
+        open_btn.clicked.connect(self.openFolder)
+        folder.addWidget(where, 1)
+        folder.addWidget(open_btn)
+        form.addRow("專案資料夾", folder)
+        form.addRow("專案檔", ro(os.path.basename(path) if path else "—"))
+        form.addRow("格式", ro(f"{proj['width']} × {proj['height']}，{proj['fps']:g} fps"))
+        form.addRow("內容", ro(stats))
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.buttons.button(QDialogButtonBox.Ok).setText("確定")
+        self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(self.buttons)
+
+    def values(self):
+        return {"title": self.title.text().strip(), "author": self.author.text().strip(),
+                "genre": self.genre.text().strip(), "url": self.url.text().strip(),
+                "comments": self.comments.toPlainText()}

@@ -1,7 +1,7 @@
 """Media library panel: folders and media, drag into folders or onto the timeline."""
 from PySide6.QtCore import QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QMenu, QPushButton, QStyle,
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMenu, QPushButton, QStyle,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 MIME = "application/x-tesetoa-media"
@@ -82,15 +82,20 @@ class LibraryPanel(QWidget):
     moveRequested = Signal(str, object)
     addRequested = Signal(str)                # item id -> add at the playhead
     filesDropped = Signal(list, object)       # paths, folder id or None (dragged in from outside)
+    revealRequested = Signal(object)          # item / folder id, or None for the Media folder itself
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(240)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
+        self.head = QLabel("")                  # the project folder this library mirrors
+        self.head.setStyleSheet("color: #9a9aa0;")
+        lay.addWidget(self.head)
         bar = QHBoxLayout()
         for label, fn in (("匯入素材", lambda: self.importRequested.emit(self.current_folder())),
-                          ("新資料夾", lambda: self.newFolderRequested.emit(self.current_folder()))):
+                          ("新資料夾", lambda: self.newFolderRequested.emit(self.current_folder())),
+                          ("開啟資料夾", lambda: self.revealRequested.emit(None))):
             b = QPushButton(label)
             b.clicked.connect(fn)
             bar.addWidget(b)
@@ -103,6 +108,10 @@ class LibraryPanel(QWidget):
         self.tree.itemDoubleClicked.connect(lambda it, _c: self._double(it))
         lay.addWidget(self.tree, 1)
         self.icons = {}
+
+    def set_origin(self, text, tip=""):
+        self.head.setText(text)
+        self.head.setToolTip(tip)
 
     def current_folder(self):
         it = self.tree.currentItem()
@@ -180,7 +189,8 @@ class LibraryPanel(QWidget):
             if not ident.startswith("f"):
                 menu.addAction("加到播放頭位置", lambda: self.addRequested.emit(ident))
             menu.addAction("重新命名…", lambda: self.renameRequested.emit(ident))
-            menu.addAction("刪除", lambda: self.deleteRequested.emit(ident))
+            menu.addAction("刪除（移到資源回收筒）", lambda: self.deleteRequested.emit(ident))
+            menu.addAction("在檔案總管中顯示", lambda: self.revealRequested.emit(ident))
             menu.addSeparator()
         menu.addAction("新資料夾", lambda: self.newFolderRequested.emit(self.current_folder()))
         menu.addAction("匯入素材…", lambda: self.importRequested.emit(self.current_folder()))

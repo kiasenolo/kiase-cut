@@ -21,7 +21,10 @@ class EditError(Exception):
 
 
 class History:
-    """Snapshot undo stack: copies the project before each change (a few hundred KB)."""
+    """Snapshot undo stack: copies the project before each change (a few hundred KB).
+    The media library and the project info mirror the project folder, not the edit, so
+    they are left out of the snapshots: undo never brings back or hides a file."""
+    SIDE = ("library", "info")
 
     def __init__(self, proj, limit=200):
         self.proj = proj
@@ -31,7 +34,7 @@ class History:
     def do(self, label, fn, *args, merge=None, **kw):
         """Apply fn(proj, *args, **kw) as one undoable step. Repeated edits with the same
         merge key within MERGE_S seconds (spinning a value, typing) share one step."""
-        before = project.dumps(self.proj)              # shared compounds stored once
+        before = self.snap()                           # shared compounds stored once
         try:
             result = fn(self.proj, *args, **kw)
         except Exception:
@@ -48,17 +51,28 @@ class History:
         project.refresh_duration(self.proj)
         return result
 
+    def snap(self):
+        return json.dumps({k: v for k, v in project.detached(self.proj).items() if k not in self.SIDE},
+                          ensure_ascii=False)
+
     def _restore(self, snapshot):
         data = json.loads(snapshot)
+        keep = {k: self.proj[k] for k in self.SIDE if k in self.proj}
         self.proj.clear()
         self.proj.update(data)
+        self.proj.update(keep)
         project.link(self.proj)
+
+    def rewrite(self, fn):
+        """Apply fn(text) -> text to every stored snapshot (media files that were renamed)."""
+        self.undo_stack = [(l, fn(s), *rest) for l, s, *rest in self.undo_stack]
+        self.redo_stack = [(l, fn(s)) for l, s in self.redo_stack]
 
     def undo(self):
         if not self.undo_stack:
             return None
         label, snap, _, _ = self.undo_stack.pop()
-        self.redo_stack.append((label, project.dumps(self.proj)))
+        self.redo_stack.append((label, self.snap()))
         self._restore(snap)
         return label
 
@@ -66,7 +80,7 @@ class History:
         if not self.redo_stack:
             return None
         label, snap = self.redo_stack.pop()
-        self.undo_stack.append((label, project.dumps(self.proj), None, 0.0))
+        self.undo_stack.append((label, self.snap(), None, 0.0))
         self._restore(snap)
         return label
 

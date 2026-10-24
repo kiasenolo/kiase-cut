@@ -1,3 +1,9 @@
+# 前言 （這段是KILO自己加的）
+簡單來説 我就是受不了剪映只能在windows上用這件事情 所以我覺得AI vibe出來了一個剪片軟體
+基本上 我會嘗試讓AI還原該還原的東西 因爲我自己也需要用到
+同時 我覺得FL的有些邏輯其實不錯 可以放進去 所以 我讓AI放了
+這算是少數幾個我認真對待的AI生產的東西了
+
 # tesetoa
 
 A small Jianying (剪映)-style video editor on top of the MLT engine. Goal: edit — and
@@ -145,6 +151,29 @@ custom one) and any size as a multiple of the project's resolution (0.25× / 0.5
 a pixel size: times are microseconds and positions, text sizes and masks are fractions of
 the canvas, so every rate and size renders the same picture. The project's own fps only
 sets the timeline's frame grid, and its width and height the canvas shape.
+
+## Project folder
+
+A project is a folder, as in FL Studio (File > New project asks for a name and a place):
+
+```
+My Video/
+    My Video.tesetoa.json   the project file (media paths are stored relative to the folder)
+    Media/                  the media library: its sub-folders are the library folders
+    Cache/                  waveforms, proxies
+    Exports/                rendered videos (the export dialog starts here)
+    Backup/                 earlier copies of the project file, one per save; autosave
+```
+
+The media library is the Media folder: imports (dialog, or files dragged in from the file
+manager) are copied into it, new folders / renaming / moving / deleting in the library do the
+same to the files (deleting uses the recycle bin), and files added or removed in Media by hand
+show up in the library. Clips follow renamed or moved files. Because of that, these are not
+part of Ctrl+Z. File > Project info (F11) holds title, author, genre, URL, comments and the
+project's history: when it was started, last opened and saved, and the time spent on it.
+Older projects (and Jianying drafts) are offered to be tidied into a project folder; File >
+Collect media into the project folder does it any time. Several project files can share one
+folder (File > Save as).
 
 ## How it works
 

@@ -1,18 +1,21 @@
-"""Media library: imported files organised in folders, stored in the project.
+"""Media library: the files of the project's Media folder, organised in its sub-folders.
 
 proj["library"] = {"folders": [{id, name, parent}], "items": [{id, name, path, kind, width,
-height, duration_us, folder}]}. parent / folder is None at the top level. Every function
-takes the project root and raises edit.EditError on bad input, so they run through the
-same undo history as timeline edits.
+height, duration_us, folder}]}. parent / folder is None at the top level. The library is a
+mirror of <project folder>/Media (see "the Media folder" below): folders are directories,
+items are files; imports copy files in, and renaming, moving or deleting here does the
+same to the files. The first group of functions only edits the dicts; the second one also
+touches the disk. Both raise edit.EditError on bad input.
 """
 import json
 import os
+import shutil
 import subprocess
 import uuid
 
 from PIL import Image
 
-from . import edit, project
+from . import edit, project, workspace
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 IMAGE_DEFAULT_US = 5_000_000
@@ -220,3 +223,349 @@ def place(container, root, item_id, track_id, start_us):
     track["clips"].append(c)
     track["clips"].sort(key=lambda k: k["start_us"])
     return c
+
+
+# -- the Media folder -------------------------------------------------------------------------------
+def slash(p):
+    return p.replace("\\", "/")
+
+
+def norm(p):
+    return slash(os.path.abspath(p))
+
+
+def within(path, folder):
+    a, b = project._fold(slash(path)), project._fold(slash(folder)).rstrip("/")
+    return a.startswith(b + "/")
+
+
+def folder_rel(proj, folder_id):
+    """Path of a library folder below Media ("" for the top level)."""
+    parts = []
+    while folder_id:
+        f = folder(proj, folder_id)
+        parts.append(f["name"])
+        folder_id = f["parent"]
+    return "/".join(reversed(parts))
+
+
+def folder_dir(proj, root, folder_id):
+    rel = folder_rel(proj, folder_id)
+    return workspace.media_dir(root) + ("/" + rel if rel else "")
+
+
+def unique_name(directory, name):
+    """name, or "name (2).ext" … when the folder already has it."""
+    if not os.path.exists(os.path.join(directory, name)):
+        return name
+    stem, ext = os.path.splitext(name)
+    n = 2
+    while os.path.exists(os.path.join(directory, f"{stem} ({n}){ext}")):
+        n += 1
+    return f"{stem} ({n}){ext}"
+
+
+def import_copy(root, files, dest_dir, progress=None):
+    """Copy files into dest_dir (a folder of Media). Files already inside Media stay where they
+    are; a copy that was imported before (same name, size and time) is reused. Returns
+    {source path: path in the project}. Runs on a worker thread."""
+    mroot = workspace.media_dir(root)
+    os.makedirs(dest_dir, exist_ok=True)
+    out = {}
+    for i, f in enumerate(files):
+        src = norm(f)
+        if within(src, mroot):
+            out[src] = src
+        else:
+            name = os.path.basename(src)
+            dst = os.path.join(dest_dir, name)
+            if os.path.exists(dst) and _same_file(src, dst):
+                out[src] = norm(dst)
+            else:
+                dst = os.path.join(dest_dir, unique_name(dest_dir, name))
+                shutil.copy2(src, dst)
+                out[src] = norm(dst)
+        if progress:
+            progress((i + 1) / len(files))
+    return out
+
+
+def _same_file(a, b):
+    sa, sb = os.stat(a), os.stat(b)
+    return sa.st_size == sb.st_size and abs(sa.st_mtime - sb.st_mtime) < 2
+
+
+def scan(root, known=(), prober=probe):
+    """Read the Media folder: {"dirs": [relative paths], "files": [paths], "probes": {path: info
+    for files not in `known`}, "failed": [paths that could not be read]}. Runs on a worker thread."""
+    mroot = norm(workspace.media_dir(root))
+    res = {"dirs": [], "files": [], "probes": {}, "failed": []}
+    if not os.path.isdir(mroot):
+        return res
+    for d, dnames, fnames in os.walk(mroot):
+        dnames[:] = sorted(x for x in dnames if not x.startswith("."))
+        rel = slash(os.path.relpath(d, mroot))
+        if rel != ".":
+            res["dirs"].append(rel)
+        for f in sorted(fnames):
+            if os.path.splitext(f)[1].lower() not in MEDIA_EXT or f.startswith("."):
+                continue
+            path = norm(os.path.join(d, f))
+            res["files"].append(path)
+            if path not in known:
+                try:
+                    res["probes"][path] = prober(path)
+                except Exception:
+                    res["failed"].append(path)       # maybe still being written
+    res["dirs"].sort()
+    return res
+
+
+def known_paths(proj):
+    return {it["path"] for it in lib(proj)["items"]}
+
+
+def dedupe(proj):
+    """One item per file (two appear when a file is copied in while the library is read)."""
+    seen, keep = set(), []
+    for it in lib(proj)["items"]:
+        key = project._fold(slash(it["path"]))
+        if key not in seen:
+            seen.add(key)
+            keep.append(it)
+    changed = len(keep) != len(lib(proj)["items"])
+    lib(proj)["items"][:] = keep
+    return changed
+
+
+def apply_scan(proj, root, res):
+    """Make the library match a scan of Media. Returns whether anything changed. Items outside
+    Media (older projects, until their media are collected) are left alone."""
+    L = lib(proj)
+    mroot = norm(workspace.media_dir(root))
+    changed = dedupe(proj)
+    byrel = {folder_rel(proj, f["id"]): f for f in L["folders"]}
+    for rel in res["dirs"]:
+        if rel not in byrel:
+            parent = rel.rpartition("/")[0]
+            f = {"id": _id("f"), "name": rel.rpartition("/")[2], "parent": byrel[parent]["id"] if parent else None}
+            L["folders"].append(f)
+            byrel[rel] = f
+            changed = True
+    keep = set()                                   # folders that items outside Media still sit in
+    for it in L["items"]:
+        fid = it.get("folder")
+        if fid and not within(it["path"], mroot):
+            while fid and fid not in keep:
+                keep.add(fid)
+                fid = folder(proj, fid)["parent"]
+    live = {f["id"] for r, f in byrel.items() if r in set(res["dirs"])} | keep
+    for f in list(L["folders"]):
+        if f["id"] not in live:
+            L["folders"].remove(f)
+            changed = True
+    files = set(res["files"])
+    have = {}
+    for it in list(L["items"]):
+        if within(it["path"], mroot):
+            if it["path"] in files:
+                have[it["path"]] = it
+            else:
+                L["items"].remove(it)
+                changed = True
+    for path in res["files"]:
+        d = slash(os.path.dirname(path))
+        rel = d[len(mroot) + 1:] if d != mroot else ""
+        fid = byrel[rel]["id"] if rel else None
+        it = have.get(path)
+        if it is None:
+            info = res["probes"].get(path)
+            if not info:
+                continue
+            it = {"id": _id("m"), "name": os.path.basename(path), "path": path, "folder": fid, **info}
+            L["items"].append(it)
+            changed = True
+        if it.get("folder") != fid:
+            it["folder"] = fid
+            changed = True
+        if it["name"] != os.path.basename(path):
+            it["name"] = os.path.basename(path)
+            changed = True
+    return changed
+
+
+def retarget(proj, old, new, is_dir=False):
+    """The file (or folder) old is now at new: items and clips follow it."""
+    old, new = slash(old), slash(new)
+
+    def fix(path):
+        p = slash(path)
+        if is_dir:
+            return new + p[len(old):] if project._fold(p).startswith(project._fold(old) + "/") else path
+        return new if project._fold(p) == project._fold(old) else path
+    for it in lib(proj)["items"]:
+        it["path"] = fix(it["path"])
+    for c in project.all_clips(proj):
+        m = c.get("media")
+        if m and m.get("path"):
+            m["path"] = fix(m["path"])
+    dedupe(proj)
+
+
+def retarget_text(text, old, new, is_dir=False):
+    """The same for an undo snapshot (JSON text)."""
+    esc = lambda s: json.dumps(slash(s), ensure_ascii=False)[1:-1]
+    tail = "/" if is_dir else '"'
+    return text.replace(esc(old) + tail, esc(new) + tail)
+
+
+def external_media(proj, root):
+    """{path outside Media: where a copy would go}: the library items and clips that use files
+    from elsewhere. Items keep their library folder as a sub-folder of Media."""
+    mroot = norm(workspace.media_dir(root))
+    plan, taken = {}, {}
+    todo = [(it["path"], folder_rel(proj, it["folder"]) if it.get("folder") else "") for it in lib(proj)["items"]]
+    todo += [(c["media"]["path"], "匯入的素材") for c in project.all_clips(proj) if c.get("media")]
+    for path, rel in todo:
+        path = slash(path)
+        if within(path, mroot) or path in plan or not path:
+            continue
+        d = mroot + ("/" + rel if rel else "")
+        stem, ext = os.path.splitext(os.path.basename(path))
+        cand, n = stem + ext, 1
+        while True:
+            dst = d + "/" + cand
+            if dst in taken.values() or (os.path.exists(dst) and not (os.path.exists(path) and _same_file(path, dst))):
+                n += 1
+                cand = f"{stem} ({n}){ext}"
+            else:
+                break
+        name = cand
+        plan[path] = taken[path] = d + "/" + name
+    return plan
+
+
+def collect(plan, progress=None):
+    """Copy the files of an external_media() plan. Runs on a worker thread; files that are
+    missing are skipped. Returns {source: copy} for those that exist."""
+    done = {}
+    items = list(plan.items())
+    for i, (src, dst) in enumerate(items):
+        if os.path.exists(src):
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if not os.path.exists(dst):
+                shutil.copy2(src, dst)
+            done[src] = dst
+        if progress:
+            progress((i + 1) / len(items))
+    return done
+
+
+# -- file operations (the disk and the library together) -------------------------------------------
+def make_folder(proj, root, name, parent=None):
+    name = workspace.safe_name(name, "新資料夾")
+    base = folder_dir(proj, root, parent)
+    name = unique_name(base, name)
+    os.makedirs(base + "/" + name)
+    return add_folder(proj, name, parent)
+
+
+def _inside(proj, root, ident):
+    """Files and folders of the project's Media may be changed; others belong to the user."""
+    mroot = norm(workspace.media_dir(root))
+    if ident.startswith("f"):
+        ok = os.path.isdir(folder_dir(proj, root, ident))
+    else:
+        ok = within(item(proj, ident)["path"], mroot)
+    if not ok:
+        raise edit.EditError("這個素材不在專案資料夾裡，請先用「檔案 > 整理素材到專案資料夾」")
+
+
+def rename_on_disk(proj, root, ident, name):
+    """Rename a folder or file. Returns [(old, new, is_dir)] for the places that hold paths."""
+    name = name.strip()
+    if not name:
+        raise edit.EditError("name is empty")
+    _inside(proj, root, ident)
+    if name != workspace.safe_name(name, ""):
+        raise edit.EditError("名稱不能包含 \\ / : * ? \" < > |")
+    if ident.startswith("f"):
+        f = folder(proj, ident)
+        old = folder_dir(proj, root, ident)
+        new = slash(os.path.dirname(old)) + "/" + name
+        if name != f["name"]:
+            if os.path.exists(new):
+                raise edit.EditError("已有同名的資料夾或檔案")
+            os.rename(old, new)
+            f["name"] = name
+            retarget(proj, old, new, True)
+            return [(old, new, True)]
+        return []
+    it = item(proj, ident)
+    if not os.path.splitext(name)[1]:
+        name += os.path.splitext(it["path"])[1]              # the extension stays
+    new = slash(os.path.dirname(it["path"])) + "/" + name
+    if new == it["path"]:
+        return []
+    if os.path.exists(new):
+        raise edit.EditError("已有同名的檔案")
+    old = it["path"]
+    os.rename(old, new)
+    it["name"] = name
+    retarget(proj, old, new)
+    return [(old, new, False)]
+
+
+def move_on_disk(proj, root, ident, to_folder):
+    """Move a folder or file into to_folder (None: top level of Media)."""
+    if to_folder is not None:
+        folder(proj, to_folder)
+    _inside(proj, root, ident)
+    dest_dir = folder_dir(proj, root, to_folder)
+    if ident.startswith("f"):
+        if to_folder is not None and to_folder in descendants(proj, ident):
+            raise edit.EditError("a folder cannot go inside itself")
+        old = folder_dir(proj, root, ident)
+        new = dest_dir + "/" + folder(proj, ident)["name"]
+        if slash(os.path.dirname(old)) == dest_dir:
+            return []
+        if os.path.exists(new):
+            raise edit.EditError("目的地已有同名的資料夾或檔案")
+        shutil.move(old, new)
+        folder(proj, ident)["parent"] = to_folder
+        retarget(proj, old, new, True)
+        return [(old, new, True)]
+    it = item(proj, ident)
+    old = it["path"]
+    new = dest_dir + "/" + os.path.basename(old)
+    if slash(os.path.dirname(old)) == dest_dir:
+        return []
+    if os.path.exists(new):
+        raise edit.EditError("目的地已有同名的檔案")
+    os.makedirs(dest_dir, exist_ok=True)
+    shutil.move(old, new)
+    it["folder"] = to_folder
+    retarget(proj, old, new)
+    return [(old, new, False)]
+
+
+def delete_on_disk(proj, root, ident, trash=None):
+    """Delete a file, or a folder with everything in it (trash(path) puts it in the recycle bin).
+    Clips that used the files stay on the timeline, offline."""
+    trash = trash or (lambda p: shutil.rmtree(p) if os.path.isdir(p) else os.remove(p))
+    L = lib(proj)
+    if not ident.startswith("f") and not within(item(proj, ident)["path"], norm(workspace.media_dir(root))):
+        L["items"].remove(item(proj, ident))             # a link to a file elsewhere: only the link goes
+        return
+    if ident.startswith("f"):
+        gone = descendants(proj, ident)
+        path = folder_dir(proj, root, ident)
+        if os.path.exists(path):
+            trash(path)
+        L["items"] = [it for it in L["items"] if it.get("folder") not in gone]
+        L["folders"] = [f for f in L["folders"] if f["id"] not in gone]
+    else:
+        it = item(proj, ident)
+        if os.path.exists(it["path"]):
+            trash(it["path"])
+        L["items"].remove(it)

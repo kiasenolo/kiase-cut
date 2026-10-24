@@ -39,7 +39,7 @@ import json
 import os
 
 FORMAT = "tesetoa"
-VERSION = 3                     # 2: shared compounds; 3: several timelines
+VERSION = 4                     # 2: shared compounds; 3: several timelines; 4: project folder
 DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
                                  "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
                                  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
@@ -58,14 +58,62 @@ def load(path):
         p = json.load(fh)
     if p.get("format") != FORMAT:
         raise ValueError(f"{path} is not a tesetoa project")
+    root = os.path.dirname(os.path.abspath(path))
+    _map_paths(p, lambda s: to_abs(s, root))              # media paths are stored relative to the project folder
     return normalize(p)
 
 
 def save(p, path):
+    """Write the project. Media inside the project folder (the file's own folder) are stored
+    with paths relative to it, so the whole folder can be moved or copied."""
+    root = os.path.dirname(os.path.abspath(path))
+    data = json.loads(dumps(p))                           # a private copy to rewrite
+    _map_paths(data, lambda s: to_rel(s, root))
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(dumps(p, indent=1))
+        json.dump(data, fh, ensure_ascii=False, indent=1)
     os.replace(tmp, path)          # never leave a half-written project behind
+
+
+# -- media paths ------------------------------------------------------------------------------------
+def _slash(s):
+    return s.replace("\\", "/")
+
+
+def is_abs(s):
+    s = _slash(s)
+    return s.startswith("/") or (len(s) > 2 and s[1] == ":" and s[0].isalpha() and s[2] == "/")
+
+
+def _fold(s):
+    return s.lower() if os.name == "nt" else s
+
+
+def to_rel(path, root):
+    """path relative to root when it is inside it, else unchanged."""
+    p, r = _slash(path), _slash(root).rstrip("/")
+    return p[len(r) + 1:] if is_abs(p) and _fold(p).startswith(_fold(r) + "/") else path
+
+
+def to_abs(path, root):
+    return path if not path or is_abs(path) else _slash(root).rstrip("/") + "/" + _slash(path)
+
+
+def _map_paths(data, fn):
+    """Apply fn to every media path of a stored project: library items and clips (timelines
+    and compounds)."""
+    for it in data.get("library", {}).get("items", []):
+        if it.get("path"):
+            it["path"] = fn(it["path"])
+    holders = [tl["tracks"] for tl in data.get("timelines", [])]
+    holders += [c["tracks"] for c in data.get("compounds", {}).values()]
+    holders.append(data.get("tracks", []) if "timelines" not in data else [])
+    for tracks in holders:
+        for t in tracks:
+            for c in t["clips"]:
+                m = c.get("media")
+                if m and m.get("path"):
+                    m["path"] = fn(m["path"])
 
 
 def end_us(tracks):

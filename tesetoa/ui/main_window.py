@@ -8,15 +8,20 @@ import hashlib
 import json
 import math
 import os
+import shutil
+import subprocess
+import sys
+import time
 
-from PySide6.QtCore import QMimeData, QObject, QSize, QStandardPaths, Qt, QThread, Signal, Slot
-from PySide6.QtGui import QAction, QDrag, QKeySequence
+from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
+                            QThread, QTimer, QUrl, Signal, Slot)
+from PySide6.QtGui import QAction, QDesktopServices, QDrag, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
 
-from .. import build, curves, edit, library, project, waveform
+from .. import build, curves, edit, library, project, waveform, workspace
 from ..client import EngineClient
 from ..importers import jianying
 from .compounds import CompoundPanel
@@ -25,6 +30,7 @@ from .export_dialog import ExportDialog
 from .inspector import Inspector
 from .library import LibraryPanel
 from .player import Player
+from .project_dialogs import NewProjectDialog, ProjectInfoDialog
 from . import icons
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -152,7 +158,12 @@ class MainWindow(QMainWindow):
         self.proj = None
         self.history = None
         self.path = None
+        self.root = None                # the project folder (the folder of the project file)
         self.dirty = False
+        self.fs_epoch = 0               # counts changes made to the Media folder from here
+        self.sync_busy = False
+        self.sync_retries = 0
+        self._last_tick = time.monotonic()
         self.path_ids = []              # open compound clips, outermost first
         self.tl_pos = {}                # playhead of each timeline while another is open
         self.clipboard = None           # clips copied with 複製 / 剪下 (edit.copy_clips)
@@ -177,7 +188,8 @@ class MainWindow(QMainWindow):
         lb.newFolderRequested.connect(self.new_folder)
         lb.renameRequested.connect(self.rename_library)
         lb.deleteRequested.connect(self.delete_library)
-        lb.moveRequested.connect(lambda ident, f: self.apply_root("移動素材", library.move, ident, f))
+        lb.moveRequested.connect(self.move_library)
+        lb.revealRequested.connect(self.reveal)
         lb.addRequested.connect(lambda iid: self.place_media(iid, "", self.playhead_us()))
         lb.filesDropped.connect(lambda paths, folder: self.drop_files(paths, folder))
 
@@ -405,11 +417,23 @@ class MainWindow(QMainWindow):
         w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))  # never modal
         w.stateChanged.connect(self.on_state)
         w.levels.connect(self.meter.bars.feed)
+        # the library follows the Media folder: look again when something in it changes, when
+        # this window comes back to the front, and after our own file operations
+        self.watcher = QFileSystemWatcher(self)
+        self.watcher.directoryChanged.connect(lambda _p: self.request_sync(700))
+        self.sync_timer = QTimer(self, singleShot=True)
+        self.sync_timer.timeout.connect(self.sync_library)
+        self.clock = QTimer(self, interval=5000)        # time spent on the project; autosave
+        self.clock.timeout.connect(self._tick)
+        self.clock.start()
+        self.autosave_timer = QTimer(self, interval=5 * 60 * 1000)
+        self.autosave_timer.timeout.connect(self._autosave)
+        self.autosave_timer.start()
         self._menus()
         self._update_title()
         self._update_crumb()
         self._update_buttons()
-        self.statusBar().showMessage("檔案 > 匯入剪映草稿，或從素材庫匯入素材")
+        self.statusBar().showMessage("檔案 > 新專案…（或開啟最近的專案、匯入剪映草稿）")
 
     # -- menus ------------------------------------------------------------------------------------
     def _menus(self):
@@ -421,12 +445,18 @@ class MainWindow(QMainWindow):
             menu.addAction(a)
 
         m = self.menuBar().addMenu("檔案")
-        add(m, "新專案", "Ctrl+N", self.new_project)
-        add(m, "匯入剪映草稿…", "Ctrl+I", self.import_draft)
+        add(m, "新專案…", "Ctrl+N", self.new_project)
         add(m, "開啟專案…", "Ctrl+O", self.open_project)
+        self.recent_menu = m.addMenu("最近的專案")
+        self.recent_menu.aboutToShow.connect(self._fill_recent)
         add(m, "儲存專案", "Ctrl+S", self.save_project)
-        add(m, "另存專案…", "Ctrl+Shift+S", lambda: self.save_project(True))
+        add(m, "另存新檔…", "Ctrl+Shift+S", lambda: self.save_project(True))
         m.addSeparator()
+        add(m, "專案資訊…", "F11", self.show_project_info)
+        add(m, "開啟專案資料夾", None, lambda: self.reveal(None))
+        add(m, "整理素材到專案資料夾", None, self.collect_external)
+        m.addSeparator()
+        add(m, "匯入剪映草稿…", "Ctrl+I", self.import_draft)
         add(m, "匯入素材…", "Ctrl+Shift+I", lambda: self.import_media(self.library.current_folder()))
         add(m, "匯出影片…", "Ctrl+E", self.export)
         m = self.menuBar().addMenu("編輯")
@@ -462,8 +492,10 @@ class MainWindow(QMainWindow):
             self.addAction(a)
 
     def _update_title(self):
-        name = os.path.basename(self.path) if self.path else ("未儲存" if self.proj else "")
+        name = workspace.title_of(self.proj, self.path) if self.proj else ""
         self.setWindowTitle("tesetoa" + (f" — {name}" if name else "") + (" *" if self.dirty else ""))
+        self.library.set_origin(f"專案資料夾：{os.path.basename(self.root)} / Media" if self.root else "（還沒有專案）",
+                                self.root or "")
 
     def _update_buttons(self):
         h = self.history
@@ -650,8 +682,8 @@ class MainWindow(QMainWindow):
 
     # -- project ----------------------------------------------------------------------------------
     def cache_dir(self):
-        if self.path:
-            return self.path.replace(".tesetoa.json", "") + ".tesetoa-cache"
+        if self.root:
+            return workspace.cache_dir(self.root)
         base = QStandardPaths.writableLocation(QStandardPaths.CacheLocation)
         key = hashlib.sha1(str(id(self.proj)).encode()).hexdigest()[:10]
         return os.path.join(base, "unsaved", key)
@@ -665,54 +697,174 @@ class MainWindow(QMainWindow):
             return self.save_project()
         return ans == QMessageBox.Discard
 
-    def new_project(self):
+    # recent projects and settings live in the user's profile, not in a project
+    SETTINGS = ("tesetoa", "tesetoa")
+
+    def settings(self):
+        return QSettings(*self.SETTINGS)
+
+    def default_location(self):
+        s = self.settings().value("project_dir")
+        if s and os.path.isdir(str(s)):
+            return str(s)
+        docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or os.path.expanduser("~")
+        return os.path.join(docs, "tesetoa").replace("\\", "/")
+
+    def recent(self):
+        v = self.settings().value("recent", [])
+        v = v if isinstance(v, list) else ([v] if v else [])
+        return [str(p) for p in v]
+
+    def remember(self, path):
+        s = self.settings()
+        s.setValue("recent", [path] + [p for p in self.recent() if p != path][:9])
+        s.setValue("project_dir", os.path.dirname(workspace.root_of(path)))
+
+    def _fill_recent(self):
+        m = self.recent_menu
+        m.clear()
+        have = [p for p in self.recent() if os.path.exists(p)]
+        for p in have:
+            m.addAction(f"{workspace.project_name(p)}    {workspace.root_of(p)}", lambda p=p: self.open_recent(p))
+        if not have:
+            m.addAction("（沒有）").setEnabled(False)
+        else:
+            m.addSeparator()
+            m.addAction("清除清單", lambda: self.settings().setValue("recent", []))
+
+    def open_recent(self, path):
         if self.maybe_save():
-            self.path = None
-            self.set_project(project.new())
+            self.open_path(path)
+
+    def ensure_project(self):
+        """Media goes into a project folder, so there has to be a project first."""
+        return bool(self.proj) or self.new_project()
+
+    def new_project(self):
+        if not self.maybe_save():
+            return False
+        dlg = NewProjectDialog(self, self.default_location())
+        if dlg.exec() != QDialog.Accepted:
+            return False
+        location, name, w, h, fps = dlg.values()
+        try:
+            os.makedirs(location, exist_ok=True)
+            proj, path = workspace.create(location, name, w, h, fps)
+        except Exception as exc:
+            QMessageBox.critical(self, "無法建立專案", str(exc))
+            return False
+        self.open_loaded(proj, path)
+        return True
+
+    def open_loaded(self, proj, path):
+        self.path = path
+        self.set_project(proj)
+        self.remember(path)
 
     def import_draft(self):
         if not self.maybe_save():
             return
         fn, _ = QFileDialog.getOpenFileName(self, "匯入剪映草稿（已解密的 draft_content）", "",
                                             "Jianying draft (*.json)")
-        if not fn:
-            return
+        if fn:
+            self.import_draft_file(fn)
+
+    def import_draft_file(self, fn):
         try:
             proj, warnings = jianying.import_draft(fn)
         except Exception as exc:
             QMessageBox.critical(self, "匯入失敗", str(exc))
             return
-        self.path = None
-        self.set_project(proj)
+        guess = os.path.basename(os.path.dirname(os.path.abspath(fn))) or "剪映草稿"
+        dlg = NewProjectDialog(self, self.default_location(), guess, (proj["width"], proj["height"], proj["fps"]),
+                               "匯入剪映草稿")
+        if dlg.exec() != QDialog.Accepted:
+            return
+        location, name = dlg.values()[:2]
+        try:
+            os.makedirs(location, exist_ok=True)
+            path = workspace.adopt(proj, location, name)
+        except Exception as exc:
+            QMessageBox.critical(self, "無法建立專案", str(exc))
+            return
+        self.open_loaded(proj, path)
         if warnings:
             QMessageBox.information(self, "匯入完成", "部分內容無法匯入：\n" + "\n".join(sorted(set(warnings))))
+        self.collect_external(ask=False)             # the draft's media are copied into the project
 
     def open_project(self):
         if not self.maybe_save():
             return
-        fn, _ = QFileDialog.getOpenFileName(self, "開啟專案", "", "tesetoa project (*.tesetoa.json)")
+        fn, _ = QFileDialog.getOpenFileName(self, "開啟專案", self.default_location(),
+                                            "tesetoa project (*.tesetoa.json)")
         if fn:
-            self.path = fn
-            self.set_project(project.load(fn))
+            self.open_path(fn)
+
+    def open_path(self, fn):
+        try:
+            proj = project.load(fn)
+        except Exception as exc:
+            QMessageBox.critical(self, "無法開啟專案", f"{fn}\n{exc}")
+            return False
+        old_format = "info" not in proj
+        workspace.opened(proj, fn)
+        self.open_loaded(proj, fn)
+        if old_format and library.external_media(proj, self.root):
+            self.collect_external(ask=True)
+        return True
 
     def save_project(self, save_as=False):
         if not self.proj:
             return False
-        if save_as or not self.path:
-            fn, _ = QFileDialog.getSaveFileName(self, "儲存專案", "", "tesetoa project (*.tesetoa.json)")
-            if not fn:
+        if not self.path:
+            if not self.new_location_for_unsaved():
                 return False
-            if not fn.endswith(".tesetoa.json"):
-                fn = fn.removesuffix(".json") + ".tesetoa.json"
+        elif save_as:
+            old = workspace.project_name(self.path)
+            name, ok = QInputDialog.getText(self, "另存新檔", "專案檔名稱（存在同一個專案資料夾裡，共用素材）",
+                                            text=old + " 2")
+            name = workspace.safe_name(name, "")
+            if not ok or not name:
+                return False
+            fn = workspace.project_file(self.root, name)
+            if os.path.exists(fn) and QMessageBox.question(self, "覆蓋", f"「{name}」已經存在，要覆蓋嗎？") != QMessageBox.Yes:
+                return False
             self.path = fn
-        project.save(self.proj, self.path)
+        try:
+            workspace.save(self.proj, self.path)
+        except OSError as exc:
+            QMessageBox.critical(self, "儲存失敗", str(exc))
+            return False
         self.dirty = False
+        self.remember(self.path)
         self._update_title()
         self.statusBar().showMessage("已儲存", 3000)
         return True
 
+    def new_location_for_unsaved(self):
+        """A project without a folder (made by a tool): ask where its folder goes."""
+        dlg = NewProjectDialog(self, self.default_location(), "新專案", (self.proj["width"], self.proj["height"],
+                                                                       self.proj["fps"]), "儲存專案")
+        if dlg.exec() != QDialog.Accepted:
+            return False
+        location, name = dlg.values()[:2]
+        try:
+            os.makedirs(location, exist_ok=True)
+            self.path = workspace.adopt(self.proj, location, name)
+        except Exception as exc:
+            QMessageBox.critical(self, "無法建立專案", str(exc))
+            return False
+        self.root = workspace.root_of(self.path)
+        self.collect_external(ask=False)
+        self.watch_media()
+        return True
+
     def set_project(self, proj):
+        self.root = workspace.root_of(self.path) if self.path else None
         self.relink(proj)
+        workspace.ensure_info(proj, self.path)
+        if self.root:
+            workspace.ensure_layout(self.root)
         if not library.lib(proj)["items"]:
             library.add_from_project(proj)         # media already used, e.g. after a draft import
         self.proj = proj
@@ -732,6 +884,167 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.refresh_inspector()
         self.rebuild()
+        self._last_tick = time.monotonic()
+        self.watch_media()
+        self.request_sync(0)
+
+    # -- project folder: info, time spent, backups -----------------------------------------------
+    def show_project_info(self):
+        if not self.proj:
+            return
+        self._tick()
+        mroot = workspace.media_dir(self.root) if self.root else None
+        items = library.lib(self.proj)["items"]
+        n_clips = sum(1 for _ in project.all_clips(self.proj))
+        size = workspace.show_size(workspace.folder_size(mroot)) if mroot and os.path.isdir(mroot) else "—"
+        stats = (f"{len(self.proj['timelines'])} 條時間線，{n_clips} 個片段\n"
+                 f"素材庫 {len(items)} 個檔案（Media 資料夾 {size}）\n"
+                 f"長度 {timecode(self.proj['duration_us'], self.proj['fps'])}")
+        dlg = ProjectInfoDialog(self, self.proj, self.path, stats)
+        dlg.openFolder.connect(lambda: self.reveal(None))
+        if dlg.exec() != QDialog.Accepted:
+            return
+        info = workspace.info(self.proj)
+        new = dlg.values()
+        if any(info.get(k) != v for k, v in new.items()):
+            info.update(new)
+            self.dirty = True
+            self._update_title()
+
+    def _tick(self):
+        """Every few seconds: add the time the window was in use to the project's time spent."""
+        now = time.monotonic()
+        dt, self._last_tick = min(now - self._last_tick, 30.0), now
+        if self.proj and self.isActiveWindow():
+            info = workspace.info(self.proj)
+            info["time_spent_s"] = round(float(info.get("time_spent_s", 0)) + dt, 1)
+
+    def _autosave(self):
+        if self.proj and self.path and self.dirty:
+            try:
+                workspace.autosave(self.proj, self.path)
+            except OSError:
+                pass
+
+    def reveal(self, ident):
+        """Show a library entry (None: the Media folder) in the file manager."""
+        if not self.root:
+            return
+        target = workspace.media_dir(self.root)
+        select = False
+        if ident:
+            if ident.startswith("f"):
+                target = library.folder_dir(self.proj, self.root, ident)
+            else:
+                target, select = library.item(self.proj, ident)["path"], True
+        if not os.path.exists(target):
+            target = workspace.media_dir(self.root)
+            select = False
+        if select and sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,", target.replace("/", "\\")])
+        else:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(target) if select else target))
+
+    # -- media folder <-> library -----------------------------------------------------------------
+    def watch_media(self):
+        old = self.watcher.directories()
+        if old:
+            self.watcher.removePaths(old)
+        mroot = workspace.media_dir(self.root) if self.root else None
+        if mroot and os.path.isdir(mroot):
+            dirs = [d for d, _, _ in os.walk(mroot) if not any(p.startswith(".") for p in d[len(mroot):].split(os.sep))]
+            self.watcher.addPaths(dirs)
+
+    def request_sync(self, delay=500):
+        if self.root:
+            self.sync_timer.start(delay)
+
+    def sync_library(self):
+        """Read the Media folder (off the UI thread: new files are probed) and make the
+        library match it."""
+        if not self.proj or not self.root:
+            return
+        if self.sync_busy:
+            self.request_sync(300)
+            return
+        self.sync_busy, root, epoch = True, self.root, self.fs_epoch
+        known = library.known_paths(self.proj)
+
+        def done(res):
+            self.sync_busy = False
+            if not self.proj or self.root != root:
+                return
+            if epoch != self.fs_epoch:                    # our own file operation came in between
+                self.request_sync(100)
+                return
+            if library.apply_scan(self.proj, root, res):
+                self.library.set_library(library.lib(self.proj))
+            self.watch_media()
+            if res["failed"] and self.sync_retries < 4:   # a file still being written: look again
+                self.sync_retries += 1
+                self.request_sync(3000)
+            else:
+                if res["failed"]:
+                    self.statusBar().showMessage(f"無法讀取：{os.path.basename(res['failed'][0])}", 6000)
+                self.sync_retries = 0
+
+        def failed(msg):
+            self.sync_busy = False
+            self.statusBar().showMessage(f"整理素材庫失敗：{msg}", 6000)
+
+        self.run_task(lambda _p: library.scan(root, known), done, failed)
+
+    def changeEvent(self, e):
+        if e.type() == QEvent.ActivationChange and self.isActiveWindow():
+            self.request_sync(300)
+        super().changeEvent(e)
+
+    def paths_changed(self, pairs, label):
+        """Files were renamed / moved: the undo history follows them, and the views refresh."""
+        if pairs and self.history:
+            def fix(text):
+                for old, new, is_dir in pairs:
+                    text = library.retarget_text(text, old, new, is_dir)
+                return text
+            self.history.rewrite(fix)
+        self.fs_epoch += 1
+        self.after_edit(label)
+        self.request_sync(300)
+
+    def collect_external(self, ask=True):
+        """Copy the media that sit outside the project folder into Media."""
+        if not self.proj or not self.root:
+            return
+        plan = library.external_media(self.proj, self.root)
+        if not plan:
+            self.statusBar().showMessage("所有素材都已經在專案資料夾裡了", 4000)
+            return
+        if ask and QMessageBox.question(
+                self, "整理素材",
+                f"有 {len(plan)} 個素材在專案資料夾外面。\n要把它們複製到專案的 Media 資料夾嗎？\n（原檔不會被動到）") != QMessageBox.Yes:
+            return
+        prog = QProgressDialog("複製素材到專案資料夾…", None, 0, 1000, self)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        root = self.root
+
+        def done(copied):
+            prog.close()
+            if self.root != root:
+                return
+            pairs = []
+            for src, dst in copied.items():
+                library.retarget(self.proj, src, dst)
+                pairs.append((src, dst, False))
+            self.paths_changed(pairs, "已整理素材")
+            if len(copied) < len(plan):
+                QMessageBox.warning(self, "部分素材找不到",
+                                    f"{len(plan) - len(copied)} 個素材的檔案不存在，沒有複製（片段保留原路徑）。")
+            self.dirty = True
+
+        self.run_task(lambda progress: library.collect(plan, progress), done,
+                      lambda m: (prog.close(), QMessageBox.critical(self, "複製失敗", m)),
+                      lambda p: prog.setValue(int(p * 1000)))
 
     def relink(self, proj):
         """Offer to find missing media by file name under a folder the user picks."""
@@ -1114,8 +1427,8 @@ class MainWindow(QMainWindow):
 
     # -- media library ----------------------------------------------------------------------------
     def import_media(self, folder):
-        if not self.proj:
-            self.set_project(project.new())
+        if not self.ensure_project():
+            return
         files, _ = QFileDialog.getOpenFileNames(self, "匯入素材", "",
                                                 "Media (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.mp4 *.mov *.mkv "
                                                 "*.avi *.webm *.mp3 *.wav *.m4a *.aac *.flac *.ogg);;All files (*)")
@@ -1133,8 +1446,9 @@ class MainWindow(QMainWindow):
             self.drop_files(paths, self.library.current_folder())
 
     def drop_files(self, paths, folder, place=None):
-        """Files (or folders of them) dragged in: they go into the media library, and onto the
-        timeline too when dropped there (place = (track id, start us))."""
+        """Files (or folders of them) dragged in: they are copied into the project's Media folder
+        (so into the media library), and onto the timeline too when dropped there
+        (place = (track id, start us))."""
         files = library.media_files(paths)
         if not files:
             self.statusBar().showMessage("沒有可以匯入的圖片、影片或音訊檔案", 4000)
@@ -1142,63 +1456,113 @@ class MainWindow(QMainWindow):
         self.import_files(files, folder, place)
 
     def import_files(self, files, folder, place=None):
-        """Read the files, add them to the library (once each) and, with place, to the timeline."""
-        if not self.proj:
-            self.set_project(project.new())
-        self.statusBar().showMessage(f"讀取 {len(files)} 個檔案…")
+        """Copy the files into Media (in `folder`), add them to the library and, with place,
+        to the timeline."""
+        if not self.ensure_project():
+            return
+        root = self.root
+        dest = library.folder_dir(self.proj, root, folder)
+        known = library.known_paths(self.proj)
+        self.statusBar().showMessage(f"匯入 {len(files)} 個檔案…")
 
-        def work(_p):
-            out, errors = {}, []
-            for f in files:
-                p = os.path.abspath(f).replace("\\", "/")
-                try:
-                    out[p] = library.probe(p)
-                except Exception as exc:
-                    errors.append(f"{os.path.basename(p)}：{exc}")
-            return out, errors
+        def work(progress):
+            got = library.import_copy(root, files, dest, progress)
+            return got, library.scan(root, known)
 
-        def add_and_place(root, probes):
-            added = library.add_files(root, list(probes), folder, probes, reuse=True)
+        def add_and_place(proj, ids):
             if place is None:
                 return None
             track_id, start = place
-            level = self.container(root)
+            level = self.container(proj)
             tracks, nxt, clip = {}, {}, None
-            for it in added:
+            for iid in ids:
+                it = library.item(proj, iid)
                 want = "audio" if it["kind"] == "audio" else "video"
-                clip = library.place(level, root, it["id"], tracks.get(want, track_id), nxt.get(want, start))
+                clip = library.place(level, proj, iid, tracks.get(want, track_id), nxt.get(want, start))
                 tracks[want] = edit.find(level, clip["id"])[0]["id"]
                 nxt[want] = clip["start_us"] + clip["duration_us"]
             return clip
 
         def done(result):
-            probes, errors = result
-            if probes:
-                self.apply_root("匯入素材" if place is None else "匯入素材並加入時間軸", add_and_place, probes,
-                                select=None if place is None else (lambda c: c["id"]))
-                self.left.setCurrentWidget(self.library)
-            if errors:
-                QMessageBox.warning(self, "部分檔案無法匯入", "\n".join(errors))
+            got, res = result
+            if self.root != root:
+                return
+            self.fs_epoch += 1
+            library.apply_scan(self.proj, root, res)
+            self.library.set_library(library.lib(self.proj))
+            self.watch_media()
+            by_path = {it["path"]: it for it in library.lib(self.proj)["items"]}
+            items = [by_path[p] for p in dict.fromkeys(got.values()) if p in by_path]
+            bad = [os.path.basename(p) for p in dict.fromkeys(got.values()) if p not in by_path]
+            self.left.setCurrentWidget(self.library)
+            if items and place is not None:
+                self.apply_root("匯入素材並加入時間軸", add_and_place, [it["id"] for it in items],
+                                select=lambda c: c["id"])
+            elif items:
+                self.statusBar().showMessage(f"已匯入 {len(items)} 個素材到專案資料夾", 4000)
+            if bad:
+                QMessageBox.warning(self, "部分檔案無法匯入", "讀不到：\n" + "\n".join(bad))
 
-        self.run_task(work, done, lambda m: QMessageBox.critical(self, "匯入失敗", m))
+        self.run_task(work, done, lambda m: QMessageBox.critical(self, "匯入失敗", m),
+                      lambda p: self.statusBar().showMessage(f"匯入中… {int(p * 100)}%"))
+
+    def library_do(self, label, fn):
+        """A file operation on Media: it is done on the disk at once (not part of undo); clips,
+        the undo history and the library follow the files."""
+        if not self.proj or not self.root:
+            return False, None
+        try:
+            result = fn()
+        except (edit.EditError, OSError, shutil.Error) as exc:
+            QMessageBox.warning(self, label, str(exc))
+            return False, None
+        finally:
+            self.fs_epoch += 1
+            self.library.set_library(library.lib(self.proj))
+            self.watch_media()
+        return True, result
 
     def new_folder(self, parent):
-        if not self.proj:
+        if not self.ensure_project():
             return
         name, ok = QInputDialog.getText(self, "新資料夾", "名稱", text="新資料夾")
         if ok:
-            self.apply_root("新資料夾", library.add_folder, name, parent)
+            self.library_do("新資料夾", lambda: library.make_folder(self.proj, self.root, name, parent))
 
     def rename_library(self, ident):
         target = library.folder(self.proj, ident) if ident.startswith("f") else library.item(self.proj, ident)
-        name, ok = QInputDialog.getText(self, "重新命名", "名稱", text=target["name"])
+        name, ok = QInputDialog.getText(self, "重新命名", "名稱（檔案會一起改名）", text=target["name"])
         if ok:
-            self.apply_root("重新命名素材", library.rename, ident, name)
+            _ok, pairs = self.library_do("重新命名", lambda: library.rename_on_disk(self.proj, self.root, ident, name))
+            if pairs:
+                self.paths_changed(pairs, "重新命名素材")
+
+    def move_library(self, ident, to_folder):
+        _ok, pairs = self.library_do("移動素材", lambda: library.move_on_disk(self.proj, self.root, ident, to_folder))
+        if pairs:
+            self.paths_changed(pairs, "移動素材")
+
+    def trash(self, path):
+        if QFile.moveToTrash(path):
+            return
+        if QMessageBox.question(self, "無法移到資源回收筒", f"{os.path.basename(path)}\n要直接永久刪除嗎？") != QMessageBox.Yes:
+            raise OSError("已取消")
+        shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
 
     def delete_library(self, ident):
-        what = "資料夾（內容會移到上一層）" if ident.startswith("f") else "素材（時間軸上的片段不受影響）"
-        if QMessageBox.question(self, "刪除", f"要從素材庫刪除這個{what}嗎？") == QMessageBox.Yes:
-            self.apply_root("刪除素材", library.delete, ident)
+        if ident.startswith("f"):
+            what = "資料夾和裡面所有的檔案"
+            gone = {it["path"] for it in library.lib(self.proj)["items"] if it.get("folder") in library.descendants(self.proj, ident)}
+        else:
+            what = "素材檔案"
+            gone = {library.item(self.proj, ident)["path"]}
+        used = sum(1 for c in project.all_clips(self.proj) if c.get("media") and c["media"]["path"] in gone)
+        note = f"\n\n時間軸上有 {used} 個片段用到，刪除後它們會找不到素材。" if used else ""
+        if QMessageBox.question(self, "刪除", f"要刪除這個{what}嗎？它們會被移到資源回收筒。{note}") == QMessageBox.Yes:
+            ok, _ = self.library_do("刪除", lambda: library.delete_on_disk(self.proj, self.root, ident, self.trash))
+            if ok:
+                self.after_edit("刪除素材")
+                self.request_sync(300)
 
     def place_compound(self, kid, track_id, start_us):
         if not self.proj:
@@ -1414,8 +1778,8 @@ class MainWindow(QMainWindow):
         while self.path_ids:
             self.leave_compound()
         total = round(self.proj["duration_us"] / US * self.fps)
-        default = (self.path.replace(".tesetoa.json", ".mp4") if self.path
-                   else os.path.join(os.path.expanduser("~"), "Videos", "tesetoa.mp4"))
+        default = (os.path.join(workspace.exports_dir(self.root), workspace.project_name(self.path) + ".mp4")
+                   if self.root else os.path.join(os.path.expanduser("~"), "Videos", "tesetoa.mp4"))
         if len(self.proj["timelines"]) > 1:              # one file per timeline
             default = default[:-4] + f" - {project.timeline(self.proj)['name']}.mp4"
         dlg = ExportDialog(self, default, self.fps, total, self.timeline.mark_in, self.timeline.mark_out,
@@ -1437,6 +1801,7 @@ class MainWindow(QMainWindow):
 
         def work(progress):
             os.makedirs(cache, exist_ok=True)
+            os.makedirs(os.path.dirname(out), exist_ok=True)
             xml = build.build(snapshot, cache, os.path.join(cache, "export.mlt"),   # originals, no proxies
                               size=(fmt["width"], fmt["height"]), fps=fps)
             eng = EngineClient(16, 16)        # its own process; the preview stays usable
@@ -1472,9 +1837,7 @@ def run(argv):
     if len(argv) > 1:
         a = argv[1]
         if a.endswith(".tesetoa.json"):
-            win.path = a
-            win.set_project(project.load(a))
+            win.open_path(os.path.abspath(a))
         else:
-            proj, _ = jianying.import_draft(a)
-            win.set_project(proj)
+            win.import_draft_file(a)
     return app.exec()

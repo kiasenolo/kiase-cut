@@ -199,10 +199,12 @@ it, and set its centre, size, rotation and feather with keyframes. While that ta
 the preview is the mask editor and only masks can be changed there: drag inside the mask
 to move it, the squares to size it, the round handle to turn it and the arrow below it for
 the feather (a switched-off mask is drawn dimmed). Back on 屬性 the preview edits the clip
-again. Every drag
+again. An effect's 範圍 (in the 效果 tab) is edited the same way: press 編輯遮罩 beside it
+(picking a shape for 範圍 switches it on too). Every drag
 shows live and is one undo step; keyframed values get their keyframe at the playhead.
 Ctrl+wheel zooms the preview (to reach handles of clips bigger than the canvas), the
-middle button drags it. F or double-click toggles fullscreen.
+middle button drags it. F toggles fullscreen; double-click a text on the preview to type its
+words right there (Ctrl+Enter or a click elsewhere closes it, Esc puts the words back).
 
 Scale has an X and a Y value with a link button between them: linked (the default), changing
 one changes the other in the same proportion and their keyframes are added and removed

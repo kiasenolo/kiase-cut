@@ -275,7 +275,7 @@ class MainWindow(QMainWindow):
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
         self.preview.paramsCommitted.connect(self.on_preview_params)
         self.preview.paramsLive.connect(self.live_params)
-        self.preview.doubleClicked.connect(self.toggle_fullscreen)
+        self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
         self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
 
@@ -344,8 +344,17 @@ class MainWindow(QMainWindow):
         self.subtitles = SubtitlePanel()
         self.subtitles.textsEdited.connect(lambda contents: self.apply("批量修改文字", edit.set_texts, contents))
         self.side.addTab(self.subtitles, "字幕")
-        # the 遮罩 tab turns the preview into the mask editor
-        self.side.currentChanged.connect(lambda _: self.preview.set_mask_mode(self.side.currentWidget() is mask_scroll))
+        # the 遮罩 tab (or 編輯遮罩 of an effect in the 效果 tab) turns the preview into the mask editor
+        def mask_mode():
+            w = self.side.currentWidget()
+            if w is mask_scroll:
+                self.preview.set_mask_mode(True, "mask")
+            elif w is fx_scroll and ef.mask_edit:
+                self.preview.set_mask_mode(True, "fxmask:" + ef.mask_edit)
+            else:
+                self.preview.set_mask_mode(False)
+        self.side.currentChanged.connect(lambda _: mask_mode())
+        ef.maskEditChanged.connect(mask_mode)
         self.side.addTab(cv, "關鍵幀曲線")
 
         def tool(name, tip, fn, checkable=False):
@@ -361,7 +370,7 @@ class MainWindow(QMainWindow):
 
         self.play_btn = tool("play", "播放 / 暫停（空白鍵）", self.toggle_play)
         self.play_btn.setIconSize(QSize(22, 22))
-        full_btn = tool("fullscreen", "全螢幕（F，或在預覽上按兩下）", self.toggle_fullscreen)
+        full_btn = tool("fullscreen", "全螢幕（F）", self.toggle_fullscreen)
         self.time_lbl = QLabel("00:00.00")
         self.time_lbl.setObjectName("time")
         self.dur_lbl = QLabel("")
@@ -1600,7 +1609,7 @@ class MainWindow(QMainWindow):
         """A drag of the clip or its mask on the canvas: one edit (keyframed values get or
         edit their keyframe at the playhead)."""
         t = self.clip_time(cid)
-        if group == "mask":
+        if group == "mask" or group.startswith("fxmask:"):
             label = "遮罩"
         elif group == "multi":                          # a built-in asset resized: size and place
             label = "調整大小"
@@ -1986,7 +1995,7 @@ class MainWindow(QMainWindow):
                         parts[i] = (g, vals)
                     holder.update(vals)
         self.player.worker.set_view(view, self.cache_dir())
-        for panel in (self.inspector, self.mask_panel):         # the numbers follow the drag
+        for panel in (self.inspector, self.mask_panel, self.effects):   # the numbers follow the drag
             for g, vals in parts:
                 panel.show_live(cid, g, vals)
 

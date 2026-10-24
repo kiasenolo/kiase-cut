@@ -32,6 +32,7 @@ class EffectsPanel(QWidget):
     moveRequested = Signal(str, str, int)           # clip id, effect id, -1 / +1
     maskKindChosen = Signal(str, str, object)       # clip id, effect id, kind or None
     maskInvertChosen = Signal(str, str, bool)
+    maskEditChanged = Signal()                      # 編輯遮罩 switched: self.mask_edit
     paramEdited = Signal(list, str, str, object)    # clip ids, group, key, value
     keyToggled = Signal(list, str, str)
     liveEdited = Signal(list, str, str, object)
@@ -43,6 +44,7 @@ class EffectsPanel(QWidget):
         self.setMinimumWidth(300)
         self.user_filters = []                      # [(name, path)] from the user's Library
         self.clip_id = None
+        self.mask_edit = None                       # effect id whose mask the preview edits (編輯遮罩)
         self.shape = None
         self.widgets = {}
         self.pending = {}
@@ -179,11 +181,18 @@ class EffectsPanel(QWidget):
             if k is not None:
                 kind.addItem(name + "遮罩", k)
         kind.setCurrentIndex(max(0, kind.findData(kind_tag(e.get("mask")))))
-        kind.activated.connect(lambda i, eid=e["id"], cb=kind: self._now(self.maskKindChosen, eid, cb.itemData(i)))
+        kind.activated.connect(lambda i, eid=e["id"], cb=kind: self._kind_chosen(eid, cb.itemData(i)))
         row.addWidget(kind, 1)
         mgroup = "fxmask:" + e["id"]
         self.widgets[(mgroup, "kind")] = kind
         if e.get("mask"):
+            ed = QPushButton("編輯遮罩")
+            ed.setCheckable(True)
+            ed.setChecked(self.mask_edit == e["id"])
+            ed.setToolTip("在預覽畫面上拖曳這個遮罩：移動、縮放、旋轉、羽化")
+            ed.toggled.connect(lambda v, eid=e["id"]: self.set_mask_edit(eid if v else None))
+            self.widgets[("mask_edit", e["id"])] = ed
+            row.addWidget(ed)
             row.addWidget(self._key_button(mgroup, "kind"))
         lay.addLayout(row)
         if e.get("mask"):
@@ -259,6 +268,32 @@ class EffectsPanel(QWidget):
         return row
 
     # -- showing values ---------------------------------------------------------------------------
+    def _kind_chosen(self, eid, kind):
+        if kind is not None:                        # a new range: straight to dragging it on the preview
+            self.mask_edit = eid
+        self._now(self.maskKindChosen, eid, kind)
+
+    def set_mask_edit(self, eid):
+        """Edit the mask of effect eid on the preview (None: none)."""
+        if eid == self.mask_edit:
+            return
+        self.mask_edit = eid
+        for key, b in self.widgets.items():
+            if key[0] == "mask_edit":
+                b.blockSignals(True)
+                b.setChecked(key[1] == eid)
+                b.blockSignals(False)
+        self.maskEditChanged.emit()
+
+    def show_live(self, clip_id, group, values):
+        """The numbers of an effect mask being dragged on the preview (not an edit yet)."""
+        if clip_id != self.clip_id or not group.startswith("fxmask:"):
+            return
+        for r in PARAMS["mask"]:
+            s = self.widgets.get((group, r[0]))
+            if r[0] in values and s is not None and not s.hasFocus():
+                s.show_value(round(values[r[0]] * r[6], r[5]))
+
     def show_clips(self, clips, t_us, fps):
         c = clips[0] if len(clips) == 1 else None
         shape = None
@@ -270,7 +305,11 @@ class EffectsPanel(QWidget):
             self._flush()
             self.shape = shape
             self.clip_id = c["id"] if c else None
+            if self.mask_edit and not any(e["id"] == self.mask_edit and e.get("mask")
+                                          for e in (c.get("effects") or [] if c else [])):
+                self.mask_edit = None               # that effect or its mask is gone
             self._build(c)
+            self.maskEditChanged.emit()
         if c is None or c["type"] not in edit.VISUAL:
             return
         t = t_us - c["start_us"]

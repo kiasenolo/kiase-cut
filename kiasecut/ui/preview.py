@@ -9,7 +9,8 @@ keeps the ratio) and an edge only its own axis. A built-in asset (assets.py) is 
 its 寬 / 高 change and its scale stays (an edge changes one side, a corner both, Shift keeps
 their ratio); that drag reports group "multi": {"asset": {w, h}, "transform": {x, y}}.
 
-Mask mode (`mask_mode`, while the 遮罩 tab is open) edits only masks: the clip itself
+Mask mode (`mask_mode`, while the 遮罩 tab is open, or 編輯遮罩 of an effect's 範圍 in the
+效果 tab: `mask_group` "mask" or "fxmask:<effect id>") edits only that mask: the clip itself
 cannot be moved, scaled or turned there, and a click on another clip just selects it. The
 mask outline is drawn where it cuts the clip (dimmed while the mask is switched off). Drag inside it to move it, the squares on its edges / corner to size it, the
 round handle to rotate it and the arrow below it for the feather. The mask snaps to the
@@ -18,6 +19,9 @@ drags freely. Snapped lines show in amber.
 
 Ctrl+wheel zooms the view around the mouse (to reach handles of clips larger than the
 canvas), the middle button drags it; zooming back to about 100% fits it again.
+
+Double-clicking a text clip opens a box over it to type its words in (textEdited while
+typing, one undo step); Ctrl+Enter or a click elsewhere closes it, Esc puts the words back.
 
 Every drag shows live (paramsLive) and becomes one edit on release (paramsCommitted), in
 the project's units: transform x / y in half-canvas units (y up), scale, clockwise degrees;
@@ -29,7 +33,7 @@ import math
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
 from .. import curves, edit, fonts, project, render, textlayout
 
@@ -132,10 +136,11 @@ class Box:
 
 
 class MaskGeo:
-    """A clip's mask at one time: its frame on the canvas and handle points."""
+    """A clip's mask (or one of its effects' masks: m) at one time: its frame on the canvas
+    and handle points."""
 
-    def __init__(self, box):
-        m = box.clip["mask"]
+    def __init__(self, box, m=None):
+        m = m if m is not None else box.clip["mask"]
         t = box.t
         v = lambda k, d: curves.value(m.get(k, d), t)
         self.box, self.m = box, m
@@ -217,6 +222,7 @@ class Preview(QWidget):
     paramsLive = Signal(str, str, dict)         # clip id, group, {key: value} while dragging
     paramsCommitted = Signal(str, str, dict)    # the same on release
     doubleClicked = Signal()
+    textEdited = Signal(str, str)               # text clip id, its words: typed in on the canvas
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
 
     def __init__(self, parent=None, interactive=True):
@@ -228,6 +234,8 @@ class Preview(QWidget):
         self.selected_id = None
         self.interactive = interactive
         self.mask_mode = False
+        self.mask_group = "mask"                # which mask mask mode edits: the clip's, "fxmask:<effect id>"
+        self.text_box = None                    # TextBox while a text clip's words are typed on the canvas
         self.drag = None
         self.guides = []
         self.mask_guides = []                   # (a, b) canvas points: lines a mask drag has snapped to
@@ -252,9 +260,16 @@ class Preview(QWidget):
         if self.drag is None:
             self.update()
 
-    def set_mask_mode(self, on):
-        self.mask_mode = on
+    def set_mask_mode(self, on, group="mask"):
+        self.mask_mode, self.mask_group = on, group
         self.update()
+
+    def mask_of(self, clip):
+        """The mask that mask mode edits on clip, or None."""
+        try:
+            return edit.holder(clip, self.mask_group)
+        except (edit.EditError, KeyError):
+            return None
 
     def _report_size(self):
         self.renderWidth.emit(round(self._rect().width() * self.devicePixelRatioF()))
@@ -321,13 +336,14 @@ class Preview(QWidget):
         group, vals = self.live
         c = json.loads(json.dumps(box.clip))
         for g, v in (vals.items() if group == "multi" else [(group, vals)]):
-            holder = c.setdefault(g, {}) if g != "clip" else c
+            holder = c if g == "clip" else edit.holder(c, g) if g.startswith("fxmask:") else c.setdefault(g, {})
             holder.update(edit.with_linked_scale(holder, v, box.t) if g == "transform" else v)
         return Box(c, self.W, self.H, box.t)
 
     def masking(self, box):
-        return self.mask_mode and box is not None and box.clip.get("mask") and \
-            box.clip["type"] in ("image", "video", "compound", "filter")
+        if not self.mask_mode or box is None or not self.mask_of(box.clip):
+            return False
+        return self.mask_group != "mask" or box.clip["type"] in ("image", "video", "compound", "filter")
 
     # -- painting ---------------------------------------------------------------------------------
     def paintEvent(self, _):
@@ -403,9 +419,9 @@ class Preview(QWidget):
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(QColor(255, 255, 255, 90), 1 * k, Qt.DashLine))
         p.drawPolygon(QPolygonF(box.corners()))
-        g = MaskGeo(box)
+        g = MaskGeo(box, self.mask_of(box.clip))
         path = g.outline()
-        on = box.clip["mask"].get("enabled", True)
+        on = g.m.get("enabled", True)
         edge = QColor("#ffb020") if on else QColor(255, 176, 32, 110)
         p.save()
         clip = QPainterPath()
@@ -455,7 +471,7 @@ class Preview(QWidget):
         k = self._k()
         box = self.selected_box()
         if box is not None and self.masking(box):
-            g = MaskGeo(box)
+            g = MaskGeo(box, self.mask_of(box.clip))
             hit = next((n for n, pt in g.handles(k) if self._near(pt, m, k)), None)
             if hit is None and (g.contains(m) or self._near(g.centre(), m, k)):
                 hit = "move"
@@ -689,6 +705,8 @@ class Preview(QWidget):
                 return
         d["moved"] = True
         group, vals = self._values(e, m)
+        if group == "mask":
+            group = self.mask_group
         self.live = (group, vals)
         self.paramsLive.emit(d["box"].clip["id"], group, vals)
         self.update()
@@ -701,7 +719,7 @@ class Preview(QWidget):
         box = self.selected_box()
         cur = Qt.ArrowCursor
         if box is not None and self.masking(box):
-            g = MaskGeo(box)
+            g = MaskGeo(box, self.mask_of(box.clip))
             if any(self._near(pt, m, k) for _, pt in g.handles(k)):
                 cur = Qt.PointingHandCursor
             elif g.contains(m):
@@ -730,7 +748,93 @@ class Preview(QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, e):
-        self.doubleClicked.emit()
+        if not self.interactive:
+            self.doubleClicked.emit()
+            return
+        if e.button() != Qt.LeftButton or not self.view or self.mask_mode:
+            return
+        x, y = self._to_canvas(e.position())
+        boxes = self.visible_boxes()
+        hit = next((b for b in boxes if b.clip["id"] == self.selected_id and b.contains(x, y)), None) \
+            or next((b for b in boxes if b.contains(x, y)), None)
+        if hit is not None and hit.clip["type"] == "text" and not curves.is_animated(hit.clip["text"].get("content")):
+            self.drag = None
+            self.edit_text(hit)
+
+    # -- typing a text clip's words on the canvas -------------------------------------------------
+    def _screen_rect(self, box):
+        """Where box is on the widget (its bounding rectangle)."""
+        r, pts = self._rect(), box.corners()
+        xs = [r.x() + pt.x() / self.W * r.width() for pt in pts]
+        ys = [r.y() + pt.y() / self.H * r.height() for pt in pts]
+        return QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+    def edit_text(self, box):
+        self.close_text_box()
+        self.text_box = TextBox(self, box.clip["id"], box.clip["text"]["content"])
+        self.text_box.edited.connect(lambda cid, words: self.textEdited.emit(cid, words))
+        self.text_box.finished.connect(self.close_text_box)
+        sr = self._screen_rect(box)
+        w = min(max(sr.width() + 24, 220), self.width() - 8)
+        h = min(max(sr.height() + 16, 70), self.height() - 8)
+        x = min(max(sr.center().x() - w / 2, 4), self.width() - w - 4)
+        y = min(max(sr.center().y() - h / 2, 4), self.height() - h - 4)
+        self.text_box.setGeometry(round(x), round(y), round(w), round(h))
+        self.text_box.show()
+        self.text_box.setFocus()
+        self.text_box.selectAll()
+
+    def close_text_box(self):
+        tb, self.text_box = self.text_box, None
+        if tb is not None:
+            tb.flush()
+            tb.hide()
+            tb.deleteLater()
+
+
+class TextBox(QPlainTextEdit):
+    """The words of a text clip typed in on the preview. Changes go out a moment after typing
+    stops (and when it closes); Esc puts the words it opened with back."""
+    edited = Signal(str, str)                   # clip id, words
+    finished = Signal()
+
+    def __init__(self, parent, clip_id, words):
+        super().__init__(parent)
+        self.clip_id, self.original, self.sent = clip_id, words, words
+        self.setPlainText(words)
+        self.setToolTip("Ctrl+Enter 或點別的地方完成，Esc 還原")
+        self.setStyleSheet("QPlainTextEdit { background: rgba(20, 20, 24, 225); color: #ffffff;"
+                           " border: 2px solid #4da3ff; border-radius: 4px; font-size: 15px; }")
+        self.timer = QTimer(self, singleShot=True, interval=300)
+        self.timer.timeout.connect(self.flush)
+        self.textChanged.connect(self.timer.start)
+
+    def flush(self):
+        self.timer.stop()
+        words = self.toPlainText()
+        if words != self.sent:
+            self.sent = words
+            self.edited.emit(self.clip_id, words)
+
+    def event(self, e):
+        if e.type() == QEvent.ShortcutOverride and e.key() in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter):
+            e.accept()                          # these belong to the box, not the window's shortcuts
+            return True
+        return super().event(e)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_Escape:
+            self.setPlainText(self.original)
+            self.finished.emit()
+        elif e.key() in (Qt.Key_Return, Qt.Key_Enter) and e.modifiers() & Qt.ControlModifier:
+            self.finished.emit()
+        else:
+            super().keyPressEvent(e)
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        if e.reason() != Qt.PopupFocusReason:   # (not for its own right-click menu)
+            self.finished.emit()
 
 
 class SeekBar(QWidget):

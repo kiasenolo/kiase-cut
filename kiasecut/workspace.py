@@ -1,7 +1,7 @@
 """The project folder (as in FL Studio): a project is a folder that holds everything of it.
 
     My Video/
-        My Video.tesetoa.json     the project file (media paths stored relative to the folder)
+        My Video.kiasecut.json    the project file (media paths stored relative to the folder)
         Media/                    the media library: its sub-folders are the library folders
         Cache/                    waveforms, proxies, temporary renders
         Exports/                  rendered videos
@@ -17,7 +17,9 @@ import shutil
 
 from . import project
 
-EXT = ".tesetoa.json"
+EXT = ".kiasecut.json"
+OLD_EXTS = (".tesetoa.json",)  # project files of the program's earlier name
+EXTS = (EXT,) + OLD_EXTS
 MEDIA, CACHE, EXPORTS, BACKUP = "Media", "Cache", "Exports", "Backup"
 BACKUPS_KEPT = 20
 BACKUP_EVERY_S = 30             # saves closer together than this share one backup
@@ -87,12 +89,13 @@ def project_file(root, name):
 
 def project_name(path):
     base = os.path.basename(path)
-    return base[:-len(EXT)] if base.endswith(EXT) else os.path.splitext(base)[0]
+    ext = next((e for e in EXTS if base.endswith(e)), None)
+    return base[:-len(ext)] if ext else os.path.splitext(base)[0]
 
 
 def other_projects(root):
     """The project files in a folder (several can share the media, as FL projects do)."""
-    return sorted(f for f in os.listdir(root) if f.endswith(EXT))
+    return sorted(f for f in os.listdir(root) if f.endswith(EXTS))
 
 
 # -- project info -----------------------------------------------------------------------------------
@@ -176,7 +179,7 @@ def make_backup(path, tag=None):
     folder = sub(root_of(path), BACKUP)
     os.makedirs(folder, exist_ok=True)
     stem = project_name(path)
-    mine = sorted(f for f in os.listdir(folder) if f.startswith(stem + " ") and f.endswith(EXT))
+    mine = sorted(f for f in os.listdir(folder) if f.startswith(stem + " ") and f.endswith(EXTS))
     if tag is None and mine:
         last = os.path.getmtime(os.path.join(folder, mine[-1]))
         if now().timestamp() - last < BACKUP_EVERY_S:
@@ -184,8 +187,8 @@ def make_backup(path, tag=None):
     stamp = now().strftime("%Y-%m-%d %H-%M-%S")
     dest = os.path.join(folder, f"{stem} {stamp}{' ' + tag if tag else ''}{EXT}")
     shutil.copy2(path, dest)
-    mine = sorted(f for f in os.listdir(folder) if f.startswith(stem + " ") and f.endswith(EXT)
-                  and not f.endswith(" autosave" + EXT))
+    mine = sorted(f for f in os.listdir(folder) if f.startswith(stem + " ") and f.endswith(EXTS)
+                  and not any(f.endswith(" autosave" + e) for e in EXTS))
     for old in mine[:-BACKUPS_KEPT]:
         os.remove(os.path.join(folder, old))
     return dest

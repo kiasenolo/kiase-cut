@@ -59,8 +59,8 @@ class Rasterizer:
         b = math.radians(v("rotation", 0.0))
         rx = mx * math.cos(b) - my * math.sin(b)
         ry = mx * math.sin(b) + my * math.cos(b)
-        m = alpha(mask["kind"], v("w", 1.0) * disp_w, v("h", 1.0) * disp_h, v("feather", 0.0), rx, ry)
-        if mask.get("invert"):
+        m = alpha(v("kind", "rectangle"), v("w", 1.0) * disp_w, v("h", 1.0) * disp_h, v("feather", 0.0), rx, ry)
+        if v("invert", False):
             m = 1 - m
         return (m * 255 + 0.5).astype(np.uint8)
 
@@ -102,14 +102,15 @@ def spline(mask, t, disp_w, disp_h, frame_w, frame_h):
     b = math.radians(v("rotation", 0.0))
     cb, sb = math.cos(b), math.sin(b)
     big = 8 * (frame_w + frame_h)
-    pts = _shape(mask["kind"], v("w", 1.0) * disp_w, v("h", 1.0) * disp_h, big)
+    kind = v("kind", "rectangle")
+    pts = _shape(kind, v("w", 1.0) * disp_w, v("h", 1.0) * disp_h, big)
 
     def to_frame(q):
         # rotate clockwise by b (y up), move to the centre, then to 0-1 image coordinates
         x, y = q[0] * cb + q[1] * sb, -q[0] * sb + q[1] * cb
         return [0.5 + (cx + x) / frame_w, 0.5 - (cy + y) / frame_h]
 
-    if mask["kind"] in ("line", "mirror"):
+    if kind in ("line", "mirror"):
         # half-planes and bands are huge quads; rotoscoping rasterises their whole extent,
         # which made a line mask cost ~80 ms a frame. Clip them to the frame first.
         poly = clip_polygon([to_frame(p) for _, p, _ in pts], -0.01, 1.01)

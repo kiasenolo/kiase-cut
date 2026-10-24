@@ -1,7 +1,7 @@
-"""Import a decrypted Jianying (剪映) draft_content.json into a tesetoa project.
+"""Import a decrypted Jianying (剪映) draft_content.json into a KiaseCut project.
 
 Jianying stores keyframe times relative to the material's time zero (clip start minus
-source start); tesetoa keeps them relative to the clip start.
+source start); KiaseCut keeps them relative to the clip start.
 """
 import json
 

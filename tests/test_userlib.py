@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PIL import Image  # noqa: E402
 
-from tesetoa import edit, fx, library, project, userlib  # noqa: E402
+from kiasecut import edit, fx, library, project, userlib  # noqa: E402
 
 
 def png(path, size=(32, 18)):
@@ -54,8 +54,8 @@ class UserLibraryTest(unittest.TestCase):
         project.timeline(proj)["tracks"].append({"id": "t0", "kind": "video", "name": "v", "clips": [clip]})
         pdir = os.path.join(self.tmp.name, "proj")
         os.makedirs(pdir)
-        project.save(proj, os.path.join(pdir, "p.tesetoa.json"))
-        with open(os.path.join(pdir, "p.tesetoa.json"), encoding="utf-8") as fh:
+        project.save(proj, os.path.join(pdir, "p.kiasecut.json"))
+        with open(os.path.join(pdir, "p.kiasecut.json"), encoding="utf-8") as fh:
             data = json.load(fh)
         stored = data["timelines"][0]["tracks"][-1]["clips"][0]["media"]["path"]
         self.assertEqual(stored, "@library/images/a.png")

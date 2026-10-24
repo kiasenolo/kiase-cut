@@ -3,7 +3,7 @@ import unittest
 
 import numpy as np
 
-from tesetoa import audiomix, build, edit, project, waveform
+from kiasecut import audiomix, build, edit, project, waveform
 
 
 def proj():

@@ -2,7 +2,8 @@
 
 Every animatable value has a ◆ button: filled when the playhead sits on one of its
 keyframes. Clicking it adds or removes a keyframe there. Changing a value that already
-has keyframes edits the keyframe at the playhead, or adds one, as Jianying does.
+has keyframes edits the keyframe at the playhead, or adds one, as Jianying does. Choices
+(font, blend mode, mask shape, invert) have ◆ too: their keyframes hold until the next one.
 Edits are reported after a short pause so typing or spinning produces one rebuild.
 
 One class serves two tabs: part="main" (type, text, picture, sound) and part="mask" (the
@@ -44,6 +45,10 @@ PARAMS = {
 }
 MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"))
 EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
+BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "screen"), ("疊加", "overlay"),
+               ("變暗", "darken"), ("變亮", "lighten"), ("顏色減淡", "color_dodge"), ("顏色加深", "color_burn"),
+               ("強光", "hard_light"), ("柔光", "soft_light"), ("差值", "difference"), ("排除", "exclusion"),
+               ("相加", "add"))
 KEY_ON, KEY_OFF = "◆", "◇"
 
 
@@ -219,7 +224,7 @@ class Inspector(QWidget):
             font.activated.connect(self._font_chosen)
             self.widgets["font"] = font
             self._fill_fonts()
-            form.addRow("字體", font)
+            form.addRow("字體", self._with_key(font, "text", "font_path"))
             row = QWidget()
             lay = QHBoxLayout(row)
             lay.setContentsMargins(0, 0, 0, 0)
@@ -239,6 +244,14 @@ class Inspector(QWidget):
             else:
                 form.addRow(section("畫面"))
                 self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"),))
+                blend = ComboBox()
+                blend.setPlaceholderText("--")
+                for name, k in BLEND_NAMES:
+                    blend.addItem(name, k)
+                blend.setToolTip("這個片段和下面的畫面怎麼混合")
+                blend.activated.connect(lambda i: self._emit_now(self.paramEdited, "clip", "blend", blend.itemData(i)))
+                self.widgets["blend"] = blend
+                form.addRow("混合模式", self._with_key(blend, "clip", "blend"))
         if "volume" in c:
             form.addRow(section("聲音"))
             form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
@@ -273,12 +286,7 @@ class Inspector(QWidget):
                 self._show_font(self._last_font)
                 return
             path = path.replace("\\", "/")
-        self._emit_text({"font_path": path})
-
-    def _emit_text(self, fields):
-        self._flush()
-        if self.clip_ids:
-            self.textEdited.emit(list(self.clip_ids), fields)
+        self._emit_now(self.paramEdited, "text", "font_path", path)      # keyframed fonts get a key here
 
     def _show_font(self, path):
         """Show the font of the clip(s): `path`, "--" when they differ."""
@@ -315,6 +323,7 @@ class Inspector(QWidget):
         self.widgets["mask_kind"] = kind
         row.addWidget(kind, 1)
         if c.get("mask"):
+            row.addWidget(self._key_button("mask", "kind"))
             drop = QPushButton("移除")
             drop.setToolTip("刪除遮罩和它的設定")
             drop.clicked.connect(lambda: self._emit_now(self.maskKindChosen, None))
@@ -330,8 +339,8 @@ class Inspector(QWidget):
         inv.setTristate(False)
         inv.toggled.connect(lambda v: self._emit_now(self.maskInvertChosen, v))
         self.widgets["mask_invert"] = inv
-        form.addRow("", inv)
-        rows = [r for r in PARAMS["mask"] if not (c["mask"]["kind"] == "line" and r[0] in ("w", "h"))]
+        form.addRow("", self._with_key(inv, "mask", "invert"))
+        rows = [r for r in PARAMS["mask"] if not (kind_tag(c["mask"]) == "line" and r[0] in ("w", "h"))]
         self._rows(form, "mask", rows, (("cx", "cy", "中心"), ("w", "h", "大小")))
         hint = QLabel("在預覽上拖曳：中間移動、方塊調大小、圓點旋轉、箭頭羽化")
         hint.setStyleSheet("color: #9a9aa0;")
@@ -394,6 +403,15 @@ class Inspector(QWidget):
         lay.addWidget(self._key_button(group, key))
         return row
 
+    def _with_key(self, widget, group, key):
+        """A row of widget and its ◆ button."""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(widget, 1)
+        lay.addWidget(self._key_button(group, key))
+        return row
+
     def _key_button(self, group, key):
         b = QPushButton(KEY_OFF)
         b.setFixedWidth(26)
@@ -410,7 +428,7 @@ class Inspector(QWidget):
         """Show the selected clips (the first is the primary one); t_us is the playhead time."""
         c = common(clips)
         shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")),
-                                         (c.get("mask") or {}).get("kind"), "volume" in c)
+                                         kind_tag(c.get("mask")), "volume" in c)
         if shape != self.shape:
             self._flush()
             self.clip_ids = [k["id"] for k in clips]
@@ -433,8 +451,9 @@ class Inspector(QWidget):
         if "content" in w:
             contents = [k["text"]["content"] for k in clips]
             text = contents[0] if same(contents) else ""
-            fonts = {k["text"].get("font_path") for k in clips}
+            fonts = {curves.value(k["text"].get("font_path"), t) for k, t in zip(clips, ts)}
             self._show_font(fonts.pop() if len(fonts) == 1 else "--")
+            self._key_state(w[("key", "text", "font_path")], [k["text"].get("font_path") for k in clips], clips, ts)
             if w["content"].toPlainText() != text and not w["content"].hasFocus():
                 w["content"].blockSignals(True)
                 w["content"].setPlainText(text)
@@ -472,15 +491,22 @@ class Inspector(QWidget):
             w["mask_on"].setCheckState(Qt.PartiallyChecked if len(on) > 1 else
                                        (Qt.Checked if on.pop() else Qt.Unchecked))
             w["mask_on"].blockSignals(False)
+        if "blend" in w:
+            modes = {curves.value(k.get("blend", "normal"), t) for k, t in zip(clips, ts)}
+            self._set_combo(w["blend"], modes.pop() if len(modes) == 1 else "--")
+            self._key_state(w[("key", "clip", "blend")], [k.get("blend", "normal") for k in clips], clips, ts)
         if "mask_kind" in w:
-            kinds = {(k.get("mask") or {}).get("kind") for k in clips}
+            kinds = {curves.value((k.get("mask") or {}).get("kind"), t) for k, t in zip(clips, ts)}
             self._set_combo(w["mask_kind"], kinds.pop() if len(kinds) == 1 else "--")
+            if ("key", "mask", "kind") in w:
+                self._key_state(w[("key", "mask", "kind")], [k["mask"].get("kind") for k in clips], clips, ts)
         if "mask_invert" in w:
-            inv = {bool(k["mask"].get("invert")) for k in clips}
+            inv = {bool(curves.value(k["mask"].get("invert", False), t)) for k, t in zip(clips, ts)}
             w["mask_invert"].blockSignals(True)
             w["mask_invert"].setCheckState(Qt.PartiallyChecked if len(inv) > 1 else
                                            (Qt.Checked if inv.pop() else Qt.Unchecked))
             w["mask_invert"].blockSignals(False)
+            self._key_state(w[("key", "mask", "invert")], [k["mask"].get("invert", False) for k in clips], clips, ts)
         easings.discard(None)
         if "easing" not in w:
             return
@@ -562,6 +588,14 @@ class Inspector(QWidget):
             self.paramEdited.emit(ids, g.rstrip("*"), k, v)
 
 
+def kind_tag(mask):
+    """A mask's shape for comparing forms: its kind, "keys" when the shape has keyframes,
+    None without a mask."""
+    if not mask:
+        return None
+    return "keys" if curves.is_animated(mask.get("kind")) else mask.get("kind")
+
+
 def common(clips):
     """A clip-like dict holding only what every clip has (for the form layout), or None."""
     if not clips:
@@ -576,7 +610,7 @@ def common(clips):
         out["transform"] = first["transform"]
     if all(k["type"] in ("image", "video", "compound", "filter") for k in clips):
         out["type"] = out["type"] if out["type"] != "mixed" else "video"     # can take masks
-        kinds = {(k.get("mask") or {}).get("kind") for k in clips}
+        kinds = {kind_tag(k.get("mask")) for k in clips}
         if len(kinds) == 1 and None not in kinds:
             out["mask"] = first["mask"]
     if all("volume" in k for k in clips):

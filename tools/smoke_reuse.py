@@ -1,6 +1,6 @@
 """Headless check of shared compounds, timeline keyframe dragging and the time selection.
 
-  python tools/smoke_reuse.py PROJECT.tesetoa.json out/
+  python tools/smoke_reuse.py PROJECT.kiasecut.json out/
 """
 import json
 import os
@@ -17,9 +17,9 @@ from PySide6.QtGui import QDropEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import edit, project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import edit, project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 app = QApplication(sys.argv)
 app.setStyleSheet(STYLE)
@@ -112,7 +112,7 @@ def run():
           c["compound_id"] != tic and len(instances(tic)) == 5 and c["compound"] is not win.proj["compounds"][tic])
 
     # save / load keeps the sharing
-    path = os.path.join(out, "reuse_test.tesetoa.json")
+    path = os.path.join(out, "reuse_test.kiasecut.json")
     project.save(win.proj, path)
     back = project.load(path)
     check("save / load keeps one shared entry per compound",

@@ -1,4 +1,4 @@
-"""Project model: plain JSON-able dicts, saved as *.tesetoa.json.
+"""Project model: plain JSON-able dicts, saved as *.kiasecut.json.
 
 project  {format, version, width, height, fps, duration_us, timelines: [timeline],
           active_timeline, tracks, compounds: {id: compound}, master_gain}
@@ -38,7 +38,8 @@ leaves the links out and link() puts them back.
 import json
 import os
 
-FORMAT = "tesetoa"
+FORMAT = "kiasecut"
+OLD_FORMATS = ("tesetoa",)        # the program's earlier name: those projects still open
 VERSION = 4                     # 2: shared compounds; 3: several timelines; 4: project folder
 DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
                                  "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
@@ -56,8 +57,9 @@ def new(width=1920, height=1080, fps=60.0):
 def load(path):
     with open(path, encoding="utf-8") as fh:
         p = json.load(fh)
-    if p.get("format") != FORMAT:
-        raise ValueError(f"{path} is not a tesetoa project")
+    if p.get("format") != FORMAT and p.get("format") not in OLD_FORMATS:
+        raise ValueError(f"{path} is not a KiaseCut project")
+    p["format"] = FORMAT
     root = os.path.dirname(os.path.abspath(path))
     _map_paths(p, lambda s: to_abs(s, root))              # media paths are stored relative to the project folder
     return normalize(p)

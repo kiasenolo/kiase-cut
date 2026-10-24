@@ -1,7 +1,7 @@
 """Headless check of the preview handles: scale, rotate and the mask editor, through real
 mouse events. Each drag must put the dragged point where the mouse let go.
 
-  python tools/smoke_handles.py PROJECT.tesetoa.json out/
+  python tools/smoke_handles.py PROJECT.kiasecut.json out/
 """
 import json
 import math
@@ -18,10 +18,10 @@ from PySide6.QtCore import QPoint, QPointF, Qt, QTimer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import edit, project, render  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.preview import MaskGeo  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import edit, project, render  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.preview import MaskGeo  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 app = QApplication(sys.argv)
 app.setStyleSheet(STYLE)

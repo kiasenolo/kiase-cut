@@ -1,6 +1,6 @@
 """Headless keyframe / mask smoke test through the real window.
 
-  python tools/smoke_keys.py out/AlianShit.tesetoa.json out/
+  python tools/smoke_keys.py out/AlianShit.kiasecut.json out/
 
 Animates a text's position with two keyframes set from the inspector, checks the
 in-between frame, applies an easing preset, jumps between keyframes, changes a mask's
@@ -20,9 +20,9 @@ import numpy as np  # noqa: E402
 from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import curves, project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import curves, project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 proj_path, out = sys.argv[1], sys.argv[2]
 app = QApplication(sys.argv)

@@ -326,6 +326,15 @@ class Engine:
             pass
 
 
+def missing():
+    """Why filters cannot run on this computer (the panels show it), or None."""
+    try:
+        import moderngl  # noqa: F401
+    except ImportError:
+        return "濾鏡引擎沒有安裝，預覽和匯出都看不到效果。請執行：python -m pip install moderngl"
+    return None
+
+
 def check(ref):
     """Compile a filter on its own (for the Library and tests): None, or the error text."""
     d = get(ref)

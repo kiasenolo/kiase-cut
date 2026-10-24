@@ -1,7 +1,7 @@
 """Headless check of the inspector's number fields (drag to change, click to type), the
 paired X / Y row, the curve editor's keyframe jumps and nesting a timeline in another.
 
-  python tools/smoke_inspector.py PROJECT.tesetoa.json out/
+  python tools/smoke_inspector.py PROJECT.kiasecut.json out/
 """
 import os
 import sys
@@ -17,9 +17,9 @@ from PySide6.QtGui import QDropEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import edit, project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import edit, project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 app = QApplication(sys.argv)
 app.setStyleSheet(STYLE)

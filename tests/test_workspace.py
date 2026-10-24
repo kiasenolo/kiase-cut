@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PIL import Image  # noqa: E402
 
-from tesetoa import edit, library, project, workspace  # noqa: E402
+from kiasecut import edit, library, project, workspace  # noqa: E402
 
 
 def png(path, size=(32, 18)):
@@ -40,7 +40,7 @@ class Layout(Base):
     def test_create(self):
         for d in (workspace.MEDIA, workspace.CACHE, workspace.EXPORTS, workspace.BACKUP):
             self.assertTrue(os.path.isdir(os.path.join(self.root, d)))
-        self.assertTrue(self.path.endswith("My Video.tesetoa.json"))
+        self.assertTrue(self.path.endswith("My Video.kiasecut.json"))
         i = self.proj["info"]
         self.assertEqual((i["title"], i["time_spent_s"], i["opens"]), ("My Video", 0, 1))
         self.assertTrue(workspace.parse_time(i["created"]))
@@ -67,7 +67,7 @@ class Layout(Base):
         import shutil
         new = os.path.join(self.d, "moved")
         shutil.copytree(self.root, new)
-        back = project.load(os.path.join(new, "My Video.tesetoa.json"))
+        back = project.load(os.path.join(new, "My Video.kiasecut.json"))
         p = library.lib(back)["items"][0]["path"]
         self.assertTrue(p.startswith(new.replace("\\", "/")) and os.path.exists(p))
 
@@ -78,7 +78,7 @@ class Layout(Base):
         self.assertEqual(len(b), 1)
         self.assertIsNotNone(workspace.make_backup(self.path, tag="x"))
         workspace.autosave(self.proj, self.path)
-        self.assertIn("My Video autosave.tesetoa.json", os.listdir(os.path.join(self.root, workspace.BACKUP)))
+        self.assertIn("My Video autosave.kiasecut.json", os.listdir(os.path.join(self.root, workspace.BACKUP)))
 
     def test_old_project_gets_info(self):
         old = project.new()

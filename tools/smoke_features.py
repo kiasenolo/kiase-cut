@@ -1,6 +1,6 @@
 """Headless check of the library / compound / preview-drag / range-export features.
 
-  python tools/smoke_features.py out/AlianShit.tesetoa.json out/ MEDIA_IMAGE MEDIA_AUDIO
+  python tools/smoke_features.py out/AlianShit.kiasecut.json out/ MEDIA_IMAGE MEDIA_AUDIO
 """
 import json
 import os
@@ -18,10 +18,10 @@ from PySide6.QtGui import QColor, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QColorDialog, QInputDialog  # noqa: E402
 
-from tesetoa import build, curves, edit, library, project  # noqa: E402
-from tesetoa.client import EngineClient  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import build, curves, edit, library, project  # noqa: E402
+from kiasecut.client import EngineClient  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 proj_path, out, img_path, audio_path = sys.argv[1:5]
 # dialogs would block a headless run: answer them

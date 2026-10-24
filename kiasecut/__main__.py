@@ -1,4 +1,4 @@
-"""python -m tesetoa [project.tesetoa.json | draft_content.json]"""
+"""python -m kiasecut [project.kiasecut.json | draft_content.json]"""
 import sys
 
 

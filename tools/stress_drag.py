@@ -1,6 +1,6 @@
 """Stress: drag a clip around the preview many times in a row, as fast as possible.
 
-  python tools/stress_drag.py PROJECT.tesetoa.json
+  python tools/stress_drag.py PROJECT.kiasecut.json
 Reports errors, how long the window took to settle and the playback frame rate.
 """
 import os
@@ -15,9 +15,9 @@ from PySide6.QtCore import QPoint, Qt, QTimer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import project  # noqa: E402
-from tesetoa.ui.main_window import MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import project  # noqa: E402
+from kiasecut.ui.main_window import MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 app = QApplication(sys.argv)
 win = MainWindow()

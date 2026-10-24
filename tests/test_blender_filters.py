@@ -9,7 +9,7 @@ import numpy as np
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from tesetoa import fx  # noqa: E402
+from kiasecut import fx  # noqa: E402
 
 try:
     import bpy  # noqa: E402

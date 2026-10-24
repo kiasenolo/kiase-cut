@@ -1,6 +1,6 @@
 """Headless check of timeline multi-select, group moves, track heights and the compound list.
 
-  python tools/smoke_select.py PROJECT.tesetoa.json out/
+  python tools/smoke_select.py PROJECT.kiasecut.json out/
 """
 import json
 import os
@@ -17,9 +17,9 @@ from PySide6.QtGui import QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import edit, project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import edit, project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 app = QApplication(sys.argv)
 app.setStyleSheet(STYLE)

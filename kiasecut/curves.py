@@ -4,6 +4,9 @@ A parameter is either a plain number or {"keys": [[t, v, ldt, ldv, rdt, rdv], ..
 t is microseconds from the clip's start on the timeline, v the value, and (ldt, ldv) /
 (rdt, rdv) the left/right bezier handle offsets, exactly as Jianying stores them.
 Zero handles give a straight line; before the first and after the last key the value holds.
+
+A key can also hold a choice instead of a number (a font file, a mask shape, a blend mode,
+on / off): such a value cannot blend, so it holds from its key until the next one.
 """
 
 US = 1_000_000
@@ -11,6 +14,12 @@ US = 1_000_000
 
 def is_animated(p):
     return isinstance(p, dict) and bool(p.get("keys"))
+
+
+def discrete(v):
+    """Whether v is a choice (text, true / false or nothing) rather than a number: its keys
+    hold until the next key instead of blending into it."""
+    return v is None or isinstance(v, (str, bool))
 
 
 def value(p, t):
@@ -25,6 +34,8 @@ def value(p, t):
     for a, b in zip(keys, keys[1:]):
         if a[0] <= t <= b[0]:
             break
+    if discrete(a[1]):
+        return b[1] if t >= b[0] else a[1]
     x0, x3 = a[0], b[0]
     x1, x2 = x0 + a[4], x3 + b[2]
     lo, hi = 0.0, 1.0
@@ -82,7 +93,7 @@ def segment_bezier(a, b):
     y2=1 since its handles cannot be expressed that way."""
     dt = b[0] - a[0] or 1
     x1, x2 = a[4] / dt, 1 + b[2] / dt
-    dv = None if isinstance(a[1], list) else b[1] - a[1]
+    dv = None if isinstance(a[1], list) or discrete(a[1]) or discrete(b[1]) else b[1] - a[1]
     if not dv:
         return x1, 0.0, x2, 1.0
     return x1, a[5] / dv, x2, 1 + b[3] / dv
@@ -93,7 +104,7 @@ def apply_bezier(a, b, x1, y1, x2, y2):
     x is clamped to 0..1 so time keeps moving forward; y may overshoot."""
     x1, x2 = min(1.0, max(0.0, x1)), min(1.0, max(0.0, x2))
     dt = b[0] - a[0]
-    dv = 0.0 if isinstance(a[1], list) else b[1] - a[1]
+    dv = 0.0 if isinstance(a[1], list) or discrete(a[1]) or discrete(b[1]) else b[1] - a[1]
     a[4], a[5] = x1 * dt, y1 * dv
     b[2], b[3] = (x2 - 1) * dt, (y2 - 1) * dv
 

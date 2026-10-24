@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tesetoa import curves, edit, project  # noqa: E402
+from kiasecut import curves, edit, project  # noqa: E402
 
 S = 1_000_000
 

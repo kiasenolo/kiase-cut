@@ -1,4 +1,4 @@
-"""Locate MLT and expose the few C functions tesetoa needs through ctypes.
+"""Locate MLT and expose the few C functions KiaseCut needs through ctypes.
 
 No compiled bindings are needed: libmlt is a plain C library on every platform.
 Windows uses the copy bundled with Kdenlive or Shotcut; Linux/macOS the system library.
@@ -19,7 +19,7 @@ P = C.c_void_p
 
 def locate():
     """dict(lib, repository, data, bin) for the first MLT 7 install found."""
-    over = os.environ.get("TESETOA_MLT")
+    over = os.environ.get("KIASECUT_MLT") or os.environ.get("TESETOA_MLT")   # (the old name still works)
     roots = [over] if over else []
     if sys.platform == "win32":
         roots += [r"C:\Program Files\Kdenlive", r"C:\Program Files\Shotcut"]
@@ -29,7 +29,7 @@ def locate():
                     return {"lib": lib, "bin": os.path.dirname(lib),
                             "repository": os.path.join(root, "lib", "mlt"),
                             "data": os.path.join(root, "share", "mlt")}
-        raise FileNotFoundError("MLT not found: install Kdenlive or Shotcut, or set TESETOA_MLT")
+        raise FileNotFoundError("MLT not found: install Kdenlive or Shotcut, or set KIASECUT_MLT")
     lib = ctypes.util.find_library("mlt-7") or "libmlt-7.so.7"
     repo = next((d for d in glob.glob("/usr/lib*/mlt-7") + glob.glob("/usr/lib/*/mlt-7")
                  + glob.glob("/usr/local/lib*/mlt-7") if os.path.isdir(d)), None)

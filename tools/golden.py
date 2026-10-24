@@ -1,4 +1,4 @@
-"""Golden test: import a Jianying draft, export it with tesetoa, compare with Jianying's export.
+"""Golden test: import a Jianying draft, export it with KiaseCut, compare with Jianying's export.
 
   python tools/golden.py DRAFT.json REFERENCE.mp4 OUT_DIR [--remap OLD=NEW] [--max-mean 3]
   python tools/golden.py --compare-only EXPORT.mp4 REFERENCE.mp4 OUT_DIR
@@ -48,7 +48,7 @@ def compare(export, ref, out, fps, times):
 
 def dense_windows(proj):
     """Time windows worth checking every 0.1 s: masked and compound clips."""
-    from tesetoa import project
+    from kiasecut import project
     out = []
     for c in project.walk_clips(proj["tracks"]):
         if c.get("mask") or c["type"] == "compound":
@@ -73,14 +73,14 @@ def main():
                                     "-of", "csv=p=0", export], capture_output=True, text=True).stdout)
         times = sample_times(dur)
     else:
-        from tesetoa import build, project
-        from tesetoa.client import EngineClient
-        from tesetoa.importers import jianying
+        from kiasecut import build, project
+        from kiasecut.client import EngineClient
+        from kiasecut.importers import jianying
         proj, warnings = jianying.import_draft(a.source, [r.split("=", 1) for r in a.remap])
         for w in sorted(set(warnings)):
             print("WARN", w)
-        project.save(proj, os.path.join(a.out, "golden.tesetoa.json"))
-        xml = build.build(proj, os.path.join(a.out, "golden.tesetoa-cache"), os.path.join(a.out, "golden.mlt"))
+        project.save(proj, os.path.join(a.out, "golden.kiasecut.json"))
+        xml = build.build(proj, os.path.join(a.out, "golden.kiasecut-cache"), os.path.join(a.out, "golden.mlt"))
         export, fps = os.path.join(a.out, "golden.mp4"), proj["fps"]
         eng = EngineClient(16, 16)
         try:

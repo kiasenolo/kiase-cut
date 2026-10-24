@@ -4,21 +4,22 @@
 同時 我覺得FL的有些邏輯其實不錯 可以放進去 所以 我讓AI放了
 這算是少數幾個我認真對待的AI生產的東西了
 
-# tesetoa
+# KiaseCut
 
 A small Jianying (剪映)-style video editor on top of the MLT engine. Goal: edit — and
 reproduce frame-accurately — the kind of video made in Jianying, without its extras.
 
 ## Run
 
-Needs Python 3.11+, `pip install PySide6 numpy Pillow`, ffmpeg on PATH, and MLT 7:
+Needs Python 3.11+, `pip install PySide6 numpy Pillow moderngl` (moderngl runs the filters, in the
+preview and the export), ffmpeg on PATH, and MLT 7:
 on Windows the copy inside Kdenlive or Shotcut (found automatically, or set
-`TESETOA_MLT` to the install folder); on Linux the system package (`mlt` / `libmlt7`).
+`KIASECUT_MLT` to the install folder); on Linux the system package (`mlt` / `libmlt7`).
 
 ```
-python -m tesetoa                              # empty window: File > Import Jianying draft
-python -m tesetoa draft_content.dec.json       # import a decrypted Jianying draft
-python -m tesetoa project.tesetoa.json         # open a saved project
+python -m kiasecut                         # empty window: File > Import Jianying draft
+python -m kiasecut draft_content.dec.json  # import a decrypted Jianying draft
+python -m kiasecut project.kiasecut.json   # open a saved project
 ```
 
 Space play/pause · ←/→ step a frame · Home/End · Ctrl+I import · Ctrl+S save · Ctrl+E export.
@@ -77,7 +78,8 @@ Look: a DaVinci Resolve-like dark layout: the viewer has the timeline name and t
 above it and icon transport controls below (start, previous frame, play, next frame, end,
 fullscreen); the timeline toolbar uses icons (undo, redo, blade, delete, text, snapping,
 track height); tracks are labelled V1… (from the bottom) and A1…. Clips are coloured by
-type (pictures blue, compound violet, text mauve, sound green, or a colour you set); a
+type (pictures blue, compound violet, text mauve, sound green, or a colour you set); on a
+light colour the clip's name and waveform turn dark so they stay readable. A
 track's colour tints its row and header edge and leaves its clips alone.
 
 Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
@@ -122,6 +124,17 @@ drag up / down to change the value (Shift for fine steps, Ctrl for big ones), cl
 one. Position X / Y (and a mask's centre and size) sit side by side on one row. The
 previous / next keyframe buttons (◀ ▶) are in the curve editor.
 
+Choices keyframe too: the font, the blend mode, a mask's shape and invert, and a filter's
+on / off parameters and range shape have ◆ buttons like the numbers. Their keyframes hold
+(a step, no blending or curve) until the next keyframe; picking another value at the
+playhead edits or adds the keyframe there.
+
+Blend modes (混合模式, under 畫面 for pictures, videos, texts and compound clips): normal,
+multiply, screen, overlay, darken, lighten, colour dodge / burn, hard / soft light,
+difference, exclusion and add, mixing the clip with what the tracks below show. The
+preview draws them; a project that uses a blend mode (or a keyframed mask shape /
+invert) exports through the preview renderer, as projects with filters do.
+
 Curve editor (the 關鍵幀曲線 tab beside 屬性): tick any parameters of the selected clip and
 their keyframes show together as value-over-time curves, each in its own colour (colours
 as R/G/B lines). 正規化 gives every curve the same height; untick it to read them on one
@@ -158,7 +171,7 @@ A project is a folder, as in FL Studio (File > New project asks for a name and a
 
 ```
 My Video/
-    My Video.tesetoa.json   the project file (media paths are stored relative to the folder)
+    My Video.kiasecut.json   the project file (media paths are stored relative to the folder)
     Media/                  the media library: its sub-folders are the library folders
     Cache/                  waveforms, proxies
     Exports/                rendered videos (the export dialog starts here)
@@ -213,17 +226,17 @@ audio within 1 ms and 0.5 dB.
 
 ```
 python -m unittest discover tests            # edit operations
-python tools/smoke_edit.py PROJECT.tesetoa.json out/   # drives the real window headless
-python tools/smoke_keys.py PROJECT.tesetoa.json out/   # keyframes and masks, headless
-python tools/smoke_curves.py PROJECT.tesetoa.json out/ # curve editor: drag, cubic-bezier, presets
-python tools/smoke_audio.py PROJECT.tesetoa.json out/  # waveforms, mute / solo / hide, new tracks
-python tools/smoke_select.py PROJECT.tesetoa.json out/ # multi-select, track heights, compound list
-python tools/smoke_handles.py PROJECT.tesetoa.json out/ # scale / rotate / mask handles on the preview
-python tools/smoke_reuse.py PROJECT.tesetoa.json out/  # shared compounds, timeline ◆ drag, time selection
-python tools/smoke_volume.py PROJECT.tesetoa.json out/ # volume line, 吸附, clip clicks, meter, master volume
-python tools/smoke_inspector.py PROJECT.tesetoa.json out/ # number dragging, X / Y row, nested timelines
-python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
-python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
+python tools/smoke_edit.py PROJECT.kiasecut.json out/   # drives the real window headless
+python tools/smoke_keys.py PROJECT.kiasecut.json out/   # keyframes and masks, headless
+python tools/smoke_curves.py PROJECT.kiasecut.json out/ # curve editor: drag, cubic-bezier, presets
+python tools/smoke_audio.py PROJECT.kiasecut.json out/  # waveforms, mute / solo / hide, new tracks
+python tools/smoke_select.py PROJECT.kiasecut.json out/ # multi-select, track heights, compound list
+python tools/smoke_handles.py PROJECT.kiasecut.json out/ # scale / rotate / mask handles on the preview
+python tools/smoke_reuse.py PROJECT.kiasecut.json out/  # shared compounds, timeline ◆ drag, time selection
+python tools/smoke_volume.py PROJECT.kiasecut.json out/ # volume line, 吸附, clip clicks, meter, master volume
+python tools/smoke_inspector.py PROJECT.kiasecut.json out/ # number dragging, X / Y row, nested timelines
+python tools/smoke_features.py PROJECT.kiasecut.json out/ IMAGE AUDIO # library, compounds, preview drag, range export
+python tools/stress_drag.py PROJECT.kiasecut.json       # rapid preview drags + playback fps
 ```
 
 ## Status

@@ -1,6 +1,6 @@
 """Headless UI smoke test: open a project, seek, play, save window screenshots.
 
-  python tools/smoke_ui.py out/AlianShit.tesetoa.json out/
+  python tools/smoke_ui.py out/AlianShit.kiasecut.json out/
 """
 import os
 import sys
@@ -14,8 +14,8 @@ if sys.platform == "win32":  # the offscreen platform has no font database of it
 from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut import project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
 
 proj_path, out = sys.argv[1], sys.argv[2]
 app = QApplication(sys.argv)

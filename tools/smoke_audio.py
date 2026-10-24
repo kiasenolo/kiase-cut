@@ -1,6 +1,6 @@
 """Headless check of waveforms and track controls through real mouse events.
 
-  python tools/smoke_audio.py PROJECT.tesetoa.json out/
+  python tools/smoke_audio.py PROJECT.kiasecut.json out/
 """
 import json
 import os
@@ -16,9 +16,9 @@ from PySide6.QtCore import QPoint, Qt, QTimer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import audiomix, project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import audiomix, project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 app = QApplication(sys.argv)
 app.setStyleSheet(STYLE)

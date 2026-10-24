@@ -1,7 +1,7 @@
 """Headless check of the volume line, snapping toggle, clip clicks, level meter and master
 volume, through real mouse / keyboard events.
 
-  python tools/smoke_volume.py PROJECT.tesetoa.json out/
+  python tools/smoke_volume.py PROJECT.kiasecut.json out/
 """
 import math
 import os
@@ -17,9 +17,9 @@ from PySide6.QtCore import QPoint, Qt, QTimer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import curves, edit, project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import curves, edit, project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 app = QApplication(sys.argv)
 app.setStyleSheet(STYLE)

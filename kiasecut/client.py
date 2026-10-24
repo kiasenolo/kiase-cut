@@ -14,7 +14,7 @@ class EngineClient:
         env = mltlib.env()
         pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env["PYTHONPATH"] = pkg_root + os.pathsep + env.get("PYTHONPATH", "")
-        self.proc = subprocess.Popen([sys.executable, "-m", "tesetoa.engine"], env=env,
+        self.proc = subprocess.Popen([sys.executable, "-m", "kiasecut.engine"], env=env,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
                                      encoding="utf-8", bufsize=1)
         self.shm = shared_memory.SharedMemory(create=True, size=max_w * max_h * 4)

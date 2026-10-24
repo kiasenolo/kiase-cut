@@ -29,7 +29,7 @@ bl_info = {
 # inputs (other than the picture) become parameters you can change and keyframe in the editor:
 #   Float -> float,  Integer -> int (IN_x_i),  Boolean -> bool (IN_x_b),  Color -> color (IN_x_c),
 #   Vector -> vec3.  Min / Max of the group socket become the range of the editor's field.
-#   Put the .glsl in <KiaseCut Library>/filters.  See tesetoa/filters/FORMAT.md in KiaseCut.
+#   Put the .glsl in <KiaseCut Library>/filters.  See kiasecut/filters/FORMAT.md in KiaseCut.
 # ---------------------------------------------------------------------------
 
 import re
@@ -170,7 +170,7 @@ def _bound(v):
 
 def param_spec(it, name, t, val):
     """Description of a node-group input as an adjustable parameter (KiaseCut filters), or None.
-    kind: float / int / bool / color / vec3 (see tesetoa/filters/FORMAT.md)."""
+    kind: float / int / bool / color / vec3 (see kiasecut/filters/FORMAT.md)."""
     st = it.socket_type
     spec = {"name": name, "label": it.name, "t": t}
     if st.startswith("NodeSocketFloat"):
@@ -1937,7 +1937,7 @@ def to_hlsl(code):
 
 
 # ---- KiaseCut --------------------------------------------------------------------------------------
-# The editor runs the filter as an `effect(vec2 uv)` function (tesetoa/filters/FORMAT.md): `source` is the
+# The editor runs the filter as an `effect(vec2 uv)` function (kiasecut/filters/FORMAT.md): `source` is the
 # picture below (premultiplied), `time` the seconds since the clip started.  The generated code is the same
 # as for Hyprshade except for the wrapper, and the node group's inputs, which become `// @param` lines.
 

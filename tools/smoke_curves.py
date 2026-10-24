@@ -1,6 +1,6 @@
 """Headless check of the keyframe curve editor through real mouse / keyboard events.
 
-  python tools/smoke_curves.py PROJECT.tesetoa.json out/
+  python tools/smoke_curves.py PROJECT.kiasecut.json out/
 """
 import json
 import os
@@ -17,9 +17,9 @@ from PySide6.QtGui import QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QPushButton  # noqa: E402
 
-from tesetoa import curves, project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import US  # noqa: E402
+from kiasecut import curves, project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import US  # noqa: E402
 
 app = QApplication(sys.argv)
 app.setStyleSheet(STYLE)

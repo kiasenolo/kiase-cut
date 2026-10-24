@@ -22,8 +22,16 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 from . import curves, fx, masks, project, textlayout
 
 US = 1_000_000
-TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg")
+TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
 BIG = 1e5
+# clip blend modes (edit.BLEND_MODES) as the painter's composition modes
+BLEND_OPS = {"normal": QPainter.CompositionMode_SourceOver, "multiply": QPainter.CompositionMode_Multiply,
+             "screen": QPainter.CompositionMode_Screen, "overlay": QPainter.CompositionMode_Overlay,
+             "darken": QPainter.CompositionMode_Darken, "lighten": QPainter.CompositionMode_Lighten,
+             "color_dodge": QPainter.CompositionMode_ColorDodge, "color_burn": QPainter.CompositionMode_ColorBurn,
+             "hard_light": QPainter.CompositionMode_HardLight, "soft_light": QPainter.CompositionMode_SoftLight,
+             "difference": QPainter.CompositionMode_Difference, "exclusion": QPainter.CompositionMode_Exclusion,
+             "add": QPainter.CompositionMode_Plus}
 
 
 class Renderer:
@@ -188,6 +196,7 @@ class Renderer:
                 self.draw_filtered(q, plain, c, t, disp, fps)
         p.save()
         p.setOpacity(p.opacity() * opacity)
+        p.setCompositionMode(BLEND_OPS.get(curves.value(c.get("blend", "normal"), t), QPainter.CompositionMode_SourceOver))
         p.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
         p.rotate(v("rotation", 0.0))                       # clockwise on a y-down canvas
         p.scale(sx * (-1 if tf.get("flip_h") else 1), sy * (-1 if tf.get("flip_v") else 1))
@@ -331,8 +340,8 @@ def coverage(mask, t, disp, wt, W, H, feather):
     b = math.radians(v("rotation", 0.0))
     fx_ = mx * math.cos(b) + my * math.sin(b)                       # the mask's own frame
     fy_ = -mx * math.sin(b) + my * math.cos(b)
-    m = masks.alpha(mask["kind"], v("w", 1.0) * dw, v("h", 1.0) * dh, feather, fx_, -fy_)
-    if mask.get("invert"):
+    m = masks.alpha(v("kind", "rectangle"), v("w", 1.0) * dw, v("h", 1.0) * dh, feather, fx_, -fy_)
+    if v("invert", False):
         m = 1 - m
     return m.astype(np.float32)
 
@@ -361,7 +370,7 @@ def mask_path(mask, t, disp):
     dw, dh = disp
     w, h = v("w", 1.0) * dw, v("h", 1.0) * dh
     shape = QPainterPath()
-    kind = mask["kind"]
+    kind = v("kind", "rectangle")
     if kind == "line":                                  # keeps the side above the line
         shape.addRect(QRectF(-BIG, -BIG, 2 * BIG, BIG))
     elif kind == "mirror":
@@ -372,7 +381,7 @@ def mask_path(mask, t, disp):
         shape.addRect(QRectF(-w / 2, -h / 2, w, h))
     xf = QTransform().translate(v("cx", 0.0) * dw / 2, -v("cy", 0.0) * dh / 2).rotate(v("rotation", 0.0))
     path = xf.map(shape)
-    if mask.get("invert"):
+    if v("invert", False):
         everything = QPainterPath()
         everything.addRect(QRectF(-BIG, -BIG, 2 * BIG, 2 * BIG))
         path = everything.subtracted(path)

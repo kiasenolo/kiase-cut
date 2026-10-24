@@ -4,7 +4,7 @@ from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMenu, QPushButton, QStyle,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-MIME = "application/x-tesetoa-media"
+MIME = "application/x-kiasecut-media"
 ROLE_ID = Qt.UserRole
 KIND_NAMES = {"image": "圖片", "video": "影片", "audio": "音訊", "filter": "濾鏡", "textstyle": "文字樣式"}
 

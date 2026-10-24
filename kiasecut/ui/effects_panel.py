@@ -1,7 +1,8 @@
 """Effects: the filters on the selected clip (or the filter of a filter clip).
 
-Each effect has its switch, name, order buttons, its parameters (every number can be
-keyframed with ◆, like the clip's own) and an optional mask that limits where it works.
+Each effect has its switch, name, order buttons, its parameters (every value can be
+keyframed with ◆, like the clip's own; on / off and shapes hold until their next keyframe)
+and an optional mask that limits where it works.
 The parameters come from the filter file's `// @param` lines (see filters/FORMAT.md), so
 the form of a user's filter is built the same way as a built-in one.
 """
@@ -11,7 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QColorDialog, QFrame, QHBoxLayout, QLa
                                QToolButton, QVBoxLayout, QWidget)
 
 from .. import curves, edit, fx
-from .inspector import MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, section
+from .inspector import MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, kind_tag, section
 
 DEBOUNCE_MS = 350
 
@@ -113,6 +114,12 @@ class EffectsPanel(QWidget):
             lay.addWidget(self._note("聲音片段不能加濾鏡"))
             return
         effects = c.get("effects") or []
+        if effects and fx.missing():
+            err = QLabel("⚠ " + fx.missing())
+            err.setWordWrap(True)
+            err.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            err.setStyleSheet("color: #e0605a;")
+            lay.addWidget(err)
         if not effects:
             lay.addWidget(self._note("沒有效果。按「新增效果」加一個；\n"
                                      "也可以在 Library 的「濾鏡」頁雙擊，放成獨立的濾鏡片段，"
@@ -171,18 +178,24 @@ class EffectsPanel(QWidget):
         for name, k in MASK_NAMES:
             if k is not None:
                 kind.addItem(name + "遮罩", k)
-        kind.setCurrentIndex(max(0, kind.findData((e.get("mask") or {}).get("kind"))))
+        kind.setCurrentIndex(max(0, kind.findData(kind_tag(e.get("mask")))))
         kind.activated.connect(lambda i, eid=e["id"], cb=kind: self._now(self.maskKindChosen, eid, cb.itemData(i)))
         row.addWidget(kind, 1)
+        mgroup = "fxmask:" + e["id"]
+        self.widgets[(mgroup, "kind")] = kind
+        if e.get("mask"):
+            row.addWidget(self._key_button(mgroup, "kind"))
         lay.addLayout(row)
         if e.get("mask"):
+            irow = QHBoxLayout()
             inv = QCheckBox("反轉（效果作用在遮罩之外）")
-            inv.setChecked(bool(e["mask"].get("invert")))
             inv.toggled.connect(lambda v, eid=e["id"]: self._now(self.maskInvertChosen, eid, v))
-            lay.addWidget(inv)
-            mgroup = "fxmask:" + e["id"]
+            self.widgets[(mgroup, "invert")] = inv
+            irow.addWidget(inv, 1)
+            irow.addWidget(self._key_button(mgroup, "invert"))
+            lay.addLayout(irow)
             for r in PARAMS["mask"]:
-                if e["mask"]["kind"] == "line" and r[0] in ("w", "h"):
+                if kind_tag(e["mask"]) == "line" and r[0] in ("w", "h"):
                     continue
                 lay.addLayout(self._number_row(mgroup, r[0], r[1], r[2], r[3], r[4], r[5], r[6]))
         return box
@@ -221,9 +234,10 @@ class EffectsPanel(QWidget):
         row.addWidget(lab)
         if p.type == "bool":
             cb = QCheckBox()
-            cb.toggled.connect(lambda v, g=group, k=p.name: (self._queue(g, k, 1.0 if v else 0.0), self._flush()))
+            cb.toggled.connect(lambda v, g=group, k=p.name: (self._queue(g, k, bool(v)), self._flush()))
             self.widgets[(group, p.name)] = cb
             row.addWidget(cb, 1)
+            row.addWidget(self._key_button(group, p.name))
         elif p.type == "color":
             btn = QPushButton()
             btn.clicked.connect(lambda _=False, g=group, k=p.name: self._pick_color(g, k))
@@ -250,7 +264,7 @@ class EffectsPanel(QWidget):
         shape = None
         if c is not None:
             shape = (c["id"], c["type"], tuple((e["id"], e["filter"], bool(e.get("disabled")),
-                                                (e.get("mask") or {}).get("kind"), fx.get(e["filter"]).key(),
+                                                kind_tag(e.get("mask")), fx.get(e["filter"]).key(),
                                                 fx.get(e["filter"]).error) for e in c.get("effects") or []))
         if shape != self.shape:
             self._flush()
@@ -273,6 +287,14 @@ class EffectsPanel(QWidget):
                     Inspector._key_state(kb, [stored], [c], [t])
             if e.get("mask"):
                 mgroup = "fxmask:" + e["id"]
+                for key, default in (("kind", "rectangle"), ("invert", False)):
+                    stored = e["mask"].get(key, default)
+                    v = curves.value(stored, t)
+                    box = w[(mgroup, key)]
+                    box.blockSignals(True)
+                    box.setCurrentIndex(max(0, box.findData(v))) if key == "kind" else box.setChecked(bool(v))
+                    box.blockSignals(False)
+                    Inspector._key_state(w[("key", mgroup, key)], [stored], [c], [t])
                 for r in PARAMS["mask"]:
                     s = w.get((mgroup, r[0]))
                     if s is None:

@@ -1,6 +1,6 @@
 """Headless editing smoke test: drives the real window with real mouse events.
 
-  python tools/smoke_edit.py out/AlianShit.tesetoa.json out/
+  python tools/smoke_edit.py out/AlianShit.kiasecut.json out/
 
 Edits a text through the inspector, nudges its position, splits, drags a clip, trims an
 edge, adds a text, then undoes everything and checks the project is back to the original.
@@ -21,9 +21,9 @@ from PySide6.QtCore import QPoint, Qt, QTimer  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from tesetoa import project  # noqa: E402
-from tesetoa.ui.main_window import STYLE, MainWindow  # noqa: E402
-from tesetoa.ui.timeline import HEADER_W, US  # noqa: E402
+from kiasecut import project  # noqa: E402
+from kiasecut.ui.main_window import STYLE, MainWindow  # noqa: E402
+from kiasecut.ui.timeline import HEADER_W, US  # noqa: E402
 
 proj_path, out = sys.argv[1], sys.argv[2]
 app = QApplication(sys.argv)

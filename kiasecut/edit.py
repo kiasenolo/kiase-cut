@@ -153,8 +153,9 @@ def _params(c):
     for group in (c.get("transform"), c.get("mask"), c.get("text")):
         if group:
             out += [v for v in group.values() if curves.is_animated(v)]
-    if curves.is_animated(c.get("volume")):
-        out.append(c["volume"])
+    for key in ("volume", "blend"):
+        if curves.is_animated(c.get(key)):
+            out.append(c[key])
     for e in c.get("effects") or []:
         out += [v for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) if curves.is_animated(v)]
     return out
@@ -433,13 +434,17 @@ def set_transform(proj, clip_id, key, value, t=None):
 
 
 # -- keyframes ------------------------------------------------------------------------------------
-TEXT_ANIM_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg")
+TEXT_ANIM_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
 GROUP_FIELDS = {
     "transform": TRANSFORM_FIELDS,
     "text": TEXT_ANIM_FIELDS,
-    "mask": ("cx", "cy", "w", "h", "rotation", "feather"),
-    "clip": ("volume",),
+    "mask": ("cx", "cy", "w", "h", "rotation", "feather", "kind", "invert"),
+    "clip": ("volume", "blend"),
 }
+# how a picture mixes with what is under it (render.BLEND_OPS draws them)
+BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "color_dodge", "color_burn",
+               "hard_light", "soft_light", "difference", "exclusion", "add")
+DISCRETE_DEFAULTS = {"font_path": project.DEFAULT_FONT, "kind": "rectangle", "invert": False, "blend": "normal"}
 KEY_TOL_US = 1_000_000 // 120      # half a 60 fps frame
 EASINGS = {                        # CSS-style cubic-bezier control x positions
     "linear": (0.0, 1.0),
@@ -509,13 +514,32 @@ def key_at(p, t):
     return None
 
 
+def _coerce(value):
+    """A parameter value as stored: numbers as floats, colours as float lists, choices
+    (text, true / false, nothing) as they are (curves.discrete)."""
+    if isinstance(value, (list, tuple)):
+        return [float(v) for v in value]
+    return value if curves.discrete(value) else float(value)
+
+
+def _check_choice(c, group, key, value):
+    if key == "kind" and value not in MASK_KINDS:
+        raise EditError(f"unknown mask {value}")
+    if key == "blend" and group == "clip":
+        if c["type"] not in VISUAL or c["type"] == "filter":
+            raise EditError("blend modes go on pictures, videos, texts and compound clips")
+        if value not in BLEND_MODES:
+            raise EditError(f"unknown blend mode {value}")
+
+
 def set_param(proj, clip_id, group, key, value, t=None):
     """Set a parameter. Static ones change outright; keyframed ones get their key at t
     (clip time) updated, or a new key there - as Jianying does when you change a value."""
     _, c = find(proj, clip_id)
     h = _holder(c, group)
     p = h.get(key)
-    value = [float(v) for v in value] if isinstance(value, (list, tuple)) else float(value)
+    value = _coerce(value)
+    _check_choice(c, group, key, value)
     if group == "text" and key in ("size", "color"):
         h.pop("styles", None)                    # a whole-clip style replaces per-range ones
     if not curves.is_animated(p):
@@ -541,8 +565,12 @@ def toggle_key(proj, clip_id, group, key, t):
     _, c = find(proj, clip_id)
     _check(c, group, key, t)
     h = _holder(c, group)
-    default = {"scale": 1.0, "opacity": 1.0, "volume": 1.0, "w": 1.0, "h": 1.0, "size": 5.0,
-               "color": [1.0, 1.0, 1.0]}.get(key, 0.0)
+    if key in DISCRETE_DEFAULTS and not group.startswith("fx:"):
+        _check_choice(c, group, key, DISCRETE_DEFAULTS[key])
+        default = DISCRETE_DEFAULTS[key]
+    else:
+        default = {"scale": 1.0, "opacity": 1.0, "volume": 1.0, "w": 1.0, "h": 1.0, "size": 5.0,
+                   "color": [1.0, 1.0, 1.0]}.get(key, 0.0)
     p = h.get(key, default)
     i = key_at(p, t)
     if i is not None:
@@ -570,6 +598,8 @@ def set_easing(proj, clip_id, group, key, t, easing):
     if easing not in EASINGS:
         raise EditError(f"unknown easing {easing}")
     a, b = p["keys"][i], p["keys"][i + 1]
+    if curves.discrete(a[1]):
+        raise EditError("a choice holds until the next keyframe: it has no curve")
     dt = b[0] - a[0]
     x1, x2 = EASINGS[easing]
     a[4], a[5] = x1 * dt, 0.0                    # handles are flat: ease, not overshoot
@@ -580,7 +610,7 @@ def set_easing(proj, clip_id, group, key, t, easing):
 def easing_at(p, t):
     """Name of the preset matching the segment that starts at the key at t, if any."""
     i = key_at(p, t)
-    if i is None or i + 1 >= len(p["keys"]):
+    if i is None or i + 1 >= len(p["keys"]) or curves.discrete(p["keys"][i][1]):
         return None
     a, b = p["keys"][i], p["keys"][i + 1]
     dt = b[0] - a[0] or 1
@@ -597,8 +627,9 @@ def key_times(c):
         for v in (c.get(group) or {}).values():
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
-    if curves.is_animated(c.get("volume")):
-        times |= {k[0] for k in c["volume"]["keys"]}
+    for key in ("volume", "blend"):
+        if curves.is_animated(c.get(key)):
+            times |= {k[0] for k in c[key]["keys"]}
     for e in c.get("effects") or []:
         for v in list(e["params"].values()) + list((e.get("mask") or {}).values()):
             if curves.is_animated(v):
@@ -644,8 +675,21 @@ def _aspect(c):
     return 16 / 9
 
 
-def set_mask(proj, clip_id, kind):
-    """Give a clip a mask of `kind` (keeping its position), or remove it with None."""
+def _new_mask(old, kind, aspect):
+    """A mask of `kind` keeping what it can of the old one (shape keyframes too)."""
+    size = {"line": (1.0, 1.0), "mirror": (1.0, 0.3), "circle": (0.5, 0.5 * aspect),
+            "rectangle": (0.5, 0.5 * aspect)}[kind]
+    line = kind == "line" and not curves.is_animated(old.get("kind"))
+    return {"kind": old["kind"] if curves.is_animated(old.get("kind")) else kind,
+            "invert": old.get("invert", False), "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
+            "w": old.get("w", size[0]) if not line else 1.0,
+            "h": old.get("h", size[1]) if not line else 1.0,
+            "rotation": old.get("rotation", 0.0), "feather": old.get("feather", 0.0)}
+
+
+def set_mask(proj, clip_id, kind, t=None):
+    """Give a clip a mask of `kind` (keeping its position), or remove it with None. A shape
+    with keyframes gets its keyframe at clip time t set (or added), as numbers do."""
     _, c = find(proj, clip_id)
     if c["type"] not in ("image", "video", "compound", "filter"):
         raise EditError("masks go on pictures, videos, compound clips and filters")
@@ -655,13 +699,9 @@ def set_mask(proj, clip_id, kind):
     if kind not in MASK_KINDS:
         raise EditError(f"unknown mask {kind}")
     old = c.get("mask") or {}
-    a = _aspect(c)
-    size = {"line": (1.0, 1.0), "mirror": (1.0, 0.3), "circle": (0.5, 0.5 * a), "rectangle": (0.5, 0.5 * a)}[kind]
-    c["mask"] = {"kind": kind, "invert": bool(old.get("invert")),
-                 "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
-                 "w": old.get("w", size[0]) if kind != "line" else 1.0,
-                 "h": old.get("h", size[1]) if kind != "line" else 1.0,
-                 "rotation": old.get("rotation", 0.0), "feather": old.get("feather", 0.0)}
+    if curves.is_animated(old.get("kind")):
+        return set_param(proj, clip_id, "mask", "kind", kind, t)
+    c["mask"] = _new_mask(old, kind, _aspect(c))
     if old.get("enabled") is False:
         c["mask"]["enabled"] = False
     return c
@@ -682,12 +722,11 @@ def set_mask_enabled(proj, clip_id, on):
     return c
 
 
-def set_mask_invert(proj, clip_id, invert):
+def set_mask_invert(proj, clip_id, invert, t=None):
     _, c = find(proj, clip_id)
     if not c.get("mask"):
         raise EditError("clip has no mask")
-    c["mask"]["invert"] = bool(invert)
-    return c
+    return set_param(proj, clip_id, "mask", "invert", bool(invert), t)
 
 
 # -- filters ----------------------------------------------------------------------------------------
@@ -737,8 +776,9 @@ def move_effect(proj, clip_id, effect_id, delta):
         es[i], es[j] = es[j], es[i]
 
 
-def set_effect_mask(proj, clip_id, effect_id, kind):
-    """Limit an effect to a shape (None removes it): coverage in the clip's own space."""
+def set_effect_mask(proj, clip_id, effect_id, kind, t=None):
+    """Limit an effect to a shape (None removes it): coverage in the clip's own space. A
+    shape with keyframes gets its keyframe at clip time t set (or added)."""
     _, c = find(proj, clip_id)
     e = _effect(c, effect_id)
     if kind is None:
@@ -747,20 +787,19 @@ def set_effect_mask(proj, clip_id, effect_id, kind):
     if kind not in MASK_KINDS:
         raise EditError(f"unknown mask {kind}")
     old = e.get("mask") or {}
-    size = {"line": (1.0, 1.0), "mirror": (1.0, 0.3), "circle": (0.5, 0.5), "rectangle": (0.5, 0.5)}[kind]
-    e["mask"] = {"kind": kind, "invert": bool(old.get("invert")), "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
-                 "w": old.get("w", size[0]) if kind != "line" else 1.0,
-                 "h": old.get("h", size[1]) if kind != "line" else 1.0,
-                 "rotation": old.get("rotation", 0.0), "feather": old.get("feather", 0.0)}
+    if curves.is_animated(old.get("kind")):
+        set_param(proj, clip_id, "fxmask:" + effect_id, "kind", kind, t)
+        return e
+    e["mask"] = _new_mask(old, kind, 1.0)
     return e
 
 
-def set_effect_mask_invert(proj, clip_id, effect_id, invert):
+def set_effect_mask_invert(proj, clip_id, effect_id, invert, t=None):
     _, c = find(proj, clip_id)
     e = _effect(c, effect_id)
     if not e.get("mask"):
         raise EditError("effect has no mask")
-    e["mask"]["invert"] = bool(invert)
+    set_param(proj, clip_id, "fxmask:" + effect_id, "invert", bool(invert), t)
 
 
 def add_filter_clip(proj, ref, at_us, duration_us=FILTER_DEFAULT_US, track_id=None):
@@ -843,8 +882,7 @@ def set_keys(proj, clip_id, group, key, keys):
         t = int(min(max(k[0], 0), c["duration_us"]))
         if clean and t - clean[-1][0] <= KEY_TOL_US:
             raise EditError("two keyframes at the same time")
-        v = [float(x) for x in k[1]] if isinstance(k[1], (list, tuple)) else float(k[1])
-        clean.append([t, v] + [float(x) for x in k[2:6]])
+        clean.append([t, _coerce(k[1])] + [float(x) for x in k[2:6]])
     for i, k in enumerate(clean):
         prev_dt = k[0] - clean[i - 1][0] if i else 0
         next_dt = clean[i + 1][0] - k[0] if i + 1 < len(clean) else 0
@@ -859,7 +897,7 @@ def clear_keys(proj, clip_id, group, key, value):
     _, c = find(proj, clip_id)
     if not _valid_key(c, group, key):
         raise EditError(f"unknown {group} field {key}")
-    _holder(c, group)[key] = [float(x) for x in value] if isinstance(value, (list, tuple)) else float(value)
+    _holder(c, group)[key] = _coerce(value)
     return c
 
 

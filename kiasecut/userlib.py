@@ -164,7 +164,7 @@ STYLE_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", 
 def style_from_clip(clip):
     """The look of a text clip as a dict that can be saved and applied again."""
     tx = clip["text"]
-    return {"format": "tesetoa-textstyle", "text": {k: tx[k] for k in STYLE_FIELDS if k in tx},
+    return {"format": "kiasecut-textstyle", "text": {k: tx[k] for k in STYLE_FIELDS if k in tx},
             "transform": {k: v for k, v in (clip.get("transform") or {}).items()
                           if k in ("scale", "scale_y")}}
 
@@ -181,7 +181,7 @@ def save_style(folder, name, clip):
 def load_style(path):
     with open(path, encoding="utf-8") as fh:
         d = json.load(fh)
-    if d.get("format") != "tesetoa-textstyle" or not isinstance(d.get("text"), dict):
+    if d.get("format") not in ("kiasecut-textstyle", "tesetoa-textstyle") or not isinstance(d.get("text"), dict):
         raise ValueError("不是文字樣式檔")
     return d
 

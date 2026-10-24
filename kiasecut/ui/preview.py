@@ -27,7 +27,7 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import QWidget
 
-from .. import curves, textlayout
+from .. import curves, render, textlayout
 
 US = 1_000_000
 SNAP_PX = 7
@@ -50,7 +50,7 @@ def text_size(spec, canvas_h):
 def base_size(c, W, H, t):
     """On-canvas size of clip c at scale 1."""
     if c["type"] == "text":
-        spec = curves.static(c["text"], t, ("size", "color", "letter_spacing", "line_spacing", "italic_deg"))
+        spec = curves.static(c["text"], t, render.TEXT_FIELDS)
         return text_size(spec, H)
     if c["type"] == "compound":
         w, h = c["compound"]["width"], c["compound"]["height"]
@@ -117,7 +117,7 @@ class MaskGeo:
         t = box.t
         v = lambda k, d: curves.value(m.get(k, d), t)
         self.box, self.m = box, m
-        self.kind = m["kind"]
+        self.kind = v("kind", "rectangle")                      # (a shape can have keyframes)
         self.dw, self.dh = box.bw, box.bh                       # material size at scale 1
         self.cx, self.cy, self.rot = v("cx", 0.0), v("cy", 0.0), v("rotation", 0.0)
         self.mw, self.mh, self.feather = v("w", 1.0), v("h", 1.0), v("feather", 0.0)

@@ -95,9 +95,10 @@ class Timeline(QWidget):
     clipAction = Signal(str, str)                    # action, clip id
     mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
     compoundDropped = Signal(str, str, int)          # compound id, track id or "", start us
+    assetDropped = Signal(str, str, int)             # built-in asset ("asset:…"), track id or "", start us
     filterDropped = Signal(str, str, str, int)       # filter ref, clip id or "", track id or "", start us
     filesDropped = Signal(list, str, int)            # file manager paths, track id or "", start us
-    replaceDropped = Signal(str, str)                # media id (library item, or "cmp:<id>"), clip id: Alt + drop
+    replaceDropped = Signal(str, str)                # media id (library item, "cmp:<id>" or "asset:…"), clip id: Alt + drop
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
     clipDragging = Signal(str, int, int)             # clip id, start us, duration us: while dragging
     peaksReady = Signal(str)                         # emitted from the waveform thread
@@ -1183,6 +1184,8 @@ class Timeline(QWidget):
         for ident in bytes(e.mimeData().data(MEDIA_MIME)).decode().split(","):
             if ident.startswith("cmp:"):                 # from the compound browser
                 self.compoundDropped.emit(ident[4:], tid, start)
+            elif ident.startswith("asset:"):             # from the 內建素材 tab
+                self.assetDropped.emit(ident, tid, start)
             elif ident.startswith("m"):
                 self.mediaDropped.emit(ident, tid, start)
         e.acceptProposedAction()

@@ -114,6 +114,14 @@ Jianying draft fills the library with the media it uses. SVG files work like any
 and are drawn at the size they are shown, so they stay sharp at any zoom (the MLT export
 gets a PNG drawn at the clip's largest size).
 
+Built-in assets (內建素材 tab): solid colours, gradients (presets, plus horizontal /
+vertical / diagonal / radial ones, a subtitle backing and a vignette) and basic shapes
+(rectangle, circle, triangle, star, heart, arrow, ring, frames, line…). The two colours at
+the top of the tab paint the shapes and the 自訂 ones (alpha works too). Drag one onto the
+timeline or double-click it: it is written as an SVG into Media/內建素材, so it is a picture
+like any other; solids and gradients have the canvas's size and fill the frame, shapes come
+in at 40 % scale. Alt + drop on a picture clip replaces its source.
+
 Replacing a clip's source (替換素材): hold Alt while dropping media (from the library, the
 Library tab or the 複合片段 tab) on a clip: the clip lights up with 替換素材, and on release
 it shows the new media in its place, keeping its position, length, transform, mask,

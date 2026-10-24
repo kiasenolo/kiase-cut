@@ -21,9 +21,10 @@ from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
 
-from .. import build, curves, edit, fonts, fx, gpu, library, project, renderexport, userlib, waveform, workspace
+from .. import assets, build, curves, edit, fonts, fx, gpu, library, project, renderexport, userlib, waveform, workspace
 from ..client import EngineClient
 from ..importers import jianying
+from .assets_panel import AssetsPanel
 from .compounds import CompoundPanel
 from .curve_editor import CurveEditor
 from .beat_panel import BeatPanel
@@ -245,8 +246,11 @@ class MainWindow(QMainWindow):
         self.vfx.addClipRequested.connect(lambda ref: self.add_filter_clip(ref))
         self.vfx.applyRequested.connect(self.apply_filter_to_selected)
         self.vfx.docRequested.connect(self.show_filter_doc)
+        self.assets = AssetsPanel()
+        self.assets.addRequested.connect(lambda ident: self.place_asset(ident, "", self.playhead_us()))
         self.left = QTabWidget()
         self.left.addTab(self.library, "專案素材")
+        self.left.addTab(self.assets, "內建素材")
         self.left.addTab(self.ulpanel, "Library")
         self.left.addTab(self.vfx, "VFX")
         self.left.addTab(self.compounds, "複合片段")
@@ -398,6 +402,7 @@ class MainWindow(QMainWindow):
         tl.trackAction.connect(self.on_track_action)
         tl.clipAction.connect(self.on_clip_action)
         tl.mediaDropped.connect(self.place_media)
+        tl.assetDropped.connect(self.place_asset)
         tl.compoundDropped.connect(self.place_compound)
         tl.replaceDropped.connect(self.replace_source)
         tl.filterDropped.connect(self.on_filter_dropped)
@@ -1666,9 +1671,9 @@ class MainWindow(QMainWindow):
                 place = None                  # (the rest only joins the project's media library)
         self.import_files(files, folder, place)
 
-    def import_files(self, files, folder, place=None):
+    def import_files(self, files, folder, place=None, then=None):
         """Copy the files into Media (in `folder`), add them to the library and, with place,
-        to the timeline."""
+        to the timeline; with then, hand their library items to then(items) instead."""
         if not self.ensure_project():
             return
         root = self.root
@@ -1705,8 +1710,11 @@ class MainWindow(QMainWindow):
             by_path = {it["path"]: it for it in library.lib(self.proj)["items"]}
             items = [by_path[p] for p in dict.fromkeys(got.values()) if p in by_path]
             bad = [os.path.basename(p) for p in dict.fromkeys(got.values()) if p not in by_path]
-            self.left.setCurrentWidget(self.library)
-            if items and place is not None:
+            if then is None:
+                self.left.setCurrentWidget(self.library)
+            if items and then is not None:
+                then(items)
+            elif items and place is not None:
                 self.apply_root("匯入素材並加入時間軸", add_and_place, [it["id"] for it in items],
                                 select=lambda c: c["id"])
             elif items:
@@ -1810,10 +1818,39 @@ class MainWindow(QMainWindow):
                         lambda root: library.place(self.container(root), root, item_id, track_id or None, start_us),
                         select=lambda c: c["id"])
 
+    def use_asset(self, ident, then):
+        """Write a built-in asset (assets.py) into Media/內建素材, as big as the open level's
+        canvas, and hand its library item and definition to then(item, asset)."""
+        got = assets.parse(ident)
+        if got is None or not self.ensure_project():
+            return
+        a, c1, c2 = got
+        level = self.container()
+        w, h = level.get("width") or self.proj["width"], level.get("height") or self.proj["height"]
+        try:
+            path = assets.write(os.path.join(workspace.media_dir(self.root), assets.FOLDER), a, c1, c2, w, h)
+        except OSError as exc:
+            QMessageBox.critical(self, "無法建立素材", str(exc))
+            return
+        self.import_files([path], None, then=lambda items: then(items[0], a))
+
+    def place_asset(self, ident, track_id, start_us):
+        def put(it, a):
+            def fn(root):
+                c = library.place_item(self.container(root), it, track_id or None, start_us)
+                c["transform"]["scale"] = a.scale
+                return c
+            self.apply_root("加入內建素材", fn, select=lambda c: c["id"])
+        self.use_asset(ident, put)
+
     def replace_source(self, ident, cid):
         """Media dropped on a clip with Alt held: the clip shows (or plays) it instead, keeping
         its place, length, look and keyframes."""
         if not self.proj:
+            return
+        if ident.startswith(assets.PREFIX):
+            self.use_asset(ident, lambda it, _a: self.apply("替換素材", edit.replace_media, cid, dict(it),
+                                                            select=lambda c: c["id"]))
             return
         if ident.startswith("cmp:"):
             self.apply_root("替換素材", lambda root: edit.replace_with_compound(root, self.container(root), cid, ident[4:]),

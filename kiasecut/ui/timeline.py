@@ -3,7 +3,8 @@
 Layout follows Jianying: the topmost layer is drawn at the top, audio tracks at the bottom.
 Click to seek or select; Ctrl / Shift + click adds to or removes from the selection, dragging
 on empty track space draws a selection box, and a selection moves together. Drag a clip to move it (also to another track of the same kind),
-drag its edges to trim. Moves and trims snap to the playhead and to other clips' edges.
+drag its edges to trim. Moves and trims snap to the playhead and to other clips' starts,
+ends and keyframes; a yellow line shows where a drag has snapped.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
 zooms time around the mouse, the middle button drags the view. Alt+wheel or the toolbar
@@ -17,8 +18,8 @@ loops inside it, and it is the range a marked export uses. Ctrl+Shift+D clears i
 click without dragging opens the menu.
 
 The selected clip shows its keyframes as diamonds along its bottom edge; drag one sideways
-to move every keyframe at that time (it snaps to frames and to the playhead), click it to
-go there.
+to move every keyframe at that time (it snaps to frames, the playhead and other clips'
+starts, ends and keyframes), click it to go there.
 
 Sound clips have a volume line (as in Jianying): drag it up or down to change the clip's
 volume (with volume keyframes, all of them change together); the keyframes are points on
@@ -301,21 +302,54 @@ class Timeline(QWidget):
                     return row, c, "body"
         return row, None, None
 
-    def _snap(self, t_us, exclude):
-        """Snap a time to the playhead / 0 / clip edges within SNAP_PX; exclude is a clip or
-        a set of clip ids (a moving group). With snapping off, times are left as they are."""
-        if not self.snapping:
-            return t_us
-        best, limit = t_us, SNAP_PX / self.px_per_s * US
+    def _snap_targets(self, exclude):
+        """Times a drag snaps to: 0, the playhead, and every other clip's start, end and
+        keyframes; exclude is a clip or a set of clip ids (a moving group)."""
         cands = [0, self.pos / self.fps * US]
         for tr in self.rows:
             for c in tr["clips"]:
                 if c is not exclude and not (isinstance(exclude, set) and c["id"] in exclude):
-                    cands += [c["start_us"], c["start_us"] + c["duration_us"]]
-        for t in cands:
+                    s = c["start_us"]
+                    cands += [s, s + c["duration_us"]]
+                    cands += [s + k for k in edit.key_times(c) if 0 <= k <= c["duration_us"]]
+        return cands
+
+    def _snap(self, t_us, exclude):
+        """Snap a time to the nearest _snap_targets within SNAP_PX. With snapping off, times
+        are left as they are."""
+        if not self.snapping:
+            return t_us
+        best, limit = t_us, SNAP_PX / self.px_per_s * US
+        for t in self._snap_targets(exclude):
             if abs(t - t_us) < limit:
                 best, limit = t, abs(t - t_us)
         return best
+
+    def _snap_span(self, start, length, exclude):
+        """Start of a moved span [start, start + length): snapped by whichever of its ends
+        lands on a target nearer; unchanged when neither does."""
+        moved = [x for x in (self._snap(start, exclude), self._snap(start + length, exclude) - length)
+                 if x != start and x >= 0]
+        return min(moved, key=lambda x: abs(x - start)) if moved else start
+
+    def _snap_guides(self):
+        """Times where the current drag sits on a snap target (drawn as guide lines)."""
+        d = self.drag
+        if not (self.snapping and d and d.get("moved") and d.get("clip")):
+            return []
+        c = d["clip"]
+        if d["mode"] == "key":
+            edges, exclude = [c["start_us"] + d["t"]] if "t" in d else [], c
+        elif d["mode"] == "group":
+            sh = d.get("shift", 0)
+            edges, exclude = [c["start_us"] + sh, c["start_us"] + c["duration_us"] + sh], d["ids"]
+        elif d["mode"] in ("body", "start", "end"):
+            edges = [d.get("start", c["start_us"]), d.get("end", c["start_us"] + c["duration_us"])]
+            exclude = c
+        else:
+            return []
+        targets = self._snap_targets(exclude)
+        return sorted({e for e in edges if any(abs(e - t) < 1 for t in targets)})
 
     # -- painting -------------------------------------------------------------------------------
     def paintEvent(self, _):
@@ -444,6 +478,11 @@ class Timeline(QWidget):
             if row is not None:
                 p.fillRect(QRectF(HEADER_W, self.tops[row], w - HEADER_W, self.row_h(row) - 2),
                            QColor(255, 255, 255, 30))
+        p.setPen(QPen(QColor("#ffd34d"), 1))                     # where a drag has snapped
+        for t in self._snap_guides():
+            gx = self._x(t / US)
+            if gx >= HEADER_W:
+                p.drawLine(QPointF(gx, RULER_H), QPointF(gx, self.height()))
         p.restore()
         x = self._x(self.pos / self.fps)
         if x >= HEADER_W:
@@ -506,7 +545,7 @@ class Timeline(QWidget):
         t0 = self._sec(x0) - start / US                     # seconds into the clip
         t1 = self._sec(x0 + n) - start / US
         src = c.get("source_start_us", 0) / US
-        amp = waveform.columns(peaks, lead, src + t0, src + t1, n)
+        hi, lo = waveform.columns(peaks, lead, src + t0, src + t1, n)      # highest / lowest sample per px
         # the clip's volume and fades, sampled every few columns
         vol, fi, fo, dur = c.get("volume", 1.0), c.get("fade_in_us", 0), c.get("fade_out_us", 0), c["duration_us"]
         if curves.is_animated(vol) or fi or fo:
@@ -516,14 +555,16 @@ class Timeline(QWidget):
                 g *= np.clip(ts / fi, 0, 1)
             if fo:
                 g *= np.clip((dur - ts) / fo, 0, 1)
-            amp *= np.interp(np.linspace(t0, t1, n) * US, ts, g)
+            gain = np.interp(np.linspace(t0, t1, n) * US, ts, g)
         else:
-            amp *= curves.value(vol, 0)
-        amp = np.clip(amp, 0, 1) ** 0.7                      # quieter parts stay visible
+            gain = curves.value(vol, 0)
+        # quieter parts stay visible; the line stays at least a hair thick
+        shape = lambda a: np.sign(a) * np.clip(np.abs(a * gain), 0, 1) ** 0.7
+        hi, lo = np.maximum(shape(hi), 0.02), np.minimum(shape(lo), -0.02)
         mid, half = top + height / 2, height / 2
         xs = x0 + np.arange(n) + 0.5
-        upper = [QPointF(x, mid - a * half) for x, a in zip(xs, amp)]
-        lower = [QPointF(x, mid + a * half) for x, a in zip(xs[::-1], amp[::-1])]
+        upper = [QPointF(x, mid - a * half) for x, a in zip(xs, hi)]
+        lower = [QPointF(x, mid - a * half) for x, a in zip(xs[::-1], lo[::-1])]
         poly = QPolygonF(upper + lower)
         if len(self._waves) > 400:
             self._waves.clear()
@@ -538,7 +579,7 @@ class Timeline(QWidget):
         r = QRectF(max(x0, HEADER_W) + 0.5, y + 3, max(1.0, x1 - max(x0, HEADER_W) - 1), h - 8)
         col = QColor(c.get("color") or COLORS.get(c["type"], "#555"))      # (not the track's colour)
         sel = c["id"] in self.selected_ids
-        # a light colour gets dark writing and waveform (decided on the plain colour, so
+        # a light colour gets dark writing (decided on the plain colour, so
         # selecting a clip never flips it; dimmed clips are dark anyway)
         bright = is_bright(col) and not dim
         if sel:
@@ -562,8 +603,7 @@ class Timeline(QWidget):
                 p.save()
                 p.setClipRect(r)
                 p.setPen(Qt.NoPen)
-                ink = 20 if bright else 255
-                p.setBrush(QColor(ink, ink, ink + 2, 80 if dim else 150 if audio else 110))
+                p.setBrush(QColor(255, 255, 255, 90 if dim else 235 if audio else 200))
                 p.drawPolygon(poly)
                 p.restore()
         if r.width() > 24:
@@ -833,9 +873,8 @@ class Timeline(QWidget):
             frame = US / self.fps
             t = d["t0"] + (pos.x() - d["x0"]) / self.px_per_s * US
             g = c["start_us"] + t                                   # snap on the timeline's frames
-            play = self.pos / self.fps * US
-            snap = self.snapping and abs(g - play) < SNAP_PX / self.px_per_s * US
-            g = play if snap else round(g / frame) * frame
+            snapped = self._snap(g, c)                              # or onto other clips' edges / keys
+            g = snapped if snapped != g else round(g / frame) * frame
             others = [k for k in edit.key_times(c) if abs(k - d["t0"]) > edit.KEY_TOL_US]
             lo = max([k + frame for k in others if k < d["t0"]], default=0)
             hi = min([k - frame for k in others if k > d["t0"]], default=c["duration_us"])
@@ -883,9 +922,7 @@ class Timeline(QWidget):
             group = [k for t in self.rows for k in t["clips"] if k["id"] in d["ids"]]
             dt = max(dt, -min(k["start_us"] for k in group))
             # snap the clip under the mouse by its start or its end
-            s = self._snap(c["start_us"] + dt, d["ids"]) - c["start_us"]
-            e_ = self._snap(c["start_us"] + c["duration_us"] + dt, d["ids"]) - c["start_us"] - c["duration_us"]
-            d["shift"] = s if abs(s - dt) <= abs(e_ - dt) else e_
+            d["shift"] = self._snap_span(c["start_us"] + dt, c["duration_us"], d["ids"]) - c["start_us"]
             self.update()
             return
         if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX and self._row_at(pos.y()) == d["row0"]:
@@ -895,10 +932,7 @@ class Timeline(QWidget):
         dt = (pos.x() - d["x0"]) / self.px_per_s * US
         s0, e0 = c["start_us"], c["start_us"] + c["duration_us"]
         if d["mode"] == "body":
-            start = max(0.0, s0 + dt)
-            snapped_s = self._snap(start, c)
-            snapped_e = self._snap(start + (e0 - s0), c) - (e0 - s0)
-            start = snapped_s if abs(snapped_s - start) <= abs(snapped_e - start) else snapped_e
+            start = self._snap_span(max(0.0, s0 + dt), e0 - s0, c)
             d["start"], d["end"] = start, start + (e0 - s0)
             row = self._row_at(pos.y())
             audio = self.rows[d["row0"]]["kind"] == "audio"

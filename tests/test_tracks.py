@@ -93,12 +93,16 @@ class TrackTests(unittest.TestCase):
         self.assertIn('<property name="level">-6.021</property>', xml)
 
     def test_waveform_columns(self):
-        peaks = np.zeros(400, np.float32)
-        peaks[200] = 1.0                                           # a click at 1 s
-        cols = waveform.columns(peaks, 0.0, 0.0, 2.0, 20)
-        self.assertEqual(cols.argmax(), 10)
-        shifted = waveform.columns(peaks, 0.5, 0.0, 2.0, 20)       # stream starts 0.5 s late
-        self.assertEqual(shifted.argmax(), 15)
+        per_s = round(1 / waveform.BIN_S)
+        peaks = np.zeros((2 * per_s, 2), np.float32)
+        peaks[per_s] = (0.8, -0.5)                                 # a click at 1 s
+        hi, lo = waveform.columns(peaks, 0.0, 0.0, 2.0, 20)
+        self.assertEqual(hi.argmax(), 10)
+        self.assertEqual(lo.argmin(), 10)
+        self.assertAlmostEqual(float(hi[10]), 0.8, places=6)
+        self.assertAlmostEqual(float(lo[10]), -0.5, places=6)
+        hi, lo = waveform.columns(peaks, 0.5, 0.0, 2.0, 20)        # stream starts 0.5 s late
+        self.assertEqual(hi.argmax(), 15)
 
 
 if __name__ == "__main__":

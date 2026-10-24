@@ -546,6 +546,8 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "刪除", "Delete", self.do_delete)
+        add(m, "移到上面的軌道", "Ctrl+Up", lambda: self.do_move_rows(-1))
+        add(m, "移到下面的軌道", "Ctrl+Down", lambda: self.do_move_rows(1))
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
         add(m, "新增文字", "Ctrl+T", self.do_text)
@@ -1255,6 +1257,26 @@ class MainWindow(QMainWindow):
             self.timeline.selected_id = None
             self.apply("刪除" if len(ids) == 1 else f"刪除 {len(ids)} 個片段", edit.delete_many, ids)
 
+    def do_move_rows(self, d_rows):
+        """Ctrl+Up / Ctrl+Down: the selected clips one track up (-1) or down (+1) the screen, at
+        the same time; nothing moves when a clip would land on another one."""
+        if self._typing_widget() is not None:
+            return
+        ids = [c["id"] for c in self.timeline.selected_clips()]
+        if not ids:
+            self.statusBar().showMessage("先在時間軸上選取片段", 3000)
+            return
+        where = "上面" if d_rows < 0 else "下面"
+
+        def move(level):
+            try:
+                return edit.move_many(level, ids, 0, d_rows)
+            except edit.EditError as exc:                # say why in words the user reads
+                why = "被其他片段擋住了" if str(exc) == "no room there" else f"{where}沒有同類的軌道"
+                raise edit.EditError(why) from exc
+
+        self.apply(f"移到{where}的軌道", move)
+
     def _typing_widget(self):
         """The text field with the keyboard focus, if any: copy / paste then belong to it."""
         fw = QApplication.focusWidget()
@@ -1790,8 +1812,9 @@ class MainWindow(QMainWindow):
     # -- playback ---------------------------------------------------------------------------------
     def on_loaded(self, info):
         self.length = info["length"]
-        self.statusBar().showMessage(f"{info['width']}×{info['height']} {info['fps']:g}fps，"
-                                     f"{self.length} 幀", 3000)
+        if not self.statusBar().currentMessage():        # (it arrives after every edit: never hide what an edit said)
+            self.statusBar().showMessage(f"{info['width']}×{info['height']} {info['fps']:g}fps，"
+                                         f"{self.length} 幀", 3000)
 
     def on_frame(self, img, pos):
         self.pos = pos

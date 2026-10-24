@@ -25,16 +25,18 @@ python -m kiasecut project.kiasecut.json   # open a saved project
 Space play/pause · ←/→ step a frame · Home/End · Ctrl+I import · Ctrl+S save · Ctrl+E export.
 
 Editing: drag a clip to move it (also onto another track of the same kind), drag its
-edges to trim; moves and trims snap to the playhead and clip edges while 吸附 (N, in the
-timeline toolbar) is on, as Jianying's auto-snap. Clicking a clip only selects it: the
+edges to trim; moves and trims snap to the playhead and to other clips' starts, ends and
+keyframes while 吸附 (N, in the timeline toolbar) is on, as Jianying's auto-snap; a yellow
+line marks where the drag has snapped. Clicking a clip only selects it: the
 playhead and the view stay where they are (the view follows the playhead during playback
 and for jumps such as Home / End / keyframes). Ctrl+B splits the
 selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a text,
-Ctrl+Z / Ctrl+Y undo and redo. Right-click a track header or clip to rename it or give it
+Ctrl+Up / Ctrl+Down move the selected clips to the track above / below (at the same time;
+nothing moves when one would land on another clip), Ctrl+Z / Ctrl+Y undo and redo. Right-click a track header or clip to rename it or give it
 a colour (double-click a track name to rename).
 
 Time selection, as in FL Studio: drag with the right button anywhere on the timeline to
-select a span (it snaps to clip edges and the playhead); playback starts at it and loops
+select a span (it snaps like clips do); playback starts at it and loops
 inside it, and a marked export uses it. Ctrl+Shift+D (or Alt+X) clears it; a right click
 without dragging opens the menu. I / O still set its ends at the playhead.
 
@@ -49,7 +51,8 @@ Output: right of the timeline a level meter shows the left / right peak of what 
 double-click for 0 dB), used by the preview and the export.
 
 Keyframes on the timeline: the selected clip shows its keyframes as orange diamonds; drag
-one sideways to move every keyframe at that time (snapping to frames and the playhead),
+one sideways to move every keyframe at that time (snapping to frames, the playhead and other
+clips' starts, ends and keyframes),
 click it to go there.
 
 Navigation (timeline and curve editor alike): the wheel moves up and down, Shift+wheel
@@ -79,7 +82,7 @@ above it and icon transport controls below (start, previous frame, play, next fr
 fullscreen); the timeline toolbar uses icons (undo, redo, blade, delete, text, snapping,
 track height); tracks are labelled V1… (from the bottom) and A1…. Clips are coloured by
 type (pictures blue, compound violet, text mauve, sound green, or a colour you set); on a
-light colour the clip's name and waveform turn dark so they stay readable. A
+light colour the clip's name turns dark so it stays readable. A
 track's colour tints its row and header edge and leaves its clips alone.
 
 Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
@@ -148,7 +151,8 @@ overshoot, for bounces) or a preset (linear, ease in / out / in-out, back). Time
 can be typed too: with several keyframes selected they show "--" where they differ, and a
 typed number goes to all of them.
 
-Sound and tracks: audio and video clips show their waveform on the timeline (following
+Sound and tracks: audio and video clips show their waveform on the timeline (white, the
+highest and lowest sample of every millisecond, so zooming in shows detail; following
 the clip volume and fades). Audio track headers have mute and solo buttons, picture
 tracks an eye to hide them (and mute, when they hold videos or compound clips); muted /
 hidden tracks are dimmed. The track menu (right-click a header) sets a track volume in dB,

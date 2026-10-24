@@ -61,7 +61,10 @@ track name to size that track alone (double-click it to reset).
 Timelines: a project holds several timelines (as in DaVinci Resolve) sharing its media
 and compounds; they are tabs above the timeline: click to open one, + for a new one (with
 V1 / A1), double-click to rename, right-click to duplicate or delete. Each keeps its own
-tracks; edits, playback and export work on the open one. Older projects open as one
+tracks; edits, playback and export work on the open one. A timeline can be used inside
+another (nested, as in Resolve): drag its tab, or its ⧉ row in the 複合片段 tab, onto the
+timeline. The clip shows that timeline live (editing it changes every place it is used);
+a timeline can never end up inside itself, and one in use cannot be deleted. Older projects open as one
 timeline.
 
 Look: a DaVinci Resolve-like dark layout: the viewer has the timeline name and timecode
@@ -108,7 +111,10 @@ changing a value that already has keyframes edits or adds the keyframe at the pl
 in Jianying. ◀/▶ jump between keyframes, and the curve menu sets linear / ease-in /
 ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, videos and
 compound clips take line, mirror, circle or rectangle masks (see the 遮罩 tab). The
-mouse wheel never changes a number field.
+mouse wheel never changes a number field. Number fields work like Resolve's: press and
+drag up / down to change the value (Shift for fine steps, Ctrl for big ones), click to type
+one. Position X / Y (and a mask's centre and size) sit side by side on one row. The
+previous / next keyframe buttons (◀ ▶) are in the curve editor.
 
 Curve editor (the 關鍵幀曲線 tab beside 屬性): tick any parameters of the selected clip and
 their keyframes show together as value-over-time curves, each in its own colour (colours
@@ -186,6 +192,7 @@ python tools/smoke_select.py PROJECT.tesetoa.json out/ # multi-select, track hei
 python tools/smoke_handles.py PROJECT.tesetoa.json out/ # scale / rotate / mask handles on the preview
 python tools/smoke_reuse.py PROJECT.tesetoa.json out/  # shared compounds, timeline ◆ drag, time selection
 python tools/smoke_volume.py PROJECT.tesetoa.json out/ # volume line, 吸附, clip clicks, meter, master volume
+python tools/smoke_inspector.py PROJECT.tesetoa.json out/ # number dragging, X / Y row, nested timelines
 python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
 python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
 ```

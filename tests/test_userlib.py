@@ -1,4 +1,5 @@
 import json
+import shutil
 import os
 import sys
 import tempfile
@@ -31,12 +32,24 @@ class UserLibraryTest(unittest.TestCase):
         for key, _ in userlib.CATEGORIES:
             self.assertTrue(os.path.isdir(userlib.category_dir(self.root, key)))
         self.assertTrue(os.path.exists(self.root + "/filters/FORMAT.md"))
+        self.assertTrue(os.path.exists(self.root + "/filters/Example.glsl.txt"))
+        self.assertFalse(os.path.exists(self.root + "/filters/Example.glsl"))
         self.assertEqual(userlib.category_of(self.root + "/images/a/b.png", self.root), "images")
         self.assertEqual(userlib.category_of(self.root + "/x.png", self.root), "")
         self.assertIsNone(userlib.category_of("/elsewhere/x.png", self.root))
         self.assertEqual(userlib.category_for("a.GLSL"), "filters")
         self.assertEqual(userlib.category_for("a.json"), None)
         self.assertEqual(userlib.category_for("a.json", prefer="textstyles"), "textstyles")
+
+    def test_old_example_filter_removed_only_when_untouched(self):
+        old = self.root + "/filters/Example.glsl"
+        shutil.copyfile(fx.TEMPLATE_PATH, old)
+        userlib.ensure_layout(self.root)
+        self.assertFalse(os.path.exists(old))
+        with open(old, "w", encoding="utf-8") as fh:
+            fh.write("// @filter Mine\n")
+        userlib.ensure_layout(self.root)
+        self.assertTrue(os.path.exists(old))
 
     def test_scan_finds_hand_dropped_files(self):
         png(self.root + "/images/Logos/a.png")

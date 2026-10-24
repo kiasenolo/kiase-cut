@@ -35,6 +35,9 @@ def category_dir(root, key):
     return library.norm(os.path.join(root, key))
 
 
+EXAMPLE = "Example.glsl.txt"     # not .glsl, so the example is not listed (and used) as a filter
+
+
 def ensure_layout(root):
     """Create the category folders, and put the filter format notes and an example filter
     where people look for them."""
@@ -42,10 +45,18 @@ def ensure_layout(root):
         os.makedirs(category_dir(root, key), exist_ok=True)
     from . import fx
     folder = category_dir(root, "filters")
-    for name, src in (("FORMAT.md", fx.DOC_PATH), ("Example.glsl", fx.TEMPLATE_PATH)):
+    for name, src in (("FORMAT.md", fx.DOC_PATH), (EXAMPLE, fx.TEMPLATE_PATH)):
         dst = os.path.join(folder, name)
         if not os.path.exists(dst) and os.path.exists(src):
             shutil.copyfile(src, dst)
+    old = os.path.join(folder, "Example.glsl")      # older versions put the example in as a filter
+    try:
+        with open(old, "rb") as a, open(fx.TEMPLATE_PATH, "rb") as b:
+            untouched = a.read() == b.read()
+        if untouched:
+            os.remove(old)
+    except OSError:
+        pass
 
 
 def category_of(path, root):

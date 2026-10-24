@@ -1064,6 +1064,15 @@ def set_track_color(proj, track_id, color):
         t.pop("color", None)
 
 
+def set_track_clip_colors(proj, track_id, color):
+    """Give every clip of a track the colour '#rrggbb' (None: each its default colour)."""
+    for c in track_by_id(proj, track_id)["clips"]:
+        if color:
+            c["color"] = color
+        else:
+            c.pop("color", None)
+
+
 def rename_clip(proj, clip_id, name):
     _, c = find(proj, clip_id)
     c["name"] = str(name).strip()

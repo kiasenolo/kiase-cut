@@ -1621,6 +1621,15 @@ class MainWindow(QMainWindow):
                 self.apply("軌道顏色", edit.set_track_color, tid, col.name())
         elif action == "nocolor":
             self.apply("軌道顏色", edit.set_track_color, tid, None)
+        elif action == "clips:track":                   # the track's colour onto all its clips
+            self.apply("片段顏色", edit.set_track_clip_colors, tid, t.get("color"))
+        elif action == "clips:pick":
+            first = next((c.get("color") for c in t["clips"] if c.get("color")), None)
+            col = QColorDialog.getColor(QColor(first or t.get("color") or "#888888"), self, "所有片段的顏色")
+            if col.isValid():
+                self.apply("片段顏色", edit.set_track_clip_colors, tid, col.name())
+        elif action == "clips:none":
+            self.apply("片段顏色", edit.set_track_clip_colors, tid, None)
         elif action.startswith("toggle:"):
             flag = action.split(":", 1)[1]
             label = {"muted": "靜音", "solo": "獨奏", "hidden": "隱藏"}[flag]

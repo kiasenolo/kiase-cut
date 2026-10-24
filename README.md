@@ -97,9 +97,15 @@ Look: a DaVinci Resolve-like dark layout: the viewer has the timeline name and t
 above it and icon transport controls below (start, previous frame, play, next frame, end,
 fullscreen); the timeline toolbar uses icons (undo, redo, blade, delete, text, snapping,
 track height); tracks are labelled V1… (from the bottom) and A1…. Clips are coloured by
-type (pictures blue, compound violet, text mauve, sound green, or a colour you set); on a
-light colour the clip's name turns dark so it stays readable. A
-track's colour tints its row and header edge and leaves its clips alone.
+type (pictures blue, compound violet, text mauve, sound green, or a colour you set): the
+colour outlines the clip and fills it see-through (alpha 0x50), so the name stays readable
+on any colour; a selected clip is outlined white. A track's colour turns its row a deep
+shade of it, marks its header edge and colours its clips that keep the default colour (a
+clip given its own colour keeps it; 預設顏色 on a clip makes it follow its track again). The
+track's right-click menu can also give its clips colours of their own: 將軌道顏色套用到所有
+片段 (they keep it when the track's colour changes), 設定所有片段的顏色…, 所有片段改回預設
+顏色 (one undo step each).
+Dragging on the ruler always moves the playhead, also over clips scrolled up under it.
 
 Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
 the breadcrumb above the timeline shows where you are, Esc / 返回上一層 goes back.
@@ -175,9 +181,10 @@ Beat alignment (節拍 tab, for a selected sound clip): switch on BPM 對齊 and
 BPM and the start offset (the first beat's time in the sound); 細分 splits each beat into
 1, 1/2, 1/3, 1/4 or 1/6, or thins it to a line every 2 or 4 beats (BPM ÷2 / ÷4: 180 → 90,
 the BPM typed in stays as it is).
-The grid shows as ticks along the clip's top, coloured by where in the beat they fall
-(yellow beat, orange half, pink third, cyan quarter, violet sixth; lines too close at the
-zoom are left out), and everything that snaps (clips, trims, keyframes, the playhead)
+The grid shows as lines down from the clip's top, coloured by where in the beat they fall
+(yellow beat, orange half, pink third, cyan quarter, violet sixth) and shorter and thinner
+the smaller the division (a beat line reaches about half way down the clip; lines too close
+at the zoom are left out), and everything that snaps (clips, trims, keyframes, the playhead)
 lands on them. Switching it off keeps the numbers; 重置 deletes them (after asking) and
 switches it off.
 

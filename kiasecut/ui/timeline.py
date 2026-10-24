@@ -56,21 +56,28 @@ COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by
 ROW_BG = QColor("#1f1f21")
 
 
-def is_bright(col):
-    """Whether a clip colour is light enough that white writing on it is hard to read
-    (relative luminance, as WCAG weighs the channels)."""
-    lin = lambda v: v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
-    return 0.2126 * lin(col.redF()) + 0.7152 * lin(col.greenF()) + 0.0722 * lin(col.blueF()) > 0.25
+# a clip is filled with its colour at this alpha and outlined in the colour itself, so even a
+# light colour leaves its name readable
+FILL_ALPHA = 0x50
+
+
+ROW_SHADE = 0.3                                      # a coloured row's brightness, of its colour's
 
 
 def row_color(track):
-    """A track's row background: its colour, mixed far down into the dark row grey."""
+    """A track's row background: a deep shade of its colour (its hue and saturation at
+    ROW_SHADE of its brightness), the dark row grey without one."""
     if not track.get("color"):
         return ROW_BG
-    c, k = QColor(track["color"]), 0.22
-    return QColor(round(ROW_BG.red() + (c.red() - ROW_BG.red()) * k),
-                  round(ROW_BG.green() + (c.green() - ROW_BG.green()) * k),
-                  round(ROW_BG.blue() + (c.blue() - ROW_BG.blue()) * k))
+    c = QColor(track["color"])
+    return QColor.fromHsv(max(0, c.hsvHue()), c.hsvSaturation(), max(ROW_BG.value(), round(c.value() * ROW_SHADE)))
+
+
+def clip_color(c, track=None):
+    """A clip's colour: its own, else its track's (a coloured track colours the clips that
+    keep the default), else the default for its kind."""
+    kind = "static" if project.is_static(c) else c["type"]
+    return QColor(c.get("color") or (track or {}).get("color") or COLORS.get(kind, "#555"))
 RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140
 BTN = 18                                             # header button size
 MIN_H, MAX_H = 22, 240                               # track heights
@@ -79,7 +86,8 @@ PLAYHEAD_PX = 4                 # how near the playhead line the mouse grabs it
 BEAT_PX = 5                                          # beat grid lines at least this far apart show
 # beat grid lines by their place in the beat (edit.beat_grid): colour, tick length
 BEAT_COLORS = {1: "#ffd34d", 2: "#ff8a3d", 3: "#ff6bd5", 4: "#4dd2ff", 6: "#b48cff"}
-BEAT_TICKS = {1: 7, 2: 5, 3: 4, 4: 4, 6: 3}
+BEAT_TICKS = {1: (0.55, 12, 2.5), 2: (0.4, 9, 1.5), 3: (0.3, 7, 1.5), 4: (0.3, 7, 1.5),
+              6: (0.22, 5, 1.2)}                    # share of the clip's height, at least px; pen width
 
 
 def timecode(us, fps):
@@ -310,6 +318,10 @@ class Timeline(QWidget):
         return None
 
     def _row_at(self, y):
+        """The row at y; none on the ruler (rows scrolled up under it must not be grabbed
+        through it: dragging there always moves the playhead)."""
+        if y < RULER_H:
+            return None
         for i, top in enumerate(self.tops):
             if top <= y < top + self.row_h(i):
                 return i
@@ -485,7 +497,7 @@ class Timeline(QWidget):
             if self.tops[i] > self.height() or self.tops[i] + self.row_h(i) < RULER_H:
                 continue
             y, h = self.tops[i], self.row_h(i)
-            p.fillRect(0, y, w, h - 1, row_color(tr))       # the track colour tints its row only
+            p.fillRect(0, y, w, h - 1, row_color(tr))       # the track colour: its row, and clip_color
             p.fillRect(0, y, HEADER_W, h - 1, QColor("#242427"))     # header column, as in Resolve
             p.fillRect(HEADER_W - 1, y, 1, h - 1, QColor("#0e0e10"))
             if tr.get("color"):
@@ -540,7 +552,7 @@ class Timeline(QWidget):
             else:
                 y = self.tops[d["row"]]
             self._draw_clip(p, dragged, y, d["start"], d["end"] - d["start"], ghost=True,
-                            track=self.rows[d["row"]], h=h)
+                            track=None if d.get("new") else self.rows[d["row"]], h=h)
         if self.band is not None:
             p.setPen(QPen(QColor("#e6e6e6"), 1, Qt.DashLine))
             p.setBrush(QColor(255, 255, 255, 35))
@@ -667,20 +679,27 @@ class Timeline(QWidget):
             return
         r = QRectF(max(x0, HEADER_W) + 0.5, y + 3, max(1.0, x1 - max(x0, HEADER_W) - 1), h - 8)
         kind = "static" if project.is_static(c) else c["type"]
-        col = QColor(c.get("color") or COLORS.get(kind, "#555"))      # (not the track's colour)
+        col = clip_color(c, track)
         sel = c["id"] in self.selected_ids
-        # a light colour gets dark writing (decided on the plain colour, so
-        # selecting a clip never flips it; dimmed clips are dark anyway)
-        bright = is_bright(col) and not dim
-        if sel:
-            col = col.lighter(150)
         if dim:
             col = col.darker(220)
-        if ghost:
-            col.setAlpha(190)
-        p.setPen(QPen(QColor("#ffffff") if sel else col.darker(140), 1))
-        p.setBrush(col)
+        # the colour on the outline, a see-through tint of it inside (FILL_ALPHA): light
+        # colours no longer swallow the name; a selected clip is tinted a little more, outlined white
+        fill = QColor(col)
+        fill.setAlpha(FILL_ALPHA * (3 if sel else 2) // 2 * (3 if ghost else 4) // 4)
+        edge = QColor(col)
+        edge.setAlpha(190 if ghost else 255)
+        p.setBrush(fill)
+        p.setPen(Qt.NoPen)
         p.drawRoundedRect(r, 3, 3)
+        p.setBrush(Qt.NoBrush)
+        if sel:
+            p.setPen(QPen(edge, 4))
+            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 3, 3)
+            p.setPen(QPen(QColor("#ffffff"), 1.5))
+        else:
+            p.setPen(QPen(edge, 2))
+        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 3, 3)
         audio = c["type"] == "audio"
         wx0, wx1 = max(r.left() + 1, HEADER_W), min(r.right() - 1, w)
         if wx1 - wx0 >= 2:
@@ -697,7 +716,7 @@ class Timeline(QWidget):
                 p.drawPolygon(poly)
                 p.restore()
         if r.width() > 24:
-            p.setPen(QColor("#141416") if bright else QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
+            p.setPen(QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
             label = self.clip_label(c).replace("\n", " ")
             if c["type"] == "compound":
                 label = ("⧉ " if c.get("timeline_id") else "◧ " if kind == "static" else "▣ ") + label
@@ -723,15 +742,17 @@ class Timeline(QWidget):
             if lines:
                 p.save()
                 p.setClipRect(r)
-                pens = {}
+                pens, lengths = {}, {}
                 for d, col in BEAT_COLORS.items():
                     col = QColor(col)
                     col.setAlpha(110 if dim else 235)
-                    pens[d] = QPen(col, 1.5 if d == 1 else 1)
+                    share, least, width = BEAT_TICKS[d]
+                    pens[d] = QPen(col, width, Qt.SolidLine, Qt.FlatCap)
+                    lengths[d] = min(r.height() - 2, max(least, r.height() * share))
                 for t, d in lines:
                     bx = self._x((t + shift) / US)
                     p.setPen(pens.get(d, pens[1]))
-                    p.drawLine(QPointF(bx, r.top() + 1), QPointF(bx, r.top() + 1 + BEAT_TICKS.get(d, 3)))
+                    p.drawLine(QPointF(bx, r.top() + 1), QPointF(bx, r.top() + 1 + lengths.get(d, lengths[1])))
                 p.restore()
         if c["id"] == self.selected_id and not ghost:
             # keyframes of the selected clip, as diamonds along its bottom edge
@@ -842,7 +863,7 @@ class Timeline(QWidget):
         if row is None:
             return None, None
         ky = self.tops[row] + 3 + (self.row_h(row) - 8) - 5
-        if abs(pos.y() - ky) > 7:
+        if abs(pos.y() - ky) > 7 or pos.y() < RULER_H:
             return None, None
         best = None
         for k in edit.key_times(c):
@@ -1260,6 +1281,10 @@ class Timeline(QWidget):
             tr = self.rows[row]
             tid = tr["id"]
             items = [("重新命名軌道…", "rename"), ("軌道顏色…", "color"), ("預設顏色", "nocolor"), None]
+            if tr["clips"]:
+                if tr.get("color"):
+                    items += [("將軌道顏色套用到所有片段", "clips:track")]
+                items += [("設定所有片段的顏色…", "clips:pick"), ("所有片段改回預設顏色", "clips:none"), None]
             if tr["kind"] == "audio" or any(c["type"] in ("video", "compound") for c in tr["clips"]):
                 items += [("軌道音量…", "gain")]
             items += [("上移", "up"), ("下移", "down"), None,

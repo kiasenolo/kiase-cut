@@ -6,8 +6,8 @@ Resolve; the clip shows that timeline live), double-click to open it.
 Each compound is listed once with how many clips show it; under it, where it is used.
 Drag a compound onto the timeline to place another clip showing it (every clip shows the
 same content, so editing one edits all). Click a use to select it on its timeline,
-double-click a use (or the compound) to open it. Right-click to rename a compound or
-delete an unused one.
+double-click a use (or the compound) to open it. Right-click to rename or delete a compound
+(with the clips that show it), a timeline, or one use.
 """
 from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QLabel, QMenu, QTreeWidget, QTreeWidgetItem,
@@ -47,6 +47,7 @@ class CompoundPanel(QWidget):
     renameRequested = Signal(str)                # compound id
     deleteRequested = Signal(str)                # compound id
     timelineRequested = Signal(str)              # timeline id to open
+    useDeleteRequested = Signal(str, list, str)  # timeline id, parent path, clip id: delete that clip
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,20 +59,18 @@ class CompoundPanel(QWidget):
         self.empty = QLabel("這個專案沒有複合片段")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setStyleSheet("color: #777;")
-        hint = QLabel("拖到時間軸上重複使用；同一個複合片段的內容是共用的")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #8a8a90;")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.tree)
         lay.addWidget(self.empty)
-        lay.addWidget(hint)
         self.open_path = []
         self.uses = {}
+        self.tl_count = 1
 
     def set_project(self, proj, open_path=()):
         """Fill the list; the compound being edited (open_path) is shown in bold."""
         self.open_path = list(open_path)
+        self.tl_count = len(proj.get("timelines", [])) if proj else 1
         expanded = {it.data(0, Qt.UserRole)[1] for it in self._items() if it.isExpanded()}
         self.tree.clear()
         comps = proj.get("compounds", {}) if proj else {}
@@ -138,12 +137,23 @@ class CompoundPanel(QWidget):
 
     def _menu(self, pos):
         it = self.tree.itemAt(pos)
-        if it is None or it.data(0, Qt.UserRole)[0] != "def":
+        if it is None:
             return
-        kid = it.data(0, Qt.UserRole)[1]
+        d = it.data(0, Qt.UserRole)
         menu = QMenu(self)
-        menu.addAction("重新命名…", lambda: self.renameRequested.emit(kid))
-        if not kid.startswith("tl"):                    # (timelines are deleted from their tab)
-            a = menu.addAction("刪除（沒有使用時）", lambda: self.deleteRequested.emit(kid))
-            a.setEnabled(not self.uses.get(kid))
+        if d[0] == "use":
+            menu.addAction("選取", lambda: self.showRequested.emit(d[3], list(d[2]), d[1]))
+            menu.addAction("進入編輯", lambda: self.openRequested.emit(d[3], list(d[2]) + [d[1]]))
+            menu.addSeparator()
+            menu.addAction("刪除這個片段", lambda: self.useDeleteRequested.emit(d[3], list(d[2]), d[1]))
+        else:
+            kid = d[1]
+            menu.addAction("重新命名…", lambda: self.renameRequested.emit(kid))
+            if kid.startswith("tl"):
+                a = menu.addAction("刪除時間線", lambda: self.deleteRequested.emit(kid))
+                a.setEnabled(self.tl_count > 1)
+            else:
+                n = len(self.uses.get(kid, []))
+                menu.addAction("刪除" + (f"（連同 {n} 個使用的片段）" if n else ""),
+                               lambda: self.deleteRequested.emit(kid))
         menu.exec(self.tree.viewport().mapToGlobal(pos))

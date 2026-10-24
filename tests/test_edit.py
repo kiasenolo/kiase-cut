@@ -188,5 +188,51 @@ class EditTests(unittest.TestCase):
             edit.set_mask(p, "c3", "line")                      # audio
 
 
+class CopyPasteTests(unittest.TestCase):
+    def test_paste_keeps_spacing_and_picks_free_tracks(self):
+        p = proj()
+        payload = edit.copy_clips(p, ["c2", "c1"])           # c1 at 0, c2 at 5 s
+        new = edit.paste_clips(p, p, payload, 10 * S)
+        self.assertEqual([c["start_us"] for c in new], [10 * S, 15 * S])
+        self.assertEqual(len({c["id"] for c in new} | {"c1", "c2"}), 4)
+        self.assertTrue(all(c in edit.find(p, c["id"]) for c in new))
+        self.assertEqual({edit.find(p, c["id"])[0]["id"] for c in new}, {"t0"})   # their own track
+        again = edit.paste_clips(p, p, payload, 10 * S)         # now taken: another track, spaced the same
+        self.assertEqual([c["start_us"] for c in again], [10 * S, 15 * S])
+        self.assertNotEqual(edit.find(p, again[0]["id"])[0]["id"], "t0")
+
+    def test_paste_into_a_new_track_when_none_is_free(self):
+        p = proj()
+        n = len(p["tracks"])
+        payload = edit.copy_clips(p, ["c1"])
+        edit.paste_clips(p, p, payload, 0)                      # c1 is there; t1 is free
+        edit.paste_clips(p, p, payload, 0)                      # t0 and t1 are taken now
+        self.assertEqual(len(p["tracks"]), n + 1)
+
+    def test_duplicate_goes_after_the_last_clip(self):
+        p = proj()
+        new = edit.duplicate_clips(p, p, ["c1"])
+        self.assertEqual(new[0]["start_us"], 2 * S)
+        self.assertEqual(edit.find(p, new[0]["id"])[0]["id"], "t0")
+
+    def test_audio_stays_on_audio(self):
+        p = proj()
+        new = edit.paste_clips(p, p, edit.copy_clips(p, ["c3"]), 0)
+        self.assertEqual(edit.find(p, new[0]["id"])[0]["kind"], "audio")
+
+    def test_delete_compound_with_its_uses(self):
+        p = proj()
+        tl2 = edit.add_timeline(p)                              # an empty second timeline, now open
+        first = p["timelines"][0]["id"]
+        clip_ = edit.place_compound(p, p, first, None, 0)
+        edit.make_unique(p, p, clip_["id"])
+        kid = next(iter(p["compounds"]))
+        with self.assertRaises(edit.EditError):
+            edit.delete_compound(p, kid)                        # used: needs force
+        edit.delete_compound(p, kid, force=True)
+        self.assertEqual(p["compounds"], {})
+        self.assertFalse(any(c["type"] == "compound" for t in tl2["tracks"] for c in t["clips"]))
+
+
 if __name__ == "__main__":
     unittest.main()

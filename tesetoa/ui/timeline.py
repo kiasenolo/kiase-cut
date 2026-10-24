@@ -77,7 +77,9 @@ class Timeline(QWidget):
     clipAction = Signal(str, str)                    # action, clip id
     mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
     compoundDropped = Signal(str, str, int)          # compound id, track id or "", start us
+    filesDropped = Signal(list, str, int)            # file manager paths, track id or "", start us
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
+    clipDragging = Signal(str, int, int)             # clip id, start us, duration us: while dragging
     peaksReady = Signal(str)                         # emitted from the waveform thread
     vzoomChanged = Signal(float)
 
@@ -880,6 +882,9 @@ class Timeline(QWidget):
             d["start"] = min(self._snap(s0 + dt, c), e0 - US / self.fps)
         else:
             d["end"] = max(self._snap(e0 + dt, c), s0 + US / self.fps)
+        s1 = d.get("start", s0) if d["mode"] != "end" else s0
+        e1 = d.get("end", e0) if d["mode"] != "start" else e0
+        self.clipDragging.emit(c["id"], int(round(s1)), int(round(e1 - s1)))
         self.update()
 
     def mouseReleaseEvent(self, e):
@@ -934,15 +939,19 @@ class Timeline(QWidget):
         self.update()
 
     # -- drops from the media library -----------------------------------------------------------
+    def _accepts(self, md):
+        return (bool(self.proj) and md.hasFormat(MEDIA_MIME)) or md.hasUrls()
+
     def dragEnterEvent(self, e):
-        if self.proj and e.mimeData().hasFormat(MEDIA_MIME):
+        if self._accepts(e.mimeData()):
             e.acceptProposedAction()
 
     def dragMoveEvent(self, e):
-        if not (self.proj and e.mimeData().hasFormat(MEDIA_MIME)):
+        if not self._accepts(e.mimeData()):
             return
         pos = e.position()
-        self.drop_at = (self._row_at(pos.y()), max(0.0, self._sec(pos.x())) * US)
+        if self.proj:
+            self.drop_at = (self._row_at(pos.y()), max(0.0, self._sec(pos.x())) * US)
         e.acceptProposedAction()
         self.update()
 
@@ -953,9 +962,16 @@ class Timeline(QWidget):
     def dropEvent(self, e):
         self.drop_at = None
         pos = e.position()
-        row = self._row_at(pos.y())
+        row = self._row_at(pos.y()) if self.proj else None
         tid = self.rows[row]["id"] if row is not None else ""
-        start = int(max(0.0, self._sec(pos.x())) * US)
+        start = int(max(0.0, self._sec(pos.x())) * US) if self.proj else 0
+        if not e.mimeData().hasFormat(MEDIA_MIME):           # files from the file manager
+            paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+            if paths:
+                self.filesDropped.emit(paths, tid, start)
+                e.acceptProposedAction()
+            self.update()
+            return
         for ident in bytes(e.mimeData().data(MEDIA_MIME)).decode().split(","):
             if ident.startswith("cmp:"):                 # from the compound browser
                 self.compoundDropped.emit(ident[4:], tid, start)
@@ -1001,7 +1017,8 @@ class Timeline(QWidget):
         elif c is not None:
             if c["id"] not in self.selected_ids:
                 self.select(c)
-            items = [("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
+            items = [("複製", "copy"), ("剪下", "cut"), ("貼上到播放頭", "paste"), ("建立副本", "duplicate"), None,
+                     ("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
                      ("在播放頭分割", "split"), ("刪除", "delete")]
             if c["type"] == "compound":
                 items = [("編輯複合片段", "enter"), ("設為獨立（不再共用）", "unique"), None] + items
@@ -1012,8 +1029,8 @@ class Timeline(QWidget):
                     menu.addSeparator()
                 else:
                     menu.addAction(it[0], lambda a=it[1]: self.clipAction.emit(a, c["id"]))
-        else:
-            return
+        else:                                          # a free spot on a track
+            menu.addAction("貼上到播放頭", lambda: self.clipAction.emit("paste", ""))
         menu.exec(global_pos)
 
     def mouseDoubleClickEvent(self, e):

@@ -8,7 +8,9 @@ settles on 0 / 90 / 180 / 270).
 Mask mode (`mask_mode`, while the 遮罩 tab is open) edits only masks: the clip itself
 cannot be moved, scaled or turned there, and a click on another clip just selects it. The
 mask outline is drawn where it cuts the clip (dimmed while the mask is switched off). Drag inside it to move it, the squares on its edges / corner to size it, the
-round handle to rotate it and the arrow below it for the feather.
+round handle to rotate it and the arrow below it for the feather. The mask snaps to the
+clip's centre and edges (and to a square, to full size, to feather 0 / 1) while it is dragged; Alt
+drags freely. Snapped lines show in amber.
 
 Ctrl+wheel zooms the view around the mouse (to reach handles of clips larger than the
 canvas), the middle button drags it; zooming back to about 100% fits it again.
@@ -21,7 +23,7 @@ A fullscreen window shows the same frames.
 import json
 import math
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import QWidget
 
@@ -193,6 +195,7 @@ class Preview(QWidget):
     paramsLive = Signal(str, str, dict)         # clip id, group, {key: value} while dragging
     paramsCommitted = Signal(str, str, dict)    # the same on release
     doubleClicked = Signal()
+    renderWidth = Signal(int)                   # width of the canvas on screen, device px
 
     def __init__(self, parent=None, interactive=True):
         super().__init__(parent)
@@ -205,6 +208,7 @@ class Preview(QWidget):
         self.mask_mode = False
         self.drag = None
         self.guides = []
+        self.mask_guides = []                   # (a, b) canvas points: lines a mask drag has snapped to
         self.live = None                        # (group, values) shown while dragging
         self.zoom = 1.0                         # view zoom (1 = canvas fits the widget)
         self.pan = QPointF(0, 0)                # view offset, screen px
@@ -218,8 +222,9 @@ class Preview(QWidget):
 
     def set_scene(self, view, t_us, selected_id):
         self.view = view
-        if view:
+        if view and (self.W, self.H) != (view["width"], view["height"]):
             self.W, self.H = view["width"], view["height"]
+            self._report_size()
         self.t_us = t_us
         self.selected_id = selected_id
         if self.drag is None:
@@ -228,6 +233,13 @@ class Preview(QWidget):
     def set_mask_mode(self, on):
         self.mask_mode = on
         self.update()
+
+    def _report_size(self):
+        self.renderWidth.emit(round(self._rect().width() * self.devicePixelRatioF()))
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._report_size()
 
     def _rect(self):
         w, h = self.width(), self.height()
@@ -249,6 +261,7 @@ class Preview(QWidget):
             self.zoom = z
             r = self._rect()                             # keep the canvas point under the mouse
             self.pan += e.position() - QPointF(r.x() + cx / self.W * r.width(), r.y() + cy / self.H * r.height())
+        self._report_size()
         self.update()
         e.accept()
 
@@ -321,6 +334,10 @@ class Preview(QWidget):
                 p.drawPolygon(QPolygonF(box.corners()))
             else:
                 self._paint_transform(p, box, k)
+        if self.mask_guides:
+            p.setPen(QPen(QColor("#ffb020"), 1.5 * k, Qt.DashLine))
+            for a, b in self.mask_guides:
+                p.drawLine(a, b)
         if self.guides:
             p.setPen(QPen(QColor("#e6e6e6"), 1.5 * k, Qt.DashLine))
             for axis, v in self.guides:
@@ -474,6 +491,73 @@ class Preview(QWidget):
             guides.append(("y", sy[1]))
         return dx, dy, guides
 
+    @staticmethod
+    def _best(cands, targets, tol):
+        """(shift, target) of the closest candidate / target pair within tol, else None."""
+        hit = None
+        for v in cands:
+            for g in targets:
+                if abs(v - g) < tol and (hit is None or abs(g - v) < abs(hit[0])):
+                    hit = (g - v, g)
+        return hit
+
+    def _mask_line(self, box, g, axis, v):
+        """A guide through clip-frame value v (half-material units) along `axis`, across the clip."""
+        reach = 2 * math.hypot(g.dw, g.dh)
+        if axis == "x":
+            a, b = QPointF(v * g.dw / 2, -reach), QPointF(v * g.dw / 2, reach)
+        else:
+            a, b = QPointF(-reach, -v * g.dh / 2), QPointF(reach, -v * g.dh / 2)
+        xf = box.xf()
+        return xf.map(a), xf.map(b)
+
+    def _snap_mask(self, kind, vals, g, box, free):
+        """Snap the mask values being dragged (move: cx / cy, size: w / h, feather) to the clip's
+        centre and edges. Returns the values; self.mask_guides gets the lines shown."""
+        self.mask_guides = []
+        if free:
+            return vals
+        k = self._k()
+        tx = SNAP_PX * k / max(g.dw / 2 * abs(box.s), 1e-6)       # canvas px -> half-material units
+        ty = SNAP_PX * k / max(g.dh / 2 * abs(box.sy), 1e-6)
+        upright = abs(g.rot) % 180 < 0.01                         # edges line up with the clip's
+        guides = []
+        if kind == "move":
+            cx, cy = vals["cx"], vals["cy"]
+            ex = [0.0] if g.hw == 0 else ([-g.mw, 0.0, g.mw] if upright else [0.0])
+            ey = [0.0] if g.hh == 0 else ([-g.mh, 0.0, g.mh] if upright else [0.0])
+            hx = self._best([cx + d for d in ex], [-1.0, 0.0, 1.0], tx)
+            hy = self._best([cy + d for d in ey], [-1.0, 0.0, 1.0], ty)
+            if hx:
+                vals["cx"] = round(cx + hx[0], 5)
+                guides.append(("x", hx[1]))
+            if hy:
+                vals["cy"] = round(cy + hy[0], 5)
+                guides.append(("y", hy[1]))
+        elif kind in ("w", "h", "wh") and upright:
+            cx, cy = g.cx, g.cy
+            if "w" in vals:                   # an edge reaches the clip's edge, or the full width
+                hit = self._best([vals["w"]], [1.0 - cx, 1.0 + cx, 1.0], tx)
+                if hit:
+                    vals["w"] = round(vals["w"] + hit[0], 4)
+                    guides += [("x", cx - vals["w"]), ("x", cx + vals["w"])]
+            if "h" in vals:
+                hit = self._best([vals["h"]], [1.0 - cy, 1.0 + cy, 1.0], ty)
+                if hit:
+                    vals["h"] = round(vals["h"] + hit[0], 4)
+                    guides += [("y", cy - vals["h"]), ("y", cy + vals["h"])]
+            if kind == "wh" and "w" in vals and "h" in vals and not guides:
+                # a square (or a circle): as wide as high on screen
+                pw, ph = vals["w"] * g.dw, vals["h"] * g.dh
+                if abs(pw - ph) < SNAP_PX * k:
+                    vals["h"] = round(pw / g.dh, 4)
+        elif kind == "feather":
+            hit = self._best([vals["feather"]], [0.0, 1.0], 0.025)
+            if hit:
+                vals["feather"] = hit[1]
+        self.mask_guides = [self._mask_line(box, g, ax, v) for ax, v in guides]
+        return vals
+
     def _values(self, e, m):
         """(group, {key: value}) for the drag at canvas point m."""
         d = self.drag
@@ -502,8 +586,9 @@ class Preview(QWidget):
         inv, _ = box.xf().inverted()
         p0, p1 = inv.map(d["m0"]), inv.map(m)
         if kind == "move":
-            return "mask", {"cx": round(g.cx + (p1.x() - p0.x()) / (g.dw / 2), 5),
-                            "cy": round(g.cy - (p1.y() - p0.y()) / (g.dh / 2), 5)}
+            return "mask", self._snap_mask("move", {"cx": round(g.cx + (p1.x() - p0.x()) / (g.dw / 2), 5),
+                                                    "cy": round(g.cy - (p1.y() - p0.y()) / (g.dh / 2), 5)},
+                                           g, box, bool(e.modifiers() & Qt.AltModifier))
         if kind == "rot":
             o = g.local.map(QPointF(0, 0))
             a0 = math.degrees(math.atan2(p0.y() - o.y(), p0.x() - o.x()))
@@ -513,7 +598,8 @@ class Preview(QWidget):
             u, hh = g.down()
             ctr = g.centre()
             dist = (m.x() - ctr.x()) * u.x() + (m.y() - ctr.y()) * u.y()
-            return "mask", {"feather": round(min(1.0, max(0.0, ((dist - hh) / self._k() - 14) / 80)), 3)}
+            return "mask", self._snap_mask("feather", {"feather": round(
+                min(1.0, max(0.0, ((dist - hh) / self._k() - 14) / 80)), 3)}, g, box, bool(e.modifiers() & Qt.AltModifier))
         linv, _ = g.local.inverted()
         q = linv.map(p1)                                       # in the mask's own frame
         out = {}
@@ -521,7 +607,7 @@ class Preview(QWidget):
             out["w"] = round(max(0.01, 2 * abs(q.x()) / g.dw), 4)
         if "h" in kind:
             out["h"] = round(max(0.01, 2 * abs(q.y()) / g.dh), 4)
-        return "mask", out
+        return "mask", self._snap_mask(kind, out, g, box, bool(e.modifiers() & Qt.AltModifier))
 
     def mouseMoveEvent(self, e):
         d = self.drag
@@ -572,6 +658,7 @@ class Preview(QWidget):
             self.setCursor(Qt.ArrowCursor)
             return
         self.guides = []
+        self.mask_guides = []
         live, self.live = self.live, None
         if d and d["moved"] and live:
             self.paramsCommitted.emit(d["box"].clip["id"], *live)
@@ -581,20 +668,119 @@ class Preview(QWidget):
         self.doubleClicked.emit()
 
 
+class SeekBar(QWidget):
+    """Progress bar of the fullscreen preview: position / length, click or drag to seek."""
+    seekRequested = Signal(int)                 # frame
+    HEIGHT = 46
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pos, self.length, self.fps = 0, 1, 60.0
+        self.dragging = False
+        self.setFixedHeight(self.HEIGHT)
+        self.setMouseTracking(True)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def set_position(self, pos, length, fps):
+        if (pos, length, fps) != (self.pos, self.length, self.fps):
+            self.pos, self.length, self.fps = pos, max(1, length), fps
+            self.update()
+
+    @staticmethod
+    def _clock(frame, fps):
+        s = frame / fps
+        return f"{int(s // 60):02d}:{int(s % 60):02d}.{int(round((s % 1) * 100)) % 100:02d}"
+
+    def _track(self):
+        return QRectF(88, self.height() / 2 - 2, max(1, self.width() - 176), 4)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(0, 0, 0, 150))
+        tr = self._track()
+        frac = min(1.0, max(0.0, self.pos / max(1, self.length - 1)))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#4a4a52"))
+        p.drawRoundedRect(tr, 2, 2)
+        p.setBrush(QColor("#e6e6e6"))
+        p.drawRoundedRect(QRectF(tr.x(), tr.y(), tr.width() * frac, tr.height()), 2, 2)
+        p.drawEllipse(QPointF(tr.x() + tr.width() * frac, tr.center().y()), 6, 6)
+        p.setPen(QColor("#d0d0d2"))
+        f = p.font()
+        f.setPixelSize(13)
+        p.setFont(f)
+        p.drawText(QRectF(8, 0, 76, self.height()), Qt.AlignRight | Qt.AlignVCenter, self._clock(self.pos, self.fps))
+        p.drawText(QRectF(self.width() - 84, 0, 76, self.height()), Qt.AlignLeft | Qt.AlignVCenter,
+                   self._clock(self.length, self.fps))
+
+    def _seek(self, x):
+        tr = self._track()
+        frac = min(1.0, max(0.0, (x - tr.x()) / tr.width()))
+        self.seekRequested.emit(round(frac * (self.length - 1)))
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.dragging = True
+            self._seek(e.position().x())
+
+    def mouseMoveEvent(self, e):
+        if self.dragging:
+            self._seek(e.position().x())
+
+    def mouseReleaseEvent(self, e):
+        self.dragging = False
+
+
 class FullscreenPreview(QWidget):
-    """Frameless fullscreen copy of the preview. Esc / double-click closes, Space plays."""
+    """Frameless fullscreen copy of the preview with a progress bar along the bottom (it shows
+    when the mouse moves and hides after a moment). Esc / double-click closes, Space plays."""
     closed = Signal()
     togglePlay = Signal()
     step = Signal(int)
+    seekRequested = Signal(int)                 # frame, from the progress bar
 
     def __init__(self):
         super().__init__(None, Qt.Window | Qt.FramelessWindowHint)
         self.setStyleSheet("background: black;")
         self.canvas = Preview(self, interactive=False)
         self.canvas.doubleClicked.connect(self.close)
+        self.canvas.setMouseTracking(True)
+        self.canvas.installEventFilter(self)
+        self.bar = SeekBar(self)
+        self.bar.seekRequested.connect(self.seekRequested)
+        self.hide_timer = QTimer(self, singleShot=True, interval=2500)
+        self.hide_timer.timeout.connect(self._hide_bar)
+        self.setMouseTracking(True)
+
+    def set_position(self, pos, length, fps):
+        self.bar.set_position(pos, length, fps)
+
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.MouseMove:
+            self._show_bar()
+        return False
+
+    def _show_bar(self):
+        self.bar.show()
+        self.bar.raise_()
+        self.unsetCursor()
+        self.hide_timer.start()
+
+    def _hide_bar(self):
+        if self.bar.dragging or self.bar.underMouse():
+            self.hide_timer.start()
+            return
+        self.bar.hide()
+        self.setCursor(Qt.BlankCursor)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._show_bar()
 
     def resizeEvent(self, e):
         self.canvas.setGeometry(self.rect())
+        self.bar.setGeometry(0, self.height() - SeekBar.HEIGHT, self.width(), SeekBar.HEIGHT)
 
     def keyPressEvent(self, e):
         k = e.key()
@@ -604,7 +790,9 @@ class FullscreenPreview(QWidget):
             self.togglePlay.emit()
         elif k in (Qt.Key_Left, Qt.Key_Right):
             self.step.emit(-1 if k == Qt.Key_Left else 1)
+        self._show_bar()
 
     def closeEvent(self, e):
+        self.hide_timer.stop()
         self.closed.emit()
         super().closeEvent(e)

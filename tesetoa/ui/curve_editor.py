@@ -782,12 +782,10 @@ class CurveEditor(QWidget):
                 self.bezier.setText(f"{x1:.3g}, {y1:.3g}, {x2:.3g}, {y2:.3g}")
             else:
                 self.bezier.setText("--" if segs else "")
-            self.hint.setText(f"選取了 {len(sel)} 個關鍵幀：拖曳一起移動（Shift 鎖定方向）；"
-                              "輸入的時間、數值、曲線會套用到每一個")
+            self.hint.setText("")
         else:
             self.bezier.clear()
-            self.hint.setText("點選關鍵幀編輯，Ctrl 點選或拖框多選，Ctrl+D 取消選取；雙擊新增，Delete 刪除；"
-                              "滾輪上下移動，Shift+滾輪左右移動，Ctrl+滾輪縮放時間，Alt+滾輪縮放數值，中鍵拖曳平移")
+            self.hint.setText("")
 
     def select_param(self, group, key):
         """Show this parameter's curve too (e.g. after its ◆ was clicked in the inspector)."""

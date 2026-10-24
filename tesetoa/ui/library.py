@@ -16,8 +16,14 @@ def fmt_dur(us):
     return f"{int(s // 60)}:{s % 60:04.1f}"
 
 
+def dropped_paths(md):
+    """Local file / folder paths in a drag from the file manager."""
+    return [u.toLocalFile() for u in md.urls() if u.isLocalFile()] if md.hasUrls() else []
+
+
 class Tree(QTreeWidget):
     moved = Signal(str, object)        # id, target folder id or None
+    filesDropped = Signal(list, object)   # paths from the file manager, target folder id or None
 
     def __init__(self):
         super().__init__()
@@ -39,18 +45,29 @@ class Tree(QTreeWidget):
         return md
 
     def dragEnterEvent(self, e):
-        e.acceptProposedAction() if e.mimeData().hasFormat(MIME) else e.ignore()
+        e.acceptProposedAction() if e.mimeData().hasFormat(MIME) or e.mimeData().hasUrls() else e.ignore()
 
     def dragMoveEvent(self, e):
-        e.acceptProposedAction() if e.mimeData().hasFormat(MIME) else e.ignore()
+        e.acceptProposedAction() if e.mimeData().hasFormat(MIME) or e.mimeData().hasUrls() else e.ignore()
+
+    def _folder_at(self, pos):
+        target = self.itemAt(pos)
+        if target is None:
+            return None
+        tid = target.data(0, ROLE_ID)
+        return tid if tid.startswith("f") else (target.parent().data(0, ROLE_ID) if target.parent() else None)
 
     def dropEvent(self, e):
         """The model decides; the tree is rebuilt from it afterwards."""
-        target = self.itemAt(e.position().toPoint())
-        folder = None
-        if target is not None:
-            tid = target.data(0, ROLE_ID)
-            folder = tid if tid.startswith("f") else (target.parent().data(0, ROLE_ID) if target.parent() else None)
+        folder = self._folder_at(e.position().toPoint())
+        if not e.mimeData().hasFormat(MIME):                 # files from the file manager
+            paths = dropped_paths(e.mimeData())
+            if paths:
+                self.filesDropped.emit(paths, folder)
+                e.acceptProposedAction()
+            else:
+                e.ignore()
+            return
         for ident in bytes(e.mimeData().data(MIME)).decode().split(","):
             if ident and ident != folder:
                 self.moved.emit(ident, folder)
@@ -64,6 +81,7 @@ class LibraryPanel(QWidget):
     deleteRequested = Signal(str)
     moveRequested = Signal(str, object)
     addRequested = Signal(str)                # item id -> add at the playhead
+    filesDropped = Signal(list, object)       # paths, folder id or None (dragged in from outside)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -79,6 +97,7 @@ class LibraryPanel(QWidget):
         lay.addLayout(bar)
         self.tree = Tree()
         self.tree.moved.connect(self.moveRequested)
+        self.tree.filesDropped.connect(self.filesDropped)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemDoubleClicked.connect(lambda it, _c: self._double(it))

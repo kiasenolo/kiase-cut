@@ -52,5 +52,26 @@ class LibraryTests(unittest.TestCase):
         self.assertNotEqual([t["kind"] for t in p["tracks"]][-1], "video")   # audio stays last
 
 
+class DroppedFiles(unittest.TestCase):
+    def test_media_files_walks_folders_and_skips_other_files(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("a.png", "b.MP4", "notes.txt", os.path.join("sub", "c.mp3")):
+                path = os.path.join(d, name)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, "w").close()
+            got = sorted(os.path.relpath(f, d) for f in library.media_files(
+                [os.path.join(d, "a.png"), os.path.join(d, "notes.txt"), d]))
+            self.assertEqual(got, ["a.png", "a.png", os.path.join("b.MP4"), os.path.join("sub", "c.mp3")])
+
+    def test_add_files_reuse_does_not_duplicate(self):
+        p = proj()
+        probes = {"/x/new.png": {"kind": "image", "width": 1, "height": 1}}
+        first = library.add_files(p, ["/x/new.png"], None, probes, reuse=True)
+        again = library.add_files(p, ["/x/new.png"], None, probes, reuse=True)
+        self.assertEqual(first[0]["id"], again[0]["id"])
+        self.assertEqual(sum(1 for i in library.lib(p)["items"] if i["path"] == "/x/new.png"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

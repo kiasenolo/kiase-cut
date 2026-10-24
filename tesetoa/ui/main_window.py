@@ -12,7 +12,7 @@ import os
 from PySide6.QtCore import QMimeData, QObject, QSize, QStandardPaths, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QDrag, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
-                               QInputDialog, QLabel, QMainWindow, QMessageBox, QProgressDialog,
+                               QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
 
@@ -55,6 +55,7 @@ QSplitter::handle:vertical { height: 3px; }
 QDoubleSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #141416; border: 1px solid #2c2c31; border-radius: 3px; padding: 2px 4px; selection-background-color: #4a4a52; }
 QDoubleSpinBox:focus, QPlainTextEdit:focus, QLineEdit:focus, QComboBox:focus { border-color: #6a6a72; }
 QDoubleSpinBox:disabled { color: #5c5c62; }
+QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; subcontrol-origin: border; }
 QComboBox QAbstractItemView { background: #26262a; selection-background-color: #3d3d43; }
 QTreeWidget, QListWidget { background: #1c1c1e; border: none; alternate-background-color: #202023; }
 QTreeWidget::item, QListWidget::item { padding: 2px; }
@@ -138,6 +139,7 @@ class Slider(QSlider):
 
 
 class MainWindow(QMainWindow):
+    taskCall = Signal(object, object)          # (function, argument): run on the UI thread
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",
@@ -153,6 +155,8 @@ class MainWindow(QMainWindow):
         self.dirty = False
         self.path_ids = []              # open compound clips, outermost first
         self.tl_pos = {}                # playhead of each timeline while another is open
+        self.clipboard = None           # clips copied with 複製 / 剪下 (edit.copy_clips)
+        self.open_tls = None            # timelines with a tab (None: all, until the first tab update)
         self.xml = None                 # truthy once the preview has a project
         self.length = 0
         self.fps = 60.0
@@ -163,6 +167,8 @@ class MainWindow(QMainWindow):
         self.building = False            # kept for tools: previews no longer build anything
         self.pending_seek = None
         self.fullscreen = None
+        self.taskCall.connect(self._task_call)
+        self.setAcceptDrops(True)       # files dragged in from the file manager go to the library
 
         # library | preview | inspector
         self.library = LibraryPanel()
@@ -173,13 +179,15 @@ class MainWindow(QMainWindow):
         lb.deleteRequested.connect(self.delete_library)
         lb.moveRequested.connect(lambda ident, f: self.apply_root("移動素材", library.move, ident, f))
         lb.addRequested.connect(lambda iid: self.place_media(iid, "", self.playhead_us()))
+        lb.filesDropped.connect(lambda paths, folder: self.drop_files(paths, folder))
 
         self.compounds = CompoundPanel()
         self.compounds.showRequested.connect(self.show_compound)
         self.compounds.openRequested.connect(self.open_compound_path)
         self.compounds.renameRequested.connect(self.rename_compound)
         self.compounds.timelineRequested.connect(self.switch_timeline)
-        self.compounds.deleteRequested.connect(lambda kid: self.apply_root("刪除複合片段", edit.delete_compound, kid))
+        self.compounds.deleteRequested.connect(self.delete_compound_item)
+        self.compounds.useDeleteRequested.connect(self.delete_use)
         self.left = QTabWidget()
         self.left.addTab(self.library, "素材庫")
         self.left.addTab(self.compounds, "複合片段")
@@ -189,6 +197,8 @@ class MainWindow(QMainWindow):
         self.preview.paramsCommitted.connect(self.on_preview_params)
         self.preview.paramsLive.connect(self.live_params)
         self.preview.doubleClicked.connect(self.toggle_fullscreen)
+        self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
+        self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
 
         self.inspector = Inspector()
         ins = self.inspector
@@ -210,6 +220,8 @@ class MainWindow(QMainWindow):
         mask_scroll.setWidget(mp)
         mask_scroll.setWidgetResizable(True)
         ins.keyJump.connect(self.jump_key)
+        ins.liveEdited.connect(self.on_live_edit)
+        mp.liveEdited.connect(self.on_live_edit)
         scroll = QScrollArea()
         scroll.setWidget(self.inspector)
         scroll.setWidgetResizable(True)
@@ -293,12 +305,15 @@ class MainWindow(QMainWindow):
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
         tl.groupMoveRequested.connect(lambda ids, dt: self.apply("移動", edit.move_many, ids, dt))
         tl.marksChanged.connect(self.marks_changed)
+        tl.clipDragging.connect(lambda cid, start, dur: self.inspector.show_live_time(cid, start, dur, self.fps))
         tl.volumeEdited.connect(self.on_volume_line)
         tl.keyMoveRequested.connect(lambda cid, a, b: self.apply("移動關鍵幀", edit.move_keys_at, cid, a, b))
         tl.trackAction.connect(self.on_track_action)
         tl.clipAction.connect(self.on_clip_action)
         tl.mediaDropped.connect(self.place_media)
         tl.compoundDropped.connect(self.place_compound)
+        tl.filesDropped.connect(lambda paths, tid, start: self.drop_files(
+            paths, self.library.current_folder(), (tid, start)))
         tl.newTrackRequested.connect(
             lambda cid, start, top: self.apply("移到新軌道", edit.move_to_new_track, cid, start, top))
         # timelines (as in DaVinci Resolve: several per project, one open), as tabs
@@ -309,6 +324,7 @@ class MainWindow(QMainWindow):
         self.tl_tabs.setObjectName("timelines")
         self.tl_tabs.setExpanding(False)
         self.tl_tabs.setDrawBase(False)
+        self.tl_tabs.setTabsClosable(False)         # our own X buttons (see _update_timeline_tabs)
         self.tl_tabs.currentChanged.connect(self._tab_switched)
         self.tl_tabs.tabBarDoubleClicked.connect(lambda i: self.timeline_action("rename", i))
         self.tl_tabs.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -417,6 +433,11 @@ class MainWindow(QMainWindow):
         add(m, "復原", "Ctrl+Z", self.do_undo)
         add(m, "重做", "Ctrl+Y", self.do_redo)
         m.addSeparator()
+        add(m, "複製", "Ctrl+C", self.do_copy)
+        add(m, "剪下", "Ctrl+X", lambda: self.do_copy(cut=True))
+        add(m, "貼上", "Ctrl+V", self.do_paste)
+        add(m, "建立副本", "Ctrl+Shift+C", self.do_duplicate)
+        m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "刪除", "Delete", self.do_delete)
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
@@ -454,16 +475,43 @@ class MainWindow(QMainWindow):
         self.buttons["delete"].setEnabled(has and self.timeline.selected is not None)
 
     def _update_timeline_tabs(self):
+        """One tab per open timeline, each with an X (closing hides the tab, the timeline stays
+        in the project and in the compound list). The open one always has a tab."""
         self._tabs_updating = True
         while self.tl_tabs.count():
             self.tl_tabs.removeTab(0)
         if self.proj:
-            for tl in self.proj["timelines"]:
+            ids = [tl["id"] for tl in self.proj["timelines"]]
+            if self.open_tls is None:
+                self.open_tls = list(ids)
+            self.open_tls = [t for t in self.open_tls if t in ids]
+            if self.proj["active_timeline"] not in self.open_tls:
+                self.open_tls.append(self.proj["active_timeline"])
+            many = len(self.open_tls) > 1
+            for tid in self.open_tls:
+                tl = project.timeline(self.proj, tid)
                 i = self.tl_tabs.addTab(tl["name"])
-                self.tl_tabs.setTabData(i, tl["id"])
-                if tl["id"] == self.proj["active_timeline"]:
+                self.tl_tabs.setTabData(i, tid)
+                close = self.tool("close", "關閉這個時間線（內容保留，可從「複合片段」重新打開）",
+                                  lambda _=False, t=tid: self.close_timeline(t))
+                close.setIconSize(QSize(12, 12))
+                close.setFixedSize(18, 18)
+                self.tl_tabs.setTabButton(i, QTabBar.RightSide, close)
+                close.setVisible(many)                    # (setTabButton shows it)
+                if tid == self.proj["active_timeline"]:
                     self.tl_tabs.setCurrentIndex(i)
         self._tabs_updating = False
+
+    def close_timeline(self, tid):
+        """Close a timeline's tab; the one before / after it opens if it was the open one."""
+        if not self.proj or self.open_tls is None or len(self.open_tls) < 2 or tid not in self.open_tls:
+            return
+        i = self.open_tls.index(tid)
+        self.open_tls.remove(tid)
+        if tid == self.proj["active_timeline"]:
+            self.switch_timeline(self.open_tls[max(0, i - 1)])
+        else:
+            self._update_timeline_tabs()
 
     def _tab_switched(self, i):
         if not self._tabs_updating and i >= 0:
@@ -487,15 +535,20 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.addAction("重新命名…", lambda: self.timeline_action("rename", i))
         menu.addAction("建立副本", lambda: self.timeline_action("duplicate", i))
+        a = menu.addAction("關閉時間線", lambda: self.close_timeline(self.tl_tabs.tabData(i)))
+        a.setEnabled(self.tl_tabs.count() > 1)
         menu.addSeparator()
         a = menu.addAction("刪除時間線", lambda: self.timeline_action("delete", i))
         a.setEnabled(self.tl_tabs.count() > 1)
         menu.exec(self.tl_tabs.mapToGlobal(pos))
 
     def timeline_action(self, action, i):
-        if i < 0 or not self.proj:
+        if i >= 0:
+            self.timeline_do(action, self.tl_tabs.tabData(i))
+
+    def timeline_do(self, action, tid):
+        if not self.proj:
             return
-        tid = self.tl_tabs.tabData(i)
         tl = project.timeline(self.proj, tid)
         if action == "rename":
             name, ok = QInputDialog.getText(self, "時間線名稱", "名稱", text=tl["name"])
@@ -667,6 +720,7 @@ class MainWindow(QMainWindow):
         self.meter.set_gain(proj.get("master_gain", 1.0))
         self.dirty = False
         self.path_ids = []
+        self.open_tls = None
         self.fps = proj["fps"]
         self.timeline.mark_in = self.timeline.mark_out = None
         self.player.worker.set_loop(None)
@@ -791,6 +845,64 @@ class MainWindow(QMainWindow):
         if ids:
             self.timeline.selected_id = None
             self.apply("刪除" if len(ids) == 1 else f"刪除 {len(ids)} 個片段", edit.delete_many, ids)
+
+    def _typing_widget(self):
+        """The text field with the keyboard focus, if any: copy / paste then belong to it."""
+        fw = QApplication.focusWidget()
+        return fw if isinstance(fw, (QLineEdit, QPlainTextEdit)) else None
+
+    def do_copy(self, cut=False):
+        fw = self._typing_widget()
+        if fw is not None:
+            (fw.cut if cut else fw.copy)()
+            return
+        ids = [c["id"] for c in self.timeline.selected_clips()]
+        if not self.proj or not ids:
+            self.statusBar().showMessage("先在時間軸上選取片段", 3000)
+            return
+        self.clipboard = edit.copy_clips(self.container(), ids)
+        self.statusBar().showMessage(f"已{'剪下' if cut else '複製'} {len(ids)} 個片段", 3000)
+        if cut:
+            self.do_delete()
+
+    def do_paste(self):
+        fw = self._typing_widget()
+        if fw is not None:
+            fw.paste()
+            return
+        if not self.proj or not self.clipboard:
+            self.statusBar().showMessage("沒有複製的片段", 3000)
+            return
+        self._select_new(self.apply_root("貼上", lambda root: edit.paste_clips(
+            root, self.container(root), self.clipboard, self.playhead_us())))
+
+    def do_duplicate(self):
+        ids = [c["id"] for c in self.timeline.selected_clips()]
+        if not self.proj or not ids:
+            self.statusBar().showMessage("先在時間軸上選取片段", 3000)
+            return
+        self._select_new(self.apply_root("建立副本", lambda root: edit.duplicate_clips(
+            root, self.container(root), ids)))
+
+    def _select_new(self, clips):
+        if clips:
+            self.timeline.set_selection({c["id"] for c in clips}, clips[-1]["id"])
+
+    def delete_compound_item(self, kid):
+        """From the compound list: a timeline, or a compound with the clips that show it."""
+        if kid.startswith("tl"):
+            self.timeline_do("delete", kid)
+            return
+        n = len(project.compound_uses(self.proj).get(kid, []))
+        name = self.proj["compounds"][kid].get("name") or "複合片段"
+        msg = f"刪除「{name}」？" + (f"\n時間軸上有 {n} 個片段在使用它，會一起刪除。" if n else "")
+        if QMessageBox.question(self, "刪除複合片段", msg) == QMessageBox.Yes:
+            self.timeline.selected_id = None
+            self.apply_root("刪除複合片段", lambda root: edit.delete_compound(root, kid, force=True))
+
+    def delete_use(self, tl_id, path, cid):
+        self.timeline.selected_id = None
+        self.apply_root("刪除片段", lambda root: edit.delete_use(root, tl_id, path, cid))
 
     def do_text(self):
         if self.proj:
@@ -972,6 +1084,12 @@ class MainWindow(QMainWindow):
             self.apply("刪除軌道", edit.delete_track, tid)
 
     def on_clip_action(self, action, cid):
+        if action == "paste":
+            self.do_paste()
+            return
+        if action in ("copy", "cut", "duplicate"):
+            {"copy": self.do_copy, "cut": lambda: self.do_copy(cut=True), "duplicate": self.do_duplicate}[action]()
+            return
         _, c = edit.find(self.container(), cid)
         if action == "enter":
             self.enter_compound(cid)
@@ -1001,8 +1119,32 @@ class MainWindow(QMainWindow):
         files, _ = QFileDialog.getOpenFileNames(self, "匯入素材", "",
                                                 "Media (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.mp4 *.mov *.mkv "
                                                 "*.avi *.webm *.mp3 *.wav *.m4a *.aac *.flac *.ogg);;All files (*)")
+        if files:
+            self.import_files(files, folder)
+
+    def dragEnterEvent(self, e):
+        if e.mimeData().hasUrls():
+            e.acceptProposedAction()
+
+    def dropEvent(self, e):
+        paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
+        if paths:
+            e.acceptProposedAction()
+            self.drop_files(paths, self.library.current_folder())
+
+    def drop_files(self, paths, folder, place=None):
+        """Files (or folders of them) dragged in: they go into the media library, and onto the
+        timeline too when dropped there (place = (track id, start us))."""
+        files = library.media_files(paths)
         if not files:
+            self.statusBar().showMessage("沒有可以匯入的圖片、影片或音訊檔案", 4000)
             return
+        self.import_files(files, folder, place)
+
+    def import_files(self, files, folder, place=None):
+        """Read the files, add them to the library (once each) and, with place, to the timeline."""
+        if not self.proj:
+            self.set_project(project.new())
         self.statusBar().showMessage(f"讀取 {len(files)} 個檔案…")
 
         def work(_p):
@@ -1015,10 +1157,26 @@ class MainWindow(QMainWindow):
                     errors.append(f"{os.path.basename(p)}：{exc}")
             return out, errors
 
+        def add_and_place(root, probes):
+            added = library.add_files(root, list(probes), folder, probes, reuse=True)
+            if place is None:
+                return None
+            track_id, start = place
+            level = self.container(root)
+            tracks, nxt, clip = {}, {}, None
+            for it in added:
+                want = "audio" if it["kind"] == "audio" else "video"
+                clip = library.place(level, root, it["id"], tracks.get(want, track_id), nxt.get(want, start))
+                tracks[want] = edit.find(level, clip["id"])[0]["id"]
+                nxt[want] = clip["start_us"] + clip["duration_us"]
+            return clip
+
         def done(result):
             probes, errors = result
             if probes:
-                self.apply_root("匯入素材", library.add_files, list(probes), folder, probes)
+                self.apply_root("匯入素材" if place is None else "匯入素材並加入時間軸", add_and_place, probes,
+                                select=None if place is None else (lambda c: c["id"]))
+                self.left.setCurrentWidget(self.library)
             if errors:
                 QMessageBox.warning(self, "部分檔案無法匯入", "\n".join(errors))
 
@@ -1051,8 +1209,7 @@ class MainWindow(QMainWindow):
 
     def rename_compound(self, kid):
         if kid.startswith("tl"):                                    # a timeline row
-            i = next(i for i in range(self.tl_tabs.count()) if self.tl_tabs.tabData(i) == kid)
-            self.timeline_action("rename", i)
+            self.timeline_do("rename", kid)
             return
         comp = self.proj["compounds"][kid]
         name, ok = QInputDialog.getText(self, "複合片段名稱", "名稱", text=comp.get("name") or "")
@@ -1102,18 +1259,39 @@ class MainWindow(QMainWindow):
                 if group == "transform" and "scale" in values and "scale_y" in holder:
                     holder["scale_y"] = values["scale"]
         self.player.worker.set_view(view, self.cache_dir())
+        for panel in (self.inspector, self.mask_panel):         # the numbers follow the drag
+            panel.show_live(cid, group, values)
+
+    def on_live_edit(self, ids, group, key, value):
+        """A value being typed or scrubbed in the inspector: the preview shows it at once
+        (the edit itself follows after a short pause)."""
+        view = self.snapshot()
+        for c in project.walk_clips(view["tracks"]):
+            if c["id"] in ids:
+                holder = c if group == "clip" else c.setdefault(group, {})
+                holder[key] = value
+                if group == "transform" and key == "scale" and "scale_y" in holder:
+                    holder["scale_y"] = value
+        self.player.worker.set_view(view, self.cache_dir())
+
+    @Slot(object, object)
+    def _task_call(self, fn, arg):
+        fn(arg)
 
     def run_task(self, fn, done, failed, progress=None):
         th, task = QThread(self), Task(fn)
         task.moveToThread(th)
         th.started.connect(task.run)
-        task.finished.connect(done)
-        task.failed.connect(failed)
+        # the results are handled on the UI thread: a plain function connected to a signal would
+        # run on the worker thread (and touch widgets from there), so each goes through a
+        # signal of the window, which Qt queues across threads
+        task.finished.connect(lambda r: self.taskCall.emit(done, r))
+        task.failed.connect(lambda m: self.taskCall.emit(failed, m))
         if progress:
-            task.progress.connect(progress)
+            task.progress.connect(lambda v: self.taskCall.emit(progress, v))
         for sig in (task.finished, task.failed):
             sig.connect(th.quit)
-        th.finished.connect(lambda: self.tasks.remove((th, task)))
+        th.finished.connect(lambda: self.taskCall.emit(lambda _: self.tasks.remove((th, task)), None))
         self.tasks.append((th, task))
         th.start()
 
@@ -1128,6 +1306,7 @@ class MainWindow(QMainWindow):
         self.preview.show_image(img)
         if self.fullscreen:
             self.fullscreen.canvas.show_image(img)
+            self.fullscreen.set_position(pos, self.length, self.fps)
         self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True))
         self.time_lbl.setText(timecode(pos / self.fps * US, self.fps))
         self.dur_lbl.setText("長度 " + timecode(self.length / self.fps * US, self.fps))
@@ -1144,12 +1323,13 @@ class MainWindow(QMainWindow):
 
     def toggle_play(self):
         if self.proj is not None:
-            self.player.worker.set_playing(not self.playing)
+            w = self.player.worker
+            w.set_playing(not w.playing)           # (the player's own state: the UI's lags a moment)
 
     def seek(self, frame, follow=True):
         if self.proj is not None:
             self.follow = follow
-            if self.playing:
+            if self.player.worker.playing:
                 self.player.worker.set_playing(False)
             self.player.worker.request_seek(frame)
 
@@ -1165,9 +1345,21 @@ class MainWindow(QMainWindow):
         fs.canvas.show_image(self.preview.img)
         fs.togglePlay.connect(self.toggle_play)
         fs.step.connect(self.step)
-        fs.closed.connect(lambda: setattr(self, "fullscreen", None))
+        fs.seekRequested.connect(self.seek)
+        fs.canvas.renderWidth.connect(lambda w: self.set_render_width("full", w))
+        fs.closed.connect(self._fullscreen_closed)
+        fs.set_position(self.pos, self.length, self.fps)
         self.fullscreen = fs
         fs.showFullScreen()
+
+    def _fullscreen_closed(self):
+        self.fullscreen = None
+        self.set_render_width("full", 0)
+
+    def set_render_width(self, who, w):
+        """The preview (or the fullscreen one) shows frames w px wide: draw them that size."""
+        self.render_w[who] = w
+        self.player.worker.set_render_width(max(self.render_w.values()))
 
     # -- range and export -------------------------------------------------------------------------
     def on_volume_line(self, cid, vol):

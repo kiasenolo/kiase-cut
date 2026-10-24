@@ -266,6 +266,56 @@ def move_many(proj, clip_ids, d_us):
     return [c for _, c in moving]
 
 
+def copy_clips(level, clip_ids):
+    """What paste_clips needs to make copies of these clips (any selection of one level)."""
+    items = []
+    for cid in clip_ids:
+        t, c = find(level, cid)
+        items.append({"track": t["id"], "kind": t["kind"], "compound": c.get("compound"),
+                      "clip": copy.deepcopy({k: v for k, v in c.items() if k != "compound"})})
+    if not items:
+        raise EditError("nothing is selected")
+    items.sort(key=lambda i: i["clip"]["start_us"])
+    return {"anchor_us": items[0]["clip"]["start_us"], "items": items}
+
+
+def paste_clips(root, level, payload, at_us):
+    """Put copies of copy_clips' clips into `level` with the earliest one at at_us, keeping
+    their spacing. Each goes back to its own track if it fits there, else to another track
+    of its kind with room, else to a new track. Returns the new clips."""
+    at_us, anchor = max(0, int(at_us)), payload["anchor_us"]
+    own = _container_id(root, level)
+    new = []
+    for item in payload["items"]:
+        c = copy.deepcopy(item["clip"])
+        ref = project.ref_of(c)
+        if ref and own is not None and project.contains(root, ref, own):
+            raise EditError("a timeline or compound cannot show itself")
+        c["id"] = new_clip_id()
+        c["start_us"] = at_us + c["start_us"] - anchor
+        if ref:
+            c["compound"] = item["compound"]            # shared, as for the original
+        s, e = c["start_us"], c["start_us"] + c["duration_us"]
+        kind = item["kind"]
+        orig = next((t for t in level["tracks"] if t["id"] == item["track"] and t["kind"] == kind), None)
+        tracks = ([orig] if orig else []) + [t for t in level["tracks"] if t["kind"] == kind and t is not orig]
+        track = next((t for t in tracks if free_range(t, s, e) is not None), None)
+        if track is None:
+            track = add_track(level, kind, near_id=item["track"])
+        track["clips"].append(c)
+        _sort(track)
+        new.append(c)
+    project.link(root)
+    return new
+
+
+def duplicate_clips(root, level, clip_ids):
+    """Copies of the clips right after the last of them (on the same tracks when free)."""
+    payload = copy_clips(level, clip_ids)
+    return paste_clips(root, level, payload,
+                       max(i["clip"]["start_us"] + i["clip"]["duration_us"] for i in payload["items"]))
+
+
 def add_text(proj, at_us, content="輸入文字", duration_us=3_000_000):
     """New text clip at at_us on the topmost text track with room, else a new track."""
     clip = {
@@ -798,10 +848,26 @@ def rename_compound(root, compound_id, name):
     root["compounds"][compound_id]["name"] = str(name).strip() or "複合片段"
 
 
-def delete_compound(root, compound_id):
-    if project.compound_uses(root).get(compound_id):
+def delete_compound(root, compound_id, force=False):
+    """Remove a shared compound; with force also every clip that shows it (anywhere)."""
+    uses = project.compound_uses(root).get(compound_id) or []
+    if uses and not force:
         raise EditError("still used on a timeline")
-    del root["compounds"][compound_id]
+    shown = {id(c) for _, _, c in uses}
+    for owner in list(root.get("timelines", [])) + list(root.get("compounds", {}).values()):
+        for t in owner["tracks"]:
+            t["clips"] = [c for c in t["clips"] if id(c) not in shown]
+    root["compounds"].pop(compound_id, None)
+    project.link(root)
+
+
+def delete_use(root, tl_id, path, clip_id):
+    """Delete one clip showing a compound: it sits in timeline tl_id, inside the compound
+    clips of `path` (their ids, outermost first)."""
+    node = project.timeline(root, tl_id)
+    for pid in path:
+        node = find(node, pid)[1]["compound"]
+    delete(node, clip_id)
 
 
 def set_master_gain(proj, gain):

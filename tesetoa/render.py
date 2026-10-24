@@ -14,11 +14,12 @@ QPainter on QImage is usable from any thread, so the player renders off the UI t
 import json
 import math
 
+import numpy as np
 from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 
-from . import curves, project, textlayout
+from . import curves, masks, project, textlayout
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg")
@@ -127,7 +128,7 @@ class Renderer:
             rs = quantize(rs)                   # animated scales reuse a few renderings
             pic = self.text(spec, rs, H)
             bw, bh = pic.width() / rs * k_size, pic.height() / rs * k_size
-            draw = lambda: p.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
+            draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
             disp = (bw, bh)
         elif kind in ("image", "video"):
             m = c["media"]
@@ -141,7 +142,7 @@ class Renderer:
                                        max(1, round(tw)), max(1, round(th))) if self.video_frame else None
                 if pic is None:
                     return
-            draw = lambda: p.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
+            draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
             disp = (bw, bh)
         elif kind == "compound":
             comp = c["compound"]
@@ -150,11 +151,11 @@ class Renderer:
             bw, bh = cw * fit, ch * fit
             k = fit * max(abs(sx), abs(sy), 0.01) * px_per_unit       # layer px per compound unit
 
-            def draw():
+            def draw(q=p):
                 # only the part that lands on the target: a compound zoomed in 6x used to
                 # get a 6000 px layer of which a 960 px window was shown
-                inv, ok = p.worldTransform().inverted()
-                dev = p.device()
+                inv, ok = q.worldTransform().inverted()
+                dev = q.device()
                 full = QRectF(-bw / 2, -bh / 2, bw, bh)
                 vis = inv.mapRect(QRectF(0, 0, dev.width(), dev.height())) if ok else full
                 pad = 2 * fit / k
@@ -171,7 +172,7 @@ class Renderer:
                 lp.translate(-ux, -uy)
                 self.draw_tracks(lp, comp["tracks"], cw, ch, fps, t + c.get("source_start_us", 0), k)
                 lp.end()
-                p.drawImage(QRectF(vis.left(), vis.top(), layer.width() / k * fit, layer.height() / k * fit), layer)
+                q.drawImage(QRectF(vis.left(), vis.top(), layer.width() / k * fit, layer.height() / k * fit), layer)
             disp = (bw, bh)
         else:
             return
@@ -180,9 +181,50 @@ class Renderer:
         p.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
         p.rotate(v("rotation", 0.0))                       # clockwise on a y-down canvas
         p.scale(sx * (-1 if tf.get("flip_h") else 1), sy * (-1 if tf.get("flip_v") else 1))
-        if project.active_mask(c):
-            p.setClipPath(mask_path(c["mask"], t, disp))
-        draw()
+        mask = c["mask"] if project.active_mask(c) else None
+        feather = curves.value(mask.get("feather", 0.0), t) if mask else 0.0
+        if mask and feather > 1e-3:
+            self.draw_soft(p, mask, t, disp, feather, draw)      # a clip path has no soft edge
+        else:
+            if mask:
+                p.setClipPath(mask_path(mask, t, disp))
+            draw()
+        p.restore()
+
+    def draw_soft(self, p, mask, t, disp, feather, draw):
+        """Draw the clip through a feathered mask: the clip goes to a layer the size of the
+        target, which is multiplied by the mask's coverage (masks.alpha) and drawn back."""
+        dev = p.device()
+        W, H = dev.width(), dev.height()
+        wt = p.worldTransform()
+        inv, ok = wt.inverted()
+        if not ok:
+            return
+        layer = QImage(W, H, QImage.Format_ARGB32_Premultiplied)
+        layer.fill(Qt.transparent)
+        lp = QPainter(layer)
+        lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        lp.setTransform(wt)
+        draw(lp)
+        lp.end()
+        v = lambda k, d: curves.value(mask.get(k, d), t)
+        dw, dh = disp
+        gx, gy = np.meshgrid(np.arange(W) + 0.5, np.arange(H) + 0.5)
+        lx = inv.m11() * gx + inv.m21() * gy + inv.dx()                 # clip-local, y down
+        ly = inv.m12() * gx + inv.m22() * gy + inv.dy()
+        mx, my = lx - v("cx", 0.0) * dw / 2, ly + v("cy", 0.0) * dh / 2
+        b = math.radians(v("rotation", 0.0))
+        fx = mx * math.cos(b) + my * math.sin(b)                        # the mask's own frame
+        fy = -mx * math.sin(b) + my * math.cos(b)
+        m = masks.alpha(mask["kind"], v("w", 1.0) * dw, v("h", 1.0) * dh, feather, fx, -fy)
+        if mask.get("invert"):
+            m = 1 - m
+        m8 = (m * 255 + 0.5).astype(np.uint16)
+        px = np.ndarray((H, W, 4), np.uint8, buffer=layer.bits(), strides=(layer.bytesPerLine(), 4, 1))
+        px[...] = ((px.astype(np.uint16) * m8[..., None] + 127) // 255).astype(np.uint8)
+        p.save()
+        p.resetTransform()
+        p.drawImage(0, 0, layer)
         p.restore()
 
 

@@ -159,6 +159,7 @@ class Inspector(QWidget):
     maskInvertChosen = Signal(list, bool)           # clip ids, invert
     maskEnabledChosen = Signal(list, bool)          # clip ids, on
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
+    liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
 
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
@@ -446,6 +447,26 @@ class Inspector(QWidget):
     def _queue(self, group, key, value):
         self.pending[(group, key)] = value
         self.timer.start()
+        if self.clip_ids and (group, key) != ("text", "content"):
+            self.liveEdited.emit(list(self.clip_ids), group.rstrip("*"), key, value)   # shown in the preview now
+
+    def show_live(self, clip_id, group, values):
+        """The numbers of a drag on the canvas, while it goes on (not an edit yet)."""
+        if self.clip_ids != [clip_id] or group not in self.groups:
+            return
+        rows = {r[0]: r for r in PARAMS.get(group, ())}
+        for key, v in values.items():
+            r = rows.get(key)
+            s = self.widgets.get((group, key))
+            if r is not None and s is not None and not s.hasFocus():
+                s.show_value(round(v * r[6], r[5]))
+
+    def show_live_time(self, clip_id, start_us, duration_us, fps):
+        """Start / length of a clip being dragged or trimmed on the timeline."""
+        w = self.widgets
+        if self.clip_ids == [clip_id] and "開始" in w:
+            w["開始"].setText(timecode(start_us, fps))
+            w["長度"].setText(f"{duration_us / US:.2f} 秒")
 
     def _emit_now(self, signal, *args):
         self._flush()

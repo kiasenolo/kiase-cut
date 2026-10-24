@@ -29,7 +29,7 @@ def alpha(kind, w, h, feather, xs, ys):
         d = np.minimum(w / 2 - np.abs(xs), h / 2 - np.abs(ys))
     else:
         raise ValueError(f"unsupported mask {kind!r}")
-    soft = max(feather * (min(w, h) if kind != "line" else 0) / 2, 0.5)
+    soft = max(feather * min(w, h) / 2, 0.5)
     return np.clip(d / (2 * soft) + 0.5, 0, 1)
 
 

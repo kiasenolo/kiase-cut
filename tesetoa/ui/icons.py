@@ -80,6 +80,11 @@ def _draw(p, name):
     elif name == "plus":
         p.drawRect(QRectF(11, 5, 2.4, 14))
         p.drawRect(QRectF(5, 10.8, 14, 2.4))
+    elif name == "close":
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(pen.color(), 2.2, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(7, 7), QPointF(17, 17))
+        p.drawLine(QPointF(17, 7), QPointF(7, 17))
     elif name == "back":
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(pen.color(), 2))

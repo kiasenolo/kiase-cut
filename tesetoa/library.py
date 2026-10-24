@@ -16,6 +16,21 @@ from . import edit, project
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 IMAGE_DEFAULT_US = 5_000_000
+MEDIA_EXT = IMAGE_EXT | {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".ts", ".mts",
+                         ".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
+
+
+def media_files(paths):
+    """The media files among dropped paths: folders are searched, other files are skipped."""
+    out = []
+    for p in paths:
+        if os.path.isdir(p):
+            for d, dirs, files in os.walk(p):
+                dirs.sort()
+                out += [os.path.join(d, f) for f in sorted(files) if os.path.splitext(f)[1].lower() in MEDIA_EXT]
+        elif os.path.splitext(p)[1].lower() in MEDIA_EXT:
+            out.append(p)
+    return out
 
 
 def lib(proj):
@@ -120,11 +135,16 @@ def delete(proj, ident):
         L["items"].remove(item(proj, ident))
 
 
-def add_files(proj, paths, to_folder=None, probes=None):
-    """Import files (probe results may be passed in when done off the UI thread)."""
+def add_files(proj, paths, to_folder=None, probes=None, reuse=False):
+    """Import files (probe results may be passed in when done off the UI thread). With reuse,
+    a file that is already in the library is not added twice: its item is returned."""
     added = []
     for p in paths:
         p = os.path.abspath(p).replace("\\", "/")
+        have = next((it for it in lib(proj)["items"] if it["path"] == p), None) if reuse else None
+        if have is not None:
+            added.append(have)
+            continue
         info = (probes or {}).get(p) or probe(p)
         it = {"id": _id("m"), "name": os.path.basename(p), "path": p, "folder": to_folder, **info}
         lib(proj)["items"].append(it)

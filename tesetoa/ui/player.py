@@ -17,7 +17,9 @@ from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 from .. import render
 from ..audiomix import CHANNELS, RATE, Mixer
 
-PREVIEW_W = 960
+PREVIEW_W = 960            # until the preview reports its size
+MIN_W = 160
+LEAD = 6                    # frames of sound kept queued ahead of the picture while playing
 
 
 class Worker(QObject):
@@ -38,6 +40,11 @@ class Worker(QObject):
         self.quit = False
         self.engine = None          # started on first use, for video pictures only
         self.loop = None            # (first, last) frame: playback stays inside (time selection)
+        self.render_w = PREVIEW_W   # width in px the frames are drawn at (the preview's own size)
+        self.t0 = 0.0               # playback clock: when the first picture was due
+        self.shown_n = self.audio_n = 0     # pictures shown / sound frames queued since playing began
+        self.audio_f = None         # next frame whose sound is to be queued
+        self.peaks = {}             # sound frame number -> (left, right) level, shown with its picture
 
     # called from the UI thread -----------------------------------------------------------
     def set_view(self, view, cache_dir):
@@ -50,6 +57,18 @@ class Worker(QObject):
         with self.cv:
             self.want = max(0, min(pos, self.length - 1)) if self.length else max(0, pos)
             self.cv.notify()
+
+    def set_render_width(self, w):
+        """Draw frames at w px wide (the size the preview shows them at; never above the
+        project's own size). A stopped picture is redrawn at once."""
+        w = max(MIN_W, int(w))
+        with self.cv:
+            if abs(w - self.render_w) < 8:
+                return
+            self.render_w = w
+            if not self.playing and self.view is not None and self.want is None:
+                self.want = self.pos
+                self.cv.notify()
 
     def set_loop(self, span):
         """Loop playback inside frames (first, last), or None (FL Studio's time selection)."""
@@ -95,7 +114,8 @@ class Worker(QObject):
         was_playing = False
         while True:
             with self.cv:
-                while not (self.quit or self.new_view or self.want is not None or self.playing):
+                while not (self.quit or self.new_view or self.want is not None or self.playing
+                           or was_playing):
                     self.cv.wait()
                 if self.quit:
                     break
@@ -120,6 +140,9 @@ class Worker(QObject):
                 if playing != was_playing:
                     if playing:
                         out = sink.start()
+                        self.t0 = time.monotonic()
+                        self.shown_n = self.audio_n = 0
+                        self.audio_f, self.peaks = None, {}
                     else:
                         sink.stop()
                         out = None
@@ -127,6 +150,12 @@ class Worker(QObject):
                     self.stateChanged.emit(playing)
                 if want is not None:
                     self.pos = min(want, self.length - 1)
+                    if playing and was_playing:           # a jump while playing: sound and clock start over
+                        sink.stop()
+                        out = sink.start()
+                        self.t0 = time.monotonic()
+                        self.shown_n = self.audio_n = 0
+                        self.audio_f, self.peaks = None, {}
                 if self.view is None:
                     continue
                 if playing:
@@ -143,33 +172,80 @@ class Worker(QObject):
 
     def _show(self, pos):
         v = self.view
-        h = round(PREVIEW_W * v["height"] / v["width"])
-        self.frameReady.emit(self.renderer.render(v, pos, PREVIEW_W, h), pos)
+        w = max(2, min(self.render_w, v["width"]))
+        h = max(2, round(w * v["height"] / v["width"]))
+        self.frameReady.emit(self.renderer.render(v, pos, w, h), pos)
         if self.renderer.errors:
             self.failed.emit("；".join(dict.fromkeys(self.renderer.errors)))
             self.renderer.errors.clear()
 
+    def _next(self, f):
+        """The frame after f, looping inside the time selection."""
+        f += 1
+        if self.loop and f > self.loop[1] and f - 1 <= self.loop[1]:
+            f = self.loop[0]
+        return f
+
+    def _interrupted(self):
+        return bool(self.new_view or self.want is not None or not self.playing or self.quit)
+
+    def _feed(self, out, sink):
+        """Queue the sound up to LEAD frames ahead of the picture. Playing begins with the
+        queue empty, so this is also what keeps the picture from racing ahead at the start."""
+        fps = self.view["fps"]
+        if self.audio_f is None:
+            self.audio_f = self.pos
+        while self.audio_n <= self.shown_n + LEAD and self.audio_f < self.length:
+            pcm = self.mixer.mix(self.audio_f, fps)
+            a = np.frombuffer(pcm, np.int16).reshape(-1, CHANNELS)
+            if len(a):
+                peak = np.abs(a.astype(np.int32)).max(axis=0) / 32768.0
+                self.peaks[self.audio_n] = (float(peak[0]), float(peak[-1]))
+            if out is not None:
+                view = memoryview(pcm)
+                while view:
+                    if self._interrupted():
+                        return                              # react to edits / seeks at once
+                    free = sink.bytesFree()
+                    if free <= 0:
+                        time.sleep(0.002)
+                        continue
+                    n = out.write(bytes(view[:free]))
+                    view = view[n:]
+            self.audio_f = self._next(self.audio_f)
+            self.audio_n += 1
+
     def _play_one(self, out, sink):
+        """One picture, on time: the sound is queued first and the pictures follow the clock
+        that started with it (a picture that is late is skipped, not shown late)."""
+        fps = self.view["fps"]
+        self._feed(out, sink)
+        due = self.t0 + self.shown_n / fps
+        while not self._interrupted():
+            wait = due - time.monotonic()
+            if wait <= 0:
+                break
+            time.sleep(min(wait, 0.004))
+        if self._interrupted():
+            return
+        behind = int((time.monotonic() - due) * fps)
+        for _ in range(behind if behind >= 2 else 0):
+            self.pos = self._next(self.pos)
+            self.shown_n += 1
+        last = self.pos >= self.length - 1
+        self.pos = min(self.pos, self.length - 1)
         self._show(self.pos)
-        pcm = self.mixer.mix(self.pos, self.view["fps"])
-        a = np.frombuffer(pcm, np.int16).reshape(-1, CHANNELS)
-        if len(a):
-            peak = np.abs(a.astype(np.int32)).max(axis=0) / 32768.0
-            self.levels.emit(float(peak[0]), float(peak[-1]))
-        if out is not None:
-            view = memoryview(pcm)
-            while view:
-                if self.new_view or self.want is not None or not self.playing or self.quit:
-                    break                                   # react to edits / seeks at once
-                free = sink.bytesFree()
-                if free <= 0:
-                    time.sleep(0.002)
-                    continue
-                n = out.write(bytes(view[:free]))
-                view = view[n:]
-        self.pos += 1
-        if self.loop and self.pos > self.loop[1] and self.pos - 1 <= self.loop[1]:
-            self.pos = self.loop[0]
+        for k in [k for k in self.peaks if k < self.shown_n]:
+            del self.peaks[k]
+        lv = self.peaks.pop(self.shown_n, None)
+        if lv:
+            self.levels.emit(*lv)
+        self.shown_n += 1
+        if last:
+            with self.cv:
+                self.playing = False
+            return
+        self.pos = self._next(self.pos)
         if self.pos >= self.length:
             self.pos = self.length - 1
             with self.cv:

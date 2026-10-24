@@ -4,22 +4,26 @@ A clip made from one is a picture clip that also holds its parameters:
 
 clip["asset"] = {key, family, w, h, color, ...}   key: the preset it came from; family: what
                 is drawn (solid, gradient, rect, ellipse, polygon, star, heart, arrow, line);
-                w, h: its size in canvas pixels; the rest depends on the family (FIELDS)
+                w, h: its size in canvas pixels; the rest depends on the family (FIELDS).
+                Every field is a parameter like a clip's position: a value or a curve dict
+                with keyframes (curves.py). Colours are [r, g, b, a] (0 - 1), so their
+                keyframes blend; choices (gtype, outline) hold until the next keyframe.
 
 Unlike other pictures, which are fitted into the canvas, an asset clip is drawn at its own
 size (project.picture_size), so 寬 / 高 are canvas pixels and corners or outlines keep their
-thickness when it is resized. Every change of parameters draws a new SVG into the project's
-Media/.內建素材 folder (hidden from the media library), named after its content, so undo
-only has to point the clip back at the earlier file.
+thickness when it is resized. The renderers draw it from its parameters at each moment
+(at(), svg()); the SVG written into the project's Media/.內建素材 folder (hidden from the
+media library) when the clip is made only gives it a file, as every picture clip has.
 
 The 內建素材 tab names a preset on its drag data as "asset:<key>:<colour 1>:<colour 2>":
 presets carry their own colours, the 自訂 ones and every shape take the tab's two colours.
 """
-import copy
 import hashlib
 import math
 import os
 import re
+
+from . import curves
 
 FOLDER = ".內建素材"
 PREFIX = "asset:"
@@ -137,6 +141,47 @@ def parse(text):
 
 
 # -- parameters -------------------------------------------------------------------------------------
+def to_rgba(c, default=(1.0, 1.0, 1.0, 1.0)):
+    """[r, g, b, a] (0 - 1) of #rrggbb[aa] or of such a list; else the default."""
+    if isinstance(c, (list, tuple)) and len(c) in (3, 4):
+        try:
+            v = [min(1.0, max(0.0, float(x))) for x in c]
+        except (TypeError, ValueError):
+            return list(default)
+        return v + [1.0] * (4 - len(v))
+    c = clean_color(c, "")
+    if not c:
+        return list(default)
+    return [int(c[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [int(c[7:], 16) / 255 if len(c) == 9 else 1.0]
+
+
+def hex_of(rgba):
+    """#rrggbb, or #rrggbbaa when not opaque."""
+    v = [round(min(1.0, max(0.0, x)) * 255) for x in to_rgba(rgba)]
+    return "#" + "".join(f"{x:02x}" for x in v[:3]) + (f"{v[3]:02x}" if v[3] < 255 else "")
+
+
+def fields_of(family):
+    """Every parameter a family has (FIELDS plus size and colour)."""
+    return ("w", "h", "color") + FIELDS.get(family, ())
+
+
+def clean(f, v):
+    """One value of field f as it is stored: a colour as [r, g, b, a], a choice that exists,
+    a number in range (sides and points are rounded when drawn)."""
+    info = FIELD_INFO[f]
+    if info[1] == "color":
+        return to_rgba(v, (0.0, 0.0, 0.0, 1.0) if f == "color2" else (1.0, 1.0, 1.0, 1.0))
+    if info[1] == "choice":
+        vals = [x for _n, x in info[2]]
+        return v if v in vals else vals[0]
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        v = float(info[2])
+    return min(max(v, info[2]), info[3])
+
+
 def make(a, c1, c2, canvas_w, canvas_h):
     """The parameters (clip["asset"]) of a new clip of preset a on a canvas_w x canvas_h canvas:
     solids and gradients fill it, shapes keep their size relative to its height."""
@@ -162,26 +207,48 @@ def make(a, c1, c2, canvas_w, canvas_h):
 
 
 def normalize(p):
-    """Parameters made valid: known family, numbers in range, colours as #rrggbb[aa]; fields
-    the family does not have are dropped."""
+    """Parameters made valid (clean() for every value and keyframe); fields the family does
+    not have are dropped, missing ones get a default."""
     fam = p.get("family") if p.get("family") in FIELDS else "rect"
     out = {"key": str(p.get("key") or fam), "family": fam}
-    for f in ("w", "h", "color") + FIELDS[fam]:
-        info = FIELD_INFO[f]
+    for f in fields_of(fam):
         v = p.get(f)
-        if info[1] == "color":
-            out[f] = clean_color(v, "#000000" if f == "color2" else "#ffffff")
-        elif info[1] == "choice":
-            vals = [x for _n, x in info[2]]
-            out[f] = v if v in vals else vals[0]
+        if curves.is_animated(v):
+            out[f] = {"keys": [[k[0], clean(f, k[1])] + list(k[2:]) for k in v["keys"]]}
         else:
-            try:
-                v = float(v)
-            except (TypeError, ValueError):
-                v = info[2]
-            v = min(max(v, info[2]), info[3])
-            out[f] = int(round(v)) if info[5] == 0 else v
+            out[f] = clean(f, v if v is not None else _DEFAULTS.get(f))
     return out
+
+
+_DEFAULTS = {"outline": False, "stroke": 24, "radius": 0, "sides": 6, "points": 5, "inner": 40, "angle": 0,
+             "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX}
+
+
+def at(p, t):
+    """The parameters at clip time t, ready to draw: plain values, colours as #rrggbb[aa],
+    sides and points whole."""
+    fam = p.get("family") if p.get("family") in FIELDS else "rect"
+    out = {"key": p.get("key"), "family": fam}
+    for f in fields_of(fam):
+        v = clean(f, curves.value(p[f], t) if f in p else _DEFAULTS.get(f))
+        if FIELD_INFO[f][1] == "color":
+            v = hex_of(v)
+        elif f in ("sides", "points"):
+            v = int(round(v))
+        elif f in ("w", "h"):
+            v = round(v, 2)
+        out[f] = v
+    return out
+
+
+def size_at(p, t):
+    """(w, h) in canvas px at clip time t."""
+    q = at(p, t)
+    return q["w"], q["h"]
+
+
+def animated(p):
+    return bool(p) and any(curves.is_animated(v) for v in p.values())
 
 
 def name_of(p):
@@ -274,7 +341,7 @@ def _shape(p, w, h):
 
 
 def svg(p):
-    """The SVG text of asset parameters p (normalized)."""
+    """The SVG text of asset parameters p as at() gives them."""
     w, h = p["w"], p["h"]
     if p["family"] == "solid":
         return _svg(w, h, f'<rect width="{w}" height="{h}" {_paint(p["color"], False, 0)}/>')
@@ -284,9 +351,9 @@ def svg(p):
 
 
 def store(media_dir, p):
-    """Write the SVG of p into media_dir/.內建素材, named after its content (an identical one
-    is reused). Returns its path."""
-    text = svg(p)
+    """Write the SVG of p (at its start) into media_dir/.內建素材, named after its content
+    (an identical one is reused). Returns its path."""
+    text = svg(at(p, 0))
     d = os.path.join(media_dir, FOLDER)
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, f"{p['family']}-{hashlib.sha1(text.encode('utf-8')).hexdigest()[:12]}.svg")
@@ -299,7 +366,8 @@ def store(media_dir, p):
 
 def item(p, path):
     """A library-item-like dict for placing or replacing with asset p (stored at path)."""
-    return {"kind": "image", "name": name_of(p), "path": path, "width": p["w"], "height": p["h"]}
+    w, h = size_at(p, 0)
+    return {"kind": "image", "name": name_of(p), "path": path, "width": w, "height": h}
 
 
 def restore(clips, media_dir):
@@ -311,12 +379,6 @@ def restore(clips, media_dir):
         if p and not os.path.exists((c.get("media") or {}).get("path") or ""):
             new = store(media_dir, normalize(p))
             out.append((c["media"].get("path"), new))
-            c["media"] = {"path": new, "width": p["w"], "height": p["h"]}
+            w, h = size_at(p, 0)
+            c["media"] = {"path": new, "width": w, "height": h}
     return out
-
-
-def updated(p, fields):
-    """p with fields changed (a deep copy, normalized)."""
-    q = copy.deepcopy(p)
-    q.update(fields)
-    return normalize(q)

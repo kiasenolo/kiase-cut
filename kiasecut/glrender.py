@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import curves, fx, project, render, textlayout
+from . import assets, curves, fx, project, render, textlayout
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -400,9 +400,11 @@ class GLRenderer(render.Renderer):
             rect = QRectF(-bw / 2, -bh / 2, bw, bh)
         elif kind in ("image", "video"):
             m = c["media"]
-            bw, bh = project.picture_size(c, W, H)
+            bw, bh = project.picture_size(c, W, H, t=t)
             tw, th = bw * abs(sx) * ppu, bh * abs(sy) * ppu
-            if kind == "image":
+            if c.get("asset"):                       # drawn from its parameters at t
+                tex, straight = gl.picture(self.asset(assets.at(c["asset"], t), tw, th), mipmap=True)
+            elif kind == "image":
                 tex, straight = gl.picture(self.image(m["path"], tw, th), mipmap=True)
             else:
                 pic = self.video_frame(m["path"], c.get("source_start_us", 0) + t,

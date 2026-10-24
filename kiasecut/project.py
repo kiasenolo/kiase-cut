@@ -186,13 +186,15 @@ def active_mask(c):
     return m if m and m.get("enabled", True) else None
 
 
-def picture_size(c, W, H, k=1.0):
+def picture_size(c, W, H, k=1.0, t=0):
     """On-canvas size at scale 1 of an image or video clip on a W x H level: fitted into it,
-    as Jianying does. A built-in asset (clip["asset"]) has its own size in canvas pixels;
-    k converts those to the units W and H are in."""
+    as Jianying does. A built-in asset (clip["asset"]) has its own size in canvas pixels, at
+    clip time t (it can have keyframes); k converts those to the units W and H are in."""
     m = c["media"]
     if c.get("asset"):
-        return m["width"] * k, m["height"] * k
+        from . import assets
+        w, h = assets.size_at(c["asset"], t)
+        return w * k, h * k
     fit = min(W / m["width"], H / m["height"])
     return m["width"] * fit, m["height"] * fit
 

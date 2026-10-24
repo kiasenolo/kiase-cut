@@ -8,7 +8,8 @@ Edits are reported after a short pause so typing or spinning produces one rebuil
 
 Scale has an X and a Y value with a link button between them: linked (the default), changing
 one changes the other in proportion and keyframes go on both. Built-in assets (assets.py)
-add a 素材參數 section: size in canvas pixels, colours and the shape's own settings.
+add a 素材參數 section: size in canvas pixels, colours and the shape's own settings, each
+with its ◆ like any other value.
 
 One class serves two tabs: part="main" (type, text, picture, sound) and part="mask" (the
 mask: on / off, shape, invert and its values), each with its own keyframe controls.
@@ -173,12 +174,11 @@ class Inspector(QWidget):
     maskEnabledChosen = Signal(list, bool)          # clip ids, on
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
-    assetEdited = Signal(list, dict)                # clip ids, {asset field: value} (assets.py)
 
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
         self.part = part
-        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip"]
+        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset"]
         self.setMinimumWidth(300)
         lay = QVBoxLayout(self)
         lay.addWidget(section("遮罩" if part == "mask" else "屬性"))
@@ -434,18 +434,19 @@ class Inspector(QWidget):
         return b
 
     def _build_asset(self, form, family):
-        """素材參數: size, colours and the family's own fields (assets.FIELDS); not keyframed."""
+        """素材參數: size, colours and the family's own fields (assets.FIELDS), each with ◆."""
         form.addRow(section("素材參數"))
         row = QWidget()
         lay = QHBoxLayout(row)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(3)
-        for f, tag in (("w", "寬"), ("h", "高")):
+        for f in ("w", "h"):
             info = assets.FIELD_INFO[f]
-            t = QLabel(tag)
+            t = QLabel(info[0])
             t.setStyleSheet("color: #8e8e94;")
             lay.addWidget(t)
             lay.addWidget(self._spin(("asset", f), *info[2:6]), 1)
+            lay.addWidget(self._key_button("asset", f))
         form.addRow("大小 px", row)
         for f in ("color",) + assets.FIELDS[family]:
             info = assets.FIELD_INFO[f]
@@ -453,24 +454,34 @@ class Inspector(QWidget):
                 b = QPushButton()
                 b.clicked.connect(lambda _=False, f=f: self._pick_asset_color(f))
                 self.widgets[("asset", f)] = b
-                form.addRow(info[0], b)
+                form.addRow(info[0], self._with_key(b, "asset", f))
             elif info[1] == "choice":
                 box = ComboBox()
                 box.setPlaceholderText("--")
                 for i, (name, _v) in enumerate(info[2]):
                     box.addItem(name, i)
-                box.activated.connect(lambda i, f=f: (self._queue("asset", f, assets.FIELD_INFO[f][2][i][1]),
-                                                      self._flush()))
+                box.activated.connect(lambda i, f=f: self._emit_now(self.paramEdited, "asset", f,
+                                                                    assets.FIELD_INFO[f][2][i][1]))
                 self.widgets[("asset", f)] = box
-                form.addRow(info[0], box)
+                form.addRow(info[0], self._with_key(box, "asset", f))
             else:
-                form.addRow(info[0], self._spin(("asset", f), *info[2:6]))
+                form.addRow(info[0], self._param_row("asset", f, info[0], *info[2:6], 1, None))
 
-    def _show_asset(self, clips):
-        for (_g, f), wid in [(k, v) for k, v in self.widgets.items() if isinstance(k, tuple) and k[0] == "asset"]:
-            vals = {k["asset"].get(f) for k in clips}
-            v = vals.pop() if len(vals) == 1 else None
+    def _show_asset(self, clips, ts, easings):
+        """The asset fields at the playhead (each clip at its own time), their ◆ states;
+        adds the easings of keys at the playhead to `easings`."""
+        for (_g, f), wid in [(k, v) for k, v in self.widgets.items()
+                                if isinstance(k, tuple) and len(k) == 2 and k[0] == "asset"]:
+            ps = [k["asset"].get(f) for k in clips]
             kind = assets.FIELD_INFO[f][1]
+            vals = []
+            for p, t in zip(ps, ts):
+                v = assets.clean(f, curves.value(p, t) if p is not None else None)
+                vals.append(assets.hex_of(v) if kind == "color" else
+                            round(v, assets.FIELD_INFO[f][5]) if kind == "number" else v)
+                if edit.key_at(p, t) is not None:
+                    easings.add(edit.easing_at(p, t))
+            v = vals[0] if len(set(map(str, vals))) == 1 else None
             if kind == "color":
                 if v is None:
                     wid.setText("--")
@@ -484,13 +495,14 @@ class Inspector(QWidget):
                 self._set_combo(wid, opts.index(v) if v in opts else "--")
             else:
                 self._set(("asset", f), v)
+            self._key_state(self.widgets[("key", "asset", f)], ps, clips, ts)
 
     def _pick_asset_color(self, f):
         cur = self.widgets[("asset", f)].text()
         col = QColorDialog.getColor(QColor(cur[:7]) if cur.startswith("#") else QColor("white"), self, "顏色",
                                     QColorDialog.ShowAlphaChannel)
         if col.isValid():
-            self._queue("asset", f, col.name() + (f"{col.alpha():02x}" if col.alpha() < 255 else ""))
+            self._queue("asset", f, [col.redF(), col.greenF(), col.blueF(), col.alphaF()])
             self._flush()
 
     def _key_button(self, group, key):
@@ -574,7 +586,7 @@ class Inspector(QWidget):
             w["scale_link"].setChecked(all(edit.linked(k["transform"]) for k in clips))
             w["scale_link"].blockSignals(False)
         if ("asset", "w") in w:
-            self._show_asset(clips)
+            self._show_asset(clips, ts, easings)
         if "mask_on" in w:
             on = {bool(project.active_mask(k)) for k in clips}
             w["mask_on"].blockSignals(True)
@@ -640,7 +652,10 @@ class Inspector(QWidget):
         """The numbers of a drag on the canvas, while it goes on (not an edit yet)."""
         if self.clip_ids != [clip_id] or group not in self.groups:
             return
-        rows = {r[0]: r for r in PARAMS.get(group, ())}
+        if group == "asset":                             # (dragging an asset's size)
+            rows = {f: (f, None, None, None, None, i[5], 1) for f, i in assets.FIELD_INFO.items() if i[1] == "number"}
+        else:
+            rows = {r[0]: r for r in PARAMS.get(group, ())}
         for key, v in values.items():
             r = rows.get(key)
             s = self.widgets.get((group, key))
@@ -675,9 +690,6 @@ class Inspector(QWidget):
         ids = list(self.clip_ids)
         if ("text", "content") in pending:                 # the words themselves
             self.textEdited.emit(ids, {"content": pending.pop(("text", "content"))})
-        fields = {k: pending.pop((g, k)) for g, k in list(pending) if g == "asset"}
-        if fields:                                           # a built-in asset's parameters
-            self.assetEdited.emit(ids, fields)
         for (g, k), v in pending.items():                    # everything else can animate
             self.paramEdited.emit(ids, g.rstrip("*"), k, v)
 

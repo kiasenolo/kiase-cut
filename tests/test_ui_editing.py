@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPointF, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from kiasecut import assets  # noqa: E402
 from kiasecut.ui.main_window import edit_rate  # noqa: E402
 from kiasecut.ui.player import Worker  # noqa: E402
 from kiasecut.ui.preview import Box, Preview  # noqa: E402
@@ -33,7 +34,11 @@ class ScaleDragTests(unittest.TestCase):
         box = Box(c, 1920, 1080, 0)
         handle = next(pt for sx, sy, pt in box.handles() if (sx, sy) == side)
         d = {"side": side, "m0": handle}
-        out = pv._scale_values(box, d, QPointF(handle.x() + to[0], handle.y() + to[1]), mods)
+        group, out = pv._scale_values(box, d, QPointF(handle.x() + to[0], handle.y() + to[1]), mods)
+        if group == "multi":                                    # a built-in asset: its size
+            moved = dict(c, transform=dict(c["transform"], **out.get("transform", {})),
+                         asset=dict(c["asset"], **out["asset"]))
+            return out, Box(moved, 1920, 1080, 0)
         return out, Box(dict(c, transform=dict(c["transform"], **out)), 1920, 1080, 0)
 
     def test_corner_keeps_the_opposite_corner(self):
@@ -67,6 +72,23 @@ class ScaleDragTests(unittest.TestCase):
         self.assertAlmostEqual(out["scale_y"], 0.5, 3)          # a corner sets each freely
         out, _ = self.drag(picture(scale_link=False), (1, 1), (96, 0), Qt.KeyboardModifier.ShiftModifier)
         self.assertAlmostEqual(out["scale"], out["scale_y"], 4)  # Shift keeps the ratio
+
+    def test_asset_changes_its_size(self):
+        c = clip("c", 0, S)
+        c["asset"] = assets.make(assets.get("shape.rect"), "#ffffff", "", 1920, 1080)
+        c["transform"]["scale"] = 0.5                          # shown 200 x 200
+        before = Box(c, 1920, 1080, 0)
+        out, after = self.drag(c, (1, 0), (50, 0))             # right edge: 100 px of the clip's own
+        self.assertEqual(out["asset"], {"w": 500.0, "h": 400.0})
+        self.assertNotIn("scale", out["transform"])            # the scale stays
+        self.assertAlmostEqual(after.extents()[0], before.extents()[0], 1)
+        out, _ = self.drag(c, (1, 1), (50, 0))                 # corner: each side freely
+        self.assertEqual(out["asset"], {"w": 500.0, "h": 400.0})
+        out, _ = self.drag(c, (1, 1), (50, 0), Qt.KeyboardModifier.ShiftModifier)
+        self.assertEqual(out["asset"]["w"], out["asset"]["h"])
+        out, _ = self.drag(c, (1, 0), (50, 0), Qt.KeyboardModifier.AltModifier)
+        self.assertEqual(out["asset"]["w"], 600.0)              # about the centre: both sides
+        self.assertNotIn("transform", out)
 
     def test_rotated_anchor(self):
         c = picture(rotation=30.0)

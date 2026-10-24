@@ -132,12 +132,18 @@ the top of the tab paint the shapes and the 自訂 ones (alpha works too). Drag 
 timeline or double-click it (Alt + drop on a picture clip replaces its source). The clip
 keeps its parameters: select it and the inspector's 素材參數 sets its size in canvas pixels
 (寬 / 高), its colours and what its kind has: gradient type and angle, corner radius,
-polygon sides, star points and inner radius, filled or outline and outline width. Unlike
-other pictures it is not fitted to the canvas but drawn at that size, so resizing it keeps
-corners and outlines as they are (scaling stretches them). Solids and gradients start at
-the canvas's size, shapes at 400 px (on a 1080-high canvas). Each change draws an SVG into
-Media/.內建素材 (hidden from the media library; missing ones are drawn again when the
-project opens).
+polygon sides, star points and inner radius, filled or outline and outline width. Every
+one of them has a ◆ and keyframes like position or scale: sizes, angles and colours blend
+between keyframes (sides and points step), choices hold until the next one; the numbers
+also show in the curve editor. Unlike other pictures it is not fitted to the canvas but
+drawn at that size, so resizing it keeps corners and outlines as they are (scaling
+stretches them). On the preview its corner and edge squares change 寬 / 高 rather than
+the scale: an edge one side, a corner both (Shift keeps their ratio), the opposite edge or
+corner staying put (Alt: the centre). Solids and gradients start at the canvas's size,
+shapes at 400 px (on a 1080-high canvas). The preview and the export draw it from its
+parameters at every frame (an export with asset keyframes goes through KiaseCut's own
+renderer); the SVG written into Media/.內建素材 when it is made (hidden from the media
+library, drawn again if missing) only gives it a file like any picture.
 
 Replacing a clip's source (替換素材): hold Alt while dropping media (from the library, the
 Library tab or the 複合片段 tab) on a clip: the clip lights up with 替換素材, and on release

@@ -22,7 +22,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 
-from . import curves, fx, masks, project, svgimage, textlayout
+from . import assets, curves, fx, masks, project, svgimage, textlayout
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
@@ -50,6 +50,21 @@ class Renderer:
         self._fx_error = None
 
     # -- assets -----------------------------------------------------------------------------------
+    def asset(self, p, w, h):
+        """A built-in asset with parameters p (assets.at) drawn for about w x h px: at the next
+        power of two at or above it, so it stays sharp (as SVG files are)."""
+        side = 2 ** max(6, math.ceil(math.log2(max(w, h, 1))))
+        text = assets.svg(p)
+        key = ("asset", text, side)
+        im = self.images.get(key)
+        if im is None:
+            k = side / max(p["w"], p["h"], 1)
+            im = svgimage.raster_text(text, p["w"] * k, p["h"] * k)
+            if len(self.images) >= 48:
+                self.images.pop(next(iter(self.images)))
+            self.images[key] = im
+        return im
+
     def image(self, path, w, h):
         """The image at the smallest mip level at least w x h; the painter scales it the rest
         of the way (less than 2x, so bilinear stays clean). Decoding and smooth scaling happen
@@ -189,9 +204,11 @@ class Renderer:
             disp = (bw, bh)
         elif kind in ("image", "video"):
             m = c["media"]
-            bw, bh = project.picture_size(c, W, H)
+            bw, bh = project.picture_size(c, W, H, t=t)
             tw, th = bw * abs(sx) * px_per_unit, bh * abs(sy) * px_per_unit
-            if kind == "image":
+            if c.get("asset"):                       # drawn from its parameters at t
+                pic = self.asset(assets.at(c["asset"], t), tw, th)
+            elif kind == "image":
                 pic = self.image(m["path"], tw, th)
             else:
                 pic = self.video_frame(m["path"], c.get("source_start_us", 0) + t,

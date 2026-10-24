@@ -11,7 +11,7 @@ import math
 import time
 import uuid
 
-from . import curves, fx, project
+from . import assets, curves, fx, project
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -153,7 +153,7 @@ def source_length(c):
 def _params(c):
     """Every animatable parameter dict in a clip, for shifting keyframes."""
     out = []
-    for group in (c.get("transform"), c.get("mask"), c.get("text")):
+    for group in (c.get("transform"), c.get("mask"), c.get("text"), c.get("asset")):
         if group:
             out += [v for v in group.values() if curves.is_animated(v)]
     for key in ("volume", "blend"):
@@ -471,6 +471,8 @@ def _valid_key(c, group, key):
         return key in _effect(c, group[3:])["params"]
     if group.startswith("fxmask:"):
         return key in GROUP_FIELDS["mask"]
+    if group == "asset":
+        return bool(c.get("asset")) and key in assets.fields_of(c["asset"].get("family"))
     return key in GROUP_FIELDS.get(group, ())
 
 
@@ -497,6 +499,10 @@ def _holder(c, group):
         if not c.get("text"):
             raise EditError("not a text clip")
         return c["text"]
+    if group == "asset":
+        if not c.get("asset"):
+            raise EditError("not a built-in asset")
+        return c["asset"]
     return c.setdefault("transform", {})
 
 
@@ -574,6 +580,10 @@ def set_param(proj, clip_id, group, key, value, t=None):
     if group == "transform" and key == "scale_link":
         h[key] = bool(value)
         return c
+    if group == "asset":
+        if not _valid_key(c, group, key):
+            raise EditError(f"unknown asset field {key}")
+        value = assets.clean(key, value)
     _set_one(c, h, group, key, value, t)
     return c
 
@@ -677,7 +687,7 @@ def easing_at(p, t):
 def key_times(c):
     """Sorted clip-time positions of every keyframe in a clip."""
     times = set()
-    for group in ("transform", "mask", "text"):
+    for group in ("transform", "mask", "text", "asset"):
         for v in (c.get(group) or {}).values():
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
@@ -1010,17 +1020,6 @@ def replace_media(proj, clip_id, it, asset=None):
         _fit_source(c, it.get("duration_us"))
     if not c.get("named"):
         c["name"] = it.get("name") or c["media"]["path"].replace("\\", "/").rsplit("/", 1)[-1]
-    return c
-
-
-def set_asset(proj, clip_id, asset, path):
-    """Give a built-in asset clip (assets.py) new parameters: asset is its whole new dict,
-    path the SVG drawn from it."""
-    _, c = find(proj, clip_id)
-    if not c.get("asset"):
-        raise EditError("not a built-in asset")
-    c["asset"] = copy.deepcopy(asset)
-    c["media"] = {"path": path, "width": asset["w"], "height": asset["h"]}
     return c
 
 

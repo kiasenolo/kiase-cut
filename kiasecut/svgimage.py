@@ -6,7 +6,7 @@ for a raster at the size they need. Needs a Qt GUI application (the program alwa
 """
 import os
 
-from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtCore import QByteArray, QRectF, QSize, Qt
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtSvg import QSvgRenderer
 
@@ -22,7 +22,7 @@ def is_svg(path):
 def _renderer(path):
     r = QSvgRenderer(path)
     if not r.isValid():
-        raise ValueError(f"cannot read SVG {os.path.basename(path)}")
+        raise ValueError(f"cannot read SVG {os.path.basename(str(path))}")
     r.setAspectRatioMode(Qt.KeepAspectRatio)
     return r
 
@@ -38,6 +38,21 @@ def size(path):
         k = DEFAULT_PX / max(box.width(), box.height())
         return max(1, round(box.width() * k)), max(1, round(box.height() * k))
     return DEFAULT_PX, DEFAULT_PX
+
+
+def raster_text(text, w, h):
+    """SVG text drawn into a w x h transparent picture (ARGB32 premultiplied); built-in
+    assets (assets.svg) are drawn this way, from their parameters at each moment."""
+    k = min(1.0, MAX_PX / max(w, h, 1))
+    w, h = max(1, round(w * k)), max(1, round(h * k))
+    img = QImage(QSize(w, h), QImage.Format_ARGB32_Premultiplied)
+    img.fill(Qt.transparent)
+    p = QPainter(img)
+    p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+    r = QSvgRenderer(QByteArray(text.encode("utf-8")))
+    r.render(p, QRectF(0, 0, w, h))
+    p.end()
+    return img
 
 
 def raster(path, w, h=None):

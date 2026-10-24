@@ -24,7 +24,7 @@ from xml.sax.saxutils import escape
 import numpy as np
 from PIL import Image
 
-from . import curves, masks, project, svgimage, textlayout
+from . import assets, curves, masks, project, svgimage, textlayout
 
 US = 1_000_000
 TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
@@ -316,6 +316,17 @@ class Builder:
             os.replace(out + ".tmp.png", out)
         return out.replace("\\", "/")
 
+    def asset_svg(self, p):
+        """A built-in asset's SVG file, drawn from its parameters (static ones: an asset with
+        keyframes goes to renderexport, which draws every frame)."""
+        text = assets.svg(assets.at(p, 0))
+        out = os.path.join(self.cache, "proxy", _hash("asset", text) + ".svg")
+        if not os.path.exists(out):
+            with open(out + ".tmp", "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.replace(out + ".tmp", out)
+        return out.replace("\\", "/")
+
     def media_producer(self, path, kind, track):
         """One producer per media file per track; entries cut it with in/out. Opening a long
         recording once per clip made loading take ~30 s."""
@@ -365,10 +376,12 @@ class Builder:
         if t == "image":
             m = c["media"]
             bw, bh = project.picture_size(c, self.W, self.H, self.W / self.p["width"])
-            if svgimage.is_svg(m["path"]):
+            path = self.asset_svg(c["asset"]) if c.get("asset") else m["path"]
+            if svgimage.is_svg(path):
                 tf = c.get("transform", {})
                 zoom = max(curves.max_abs(tf.get("scale", 1.0)), curves.max_abs(tf.get("scale_y", 1.0)))
-                src = self.svg_png(m["path"], m["width"], m["height"], bw / m["width"] * max(1.0, zoom))
+                w, h = svgimage.size(path)
+                src = self.svg_png(path, w, h, bw / w * max(1.0, zoom))
             else:
                 src = self.proxy(m["path"], m["width"], m["height"])
             pid = self.media_producer(src, "image", track)

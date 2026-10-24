@@ -28,7 +28,7 @@ def thumbnail(a, c1, c2):
         for x in range(0, w, 6):
             if (x // 6 + y // 6) % 2:
                 p.fillRect(x, y, 6, 6, QColor("#38383d"))
-    r = QSvgRenderer(QByteArray(assets.svg(assets.make(a, c1, c2, 160, 90)).encode("utf-8")))
+    r = QSvgRenderer(QByteArray(assets.svg(assets.at(assets.make(a, c1, c2, 160, 90), 0)).encode("utf-8")))
     r.setAspectRatioMode(Qt.KeepAspectRatio)
     pad = 5 if a.cat == "shape" else 0
     r.render(p, QRectF(pad, pad, w - 2 * pad, h - 2 * pad))

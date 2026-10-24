@@ -278,7 +278,6 @@ class MainWindow(QMainWindow):
         self.inspector = Inspector()
         ins = self.inspector
         ins.textEdited.connect(self.on_text_edited)
-        ins.assetEdited.connect(self.on_asset_edited)
         ins.paramEdited.connect(self.on_param_edited)
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
@@ -1472,7 +1471,8 @@ class MainWindow(QMainWindow):
     def on_param_edited(self, ids, group, key, value):
         """A value typed in the inspector: set on every selected clip (each at its own
         playhead time, so keyframed ones get or edit the keyframe there)."""
-        label = "調整效果" if group.startswith("fx") else "調整" + self.PARAM_LABELS.get((group, key), "遮罩")
+        label = ("調整效果" if group.startswith("fx") else "調整素材" if group == "asset" else
+                 "調整" + self.PARAM_LABELS.get((group, key), "遮罩"))
         times = {cid: self.clip_time(cid) for cid in ids}
         self.apply_each(label, lambda lvl, cid: edit.set_param(lvl, cid, group, key, value, times[cid]), ids,
                         merge=("param", tuple(ids), group, key, round(times[ids[0]])))
@@ -1590,12 +1590,15 @@ class MainWindow(QMainWindow):
         t = self.clip_time(cid)
         if group == "mask":
             label = "遮罩"
+        elif group == "multi":                          # a built-in asset resized: size and place
+            label = "調整大小"
         else:
             label = "旋轉" if "rotation" in values else "縮放" if "scale" in values else "移動位置"
 
         def set_all(level):
-            for key, v in values.items():
-                edit.set_param(level, cid, group, key, v, t)
+            for g, vals in (values.items() if group == "multi" else [(group, values)]):
+                for key, v in vals.items():
+                    edit.set_param(level, cid, g, key, v, t)
 
         self.apply(label, set_all)
 
@@ -1892,23 +1895,6 @@ class MainWindow(QMainWindow):
             return c
         self.apply("加入內建素材", fn, select=lambda c: c["id"])
 
-    def on_asset_edited(self, ids, fields):
-        """素材參數 changed in the inspector: each clip gets its parameters with these fields and
-        a file drawn from them."""
-        level = self.container()
-        todo = {}
-        for cid in ids:
-            c = edit.find(level, cid)[1]
-            if c.get("asset"):
-                params = assets.updated(c["asset"], fields)
-                path = self.store_asset(params)
-                if path is None:
-                    return
-                todo[cid] = (params, path)
-        if todo:
-            self.apply_each("調整素材", lambda lvl, cid: edit.set_asset(lvl, cid, *todo[cid]), list(todo),
-                            merge=("asset", tuple(todo), tuple(sorted(fields))))
-
     def replace_source(self, ident, cid):
         """Media dropped on a clip with Alt held: the clip shows (or plays) it instead, keeping
         its place, length, look and keyframes."""
@@ -1969,24 +1955,28 @@ class MainWindow(QMainWindow):
         """While a clip or its mask is dragged on the canvas: draw it so without editing yet
         (a keyframed value shows as if its key held the new value)."""
         view = self.snapshot()
+        parts = list(values.items()) if group == "multi" else [(group, values)]
         for c in project.walk_clips(view["tracks"]):
             if c["id"] == cid:
-                holder = group_holder(c, group, create=True)
-                if group == "transform":
-                    values = edit.with_linked_scale(holder, values, self.playhead_us() - c["start_us"])
-                holder.update(values)
+                for i, (g, vals) in enumerate(parts):
+                    holder = group_holder(c, g, create=True)
+                    if g == "transform":
+                        vals = edit.with_linked_scale(holder, vals, self.playhead_us() - c["start_us"])
+                        parts[i] = (g, vals)
+                    holder.update(vals)
         self.player.worker.set_view(view, self.cache_dir())
         for panel in (self.inspector, self.mask_panel):         # the numbers follow the drag
-            panel.show_live(cid, group, values)
+            for g, vals in parts:
+                panel.show_live(cid, g, vals)
 
     def on_live_edit(self, ids, group, key, value):
         """A value being typed or scrubbed in the inspector: the preview shows it at once
         (the edit itself follows after a short pause)."""
-        if group == "asset" or key == "scale_link":
+        if key == "scale_link":
             return                                  # (drawn when the edit is made)
         view = self.snapshot()
         for c in project.walk_clips(view["tracks"]):
-            if c["id"] in ids:
+            if c["id"] in ids and (group != "asset" or c.get("asset")):
                 holder = group_holder(c, group, create=True)
                 if group == "transform":
                     holder.update(edit.with_linked_scale(holder, {key: value}, self.playhead_us() - c["start_us"]))

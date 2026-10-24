@@ -24,7 +24,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, fx
+from .. import assets, curves, edit, fx
 from .inspector import PARAMS, SpinBox
 
 US = 1_000_000
@@ -42,6 +42,9 @@ def param_rows(c):
     if c.get("transform") is not None:
         out += [("transform", r[0], r[1], r[6], r[7]) for r in PARAMS["transform"]
                 if r[0] != "scale_y" or "scale_y" in c["transform"]]       # (absent: Y follows X)
+    if c.get("asset"):                                  # a built-in asset's numbers (assets.py)
+        out += [("asset", f, "素材" + assets.FIELD_INFO[f][0], 1, assets.clean(f, None))
+                for f in assets.fields_of(c["asset"].get("family")) if assets.FIELD_INFO[f][1] == "number"]
     if c.get("text"):
         out += [("text", r[0], r[1], r[6], r[7]) for r in PARAMS["text"]]
         out.append(("text", "color", "文字顏色", 1, [1.0, 1.0, 1.0]))

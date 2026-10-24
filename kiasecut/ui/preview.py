@@ -5,7 +5,9 @@ other visible clips' centres and edges; Alt moves freely), drag a corner or edge
 scale it with the opposite corner / edge staying put (Alt: about its centre), drag the round
 handle above it to rotate (Shift: 15° steps; it also settles on 0 / 90 / 180 / 270). With X / Y
 scale linked a corner or an edge keeps their ratio; unlinked, a corner sets both freely (Shift
-keeps the ratio) and an edge only its own axis.
+keeps the ratio) and an edge only its own axis. A built-in asset (assets.py) is resized instead:
+its 寬 / 高 change and its scale stays (an edge changes one side, a corner both, Shift keeps
+their ratio); that drag reports group "multi": {"asset": {w, h}, "transform": {x, y}}.
 
 Mask mode (`mask_mode`, while the 遮罩 tab is open) edits only masks: the clip itself
 cannot be moved, scaled or turned there, and a click on another clip just selects it. The
@@ -57,7 +59,7 @@ def base_size(c, W, H, t):
     if c["type"] == "compound":
         w, h = c["compound"]["width"], c["compound"]["height"]
     elif c.get("media", {}).get("width"):
-        return project.picture_size(c, W, H)
+        return project.picture_size(c, W, H, t=t)
     else:
         w, h = W, H
     k = min(W / w, H / h)
@@ -318,8 +320,9 @@ class Preview(QWidget):
             return box
         group, vals = self.live
         c = json.loads(json.dumps(box.clip))
-        holder = c.setdefault(group, {}) if group != "clip" else c
-        holder.update(edit.with_linked_scale(holder, vals, box.t) if group == "transform" else vals)
+        for g, v in (vals.items() if group == "multi" else [(group, vals)]):
+            holder = c.setdefault(g, {}) if g != "clip" else c
+            holder.update(edit.with_linked_scale(holder, v, box.t) if g == "transform" else v)
         return Box(c, self.W, self.H, box.t)
 
     def masking(self, box):
@@ -595,7 +598,7 @@ class Preview(QWidget):
                                  "y": round((self.H / 2 - (box.cy + dy)) / (self.H / 2), 5)}
         c = QPointF(box.cx, box.cy)
         if kind == "scale":
-            return "transform", self._scale_values(box, d, m, e.modifiers())
+            return self._scale_values(box, d, m, e.modifiers())
         if kind == "rotate":
             a0 = math.degrees(math.atan2(d["m0"].y() - c.y(), d["m0"].x() - c.x()))
             a1 = math.degrees(math.atan2(m.y() - c.y(), m.x() - c.x()))
@@ -629,9 +632,9 @@ class Preview(QWidget):
         return "mask", self._snap_mask(kind, out, g, box, bool(e.modifiers() & Qt.AltModifier))
 
     def _scale_values(self, box, d, m, mods):
-        """Transform values of a drag of scale handle d["side"] to canvas point m (see the
-        module notes): scale, scale_y and, unless Alt holds the centre, x / y so that the
-        opposite corner or edge stays where it is."""
+        """(group, values) of a drag of scale handle d["side"] to canvas point m (see the
+        module notes): scale, scale_y - or a built-in asset's w / h - and, unless Alt holds
+        the centre, x / y so that the opposite corner or edge stays where it is."""
         sx, sy = d["side"]
         centre = bool(mods & Qt.AltModifier)
         lx0, ly0 = box.to_local(d["m0"])
@@ -642,22 +645,32 @@ class Preview(QWidget):
         kx = (px - ax) / (hx - ax) if sx and hx != ax else 1.0
         ky = (py - ay) / (hy - ay) if sy and hy != ay else 1.0
         tf = box.clip.get("transform") or {}
-        if edit.linked(tf) or (sx and sy and mods & Qt.ShiftModifier):
+        asset = box.clip.get("asset")
+        if (edit.linked(tf) and not asset) or (sx and sy and mods & Qt.ShiftModifier):
             if sx and sy:                                      # along the diagonal
                 vx, vy = hx - ax, hy - ay
                 kx = ky = ((px - ax) * vx + (py - ay) * vy) / ((vx * vx + vy * vy) or 1.0)
             else:
                 kx = ky = kx if sx else ky
-        scale = lambda s, k: math.copysign(max(0.01, abs(s * k)), s or 1.0)
-        ns, nsy = scale(box.s, kx), scale(box.sy, ky)
-        out = {"scale": round(ns, 4), "scale_y": round(nsy, 4)}
-        if not centre:
+        if asset:                                              # its own size changes, not the scale
+            w0, h0 = box.bw, box.bh
+            nw, nh = max(1.0, w0 * kx), max(1.0, h0 * ky)
+            kx, ky = nw / w0, nh / h0
+            vals = {"asset": {"w": round(nw, 1), "h": round(nh, 1)}, "transform": {}}
+            out = vals["transform"]
+        else:
+            scale = lambda s, k: math.copysign(max(0.01, abs(s * k)), s or 1.0)
+            ns, nsy = scale(box.s, kx), scale(box.sy, ky)
+            out = vals = {"scale": round(ns, 4), "scale_y": round(nsy, 4)}
             kx, ky = ns / box.s if box.s else 1.0, nsy / box.sy if box.sy else 1.0
+        if not centre:
             dx, dy = ax - ax * kx, ay - ay * ky                    # the anchor's move, cancelled
             c, s = math.cos(box.rot), math.sin(box.rot)
             cx, cy = box.cx + dx * c - dy * s, box.cy + dx * s + dy * c
             out.update(x=round((cx - self.W / 2) / (self.W / 2), 5), y=round((self.H / 2 - cy) / (self.H / 2), 5))
-        return out
+        if asset and not out:
+            del vals["transform"]
+        return ("multi" if asset else "transform"), vals
 
     def mouseMoveEvent(self, e):
         d = self.drag

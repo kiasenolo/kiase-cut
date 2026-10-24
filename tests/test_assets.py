@@ -1,5 +1,6 @@
 """Built-in assets (內建素材): every preset makes a valid SVG of its size, parameters can be
-edited, asset clips are drawn at their own size; X / Y scale, linked and not."""
+edited and keyframed, asset clips are drawn at their own size from their parameters; X / Y
+scale, linked and not."""
 import os
 import shutil
 import sys
@@ -16,6 +17,11 @@ from kiasecut import assets, curves, edit, library, project, svgimage  # noqa: E
 from test_edit import S, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
+
+
+def changed(p, **fields):
+    """Asset parameters p with some fields set (as the inspector would)."""
+    return assets.normalize(dict(p, **fields))
 
 
 def pixel(path, x, y, w):
@@ -43,7 +49,7 @@ class AssetTests(unittest.TestCase):
                                    for y in range(0, img.height(), 2)), 0, a.key)
             for out in (True, False):                     # outlines too
                 if "outline" in p:
-                    q = assets.updated(p, {"outline": out, "stroke": 30, "w": 300, "h": 120})
+                    q = changed(p, outline=out, stroke=30, w=300, h=120)
                     self.assertTrue(svgimage.size(assets.store(self.dir, q)) == (300, 120), a.key)
 
     def test_colours_and_parameters(self):
@@ -51,36 +57,39 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(pixel(assets.store(self.dir, p), 8, 4, 16).name(), "#ff0000")
         red = assets.make(assets.get("solid.3"), "#00ff00", "#000000", 16, 9)   # a preset keeps its colour
         self.assertEqual(pixel(assets.store(self.dir, red), 8, 4, 16).name(), "#e53935")
-        g = assets.updated(assets.make(assets.get("gradient.custom.0"), "#000000", "#ffffff", 100, 10), {})
+        g = assets.make(assets.get("gradient.custom.0"), "#000000", "#ffffff", 100, 10)
         self.assertLess(pixel(assets.store(self.dir, g), 2, 5, 100).red(), 30)
         self.assertGreater(pixel(assets.store(self.dir, g), 97, 5, 100).red(), 225)
-        flipped = assets.updated(g, {"angle": 180})
+        flipped = changed(g, angle=180)
         self.assertGreater(pixel(assets.store(self.dir, flipped), 2, 5, 100).red(), 225)
-        ring = assets.updated(assets.make(assets.get("shape.circle"), "#ffffff", "", 1920, 1080),
-                              {"w": 100, "h": 100, "outline": True, "stroke": 10})
+        ring = changed(assets.make(assets.get("shape.circle"), "#ffffff", "", 1920, 1080),
+                       w=100, h=100, outline=True, stroke=10)
         self.assertEqual(pixel(assets.store(self.dir, ring), 50, 50, 100).alpha(), 0)    # hollow
         self.assertEqual(pixel(assets.store(self.dir, ring), 50, 3, 100).alpha(), 255)
-        disc = assets.updated(ring, {"outline": False})
+        disc = changed(ring, outline=False)
         self.assertEqual(pixel(assets.store(self.dir, disc), 50, 50, 100).alpha(), 255)
 
     def test_normalize(self):
-        p = assets.updated(assets.make(assets.get("shape.star"), "#fff", "", 1920, 1080),
-                           {"points": 99, "w": -5, "color": "nope", "radius": 3})
-        self.assertEqual((p["points"], p["w"], p["color"]), (24, 1, "#ffffff"))
+        p = changed(assets.make(assets.get("shape.star"), "#fff", "", 1920, 1080),
+                    points=99, w=-5, color="nope", radius=3)
+        self.assertEqual((p["points"], p["w"], p["color"]), (24, 1, [1.0, 1.0, 1.0, 1.0]))
         self.assertNotIn("radius", p)                     # stars have no corners
+        self.assertEqual(assets.at(p, 0)["color"], "#ffffff")
+        self.assertEqual(assets.to_rgba("#ff000080")[3], 128 / 255)
+        self.assertEqual(assets.hex_of([1, 0, 0, 0.5]), "#ff000080")
 
     def test_store_reuses(self):
         p = assets.make(assets.get("shape.circle"), "#ffffff", "#000000", 1920, 1080)
         a, b = assets.store(self.dir, p), assets.store(self.dir, dict(p))
         self.assertEqual(a, b)
-        self.assertNotEqual(a, assets.store(self.dir, assets.updated(p, {"w": 401})))
+        self.assertNotEqual(a, assets.store(self.dir, changed(p, w=401)))
         self.assertEqual(len(os.listdir(os.path.join(self.dir, assets.FOLDER))), 2)
 
     def test_restore(self):
         p = assets.make(assets.get("shape.heart"), "#ff0000", "", 1920, 1080)
         c = {"id": "c", "asset": p, "media": {"path": "/gone/heart.svg", "width": 1, "height": 1}}
-        changed = assets.restore([c], self.dir)
-        self.assertEqual(changed[0][0], "/gone/heart.svg")
+        moved = assets.restore([c], self.dir)
+        self.assertEqual(moved[0][0], "/gone/heart.svg")
         self.assertTrue(os.path.exists(c["media"]["path"]))
         self.assertEqual((c["media"]["width"], c["media"]["height"]), (400, 400))
         self.assertEqual(assets.restore([c], self.dir), [])
@@ -100,14 +109,64 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(c["asset"]["family"], "rect")
         self.assertEqual(project.picture_size(c, 1920, 1080), (400, 400))      # own size, not fitted
         self.assertEqual(project.picture_size(c, 1920, 1080, 2.0), (800, 800))
-        q = assets.updated(params, {"w": 600})
-        edit.set_asset(p, "c1", q, "/b.svg")
-        self.assertEqual((c["media"]["path"], c["media"]["width"]), ("/b.svg", 600))
+        edit.set_param(p, "c1", "asset", "w", 600, 0)
+        self.assertEqual(project.picture_size(c, 1920, 1080), (600, 400))
+        edit.set_param(p, "c1", "asset", "radius", 99999, 0)                 # kept in range
+        self.assertEqual(c["asset"]["radius"], assets.FIELD_INFO["radius"][3])
+        edit.set_param(p, "c1", "asset", "color", "#00ff00", 0)
+        self.assertEqual(c["asset"]["color"], [0.0, 1.0, 0.0, 1.0])
+        with self.assertRaises(edit.EditError):
+            edit.set_param(p, "c1", "asset", "points", 5, 0)                 # a rectangle has none
         edit.replace_media(p, "c1", {"kind": "image", "path": "/x.png", "width": 100, "height": 50})
         self.assertNotIn("asset", c)
         self.assertEqual(project.picture_size(c, 1920, 1080), (1920, 960))
         with self.assertRaises(edit.EditError):
-            edit.set_asset(p, "c1", q, "/b.svg")
+            edit.set_param(p, "c1", "asset", "w", 600, 0)
+
+    def test_keyframes(self):
+        from kiasecut import renderexport
+        p = proj()
+        params = assets.make(assets.get("shape.rect"), "#ff0000", "", 1920, 1080)
+        edit.replace_media(p, "c1", assets.item(params, "/a.svg"), params)
+        c = edit.find(p, "c1")[1]
+        self.assertFalse(renderexport.needs_renderer(p))
+        for g, k in (("asset", "w"), ("asset", "color")):
+            edit.toggle_key(p, "c1", g, k, 0)
+        edit.set_param(p, "c1", "asset", "w", 800, S)                     # a second key at 1 s
+        edit.set_param(p, "c1", "asset", "color", [0, 0, 1, 1], S)
+        self.assertEqual(project.picture_size(c, 1920, 1080, t=S // 2), (600, 400))
+        self.assertEqual(assets.at(c["asset"], S)["color"], "#0000ff")
+        self.assertEqual(edit.key_times(c), [0, S])                       # shown on the timeline
+        self.assertTrue(renderexport.needs_renderer(p))                    # MLT cannot animate it
+        for t in (S, 0):                                                   # the last key goes: a value again
+            edit.toggle_key(p, "c1", "asset", "color", t)
+        self.assertEqual(c["asset"]["color"], [1.0, 0.0, 0.0, 1.0])
+        right = edit.split(p, "c1", S // 2)                                # keys follow a split
+        self.assertEqual(project.picture_size(right, 1920, 1080), (600, 400))
+
+    def test_drawn_from_parameters(self):
+        from kiasecut import render
+        p = proj()
+        p["tracks"][0]["clips"] = p["tracks"][0]["clips"][:1]
+        params = assets.make(assets.get("solid.custom"), "#ff0000", "", 1920, 1080)
+        edit.replace_media(p, "c1", assets.item(params, "/nowhere.svg"), params)   # no file needed
+        edit.toggle_key(p, "c1", "asset", "color", 0)
+        edit.set_param(p, "c1", "asset", "color", [0, 0, 1, 1], S)
+        r = render.Renderer()
+        fps = p["fps"]
+        a = r.render(p, 0, 64, 36).pixelColor(32, 18)
+        b = r.render(p, round(fps), 64, 36).pixelColor(32, 18)
+        self.assertEqual((a.red(), a.blue()), (255, 0))
+        self.assertEqual((b.red(), b.blue()), (0, 255))
+        self.assertFalse(r.errors)
+
+    def test_export_static_asset(self):
+        from kiasecut import build
+        p = proj()
+        params = assets.make(assets.get("shape.star"), "#ff0000", "", 1920, 1080)
+        edit.replace_media(p, "c1", assets.item(params, "/nowhere.svg"), params)
+        doc = build.Builder(p, self.dir).document()                       # drawn from the parameters
+        self.assertIn(".png", doc)
 
     def test_panel(self):
         from kiasecut.ui.assets_panel import AssetsPanel
@@ -125,20 +184,27 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(got, ["asset:shape.rect:#ff0000:#00ff00"])
 
     def test_inspector(self):
-        from kiasecut.ui.inspector import Inspector
+        from kiasecut.ui.inspector import KEY_ON, Inspector
         p = proj()
         params = assets.make(assets.get("shape.star"), "#ff0000", "", 1920, 1080)
         edit.replace_media(p, "c1", assets.item(params, "/a.svg"), params)
         ins = Inspector()
-        got = []
-        ins.assetEdited.connect(lambda ids, f: got.append((ids, f)))
-        ins.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        got, keys = [], []
+        ins.paramEdited.connect(lambda ids, g, k, v: got.append((ids, g, k, v)))
+        ins.keyToggled.connect(lambda ids, g, k: keys.append((g, k)))
+        c = edit.find(p, "c1")[1]
+        ins.show_clips([c], 0, 30)
         self.assertEqual(ins.widgets[("asset", "points")].value(), 5)
         self.assertEqual(ins.widgets[("asset", "color")].text(), "#ff0000")
         self.assertTrue(ins.widgets["scale_link"].isChecked())
         ins.widgets[("asset", "w")].setValue(640)
         ins._flush()
-        self.assertEqual(got, [(["c1"], {"w": 640.0})])
+        self.assertEqual(got, [(["c1"], "asset", "w", 640.0)])
+        ins.widgets[("key", "asset", "points")].click()
+        self.assertEqual(keys, [("asset", "points")])
+        edit.toggle_key(p, "c1", "asset", "points", 0)
+        ins.show_clips([c], 0, 30)
+        self.assertEqual(ins.widgets[("key", "asset", "points")].text(), KEY_ON)
         ins.show_clips([edit.find(p, "c2")[1]], 0, 30)     # a plain picture: no asset section
         self.assertNotIn(("asset", "w"), ins.widgets)
 

@@ -20,9 +20,15 @@ The selected clip shows its keyframes as diamonds along its bottom edge; drag on
 to move every keyframe at that time (it snaps to frames and to the playhead), click it to
 go there.
 
+Sound clips have a volume line (as in Jianying): drag it up or down to change the clip's
+volume (with volume keyframes, all of them change together); the keyframes are points on
+the line that can be dragged up / down (value) and sideways (time). The line's height is
+in dB: the top is +20 dB (1000 %), 0 dB (100 %) two thirds of the way up.
+
 Audio and video clips show their waveform (scaled by the clip volume and fades). Track
 headers have mute / solo buttons (sound) and a hide button (pictures).
 """
+import copy
 import math
 
 import numpy as np
@@ -53,6 +59,7 @@ class Timeline(QWidget):
     groupMoveRequested = Signal(list, int)           # clip ids, shift us
     keyMoveRequested = Signal(str, int, int)         # clip id, keyframe clip time from, to (us)
     marksChanged = Signal()                          # the time selection (mark_in / mark_out) changed
+    volumeEdited = Signal(str, object)               # clip id, new volume (number or {"keys": ...})
     moveRequested = Signal(str, int, str)            # clip id, start us, track id
     trimRequested = Signal(str, str, int)            # clip id, "start" | "end", time us
     trackAction = Signal(str, str)                   # action, track id
@@ -73,6 +80,7 @@ class Timeline(QWidget):
         self._primary = None
         self.selected_ids = set()
         self.band = None                           # selection box (QRectF) while dragging
+        self.snapping = True                       # 自動吸附: moves / trims snap to edges and the playhead
         self.rows = []
         self.drag = None
         self.mark_in = self.mark_out = None        # export range, frames
@@ -163,10 +171,11 @@ class Timeline(QWidget):
         self.clipSelected.emit(clip)
         self.update()
 
-    def set_position(self, frame):
+    def set_position(self, frame, follow=True):
+        """Move the playhead; with follow, scroll so it stays in view (playback, keys)."""
         self.pos = frame
         x = self._x(frame / self.fps)
-        if x > self.width() - 30 or x < HEADER_W:         # keep the playhead in view
+        if follow and (x > self.width() - 30 or x < HEADER_W):
             self.scroll_s = max(0.0, frame / self.fps - (self.width() - HEADER_W) * 0.2 / self.px_per_s)
         self.update()
 
@@ -271,7 +280,9 @@ class Timeline(QWidget):
 
     def _snap(self, t_us, exclude):
         """Snap a time to the playhead / 0 / clip edges within SNAP_PX; exclude is a clip or
-        a set of clip ids (a moving group)."""
+        a set of clip ids (a moving group). With snapping off, times are left as they are."""
+        if not self.snapping:
+            return t_us
         best, limit = t_us, SNAP_PX / self.px_per_s * US
         cands = [0, self.pos / self.fps * US]
         for tr in self.rows:
@@ -505,6 +516,9 @@ class Timeline(QWidget):
             elif c["type"] == "video" and r.height() >= 24:
                 lr.setBottom(wt - 1 if r.height() > 40 else r.bottom() - 9)
             p.drawText(lr, Qt.AlignVCenter, label)
+        row = next((i for i, t in enumerate(self.rows) if c in t["clips"]), None)
+        if row is not None and not ghost and abs(self.tops[row] - y) < 0.5:
+            self._draw_volume(p, c, row, r)
         if c["id"] == self.selected_id and not ghost:
             # keyframes of the selected clip, as diamonds along its bottom edge
             d = self.drag if self.drag and self.drag["mode"] == "key" and self.drag["clip"] is c else None
@@ -516,6 +530,93 @@ class Timeline(QWidget):
                     ky = r.bottom() - 5
                     p.setBrush(QColor("#ffffff") if moving else QColor("#ffb020"))
                     p.drawPolygon([QPointF(kx, ky - 5), QPointF(kx + 5, ky), QPointF(kx, ky + 5), QPointF(kx - 5, ky)])
+
+    # -- volume line ----------------------------------------------------------------------------
+    DB_LO, DB_HI = -40.0, 20.0
+
+    def _vol_band(self, c, row):
+        """(top, bottom) of the area the volume line moves in, or None (no line on this clip)."""
+        if "volume" not in c or c["type"] not in ("audio", "video"):
+            return None
+        h = self.row_h(row)
+        top, bottom = self.tops[row] + 5, self.tops[row] + h - 7       # the clip's whole height
+        if c["type"] == "video" and h < 44 or bottom - top < 10:
+            return None
+        return top, bottom
+
+    def _vol_y(self, g, band):
+        db = 20 * math.log10(g) if g > 1e-5 else self.DB_LO
+        f = (min(max(db, self.DB_LO), self.DB_HI) - self.DB_LO) / (self.DB_HI - self.DB_LO)
+        return band[1] - f * (band[1] - band[0])
+
+    def _vol_of_y(self, y, band):
+        f = (band[1] - y) / max(1.0, band[1] - band[0])
+        db = self.DB_LO + min(max(f, 0.0), 1.0) * (self.DB_HI - self.DB_LO)
+        return 0.0 if f <= 0 else 10 ** (db / 20)
+
+    def _volume(self, c):
+        """The clip's volume, or the one being dragged."""
+        d = self.drag
+        if d and d["mode"] in ("vol", "volkey") and d["clip"] is c:
+            return d["vol"]
+        return c.get("volume", 1.0)
+
+    def _vol_hit(self, pos):
+        """("vol" | "volkey", clip, row, key index) under pos, or None."""
+        row = self._row_at(pos.y())
+        if row is None or pos.x() < HEADER_W:
+            return None
+        for c in self.rows[row]["clips"]:
+            band = self._vol_band(c, row)
+            x0, x1 = self._x(c["start_us"] / US), self._x((c["start_us"] + c["duration_us"]) / US)
+            if band is None or not x0 + EDGE_PX <= pos.x() <= x1 - EDGE_PX:
+                continue
+            vol = c.get("volume", 1.0)
+            if curves.is_animated(vol):
+                for i, k in enumerate(vol["keys"]):
+                    kx = self._x((c["start_us"] + k[0]) / US)
+                    if abs(pos.x() - kx) <= 5 and abs(pos.y() - self._vol_y(k[1], band)) <= 5:
+                        return "volkey", c, row, i
+            t = (self._sec(pos.x()) * US) - c["start_us"]
+            if abs(pos.y() - self._vol_y(curves.value(vol, t), band)) <= 4:
+                return "vol", c, row, None
+        return None
+
+    def _draw_volume(self, p, c, row, r):
+        band = self._vol_band(c, row)
+        if band is None:
+            return
+        vol = self._volume(c)
+        x0, x1 = max(r.left(), HEADER_W), min(r.right(), self.width())
+        p.save()
+        p.setClipRect(r)
+        p.setPen(QPen(QColor("#e6e6e6"), 1.4))
+        if curves.is_animated(vol):
+            pts = []
+            x = x0
+            while True:
+                t = self._sec(x) * US - c["start_us"]
+                pts.append(QPointF(x, self._vol_y(curves.value(vol, t), band)))
+                if x >= x1:
+                    break
+                x = min(x + 3, x1)
+            p.drawPolyline(QPolygonF(pts))
+            p.setPen(QPen(QColor("#111114"), 1))
+            p.setBrush(QColor("#ffb020"))
+            for k in vol["keys"]:
+                kx = self._x((c["start_us"] + k[0]) / US)
+                if x0 - 4 <= kx <= x1 + 4:
+                    p.drawEllipse(QPointF(kx, self._vol_y(k[1], band)), 3.5, 3.5)
+        else:
+            y = self._vol_y(curves.value(vol, 0), band)
+            p.drawLine(QPointF(x0, y), QPointF(x1, y))
+        d = self.drag
+        if d and d["mode"] in ("vol", "volkey") and d["clip"] is c and d["moved"]:
+            g = d["shown"]
+            text = "-∞ dB" if g <= 1e-5 else f"{20 * math.log10(g):+.1f} dB"
+            p.setPen(QColor("#ffffff"))
+            p.drawText(QRectF(d["x"] + 8, band[0] - 2, 90, 14), Qt.AlignLeft | Qt.AlignVCenter, text)
+        p.restore()
 
     # -- mouse ----------------------------------------------------------------------------------
     def _key_hit(self, pos):
@@ -562,6 +663,16 @@ class Timeline(QWidget):
                         self.trackAction.emit("toggle:" + flag, self.rows[row]["id"])
             return
         pos = e.position()
+        vh = self._vol_hit(pos) if not e.modifiers() else None
+        if vh is not None:
+            kind, c, row, i = vh
+            self.select(c)
+            vol = copy.deepcopy(c.get("volume", 1.0))
+            self.drag = {"clip": c, "mode": kind, "row": row, "i": i, "y0": pos.y(), "x0": pos.x(), "x": pos.x(),
+                         "orig": copy.deepcopy(vol), "vol": vol, "moved": False,
+                         "shown": curves.value(vol, self._sec(pos.x()) * US - c["start_us"]) if i is None
+                         else vol["keys"][i][1]}
+            return
         kc, kt = self._key_hit(pos)
         if kc is not None and not e.modifiers():
             self.drag = {"clip": kc, "mode": "key", "t0": kt, "t": kt, "x0": pos.x(), "moved": False}
@@ -603,6 +714,10 @@ class Timeline(QWidget):
             if self.proj and self._key_hit(pos)[0] is not None:
                 self.setCursor(Qt.SizeHorCursor)
                 return
+            vh = self._vol_hit(pos) if self.proj else None
+            if vh is not None:
+                self.setCursor(Qt.SizeAllCursor if vh[0] == "volkey" else Qt.SizeVerCursor)
+                return
             _, c, zone = self._hit(pos) if self.proj else (None, None, None)
             self.setCursor(Qt.SizeHorCursor if zone in ("start", "end") else Qt.ArrowCursor)
             return
@@ -617,6 +732,34 @@ class Timeline(QWidget):
             self.marksChanged.emit()
             self.update()
             return
+        if d["mode"] in ("vol", "volkey"):
+            if not d["moved"] and abs(pos.y() - d["y0"]) + abs(pos.x() - d["x0"]) < DRAG_PX:
+                return
+            d["moved"] = True
+            d["x"] = pos.x()
+            band = self._vol_band(d["clip"], d["row"])
+            c, orig = d["clip"], d["orig"]
+            if d["mode"] == "vol":                         # the whole volume, in dB steps
+                db = -(pos.y() - d["y0"]) / max(1.0, band[1] - band[0]) * (self.DB_HI - self.DB_LO)
+                k = 10 ** (db / 20)
+                clamp = lambda g: min(10.0, max(0.0, g * k))
+                if curves.is_animated(orig):
+                    d["vol"] = {"keys": [[q[0], clamp(q[1])] + q[2:] for q in orig["keys"]]}
+                    d["shown"] = clamp(curves.value(orig, self._sec(d["x0"]) * US - c["start_us"]))
+                else:
+                    d["vol"] = d["shown"] = clamp(curves.value(orig, 0))
+            else:                                          # one keyframe: value and time
+                keys = [list(q) for q in orig["keys"]]
+                i = d["i"]
+                frame = US / self.fps
+                t = keys[i][0] + (pos.x() - d["x0"]) / self.px_per_s * US
+                lo = keys[i - 1][0] + frame if i > 0 else 0
+                hi = keys[i + 1][0] - frame if i + 1 < len(keys) else c["duration_us"]
+                keys[i][0] = int(min(max(round(t / frame) * frame, lo), hi))
+                keys[i][1] = min(10.0, self._vol_of_y(self._vol_y(orig["keys"][i][1], band) + pos.y() - d["y0"], band))
+                d["vol"], d["shown"] = {"keys": keys}, keys[i][1]
+            self.update()
+            return
         if d["mode"] == "key":
             if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX:
                 return
@@ -626,7 +769,8 @@ class Timeline(QWidget):
             t = d["t0"] + (pos.x() - d["x0"]) / self.px_per_s * US
             g = c["start_us"] + t                                   # snap on the timeline's frames
             play = self.pos / self.fps * US
-            g = play if abs(g - play) < SNAP_PX / self.px_per_s * US else round(g / frame) * frame
+            snap = self.snapping and abs(g - play) < SNAP_PX / self.px_per_s * US
+            g = play if snap else round(g / frame) * frame
             others = [k for k in edit.key_times(c) if abs(k - d["t0"]) > edit.KEY_TOL_US]
             lo = max([k + frame for k in others if k < d["t0"]], default=0)
             hi = min([k - frame for k in others if k > d["t0"]], default=c["duration_us"])
@@ -711,6 +855,11 @@ class Timeline(QWidget):
             if not d["moved"]:
                 self._menu(e.position().toPoint(), e.globalPosition().toPoint())
             return
+        if d and d["mode"] in ("vol", "volkey"):
+            if d["moved"]:
+                self.volumeEdited.emit(d["clip"]["id"], d["vol"])
+            self.update()
+            return
         if d and d["mode"] == "key":
             if d["moved"] and d["t"] != d["t0"]:
                 self.keyMoveRequested.emit(d["clip"]["id"], int(d["t0"]), int(d["t"]))
@@ -735,13 +884,11 @@ class Timeline(QWidget):
                 self.groupMoveRequested.emit(sorted(d["ids"]), int(round(d["shift"])))
             elif not d["moved"] and not d["adding"]:
                 self.select(d["clip"])                  # a plain click picks one of the group
-                self.seekRequested.emit(max(0, round(self._sec(e.position().x()) * self.fps)))
             self.update()
             return
         c = d["clip"]
-        if not d["moved"]:
-            self.seekRequested.emit(max(0, round(self._sec(e.position().x()) * self.fps)))
-            self.update()
+        if not d["moved"]:                              # clicking a clip only selects it (as in
+            self.update()                               # Jianying): the playhead stays put
             return
         if d["mode"] == "body" and d.get("new"):
             self.newTrackRequested.emit(c["id"], int(round(d["start"])), d["new"] == "top")

@@ -62,8 +62,10 @@ class Mixer:
         self.lock = threading.Lock()
         self.queue = []
         self.thread = None
+        self.master = 1.0                     # the project's master volume
 
     def set_view(self, view):
+        self.master = float(view.get("master_gain", 1.0))
         srcs = sources(view["tracks"])
         with self.lock:
             for s in srcs:
@@ -137,4 +139,4 @@ class Mixer:
             lo, hi = max(i0, 0), min(i0 + n, len(s.pcm))
             if hi > lo:
                 acc[lo - i0:hi - i0] += s.pcm[lo:hi] * g
-        return np.clip(acc, -32768, 32767).astype(np.int16).tobytes()
+        return np.clip(acc * self.master, -32768, 32767).astype(np.int16).tobytes()

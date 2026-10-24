@@ -431,6 +431,10 @@ class Builder:
     def document(self):
         total = self.fr(self.p["duration_us"])
         main = self.tractor(self.p["tracks"], 0, (0, total))
+        master = float(self.p.get("master_gain", 1.0))
+        if abs(master - 1.0) > 1e-6:                  # the master volume, on the whole mix
+            self.xml[-1] = self.xml[-1].replace("</tractor>", self.filt("volume", {"gain": f"{master:.5f}"})
+                                                + "</tractor>")
         fps_num = round(self.fps * 1000)
         profile = (f'<profile description="{self.W}x{self.H} {self.fps:g}fps" width="{self.W}" '
                    f'height="{self.H}" frame_rate_num="{fps_num}" frame_rate_den="1000" '

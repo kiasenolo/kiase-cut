@@ -8,6 +8,8 @@ from the mixer goes to a QAudioSink whose buffer paces the loop, so audio is the
 import threading
 import time
 
+import numpy as np
+
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
@@ -23,6 +25,7 @@ class Worker(QObject):
     loaded = Signal(dict)
     failed = Signal(str)
     stateChanged = Signal(bool)
+    levels = Signal(float, float)       # left / right peak (0..1) of each played frame
 
     def __init__(self):
         super().__init__()
@@ -149,6 +152,10 @@ class Worker(QObject):
     def _play_one(self, out, sink):
         self._show(self.pos)
         pcm = self.mixer.mix(self.pos, self.view["fps"])
+        a = np.frombuffer(pcm, np.int16).reshape(-1, CHANNELS)
+        if len(a):
+            peak = np.abs(a.astype(np.int32)).max(axis=0) / 32768.0
+            self.levels.emit(float(peak[0]), float(peak[-1]))
         if out is not None:
             view = memoryview(pcm)
             while view:

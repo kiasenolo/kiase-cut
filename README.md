@@ -18,7 +18,10 @@ python -m tesetoa project.tesetoa.json         # open a saved project
 Space play/pause · ←/→ step a frame · Home/End · Ctrl+I import · Ctrl+S save · Ctrl+E export.
 
 Editing: drag a clip to move it (also onto another track of the same kind), drag its
-edges to trim; moves and trims snap to the playhead and clip edges. Ctrl+B splits the
+edges to trim; moves and trims snap to the playhead and clip edges while 吸附 (N, in the
+timeline toolbar) is on, as Jianying's auto-snap. Clicking a clip only selects it: the
+playhead and the view stay where they are (the view follows the playhead during playback
+and for jumps such as Home / End / keyframes). Ctrl+B splits the
 selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a text,
 Ctrl+Z / Ctrl+Y undo and redo. Right-click a track header or clip to rename it or give it
 a colour (double-click a track name to rename).
@@ -27,6 +30,16 @@ Time selection, as in FL Studio: drag with the right button anywhere on the time
 select a span (it snaps to clip edges and the playhead); playback starts at it and loops
 inside it, and a marked export uses it. Ctrl+Shift+D (or Alt+X) clears it; a right click
 without dragging opens the menu. I / O still set its ends at the playhead.
+
+Volume line: every sound clip shows a line at its volume (in dB: 0 dB two thirds up, +20 dB
+at the top), following its volume keyframes, which are points on it. Drag the line up or
+down to change the clip's volume (keyframed clips: all keyframes together, in dB); drag a
+point to change that keyframe (up / down) or its time (sideways). The value is shown
+while dragging.
+
+Output: right of the timeline a level meter shows the left / right peak of what is playing
+(peak hold; red above 0 dB) and its fader sets the project's master volume (-60 … +12 dB,
+double-click for 0 dB), used by the preview and the export.
 
 Keyframes on the timeline: the selected clip shows its keyframes as orange diamonds; drag
 one sideways to move every keyframe at that time (snapping to frames and the playhead),
@@ -159,6 +172,7 @@ python tools/smoke_audio.py PROJECT.tesetoa.json out/  # waveforms, mute / solo 
 python tools/smoke_select.py PROJECT.tesetoa.json out/ # multi-select, track heights, compound list
 python tools/smoke_handles.py PROJECT.tesetoa.json out/ # scale / rotate / mask handles on the preview
 python tools/smoke_reuse.py PROJECT.tesetoa.json out/  # shared compounds, timeline ◆ drag, time selection
+python tools/smoke_volume.py PROJECT.tesetoa.json out/ # volume line, 吸附, clip clicks, meter, master volume
 python tools/smoke_features.py PROJECT.tesetoa.json out/ IMAGE AUDIO   # library, compounds, preview drag, range export
 python tools/stress_drag.py PROJECT.tesetoa.json      # rapid preview drags + playback fps
 ```

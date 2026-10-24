@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog,
                                QPushButton, QScrollArea, QSlider, QSplitter, QTabWidget, QVBoxLayout,
                                QWidget)
 
-from .. import build, edit, library, project, waveform
+from .. import build, curves, edit, library, project, waveform
 from ..client import EngineClient
 from ..importers import jianying
 from .compounds import CompoundPanel
@@ -25,6 +25,7 @@ from .export_dialog import ExportDialog
 from .inspector import Inspector
 from .library import LibraryPanel
 from .player import Player
+from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .timeline import US, Timeline, timecode
 
@@ -34,6 +35,7 @@ QMenuBar, QMenu { background: #202024; }
 QMenu::item:selected, QMenuBar::item:selected { background: #4a4a52; }
 QPushButton { background: #2a2a30; border: 1px solid #3a3a42; border-radius: 4px; padding: 4px 12px; }
 QPushButton:hover { background: #33333b; }
+QPushButton:checked { background: #d8d8dc; color: #111114; border-color: #d8d8dc; }
 QPushButton:disabled { color: #666; }
 QSplitter::handle { background: #111114; }
 QDoubleSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #26262c; border: 1px solid #3a3a42; border-radius: 3px; padding: 2px; }
@@ -52,6 +54,9 @@ QMessageBox QLabel { color: #e6e6e6; background: transparent; }
 QSlider::groove:horizontal { height: 4px; background: #3a3a42; border-radius: 2px; }
 QSlider::sub-page:horizontal { background: #9a9aa0; border-radius: 2px; }
 QSlider::handle:horizontal { background: #e6e6e6; width: 10px; margin: -4px 0; border-radius: 5px; }
+QSlider::groove:vertical { width: 4px; background: #3a3a42; border-radius: 2px; }
+QSlider::add-page:vertical { background: #9a9aa0; border-radius: 2px; }
+QSlider::handle:vertical { background: #e6e6e6; height: 10px; margin: 0 -5px; border-radius: 5px; }
 QScrollBar { background: #1b1b1f; }
 QScrollBar::handle { background: #3a3a42; border-radius: 3px; min-height: 20px; min-width: 20px; }
 QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
@@ -106,6 +111,7 @@ class MainWindow(QMainWindow):
         self.fps = 60.0
         self.pos = 0
         self.playing = False
+        self.follow = True              # the timeline scrolls to the playhead after this seek
         self.tasks = []
         self.building = False            # kept for tools: previews no longer build anything
         self.pending_seek = None
@@ -201,13 +207,14 @@ class MainWindow(QMainWindow):
         # timeline with its toolbar and the compound breadcrumb
         self.timeline = Timeline()
         tl = self.timeline
-        tl.seekRequested.connect(self.seek)
+        tl.seekRequested.connect(lambda f: self.seek(f, follow=False))     # the user is looking there
         tl.clipSelected.connect(lambda c: self.refresh_inspector())
         tl.moveRequested.connect(lambda cid, start, tid: self.apply("移動", edit.move, cid, start, tid))
         tl.trimRequested.connect(
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
         tl.groupMoveRequested.connect(lambda ids, dt: self.apply("移動", edit.move_many, ids, dt))
         tl.marksChanged.connect(self.marks_changed)
+        tl.volumeEdited.connect(self.on_volume_line)
         tl.keyMoveRequested.connect(lambda cid, a, b: self.apply("移動關鍵幀", edit.move_keys_at, cid, a, b))
         tl.trackAction.connect(self.on_track_action)
         tl.clipAction.connect(self.on_clip_action)
@@ -233,6 +240,12 @@ class MainWindow(QMainWindow):
             tools.addWidget(b)
             self.buttons[key] = b
         tools.addStretch()
+        self.snap_btn = QPushButton("吸附")
+        self.snap_btn.setCheckable(True)
+        self.snap_btn.setChecked(True)
+        self.snap_btn.setToolTip("自動吸附（N）：移動、裁切時對齊播放頭和其他片段的邊緣")
+        self.snap_btn.toggled.connect(self.set_snapping)
+        tools.addWidget(self.snap_btn)
         tools.addWidget(QLabel("軌道高度"))
         self.vzoom = Slider(Qt.Horizontal)
         self.vzoom.setRange(65, 400)
@@ -247,7 +260,14 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(0, 0, 0, 0)
         ll.setSpacing(0)
         ll.addLayout(tools)
-        ll.addWidget(tl, 1)
+        tl_row = QHBoxLayout()
+        tl_row.setContentsMargins(0, 0, 0, 0)
+        tl_row.setSpacing(0)
+        tl_row.addWidget(tl, 1)
+        self.meter = MeterPanel()
+        self.meter.masterChanged.connect(self.on_master)
+        tl_row.addWidget(self.meter)
+        ll.addLayout(tl_row, 1)
 
         main = QSplitter(Qt.Vertical)
         main.addWidget(top)
@@ -261,6 +281,7 @@ class MainWindow(QMainWindow):
         w.loaded.connect(self.on_loaded)
         w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))  # never modal
         w.stateChanged.connect(self.on_state)
+        w.levels.connect(self.meter.bars.feed)
         self._menus()
         self._update_title()
         self._update_crumb()
@@ -299,6 +320,7 @@ class MainWindow(QMainWindow):
         add(m, "標記出點", "O", lambda: self.set_mark("out"))
         add(m, "清除標記", "Alt+X", lambda: self.set_mark(None))
         add(m, "取消選區", "Ctrl+Shift+D", lambda: self.set_mark(None))
+        add(m, "自動吸附", "N", lambda: self.snap_btn.toggle())
         m.addSeparator()
         add(m, "全螢幕預覽", "F", self.toggle_fullscreen)
         add(m, "返回上一層", "Esc", self.leave_compound)
@@ -349,6 +371,7 @@ class MainWindow(QMainWindow):
             return self.proj
         node = self.container()
         return {"width": node["width"], "height": node["height"], "fps": self.proj["fps"],
+                "master_gain": self.proj.get("master_gain", 1.0),
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"]}
 
@@ -474,6 +497,7 @@ class MainWindow(QMainWindow):
             library.add_from_project(proj)         # media already used, e.g. after a draft import
         self.proj = proj
         self.history = edit.History(proj)
+        self.meter.set_gain(proj.get("master_gain", 1.0))
         self.dirty = False
         self.path_ids = []
         self.fps = proj["fps"]
@@ -546,6 +570,7 @@ class MainWindow(QMainWindow):
 
     def after_edit(self, label):
         self.dirty = True
+        self.meter.set_gain(self.proj.get("master_gain", 1.0))
         try:
             self.container()
         except edit.EditError:                           # an undo removed an open compound
@@ -932,7 +957,7 @@ class MainWindow(QMainWindow):
         self.preview.show_image(img)
         if self.fullscreen:
             self.fullscreen.canvas.show_image(img)
-        self.timeline.set_position(pos)
+        self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True))
         self.time_lbl.setText(f"{timecode(pos / self.fps * US, self.fps)} / "
                               f"{timecode(self.length / self.fps * US, self.fps)}")
         sel = self.timeline.selected
@@ -950,8 +975,9 @@ class MainWindow(QMainWindow):
         if self.proj is not None:
             self.player.worker.set_playing(not self.playing)
 
-    def seek(self, frame):
+    def seek(self, frame, follow=True):
         if self.proj is not None:
+            self.follow = follow
             if self.playing:
                 self.player.worker.set_playing(False)
             self.player.worker.request_seek(frame)
@@ -973,6 +999,27 @@ class MainWindow(QMainWindow):
         fs.showFullScreen()
 
     # -- range and export -------------------------------------------------------------------------
+    def on_volume_line(self, cid, vol):
+        """The timeline's volume line was dragged: the clip's whole volume (or its keyframes)."""
+        def set_vol(level):
+            if curves.is_animated(vol):
+                edit.set_keys(level, cid, "clip", "volume", vol["keys"])
+            else:
+                edit.set_param(level, cid, "clip", "volume", round(vol, 5))
+
+        self.apply("調整音量", set_vol)
+
+    def on_master(self, gain, final):
+        """The meter's fader: heard at once, one undo step per drag."""
+        if self.player.worker.mixer is not None:
+            self.player.worker.mixer.master = gain
+        if final and self.proj is not None and abs(gain - self.proj.get("master_gain", 1.0)) > 1e-6:
+            self.apply_root("主音量", edit.set_master_gain, gain, merge=("master",))
+
+    def set_snapping(self, on):
+        self.timeline.snapping = on
+        self.statusBar().showMessage("自動吸附：開" if on else "自動吸附：關", 2000)
+
     def marks_changed(self):
         """The time selection: playback loops inside it."""
         tl = self.timeline

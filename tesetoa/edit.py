@@ -784,3 +784,12 @@ def delete_compound(root, compound_id):
     if project.compound_uses(root).get(compound_id):
         raise EditError("still used on a timeline")
     del root["compounds"][compound_id]
+
+
+def set_master_gain(proj, gain):
+    """The whole output's volume (the meter's fader); 1 is unchanged."""
+    g = min(4.0, max(0.0, float(gain)))
+    if abs(g - 1.0) < 1e-4:
+        proj.pop("master_gain", None)
+    else:
+        proj["master_gain"] = round(g, 5)

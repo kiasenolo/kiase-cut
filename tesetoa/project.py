@@ -1,7 +1,8 @@
 """Project model: plain JSON-able dicts, saved as *.tesetoa.json.
 
 project  {format, version, width, height, fps, duration_us, tracks: [track],
-          compounds: {id: compound}}  tracks[0] is the bottom layer; later tracks draw on top
+          compounds: {id: compound}, master_gain}  master_gain (optional, 1) scales the
+         whole output  tracks[0] is the bottom layer; later tracks draw on top
          (as in Jianying).
 track    {id, kind: video | text | audio, name, clips: [clip],
           muted, solo, hidden, gain}                        optional: muted / solo tracks

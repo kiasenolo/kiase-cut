@@ -230,18 +230,17 @@ class EffectsPanel(QWidget):
             self.widgets[(group, p.name)] = btn
             row.addWidget(btn, 1)
             row.addWidget(self._key_button(group, p.name))
-        else:                                                   # vec2
-            sx, sy = SpinBox(), SpinBox()
-            for s in (sx, sy):
+        else:                                                   # vec2 / vec3
+            n = 3 if p.type == "vec3" else 2
+            for i in range(n):
+                s = SpinBox()
                 s.setRange(p.lo, p.hi)
                 s.setSingleStep(step_for(p))
                 s.setDecimals(3)
                 s.setKeyboardTracking(False)
-            sx.edited.connect(lambda v, g=group, k=p.name: self._queue_vec(g, k, 0, v))
-            sy.edited.connect(lambda v, g=group, k=p.name: self._queue_vec(g, k, 1, v))
-            self.widgets[(group, p.name, 0)], self.widgets[(group, p.name, 1)] = sx, sy
-            row.addWidget(sx, 1)
-            row.addWidget(sy, 1)
+                s.edited.connect(lambda v, g=group, k=p.name, i=i, n=n: self._queue_vec(g, k, i, v, n))
+                self.widgets[(group, p.name, i)] = s
+                row.addWidget(s, 1)
             row.addWidget(self._key_button(group, p.name))
         return row
 
@@ -302,7 +301,7 @@ class EffectsPanel(QWidget):
                 btn.setText(f"#{r:02x}{g:02x}{b:02x}")
                 btn.setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
         else:
-            for i in (0, 1):
+            for i in range(3 if p.type == "vec3" else 2):
                 s = w.get((group, p.name, i))
                 if s is not None and not s.hasFocus():
                     s.show_value(round(float(v[i]), 3))
@@ -314,10 +313,10 @@ class EffectsPanel(QWidget):
         if self.clip_id:
             self.liveEdited.emit([self.clip_id], group, key, value)
 
-    def _queue_vec(self, group, key, index, value):
+    def _queue_vec(self, group, key, index, value, n=2):
         cur = self.pending.get((group, key))
         if cur is None:
-            cur = [self.widgets[(group, key, i)].value() for i in (0, 1)]
+            cur = [self.widgets[(group, key, i)].value() for i in range(n)]
         cur = list(cur)
         cur[index] = value
         self._queue(group, key, cur)

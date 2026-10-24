@@ -23,7 +23,7 @@ DOC_PATH = os.path.join(PKG, "FORMAT.md")
 TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
 MAX_PASSES = 8
-TYPES = ("float", "int", "bool", "color", "vec2")
+TYPES = ("float", "int", "bool", "color", "vec2", "vec3")
 RESERVED = {"source", "resolution", "time", "progress", "frame", "scale", "pass_index", "src", "effect",
             "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
 
@@ -98,9 +98,10 @@ def _param(rest):
     elif typ == "color":
         d = _color(default)
     else:
+        n = 2 if typ == "vec2" else 3
         d = [float(x) for x in default.split(",")]
-        if len(d) != 2:
-            raise ValueError("vec2 的預設值要寫成 x,y")
+        if len(d) != n:
+            raise ValueError(f"{typ} 的預設值要寫成 {','.join('xyz'[:n])}")
     return Param(name, typ, d, lo, hi, label)
 
 
@@ -198,7 +199,9 @@ def uniform_value(p, stored, t):
     if p.type == "color":
         v = list(v) + [1.0] * (4 - len(v))
         return tuple(float(x) for x in v[:4])
-    return tuple(float(x) for x in v[:2])
+    n = 3 if p.type == "vec3" else 2
+    v = list(v) + [0.0] * (n - len(v))
+    return tuple(float(x) for x in v[:n])
 
 
 # -- the shader -------------------------------------------------------------------------------------
@@ -226,7 +229,7 @@ in vec2 pos;
 out vec2 uv_;
 void main() { uv_ = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }
 """
-GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "vec2": "vec2"}
+GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "vec2": "vec2", "vec3": "vec3"}
 
 
 def shader_source(d):

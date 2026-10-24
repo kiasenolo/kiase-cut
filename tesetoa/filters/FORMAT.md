@@ -41,8 +41,9 @@ vec4 effect(vec2 uv) {
 | `bool` | `true` / `false` | `bool` | 勾選框 |
 | `color` | `#rrggbb` 或 `#rrggbbaa` | `vec4`（RGBA，0~1，**沒有**預乘） | 顏色選擇器 |
 | `vec2` | `0.5,0.5` | `vec2` | 兩個數字欄（X、Y） |
+| `vec3` | `0.1,0.2,0.3` | `vec3` | 三個數字欄（X、Y、Z） |
 
-- `float`、`int`、`vec2` 可以接 `最小 最大`，限制面板欄位的範圍（不寫就是 -1000 ~ 1000）。
+- `float`、`int`、`vec2`、`vec3` 可以接 `最小 最大`，限制面板欄位的範圍（不寫就是 -1000 ~ 1000）。
 - 最後可以放用雙引號包起來的顯示名稱，例如 `"半徑"`。
 - 名稱只能用英文字母、數字、底線，不能以數字開頭，也不能跟下面的內建名稱重複。
 
@@ -77,3 +78,15 @@ vec4 effect(vec2 uv) {
 ## 匯出
 
 含有濾鏡的專案用內建的畫面渲染器匯出（和預覽同一套），需要 OpenGL 3.3（一般的顯示卡驅動都有）。
+
+## 用 Blender 合成器做濾鏡
+
+`tools/converters/compositor_to_hyprshade.py` 是 Blender 插件。在合成器（Compositor）裡把效果做成**節點群組**，
+選單 Node →「Export as Shader / Filter」→ 格式選「KiaseCut filter (.glsl)」，把輸出的 `.glsl` 放進 Library 的 `filters` 資料夾即可。
+
+- 群組的輸入（Image 以外）會變成參數，面板上可以調、可以打關鍵幀：Float → `float`、Integer → `int`、Boolean → `bool`、
+  Color → `color`、Vector → `vec3`。群組輸入的最小／最大值就是欄位範圍。
+- `Scene Time` 節點用片段時間（`time`）；`Blur`、`Glare`、`Dilate/Erode`、`Pixelate` 的取樣數等寫在檔案裡的 `#define` 區，可以自己改。
+- `#define LINEARIZE 1`：照 Blender 的方式在線性光裡運算（預設）；`FLIP_Y`、`COMPOSITE_OVER_SCREEN` 同樣在 `#define` 區。
+- 限制：決定結構的選項（Switch 節點、Interpolation 等）在匯出時就固定了；`String to Image` 不支援（文字請用編輯器的文字片段）。
+

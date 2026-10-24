@@ -16,8 +16,8 @@ import time
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QKeySequence
-from PySide6.QtWidgets import (QApplication, QColorDialog, QDialog, QFileDialog, QHBoxLayout,
-                               QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QTextBrowser,
+from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QHBoxLayout,
+                               QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
 
@@ -148,6 +148,17 @@ class Slider(QSlider):
 
     def wheelEvent(self, e):
         e.ignore()
+
+
+def edit_rate(proj):
+    """The editor's frames per second (時間線精度, saved with the view): the project's frame
+    rate unless the user picked another."""
+    v = proj.get("view") if isinstance(proj.get("view"), dict) else {}
+    try:
+        r = float(v.get("edit_fps") or 0)
+    except (TypeError, ValueError):
+        r = 0
+    return r if 1 <= r <= 1000 else proj["fps"]
 
 
 def group_holder(c, group, create=False):
@@ -454,6 +465,28 @@ class MainWindow(QMainWindow):
             b = tool(ic, tip, getattr(self, "do_" + key))
             tools.addWidget(b)
             self.buttons[key] = b
+        tools.addSpacing(16)
+        tools.addWidget(QLabel("播放"))
+        self.play_mode = QComboBox()
+        self.play_mode.addItem("停在暫停處", "stay")
+        self.play_mode.addItem("回到開始處", "return")
+        self.play_mode.setToolTip("按空白鍵停止播放時：停在當下的位置，或回到這次開始播放的位置")
+        i = self.play_mode.findData(str(self.settings().value("play_mode", "stay")))
+        self.play_mode.setCurrentIndex(max(0, i))
+        self.play_mode.currentIndexChanged.connect(
+            lambda _i: self.settings().setValue("play_mode", self.play_mode.currentData()))
+        tools.addWidget(self.play_mode)
+        tools.addSpacing(10)
+        tools.addWidget(QLabel("精度"))
+        self.edit_fps_box = QSpinBox()
+        self.edit_fps_box.setRange(0, 1000)
+        self.edit_fps_box.setSpecialValueText("跟專案")
+        self.edit_fps_box.setSuffix(" 格/秒")
+        self.edit_fps_box.setKeyboardTracking(False)
+        self.edit_fps_box.setToolTip("時間線每秒幾格：播放頭、關鍵幀、分割、步進（←/→）的最小單位。\n"
+                                     "只影響剪輯，不影響輸出：匯出照專案（或匯出設定）的幀率。")
+        self.edit_fps_box.valueChanged.connect(lambda v: self.set_edit_fps(v or None))
+        tools.addWidget(self.edit_fps_box)
         tools.addStretch()
         self.snap_btn = tool("magnet", "自動吸附（N）：移動、裁切時對齊播放頭和其他片段的邊緣",
                              lambda: None, checkable=True)
@@ -675,7 +708,10 @@ class MainWindow(QMainWindow):
         """Every timeline's level_view, stored in the project file when it is saved."""
         tls = dict(self.tl_views)
         tls[self.proj["active_timeline"]] = self.level_view()
-        return {"vzoom": round(self.timeline.vzoom, 4), "timelines": tls}
+        out = {"vzoom": round(self.timeline.vzoom, 4), "timelines": tls}
+        if self.fps != self.proj["fps"]:
+            out["edit_fps"] = self.fps
+        return out
 
     def open_view(self, v):
         """Open the active timeline as level_view() left it (a compound that is gone opens
@@ -1030,7 +1066,11 @@ class MainWindow(QMainWindow):
         self.path_ids = []
         self.open_tls = None
         self.tl_views = {}
-        self.fps = proj["fps"]
+        self.fps = edit_rate(proj)
+        self.timeline.edit_fps = self.fps if self.fps != proj["fps"] else None
+        self.edit_fps_box.blockSignals(True)
+        self.edit_fps_box.setValue(round(self.fps) if self.fps != proj["fps"] else 0)
+        self.edit_fps_box.blockSignals(False)
         self.timeline.mark_in = self.timeline.mark_out = None
         self.player.worker.set_loop(None)
         self.timeline.set_peaks(waveform.Peaks(self.cache_dir(), on_ready=self.timeline.peaksReady.emit))
@@ -1908,8 +1948,11 @@ class MainWindow(QMainWindow):
 
     # -- preview ----------------------------------------------------------------------------------
     def snapshot(self):
-        """A private copy of the open level for the renderer thread."""
-        return json.loads(json.dumps(self.view()))
+        """A private copy of the open level for the renderer thread, counted in the editor's
+        frames (時間線精度) and played at the project's frame rate."""
+        v = json.loads(json.dumps(self.view()))
+        v["play_fps"], v["fps"] = self.proj["fps"], self.fps
+        return v
 
     def rebuild(self):
         """Hand the current project state to the live renderer: it shows on the next frame.
@@ -1976,8 +2019,9 @@ class MainWindow(QMainWindow):
     def on_loaded(self, info):
         self.length = info["length"]
         if not self.statusBar().currentMessage():        # (it arrives after every edit: never hide what an edit said)
-            self.statusBar().showMessage(f"{info['width']}×{info['height']} {info['fps']:g}fps，"
-                                         f"{self.length} 幀", 3000)
+            fine = f"，時間線每秒 {self.fps:g} 格" if self.fps != self.proj["fps"] else ""
+            self.statusBar().showMessage(f"{info['width']}×{info['height']} {self.proj['fps']:g}fps{fine}，"
+                                         f"長度 {timecode(self.length / self.fps * US, self.fps)}", 3000)
 
     def on_frame(self, img, pos):
         self.pos = pos
@@ -2000,9 +2044,50 @@ class MainWindow(QMainWindow):
         self.play_btn.setIcon(icons.icon("pause" if playing else "play"))
 
     def toggle_play(self):
-        if self.proj is not None:
-            w = self.player.worker
-            w.set_playing(not w.playing)           # (the player's own state: the UI's lags a moment)
+        """Space: play, or stop - where playback is, or (播放模式 回到開始處) back where it began."""
+        if self.proj is None:
+            return
+        w = self.player.worker
+        if not w.playing:                          # (the player's own state: the UI's lags a moment)
+            self.play_from = self.pos
+            w.set_playing(True)
+        elif self.play_mode.currentData() == "return" and getattr(self, "play_from", None) is not None:
+            self.seek(self.play_from)
+        else:
+            w.set_playing(False)
+
+    def set_edit_fps(self, rate):
+        """時間線精度: the editor's frames per second (rate None: the project's). The playhead,
+        time selection and saved positions are kept where they are in time. Not an edit and
+        not part of the export, which uses the project's frame rate."""
+        if not self.proj:
+            return
+        rate = float(rate or self.proj["fps"])
+        if abs(rate - self.fps) < 1e-9:
+            return
+        k = rate / self.fps
+        tl = self.timeline
+        for v in self.tl_views.values():
+            if isinstance(v.get("pos"), (int, float)):
+                v["pos"] = round(v["pos"] * k)
+        if tl.mark_in is not None:
+            tl.mark_in = round(tl.mark_in * k)
+        if tl.mark_out is not None:
+            tl.mark_out = max(tl.mark_in or 0, round((tl.mark_out + 1) * k) - 1)
+        if getattr(self, "play_from", None) is not None:
+            self.play_from = round(self.play_from * k)
+        pos = round(self.pos * k)
+        self.fps = rate
+        tl.edit_fps = rate if rate != self.proj["fps"] else None
+        tl.fps = rate
+        tl.px_per_s = min(tl.px_per_s, tl.max_zoom())
+        self.player.worker.set_playing(False)
+        self.pending_seek = pos
+        self.rebuild()
+        self.marks_changed()
+        self.seek(pos)
+        self.dirty = True
+        self._update_title()
 
     def seek(self, frame, follow=True):
         if self.proj is not None:
@@ -2104,7 +2189,7 @@ class MainWindow(QMainWindow):
         if len(self.proj["timelines"]) > 1:              # one file per timeline
             default = default[:-4] + f" - {project.timeline(self.proj)['name']}.mp4"
         dlg = ExportDialog(self, default, self.fps, total, self.timeline.mark_in, self.timeline.mark_out,
-                           self.proj["width"], self.proj["height"])
+                           self.proj["width"], self.proj["height"], out_fps=self.proj["fps"])
         if dlg.exec() != QDialog.Accepted:
             return
         out, t0, t1, fmt, opts = dlg.result_options()

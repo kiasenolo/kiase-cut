@@ -6,6 +6,10 @@ Scrubbing coalesces requests (only the newest position is drawn). While playing,
 from the mixer goes to a QAudioSink whose buffer paces the loop, so audio is the clock.
 Video pictures come from ffmpeg streams while playing (videoreader.py, on the GPU for
 heavy codecs) and from the engine for a single jump.
+
+Positions are frames of view["fps"], the editor's own rate (時間線精度, which can be finer
+than the project's). Playing shows a picture every step() of them, at view["play_fps"] (the
+project's frame rate), so a fine timeline costs nothing more while playing.
 """
 import threading
 import time
@@ -34,6 +38,7 @@ class Worker(QObject):
     def __init__(self):
         super().__init__()
         self.cv = threading.Condition()
+        self.view = None            # the project snapshot being shown (set on the worker thread)
         self.want = None            # newest scrub position
         self.new_view = None        # newest project snapshot (view, cache dir)
         self.playing = False
@@ -187,7 +192,7 @@ class Worker(QObject):
         """Start the sound output with room for LEAD frames and a few more: a buffer shorter
         than the lead (30 fps: 6 frames are 200 ms) kept every picture late, so most were
         skipped (~8 fps)."""
-        per_frame = RATE * CHANNELS * 2 / max(1.0, self.view["fps"] if self.view else 30.0)
+        per_frame = RATE * CHANNELS * 2 / max(1.0, self._play_fps())
         sink.setBufferSize(max(RATE * CHANNELS * 2 // 8, int(per_frame * (LEAD + 3))))
         return sink.start()
 
@@ -202,12 +207,21 @@ class Worker(QObject):
             self.failed.emit("；".join(dict.fromkeys(self.renderer.errors)))
             self.renderer.errors.clear()
 
-    def _next(self, f):
-        """The frame after f, looping inside the time selection."""
-        f += 1
-        if self.loop and f > self.loop[1] and f - 1 <= self.loop[1]:
-            f = self.loop[0]
+    def _next(self, f, n=1):
+        """The frame n after f, looping inside the time selection."""
+        for _ in range(n):
+            f += 1
+            if self.loop and f > self.loop[1] and f - 1 <= self.loop[1]:
+                f = self.loop[0]
         return f
+
+    def _play_fps(self):
+        v = self.view or {}
+        return min(v.get("fps", 30.0), v.get("play_fps") or v.get("fps", 30.0))
+
+    def step(self):
+        """Frames (of view["fps"]) per picture shown while playing."""
+        return max(1, round(self.view["fps"] / self._play_fps()))
 
     def _interrupted(self):
         return bool(self.new_view or self.want is not None or not self.playing or self.quit)
@@ -215,11 +229,11 @@ class Worker(QObject):
     def _feed(self, out, sink):
         """Queue the sound up to LEAD frames ahead of the picture. Playing begins with the
         queue empty, so this is also what keeps the picture from racing ahead at the start."""
-        fps = self.view["fps"]
+        fps, step = self.view["fps"], self.step()
         if self.audio_f is None:
             self.audio_f = self.pos
-        while self.audio_n <= self.shown_n + LEAD and self.audio_f < self.length:
-            pcm = self.mixer.mix(self.audio_f, fps)
+        while self.audio_n <= self.shown_n + LEAD * step and self.audio_f < self.length:
+            pcm = self.mixer.mix(self.audio_f / step, fps / step)      # one picture's sound
             a = np.frombuffer(pcm, np.int16).reshape(-1, CHANNELS)
             if len(a):
                 peak = np.abs(a.astype(np.int32)).max(axis=0) / 32768.0
@@ -235,13 +249,13 @@ class Worker(QObject):
                         continue
                     n = out.write(bytes(view[:free]))
                     view = view[n:]
-            self.audio_f = self._next(self.audio_f)
-            self.audio_n += 1
+            self.audio_f = self._next(self.audio_f, step)
+            self.audio_n += step
 
     def _play_one(self, out, sink):
         """One picture, on time: the sound is queued first and the pictures follow the clock
         that started with it (a picture that is late is skipped, not shown late)."""
-        fps = self.view["fps"]
+        fps, step = self.view["fps"], self.step()
         self._feed(out, sink)
         due = self.t0 + self.shown_n / fps
         while not self._interrupted():
@@ -251,10 +265,10 @@ class Worker(QObject):
             time.sleep(min(wait, 0.004))
         if self._interrupted():
             return
-        behind = int((time.monotonic() - due) * fps)
+        behind = int((time.monotonic() - due) * fps) // step         # pictures
         for _ in range(behind if behind >= 2 else 0):
-            self.pos = self._next(self.pos)
-            self.shown_n += 1
+            self.pos = self._next(self.pos, step)
+            self.shown_n += step
         last = self.pos >= self.length - 1
         self.pos = min(self.pos, self.length - 1)
         self._show(self.pos)
@@ -263,12 +277,12 @@ class Worker(QObject):
         lv = self.peaks.pop(self.shown_n, None)
         if lv:
             self.levels.emit(*lv)
-        self.shown_n += 1
+        self.shown_n += step
         if last:
             with self.cv:
                 self.playing = False
             return
-        self.pos = self._next(self.pos)
+        self.pos = self._next(self.pos, step)
         if self.pos >= self.length:
             self.pos = self.length - 1
             with self.cv:

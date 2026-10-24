@@ -1,9 +1,11 @@
 """Preview canvas: shows frames and edits the selected clip with handles on the canvas.
 
 Transform: drag the clip to move it (it snaps to the canvas centre lines and edges and to
-other visible clips' centres and edges; Alt moves freely), drag a corner square to scale
-it about its centre, drag the round handle above it to rotate (Shift: 15° steps; it also
-settles on 0 / 90 / 180 / 270).
+other visible clips' centres and edges; Alt moves freely), drag a corner or edge square to
+scale it with the opposite corner / edge staying put (Alt: about its centre), drag the round
+handle above it to rotate (Shift: 15° steps; it also settles on 0 / 90 / 180 / 270). With X / Y
+scale linked a corner or an edge keeps their ratio; unlinked, a corner sets both freely (Shift
+keeps the ratio) and an edge only its own axis.
 
 Mask mode (`mask_mode`, while the 遮罩 tab is open) edits only masks: the clip itself
 cannot be moved, scaled or turned there, and a click on another clip just selects it. The
@@ -93,6 +95,22 @@ class Box:
             x, y = sx * self.w / 2, sy * self.h / 2
             out.append(QPointF(self.cx + dx + x * c - y * s, self.cy + dy + x * s + y * c))
         return out
+
+    def handles(self):
+        """(sx, sy, canvas point) of the scale handles: the corners, then the edge middles
+        (sx, sy: -1 / 0 / 1 along the clip's own x / y, y down)."""
+        c, s = math.cos(self.rot), math.sin(self.rot)
+        out = []
+        for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1), (0, -1), (1, 0), (0, 1), (-1, 0)):
+            x, y = sx * self.w / 2, sy * self.h / 2
+            out.append((sx, sy, QPointF(self.cx + x * c - y * s, self.cy + x * s + y * c)))
+        return out
+
+    def to_local(self, pt):
+        """A canvas point in the clip's own frame (centre origin, unrotated, canvas px)."""
+        c, s = math.cos(-self.rot), math.sin(-self.rot)
+        dx, dy = pt.x() - self.cx, pt.y() - self.cy
+        return dx * c - dy * s, dx * s + dy * c
 
     def contains(self, x, y):
         c, s = math.cos(-self.rot), math.sin(-self.rot)
@@ -368,7 +386,7 @@ class Preview(QWidget):
         rh = box.rot_handle(k)
         p.setPen(QPen(QColor("#ffffff"), 1 * k))
         p.drawLine(top, rh)
-        for pt in pts:
+        for _sx, _sy, pt in box.handles():
             self._handle(p, pt, k)
         self._handle(p, rh, k, round_=True, color="#e6e6e6")
         if self.drag and self.drag["kind"] == "rotate":
@@ -445,8 +463,9 @@ class Preview(QWidget):
             if self._near(box.rot_handle(k), m, k):
                 self.drag = {"kind": "rotate", "box": box, "m0": m, "moved": False}
                 return
-            if any(self._near(pt, m, k) for pt in box.corners()):
-                self.drag = {"kind": "scale", "box": box, "m0": m, "moved": False}
+            side = next(((sx, sy) for sx, sy, pt in box.handles() if self._near(pt, m, k)), None)
+            if side is not None:
+                self.drag = {"kind": "scale", "box": box, "m0": m, "moved": False, "side": side}
                 return
         boxes = self.visible_boxes()
         sel = next((b for b in boxes if b.clip["id"] == self.selected_id and b.contains(x, y)), None)
@@ -576,10 +595,7 @@ class Preview(QWidget):
                                  "y": round((self.H / 2 - (box.cy + dy)) / (self.H / 2), 5)}
         c = QPointF(box.cx, box.cy)
         if kind == "scale":
-            r0 = math.hypot(d["m0"].x() - c.x(), d["m0"].y() - c.y()) or 1.0
-            r1 = math.hypot(m.x() - c.x(), m.y() - c.y())
-            k = r1 / r0                                          # a corner scales X and Y alike
-            return "transform", {"scale": round(max(0.01, box.s * k), 4), "scale_y": round(max(0.01, box.sy * k), 4)}
+            return "transform", self._scale_values(box, d, m, e.modifiers())
         if kind == "rotate":
             a0 = math.degrees(math.atan2(d["m0"].y() - c.y(), d["m0"].x() - c.x()))
             a1 = math.degrees(math.atan2(m.y() - c.y(), m.x() - c.x()))
@@ -611,6 +627,37 @@ class Preview(QWidget):
         if "h" in kind:
             out["h"] = round(max(0.01, 2 * abs(q.y()) / g.dh), 4)
         return "mask", self._snap_mask(kind, out, g, box, bool(e.modifiers() & Qt.AltModifier))
+
+    def _scale_values(self, box, d, m, mods):
+        """Transform values of a drag of scale handle d["side"] to canvas point m (see the
+        module notes): scale, scale_y and, unless Alt holds the centre, x / y so that the
+        opposite corner or edge stays where it is."""
+        sx, sy = d["side"]
+        centre = bool(mods & Qt.AltModifier)
+        lx0, ly0 = box.to_local(d["m0"])
+        lx, ly = box.to_local(m)
+        hx, hy = sx * box.w / 2, sy * box.h / 2               # the handle (clip frame, px)
+        px, py = hx + lx - lx0, hy + ly - ly0                  # where it is dragged to
+        ax, ay = (0.0, 0.0) if centre else (-hx, -hy)          # what stays put
+        kx = (px - ax) / (hx - ax) if sx and hx != ax else 1.0
+        ky = (py - ay) / (hy - ay) if sy and hy != ay else 1.0
+        tf = box.clip.get("transform") or {}
+        if edit.linked(tf) or (sx and sy and mods & Qt.ShiftModifier):
+            if sx and sy:                                      # along the diagonal
+                vx, vy = hx - ax, hy - ay
+                kx = ky = ((px - ax) * vx + (py - ay) * vy) / ((vx * vx + vy * vy) or 1.0)
+            else:
+                kx = ky = kx if sx else ky
+        scale = lambda s, k: math.copysign(max(0.01, abs(s * k)), s or 1.0)
+        ns, nsy = scale(box.s, kx), scale(box.sy, ky)
+        out = {"scale": round(ns, 4), "scale_y": round(nsy, 4)}
+        if not centre:
+            kx, ky = ns / box.s if box.s else 1.0, nsy / box.sy if box.sy else 1.0
+            dx, dy = ax - ax * kx, ay - ay * ky                    # the anchor's move, cancelled
+            c, s = math.cos(box.rot), math.sin(box.rot)
+            cx, cy = box.cx + dx * c - dy * s, box.cy + dx * s + dy * c
+            out.update(x=round((cx - self.W / 2) / (self.W / 2), 5), y=round((self.H / 2 - cy) / (self.H / 2), 5))
+        return out
 
     def mouseMoveEvent(self, e):
         d = self.drag
@@ -649,8 +696,10 @@ class Preview(QWidget):
         elif box is not None and not self.mask_mode:
             if self._near(box.rot_handle(k), m, k):
                 cur = Qt.PointingHandCursor
-            elif any(self._near(pt, m, k) for pt in box.corners()):
-                cur = Qt.SizeFDiagCursor
+            elif (side := next(((sx, sy) for sx, sy, pt in box.handles() if self._near(pt, m, k)), None)):
+                sx, sy = side
+                cur = (Qt.SizeHorCursor if not sy else Qt.SizeVerCursor if not sx else
+                       Qt.SizeFDiagCursor if sx == sy else Qt.SizeBDiagCursor)
             elif box.contains(x, y):
                 cur = Qt.SizeAllCursor
         self.setCursor(cur)

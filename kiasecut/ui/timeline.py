@@ -7,8 +7,12 @@ drag its edges to trim. Moves and trims snap to the playhead and to other clips'
 ends and keyframes, and to the beat grid of sound clips with BPM alignment on (drawn as
 ticks along the clip's top, coloured by where in the beat they fall: BEAT_COLORS; lines
 too close together at the zoom are neither drawn nor snapped to); a yellow line shows
-where a drag has snapped. Dragging the playhead
-snaps to the same places.
+where a drag has snapped. Dragging the playhead (on the ruler, or by its line anywhere
+on the tracks) snaps to the same places.
+
+Times are counted in frames of `fps`, the editor's rate (時間線精度: it can be finer than
+the project's frame rate, which only the export uses); the ruler marks each of them once
+they are far enough apart, and the zoom reaches 40 px per frame.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
 zooms time around the mouse, the middle button drags the view. Alt+wheel or the toolbar
@@ -71,6 +75,7 @@ RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140
 BTN = 18                                             # header button size
 MIN_H, MAX_H = 22, 240                               # track heights
 EDGE_PX, SNAP_PX, DRAG_PX = 6, 8, 3
+PLAYHEAD_PX = 4                 # how near the playhead line the mouse grabs it
 BEAT_PX = 5                                          # beat grid lines at least this far apart show
 # beat grid lines by their place in the beat (edit.beat_grid): colour, tick length
 BEAT_COLORS = {1: "#ffd34d", 2: "#ff8a3d", 3: "#ff6bd5", 4: "#4dd2ff", 6: "#b48cff"}
@@ -78,8 +83,10 @@ BEAT_TICKS = {1: 7, 2: 5, 3: 4, 4: 4, 6: 3}
 
 
 def timecode(us, fps):
+    """mm:ss.ff, the frame number as wide as the largest one (240 per second: .000 - .239)."""
     s = us / US
-    return f"{int(s // 60):02d}:{int(s % 60):02d}.{int(round((s % 1) * fps)) % int(fps):02d}"
+    n = max(1, int(fps))
+    return f"{int(s // 60):02d}:{int(s % 60):02d}.{int(round((s % 1) * fps)) % n:0{max(2, len(str(n - 1)))}d}"
 
 
 class Timeline(QWidget):
@@ -108,6 +115,7 @@ class Timeline(QWidget):
         super().__init__(parent)
         self.proj = None
         self.fps = 60.0
+        self.edit_fps = None                       # 時間線精度 (frames per second), None: the project's
         self.pos = 0
         self.px_per_s = 40.0
         self.scroll_s = 0.0
@@ -123,6 +131,7 @@ class Timeline(QWidget):
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
+        self.hover_playhead = False                # the mouse is on the playhead line (it can be dragged)
         self.drop_clip = None                      # clip a filter from the VFX tab would go onto
         self.drop_replace = False                  # drop_clip would get the dragged media as its source (Alt)
         self.tops = []                             # y of each row (on screen)
@@ -149,7 +158,7 @@ class Timeline(QWidget):
     # -- data -----------------------------------------------------------------------------------
     def set_project(self, proj, keep_view=False):
         self.proj = proj
-        self.fps = proj["fps"]
+        self.fps = self.edit_fps or proj["fps"]
         visual = [t for t in proj["tracks"] if t["kind"] != "audio"]
         audio = [t for t in proj["tracks"] if t["kind"] == "audio"]
         self.rows = list(reversed(visual)) + audio
@@ -212,12 +221,16 @@ class Timeline(QWidget):
         return {"scroll_s": round(self.scroll_s, 4), "px_per_s": round(self.px_per_s, 4),
                 "scroll_y": self.scroll_y, "heights": dict(self.heights)}
 
+    def max_zoom(self):
+        """Px per second at the closest zoom: 40 px per frame, at least 2000."""
+        return max(2000.0, 40.0 * self.fps)
+
     def set_view_state(self, v):
         """Put the view back where view_state() was (missing parts stay as they are)."""
         if not v:
             return
         self.scroll_s = max(0.0, float(v.get("scroll_s", self.scroll_s)))
-        self.px_per_s = min(2000.0, max(1.0, float(v.get("px_per_s", self.px_per_s))))
+        self.px_per_s = min(self.max_zoom(), max(1.0, float(v.get("px_per_s", self.px_per_s))))
         if isinstance(v.get("heights"), dict):
             self.heights = {k: min(MAX_H, max(MIN_H, int(h))) for k, h in v["heights"].items()
                             if isinstance(h, (int, float))}
@@ -384,6 +397,11 @@ class Timeline(QWidget):
             self.drag["t"] = t
         self.seekRequested.emit(max(0, round(t / US * self.fps)))
 
+    def _on_playhead(self, pos):
+        """Whether pos is on the playhead line (below the ruler: the ruler seeks anyway)."""
+        x = self._x(self.pos / self.fps)
+        return x >= HEADER_W and pos.x() >= HEADER_W and pos.y() >= RULER_H and abs(pos.x() - x) <= PLAYHEAD_PX
+
     def _snap_guides(self):
         """Times where the current drag sits on a snap target (drawn as guide lines)."""
         d = self.drag
@@ -424,17 +442,27 @@ class Timeline(QWidget):
         w = self.width()
         p.fillRect(0, 0, w, RULER_H, QColor("#1e1e21"))
         p.fillRect(0, RULER_H - 1, w, 1, QColor("#0e0e10"))
-        step = next(s for s in (0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300) if s * self.px_per_s >= 70)
+        steps = sorted({n / self.fps for n in (1, 2, 5, 10, 20)} | {0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300})
+        step = next(s for s in steps if s * self.px_per_s >= 70)
+        p.setPen(QColor("#4a4a50"))
+        if self.px_per_s / self.fps >= 6:                # a mark for every frame (時間線精度)
+            f = math.floor(self.scroll_s * self.fps)
+            while self._x(f / self.fps) < w:
+                x = self._x(f / self.fps)
+                if x >= HEADER_W:
+                    p.drawLine(int(x), RULER_H - 3, int(x), RULER_H)
+                f += 1
         p.setPen(QColor("#8a8a90"))
         p.setFont(QFont("Segoe UI", 8))
-        t = (int(self.scroll_s / step)) * step
-        while self._x(t) < w:
+        n = int(self.scroll_s / step)
+        while self._x(n * step) < w:
+            t = n * step
             x = self._x(t)
             if x >= HEADER_W:
                 p.drawLine(int(x), RULER_H - 6, int(x), RULER_H)
                 label = timecode(t * US, self.fps)
                 p.drawText(int(x) + 3, RULER_H - 9, label if step < 1 else label[:5])
-            t += step
+            n += 1
         if self.mark_in is not None or self.mark_out is not None:
             a = self._x((self.mark_in or 0) / self.fps)
             b = self._x(((self.mark_out if self.mark_out is not None else
@@ -546,7 +574,8 @@ class Timeline(QWidget):
         p.restore()
         x = self._x(self.pos / self.fps)
         if x >= HEADER_W:
-            p.setPen(QPen(QColor("#ff4d4f"), 2))
+            grab = self.hover_playhead or (self.drag and self.drag["mode"] == "seek")
+            p.setPen(QPen(QColor("#ff6b6d" if grab else "#ff4d4f"), 3 if grab else 2))
             p.drawLine(int(x), 0, int(x), self.height())
 
     @staticmethod
@@ -848,6 +877,10 @@ class Timeline(QWidget):
                         self.trackAction.emit("toggle:" + flag, self.rows[row]["id"])
             return
         pos = e.position()
+        if self._on_playhead(pos) and not e.modifiers():         # the playhead line: drag it
+            self.drag = {"clip": None, "mode": "seek", "moved": False}
+            self.update()
+            return
         vh = self._vol_hit(pos) if not e.modifiers() else None
         if vh is not None:
             kind, c, row, i = vh
@@ -894,6 +927,13 @@ class Timeline(QWidget):
         pos = e.position()
         d = self.drag
         if d is None:
+            on = bool(self.proj) and self._on_playhead(pos)
+            if on != self.hover_playhead:
+                self.hover_playhead = on
+                self.update()
+            if on:
+                self.setCursor(Qt.SizeHorCursor)
+                return
             if self.proj and self._edge_at(pos) is not None:
                 self.setCursor(Qt.SizeVerCursor)
                 return
@@ -1144,6 +1184,11 @@ class Timeline(QWidget):
         _, c, _ = self._hit(pos)
         return c if c is not None and c["type"] in edit.VISUAL else None
 
+    def leaveEvent(self, e):
+        if self.hover_playhead:
+            self.hover_playhead = False
+            self.update()
+
     def dragLeaveEvent(self, e):
         self.drop_at = self.drop_clip = None
         self.drop_replace = False
@@ -1281,7 +1326,7 @@ class Timeline(QWidget):
             self.set_vzoom(self.vzoom * (1.15 if d > 0 else 1 / 1.15))
         elif mods & Qt.ControlModifier:                  # zoom time around the mouse
             anchor = self._sec(e.position().x())
-            self.px_per_s = min(2000.0, max(1.0, self.px_per_s * (1.25 if d > 0 else 0.8)))
+            self.px_per_s = min(self.max_zoom(), max(1.0, self.px_per_s * (1.25 if d > 0 else 0.8)))
             self.scroll_s = max(0.0, anchor - (e.position().x() - HEADER_W) / self.px_per_s)
         elif mods & Qt.ShiftModifier or (dx and not dy):  # left / right (also touchpad sideways)
             self.scroll_s = max(0.0, self.scroll_s - d / 120 * 80 / self.px_per_s)

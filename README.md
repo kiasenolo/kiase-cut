@@ -28,11 +28,22 @@ python -m kiasecut project.kiasecut.json   # open a saved project
 
 Space play/pause · ←/→ step a frame · Home/End · Ctrl+I import · Ctrl+S save · Ctrl+E export.
 
+Playback mode (播放, in the timeline toolbar): 停在暫停處 stops where playback is, 回到開始處
+goes back to where it began (as in DAWs). The choice is remembered.
+
+Timeline precision (精度, in the timeline toolbar): how many steps a second has while
+editing - the playhead, ←/→, splits and keyframes move in them, and the ruler marks each one
+when zoomed in (the zoom reaches 40 px per step). 跟專案 uses the project's frame rate. It
+only changes editing: playback still shows the project's frame rate, and the export uses
+the project's (or the export dialog's) frame rate, sampling the timeline at its own frames.
+It is saved with the project.
+
 Editing: drag a clip to move it (also onto another track of the same kind), drag its
 edges to trim; moves and trims snap to the playhead and to other clips' starts, ends and
 keyframes while 吸附 (N, in the timeline toolbar) is on, as Jianying's auto-snap; a yellow
 line marks where the drag has snapped. Dragging the playhead snaps to the same clip edges,
-keyframes and beats. Clicking a clip only selects it: the
+keyframes and beats; it can be dragged on the ruler or by its line anywhere on the tracks
+(the line lights up and the cursor changes when the mouse is on it). Clicking a clip only selects it: the
 playhead and the view stay where they are (the view follows the playhead during playback
 and for jumps such as Home / End / keyframes). Ctrl+B splits the
 selected clip (or every clip under the playhead), Delete removes, Ctrl+T adds a text,
@@ -137,8 +148,11 @@ shortened to it.
 
 Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
 canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
-freely). Drag a corner square to scale it about its centre (X and Y alike), the round handle above it to
-rotate it (it settles on right angles; Shift turns in 15° steps).
+freely). Drag a corner or edge square to scale it: the opposite corner or edge stays where
+it is (hold Alt to scale about the centre). With X / Y scale linked, corners and edges keep
+the clip's proportions; unlinked, a corner sets X and Y freely (Shift keeps the proportions)
+and an edge changes only its own axis. Drag the round handle above it to rotate it (it
+settles on right angles; Shift turns in 15° steps).
 
 Beat alignment (節拍 tab, for a selected sound clip): switch on BPM 對齊 and enter the
 BPM and the start offset (the first beat's time in the sound); 細分 splits each beat into

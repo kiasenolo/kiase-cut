@@ -30,7 +30,9 @@ def export_size(width, height, scale):
 
 
 class ExportDialog(QDialog):
-    def __init__(self, parent, default_path, fps, length, mark_in, mark_out, width=1920, height=1080):
+    def __init__(self, parent, default_path, fps, length, mark_in, mark_out, width=1920, height=1080, out_fps=None):
+        """fps, length, mark_in / mark_out: the editor's frames (時間線精度); out_fps: the frame
+        rate offered for the file (the project's), fps when None."""
         super().__init__(parent)
         self.setWindowTitle("匯出影片")
         self.fps, self.length = fps, length
@@ -59,10 +61,11 @@ class ExportDialog(QDialog):
         form.addRow("", self.marked)
 
         # frame rate: a list plus a custom value
+        out = out_fps or fps
         self.fps_box, self.fps_custom = self._choice(
             [f"{v} fps" for v in FPS_CHOICES], 1.0, 240.0, 0.001, 3, " fps",
-            FPS_CHOICES.index(round(fps)) if round(fps) in FPS_CHOICES and abs(fps - round(fps)) < 1e-6 else None,
-            fps)
+            FPS_CHOICES.index(round(out)) if round(out) in FPS_CHOICES and abs(out - round(out)) < 1e-6 else None,
+            out)
         form.addRow("幀率", self._pair(self.fps_box, self.fps_custom))
         # size: a multiple of the project's resolution
         self.scale_box, self.scale_custom = self._choice(

@@ -74,8 +74,10 @@ click it to go there.
 Navigation (timeline and curve editor alike): the wheel moves up and down, Shift+wheel
 left and right, Ctrl+wheel zooms time around the mouse, the middle button drags the view.
 
-Selection: Ctrl / Shift + click adds or removes clips, dragging on empty track space draws
-a selection box, Ctrl+A selects every clip of the open timeline, Ctrl+D clears the
+Selection: Ctrl / Shift + click adds or removes clips; keep the button down and drag on to
+sweep over more: they all follow the first clip (selected when it was not, deselected when
+it was), as does a Ctrl / Shift selection box by the first clip it reaches. Dragging on empty
+track space draws a selection box, Ctrl+A selects every clip of the open timeline, Ctrl+D clears the
 selection. Dragging any selected clip moves the whole selection (one undo step); Delete and
 Ctrl+B act on all of it. The inspector shows what the selected clips have in common: a
 value they share is shown, one that differs shows "--", and typing a value (or a colour,

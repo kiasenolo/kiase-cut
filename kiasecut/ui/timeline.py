@@ -926,14 +926,19 @@ class Timeline(QWidget):
                 return
             # empty track space: a click seeks and clears, a drag draws a selection box
             self.drag = {"clip": None, "mode": "band", "moved": False, "x0": pos.x(), "y0": pos.y(),
-                         "base": set(self.selected_ids) if adding else set()}
+                         "base": set(self.selected_ids) if adding else set(), "remove": None}
             return
         if adding:
-            ids = set(self.selected_ids) ^ {c["id"]}
-            self.set_selection(ids, c["id"] if c["id"] in ids else None)
-            if c["id"] not in ids:
-                return
-        elif c["id"] not in self.selected_ids or len(self.selected_ids) == 1:
+            # Ctrl / Shift: the clip flips in or out of the selection, and dragging on draws a box
+            # whose clips follow it (all selected, or all deselected when it was selected)
+            base = set(self.selected_ids)
+            remove = c["id"] in base
+            ids = base - {c["id"]} if remove else base | {c["id"]}
+            self.set_selection(ids, None if remove else c["id"])
+            self.drag = {"clip": c, "mode": "band", "moved": False, "x0": pos.x(), "y0": pos.y(),
+                         "base": base, "remove": remove}
+            return
+        if c["id"] not in self.selected_ids or len(self.selected_ids) == 1:
             self.select(c)
         else:
             self.set_selection(self.selected_ids, c["id"])
@@ -1045,15 +1050,19 @@ class Timeline(QWidget):
                 return
             d["moved"] = True
             self.band = QRectF(QPointF(d["x0"], d["y0"]), pos).normalized()
-            hit = set()
+            hit = {}                                    # clip id -> its distance from where the box began
             for i, tr in enumerate(self.rows):
-                if self.tops[i] + self.row_h(i) < self.band.top() or self.tops[i] > self.band.bottom():
+                top, bottom = self.tops[i], self.tops[i] + self.row_h(i)
+                if bottom < self.band.top() or top > self.band.bottom():
                     continue
                 for c in tr["clips"]:
-                    if self._x(c["start_us"] / US) <= self.band.right() and \
-                            self._x((c["start_us"] + c["duration_us"]) / US) >= self.band.left():
-                        hit.add(c["id"])
-            self.set_selection(d["base"] | hit)
+                    left, right = self._x(c["start_us"] / US), self._x((c["start_us"] + c["duration_us"]) / US)
+                    if left <= self.band.right() and right >= self.band.left():
+                        hit[c["id"]] = math.hypot(max(left - d["x0"], 0, d["x0"] - right),
+                                                  max(top - d["y0"], 0, d["y0"] - bottom))
+            if d["remove"] is None and hit:              # the first clip reached: was it selected?
+                d["remove"] = min(hit, key=hit.get) in d["base"]
+            self.set_selection(d["base"] - hit.keys() if d["remove"] else d["base"] | hit.keys())
             return
         if d["mode"] == "group":
             if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX and self._row_at(pos.y()) == d["row0"]:
@@ -1136,7 +1145,7 @@ class Timeline(QWidget):
             return
         if d["mode"] == "band":
             self.band = None
-            if not d["moved"]:
+            if not d["moved"] and d["clip"] is None:
                 if not d["base"]:
                     self.select(None)
                 self._seek_to(e.position().x())
@@ -1280,6 +1289,10 @@ class Timeline(QWidget):
         if pos.x() < HEADER_W:
             tr = self.rows[row]
             tid = tr["id"]
+            if tr["clips"]:
+                ids = {c["id"] for c in tr["clips"]}
+                menu.addAction("選取軌道上的所有片段", lambda: self.set_selection(ids, tr["clips"][0]["id"]))
+                menu.addSeparator()
             items = [("重新命名軌道…", "rename"), ("軌道顏色…", "color"), ("預設顏色", "nocolor"), None]
             if tr["clips"]:
                 if tr.get("color"):

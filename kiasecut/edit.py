@@ -412,6 +412,25 @@ def set_text(proj, clip_id, **fields):
     return c
 
 
+def subtitle_line(content):
+    """A text clip's words as one line of the 字幕 tab: its own line breaks become \\n."""
+    return content.replace("\n", "\\n")
+
+
+def subtitle_lines(text):
+    """The 字幕 tab's text back as one content per line (trailing blank lines dropped)."""
+    lines = text.split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return [ln.replace("\\n", "\n") for ln in lines]
+
+
+def set_texts(proj, contents):
+    """Batch edit: {clip id: words} for several text clips at once."""
+    for cid, content in contents.items():
+        set_text(proj, cid, content=content)
+
+
 STYLE_TEXT_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg")
 
 

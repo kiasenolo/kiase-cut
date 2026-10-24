@@ -36,6 +36,7 @@ from .library import LibraryPanel
 from .player import Player
 from .project_dialogs import NewProjectDialog, ProjectInfoDialog
 from .settings_dialog import SettingsDialog
+from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel
 from . import icons
@@ -340,6 +341,9 @@ class MainWindow(QMainWindow):
         beat_scroll.setWidget(self.beats)
         beat_scroll.setWidgetResizable(True)
         self.side.addTab(beat_scroll, "節拍")
+        self.subtitles = SubtitlePanel()
+        self.subtitles.textsEdited.connect(lambda contents: self.apply("批量修改文字", edit.set_texts, contents))
+        self.side.addTab(self.subtitles, "字幕")
         # the 遮罩 tab turns the preview into the mask editor
         self.side.currentChanged.connect(lambda _: self.preview.set_mask_mode(self.side.currentWidget() is mask_scroll))
         self.side.addTab(cv, "關鍵幀曲線")
@@ -1545,6 +1549,7 @@ class MainWindow(QMainWindow):
         self.effects.show_clips(clips, t, self.fps)
         self.mask_panel.show_clips(clips, t, self.fps)
         self.beats.show_clips(clips)
+        self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
 
     def on_easing(self, ids, easing, groups):
         """Apply a curve preset to every parameter (of these groups) with a keyframe at the playhead."""

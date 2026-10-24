@@ -314,3 +314,8 @@ show a slightly different picture (max frame difference 4.9 at two such frames).
 `tools/converters/` holds the standalone converters this project grew from:
 `jianying_to_blender.py` (+ `jy_build.py`) builds a Blender VSE project, and `jy_mlt.py`
 turns its `timeline.json` into plain MLT XML or a `.kdenlive` project with editable titles.
+
+`extra/compositor_to_hyprshade.py` is a Blender add-on (Compositor > Node menu > Export as
+Shader / Filter): it turns a compositor node tree or node group into a one-pass GLSL screen
+shader (Hyprshade, OBS, ShaderGlass) or a KiaseCut filter whose group inputs become
+keyframeable parameters.

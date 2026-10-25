@@ -156,6 +156,39 @@ class ExportFormatTests(unittest.TestCase):
         self.assertFalse(renderexport.uses_mlt({"format": "mp4_h264", "audio": False}))
         self.assertFalse(renderexport.uses_mlt({"format": "mov_prores4444", "alpha": True}))
 
+    def test_transparent_video_clips(self):
+        """A transparent video over a red picture: red around its blue box, on the first
+        frame (the engine's picture) and on later ones (the streaming reader's)."""
+        red = os.path.join(self.dir, "red.png")
+        bg = QImage(W, H, QImage.Format_RGB32)
+        bg.fill(0xFFFF0000)
+        bg.save(red)
+        box = (f"color=c=black@0.0:s={W}x{H}:d=1:r={FPS},format=rgba[bg];color=c=blue:s=40x30:d=1:r={FPS},"
+               "format=rgba[fg];[bg][fg]overlay=60:30,format=rgba[out0]")
+        for name, args in (("prores4444.mov", ["-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le"]),
+                           ("qtrle.mov", ["-c:v", "qtrle", "-pix_fmt", "argb"]),
+                           ("vp9.webm", ["-c:v", "libvpx-vp9", "-pix_fmt", "yuva420p"]),
+                           ("vp8.webm", ["-c:v", "libvpx", "-auto-alt-ref", "0", "-pix_fmt", "yuva420p"])):
+            src = os.path.join(self.dir, "in-" + name)
+            subprocess.run([FFMPEG, "-y", "-v", "error", "-f", "lavfi", "-i", box, *args, src], check=True)
+            p = project.new(W, H, FPS)
+            p["tracks"] = [
+                {"id": "t0", "kind": "video", "name": "bg", "clips": [
+                    {"id": "bg", "type": "image", "name": "bg", "start_us": 0, "duration_us": S,
+                     "source_start_us": 0, "media": {"path": red, "width": W, "height": H}, "transform": tf()}]},
+                {"id": "t1", "kind": "video", "name": "fg", "clips": [
+                    {"id": "fg", "type": "video", "name": "fg", "start_us": 0, "duration_us": S,
+                     "source_start_us": 0, "media": {"path": src, "width": W, "height": H, "duration_us": S},
+                     "transform": tf(), "volume": 1.0}]},
+            ]
+            project.refresh_duration(p)
+            out, r = self.export(f"over-{name}.png", {"format": "png_seq"}, project.link(p))
+            files = sorted(os.listdir(r["done"]))
+            for f in (files[0], files[3]):
+                img = QImage(os.path.join(r["done"], f))
+                self.assertEqual(img.pixelColor(10, 10).red(), 255, (name, f))        # see-through
+                self.assertGreater(img.pixelColor(80, 45).blue(), 240, (name, f))     # the box
+
 
 class RendererAlphaTests(unittest.TestCase):
     def view(self):

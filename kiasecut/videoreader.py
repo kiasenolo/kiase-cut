@@ -37,9 +37,10 @@ _info_lock = threading.Lock()
 
 
 def info(path):
-    """{w, h, fps, codec, matrix} of a video file's first picture stream (cached), or None.
+    """{w, h, fps, codec, matrix, alpha} of a video file's first picture stream (cached), or None.
     matrix is the YUV -> RGB matrix: the file's own, or for an untagged file BT.709 from 720
-    lines up and BT.601 below, as MLT (the engine and the export) decides."""
+    lines up and BT.601 below, as MLT (the engine and the export) decides. alpha: a WebM
+    stream carries transparency (its alpha_mode tag)."""
     with _info_lock:
         if path in _info:
             return _info[path]
@@ -50,8 +51,8 @@ def info(path):
     res = None
     try:
         r = subprocess.run([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries",
-                            "stream=width,height,avg_frame_rate,r_frame_rate,codec_name,color_space", "-of", "json",
-                            path],
+                            "stream=width,height,avg_frame_rate,r_frame_rate,codec_name,color_space:stream_tags=alpha_mode",
+                            "-of", "json", path],
                            capture_output=True, text=True, timeout=30, creationflags=NO_WINDOW)
         s = json.loads(r.stdout)["streams"][0]
 
@@ -63,7 +64,7 @@ def info(path):
         tagged = s.get("color_space") not in (None, "", "unknown", "reserved")
         matrix = "auto" if tagged else ("bt709" if int(s["height"]) >= 720 else "bt601")
         res = {"w": int(s["width"]), "h": int(s["height"]), "fps": fps, "codec": s.get("codec_name", ""),
-               "matrix": matrix}
+               "matrix": matrix, "alpha": (s.get("tags") or {}).get("alpha_mode") == "1"}
     except (OSError, subprocess.SubprocessError, ValueError, KeyError, IndexError):
         res = None
     with _info_lock:
@@ -79,10 +80,19 @@ def stream_size(src_w, src_h, w, h):
     return max(2, round(src_w / k / 2) * 2), max(2, round(src_h / k / 2) * 2)
 
 
-class Stream:
-    """One ffmpeg process sending frames of `path` from start_us on, at w x h."""
+def alpha_decoder(inf):
+    """The decoder that keeps a transparent WebM's alpha (ffmpeg's own VP8 / VP9 decoders,
+    and the GPU's, drop it), or None."""
+    if inf.get("alpha"):
+        return {"vp8": "libvpx", "vp9": "libvpx-vp9"}.get(inf["codec"])
+    return None
 
-    def __init__(self, path, start_us, w, h, fps, hw, matrix="auto"):
+
+class Stream:
+    """One ffmpeg process sending frames of `path` from start_us on, at w x h; decoder: the
+    one to use instead of ffmpeg's choice (alpha_decoder)."""
+
+    def __init__(self, path, start_us, w, h, fps, hw, matrix="auto", decoder=None):
         self.path, self.start_us, self.w, self.h, self.fps, self.hw = path, start_us, w, h, fps, hw
         self.index = -1                      # frame last read (frame i is at start_us + i / fps)
         self.image = None
@@ -90,6 +100,8 @@ class Stream:
         cmd = [find_ffmpeg(), "-v", "error", "-nostdin"]
         if hw:
             cmd += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+        if decoder:
+            cmd += ["-c:v", decoder]
         cmd += ["-ss", f"{max(0, start_us) / US:.6f}", "-i", path, "-an", "-sn", "-dn"]
         to_rgb = f"in_color_matrix={matrix},format=rgba"
         vf = (f"scale_cuda=w={w}:h={h}:format=nv12,hwdownload,format=nv12,scale={to_rgb}" if hw
@@ -159,12 +171,13 @@ class Readers:
         return self._start(path, us, sw, sh, inf)
 
     def _start(self, path, us, w, h, inf):
-        hw = path not in self.no_gpu and gpu.decode_on_gpu(inf["codec"])
+        decoder = alpha_decoder(inf)
+        hw = not decoder and path not in self.no_gpu and gpu.decode_on_gpu(inf["codec"])
         while len(self.streams) >= MAX_STREAMS:
             old = min(self.streams, key=lambda s: s.used)
             old.close()
             self.streams.remove(old)
-        s = Stream(path, us, w, h, inf["fps"], hw, inf["matrix"])
+        s = Stream(path, us, w, h, inf["fps"], hw, inf["matrix"], decoder)
         img = s.read_to(0)
         if img is None:
             s.close()

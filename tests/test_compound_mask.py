@@ -71,7 +71,7 @@ class Scene:
         comp = {"name": "half", "width": 1920, "height": 1080, "duration_us": 2 * S,
                 "tracks": [{"id": "i0", "kind": "video", "name": "v", "clips": inner or [self.pic("m", self.alpha)]}]}
         if static:
-            comp.update(static=True, still_us=0)
+            comp["static"] = True
         v = {"width": 1920, "height": 1080, "fps": 30, "duration_us": 2 * S, "compounds": {"k1": comp},
              "tracks": [{"id": "t0", "kind": "video", "name": "v", "clips": [top]}]}
         v.update(extra)

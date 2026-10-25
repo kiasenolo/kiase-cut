@@ -44,9 +44,11 @@ clip     {id, type: image | video | audio | text | compound, name,
                      DaVinci Resolve): they show another timeline of the project, live
 compound {name, width, height, duration_us, tracks}   reusable content: any number of compound
          clips (anywhere, nested too) show the same one, so editing it changes all of them.
-         Its children use compound time. optional: static, still_us - a static compound
-         (靜態片段) always shows its content at still_us, like a picture: its clips can be
-         any length and make no sound.
+         Its children use compound time. optional: static - a static compound (靜態片段)
+         is like a picture: it only ever shows its content's first frame (time 0); its clips
+         can be any length and make no sound. (Older projects kept a still_us; loading
+         re-times their content so that moment is the first frame.) One named _thumbnail
+         is the project's thumbnail (thumbnail_compound).
 Numbers that animate are curve dicts, see curves.py.
 
 view     {vzoom, timelines: {timeline id: {pos, path, scroll_s, px_per_s, scroll_y, heights}}}
@@ -341,13 +343,26 @@ def normalize(p):
         seen.setdefault(key_of(comp), cid)
     for tl in p["timelines"]:
         visit(tl["tracks"])
+    for comp in comps.values():                            # static compounds once froze at still_us:
+        still = comp.pop("still_us", 0)                    # that moment becomes their first frame
+        if comp.get("static") and still:
+            from .edit import freeze_at
+            freeze_at(comp["tracks"], still)
     p["version"] = VERSION
     return link(p)
 
 
+THUMBNAIL = "_thumbnail"         # a static compound of this name is the project's thumbnail
+
+
+def thumbnail_compound(p):
+    """The compound named _thumbnail when it is static (only a static one counts), else None."""
+    return next((c for c in p.get("compounds", {}).values()
+                 if c.get("name") == THUMBNAIL and c.get("static")), None)
+
+
 def is_static(c):
-    """Whether clip c shows a static compound (靜態片段): one still moment of its content,
-    used like a picture."""
+    """Whether clip c shows a static compound (靜態片段): its first frame, used like a picture."""
     return c.get("type") == "compound" and bool((c.get("compound") or {}).get("static"))
 
 

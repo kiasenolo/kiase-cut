@@ -8,10 +8,11 @@ Static compounds (◧ 靜態片段) are pictures built in the editor: their clip
 of the content and can be any length.
 Drag a compound onto the timeline to place another clip showing it (every clip shows the
 same content, so editing one edits all). Click a use to select it on its timeline,
-double-click a use (or the compound) to open it. Right-click to rename or delete a compound
-(with the clips that show it), a timeline, or one use, and anywhere in the list to add a
-timeline, a compound or a static compound (createRequested: "timeline" / "compound" /
-"static"; the new compounds start empty, with a clip at the playhead to enter them by).
+double-click a use to open it there. Double-click a compound that no clip shows (or pick
+進入編輯 on any compound) to edit it by itself (entryRequested). Right-click to rename or
+delete a compound (with the clips that show it), a timeline, or one use, and anywhere in
+the list to add a timeline, a compound or a static compound (createRequested: "timeline" /
+"compound" / "static"; a new compound starts empty and opens by itself).
 """
 from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QLabel, QMenu, QTreeWidget, QTreeWidgetItem,
@@ -53,6 +54,7 @@ class CompoundPanel(QWidget):
     timelineRequested = Signal(str)              # timeline id to open
     useDeleteRequested = Signal(str, list, str)  # timeline id, parent path, clip id: delete that clip
     createRequested = Signal(str)                # "timeline", "compound" or "static": a new empty one
+    entryRequested = Signal(str)                 # compound id: edit it by itself (no clip needed)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -81,7 +83,9 @@ class CompoundPanel(QWidget):
         comps = proj.get("compounds", {}) if proj else {}
         self.uses = project.compound_uses(proj) if proj else {}
         open_ids = set()
-        if proj and self.open_path:
+        if self.open_path and self.open_path[0].startswith("cmp:"):          # opened by itself
+            open_ids.add(self.open_path[0][4:])
+        elif proj and self.open_path:
             for tl, path, c in (u for us in self.uses.values() for u in us):
                 if tl == proj.get("active_timeline") and path + [c["id"]] == self.open_path:
                     open_ids.add(project.ref_of(c))
@@ -96,7 +100,7 @@ class CompoundPanel(QWidget):
                                   "靜態" if static else f"{(comp.get('duration_us') or 0) / US:.2f}s"])
             it.setData(0, Qt.UserRole, ("def", kid))
             it.setToolTip(0, "時間線：拖進另一條時間線使用（巢狀）；按兩下打開" if is_tl
-                          else "靜態片段：像圖片一樣使用，長度隨意；按兩下進入編輯它的畫面" if static
+                          else "靜態片段：像圖片一樣使用，長度隨意；按兩下進入編輯它的畫面（只會顯示第一幀）" if static
                           else "拖到時間軸上使用；按兩下進入編輯")
             it.setFlags(it.flags() | Qt.ItemIsDragEnabled)
             if kid in open_ids:
@@ -141,6 +145,8 @@ class CompoundPanel(QWidget):
         elif self.uses.get(d[1]):
             tl, path, c = self.uses[d[1]][0]
             self.openRequested.emit(tl, path + [c["id"]])
+        else:                                            # no clip shows it: open it by itself
+            self.entryRequested.emit(d[1])
 
     def _menu(self, pos):
         it = self.tree.itemAt(pos)
@@ -153,8 +159,8 @@ class CompoundPanel(QWidget):
 
     def _create_actions(self, menu):
         for text, kind, tip in (("新增時間線", "timeline", "一條新的空白時間線"),
-                                ("新增複合片段", "compound", "空白的複合片段，片段放在播放頭；按兩下進入編輯"),
-                                ("新增靜態複合片段", "static", "空白的靜態片段（像圖片），片段放在播放頭；按兩下進入編輯")):
+                                ("新增複合片段", "compound", "空白的複合片段，建立後直接進入編輯；拖到時間軸上使用"),
+                                ("新增靜態複合片段", "static", "空白的靜態片段（像圖片，只顯示第一幀），建立後直接進入編輯")):
             a = menu.addAction(text, lambda k=kind: self.createRequested.emit(k))
             a.setToolTip(tip)
         menu.setToolTipsVisible(True)
@@ -167,6 +173,8 @@ class CompoundPanel(QWidget):
             menu.addAction("刪除這個片段", lambda: self.useDeleteRequested.emit(d[3], list(d[2]), d[1]))
         else:
             kid = d[1]
+            if not kid.startswith("tl"):
+                menu.addAction("進入編輯", lambda: self.entryRequested.emit(kid))
             menu.addAction("重新命名…", lambda: self.renameRequested.emit(kid))
             if kid.startswith("tl"):
                 a = menu.addAction("刪除時間線", lambda: self.deleteRequested.emit(kid))

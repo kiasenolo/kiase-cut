@@ -1337,12 +1337,39 @@ def place_compound(root, container, ref, track_id, start_us):
 STILL_DEFAULT_US = 5_000_000          # a new static clip lasts as long as a new picture
 
 
+def freeze_at(tracks, t_us):
+    """Re-time content so that what shows at t_us shows at 0 (a static compound shows only its
+    first frame): clips are moved t_us earlier, one running across t_us loses what came before
+    (as a trim, keyframes kept in place) and one that ended by then is dropped (it could never
+    show). Returns the tracks."""
+    t_us = int(t_us)
+    if t_us <= 0:
+        return tracks
+    for t in tracks:
+        kept = []
+        for c in t["clips"]:
+            if end(c) <= t_us:
+                continue
+            if c["start_us"] < t_us:
+                d = t_us - c["start_us"]
+                c["start_us"], c["duration_us"] = t_us, c["duration_us"] - d
+                c["source_start_us"] = c.get("source_start_us", 0) + d
+                shift_keys(c, d)
+                if c.get("fade_in_us"):
+                    c["fade_in_us"] = 0
+            c["start_us"] -= t_us
+            kept.append(c)
+        t["clips"] = kept
+    return tracks
+
+
 def make_compound(root, container, clip_ids, at_us=None, static=False):
     """Move clips of the open level into a new shared compound and leave one clip showing it
     in their place: over their whole span, on the topmost picture track they used (or a new
     one above it when that has no room). The tracks they were on come along, in order.
-    static makes a static compound (靜態片段): its clip shows the content as it is at at_us
-    (the playhead, kept inside the span) and works like a picture from then on."""
+    static makes a static compound (靜態片段), which shows only its first frame, like a
+    picture: the content is re-timed (freeze_at) so the moment at at_us (the playhead, kept
+    inside the span) is that frame."""
     picked = [find(container, cid) for cid in dict.fromkeys(clip_ids)]
     if not picked:
         raise EditError("先在時間軸上選取片段")
@@ -1366,7 +1393,8 @@ def make_compound(root, container, clip_ids, at_us=None, static=False):
             "height": size.get("height", 1080), "duration_us": int(span), "tracks": inner}
     if static:
         t = span // 2 if at_us is None else at_us - s0
-        comp.update(static=True, still_us=int(min(max(t, 0), max(0, span - 1))))
+        freeze_at(inner, min(max(t, 0), max(0, span - 1)))
+        comp["static"] = True
     kid = project.new_compound_id(root)
     comps[kid] = comp
     clip = {"id": new_clip_id(), "type": "compound", "name": comp["name"], "start_us": int(s0),
@@ -1389,19 +1417,26 @@ def new_static(root, container, at_us, track_id=None):
     return new_compound(root, container, at_us, track_id, static=True)
 
 
+def add_compound(root, static=False, size=None):
+    """A new empty compound entry (static: a static one), size (width, height) or the
+    project's; no clip shows it yet (it can be opened by itself). Returns its id."""
+    comps = root.setdefault("compounds", {})
+    n = sum(1 for k in comps.values() if bool(k.get("static")) == static) + 1
+    w, h = size or (root.get("width", 1920), root.get("height", 1080))
+    kid = project.new_compound_id(root)
+    comps[kid] = {"name": f"{'靜態片段' if static else '複合片段'} {n}", "width": w, "height": h,
+                  "duration_us": STILL_DEFAULT_US, "tracks": [{"id": "t0", "kind": "video", "name": "V1", "clips": []}]}
+    if static:
+        comps[kid]["static"] = True
+    return kid
+
+
 def new_compound(root, container, at_us, track_id=None, static=False):
     """A new empty compound (static: a static one) and a clip showing it at at_us: on
     track_id, or else on the topmost picture track with room there, or a new track. Enter
     the clip to fill it."""
-    comps = root.setdefault("compounds", {})
-    n = sum(1 for k in comps.values() if bool(k.get("static")) == static) + 1
     size = root if container is root or "width" not in container else container
-    kid = project.new_compound_id(root)
-    comps[kid] = {"name": f"{'靜態片段' if static else '複合片段'} {n}", "width": size.get("width", 1920),
-                  "height": size.get("height", 1080), "duration_us": STILL_DEFAULT_US,
-                  "tracks": [{"id": "t0", "kind": "video", "name": "V1", "clips": []}]}
-    if static:
-        comps[kid].update(static=True, still_us=0)
+    kid = add_compound(root, static, (size.get("width", 1920), size.get("height", 1080)))
     if track_id is None:
         track_id = next((t["id"] for t in reversed(container["tracks"]) if t["kind"] == "video"
                          and free_range(t, at_us, at_us + STILL_DEFAULT_US) is not None), None)
@@ -1426,7 +1461,12 @@ def make_unique(root, container, clip_id):
 
 
 def rename_compound(root, compound_id, name):
-    root["compounds"][compound_id]["name"] = str(name).strip() or "複合片段"
+    """Rename a compound; _thumbnail (the project's thumbnail) only fits a static one."""
+    comp = root["compounds"][compound_id]
+    name = str(name).strip() or "複合片段"
+    if name == project.THUMBNAIL and not comp.get("static"):
+        raise EditError(f"{project.THUMBNAIL} 一定要是靜態複合片段")
+    comp["name"] = name
 
 
 def delete_compound(root, compound_id, force=False):

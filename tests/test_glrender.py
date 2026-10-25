@@ -140,7 +140,7 @@ class GpuMatchesCpu(unittest.TestCase):
                 "tracks": [{"id": "i0", "kind": "video", "name": "v", "clips": [self.bg(transform=tf(scale=0.7))]},
                            {"id": "i1", "kind": "video", "name": "v", "clips": [self.top(transform=tf(x=0.4))]}]}
         if static:
-            comp.update(static=True, still_us=0)
+            comp["static"] = True
         return {"id": "k", "type": "compound", "name": "k", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,
                 "compound_id": "k1", "compound": comp, "transform": tf(scale=1.4, rotation=12, x=0.1, opacity=0.9)}
 

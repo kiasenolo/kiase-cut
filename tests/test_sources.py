@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 
-from kiasecut import audiomix, edit, library, project, render, renderexport, svgimage  # noqa: E402
+from kiasecut import audiomix, curves, edit, library, project, render, renderexport, svgimage  # noqa: E402
 from test_edit import S, clip, proj  # noqa: E402
 
 APP = QGuiApplication.instance() or QGuiApplication([])
@@ -121,10 +121,13 @@ class StaticTests(unittest.TestCase):
         comp = st["compound"]
         self.assertTrue(project.is_static(st))
         self.assertEqual((st["start_us"], st["duration_us"]), (0, 7 * S))
-        self.assertEqual(comp["still_us"], int(1.5 * S))
+        self.assertNotIn("still_us", comp)
         inner = [c["id"] for t in comp["tracks"] for c in t["clips"]]
         self.assertEqual(sorted(inner), ["c1", "c2"])
-        self.assertEqual(edit.find(comp, "c2")[1]["start_us"], 5 * S)
+        # the playhead moment (1.5 s) is its first frame: c1 starts there, c2 follows
+        c1 = edit.find(comp, "c1")[1]
+        self.assertEqual((c1["start_us"], c1["duration_us"], c1["source_start_us"]), (0, S // 2, int(1.5 * S)))
+        self.assertEqual(edit.find(comp, "c2")[1]["start_us"], int(3.5 * S))
         with self.assertRaises(edit.EditError):                      # gone from the timeline
             edit.find(self.p, "c1")
         with self.assertRaises(edit.EditError):                      # sound is not a picture
@@ -164,6 +167,30 @@ class StaticTests(unittest.TestCase):
             self.assertEqual(audiomix.sources(p["tracks"]), [])
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+    def test_freeze_at_keeps_the_look(self):
+        a = clip("a", 0, 3 * S)
+        a["transform"]["x"] = {"keys": [[0, 0.0, 0, 0, 0, 0], [2 * S, 1.0, 0, 0, 0, 0]]}
+        tracks = [{"id": "t", "kind": "video", "name": "v",
+                   "clips": [clip("gone", 0, S), a, clip("later", 4 * S, S)]}]
+        edit.freeze_at(tracks, S)
+        cl = tracks[0]["clips"]
+        self.assertEqual([c["id"] for c in cl], ["a", "later"])        # what ended by then can never show
+        self.assertEqual((cl[0]["start_us"], cl[0]["duration_us"], cl[0]["source_start_us"]), (0, 2 * S, S))
+        self.assertAlmostEqual(curves.value(cl[0]["transform"]["x"], 0), 0.5)   # as it looked at 1 s
+        self.assertEqual(cl[1]["start_us"], 3 * S)
+
+    def test_old_still_moment_becomes_the_first_frame(self):
+        p = proj()
+        st = edit.make_compound(p, p, ["c1"], 0, static=True)
+        data = __import__("json").loads(project.dumps(p))
+        comp = data["compounds"][st["compound_id"]]
+        comp["still_us"] = S // 2                                          # saved by an older version
+        back = project.normalize(data)
+        comp = back["compounds"][st["compound_id"]]
+        self.assertNotIn("still_us", comp)
+        c1 = comp["tracks"][0]["clips"][0]
+        self.assertEqual((c1["start_us"], c1["source_start_us"]), (0, S // 2))
 
     def test_new_empty_static(self):
         st = edit.new_static(self.p, self.p, 3 * S, "t1")

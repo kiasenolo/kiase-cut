@@ -533,12 +533,12 @@ class GLRenderer(render.Renderer):
         """A static compound's picture as a layer (drawn once, kept while unchanged)."""
         cw, ch = comp["width"], comp["height"]
         k = min(quantize(k), self.STILL_MAX_PX / max(cw, ch))
-        key = (json.dumps(comp["tracks"], sort_keys=True, default=str), comp.get("still_us", 0), cw, ch, round(k, 4))
+        key = (json.dumps(comp["tracks"], sort_keys=True, default=str), cw, ch, round(k, 4))
         lay = self.gl_stills.pop(key, None)
         if lay is None:
             lay = Layer(self.gl, max(1, math.ceil(cw * k)), max(1, math.ceil(ch * k)))
             lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
-            self.gl_tracks(lay, QTransform.fromScale(k, k), comp["tracks"], cw, ch, fps, comp.get("still_us", 0), k)
+            self.gl_tracks(lay, QTransform.fromScale(k, k), comp["tracks"], cw, ch, fps, 0, k)
             while len(self.gl_stills) >= 24:
                 self.gl_stills.pop(next(iter(self.gl_stills))).release()
         self.gl_stills[key] = lay

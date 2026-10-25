@@ -1,7 +1,9 @@
 """Main window (Jianying-like): media library, preview, inspector, timeline.
 
 Editing can happen on the main timeline or inside a compound clip (double-click it);
-`path_ids` is the chain of compound clips that are open. Every edit runs through one undo
+`path_ids` is the chain of compound clips that are open. Its first entry can instead be
+"cmp:<compound id>": that compound opened by itself, from the compound list, so one that no
+clip shows (a _thumbnail, a mask's) can be edited too. Every edit runs through one undo
 history on the whole project, applied to whichever level is open.
 """
 import hashlib
@@ -15,13 +17,13 @@ import time
 
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QKeySequence
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QImage, QKeySequence
 from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
 
-from .. import assets, build, curves, edit, fonts, fx, gpu, library, project, renderexport, userlib, waveform, workspace
+from .. import assets, build, curves, edit, fonts, fx, gpu, library, project, renderexport, thumbnail, userlib, waveform, workspace
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -35,6 +37,7 @@ from .inspector import Inspector
 from .library import LibraryPanel
 from .player import Player
 from .project_dialogs import NewProjectDialog, ProjectInfoDialog
+from .project_manager import ProjectManager
 from .settings_dialog import SettingsDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
@@ -123,6 +126,27 @@ class Task(QObject):
             self.finished.emit(self.fn(self.progress.emit))
         except Exception as exc:
             self.failed.emit(f"{type(exc).__name__}: {exc}")
+
+
+OPEN_PREFIX = "cmp:"            # path_ids[0] = OPEN_PREFIX + compound id: that compound opened by itself
+
+
+def walk_path(root, path):
+    """[(compound clip or None, the content it shows, that content's id)] along a path of open
+    levels (see the module notes); raises EditError / KeyError when a step is gone."""
+    out, node = [], root
+    for i, cid in enumerate(path):
+        if cid.startswith(OPEN_PREFIX):
+            if i:
+                raise edit.EditError("a compound opened by itself comes first")
+            kid = cid[len(OPEN_PREFIX):]
+            node = root["compounds"][kid]
+            out.append((None, node, kid))
+        else:
+            c = edit.find(node, cid)[1]
+            node = c["compound"]
+            out.append((c, node, project.ref_of(c)))
+    return out
 
 
 class TimelineTabs(QTabBar):
@@ -243,6 +267,7 @@ class MainWindow(QMainWindow):
         self.compounds.deleteRequested.connect(self.delete_compound_item)
         self.compounds.useDeleteRequested.connect(self.delete_use)
         self.compounds.createRequested.connect(self.create_from_panel)
+        self.compounds.entryRequested.connect(self.open_compound_entry)
         self.ulpanel = UserLibraryPanel()
         self.ulpanel.settingsRequested.connect(self.open_settings)
         self.ulpanel.newFilterRequested.connect(self.new_filter_file)
@@ -594,6 +619,7 @@ class MainWindow(QMainWindow):
             menu.addAction(a)
 
         m = self.menuBar().addMenu("檔案")
+        add(m, "專案管理器…", "Ctrl+Shift+O", self.show_project_manager)
         add(m, "新專案…", "Ctrl+N", self.new_project)
         add(m, "開啟專案…", "Ctrl+O", self.open_project)
         self.recent_menu = m.addMenu("最近的專案")
@@ -602,6 +628,7 @@ class MainWindow(QMainWindow):
         add(m, "另存新檔…", "Ctrl+Shift+S", lambda: self.save_project(True))
         m.addSeparator()
         add(m, "專案資訊…", "F11", self.show_project_info)
+        add(m, "把目前畫面設為專案縮圖", None, self.thumbnail_from_frame)
         add(m, "開啟專案資料夾", None, lambda: self.reveal(None))
         add(m, "整理素材到專案資料夾", None, self.collect_external)
         m.addSeparator()
@@ -745,10 +772,8 @@ class MainWindow(QMainWindow):
         the timeline itself)."""
         path = v.get("path") if isinstance(v.get("path"), list) else []
         try:
-            node = self.proj
-            for cid in path:
-                node = edit.find(node, cid)[1]["compound"]
-        except (edit.EditError, KeyError, TypeError):
+            walk_path(self.proj, path)
+        except (edit.EditError, KeyError, TypeError, AttributeError):
             path = []
         self.path_ids = list(path)
         try:
@@ -796,22 +821,22 @@ class MainWindow(QMainWindow):
         self._update_timeline_tabs()
         self.viewer_lbl.setText(project.timeline(self.proj)["name"] if self.proj else "")
         names = [project.timeline(self.proj)["name"] if self.proj else "主時間軸"]
-        node = self.proj
-        for cid in self.path_ids:
-            _, c = edit.find(node, cid)
-            names.append(c.get("name") or "複合片段")
-            node = c["compound"]
+        for c, node, _ref in walk_path(self.proj, self.path_ids) if self.proj else []:
+            if c is None:                                # a compound opened by itself: no timeline around it
+                names = ["複合片段：" + (node.get("name") or "複合片段")]
+                self.viewer_lbl.setText(names[0])
+            else:
+                names.append(c.get("name") or "複合片段")
         self.crumb.setText(" › ".join(names) if self.path_ids else "")
         self.compounds.set_project(self.proj, self.path_ids)
         self.back_btn.setVisible(bool(self.path_ids))
 
     # -- levels (main timeline / compound clips) ------------------------------------------------
     def container(self, root=None):
-        """The tracks owner that is open: the project or a compound clip's content."""
-        node = self.proj if root is None else root
-        for cid in self.path_ids:
-            node = edit.find(node, cid)[1]["compound"]
-        return node
+        """The tracks owner that is open: the project or a compound's content."""
+        root = self.proj if root is None else root
+        steps = walk_path(root, self.path_ids)
+        return steps[-1][1] if steps else root
 
     def view(self):
         """Project-like dict for the open level, for the timeline and the preview build."""
@@ -851,10 +876,20 @@ class MainWindow(QMainWindow):
         self.path_ids = list(path)
         self._switch_level(round(c.get("source_start_us", 0) / US * self.fps))
 
+    def open_compound_entry(self, kid):
+        """From the compound list: edit compound kid by itself (no clip has to show it)."""
+        if not self.proj or kid not in self.proj.get("compounds", {}):
+            return
+        if not (self.path_ids and self.path_ids[0].startswith(OPEN_PREFIX)):
+            self.return_pos = self.pos if not self.path_ids else 0     # where 返回上一層 goes back to
+            self._return_path = list(self.path_ids)
+        self.path_ids = [OPEN_PREFIX + kid]
+        self._switch_level(0)
+
     def enter_compound(self, cid):
         _, c = edit.find(self.container(), cid)
-        if project.is_static(c):                         # its picture is the moment still_us
-            inner = round(c["compound"].get("still_us", 0) / US * self.fps)
+        if project.is_static(c):                         # its picture is its first frame
+            inner = 0
         else:
             inner = round((self.playhead_us() - c["start_us"] + c.get("source_start_us", 0)) / US * self.fps)
         self.path_ids.append(cid)
@@ -866,6 +901,14 @@ class MainWindow(QMainWindow):
                 self.fullscreen.close()
             return
         cid = self.path_ids.pop()
+        if cid.startswith(OPEN_PREFIX):                  # a compound opened by itself: back where it was opened
+            self.path_ids = [p for p in getattr(self, "_return_path", []) if not p.startswith(OPEN_PREFIX)]
+            try:
+                self.container()
+            except (edit.EditError, KeyError):
+                self.path_ids = []
+            self._switch_level(getattr(self, "return_pos", 0) if not self.path_ids else 0)
+            return
         _, c = edit.find(self.container(), cid)
         if project.is_static(c):                         # (its time does not map onto the outer one)
             outer = round(c["start_us"] / US * self.fps)
@@ -951,6 +994,56 @@ class MainWindow(QMainWindow):
     def open_recent(self, path):
         if self.maybe_save():
             self.open_path(path)
+
+    def show_project_manager(self):
+        """Every project with its thumbnail; open one, or start / find another."""
+        dlg = ProjectManager(self, self.default_location(), self.recent())
+        if dlg.exec() != QDialog.Accepted or not dlg.choice:
+            return
+        what = dlg.choice[0]
+        if what == "open":
+            self.open_recent(dlg.choice[1])
+        elif what == "new":
+            self.new_project()
+        else:
+            self.open_project()
+
+    def thumbnail_from_frame(self):
+        """The frame the preview shows becomes the project's thumbnail."""
+        if not self.proj or not self.path:
+            QMessageBox.information(self, "專案縮圖", "先儲存專案，才能替它做縮圖。")
+            return
+        if project.thumbnail_compound(self.proj) is not None:
+            QMessageBox.information(self, "專案縮圖", f"這個專案有「{project.THUMBNAIL}」靜態複合片段，縮圖會用它的畫面。\n"
+                                                    f"要改用目前的畫面，先把它改名或刪掉。")
+            return
+        try:
+            thumbnail.save_image(self.preview.img, self.path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "專案縮圖", str(exc))
+            return
+        self.statusBar().showMessage("已把目前的畫面設為專案縮圖", 4000)
+
+    def update_thumbnail(self):
+        """After a save: draw the _thumbnail static compound (if any) into the thumbnail."""
+        try:
+            done = thumbnail.update(self.proj, self.path, self._thumb_video)
+        except Exception as exc:                          # a thumbnail must never spoil a save
+            self.statusBar().showMessage(f"縮圖沒有更新：{exc}", 6000)
+            return
+        if done == "not static":
+            self.statusBar().showMessage(f"「{project.THUMBNAIL}」不是靜態複合片段，沒有拿來做縮圖", 6000)
+
+    def _thumb_video(self, path, us, w, h):
+        """Video pictures for drawing a thumbnail (from the media engine)."""
+        try:
+            if getattr(self, "_thumb_engine", None) is None:
+                self._thumb_engine = EngineClient(1920, 1080)
+            k = min(1.0, (1920 * 1080 / max(1, w * h)) ** 0.5)
+            px, rw, rh = self._thumb_engine.media_frame(path, us, self.proj["fps"], max(1, int(w * k)), max(1, int(h * k)))
+            return QImage(px, rw, rh, rw * 4, QImage.Format_RGBA8888).copy()
+        except Exception:
+            return None
 
     def ensure_project(self):
         """Media goes into a project folder, so there has to be a project first."""
@@ -1056,6 +1149,7 @@ class MainWindow(QMainWindow):
         self.remember(self.path)
         self._update_title()
         self.statusBar().showMessage("已儲存", 3000)
+        self.update_thumbnail()
         return True
 
     def new_location_for_unsaved(self):
@@ -1342,7 +1436,7 @@ class MainWindow(QMainWindow):
         self.meter.set_gain(self.proj.get("master_gain", 1.0))
         try:
             self.container()
-        except edit.EditError:                           # an undo removed an open compound
+        except (edit.EditError, KeyError):               # an undo (or a delete) removed an open compound
             self.path_ids = []
         sel, ids = self.timeline.selected_id, set(self.timeline.selected_ids)
         self.timeline.set_project(self.view(), keep_view=True)
@@ -1470,16 +1564,16 @@ class MainWindow(QMainWindow):
 
     def create_from_panel(self, kind):
         """From the compound list's menu: a new timeline, or a new empty compound / static
-        compound with a clip showing it at the playhead of the open level (selected)."""
+        compound, opened by itself to be filled (drag it onto a timeline to use it)."""
         if not self.proj:
             return
         if kind == "timeline":
             self.apply_root("新增時間線", edit.add_timeline)
             return
-        static, at = kind == "static", self.playhead_us()
-        self.apply_root("新增靜態片段" if static else "新增複合片段",
-                        lambda root: edit.new_compound(root, self.container(root), at, static=static),
-                        select=lambda c: c["id"])
+        static = kind == "static"
+        kid = self.apply_root("新增靜態片段" if static else "新增複合片段", lambda root: edit.add_compound(root, static))
+        if kid:
+            self.open_compound_entry(kid)
 
     def delete_use(self, tl_id, path, cid):
         self.timeline.selected_id = None
@@ -2028,10 +2122,8 @@ class MainWindow(QMainWindow):
     def mask_compounds(self):
         """[(id, name)] of the compounds a clip of the open level can be masked with: not one
         that shows this level (it would cut with itself)."""
-        here, node = self.proj["active_timeline"], self.proj
-        for cid in self.path_ids:                        # (the open level: the last compound clip's content)
-            c = edit.find(node, cid)[1]
-            here, node = project.ref_of(c), c["compound"]
+        steps = walk_path(self.proj, self.path_ids)      # (the open level: the last compound's content)
+        here = steps[-1][2] if steps else self.proj["active_timeline"]
         out = []
         for kid, comp in self.proj.get("compounds", {}).items():
             if not project.contains(self.proj, kid, here):
@@ -2917,6 +3009,8 @@ class MainWindow(QMainWindow):
         if self.fullscreen:
             self.fullscreen.close()
         self.player.shutdown()
+        if getattr(self, "_thumb_engine", None) is not None:
+            self._thumb_engine.close()
         for th, _task in list(self.tasks):               # background work still running: let it end
             th.quit()
             th.wait(4000)
@@ -2934,4 +3028,6 @@ def run(argv):
             win.open_path(os.path.abspath(a))
         else:
             win.import_draft_file(a)
+    else:                                            # no project: pick one first
+        QTimer.singleShot(0, win.show_project_manager)
     return app.exec()

@@ -9,7 +9,8 @@ follows the same rules as build.py:
     clip centre; pictures are fitted into the canvas, texts are textlayout images;
   * masks live in material space (they move with the clip), drawn as clip paths;
   * compound clips render their tracks into a layer first, at time - start + source start;
-    a static compound (靜態片段) always at its still_us, drawn once and reused like a picture;
+    a static compound (靜態片段) always at time 0 (its first frame), drawn once and reused
+    like a picture;
   * a compound mask (kind "compound") cuts with a compound's picture (view["compounds"]):
     its alpha or luma, at clip time (a static one: its still). view["matte_preview"] =
     {clip, opacity} (the editor, while the mask is edited) draws that picture over the clip.
@@ -129,7 +130,7 @@ class Renderer:
         at most STILL_MAX_PX on its long side): drawn once, then reused while it is unchanged."""
         cw, ch = comp["width"], comp["height"]
         k = min(quantize(k), self.STILL_MAX_PX / max(cw, ch))
-        key = (json.dumps(comp["tracks"], sort_keys=True, default=str), comp.get("still_us", 0), cw, ch, round(k, 4))
+        key = (json.dumps(comp["tracks"], sort_keys=True, default=str), cw, ch, round(k, 4))
         im = self.stills.get(key)
         if im is None:
             im = QImage(max(1, math.ceil(cw * k)), max(1, math.ceil(ch * k)), QImage.Format_ARGB32_Premultiplied)
@@ -137,7 +138,7 @@ class Renderer:
             lp = QPainter(im)
             lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
             lp.scale(k, k)
-            self.draw_tracks(lp, comp["tracks"], cw, ch, fps, comp.get("still_us", 0), k)
+            self.draw_tracks(lp, comp["tracks"], cw, ch, fps, 0, k)
             lp.end()
             if len(self.stills) >= 24:
                 self.stills.pop(next(iter(self.stills)))

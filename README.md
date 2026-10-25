@@ -20,10 +20,20 @@ Or start it with `start_kiasecut.bat` (Windows: installs the packages if missing
 ffmpeg or MLT is missing, passes its arguments on).
 
 ```
-python -m kiasecut                         # empty window: File > Import Jianying draft
+python -m kiasecut                         # the project manager: pick a project
 python -m kiasecut draft_content.dec.json  # import a decrypted Jianying draft
 python -m kiasecut project.kiasecut.json   # open a saved project
 ```
+
+Project manager (專案管理器, shown when it starts without a project, and from 檔案 >
+專案管理器… / Ctrl+Shift+O): every project - those in the projects folder (where 新專案
+puts them) and those on the recent list - as cards, newest first, with a search box.
+Double-click one to open it; 新增專案… and 開啟其他專案… are also there, and right-click a
+card to open its folder or take its thumbnail away. A project has no thumbnail at first:
+檔案 > 把目前畫面設為專案縮圖 saves the frame the preview shows, or make a static compound
+named `_thumbnail` (it has to be static; another kind cannot take that name) - its picture
+becomes the thumbnail every time the project is saved, and wins over a saved frame. The
+picture is `<project name>.thumbnail.png` in the project folder.
 
 Space play/pause · ←/→ step a frame · Home/End · Ctrl+I import · Ctrl+S save · Ctrl+E export.
 
@@ -114,18 +124,22 @@ Compounds are reusable: each one is stored once in the project and any number of
 clips (on any timeline, nested too) show it, so editing it inside one clip changes every
 clip that shows it. The 複合片段 tab beside the media library lists them with how often
 they are used and where; drag one onto the timeline to use it again, click a use to select
-it, double-click to open it, right-click to rename (or delete an unused one). Right-click
+it, double-click to open it, right-click to rename (or delete an unused one). A compound
+that no clip shows (a `_thumbnail`, one a mask uses) opens by itself: double-click it, or
+right-click any compound > 進入編輯 (返回上一層 goes back to where you were). Right-click
 anywhere in that list for 新增時間線, 新增複合片段 or 新增靜態複合片段: a new compound
-starts empty, with a clip showing it at the playhead (double-click it to fill it). A clip's
+starts empty and opens by itself to be filled; drag it onto a timeline to use it. A clip's
 「設為獨立（不再共用）」 gives it its own copy. Older projects and Jianying drafts are
 converted on opening: identical copies become one shared compound. Right-click selected
 clips > 建立複合片段 puts them into a new compound (one clip takes their place).
 
 Static clips (靜態片段, ◧): a picture built in the editor. Right-click selected picture
-clips > 建立靜態片段 turns them into one, frozen as they look at the playhead; right-click
+clips > 建立靜態片段 turns them into one, frozen as they look at the playhead (that moment
+becomes its first frame: like a picture, a static clip only ever shows its first frame, so
+what ended before it is left out); right-click
 a free spot on a picture track > 新增空白靜態片段 starts an empty one. On the timeline it
 behaves like a picture: any length, no sound, drawn once and reused. Double-click it to
-edit its content (the playhead opens at its frozen moment); every clip that uses it
+edit its content (the playhead opens at its first frame, the only one it shows); every clip that uses it
 changes with it, as with compounds.
 
 Media library (left): import files (Ctrl+Shift+I), organise them in folders by dragging,

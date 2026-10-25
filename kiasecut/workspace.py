@@ -98,6 +98,37 @@ def other_projects(root):
     return sorted(f for f in os.listdir(root) if f.endswith(EXTS))
 
 
+def thumbnail_file(path):
+    """Where the project file path's thumbnail picture goes (thumbnail.py)."""
+    return sub(root_of(path), project_name(path) + ".thumbnail.png")
+
+
+def find_projects(location, extra=()):
+    """Every project file in location (in it and in its project folders, one level down)
+    plus the existing ones of extra (the recent list), newest first; each once."""
+    found = []
+    try:
+        entries = sorted(os.scandir(location), key=lambda e: e.name) if os.path.isdir(location) else []
+    except OSError:
+        entries = []
+    for e in entries:
+        if e.is_file() and e.name.endswith(EXTS):
+            found.append(e.path)
+        elif e.is_dir() and e.name not in (MEDIA, CACHE, EXPORTS, BACKUP):
+            try:
+                found += [os.path.join(e.path, f) for f in other_projects(e.path)]
+            except OSError:
+                pass
+    found += [p for p in extra if os.path.isfile(p)]
+    seen, out = set(), []
+    for p in found:
+        key = os.path.normcase(os.path.abspath(p))
+        if key not in seen:
+            seen.add(key)
+            out.append(os.path.abspath(p).replace("\\", "/"))
+    return sorted(out, key=lambda p: -os.path.getmtime(p))
+
+
 # -- project info -----------------------------------------------------------------------------------
 def new_info(title):
     t = now_iso()

@@ -258,6 +258,7 @@ class MainWindow(QMainWindow):
         lb.revealRequested.connect(self.reveal)
         lb.addRequested.connect(lambda iid: self.place_media(iid, "", self.playhead_us()))
         lb.filesDropped.connect(lambda paths, folder: self.drop_files(paths, folder))
+        lb.collectRequested.connect(lambda: self.collect_external(ask=False))
 
         self.compounds = CompoundPanel()
         self.compounds.showRequested.connect(self.show_compound)
@@ -465,12 +466,13 @@ class MainWindow(QMainWindow):
         tl.trackAction.connect(self.on_track_action)
         tl.clipAction.connect(self.on_clip_action)
         tl.mediaDropped.connect(self.place_media)
+        tl.mediaManyDropped.connect(self.place_media_many)
         tl.assetDropped.connect(self.place_asset)
         tl.compoundDropped.connect(self.place_compound)
         tl.replaceDropped.connect(self.replace_source)
         tl.filterDropped.connect(self.on_filter_dropped)
-        tl.filesDropped.connect(lambda paths, tid, start: self.drop_files(
-            paths, self.library.current_folder(), (tid, start)))
+        tl.filesDropped.connect(lambda paths, tid, start, across: self.drop_files(
+            paths, self.library.current_folder(), (tid, start, across)))
         tl.newTrackRequested.connect(
             lambda cid, start, top: self.apply("移到新軌道", edit.move_to_new_track, cid, start, top))
         # timelines (as in DaVinci Resolve: several per project, one open), as tabs
@@ -1099,7 +1101,7 @@ class MainWindow(QMainWindow):
         self.open_loaded(proj, path)
         if warnings:
             QMessageBox.information(self, "匯入完成", "部分內容無法匯入：\n" + "\n".join(sorted(set(warnings))))
-        self.collect_external(ask=False)             # the draft's media are copied into the project
+        # the draft's media stay where they are: the library's copy button brings them in
 
     def open_project(self):
         if not self.maybe_save():
@@ -1197,7 +1199,7 @@ class MainWindow(QMainWindow):
         self.player.worker.set_loop(None)
         self.timeline.set_peaks(waveform.Peaks(self.cache_dir(), on_ready=self.timeline.peaksReady.emit))
         self.timeline.set_project(proj)
-        self.library.set_library(library.lib(proj))
+        self.refresh_library()
         self._update_title()
         self._update_crumb()
         self._update_buttons()
@@ -1306,7 +1308,7 @@ class MainWindow(QMainWindow):
                 self.request_sync(100)
                 return
             if library.apply_scan(self.proj, root, res):
-                self.library.set_library(library.lib(self.proj))
+                self.refresh_library()
             self.watch_media()
             if res["failed"] and self.sync_retries < 4:   # a file still being written: look again
                 self.sync_retries += 1
@@ -1327,6 +1329,11 @@ class MainWindow(QMainWindow):
             self.request_sync(300)
             self.request_ul_sync(300)
         super().changeEvent(e)
+
+    def refresh_library(self):
+        """Show the project's library, and the copy button while some media sit outside Media."""
+        self.library.set_library(library.lib(self.proj) if self.proj else {})
+        self.library.set_external(library.external_count(self.proj, self.root) if self.proj and self.root else 0)
 
     def paths_changed(self, pairs, label):
         """Files were renamed / moved: the undo history follows them, and the views refresh."""
@@ -1447,7 +1454,7 @@ class MainWindow(QMainWindow):
         if sel:                                          # keep a multiple selection too
             self.timeline.selected_ids = (ids & alive) | {sel}
         self.timeline.update()
-        self.library.set_library(library.lib(self.proj))
+        self.refresh_library()
         self._update_title()
         self._update_crumb()
         self._update_buttons()
@@ -1863,9 +1870,9 @@ class MainWindow(QMainWindow):
             self.drop_files(paths, self.library.current_folder())
 
     def drop_files(self, paths, folder, place=None):
-        """Files (or folders of them) dragged in: they are copied into the project's Media folder
-        (so into the media library), and onto the timeline too when dropped there
-        (place = (track id, start us))."""
+        """Files (or folders of them) dragged in: they join the media library where they are,
+        and the timeline too when dropped there
+        (place = (track id, start us, across): stacked, or one after another with Alt)."""
         files = library.media_files(paths)
         if not files:
             self.statusBar().showMessage("沒有可以匯入的圖片、影片或音訊檔案", 4000)
@@ -1881,50 +1888,43 @@ class MainWindow(QMainWindow):
         self.import_files(files, folder, place)
 
     def import_files(self, files, folder, place=None):
-        """Copy the files into Media (in `folder`), add them to the library and, with place,
-        to the timeline."""
+        """Add the files to the library (in `folder`) where they are, without copying them (the
+        library's copy button does that later) and, with place, to the timeline."""
         if not self.ensure_project():
             return
         root = self.root
-        dest = library.folder_dir(self.proj, root, folder)
-        known = library.known_paths(self.proj)
         self.statusBar().showMessage(f"匯入 {len(files)} 個檔案…")
 
-        def work(progress):
-            got = library.import_copy(root, files, dest, progress)
-            return got, library.scan(root, known)
+        def work(progress):                            # probing reads the files: off the UI thread
+            probes, bad = {}, []
+            for i, f in enumerate(files):
+                try:
+                    probes[library.norm(f)] = library.probe(f)
+                except Exception:
+                    bad.append(os.path.basename(f))
+                progress((i + 1) / len(files))
+            return probes, bad
 
         def add_and_place(proj, ids):
-            if place is None:
-                return None
-            track_id, start = place
-            level = self.container(proj)
-            tracks, nxt, clip = {}, {}, None
-            for iid in ids:
-                it = library.item(proj, iid)
-                want = "audio" if it["kind"] == "audio" else "video"
-                clip = library.place(level, proj, iid, tracks.get(want, track_id), nxt.get(want, start))
-                tracks[want] = edit.find(level, clip["id"])[0]["id"]
-                nxt[want] = clip["start_us"] + clip["duration_us"]
-            return clip
+            track_id, start, across = place
+            return library.place_items(self.container(proj), [library.item(proj, iid) for iid in ids],
+                                       track_id or None, start, across)
 
         def done(result):
-            got, res = result
+            probes, bad = result
             if self.root != root:
                 return
+            items = library.add_files(self.proj, list(probes), folder, probes, reuse=True)
+            self.dirty = True
             self.fs_epoch += 1
-            library.apply_scan(self.proj, root, res)
-            self.library.set_library(library.lib(self.proj))
-            self.watch_media()
-            by_path = {it["path"]: it for it in library.lib(self.proj)["items"]}
-            items = [by_path[p] for p in dict.fromkeys(got.values()) if p in by_path]
-            bad = [os.path.basename(p) for p in dict.fromkeys(got.values()) if p not in by_path]
+            self.refresh_library()
+            self.request_sync(300)                     # files already in Media go to their own folder
             self.left.setCurrentWidget(self.library)
             if items and place is not None:
-                self.apply_root("匯入素材並加入時間軸", add_and_place, [it["id"] for it in items],
-                                select=lambda c: c["id"])
+                self._select_new(self.apply_root("匯入素材並加入時間軸", add_and_place, [it["id"] for it in items],
+                                                 select=lambda cs: cs[-1]["id"]))
             elif items:
-                self.statusBar().showMessage(f"已匯入 {len(items)} 個素材到專案資料夾", 4000)
+                self.statusBar().showMessage(f"已匯入 {len(items)} 個素材", 4000)
             if bad:
                 QMessageBox.warning(self, "部分檔案無法匯入", "讀不到：\n" + "\n".join(bad))
 
@@ -1943,7 +1943,7 @@ class MainWindow(QMainWindow):
             return False, None
         finally:
             self.fs_epoch += 1
-            self.library.set_library(library.lib(self.proj))
+            self.refresh_library()
             self.watch_media()
         return True, result
 
@@ -2023,6 +2023,26 @@ class MainWindow(QMainWindow):
         self.apply_root("加入素材",
                         lambda root: library.place(self.container(root), root, item_id, track_id or None, start_us),
                         select=lambda c: c["id"])
+
+    def place_media_many(self, item_ids, track_id, start_us, across):
+        """Several media items dragged together: stacked on tracks of their own, or (Alt,
+        across) one after another; one undo step, and they end up selected."""
+        if not self.proj:
+            return
+        items = []
+        for iid in item_ids:
+            if iid.startswith("mu"):                         # the user's Library: media only
+                key, it = self.ulib.find(iid)
+                if it is not None and key not in ("filters", "textstyles"):
+                    items.append(it)
+            else:
+                it = next((i for i in library.lib(self.proj)["items"] if i["id"] == iid), None)
+                if it is not None:
+                    items.append(it)
+        if not items:
+            return
+        self._select_new(self.apply_root("加入素材", lambda root: library.place_items(
+            self.container(root), items, track_id or None, start_us, across), select=lambda cs: cs[-1]["id"]))
 
     def store_asset(self, params):
         """Draw built-in asset parameters (assets.py) into the project's Media/.內建素材;
@@ -2710,7 +2730,7 @@ class MainWindow(QMainWindow):
 
     def ul_use_files(self, files, place):
         """Files that are in the Library are used where they are: onto the timeline when
-        dropped there (place = (track id, start us)), else just shown in the Library."""
+        dropped there (place = (track id, start us, across)), else just shown in the Library."""
         items = []
         for f in files:
             it = self.ulib.item_for_path(f)
@@ -2725,19 +2745,9 @@ class MainWindow(QMainWindow):
         if place is None:
             self.statusBar().showMessage(f"{len(items)} 個檔案已經在 Library 裡，不需要複製到專案", 5000)
             return
-        track_id, start = place
-
-        def add(root):
-            level = self.container(root)
-            tracks, nxt, clip = {}, {}, None
-            for it in items:
-                want = "audio" if it["kind"] == "audio" else "video"
-                clip = library.place_item(level, it, tracks.get(want, track_id), nxt.get(want, start))
-                tracks[want] = edit.find(level, clip["id"])[0]["id"]
-                nxt[want] = clip["start_us"] + clip["duration_us"]
-            return clip
-
-        self.apply_root("加入 Library 素材", add, select=lambda c: c["id"])
+        track_id, start, across = place
+        self._select_new(self.apply_root("加入 Library 素材", lambda root: library.place_items(
+            self.container(root), items, track_id or None, start, across), select=lambda cs: cs[-1]["id"]))
 
     def ul_menu(self, key, menu, ident):
         if not ident or ident.startswith("f"):
@@ -2803,9 +2813,9 @@ class MainWindow(QMainWindow):
 
     def browse_effect(self, cid):
         start = self.ulib.mirror("filters") if self.ulib else ""
-        path, _ = QFileDialog.getOpenFileName(self, "選擇濾鏡檔案", str(start), "GLSL 濾鏡 (*.glsl)")
-        if path:
-            self.apply("新增效果", edit.add_effect, cid, library.norm(path))
+        paths, _ = QFileDialog.getOpenFileNames(self, "選擇濾鏡檔案", str(start), "GLSL 濾鏡 (*.glsl)")
+        if paths:                                   # several at once: one undo step
+            self.apply("新增效果", edit.add_effects, cid, [library.norm(p) for p in paths])
 
     def new_filter_file(self, folder):
         """A new filter file made from the template, opened in the user's editor."""

@@ -931,6 +931,11 @@ def add_effect(proj, clip_id, ref):
     return e
 
 
+def add_effects(proj, clip_id, refs):
+    """Several filters on a clip, in order (the files picked together in 選擇濾鏡檔案)."""
+    return [add_effect(proj, clip_id, ref) for ref in refs]
+
+
 def remove_effect(proj, clip_id, effect_id):
     _, c = find(proj, clip_id)
     c["effects"].remove(_effect(c, effect_id))

@@ -63,15 +63,24 @@ class Tree(QTreeWidget):
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.setSelectionMode(QAbstractItemView.ExtendedSelection)     # Shift / Ctrl pick several
 
     def mimeTypes(self):
         return [MIME]
 
     def mimeData(self, items):
+        """The dragged ids, in the order the list shows them (top to bottom)."""
         md = QMimeData()
-        md.setData(MIME, ",".join(i.data(0, ROLE_ID) for i in items).encode())
+        md.setData(MIME, ",".join(i.data(0, ROLE_ID) for i in self.in_order(items)).encode())
         return md
+
+    def in_order(self, items):
+        rank, stack = {}, [self.topLevelItem(i) for i in reversed(range(self.topLevelItemCount()))]
+        while stack:
+            n = stack.pop()
+            rank[n.data(0, ROLE_ID)] = len(rank)
+            stack += [n.child(i) for i in reversed(range(n.childCount()))]
+        return sorted(items, key=lambda i: rank.get(i.data(0, ROLE_ID), len(rank)))
 
     def dragEnterEvent(self, e):
         e.acceptProposedAction() if e.mimeData().hasFormat(MIME) or e.mimeData().hasUrls() else e.ignore()
@@ -112,6 +121,7 @@ class LibraryPanel(QWidget):
     addRequested = Signal(str)                # item id -> add at the playhead
     filesDropped = Signal(list, object)       # paths, folder id or None (dragged in from outside)
     revealRequested = Signal(object)          # item / folder id, or None for the Media folder itself
+    collectRequested = Signal()               # copy the media from outside the Media folder into it
 
     def __init__(self, parent=None, import_label="匯入素材"):
         super().__init__(parent)
@@ -133,6 +143,10 @@ class LibraryPanel(QWidget):
         self.bar = bar
         self.bar2 = QHBoxLayout()               # a second row for panels with more buttons
         lay.addLayout(self.bar2)
+        self.collect_btn = QPushButton("將不在素材資料夾的素材複製到素材資料夾")
+        self.collect_btn.clicked.connect(self.collectRequested)
+        self.collect_btn.hide()                 # shown while some media sit elsewhere: set_external()
+        lay.addWidget(self.collect_btn)
         self.tree = Tree()
         self.tree.moved.connect(self.moveRequested)
         self.tree.filesDropped.connect(self.filesDropped)
@@ -145,6 +159,11 @@ class LibraryPanel(QWidget):
     def set_origin(self, text, tip=""):
         self.head.setText(text)
         self.head.setToolTip(tip)
+
+    def set_external(self, n):
+        """n media files used from outside the Media folder: the copy button shows while n > 0."""
+        self.collect_btn.setVisible(n > 0)
+        self.collect_btn.setToolTip(f"{n} 個素材不在素材資料夾裡（原檔不會被動到）")
 
     def current_folder(self):
         it = self.tree.currentItem()

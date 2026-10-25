@@ -3,9 +3,9 @@
 proj["library"] = {"folders": [{id, name, parent}], "items": [{id, name, path, kind, width,
 height, duration_us, folder}]}. parent / folder is None at the top level. The library is a
 mirror of <project folder>/Media (see "the Media folder" below): folders are directories,
-items are files; imports copy files in, and renaming, moving or deleting here does the
-same to the files. The first group of functions only edits the dicts; the second one also
-touches the disk. Both raise edit.EditError on bad input.
+items are files, and renaming, moving or deleting here does the same to the files. Imports
+link files where they are; external_media() / collect() copy those into Media later. The
+first group of functions only edits the dicts; the second one also touches the disk. Both raise edit.EditError on bad input.
 """
 import json
 import os
@@ -235,6 +235,50 @@ def place_item(container, it, track_id, start_us):
     return c
 
 
+def place_items(container, items, track_id, start_us, across=False):
+    """Several items dropped together, in order. Stacked (the default): all at the time the
+    first one lands, each on its own track, pictures going up from the dropped track and
+    sounds going down. Across (Alt): one after another on the track each kind lands on.
+    Returns the clips."""
+    clips, last = [], {}                      # kind -> the clip placed last
+    t0 = None
+    for it in items:
+        want = "audio" if it["kind"] == "audio" else "video"
+        prev = last.get(want)
+        if prev is None:
+            c = place_item(container, it, track_id, start_us if t0 is None or across else t0)
+        elif across:
+            c = place_item(container, it, edit.find(container, prev["id"])[0]["id"], edit.end(prev))
+        else:
+            c = _stack_on(container, it, edit.find(container, prev["id"])[0], t0)
+        t0 = c["start_us"] if t0 is None else t0
+        last[want] = c
+        clips.append(c)
+    return clips
+
+
+def _stack_on(container, it, below, t0):
+    """Place it at t0 on the first free track past `below` (above it on screen; for sounds,
+    under it), or on a new track at the far end of those."""
+    c = clip_from(it, max(0, t0))
+    tracks = container["tracks"]
+    audio = below["kind"] == "audio"
+    same = [i for i, t in enumerate(tracks) if (t["kind"] == "audio") == audio]
+    past = [i for i in same if i > tracks.index(below)]
+    for i in past:
+        t = tracks[i]
+        if not project.locked(t) and all(edit.end(k) <= c["start_us"] or k["start_us"] >= edit.end(c)
+                                         for k in t["clips"]):
+            t["clips"].append(c)
+            t["clips"].sort(key=lambda k: k["start_us"])
+            return c
+    want = "audio" if audio else "video"
+    n = sum(1 for t in tracks if t["kind"] == want) + 1
+    track = {"id": edit.new_track_id(container), "kind": want, "name": f"{want} {n}", "clips": [c]}
+    tracks.insert((past or [tracks.index(below)])[-1] + 1, track)
+    return c
+
+
 # -- the Media folder -------------------------------------------------------------------------------
 def slash(p):
     return p.replace("\\", "/")
@@ -446,17 +490,31 @@ def in_user_library(path):
     return bool(path and project.LIBRARY_ROOT and within(norm(path), norm(project.LIBRARY_ROOT)))
 
 
+def _outside(proj, root):
+    """(path, library folder below Media) of the items and clips that use files from elsewhere,
+    each path once."""
+    mroot = norm(mroot_of(root))
+    todo = [(it["path"], folder_rel(proj, it["folder"]) if it.get("folder") else "") for it in lib(proj)["items"]]
+    todo += [(c["media"]["path"], "匯入的素材") for c in project.all_clips(proj) if c.get("media")]
+    out = {}
+    for path, rel in todo:
+        path = slash(path or "")
+        if path and path not in out and not within(path, mroot) and not in_user_library(path):
+            out[path] = rel
+    return out
+
+
+def external_count(proj, root):
+    """How many files from outside Media the project uses that could be copied in (they exist)."""
+    return sum(1 for p in _outside(proj, root) if os.path.exists(p))
+
+
 def external_media(proj, root):
     """{path outside Media: where a copy would go}: the library items and clips that use files
     from elsewhere. Items keep their library folder as a sub-folder of Media."""
     mroot = norm(mroot_of(root))
     plan, taken = {}, {}
-    todo = [(it["path"], folder_rel(proj, it["folder"]) if it.get("folder") else "") for it in lib(proj)["items"]]
-    todo += [(c["media"]["path"], "匯入的素材") for c in project.all_clips(proj) if c.get("media")]
-    for path, rel in todo:
-        path = slash(path)
-        if within(path, mroot) or path in plan or not path or in_user_library(path):
-            continue
+    for path, rel in _outside(proj, root).items():
         d = mroot + ("/" + rel if rel else "")
         stem, ext = os.path.splitext(os.path.basename(path))
         cand, n = stem + ext, 1
@@ -505,7 +563,7 @@ def _inside(proj, root, ident):
     else:
         ok = within(item(proj, ident)["path"], mroot)
     if not ok:
-        raise edit.EditError("這個素材不在專案資料夾裡，請先用「檔案 > 整理素材到專案資料夾」")
+        raise edit.EditError("這個素材不在素材資料夾裡，請先按「將不在素材資料夾的素材複製到素材資料夾」")
 
 
 def rename_on_disk(proj, root, ident, name):
@@ -544,9 +602,13 @@ def rename_on_disk(proj, root, ident, name):
 
 
 def move_on_disk(proj, root, ident, to_folder):
-    """Move a folder or file into to_folder (None: top level of Media)."""
+    """Move a folder or file into to_folder (None: top level of Media). A file from elsewhere
+    only changes library folder (it is copied there when its media are collected)."""
     if to_folder is not None:
         folder(proj, to_folder)
+    if not ident.startswith("f") and not within(item(proj, ident)["path"], norm(mroot_of(root))):
+        item(proj, ident)["folder"] = to_folder
+        return []
     _inside(proj, root, ident)
     dest_dir = folder_dir(proj, root, to_folder)
     if ident.startswith("f"):

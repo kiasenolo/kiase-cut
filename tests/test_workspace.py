@@ -178,6 +178,22 @@ class Sync(Base):
         h.redo()
         self.assertTrue(all(c["media"]["path"] == new for c in project.all_clips(self.proj)))
 
+    def test_linked_media_count_and_move(self):
+        ext = png(os.path.join(self.d, "elsewhere", "e.png"))
+        (inside,) = self.import_("a.png")
+        self.assertEqual(library.external_count(self.proj, self.root), 0)
+        (it,) = library.add_files(self.proj, [ext], None)
+        gone = {"id": "mx", "name": "x.png", "path": self.d + "/nowhere/x.png", "kind": "image", "folder": None}
+        library.lib(self.proj)["items"].append(gone)                   # missing: nothing to copy
+        self.assertEqual(library.external_count(self.proj, self.root), 1)
+        F = library.make_folder(self.proj, self.root, "素材")
+        self.assertEqual(library.move_on_disk(self.proj, self.root, it["id"], F["id"]), [])
+        self.assertEqual((it["folder"], it["path"]), (F["id"], ext))     # only the library folder changes
+        self.sync()
+        self.assertEqual(library.item(self.proj, it["id"])["folder"], F["id"])
+        self.assertEqual(list(library.external_media(self.proj, self.root).values())[0],
+                         self.root.replace("\\", "/") + "/Media/素材/e.png")
+
     def test_collect_external_media(self):
         ext = png(os.path.join(self.d, "elsewhere", "e.png"))
         ext2 = png(os.path.join(self.d, "elsewhere2", "e.png"), (50, 50))
@@ -195,6 +211,7 @@ class Sync(Base):
             library.retarget(self.proj, src, dst)
         self.sync()
         self.assertEqual(library.external_media(self.proj, self.root), {})
+        self.assertEqual(library.external_count(self.proj, self.root), 0)
         self.assertTrue(all(os.path.exists(k["media"]["path"]) for k in project.all_clips(self.proj)))
         names = sorted(f["name"] for f in library.lib(self.proj)["folders"])
         self.assertEqual(names, ["匯入的素材", "素材"])

@@ -114,10 +114,11 @@ class Timeline(QWidget):
     trackAction = Signal(str, str)                   # action, track id
     clipAction = Signal(str, str)                    # action, clip id
     mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
+    mediaManyDropped = Signal(list, str, int, bool)  # library item ids, track id or "", start us, across (Alt)
     compoundDropped = Signal(str, str, int)          # compound id, track id or "", start us
     assetDropped = Signal(str, str, int)             # built-in asset ("asset:…"), track id or "", start us
     filterDropped = Signal(str, str, str, int)       # filter ref, clip id or "", track id or "", start us
-    filesDropped = Signal(list, str, int)            # file manager paths, track id or "", start us
+    filesDropped = Signal(list, str, int, bool)      # file manager paths, track id or "", start us, across (Alt)
     replaceDropped = Signal(str, str)                # media id (library item, "cmp:<id>" or "asset:…"), clip id: Alt + drop
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
     clipDragging = Signal(str, int, int)             # clip id, start us, duration us: while dragging
@@ -148,6 +149,7 @@ class Timeline(QWidget):
         self.hover_playhead = False                # the mouse is on the playhead line (it can be dragged)
         self.drop_clip = None                      # clip a filter from the VFX tab would go onto
         self.drop_replace = False                  # drop_clip would get the dragged media as its source (Alt)
+        self.drop_many = None                      # (count, across) while several media items hover
         self.tops = []                             # y of each row (on screen)
         self.vzoom = 1.0                           # track height factor
         self.heights = {}                          # track id -> height set by dragging its edge
@@ -604,6 +606,11 @@ class Timeline(QWidget):
             if row is not None:
                 p.fillRect(QRectF(self.header_w, self.tops[row], w - self.header_w, self.row_h(row) - 2),
                            QColor(255, 255, 255, 30))
+            if self.drop_many is not None:              # how several items will be laid out
+                n, across = self.drop_many
+                p.setPen(QColor("#e6e6e6"))
+                p.drawText(QPointF(dx + 6, RULER_H + 14),
+                           f"{n} 個素材：接在後面" if across else f"{n} 個素材：上下疊放（按 Alt 接在後面）")
         p.setPen(QPen(QColor("#ffd34d"), 1))                     # where a drag has snapped
         for t in self._snap_guides():
             gx = self._x(t / US)
@@ -1240,7 +1247,10 @@ class Timeline(QWidget):
         pos = e.position()
         if self.proj:
             self.drop_at = (self._drop_row(pos.y()), max(0.0, self._sec(pos.x())) * US)
-            self.drop_replace = self._alt(e) and e.mimeData().hasFormat(MEDIA_MIME)
+            md = e.mimeData()
+            n = len(self._media_ids(md)) if md.hasFormat(MEDIA_MIME) else len(self._file_paths(md))
+            self.drop_many = (n, self._alt(e)) if n > 1 else None
+            self.drop_replace = self._alt(e) and e.mimeData().hasFormat(MEDIA_MIME) and n <= 1
             if e.mimeData().hasFormat(FX_MIME):
                 self.drop_clip = self._fx_target(pos)
             elif self.drop_replace:
@@ -1257,6 +1267,18 @@ class Timeline(QWidget):
         """The row a drop at y lands on: none over a locked track (a new track is made instead)."""
         row = self._row_at(y)
         return None if row is None or project.locked(self.rows[row]) else row
+
+    @staticmethod
+    def _media_ids(md):
+        """Media library items in a drag (not compounds or built-in assets)."""
+        if not md.hasFormat(MEDIA_MIME):
+            return []
+        return [i for i in bytes(md.data(MEDIA_MIME)).decode().split(",") if i.startswith("m")]
+
+    @staticmethod
+    def _file_paths(md):
+        """Files (or folders) dragged in from the file manager."""
+        return [u.toLocalFile() for u in md.urls() if u.isLocalFile()] if md.hasUrls() else []
 
     @staticmethod
     def _alt(e):
@@ -1278,15 +1300,17 @@ class Timeline(QWidget):
             self.update()
 
     def dragLeaveEvent(self, e):
-        self.drop_at = self.drop_clip = None
+        self.drop_at = self.drop_clip = self.drop_many = None
         self.drop_replace = False
         self.update()
 
     def dropEvent(self, e):
-        self.drop_at = self.drop_clip = None
+        self.drop_at = self.drop_clip = self.drop_many = None
         self.drop_replace = False
         pos = e.position()
-        target = self._replace_target(pos) if self.proj and self._alt(e) else None
+        many = self._media_ids(e.mimeData())
+        many = many if len(many) > 1 else None             # (with several, Alt lines them up instead)
+        target = self._replace_target(pos) if self.proj and self._alt(e) and not many else None
         if target is not None and e.mimeData().hasFormat(MEDIA_MIME):     # Alt: replace that clip's source
             ident = bytes(e.mimeData().data(MEDIA_MIME)).decode().split(",")[0]
             self.replaceDropped.emit(ident, target["id"])
@@ -1308,10 +1332,15 @@ class Timeline(QWidget):
         tid = self.rows[row]["id"] if row is not None else ""
         start = int(max(0.0, self._sec(pos.x())) * US) if self.proj else 0
         if not e.mimeData().hasFormat(MEDIA_MIME):           # files from the file manager
-            paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
-            if paths:
-                self.filesDropped.emit(paths, tid, start)
+            paths = self._file_paths(e.mimeData())
+            if paths:                                         # (stacked, or one after another with Alt)
+                self.filesDropped.emit(paths, tid, start, self._alt(e))
                 e.acceptProposedAction()
+            self.update()
+            return
+        if many:                                         # several library items: one edit
+            self.mediaManyDropped.emit(many, tid, start, self._alt(e))
+            e.acceptProposedAction()
             self.update()
             return
         for ident in bytes(e.mimeData().data(MEDIA_MIME)).decode().split(","):

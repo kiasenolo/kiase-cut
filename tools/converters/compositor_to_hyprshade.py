@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Compositor to Hyprshade (GLSL)",
     "author": "Claude",
-    "version": (2, 3, 0),
+    "version": (2, 4, 0),
     "blender": (4, 2, 0),
     "location": "Compositor > Node menu > Export as Shader / Filter",
     "description": "Convert compositor node trees / node groups into screen shaders (Hyprshade, OBS, ShaderGlass) or KiaseCut filters",
@@ -115,6 +115,8 @@ SETTING_DEFS = [
     ("blur_adapt", "BLUR_ADAPT", True, "Fewer blur samples for big radii", "Use fewer samples as the blur radius grows (faster, grainier)"),
     ("bloom_samples", "BLOOM_SAMPLES", 32, "Bloom samples", "Upper limit of samples per pixel for Bloom / Fog Glow"),
     ("sun_steps", "SUN_STEPS", 24, "Sun Beams steps", "Samples along each Sun Beams ray"),
+    ("streak_taps", "STREAK_TAPS", 64, "Streak taps", "Samples along each Glare streak (Streaks); a longer streak samples every 4th / 16th pixel, jittered"),
+    ("ghost_samples", "GHOST_SAMPLES", 8, "Ghost blur samples", "Samples of the blurred highlights per ghost (Glare: Ghosts)"),
     ("dilate_k", "DILATE_K", 5, "Dilate/Erode taps", "Taps per side for Dilate / Erode"),
     ("pixelate_taps", "PIXELATE_TAPS", 3, "Pixelate taps", "Samples per axis averaged inside a Pixelate block"),
     ("frame_rate", "FRAME_RATE", 60.0, "FrameCount rate (ShaderGlass)", "ShaderGlass only: how many frames per second its FrameCount advances (used by Scene Time)"),
@@ -212,6 +214,25 @@ def menu_items(sock):
     return []
 
 
+def menu_choices(obj):
+    """The choices of a menu socket / interface item, in order ([] when it has none).  Blender's Python API does
+    not list the items of these (dynamic) menus, but the error for a choice that is not there does."""
+    try:
+        old = obj.default_value
+        obj.default_value = "\x01?"
+    except Exception as e:
+        m = re.search(r"not found in (\(.*\))", str(e))
+        if m:
+            import ast
+            try:
+                return [str(x) for x in ast.literal_eval(m.group(1))]
+            except (ValueError, SyntaxError):
+                pass
+        return []
+    obj.default_value = old
+    return []
+
+
 def param_spec(it, name, t, val, items=None):
     """Description of a node-group input as an adjustable parameter (KiaseCut filters), or None.
     kind: float / int / bool / color / vec2 / vec3 / menu (see kiasecut/filters/FORMAT.md).
@@ -271,13 +292,16 @@ class Bind:
         return default if v is None else v
 
     def menu(self, key, default=""):
+        s = self.c.find_input(self.node, key)
+        if s is not None:
+            forced = self.c.forced.get((self.ctx.id, self.node.name, s.identifier))
+            if forced is not None:              # the variant of this node for one choice of a menu parameter
+                return norm(forced)
         v = self.s(key, None)
         if v is None:
             v = getattr(self.node, norm(key), default)
-        s = self.c.find_input(self.node, key)
         if s is not None and self.c.menu_param(self.ctx, s) is not None:
-            self.warn("'%s' stays '%s' (the group input's default): only a Menu Switch follows a menu input"
-                      % (s.name, v))
+            self.warn("'%s' stays '%s' (the group input's default): its choices are not known" % (s.name, v))
         return norm(v)
 
     def flag(self, key, default=False):
@@ -310,6 +334,7 @@ class Converter:
         self.stack = []           # emit stack of (ctx.id, node.name)
         self.edges = {}           # consumer key -> set(producer keys)
         self.heavy_keys = {}      # key -> placeholder token (nodes that run a sampling loop)
+        self.forced = {}          # (ctx.id, node name, socket identifier) -> choice, see menu_variants()
         self.warnings = []
         self._warned = set()
         self.consts = []          # (name, decl) global constants (root group inputs, LUTs)
@@ -466,7 +491,7 @@ class Converter:
                 self.warn("Unsupported node '%s' (%s): output is 0" % (node.name, node.bl_idname))
                 bodies = ["return %s;" % zero(gtype(o)) for o in node.outputs]
             else:
-                bodies = handler(h)
+                bodies = self.menu_variants(h, handler)
         except Exception as e:  # keep exporting, but tell the user
             self.warn("Node '%s' (%s) failed: %s" % (node.name, node.bl_idname, e))
             bodies = ["return %s;" % zero(gtype(o)) for o in node.outputs]
@@ -481,6 +506,33 @@ class Converter:
                 node.name.encode("ascii", "replace").decode(), node.bl_idname, t,
                 self.fn(ctx, node, i), body.replace("\n", "\n    "))
             self.funcs.append(code)
+
+    def menu_variants(self, h, handler):
+        """A node whose own menu (Glare's Type, Blur's Type, ...) is picked by a menu parameter: its code for
+        every choice, the parameter picking one at run time (as if a Menu Switch were behind it)."""
+        node, ctx = h.node, h.ctx
+        if node.bl_idname != "GeometryNodeMenuSwitch":
+            for s in node.inputs:
+                fkey = (ctx.id, node.name, s.identifier)
+                if s.type != "MENU" or fkey in self.forced:
+                    continue
+                items = self.menu_param(ctx, s)
+                if not items:
+                    continue
+                sel = "int(floor(%s + 0.5))" % self.inp(ctx, node, s.identifier, "float")
+                variants = []
+                for choice in [c for c in menu_choices(s) if c in items] or items:
+                    self.forced[fkey] = choice
+                    variants.append((items.index(choice), self.menu_variants(h, handler)))
+                del self.forced[fkey]
+                res = []
+                for i, o in enumerate(node.outputs):
+                    parts = ["if (i == %d) {\n    %s\n}" % (k, (b if "return" in b else "return %s;" % b).replace("\n", "\n    "))
+                             for k, bodies in variants if i < len(bodies) and (b := bodies[i]) is not None]
+                    res.append("\n".join(["int i = %s;" % sel] + parts + ["return %s;" % zero(gtype(o))])
+                               if parts else None)
+                return res
+        return handler(h)
 
     def passthrough(self, h):
         res = []
@@ -531,11 +583,12 @@ class Converter:
                 self.root_exprs[j] = coerce("input_tex(uv)", "vec4", t)
                 self.uses_input = True
                 continue
-            items = menu_items(out) if out.type == "MENU" else []
+            # a menu's choices: of the Menu Switch it picks, else of the node menus it picks (Glare's Type, ...)
+            items = (menu_items(out) or menu_choices(it)) if out.type == "MENU" else []
             if (out.type in ("MENU", "STRING", "CUSTOM") and not items) or it.socket_type in ("NodeSocketFont", "NodeSocketString"):
                 self.root_exprs[j] = zero(t)
                 if out.type == "MENU":
-                    self.menu_params[j] = []      # picks no Menu Switch: fixed (Bind.menu warns)
+                    self.menu_params[j] = []      # no choices known: fixed (Bind.menu warns)
                 continue
             name = "IN_" + re.sub(r"\W", "_", it.name.encode("ascii", "ignore").decode() or "x")
             base, k = name, 1
@@ -650,6 +703,8 @@ PRELUDE = r"""
 #define BLUR_SAMPLES 32    // blur: samples per pixel (cost ~ linear; 16 = fast/grainy, 64 = smooth)
 #define DILATE_K 5        // dilate/erode taps per side
 #define SUN_STEPS 24      // sun beams samples
+#define STREAK_TAPS 64    // glare streaks: samples along each streak (longer streaks: every 4th / 16th pixel, jittered)
+#define GHOST_SAMPLES 8   // glare ghosts: samples of the blurred highlights per ghost
 #define TEX_SCALE 1.0     // procedural texture coordinate scale (coords are -1..1 * TEX_SCALE)
 
 vec2 res() { return vec2(textureSize(tex, 0)); }
@@ -684,14 +739,37 @@ vec2 snap_px(vec2 uv) { return (floor(uv * res()) + 0.5) / res(); }
 
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
-// glare highlight extraction (soft knee on max channel; fitted against Blender)
-vec3 glare_hl(vec3 c, float thr, float sm) {
-    float m = max(c.r, max(c.g, c.b));
-    float knee = max(min(thr, sm), 0.0);
-    float soft = clamp(m - thr + knee, 0.0, 2.0 * knee);
-    soft = soft * soft / (4.0 * knee + 1e-5);
-    float contrib = max(soft, m - thr) / max(m, 1e-5);
-    return c * contrib;
+// glare highlights as Blender computes them: the brightness (HSV value) is smoothly clamped to [thr, mx]
+// (the smoothness kept small enough that thr stays thr), then made relative to the threshold
+float smooth_min(float a, float b, float s) {
+    if (s <= 0.0) return min(a, b);
+    float h = max(s - abs(a - b), 0.0) / s;
+    return min(a, b) - h * h * s * 0.25;
+}
+// glare Fog Glow: Blender's point spread function of the angle theta (degrees) ...
+float fog_psf(float th) {
+    float f0 = 2.61e6 * exp(-(th / 0.02) * (th / 0.02));
+    float f1 = 20.91 / pow(th + 0.02, 3.0);
+    float f2 = 72.37 / ((th + 0.02) * (th + 0.02));
+    return 0.384 * f0 + 0.478 * f1 + 0.138 * f2;
+}
+// ... and its integral over the ring a <= r <= b (pixels; dpp: degrees per pixel)
+float fog_psf_ring(float a, float b, float dpp) {
+    float s = 0.02 / dpp;
+    float i0 = 3.14159265 * 2.61e6 * s * s * (exp(-(a / s) * (a / s)) - exp(-(b / s) * (b / s)));
+    float ua = a * dpp + 0.02, ub = b * dpp + 0.02, k = 6.2831853 / (dpp * dpp);
+    float i1 = k * 20.91 * ((1.0 / ua - 0.01 / (ua * ua)) - (1.0 / ub - 0.01 / (ub * ub)));
+    float i2 = k * 72.37 * (log(ub / ua) + 0.02 / ub - 0.02 / ua);
+    return 0.384 * i0 + 0.478 * i1 + 0.138 * i2;
+}
+vec3 glare_hl(vec3 c, float thr, float sm, float mx) {
+    thr = max(thr, 0.0);
+    sm = max(sm, 0.0);
+    float v = max(c.r, max(c.g, c.b));
+    float range = abs(mx - thr);
+    float b = -smooth_min(-thr, -v, min(sm, min(thr, range)));
+    b = smooth_min(mx, b, min(sm, min(abs(mx), range)));
+    return v > 0.0 ? c * ((b - thr) / v) : vec3(0.0);
 }
 
 vec3 rgb2hsv(vec3 c) {
@@ -705,6 +783,12 @@ vec3 rgb2hsv(vec3 c) {
 vec3 hsv2rgb(vec3 c) {
     vec3 p = abs(fract(c.xxx + vec3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0);
     return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+}
+// glare saturation (HSV saturation scaled) as Blender mixes it
+vec3 glare_sat(vec3 g, float s) {
+    vec3 hsv = rgb2hsv(max(g, vec3(0.0)));
+    hsv.y = clamp(hsv.y * s, 0.0, 1.0);
+    return hsv2rgb(hsv);
 }
 vec3 rgb2hsl(vec3 c) {
     float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
@@ -1677,19 +1761,109 @@ return vec4(o, cg.a);""", dist=h.i("Distortion", "float"), disp=h.i("Dispersion"
                fit="true" if fit else "false", sg=s("pg"), sx=s("pp"))]
 
 
+GLARE_QUALITY = {"high": 1, "medium": 2, "low": 4}   # Blender computes the glare at 1/1, 1/2, 1/4 of the size
+
+
+def _static_input(h, key, default):
+    """Value of an input some glare types need at export time; warns when it is a parameter / computed."""
+    s = h.c.find_input(h.node, key)
+    v = h.s(key, default)
+    if s is not None and h.c.const_sock(h.ctx, s) is None:
+        h.warn("'%s' is fixed at export for this glare type (%s)" % (s.name, v))
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def star_weights(iterations, fade):
+    """Impulse response of Blender's Simple Star filter along one line, from the centre outwards: per
+    iteration i (i pixels apart) a causal then an anti-causal pass of x = mix(x, (prev out + next in) / 2, fade).
+    Symmetric, sums to 1; cut where it falls below 1e-4 of its peak."""
+    n = 64 * max(iterations, 1) + 1
+    a = [0.0] * n
+    c = n // 2
+    a[c] = 1.0
+    for i in range(1, iterations):            # (iteration 0 changes nothing)
+        for x in range(n):
+            prev = a[x - i] if x - i >= 0 else 0.0
+            nxt = a[x + i] if x + i < n else 0.0
+            a[x] = (1.0 - fade) * a[x] + fade * (prev + nxt) * 0.5
+        for x in range(n - 1, -1, -1):
+            prev = a[x + i] if x + i < n else 0.0
+            nxt = a[x - i] if x - i >= 0 else 0.0
+            a[x] = (1.0 - fade) * a[x] + fade * (prev + nxt) * 0.5
+    w = a[c:]
+    peak = max(w)
+    while len(w) > 1 and w[-1] < 1e-4 * peak:
+        w.pop()
+    return w
+
+
+def ghost_terms(iterations):
+    """Blender's ghosts as a sum of terms of the base ghost.  Each accumulation step adds four scaled
+    (about the centre) and attenuated copies of the previous result to it, and scalings compose, so the result
+    is a sum of copies of the base ghost: (total scale, [attenuation scale per step], colour modulator counts)."""
+    off = 0.5 if iterations % 2 == 1 else 0.0
+
+    def scales(i):
+        res = []
+        for p in range(4):
+            s = 2.1 * (1.0 - (i * 4 + p + off) / (iterations * 4))
+            res.append(-0.99 / s if p % 2 == 1 else s)
+        return res
+    mods = ((0, 0, 0), (0, 1, 1), (1, 1, 0), (1, 0, 1))    # which of r, g, b each of the four copies modulates
+    terms = []
+    for i in range(1, iterations):
+        new = []
+        for p, s in enumerate(scales(i)):
+            m = mods[p]
+            if i == 1:
+                new.append((s, [abs(s)], m))
+            else:
+                for ts, tq, tm in terms:
+                    new.append((s * ts, [abs(s)] + [abs(s) * x for x in tq], tuple(a + b for a, b in zip(m, tm))))
+        terms = terms + new if i > 1 else new
+    return terms
+
+
 def _glare(h):
+    """Glare (Blender 4.4+ / 5.x): highlights -> one of the glare kinds -> saturation, tint, strength.
+    Distances are in pixels of the glare image, which Blender computes at 1/q of the size (Quality)."""
     cap = h.heavy()
     kind = h.menu("Type", norm(getattr(h.node, "glare_type", "fog_glow")))
+    q = GLARE_QUALITY.get(h.menu("Quality", "medium"), 2)
     img = h.i("Image", "vec4")
-    strength = h.i("Strength", "float") if h.has("Strength") else "1.0"
+    num = lambda key, default: h.i(key, "float") if h.has(key) else default
+    strength = "max(%s, 0.0)" % num("Strength", "1.0")
     tint = h.i("Tint", "vec4") if h.has("Tint") else "vec4(1.0)"
-    thr = h.i("Threshold", "float") if h.has("Threshold") else "0.0"
-    smooth = h.i("Smoothness", "float") if h.has("Smoothness") else "0.1"
-    sat = h.i("Saturation", "float") if h.has("Saturation") else "1.0"
+    sat = "max(%s, 0.0)" % num("Saturation", "1.0")
+    mx = "((%s) > 0.5 ? max(gthr, 0.0) + max(%s, 0.0) : 1.0e30)" % (num("Clamp", "0.0"), num("Maximum", "10.0"))
+    pre = "float gthr = %s;\nfloat gsm = %s;\nfloat gmx = %s;\n" % (num("Threshold", "1.0"), num("Smoothness", "0.1"), mx)
+    hl = lambda p: "glare_hl(%s.rgb, gthr, gsm, gmx)" % h.i("Image", "vec4", uv=p)
+    # Blender's highlights at 1/2 (1/4) size average 2x2 (4x4) pixels before the threshold: half a pixel off,
+    # one linear-filtered read is that 2x2 average
+    hlq = (lambda p: hl("(%s + 0.5 / res())" % p)) if q > 1 else hl
+    # exactly as Blender: the highlights of the 1/q size grid's texel centred at pc (the average of its q x q
+    # pixels), and the 4 grid texels around uv to scale them up linearly (q = 1: the pixel itself)
+    taps = ["vec2(%s, %s)" % (fl(x), fl(y)) for x in (-1, 1) for y in (-1, 1)] if q == 4 else ["vec2(0.0)"]
+    hl_texel = "glare_hl((%s).rgb / %s, gthr, gsm, gmx)" % (
+        " + ".join(h.i("Image", "vec4", uv="(pc + %s / R)" % t) for t in taps), fl(len(taps)))
+    grid = ("vec2 Rh = R;\nvec2 i0 = floor(uv * R);\nvec2 fr = vec2(0.0);\nconst int NK = 1;\n" if q == 1 else
+            "vec2 Rh = ceil(R / %s);\nvec2 i0 = floor(uv * Rh - 0.5);\nvec2 fr = uv * Rh - 0.5 - i0;\nconst int NK = 4;\n" % fl(q))
+    grid_mix = lambda a: a + "[0]" if q == 1 else "mix(mix(%s[0], %s[1], fr.x), mix(%s[2], %s[3], fr.x), fr.y)" % (a, a, a, a)
+    hl_grid = T("""vec2 R = res();
+$grid
+vec3 hv[NK];
+for (int k = 0; k < NK; k++) {
+    vec2 pc = (clamp(i0 + vec2(float(k & 1), float(k >> 1)), vec2(0.0), Rh - 1.0) + 0.5) * $q / R;
+    hv[k] = $texel;
+}
+vec3 g = $mix;
+""", grid=grid, q=fl(q), texel=hl_texel, mix=grid_mix("hv"))
     if "sun" in kind:
         pos = h.i("Sun Position", "vec3")
-        size = h.i("Size", "float") if h.has("Size") else "0.5"
-        src = h.i("Image", "vec4", uv="p / R")
+        size = num("Size", "0.5")
         # Formula fitted against Blender: path length = size * image diagonal, weight (1 - t)^2,
         # path stops at the sun.
         glare = T("""vec2 R = res();
@@ -1699,60 +1873,201 @@ float dist = length(v);
 vec2 dir = v / max(dist, 1e-6);
 float L = min(max($size, 0.0) * length(R), dist);
 float jit = hash31(vec3(gl_FragCoord.xy, 3.0));
-vec4 acc = vec4(0.0); float wsum = 0.0;
+vec3 acc = vec3(0.0); float wsum = 0.0;
 for (int i = 0; i < SUN_STEPS; i++) {
     float t = (float(i) + jit) / float(SUN_STEPS);
     float w = (1.0 - t) * (1.0 - t);
     vec2 p = P + dir * t * L;
-    vec4 s = $src;
-    acc += w * vec4(glare_hl(s.rgb, $thr, $smooth), s.a);
+    acc += w * $hl;
     wsum += w;
 }
-vec4 g = acc / max(wsum, 1e-6) * ($strength) * ($tint);
-float gl = luma(g.rgb);
-g.rgb = mix(vec3(gl), g.rgb, $sat);
-""", pos=pos, size=size, src=src, thr=thr, smooth=smooth, strength=strength, tint=tint, sat=sat)
-    elif "bloom" in kind or "fog" in kind:
-        size = h.i("Size", "float") if h.has("Size") else "0.5"
-        src = h.i("Image", "vec4", uv="p")
+vec3 g = acc / max(wsum, 1e-6);
+""", pos=pos, size=size, hl=hl("p / R"))
+    elif "fog" in kind:
+        # Blender convolves the highlights with fog_psf (by FFT), theta = distance * field of view / the glare
+        # image's longer side, the field of view going from 180 to 10 degrees as Size goes from 0 to 1, normalised
+        # by the kernel's sum over the zero padded domain.  Here: the 5x5 pixels around exactly, the rest by
+        # importance (log-uniform distance, the 1/r^2 of the tail), the normalisation integrated.
+        glare = T("""vec2 R = res();
+$grid
+float K = max(Rh.x, Rh.y);
+float dpp = mix(180.0, 10.0, pow(clamp($size, 0.0, 1.0), 1.0 / 3.0)) / K;
+vec3 nv[NK];
+float wn = 0.0;
+for (int k = 0; k < NK; k++) {       // the 5x5 grid texels around each of the (4) texels around uv
+    vec2 tk = clamp(i0 + vec2(float(k & 1), float(k >> 1)), vec2(0.0), Rh - 1.0);
+    nv[k] = vec3(0.0);
+    wn = 0.0;
+    for (int dy = -2; dy <= 2; dy++) {
+        for (int dx = -2; dx <= 2; dx++) {
+            vec2 dd = vec2(float(dx), float(dy));
+            float w = fog_psf(length(dd) * dpp);
+            wn += w;
+            vec2 ti = tk + dd;
+            if (any(lessThan(ti, vec2(0.0))) || any(greaterThanEqual(ti, Rh))) continue;   // zero padded
+            vec2 pc = (ti + 0.5) * $q / R;
+            nv[k] += w * $texel;
+        }
+    }
+}
+vec3 acc = $mix;
+float r0 = 2.5, r1 = max(length(Rh), 3.5);     // (nothing is lit beyond the image)
+float lr = log(r1 / r0);
+float rot = hash31(vec3(gl_FragCoord.xy, 10.0));
+float jr = hash31(vec3(gl_FragCoord.xy, 11.0));
+int ns = max(min(BLOOM_SAMPLES, $cap), 4);
+for (int i = 0; i < ns; i++) {
+    vec2 q = fract(vec2(0.7548776662, 0.5698402910) * float(i + 1) + vec2(jr, rot));
+    float r = r0 * exp(lr * q.x);
+    vec2 p = uv + r * vec2(cos(6.2831853 * q.y), sin(6.2831853 * q.y)) * $q / R;
+    acc += fog_psf(r * dpp) * 6.2831853 * r * r * lr / float(ns) * $hl * inside(p);
+}
+vec2 S = Rh + K;                                  // the padded domain, as a disc of the same area
+vec3 g = acc / (wn + fog_psf_ring(r0, sqrt(S.x * S.y / 3.14159265), dpp));
+""", grid=grid, q=fl(q), size=num("Size", "0.5"), cap=cap, hl=hlq("p"), texel=hl_texel, mix=grid_mix("nv"))
+    elif "bloom" in kind:
+        size = num("Size", "0.5")
         # Blender's bloom is a down/up-sample chain with floor(log2(min(w,h) * size)) levels, energy preserving.
         # Fitted against Blender: equal-weight mix of Gaussians with sigma = 1.2 * 2^level (px).  Sampled by
         # importance (level + Gaussian radius per sample) with a per-pixel rotated R2 lattice, so cost is fixed.
         glare = T("""vec2 R = res();
 float Lf = floor(log2(max(min(R.x, R.y) * clamp($size, 0.0, 1.0), 1.0)));
-vec4 g = vec4(0.0);
+vec3 g = vec3(0.0);
 if (Lf < 1.0) {
-    vec4 s = $src0;
-    g = vec4(glare_hl(s.rgb, $thr, $smooth), s.a);
+    g = $hl0;
 } else {
     int nl = int(clamp(Lf, 3.0, 10.0));
     float rot = hash31(vec3(gl_FragCoord.xy, 5.0));
     float jr = hash31(vec3(gl_FragCoord.xy, 6.0));
     int ns = int(max(float(min(BLOOM_SAMPLES, $cap)), float(nl)));
-    vec4 acc = vec4(0.0);
+    vec3 acc = vec3(0.0);
     for (int i = 0; i < ns; i++) {
         vec2 q = fract(vec2(0.7548776662, 0.5698402910) * float(i + 1) + vec2(jr, rot));
-        float lv = floor(float(i) / float(ns) * float(nl) + 0.5 * 0.0);   // stratified: every level gets ~ns/nl samples
-        lv = min(floor((float(i) + jr) / float(ns) * float(nl)), float(nl - 1));
+        float lv = min(floor((float(i) + jr) / float(ns) * float(nl)), float(nl - 1));   // stratified: every level gets ~ns/nl samples
         float sg = (Lf < 3.0 ? 0.9 : 1.2) * exp2(lv);
         float rr = sg * sqrt(-2.0 * log(max(1.0 - q.x, 1e-4)));
         float an = 6.2831853 * q.y;
         vec2 p = uv + rr * vec2(cos(an), sin(an)) / R;
-        vec4 s = $src;
-        acc += vec4(glare_hl(s.rgb, $thr, $smooth), s.a);
+        acc += $hl;
     }
     g = acc / float(ns);
 }
-g *= ($strength) * ($tint);
-float gl = luma(g.rgb);
-g.rgb = mix(vec3(gl), g.rgb, $sat);
-""", size=size, src0=h.i("Image", "vec4"), src=src, thr=thr, smooth=smooth, strength=strength, tint=tint, sat=sat, cap=cap)
+""", size=size, hl0=hl("uv"), hl=hl("p"), cap=cap)
+    elif "streak" in kind:
+        # Each of the N iterations (k = 0..N-1) averages a pixel with 3 neighbours 4^k, 2*4^k, 3*4^k pixels
+        # along the streak, weighted fade^distance and colour-modulated.  Together that is one tap per pixel
+        # n = 0 .. 4^N - 1 along the streak (n's base-4 digits pick the neighbour of each iteration), weight
+        # 0.5^N * fade^n * the modulators of n's non-zero digits.  Taps whose weight is under 1e-3 are dropped;
+        # past STREAK_TAPS, 4^m pixels share one jittered tap (their weights sum in closed form).
+        glare = T("""vec2 R = res();
+float fade = clamp($fade, 0.75, 1.0);
+float cm = clamp($colmod, 0.0, 1.0);
+int N = clamp(int(floor($iter + 0.5)), 2, 5);
+int ns = clamp(int(floor($streaks + 0.5)), 1, 16);
+float total = exp2(2.0 * float(N));
+float nmax = fade < 1.0 ? min(total, ceil(log(1e-3) / log(fade))) : total;
+float per = float(max(min(STREAK_TAPS, $cap / ns), 4));
+int m = 0;
+while (m < N && nmax / exp2(2.0 * float(m)) > per) m++;
+vec3 wlow = vec3(1.0);
+for (int k = 0; k < m; k++) {
+    float c = 1.0 - pow(cm, float(k + 1));
+    float f1 = pow(fade, exp2(2.0 * float(k)));
+    wlow *= vec3(1.0) + f1 * vec3(1.0, c, c) + f1 * f1 * vec3(c, c, 1.0) + f1 * f1 * f1 * vec3(c, 1.0, c);
+}
+float st = exp2(2.0 * float(m));
+float jit = m > 0 ? hash31(vec3(gl_FragCoord.xy, 7.0)) * st : 0.0;
+int nt = int(ceil(nmax / st));
+vec3 acc = vec3(0.0);
+for (int si = 0; si < ns; si++) {
+    float an = $angle + float(si) / float(ns) * 6.2831853;
+    vec2 d = vec2(cos(an), sin(an)) * $q / R;
+    for (int t = 0; t < nt; t++) {
+        int n = t << (2 * m);
+        vec3 w = wlow * pow(fade, float(n));
+        for (int k = m; k < N; k++) {
+            int j = (n >> (2 * k)) & 3;
+            float c = 1.0 - pow(cm, float(k + 1));
+            w *= j == 1 ? vec3(1.0, c, c) : j == 2 ? vec3(c, c, 1.0) : j == 3 ? vec3(c, 1.0, c) : vec3(1.0);
+        }
+        vec2 p = uv + d * (float(n) + jit);
+        acc += w * $hl * inside(p);
+    }
+}
+vec3 g = acc * exp2(-float(N)) / float(6 - N);   // shorter streaks are attenuated more
+""", fade=num("Fade", "0.9"), colmod=num("Color Modulation", "0.25"), iter=num("Iterations", "3"),
+                  streaks=num("Streaks", "4"), angle=num("Streaks Angle", "0.0"), q=fl(q), cap=cap, hl=hlq("p"))
+    elif "star" in kind:
+        # Blender runs recursive (IIR) filters along two lines; their impulse response is computed here.
+        it = int(min(max(round(_static_input(h, "Iterations", 3)), 2), 5))
+        w = star_weights(it, min(max(_static_input(h, "Fade", 0.9), 0.75), 1.0))
+        glare = T("""vec2 R = res();
+bool diag = ($diag) > 0.5;
+vec2 d1 = (diag ? vec2(1.0, 1.0) : vec2(1.0, 0.0)) * $q / R;
+vec2 d2 = (diag ? vec2(-1.0, 1.0) : vec2(0.0, 1.0)) * $q / R;
+float wk[$n] = float[$n]($w);
+vec3 g = 2.0 * wk[0] * $hl0;   // the centre is in both lines
+for (int k = 1; k < $n; k++) {
+    for (int sgn = -1; sgn <= 1; sgn += 2) {
+        vec2 p = uv + d1 * float(k * sgn);
+        g += wk[k] * $hl * inside(p);
+        p = uv + d2 * float(k * sgn);
+        g += wk[k] * $hl * inside(p);
+    }
+}
+""", diag=num("Diagonal", "1.0"), q=fl(q), n=len(w), w=", ".join(fl(x) for x in w), hl0=hlq("uv"), hl=hlq("p"))
+    elif "ghost" in kind:
+        # Base ghost: the highlights blurred (Gaussian, radius 16 and 32 px, sigma = radius / 3) at the image
+        # scaled about its centre by 2.13 and -0.97, each attenuated towards the edge; then the accumulation
+        # steps, expanded into terms of the base ghost (ghost_terms).
+        it = int(min(max(round(_static_input(h, "Iterations", 3)), 2), 5))
+        terms = ghost_terms(it)
+        lines = []
+        for k, (s, qs, m) in enumerate(terms):
+            att = " * ".join("max(0.0, 1.0 - D * %s)" % fl(x) for x in qs)
+            lines.append("ts[%d] = %s; ta[%d] = %s * %s; tm[%d] = vec3(%s);" % (
+                k, fl(s), k, att, fl(0.25 ** len(qs)), k, ", ".join("%d.0" % x for x in m)))
+        glare = T("""vec2 R = res();
+vec2 y = uv - 0.5;
+float D = 2.0 * length(y);
+float cg = 1.0 - clamp($colmod, 0.0, 1.0);
+float ts[$n]; float ta[$n]; vec3 tm[$n];
+$terms
+float rot = hash31(vec3(gl_FragCoord.xy, 8.0));
+float jr = hash31(vec3(gl_FragCoord.xy, 9.0));
+int ns = max(min(GHOST_SAMPLES, $cap / $n), 1);
+vec3 g = vec3(0.0);
+for (int t = 0; t < $n; t++) {
+    if (ta[t] <= 0.0) continue;
+    vec2 z = y * ts[t];
+    float dz = 2.0 * length(z);
+    float wsm = max(0.0, 1.0 - dz * 2.13), wbg = max(0.0, 1.0 - dz * 0.97);
+    if (wsm <= 0.0 && wbg <= 0.0) continue;
+    vec2 cs = 0.5 + z * 2.13, cb = 0.5 - z * 0.97;
+    vec3 acc = vec3(0.0);
+    for (int i = 0; i < ns; i++) {   // (each term turned differently: their noise averages out)
+        vec2 q = fract(vec2(0.7548776662, 0.5698402910) * float(i + 1) + vec2(jr, rot + 0.618034 * float(t)));
+        float rr = sqrt(-2.0 * log(max(1.0 - q.x, 1e-4)));
+        vec2 o = rr * vec2(cos(6.2831853 * q.y), sin(6.2831853 * q.y)) * (16.0 / 3.0) / R;
+        vec2 p = cs + o;
+        if (wsm > 0.0) acc += wsm * $hl * inside(p);
+        p = cb + 2.0 * o;
+        if (wbg > 0.0) acc += wbg * $hl * inside(p);
+    }
+    g += ta[t] * pow(vec3(cg), tm[t]) * acc / float(ns);
+}
+""", colmod=num("Color Modulation", "0.25"), n=len(terms), terms="\n".join(lines), cap=cap, hl=hl("p"))
+    elif "kernel" in kind:
+        if h.linked("Kernel"):
+            h.warn("Glare type 'Kernel' with a kernel image is not supported -> the highlights only")
+        glare = hl_grid
     else:
         h.warn("Glare type '%s' not implemented -> no glare" % kind)
-        glare = "vec4 g = vec4(0.0);\n"
-    return [glare + "vec4 c = %s;\nreturn c + g;" % img,
-            glare + "return g;",
-            "(%s)" % img]
+        glare = "vec3 g = vec3(0.0);\n"
+    post = "g = glare_sat(g, %s) * (%s).rgb * %s;\n" % (sat, tint, strength)
+    return [pre + glare + post + "vec4 c = max(%s, vec4(0.0));\nreturn vec4(c.rgb + g, c.a);" % img,
+            pre + glare + post + "return vec4(g, 1.0);",
+            pre + hl_grid + "return vec4(g, 1.0);"]
 
 
 # ---- procedural textures ----------------------------------------------------------------
@@ -2092,6 +2407,7 @@ def to_hlsl(code):
         t = re.sub(r"\bfloatBitsToUint\(", "asuint(", t)
         t = re.sub(r"\buintBitsToFloat\(", "asfloat(", t)
         t = re.sub(r"(?m)^const float (\w+)\[(\d+)\] = float\[\d+\]\((.*)\);", r"static const float \1[\2] = {\3};", t)
+        t = re.sub(r"(?m)^(\s+)float (\w+)\[(\d+)\] = float\[\d+\]\((.*)\);", r"\1float \2[\3] = {\4};", t)   # local arrays
         t = re.sub(r"(?m)^const (float|int|uint|float2|float3|float4|vec2|vec3|vec4) ", r"static const \1 ", t)
         for w in HLSL_RESERVED:
             t = re.sub(r"\b%s\b(?!\s*\()" % w, w + "_", t) if w not in ("texture",) else t
@@ -2386,6 +2702,8 @@ if bpy:
         blur_adapt: BoolProperty(name="Fewer blur samples for big radii", default=True, description=_D["blur_adapt"])
         bloom_samples: IntProperty(name="Bloom samples", default=32, min=4, max=256, description=_D["bloom_samples"])
         sun_steps: IntProperty(name="Sun Beams steps", default=24, min=4, max=256, description=_D["sun_steps"])
+        streak_taps: IntProperty(name="Streak taps", default=64, min=4, max=1024, description=_D["streak_taps"])
+        ghost_samples: IntProperty(name="Ghost blur samples", default=8, min=1, max=64, description=_D["ghost_samples"])
         dilate_k: IntProperty(name="Dilate/Erode taps", default=5, min=1, max=32, description=_D["dilate_k"])
         pixelate_taps: IntProperty(name="Pixelate taps", default=3, min=1, max=16, description=_D["pixelate_taps"])
         frame_rate: FloatProperty(name="FrameCount rate (ShaderGlass)", default=60.0, min=1.0, soft_max=240.0, description=_D["frame_rate"])

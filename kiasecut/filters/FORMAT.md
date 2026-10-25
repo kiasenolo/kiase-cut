@@ -92,9 +92,13 @@ vec4 effect(vec2 uv) {
   沒接線的群組節點的 `Image`／`Input` 插槽，或叫「Input」的 Image 節點。所以 Blender 裡不需要一直載著一張圖片。
 - 群組的輸入（Image／Input 以外）會變成參數，面板上可以調、可以打關鍵幀：Float → `float`、Integer → `int`、Boolean → `bool`、
   Color → `color`、Vector → `vec3`（2D 向量 → `vec2`）、Menu → `menu`。群組輸入的最小／最大值就是欄位範圍。
-- Menu 輸入：接到 Menu Switch（可以隔著轉接點、穿進內層群組的 Menu 輸入）就會變成下拉選單，選項就是 Menu Switch 的項目，
-  匯出後還能切換、打關鍵幀。接到其他節點的選單（例如 Blur 的類型）則固定在預設的選項，匯出時會出警告。
+- Menu 輸入會變成下拉選單，匯出後還能切換、打關鍵幀（可以隔著轉接點、穿進內層群組的 Menu 輸入）：
+  接到 Menu Switch 時選項就是 Menu Switch 的項目；接到節點自己的選單（例如 Glare 的 Type、Quality，Blur 的類型）時，
+  選項就是那個選單的選項，匯出檔裡每個選項各有一份程式，由參數挑一份來跑。
 - `Scene Time` 節點用片段時間（`time`）；`Blur`、`Glare`、`Dilate/Erode`、`Pixelate` 的取樣數等寫在檔案裡的 `#define` 區，可以自己改。
+- `Glare` 的七種類型都能匯出（含 Quality、Clamp、Saturation、Tint 與 Highlights 輸出）：Fog Glow、Streaks、Simple Star 照 Blender 的算法做，
+  Ghosts 是取樣近似（有一點顆粒，`GHOST_SAMPLES` 調高會更平滑但比較慢），Kernel 若接了核心圖片則只輸出 highlights。
+  Simple Star 和 Ghosts 的 Iterations（Simple Star 還有 Fade）在匯出時就固定了。
 - `#define LINEARIZE 1`：照 Blender 的方式在線性光裡運算（預設）；`FLIP_Y`、`COMPOSITE_OVER_SCREEN` 同樣在 `#define` 區。
-- 限制：決定結構的選項（Interpolation、節點自己的類型選單等）在匯出時就固定了；Switch / Index Switch 若接到群組輸入（參數）或計算出來的值、Menu Switch 若接到群組的 Menu 輸入，匯出後仍可切換；`String to Image` 不支援（文字請用編輯器的文字片段）。
+- 限制：決定結構的選項（Interpolation、節點自己的類型選單等）若沒有接到群組的 Menu 輸入，在匯出時就固定了；Switch / Index Switch 若接到群組輸入（參數）或計算出來的值，匯出後仍可切換；`String to Image` 不支援（文字請用編輯器的文字片段）。
 

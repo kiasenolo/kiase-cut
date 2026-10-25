@@ -102,6 +102,31 @@ class MenuParamTest(unittest.TestCase):
                          [(10, 20, 30, 255), (255, 0, 0, 255), (0, 0, 255, 255)])
 
 
+class GlareMathTest(unittest.TestCase):
+    """The parts of the add-on's Glare that are worked out in Python (checked against Blender 5.2's renders when
+    written: Simple Star and Fog Glow match pixel for pixel at High quality)."""
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, os.path.join(ROOT, "tools", "converters"))
+        import compositor_to_hyprshade as addon
+        cls.addon = addon
+
+    def test_star_weights(self):
+        w = self.addon.star_weights(3, 0.9)
+        self.assertAlmostEqual(w[0] + 2 * sum(w[1:]), 1.0, places=3)        # energy preserving
+        self.assertEqual(len(w), 25)
+        self.assertTrue(all(a >= b for a, b in zip(w, w[2:])))               # falls off (in steps of 2 pixels)
+        self.assertEqual([round(x, 4) for x in self.addon.star_weights(2, 0.75)[:3]], [0.3182, 0.2131, 0.0799])
+        self.assertGreater(len(self.addon.star_weights(5, 1.0)), len(w))     # more iterations: longer
+
+    def test_ghost_terms(self):
+        self.assertEqual([len(self.addon.ghost_terms(n)) for n in (2, 3, 4)], [4, 20, 100])
+        s, att, mod = self.addon.ghost_terms(2)[1]
+        self.assertAlmostEqual(s, -0.99 / (2.1 * (1 - 5 / 8)), places=6)    # Blender's scale of the 2nd copy
+        self.assertEqual((att, mod), ([abs(s)], (0, 1, 1)))
+
+
 @unittest.skipIf(bpy is None, "needs the bpy module")
 class AddonExportTest(unittest.TestCase):
     @classmethod
@@ -152,6 +177,24 @@ class AddonExportTest(unittest.TestCase):
             for fmt in ("HYPRSHADE", "HLSL", "SHADERGLASS", "KIASECUT"):
                 code, _ = self.addon.convert_tree(g, None, fmt)
                 self.assertTrue(code.strip())
+
+    def test_every_glare_type(self):
+        for kind in ("Bloom", "Ghosts", "Streaks", "Fog Glow", "Simple Star", "Sun Beams", "Kernel"):
+            for quality in ("High", "Medium", "Low"):
+                g = bpy.data.node_groups.new("Glare", "CompositorNodeTree")
+                it = g.interface
+                it.new_socket("Image", in_out="INPUT", socket_type="NodeSocketColor")
+                it.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+                gi, go = g.nodes.new("NodeGroupInput"), g.nodes.new("NodeGroupOutput")
+                gl = g.nodes.new("CompositorNodeGlare")
+                gl.inputs["Type"].default_value, gl.inputs["Quality"].default_value = kind, quality
+                g.links.new(gi.outputs[0], gl.inputs[0])
+                g.links.new(gl.outputs[0], go.inputs[0])
+                code, warns = self.addon.convert_tree(g, None, "KIASECUT")
+                self.assertEqual(warns, [], (kind, quality))
+                self.assertIsNone(fx.parse(code, "x").error)
+                for fmt in ("HYPRSHADE", "HLSL", "SHADERGLASS"):
+                    self.assertTrue(self.addon.convert_tree(g, None, fmt)[0].strip())
 
     def menu_group(self, nested=False):
         """Menu input 'Mode' picking a Menu Switch: Keep (the picture) / Red / Brighter (exposure +1);
@@ -206,23 +249,34 @@ class AddonExportTest(unittest.TestCase):
         code, _ = self.addon.convert_tree(self.menu_group(), None, "HYPRSHADE")
         self.assertIn("const float IN_Mode = 1.000000;", code)
 
-    def test_menu_into_a_nodes_own_menu_is_fixed_with_a_warning(self):
-        g = bpy.data.node_groups.new("BlurKind", "CompositorNodeTree")   # (Blender does not let one menu
-        it = g.interface                                                  # input pick both: links conflict)
+    def glare_kind_group(self, kind="Streaks"):
+        """Glare whose Type (and Quality) are menu inputs of the group, Type set to `kind`."""
+        g = bpy.data.node_groups.new("GlareKind", "CompositorNodeTree")
+        it = g.interface
         it.new_socket("Image", in_out="INPUT", socket_type="NodeSocketColor")
         it.new_socket("Kind", in_out="INPUT", socket_type="NodeSocketMenu")
+        it.new_socket("Quality", in_out="INPUT", socket_type="NodeSocketMenu")
         it.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
         gi, go = g.nodes.new("NodeGroupInput"), g.nodes.new("NodeGroupOutput")
-        blur = g.nodes.new("CompositorNodeBlur")
-        kind = next((s for s in blur.inputs if s.type == "MENU"), None)
-        if kind is None:
-            self.skipTest("Blur has no menu socket in this Blender")
-        g.links.new(gi.outputs["Kind"], kind)
-        g.links.new(gi.outputs[0], blur.inputs[0])
-        g.links.new(blur.outputs[0], go.inputs[0])
-        code, warns = self.addon.convert_tree(g, None, "KIASECUT")
-        self.assertTrue(any("only a Menu Switch follows" in w for w in warns), warns)
-        self.assertEqual(fx.parse(code, "x").params, [])                 # no parameter for it
+        gl = g.nodes.new("CompositorNodeGlare")
+        g.links.new(gi.outputs["Kind"], gl.inputs["Type"])
+        g.links.new(gi.outputs["Quality"], gl.inputs["Quality"])
+        g.links.new(gi.outputs[0], gl.inputs[0])
+        g.links.new(gl.outputs[0], go.inputs[0])
+        it.items_tree["Kind"].default_value, it.items_tree["Quality"].default_value = kind, "Medium"
+        return g
+
+    def test_a_nodes_own_menu_becomes_a_menu_parameter(self):
+        code, warns = self.addon.convert_tree(self.glare_kind_group("Fog Glow"), None, "KIASECUT")
+        self.assertEqual(warns, [])
+        d = fx.parse(code, "x")
+        self.assertIsNone(d.error)
+        kind, quality = (next(p for p in d.params if p.name == n) for n in ("IN_Kind_m", "IN_Quality_m"))
+        self.assertEqual((kind.type, kind.default), ("menu", "Fog Glow"))
+        self.assertEqual(kind.items, ["Bloom", "Ghosts", "Streaks", "Fog Glow", "Simple Star", "Sun Beams", "Kernel"])
+        self.assertEqual((quality.items, quality.default), (["High", "Medium", "Low"], "Medium"))
+        for fmt in ("HYPRSHADE", "HLSL", "SHADERGLASS"):
+            self.assertTrue(self.addon.convert_tree(self.glare_kind_group(), None, fmt)[0].strip())
 
 
 if __name__ == "__main__":

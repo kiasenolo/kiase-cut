@@ -93,6 +93,30 @@ class ScaleDragTests(unittest.TestCase):
         self.assertEqual(out["asset"]["w"], 600.0)              # about the centre: both sides
         self.assertNotIn("transform", out)
 
+    def test_edges_snap(self):
+        out, after = self.drag(picture(), (1, 0), (476, 0))     # right edge 4 px short of the canvas edge
+        self.assertAlmostEqual(after.extents()[1], 1920, 1)
+        self.assertAlmostEqual(after.extents()[0], 480, 1)     # the left edge stays
+        out, after = self.drag(picture(scale_link=False), (1, 1), (476, 266))
+        self.assertAlmostEqual(after.extents()[1], 1920, 1)    # each axis on its own
+        self.assertAlmostEqual(after.extents()[3], 1080, 1)
+        out, after = self.drag(picture(), (1, 0), (476, 0), Qt.KeyboardModifier.ControlModifier)
+        self.assertAlmostEqual(after.extents()[1], 1916, 1)    # Ctrl: freely
+        pv = Preview()
+        other = Box(dict(clip("o", 0, S), transform={"x": 0.5, "y": 0.0, "scale": 0.25}), 1920, 1080, 0)
+        box = Box(picture(), 1920, 1080, 0)
+        handle = next(pt for sx, sy, pt in box.handles() if (sx, sy) == (1, 0))
+        d = {"side": (1, 0), "m0": handle, "others": [other]}
+        _, out = pv._scale_values(box, d, QPointF(handle.x() + other.extents()[0] - 1443, handle.y()), NONE)
+        moved = Box(dict(box.clip, transform=dict(box.clip["transform"], **out)), 1920, 1080, 0)
+        self.assertAlmostEqual(moved.extents()[1], other.extents()[0], 1)   # to another clip's edge
+        self.assertIn(("x", other.extents()[0]), pv.guides)
+
+    def test_turned_clip_does_not_snap(self):
+        _, after = self.drag(picture(rotation=30.0), (1, 0), (40, 0))
+        before = Box(picture(rotation=30.0), 1920, 1080, 0)
+        self.assertGreater(after.w, before.w)
+
     def test_rotated_anchor(self):
         c = picture(rotation=30.0)
         before = Box(c, 1920, 1080, 0).corners()[3]           # bottom left stays for the top right

@@ -173,7 +173,8 @@ shortened to it.
 Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
 canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
 freely). Drag a corner or edge square to scale it: the opposite corner or edge stays where
-it is (hold Alt to scale about the centre). With X / Y scale linked, corners and edges keep
+it is (hold Alt to scale about the centre), and the moving edges snap to the same lines
+as a move does (hold Ctrl to scale freely). With X / Y scale linked, corners and edges keep
 the clip's proportions; unlinked, a corner sets X and Y freely (Shift keeps the proportions)
 and an edge changes only its own axis. Drag the round handle above it to rotate it (it
 settles on right angles; Shift turns in 15° steps).

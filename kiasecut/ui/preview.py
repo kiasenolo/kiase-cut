@@ -2,7 +2,9 @@
 
 Transform: drag the clip to move it (it snaps to the canvas centre lines and edges and to
 other visible clips' centres and edges; Alt moves freely), drag a corner or edge square to
-scale it with the opposite corner / edge staying put (Alt: about its centre), drag the round
+scale it with the opposite corner / edge staying put (Alt: about its centre; the moving edges
+snap to the same lines while the clip is upright or turned by a right angle, Ctrl scales
+freely), drag the round
 handle above it to rotate (Shift: 15° steps; it also settles on 0 / 90 / 180 / 270). With X / Y
 scale linked a corner or an edge keeps their ratio; unlinked, a corner sets both freely (Shift
 keeps the ratio) and an edge only its own axis. A built-in asset (assets.py) is resized instead:
@@ -484,7 +486,8 @@ class Preview(QWidget):
                 return
             side = next(((sx, sy) for sx, sy, pt in box.handles() if self._near(pt, m, k)), None)
             if side is not None:
-                self.drag = {"kind": "scale", "box": box, "m0": m, "moved": False, "side": side}
+                self.drag = {"kind": "scale", "box": box, "m0": m, "moved": False, "side": side,
+                             "others": [b for b in self.visible_boxes() if b.clip["id"] != box.clip["id"]]}
                 return
         boxes = self.visible_boxes()
         sel = next((b for b in boxes if b.clip["id"] == self.selected_id and b.contains(x, y)), None)
@@ -662,12 +665,17 @@ class Preview(QWidget):
         ky = (py - ay) / (hy - ay) if sy and hy != ay else 1.0
         tf = box.clip.get("transform") or {}
         asset = box.clip.get("asset")
-        if (edit.linked(tf) and not asset) or (sx and sy and mods & Qt.ShiftModifier):
+        tied = bool((edit.linked(tf) and not asset) or (sx and sy and mods & Qt.ShiftModifier))
+        if tied:
             if sx and sy:                                      # along the diagonal
                 vx, vy = hx - ax, hy - ay
                 kx = ky = ((px - ax) * vx + (py - ay) * vy) / ((vx * vx + vy * vy) or 1.0)
             else:
                 kx = ky = kx if sx else ky
+        self.guides = []
+        if not mods & Qt.ControlModifier:                      # Ctrl: scale freely
+            kx, ky, self.guides = self._snap_scale(box, d.get("others", []), (bool(sx) or tied, bool(sy) or tied),
+                                                   (ax, ay), (kx, ky), tied)
         if asset:                                              # its own size changes, not the scale
             w0, h0 = box.bw, box.bh
             nw, nh = max(1.0, w0 * kx), max(1.0, h0 * ky)
@@ -687,6 +695,48 @@ class Preview(QWidget):
         if asset and not out:
             del vals["transform"]
         return ("multi" if asset else "transform"), vals
+
+    def _snap_scale(self, box, others, driven, anchor, ks, tied):
+        """Snap the factors ks = (kx, ky) of a scale drag so that a moving edge lands on the
+        canvas centre lines / edges or another clip's centre / edges. Only for a clip turned by
+        a right angle (its edges are then upright); `driven`: which axes the drag changes,
+        `anchor`: the clip-frame point that stays put, `tied`: kx = ky. Returns (kx, ky, guides)."""
+        r = box.deg % 90
+        if min(r, 90 - r) > 0.01:
+            return ks[0], ks[1], []
+        tol = SNAP_PX * self._k()
+        targets = {"x": [self.W / 2, 0, self.W], "y": [self.H / 2, 0, self.H]}
+        for o in others:
+            ol, orr, ot, ob = o.extents()
+            targets["x"] += [o.cx, ol, orr]
+            targets["y"] += [o.cy, ot, ob]
+        c, s = round(math.cos(box.rot)), round(math.sin(box.rot))
+        hits = [None, None]                                    # per axis: (distance, k, canvas axis, target)
+        for i, u, half in ((0, (c, s), box.w / 2), (1, (-s, c), box.h / 2)):
+            if not driven[i]:
+                continue
+            axis, base, sign = ("x", box.cx, u[0]) if u[0] else ("y", box.cy, u[1])
+            a = anchor[i]
+            for e in (half, -half):                            # each edge: at base + (a + (e - a) k) sign
+                v = (e - a) * sign
+                if abs(v) < 1e-9:                              # the edge that stays put
+                    continue
+                pos = base + a * sign + v * ks[i]
+                for g in targets[axis]:
+                    k = (g - base - a * sign) / v
+                    if abs(pos - g) < tol and k > 0 and (hits[i] is None or abs(pos - g) < hits[i][0]):
+                        hits[i] = (abs(pos - g), k, axis, g)
+        kx, ky = ks
+        if tied:
+            best = min((h for h in hits if h), default=None)
+            if best is None:
+                return kx, ky, []
+            return best[1], best[1], [(best[2], best[3])]
+        if hits[0]:
+            kx = hits[0][1]
+        if hits[1]:
+            ky = hits[1][1]
+        return kx, ky, [(h[2], h[3]) for h in hits if h]
 
     def mouseMoveEvent(self, e):
         d = self.drag

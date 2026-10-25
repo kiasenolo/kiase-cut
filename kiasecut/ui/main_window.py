@@ -275,6 +275,9 @@ class MainWindow(QMainWindow):
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
         self.preview.paramsCommitted.connect(self.on_preview_params)
         self.preview.paramsLive.connect(self.live_params)
+        self.preview.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
+        self.preview.movesCommitted.connect(self.on_preview_moves)
+        self.preview.movesLive.connect(self.live_moves)
         self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
         self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
@@ -1623,6 +1626,17 @@ class MainWindow(QMainWindow):
 
         self.apply(label, set_all)
 
+    def on_preview_moves(self, moves):
+        """Several clips dragged together on the canvas ({clip id: {x, y}}): one edit."""
+        times = {cid: self.clip_time(cid) for cid in moves}
+
+        def set_all(level):
+            for cid, vals in moves.items():
+                for key, v in vals.items():
+                    edit.set_param(level, cid, "transform", key, v, times[cid])
+
+        self.apply("移動位置", set_all)
+
     def on_track_action(self, action, tid):
         t = edit.track_by_id(self.container(), tid)
         if action == "rename":
@@ -1959,7 +1973,7 @@ class MainWindow(QMainWindow):
         self.show_selection_props()
         self.curves.set_clip(sel, self.playhead_us() - sel["start_us"] if sel else 0, self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
-                               sel["id"] if sel else None)
+                               sel["id"] if sel else None, self.timeline.selected_ids)
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------
@@ -1998,6 +2012,16 @@ class MainWindow(QMainWindow):
         for panel in (self.inspector, self.mask_panel, self.effects):   # the numbers follow the drag
             for g, vals in parts:
                 panel.show_live(cid, g, vals)
+
+    def live_moves(self, moves):
+        """While several clips are dragged on the canvas: draw them there without editing yet."""
+        view = self.snapshot()
+        for c in project.walk_clips(view["tracks"]):
+            if c["id"] in moves:
+                group_holder(c, "transform", create=True).update(moves[c["id"]])
+        self.player.worker.set_view(view, self.cache_dir())
+        for cid, vals in moves.items():
+            self.inspector.show_live(cid, "transform", vals)
 
     def on_live_edit(self, ids, group, key, value):
         """A value being typed or scrubbed in the inspector: the preview shows it at once
@@ -2057,7 +2081,7 @@ class MainWindow(QMainWindow):
             self.show_selection_props()
             self.curves.set_time(sel, self.playhead_us() - sel["start_us"])
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
-                               sel["id"] if sel else None)
+                               sel["id"] if sel else None, self.timeline.selected_ids)
 
     def on_state(self, playing):
         self.playing = playing

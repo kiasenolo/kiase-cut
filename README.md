@@ -171,8 +171,14 @@ compound clips; sounds replace sounds. A clip longer than a new video or sound i
 shortened to it.
 
 Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
-canvas centre lines and edges and to other clips' centres and edges (hold Alt to move
-freely). Drag a corner or edge square to scale it: the opposite corner or edge stays where
+canvas centre lines and edges, to other clips' centres and edges and to equal spacing
+between clips: centred between its neighbours, or as far from a neighbour as two other
+clips are apart, shown with pink gap marks (hold Alt to move freely). Shift / Ctrl+click
+adds clips to the selection (or takes them out), and dragging from an empty spot draws a
+box that selects every clip it touches; several selected clips move together. When they
+stand in a row, a column or a grid, hovering them shows pink bars in the gaps (upright
+between columns, flat between rows): drag one to make all the column gaps (or row gaps) the
+same width. Drag a corner or edge square to scale it: the opposite corner or edge stays where
 it is (hold Alt to scale about the centre), and the moving edges snap to the same lines
 as a move does (hold Ctrl to scale freely). With X / Y scale linked, corners and edges keep
 the clip's proportions; unlinked, a corner sets X and Y freely (Shift keeps the proportions)

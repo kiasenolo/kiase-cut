@@ -1,7 +1,19 @@
 """Preview canvas: shows frames and edits the selected clip with handles on the canvas.
 
-Transform: drag the clip to move it (it snaps to the canvas centre lines and edges and to
-other visible clips' centres and edges; Alt moves freely), drag a corner or edge square to
+Selection: click a clip to select it; Shift / Ctrl+click adds a clip to the selection or
+takes it out, and a drag from where no clip is draws a box that selects every clip it
+touches (Shift / Ctrl: added to the selection); a click on nothing selects nothing. Several
+selected clips show their outlines in one dashed box and can only be moved together
+(selectionPicked; movesLive / movesCommitted, {clip id: {x, y}}). Clips that overlap along x
+make a column, along y a row; with the mouse over the selection, the gaps between columns
+show an upright pink bar and the gaps between rows a flat one (in line with each column).
+Dragging a bar sets every gap of its kind to the same width (the first column / row stays
+put; 間距 shows it), so a row, a column or a grid is spaced evenly.
+
+Transform: drag the clip to move it (it snaps to the canvas centre lines and edges, to
+other visible clips' centres and edges and to equal spacing - centred between its
+neighbours, or as far from one as two other clips are apart, shown in pink; Alt moves
+freely), drag a corner or edge square to
 scale it with the opposite corner / edge staying put (Alt: about its centre; the moving edges
 snap to the same lines while the clip is upright or turned by a right angle, Ctrl scales
 freely), drag the round
@@ -219,10 +231,41 @@ def snap_angle(deg, free):
     return r if abs(deg - r) <= ANGLE_SNAP else deg
 
 
+def gap_snaps(lo, hi, clo, chi, rects, tol):
+    """Equal spacing along one axis. lo / hi: the moved outline's span along it, clo / chi:
+    across it; rects: the other clips' (lo, hi, clo, chi). Returns [(lo, gaps)]: where lo
+    would go for the gap next to it to equal another one (centred between its neighbours, or
+    as wide as a gap between two other clips), with the gaps to show as (a, b, across)."""
+    def across(p, q):
+        return (max(p[0], q[0]) + min(p[1], q[1])) / 2
+
+    w, me = hi - lo, (clo, chi)
+    row = [o for o in rects if o[3] > clo and o[2] < chi]          # side by side with it
+    left = max((o for o in row if o[1] <= lo + tol), key=lambda o: o[1], default=None)
+    right = min((o for o in row if o[0] >= hi - tol), key=lambda o: o[0], default=None)
+    out = []
+    if left and right and right[0] - left[1] >= w:
+        nl = (left[1] + right[0] - w) / 2
+        out.append((nl, [(left[1], nl, across(me, left[2:])), (nl + w, right[0], across(me, right[2:]))]))
+    for p in rects:                                                # the gaps between other clips
+        q = min((o for o in rects if o[0] > p[1] and o[3] > p[2] and o[2] < p[3]), key=lambda o: o[0], default=None)
+        if q is None or (p is left and q is right):
+            continue
+        g, seg = q[0] - p[1], (p[1], q[0], across(p[2:], q[2:]))
+        if left:
+            out.append((left[1] + g, [(left[1], left[1] + g, across(me, left[2:])), seg]))
+        if right:
+            out.append((right[0] - g - w, [(right[0] - g, right[0], across(me, right[2:])), seg]))
+    return out
+
+
 class Preview(QWidget):
     clipPicked = Signal(object)                 # clip dict
+    selectionPicked = Signal(object, object)    # {clip ids}, the primary one (or None): Shift / Ctrl+click, a box
     paramsLive = Signal(str, str, dict)         # clip id, group, {key: value} while dragging
     paramsCommitted = Signal(str, str, dict)    # the same on release
+    movesLive = Signal(dict)                    # {clip id: {x, y}} while several clips are dragged
+    movesCommitted = Signal(dict)               # the same on release
     doubleClicked = Signal()
     textEdited = Signal(str, str)               # text clip id, its words: typed in on the canvas
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
@@ -234,6 +277,7 @@ class Preview(QWidget):
         self.view = None
         self.t_us = 0
         self.selected_id = None
+        self.selected_ids = set()               # the whole selection (with selected_id, the primary)
         self.interactive = interactive
         self.mask_mode = False
         self.mask_group = "mask"                # which mask mask mode edits: the clip's, "fxmask:<effect id>"
@@ -241,6 +285,7 @@ class Preview(QWidget):
         self.drag = None
         self.guides = []
         self.mask_guides = []                   # (a, b) canvas points: lines a mask drag has snapped to
+        self.gap_hover = None                   # several clips selected, the mouse over them: "group" / "handle"
         self.live = None                        # (group, values) shown while dragging
         self.zoom = 1.0                         # view zoom (1 = canvas fits the widget)
         self.pan = QPointF(0, 0)                # view offset, screen px
@@ -252,13 +297,14 @@ class Preview(QWidget):
         self.img = img
         self.update()
 
-    def set_scene(self, view, t_us, selected_id):
+    def set_scene(self, view, t_us, selected_id, selected_ids=None):
         self.view = view
         if view and (self.W, self.H) != (view["width"], view["height"]):
             self.W, self.H = view["width"], view["height"]
             self._report_size()
         self.t_us = t_us
         self.selected_id = selected_id
+        self.selected_ids = (set(selected_ids or ()) | {selected_id}) if selected_id else set()
         if self.drag is None:
             self.update()
 
@@ -330,10 +376,25 @@ class Preview(QWidget):
     def selected_box(self):
         return next((b for b in self.visible_boxes() if b.clip["id"] == self.selected_id), None)
 
+    def multi(self):
+        """Several clips selected: they can only be moved together (no handles)."""
+        return len(self.selected_ids) > 1 and not self.mask_mode
+
+    def _live_boxes(self):
+        """Boxes of the selected clips showing now, moved as they are being dragged."""
+        moves = self.live[1] if self.live and self.live[0] == "moves" else {}
+        out = []
+        for b in self.visible_boxes():
+            if b.clip["id"] in self.selected_ids:
+                if b.clip["id"] in moves:
+                    b = Box(dict(b.clip, transform=dict(b.clip["transform"], **moves[b.clip["id"]])), self.W, self.H, b.t)
+                out.append(b)
+        return out
+
     def _live_box(self):
         """The selected clip's box with the values being dragged applied."""
         box = self.selected_box()
-        if box is None or self.live is None:
+        if box is None or self.live is None or self.live[0] == "moves":
             return box
         group, vals = self.live
         c = json.loads(json.dumps(box.clip))
@@ -366,7 +427,9 @@ class Preview(QWidget):
         p.scale(r.width() / self.W, r.height() / self.H)
         k = self._k()
         box = self._live_box()
-        if box is not None:
+        if self.multi():
+            self._paint_group(p, k)
+        elif box is not None:
             if self.masking(box):
                 self._paint_mask(p, box, k)
             elif self.mask_mode:                         # no mask: just where the clip is
@@ -375,17 +438,32 @@ class Preview(QWidget):
                 p.drawPolygon(QPolygonF(box.corners()))
             else:
                 self._paint_transform(p, box, k)
+        if self.drag and self.drag["kind"] == "marquee" and self.drag["moved"]:
+            p.setPen(QPen(QColor("#e6e6e6"), 1 * k, Qt.DashLine))
+            p.setBrush(QColor(255, 255, 255, 28))
+            p.drawRect(self.drag["rect"])
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor("#ffffff"), 1.5 * k))
+            for b in self.drag["hits"]:
+                p.drawPolygon(QPolygonF(b.corners()))
         if self.mask_guides:
             p.setPen(QPen(QColor("#ffb020"), 1.5 * k, Qt.DashLine))
             for a, b in self.mask_guides:
                 p.drawLine(a, b)
-        if self.guides:
+        for g in self.guides:
+            if g[0] == "gap":                            # an equal gap: a line with ends
+                a, b = g[1], g[2]
+                n = QPointF(0, 5 * k) if abs(b.x() - a.x()) > abs(b.y() - a.y()) else QPointF(5 * k, 0)
+                p.setPen(QPen(QColor("#ff5ca8"), 1.5 * k))
+                p.drawLine(a, b)
+                p.drawLine(a - n, a + n)
+                p.drawLine(b - n, b + n)
+                continue
             p.setPen(QPen(QColor("#e6e6e6"), 1.5 * k, Qt.DashLine))
-            for axis, v in self.guides:
-                if axis == "x":
-                    p.drawLine(QPointF(v, 0), QPointF(v, self.H))
-                else:
-                    p.drawLine(QPointF(0, v), QPointF(self.W, v))
+            if g[0] == "x":
+                p.drawLine(QPointF(g[1], 0), QPointF(g[1], self.H))
+            else:
+                p.drawLine(QPointF(0, g[1]), QPointF(self.W, g[1]))
 
     def _handle(self, p, pt, k, round_=False, color="#ffffff"):
         s = HANDLE_PX * k
@@ -416,6 +494,119 @@ class Preview(QWidget):
             f.setPixelSize(round(14 * k))
             p.setFont(f)
             p.drawText(rh + QPointF(12 * k, -8 * k), f"{box.deg:.1f}°")
+
+    def _paint_group(self, p, k):
+        """Several clips selected: each outline and a dashed box around them all."""
+        boxes = self._live_boxes()
+        if not boxes:
+            return
+        p.setBrush(Qt.NoBrush)
+        for b in boxes:
+            p.setPen(QPen(QColor("#ffffff"), (2 if b.clip["id"] == self.selected_id else 1.25) * k))
+            p.drawPolygon(QPolygonF(b.corners()))
+        l, r, t, b = self._union(boxes)
+        p.setPen(QPen(QColor("#e6e6e6"), 1 * k, Qt.DashLine))
+        p.drawRect(QRectF(l, t, r - l, b - t))
+        dragging = self.drag and self.drag["kind"] == "gap"
+        if not (self.gap_hover or dragging):
+            return
+        gaps = self._gaps(boxes, k)
+        pink = QColor("#ff5ca8")
+        if dragging or self.gap_hover == "handle":       # where the gaps are (while dragging: its kind)
+            area = QPainterPath()
+            area.setFillRule(Qt.WindingFill)             # (where gaps cross: tinted once)
+            for axis, _, _, rect, _ in gaps:
+                if not dragging or axis == self.drag["axis"]:
+                    area.addRect(rect)
+            p.fillPath(area, QColor(255, 92, 168, 50))
+        for _, _, bars, _, _ in gaps:                    # pink bars in each gap, drawn on white
+            for line in bars:
+                p.setPen(QPen(QColor("#ffffff"), 4 * k, Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(*line)
+                p.setPen(QPen(pink, 2 * k, Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(*line)
+        width = next((g[4] for g in gaps if dragging and g[0] == self.drag["axis"]), None)
+        if width is not None:
+            f = p.font()
+            f.setPixelSize(round(13 * k))
+            p.setFont(f)
+            text = f"間距 {width:.0f}"
+            box = QRectF(0, 0, p.fontMetrics().horizontalAdvance(text) + 12 * k, 20 * k)
+            box.moveCenter(QPointF((l + r) / 2, b + 18 * k))
+            p.setPen(Qt.NoPen)
+            p.setBrush(pink)
+            p.drawRoundedRect(box, 3 * k, 3 * k)
+            p.setPen(QColor("#ffffff"))
+            p.drawText(box, Qt.AlignCenter, text)
+
+    @staticmethod
+    def _bands(boxes, axis):
+        """The boxes grouped where they overlap along axis - columns for "x", rows for "y" - in
+        order: [[lo, hi, boxes]]."""
+        lo, hi = (0, 1) if axis == "x" else (2, 3)
+        out = []
+        for b in sorted(boxes, key=lambda b: b.extents()[lo]):
+            e = b.extents()
+            if out and e[lo] < out[-1][1] - 0.5:
+                out[-1][1] = max(out[-1][1], e[hi])
+                out[-1][2].append(b)
+            else:
+                out.append([e[lo], e[hi], [b]])
+        return out
+
+    def _gaps(self, boxes, k):
+        """[(axis, index, bars [(a, b)], gap area, gap width)] of the gaps between the columns
+        ("x") and between the rows ("y") the boxes stand in; k = canvas px per screen px. A
+        column gap has one bar halfway down; a row gap one in line with each column."""
+        if len(boxes) < 2:
+            return []
+        l, r, t, b = self._union(boxes)
+        cols, rows = self._bands(boxes, "x"), self._bands(boxes, "y")
+        out = []
+        half = min(10 * k, (b - t) / 2)
+        for i, (c, n) in enumerate(zip(cols, cols[1:])):
+            a, z = c[1], n[0]
+            mid = QPointF((a + z) / 2, (t + b) / 2)
+            out.append(("x", i, [(mid - QPointF(0, half), mid + QPointF(0, half))], QRectF(a, t, z - a, b - t), z - a))
+        for i, (c, n) in enumerate(zip(rows, rows[1:])):
+            a, z = c[1], n[0]
+            bars = []
+            for col in cols:
+                mid, h = QPointF((col[0] + col[1]) / 2, (a + z) / 2), min(10 * k, (col[1] - col[0]) / 2)
+                bars.append((mid - QPointF(h, 0), mid + QPointF(h, 0)))
+            out.append(("y", i, bars, QRectF(l, a, r - l, z - a), z - a))
+        return out
+
+    def _gap_at(self, m, k):
+        """(axis, index, gap width) of the gap bar at canvas point m while several clips are
+        selected."""
+        if not self.multi():
+            return None
+        pad = PICK_PX * k
+        for axis, i, bars, _, width in self._gaps(self._live_boxes(), k):
+            if any(QRectF(a, b).normalized().adjusted(-pad, -pad, pad, pad).contains(m) for a, b in bars):
+                return axis, i, width
+        return None
+
+    def _spread(self, boxes, axis, gap):
+        """{clip id: {x or y}} for the boxes with every gap between their columns (axis "x") or
+        rows ("y") gap canvas px wide, the first column / row staying where it is."""
+        pos, out = None, {}
+        for lo, hi, members in self._bands(boxes, axis):
+            pos = lo if pos is None else pos
+            for b in members:
+                if axis == "x":
+                    out[b.clip["id"]] = {"x": round((b.cx + pos - lo - self.W / 2) / (self.W / 2), 5)}
+                else:
+                    out[b.clip["id"]] = {"y": round((self.H / 2 - (b.cy + pos - lo)) / (self.H / 2), 5)}
+            pos += hi - lo + gap
+        return out
+
+    @staticmethod
+    def _union(boxes):
+        """(left, right, top, bottom) around all the boxes."""
+        ex = [b.extents() for b in boxes]
+        return min(e[0] for e in ex), max(e[1] for e in ex), min(e[2] for e in ex), max(e[3] for e in ex)
 
     def _paint_mask(self, p, box, k):
         p.setBrush(Qt.NoBrush)
@@ -480,7 +671,7 @@ class Preview(QWidget):
             if hit is not None:
                 self.drag = {"kind": hit, "box": box, "geo": g, "m0": m, "moved": False}
                 return
-        elif box is not None and not self.mask_mode:
+        elif box is not None and not self.mask_mode and not self.multi():
             if self._near(box.rot_handle(k), m, k):
                 self.drag = {"kind": "rotate", "box": box, "m0": m, "moved": False}
                 return
@@ -489,50 +680,69 @@ class Preview(QWidget):
                 self.drag = {"kind": "scale", "box": box, "m0": m, "moved": False, "side": side,
                              "others": [b for b in self.visible_boxes() if b.clip["id"] != box.clip["id"]]}
                 return
+        gap = self._gap_at(m, k)
+        if gap is not None:                              # a gap bar: all the gaps of its kind change together
+            boxes = self._live_boxes()
+            self.drag = {"kind": "gap", "box": boxes[0], "boxes": boxes, "axis": gap[0], "gap0": gap[2],
+                         "m0": m, "moved": False}
+            return
         boxes = self.visible_boxes()
-        sel = next((b for b in boxes if b.clip["id"] == self.selected_id and b.contains(x, y)), None)
+        adding = bool(e.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)) and not self.mask_mode
+        sel = next((b for b in boxes if b.clip["id"] in self.selected_ids and b.contains(x, y)), None)
         hit = sel or next((b for b in boxes if b.contains(x, y)), None)
         if hit is None:
+            if not self.mask_mode:                       # a box around the clips to select
+                self.drag = {"kind": "marquee", "m0": m, "moved": False, "adding": adding, "hits": []}
             return
-        if hit.clip["id"] != self.selected_id:
-            self.selected_id = hit.clip["id"]
+        cid = hit.clip["id"]
+        if adding:                                       # Shift / Ctrl+click: in or out of the selection
+            ids = set(self.selected_ids) ^ {cid}
+            primary = cid if cid in ids else (self.selected_id if self.selected_id in ids else next(iter(ids), None))
+            self._select(ids, primary)
+            if cid not in ids:
+                return
+        elif cid != self.selected_id and (self.mask_mode or cid not in self.selected_ids):
+            self.selected_id, self.selected_ids = cid, {cid}
             self.clipPicked.emit(hit.clip)
         if self.mask_mode:                               # masks only: the clip stays put
             self.update()
             return
-        others = [b for b in boxes if b is not hit]
-        self.drag = {"kind": "move", "box": hit, "x0": x, "y0": y, "moved": False, "others": others}
+        moving = [b for b in boxes if b.clip["id"] in self.selected_ids]
+        others = [b for b in boxes if b.clip["id"] not in self.selected_ids]
+        self.drag = {"kind": "move", "box": hit, "boxes": moving, "x0": x, "y0": y, "moved": False, "others": others}
         self.update()
 
-    def _snap(self, box, dx, dy, others, tol):
-        """Snap the moved box's centre / edges to the canvas and to other clips."""
-        l, r, t, b = box.extents()
-        xs = [(box.cx + dx, 0), (l + dx, 0), (r + dx, 0)]
-        ys = [(box.cy + dy, 0), (t + dy, 0), (b + dy, 0)]
-        tx = [self.W / 2, 0, self.W]
-        ty = [self.H / 2, 0, self.H]
-        for o in others:
-            ol, orr, ot, ob = o.extents()
-            tx += [o.cx, ol, orr]
-            ty += [o.cy, ot, ob]
-        guides = []
+    def _select(self, ids, primary):
+        self.selected_ids, self.selected_id = (set(ids), primary) if primary else (set(), None)
+        self.selectionPicked.emit(set(self.selected_ids), self.selected_id)
+        self.update()
 
-        def best(cands, targets):
-            hit = None
-            for v, _ in cands:
-                for g in targets:
-                    if abs(v - g) < tol and (hit is None or abs(v - g) < abs(hit[0])):
-                        hit = (g - v, g)
-            return hit
+    def _marquee_hits(self, rect):
+        """Visible clips the selection box touches, topmost first."""
+        area = QPolygonF(rect)
+        return [b for b in self.visible_boxes() if QPolygonF(b.corners()).intersects(area)]
 
-        sx, sy = best(xs, tx), best(ys, ty)
-        if sx:
-            dx += sx[0]
-            guides.append(("x", sx[1]))
-        if sy:
-            dy += sy[0]
-            guides.append(("y", sy[1]))
-        return dx, dy, guides
+    def _snap(self, rect, dx, dy, others, tol):
+        """Snap an outline being moved by dx, dy (rect: its left, right, top, bottom) to the
+        canvas centre lines and edges, to other clips' centres and edges and to equal gaps
+        between clips (others: their rects). Returns dx, dy and the guides to draw."""
+        l, r, t, b = rect
+        tx = [self.W / 2, 0, self.W] + [v for o in others for v in ((o[0] + o[1]) / 2, o[0], o[1])]
+        ty = [self.H / 2, 0, self.H] + [v for o in others for v in ((o[2] + o[3]) / 2, o[2], o[3])]
+
+        def axis(name, lo, hi, d, gaps, point):
+            hit = self._best([(lo + hi) / 2 + d, lo + d, hi + d], tx if name == "x" else ty, tol)
+            best = (abs(hit[0]), hit[0], [(name, hit[1])]) if hit else None
+            for nl, segs in gaps:
+                s = nl - (lo + d)
+                if abs(s) < tol and (best is None or abs(s) < best[0]):
+                    best = (abs(s), s, [("gap", point(a, c), point(z, c)) for a, z, c in segs])
+            return (d, []) if best is None else (d + best[1], best[2])
+
+        dy, gy = axis("y", t, b, dy, gap_snaps(t + dy, b + dy, l + dx, r + dx, [(o[2], o[3], o[0], o[1]) for o in others], tol),
+                      lambda a, c: QPointF(c, a))
+        dx, gx = axis("x", l, r, dx, gap_snaps(l + dx, r + dx, t + dy, b + dy, others, tol), lambda a, c: QPointF(a, c))
+        return dx, dy, gx + gy
 
     @staticmethod
     def _best(cands, targets, tol):
@@ -609,12 +819,18 @@ class Preview(QWidget):
         free = bool(e.modifiers() & Qt.ShiftModifier)
         if kind == "move" and "geo" not in d:
             dx, dy = m.x() - d["x0"], m.y() - d["y0"]
+            boxes = d.get("boxes") or [box]
             if e.modifiers() & Qt.AltModifier:                 # Alt: move freely
                 self.guides = []
             else:
-                dx, dy, self.guides = self._snap(box, dx, dy, d["others"], SNAP_PX * self._k())
-            return "transform", {"x": round((box.cx + dx - self.W / 2) / (self.W / 2), 5),
-                                 "y": round((self.H / 2 - (box.cy + dy)) / (self.H / 2), 5)}
+                dx, dy, self.guides = self._snap(self._union(boxes), dx, dy, [o.extents() for o in d["others"]],
+                                                 SNAP_PX * self._k())
+            at = {b.clip["id"]: {"x": round((b.cx + dx - self.W / 2) / (self.W / 2), 5),
+                                 "y": round((self.H / 2 - (b.cy + dy)) / (self.H / 2), 5)} for b in boxes}
+            return ("moves", at) if len(boxes) > 1 else ("transform", at[box.clip["id"]])
+        if kind == "gap":
+            along = m.x() - d["m0"].x() if d["axis"] == "x" else m.y() - d["m0"].y()
+            return "moves", self._spread(d["boxes"], d["axis"], max(0.0, round(d["gap0"] + along)))
         c = QPointF(box.cx, box.cy)
         if kind == "scale":
             return self._scale_values(box, d, m, e.modifiers())
@@ -754,12 +970,26 @@ class Preview(QWidget):
             if math.hypot(m.x() - m0.x(), m.y() - m0.y()) < 3 * self._k():
                 return
         d["moved"] = True
+        if d["kind"] == "marquee":
+            d["rect"] = QRectF(d["m0"], m).normalized()
+            d["hits"] = self._marquee_hits(d["rect"])
+            self.update()
+            return
         group, vals = self._values(e, m)
         if group == "mask":
             group = self.mask_group
         self.live = (group, vals)
-        self.paramsLive.emit(d["box"].clip["id"], group, vals)
+        if group == "moves":
+            self.movesLive.emit(vals)
+        else:
+            self.paramsLive.emit(d["box"].clip["id"], group, vals)
         self.update()
+
+    def leaveEvent(self, e):
+        if self.gap_hover:
+            self.gap_hover = None
+            self.update()
+        super().leaveEvent(e)
 
     def _hover(self, e):
         if not self.interactive or not self.view:
@@ -768,12 +998,23 @@ class Preview(QWidget):
         m, k = QPointF(x, y), self._k()
         box = self.selected_box()
         cur = Qt.ArrowCursor
+        hover = None
         if box is not None and self.masking(box):
             g = MaskGeo(box, self.mask_of(box.clip))
             if any(self._near(pt, m, k) for _, pt in g.handles(k)):
                 cur = Qt.PointingHandCursor
             elif g.contains(m):
                 cur = Qt.SizeAllCursor
+        elif self.multi():
+            boxes = self._live_boxes()
+            l, r, t, b = self._union(boxes) if boxes else (0, 0, 0, 0)
+            pad = 2 * PICK_PX * k
+            if (gap := self._gap_at(m, k)) is not None:
+                cur, hover = (Qt.SizeHorCursor if gap[0] == "x" else Qt.SizeVerCursor), "handle"
+            elif any(bx.contains(x, y) for bx in boxes):
+                cur, hover = Qt.SizeAllCursor, "group"
+            elif l - pad <= x <= r + pad and t - pad <= y <= b + pad:
+                hover = "group"
         elif box is not None and not self.mask_mode:
             if self._near(box.rot_handle(k), m, k):
                 cur = Qt.PointingHandCursor
@@ -783,6 +1024,9 @@ class Preview(QWidget):
                        Qt.SizeFDiagCursor if sx == sy else Qt.SizeBDiagCursor)
             elif box.contains(x, y):
                 cur = Qt.SizeAllCursor
+        if hover != self.gap_hover:                      # the gap bars show while over the selection
+            self.gap_hover = hover
+            self.update()
         self.setCursor(cur)
 
     def mouseReleaseEvent(self, e):
@@ -793,8 +1037,17 @@ class Preview(QWidget):
         self.guides = []
         self.mask_guides = []
         live, self.live = self.live, None
-        if d and d["moved"] and live:
-            self.paramsCommitted.emit(d["box"].clip["id"], *live)
+        if d and d["kind"] == "marquee":
+            ids = {b.clip["id"] for b in d["hits"]} | (self.selected_ids if d["adding"] else set())
+            primary = self.selected_id if self.selected_id in ids else next(
+                (b.clip["id"] for b in d["hits"]), None)
+            if d["moved"] or not d["adding"]:             # (a plain click on nothing selects nothing)
+                self._select(ids, primary)
+        elif d and d["moved"] and live:
+            if live[0] == "moves":
+                self.movesCommitted.emit(live[1])
+            else:
+                self.paramsCommitted.emit(d["box"].clip["id"], *live)
         self.update()
 
     def mouseDoubleClickEvent(self, e):

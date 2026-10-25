@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from kiasecut import edit  # noqa: E402
 from kiasecut.ui.effects_panel import EffectsPanel  # noqa: E402
 from kiasecut.ui.preview import Preview  # noqa: E402
-from test_edit import S, proj  # noqa: E402
+from test_edit import S, clip, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 NONE = Qt.KeyboardModifier.NoModifier
@@ -76,6 +76,139 @@ class EffectMaskTests(unittest.TestCase):
         self.assertEqual(changes[-1], None)
         panel._kind_chosen(self.e["id"], "circle")                      # picking a shape switches it on
         self.assertEqual(panel.mask_edit, self.e["id"])
+
+
+class SpacingSnapTests(unittest.TestCase):
+    def test_centred_between_neighbours(self):
+        pv = Preview()
+        others = [(100, 300, 400, 600), (900, 1100, 400, 600)]
+        dx, dy, guides = pv._snap((495, 695, 400, 600), 0, 0, others, 7)
+        self.assertEqual(dx, 5)                                         # 200 px on each side
+        self.assertEqual([g[0] for g in guides if g[0] == "gap"], ["gap", "gap"])
+
+    def test_as_far_as_two_other_clips(self):
+        pv = Preview()
+        others = [(100, 300, 400, 600), (400, 600, 400, 600)]           # 100 px apart
+        dx, _, guides = pv._snap((703, 903, 400, 600), 0, 0, others, 7)
+        self.assertEqual(dx, -3)
+        self.assertIn("gap", [g[0] for g in guides])
+        _, dy, _ = pv._snap((400, 600, 704, 904), 0, 0, [(400, 600, 100, 300), (400, 600, 400, 600)], 7)
+        self.assertEqual(dy, -4)                                        # the same up and down
+
+    def test_not_side_by_side(self):
+        pv = Preview()
+        others = [(100, 300, 0, 100), (400, 600, 0, 100)]               # far above it
+        dx, _, _ = pv._snap((703, 903, 400, 600), 0, 0, others, 7)
+        self.assertEqual(dx, 0)
+
+
+class MultiSelectTests(unittest.TestCase):
+    def setUp(self):
+        self.p = proj()
+        c1 = edit.find(self.p, "c1")[1]
+        c1["transform"].update(scale=0.2, x=-0.5)                       # on screen around (240, 270)
+        c4 = clip("c4", 0, 2 * S)
+        c4["transform"].update(scale=0.2, x=0.5)                        # around (720, 270)
+        self.p["tracks"][1]["clips"].append(c4)
+        self.pv = preview(self.p, "c1")
+        self.picked = []
+        self.pv.selectionPicked.connect(lambda ids, primary: self.picked.append((ids, primary)))
+
+    def drag(self, a, b, mods=NONE):
+        QTest.mousePress(self.pv, Qt.LeftButton, mods, a)
+        QTest.mouseMove(self.pv, (a + b) / 2)
+        QTest.mouseMove(self.pv, b)
+        QTest.mouseRelease(self.pv, Qt.LeftButton, mods, b)
+
+    def test_shift_click_adds_and_removes(self):
+        QTest.mouseClick(self.pv, Qt.LeftButton, Qt.ShiftModifier, QPoint(720, 270))
+        self.assertEqual(self.picked[-1], ({"c1", "c4"}, "c4"))
+        QTest.mouseClick(self.pv, Qt.LeftButton, Qt.ControlModifier, QPoint(240, 270))
+        self.assertEqual(self.picked[-1], ({"c4"}, "c4"))
+
+    def test_selected_clips_move_together(self):
+        self.pv.set_scene(self.p, S // 2, "c1", {"c1", "c4"})
+        got = []
+        self.pv.movesCommitted.connect(got.append)
+        self.drag(QPoint(240, 270), QPoint(290, 300))
+        self.assertEqual(len(got), 1)
+        moves = got[0]
+        self.assertEqual(set(moves), {"c1", "c4"})
+        self.assertAlmostEqual(moves["c1"]["x"] + 0.5, moves["c4"]["x"] - 0.5, 5)
+        self.assertAlmostEqual(moves["c1"]["y"], moves["c4"]["y"], 5)
+        self.assertGreater(moves["c1"]["x"], -0.5)
+
+    def test_box_selects_what_it_touches(self):
+        self.drag(QPoint(480, 30), QPoint(700, 300))
+        self.assertEqual(self.picked[-1], ({"c4"}, "c4"))
+        self.drag(QPoint(480, 30), QPoint(100, 300), Qt.ShiftModifier)     # added
+        self.assertEqual(self.picked[-1][0], {"c1", "c4"})
+
+    def test_click_on_nothing_selects_nothing(self):
+        QTest.mouseClick(self.pv, Qt.LeftButton, NONE, QPoint(480, 30))
+        self.assertEqual(self.picked[-1], (set(), None))
+
+
+class GapHandleTests(unittest.TestCase):
+    def setUp(self):
+        self.p = proj()
+        edit.find(self.p, "c1")[1]["transform"].update(scale=0.1, x=-0.6)      # 192 px wide
+        for cid, x in (("c4", 0.0), ("c5", 0.4)):                              # gaps 384 and 192 px
+            c = clip(cid, 0, 2 * S)
+            c["transform"].update(scale=0.1, x=x)
+            self.p["tracks"][1]["clips"].append(c)
+        self.pv = preview(self.p, "c1")
+        self.pv.set_scene(self.p, S // 2, "c1", {"c1", "c4", "c5"})
+
+    def gaps(self):
+        return self.pv._gaps(self.pv._live_boxes(), self.pv._k())
+
+    def drag_bar(self, bar, by):
+        got = []
+        self.pv.movesCommitted.connect(got.append)
+        mid = (bar[0] + bar[1]) / 2
+        a = QPoint(round(mid.x() / 2), round(mid.y() / 2))                     # canvas -> widget (half size)
+        QTest.mousePress(self.pv, Qt.LeftButton, NONE, a)
+        QTest.mouseMove(self.pv, a + by / 2)
+        QTest.mouseMove(self.pv, a + by)
+        QTest.mouseRelease(self.pv, Qt.LeftButton, NONE, a + by)
+        return got[0]
+
+    def test_a_bar_in_each_gap(self):
+        gaps = self.gaps()
+        self.assertEqual([(g[0], round(g[4])) for g in gaps], [("x", 384), ("x", 192)])
+        self.assertEqual(self.pv._gap_at(gaps[0][2][0][0], self.pv._k())[:2], ("x", 0))
+
+    def test_dragging_a_bar_evens_the_gaps(self):
+        moves = self.drag_bar(self.gaps()[1][2][0], QPoint(24, 0))            # the second gap, +48 canvas px
+        self.assertEqual(set(moves["c1"]), {"x"})                              # only along the row
+        self.assertAlmostEqual(moves["c1"]["x"], -0.6, 5)                      # the first stays
+        # 240 px apart: c1 ends at 480, so c4 spans 720..912 and c5 1152..1344
+        self.assertAlmostEqual(moves["c4"]["x"], (816 - 960) / 960, 4)
+        self.assertAlmostEqual(moves["c5"]["x"], (1248 - 960) / 960, 4)
+
+    def test_overlapping_clips_have_no_bars(self):
+        for cid, x in (("c1", -0.05), ("c5", 0.05)):                           # all on top of each other
+            edit.find(self.p, cid)[1]["transform"]["x"] = x
+        self.pv.set_scene(self.p, S // 2, "c1", {"c1", "c4", "c5"})
+        self.assertEqual(self.gaps(), [])
+
+    def test_grid(self):
+        # 2 x 2: c1 c4 on top, c5 c6 below (192 x 108 each, 192 px between columns, 108 between rows)
+        for cid, x, y in (("c1", -0.2, 0.2), ("c4", 0.2, 0.2), ("c5", -0.2, -0.2), ("c6", 0.2, -0.2)):
+            if cid == "c6":
+                c = clip("c6", 0, 2 * S)
+                c["transform"]["scale"] = 0.1
+                self.p["tracks"][1]["clips"].append(c)
+            edit.find(self.p, cid)[1]["transform"].update(x=x, y=y)
+        self.pv.set_scene(self.p, S // 2, "c1", {"c1", "c4", "c5", "c6"})
+        gaps = self.gaps()
+        self.assertEqual([(g[0], round(g[4]), len(g[2])) for g in gaps], [("x", 192, 1), ("y", 108, 2)])
+        moves = self.drag_bar(gaps[1][2][1], QPoint(0, 20))                    # a row bar, +40 canvas px
+        self.assertEqual({cid: set(v) for cid, v in moves.items()}, {c: {"y"} for c in ("c1", "c4", "c5", "c6")})
+        self.assertAlmostEqual(moves["c1"]["y"], 0.2, 5)                       # the top row stays
+        self.assertAlmostEqual(moves["c6"]["y"], moves["c5"]["y"], 5)
+        self.assertAlmostEqual(moves["c5"]["y"], -0.2 - 40 / 540, 4)          # 148 px below it
 
 
 class TextOnPreviewTests(unittest.TestCase):

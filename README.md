@@ -282,7 +282,10 @@ Sound and tracks: audio and video clips show their waveform on the timeline (whi
 highest and lowest sample of every millisecond, so zooming in shows detail; following
 the clip volume and fades). Audio track headers have mute and solo buttons, picture
 tracks an eye to hide them (and mute, when they hold videos or compound clips); muted /
-hidden tracks are dimmed. The track menu (right-click a header) sets a track volume in dB,
+hidden tracks are dimmed. Every track header also has a padlock (鎖定): a locked track's
+clips cannot be selected at all - not by a click, a selection box or 全選, on the timeline
+or the preview - and nothing is moved or dropped onto it (a drop there makes a new track);
+it still plays, shows and is snapped to. It is drawn hatched. The track menu (right-click a header) sets a track volume in dB,
 moves tracks up or down, adds video / text / audio tracks and deletes them. Drag a picture
 clip above the top row, or a sound clip below the bottom row, to put it on a new track.
 分離音訊 in a video clip's menu moves its sound onto an audio track. Preview and export

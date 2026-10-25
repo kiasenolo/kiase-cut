@@ -1440,9 +1440,11 @@ class MainWindow(QMainWindow):
             self.path_ids = []
         sel, ids = self.timeline.selected_id, set(self.timeline.selected_ids)
         self.timeline.set_project(self.view(), keep_view=True)
+        alive = {c["id"] for t in self.timeline.rows for c in t["clips"]} - self.timeline.locked_ids()
+        if sel and sel not in alive and sel in {c["id"] for t in self.timeline.rows for c in t["clips"]}:
+            sel = next(iter(sorted(ids & alive)), None)  # (a track just locked lets go of its clips)
         self.timeline.selected_id = sel
         if sel:                                          # keep a multiple selection too
-            alive = {c["id"] for t in self.timeline.rows for c in t["clips"]}
             self.timeline.selected_ids = (ids & alive) | {sel}
         self.timeline.update()
         self.library.set_library(library.lib(self.proj))
@@ -1776,7 +1778,7 @@ class MainWindow(QMainWindow):
             self.apply("片段顏色", edit.set_track_clip_colors, tid, None)
         elif action.startswith("toggle:"):
             flag = action.split(":", 1)[1]
-            label = {"muted": "靜音", "solo": "獨奏", "hidden": "隱藏"}[flag]
+            label = {"muted": "靜音", "solo": "獨奏", "hidden": "隱藏", "locked": "鎖定"}[flag]
             self.apply(("取消" if t.get(flag) else "") + label + "軌道", edit.set_track_flag, tid, flag,
                        not t.get(flag))
         elif action == "gain":

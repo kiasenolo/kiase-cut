@@ -1,6 +1,7 @@
 """Preview canvas: shows frames and edits the selected clip with handles on the canvas.
 
-Selection: click a clip to select it; Shift / Ctrl+click adds a clip to the selection or
+Selection (never a clip on a locked track, project.locked: those only show and are snapped
+to): click a clip to select it; Shift / Ctrl+click adds a clip to the selection or
 takes it out, and a drag from where no clip is draws a box that selects every clip it
 touches (Shift / Ctrl: added to the selection); a click on nothing selects nothing. Several
 selected clips show their outlines in one dashed box and can only be moved together
@@ -373,7 +374,9 @@ class Preview(QWidget):
                 if c["type"] == "filter" and not (self.mask_mode and c["id"] == self.selected_id):
                     continue                    # a filter covers the whole picture: only its mask is edited here
                 if c["start_us"] <= self.t_us < c["start_us"] + c["duration_us"] and c.get("transform") is not None:
-                    out.append(Box(c, self.W, self.H, self.t_us - c["start_us"]))
+                    b = Box(c, self.W, self.H, self.t_us - c["start_us"])
+                    b.locked = project.locked(tr)       # (shown and snapped to, never picked)
+                    out.append(b)
         return out
 
     def selected_box(self):
@@ -691,8 +694,9 @@ class Preview(QWidget):
             return
         boxes = self.visible_boxes()
         adding = bool(e.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)) and not self.mask_mode
-        sel = next((b for b in boxes if b.clip["id"] in self.selected_ids and b.contains(x, y)), None)
-        hit = sel or next((b for b in boxes if b.contains(x, y)), None)
+        pickable = [b for b in boxes if not b.locked]          # clips on locked tracks are not picked
+        sel = next((b for b in pickable if b.clip["id"] in self.selected_ids and b.contains(x, y)), None)
+        hit = sel or next((b for b in pickable if b.contains(x, y)), None)
         if hit is None:
             if not self.mask_mode:                       # a box around the clips to select
                 self.drag = {"kind": "marquee", "m0": m, "moved": False, "adding": adding, "hits": []}
@@ -723,7 +727,7 @@ class Preview(QWidget):
     def _marquee_hits(self, rect):
         """Visible clips the selection box touches, topmost first."""
         area = QPolygonF(rect)
-        return [b for b in self.visible_boxes() if QPolygonF(b.corners()).intersects(area)]
+        return [b for b in self.visible_boxes() if not b.locked and QPolygonF(b.corners()).intersects(area)]
 
     def _snap(self, rect, dx, dy, others, tol):
         """Snap an outline being moved by dx, dy (rect: its left, right, top, bottom) to the
@@ -1074,7 +1078,7 @@ class Preview(QWidget):
         if e.button() != Qt.LeftButton or not self.view or self.mask_mode:
             return
         x, y = self._to_canvas(e.position())
-        boxes = self.visible_boxes()
+        boxes = [b for b in self.visible_boxes() if not b.locked]
         hit = next((b for b in boxes if b.clip["id"] == self.selected_id and b.contains(x, y)), None) \
             or next((b for b in boxes if b.contains(x, y)), None)
         if hit is not None and hit.clip["type"] == "text" and not curves.is_animated(hit.clip["text"].get("content")):

@@ -11,9 +11,10 @@ project  {format, version, width, height, fps, duration_us, timelines: [timeline
          the texts name but that system does not have (fonts.py); not part of undo.
 timeline {id, name, tracks: [track]}
 track    {id, kind: video | text | audio, name, clips: [clip],
-          muted, solo, hidden, gain}                        optional: muted / solo tracks
+          muted, solo, hidden, locked, gain}                optional: muted / solo tracks
                      make no sound (solo silences the others), hidden ones draw nothing,
-                     gain multiplies the track's sound
+                     locked ones cannot have their clips picked (locked()), gain
+                     multiplies the track's sound
 clip     {id, type: image | video | audio | text | compound, name,
           start_us, duration_us, source_start_us,
           media: {path, width, height, duration_us}         image / video / audio
@@ -210,6 +211,12 @@ def picture_size(c, W, H, k=1.0, t=0):
 
 def visible(track):
     return not track.get("hidden")
+
+
+def locked(track):
+    """A locked track (鎖定): its clips cannot be selected, on the timeline or the preview, and
+    nothing is moved or dropped onto it; it still plays and shows."""
+    return bool(track.get("locked"))
 
 
 # -- shared compounds -------------------------------------------------------------------------------

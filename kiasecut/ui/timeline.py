@@ -36,14 +36,15 @@ the line that can be dragged up / down (value) and sideways (time). The line's h
 in dB: the top is +20 dB (1000 %), 0 dB (100 %) two thirds of the way up.
 
 Audio and video clips show their waveform (scaled by the clip volume and fades). Track
-headers have mute / solo buttons (sound) and a hide button (pictures).
+headers have mute / solo buttons (sound), a hide button (pictures) and a padlock: a locked
+track (hatched) cannot have its clips selected or grabbed, and moves and drops skip it.
 """
 import copy
 import math
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QApplication, QMenu, QScrollBar, QWidget
 
 from .. import curves, edit, project, waveform
@@ -197,8 +198,12 @@ class Timeline(QWidget):
     def selected_clips_primary_first(self):
         return sorted(self.selected_clips(), key=lambda c: c["id"] != self._primary)
 
+    def locked_ids(self):
+        """Clips on locked tracks: they can never be selected."""
+        return {c["id"] for t in self.rows if project.locked(t) for c in t["clips"]}
+
     def set_selection(self, ids, primary=None):
-        ids = set(ids)
+        ids = set(ids) - self.locked_ids()
         if primary not in ids:
             primary = next((c["id"] for c in self.selected_clips() if c["id"] in ids), None) \
                 or next((c["id"] for t in self.rows for c in t["clips"] if c["id"] in ids), None)
@@ -208,7 +213,7 @@ class Timeline(QWidget):
         self.update()
 
     def select_all(self):
-        ids = {c["id"] for t in self.rows for c in t["clips"]}
+        ids = {c["id"] for t in self.rows if not project.locked(t) for c in t["clips"]}
         self.set_selection(ids, self._primary if self._primary in ids else None)
 
     @property
@@ -220,6 +225,8 @@ class Timeline(QWidget):
         return None
 
     def select(self, clip):
+        if clip and clip["id"] in self.locked_ids():
+            clip = None
         self.selected_id = clip["id"] if clip else None
         self.clipSelected.emit(clip)
         self.update()
@@ -331,9 +338,9 @@ class Timeline(QWidget):
         """[(flag, rect)] of a track header's toggle buttons, right-aligned."""
         tr = self.rows[i]
         if tr["kind"] == "audio":
-            flags = ["muted", "solo"]
+            flags = ["locked", "muted", "solo"]
         else:
-            flags = ["hidden"]
+            flags = ["locked", "hidden"]
             if any(c["type"] in ("video", "compound") for c in tr["clips"]):
                 flags.append("muted")
         y = self.tops[i] + (self.row_h(i) - 2 - BTN) / 2
@@ -345,6 +352,8 @@ class Timeline(QWidget):
         row = self._row_at(pos.y())
         if row is None:
             return None, None, None
+        if project.locked(self.rows[row]):                  # its clips cannot be grabbed
+            return row, None, None
         for c in self.rows[row]["clips"]:
             x0 = self._x(c["start_us"] / US)
             x1 = self._x((c["start_us"] + c["duration_us"]) / US)
@@ -532,6 +541,12 @@ class Timeline(QWidget):
             for c in tr["clips"]:
                 if c is not dragged and c["id"] not in group:
                     self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr, h=h, dim=dim)
+            if project.locked(tr):                          # locked: hatched over, nothing to grab
+                p.save()
+                p.setClipRect(QRectF(HEADER_W, RULER_H, w - HEADER_W, self.height() - RULER_H))
+                p.fillRect(QRectF(HEADER_W, y, w - HEADER_W, h - 2), QBrush(QColor(0, 0, 0, 70)))
+                p.fillRect(QRectF(HEADER_W, y, w - HEADER_W, h - 2), QBrush(QColor(255, 255, 255, 26), Qt.BDiagPattern))
+                p.restore()
         if group:                                         # the moving clips, on the rows they will land on
             dr = self.drag.get("drow", 0)
             for i, tr in enumerate(self.rows):
@@ -611,6 +626,17 @@ class Timeline(QWidget):
         if flag == "solo":
             p.setFont(QFont("Segoe UI", 8, QFont.Bold))
             p.drawText(r, Qt.AlignCenter, "S")
+        elif flag == "locked":                  # a padlock; shut when locked
+            p.setBrush(ink)
+            p.drawRoundedRect(QRectF(cx - 4.5, cy - 0.5, 9, 6.5), 1.2, 1.2)
+            p.setBrush(Qt.NoBrush)
+            path = QPainterPath()
+            path.moveTo(cx - 2.8, cy - 0.5)
+            path.lineTo(cx - 2.8, cy - 3)
+            path.arcTo(QRectF(cx - 2.8, cy - 5.8, 5.6, 5.6), 180, -180)
+            if on:
+                path.lineTo(cx + 2.8, cy - 0.5)
+            p.drawPath(path)
         elif flag == "muted":                   # a speaker; crossed when muted
             p.setBrush(ink)
             p.drawPolygon(QPolygonF([QPointF(cx - 6, cy - 2), QPointF(cx - 3, cy - 2), QPointF(cx + 1, cy - 5),
@@ -799,7 +825,7 @@ class Timeline(QWidget):
     def _vol_hit(self, pos):
         """("vol" | "volkey", clip, row, key index) under pos, or None."""
         row = self._row_at(pos.y())
-        if row is None or pos.x() < HEADER_W:
+        if row is None or pos.x() < HEADER_W or project.locked(self.rows[row]):
             return None
         for c in self.rows[row]["clips"]:
             band = self._vol_band(c, row)
@@ -1053,7 +1079,7 @@ class Timeline(QWidget):
             hit = {}                                    # clip id -> its distance from where the box began
             for i, tr in enumerate(self.rows):
                 top, bottom = self.tops[i], self.tops[i] + self.row_h(i)
-                if bottom < self.band.top() or top > self.band.bottom():
+                if bottom < self.band.top() or top > self.band.bottom() or project.locked(tr):
                     continue
                 for c in tr["clips"]:
                     left, right = self._x(c["start_us"] / US), self._x((c["start_us"] + c["duration_us"]) / US)
@@ -1089,7 +1115,8 @@ class Timeline(QWidget):
             row = self._row_at(pos.y())
             audio = self.rows[d["row0"]]["kind"] == "audio"
             d["new"] = None
-            if row is not None and (self.rows[row]["kind"] == "audio") == audio:
+            if row is not None and (self.rows[row]["kind"] == "audio") == audio and \
+                    (row == d["row0"] or not project.locked(self.rows[row])):     # (never onto a locked track)
                 d["row"] = row
             elif row is None and not audio and pos.y() < RULER_H:
                 d["new"] = "top"                        # above the top layer: a new top track
@@ -1112,12 +1139,15 @@ class Timeline(QWidget):
             row = 0 if y < RULER_H else len(self.rows) - 1
         n_vis = sum(1 for t in self.rows if t["kind"] != "audio")
         lo, hi = -len(self.rows), len(self.rows)
-        for i, t in enumerate(self.rows):
-            if not any(c["id"] in d["ids"] for c in t["clips"]):
-                continue
+        moving = [i for i, t in enumerate(self.rows) if any(c["id"] in d["ids"] for c in t["clips"])]
+        for i in moving:
+            t = self.rows[i]
             a, b = (n_vis, len(self.rows) - 1) if t["kind"] == "audio" else (0, n_vis - 1)
             lo, hi = max(lo, a - i), min(hi, b - i)
-        return min(max(row - d["row0"], lo), hi)
+        drow = min(max(row - d["row0"], lo), hi)
+        if any(project.locked(self.rows[i + drow]) for i in moving if drow):
+            return d.get("drow", 0)                         # (never onto a locked track: stay where it was)
+        return drow
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
@@ -1186,7 +1216,7 @@ class Timeline(QWidget):
             return
         pos = e.position()
         if self.proj:
-            self.drop_at = (self._row_at(pos.y()), max(0.0, self._sec(pos.x())) * US)
+            self.drop_at = (self._drop_row(pos.y()), max(0.0, self._sec(pos.x())) * US)
             self.drop_replace = self._alt(e) and e.mimeData().hasFormat(MEDIA_MIME)
             if e.mimeData().hasFormat(FX_MIME):
                 self.drop_clip = self._fx_target(pos)
@@ -1199,6 +1229,11 @@ class Timeline(QWidget):
         e.setDropAction(Qt.CopyAction)                     # (Alt must not turn the drop into a link)
         e.accept()
         self.update()
+
+    def _drop_row(self, y):
+        """The row a drop at y lands on: none over a locked track (a new track is made instead)."""
+        row = self._row_at(y)
+        return None if row is None or project.locked(self.rows[row]) else row
 
     @staticmethod
     def _alt(e):
@@ -1239,14 +1274,14 @@ class Timeline(QWidget):
         if e.mimeData().hasFormat(FX_MIME):                  # a filter from the VFX tab
             if self.proj:
                 ref = bytes(e.mimeData().data(FX_MIME)).decode("utf-8")
-                row = self._row_at(pos.y())
+                row = self._drop_row(pos.y())
                 c = self._fx_target(pos)
                 tid = self.rows[row]["id"] if row is not None and self.rows[row]["kind"] != "audio" else ""
                 self.filterDropped.emit(ref, c["id"] if c else "", tid, int(max(0.0, self._sec(pos.x())) * US))
                 e.acceptProposedAction()
             self.update()
             return
-        row = self._row_at(pos.y()) if self.proj else None
+        row = self._drop_row(pos.y()) if self.proj else None
         tid = self.rows[row]["id"] if row is not None else ""
         start = int(max(0.0, self._sec(pos.x())) * US) if self.proj else 0
         if not e.mimeData().hasFormat(MEDIA_MIME):           # files from the file manager

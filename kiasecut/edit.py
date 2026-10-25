@@ -183,6 +183,8 @@ def move(proj, clip_id, start_us, track_id=None):
     Snaps into the nearest free gap if the spot is taken."""
     src, c = find(proj, clip_id)
     dst = track_by_id(proj, track_id) if track_id else src
+    if dst is not src and project.locked(dst):
+        raise EditError("那條軌道已鎖定")
     if (dst["kind"] == "audio") != (src["kind"] == "audio"):
         raise EditError("audio clips stay on audio tracks, pictures on picture tracks")
     dur = c["duration_us"]
@@ -1169,7 +1171,7 @@ def clear_keys(proj, clip_id, group, key, value):
 
 
 # -- tracks -----------------------------------------------------------------------------------------
-TRACK_FLAGS = ("muted", "solo", "hidden")
+TRACK_FLAGS = ("muted", "solo", "hidden", "locked")      # locked: its clips cannot be picked
 
 
 def set_track_flag(proj, track_id, flag, on):
@@ -1316,7 +1318,7 @@ def place_compound(root, container, ref, track_id, start_us):
     track = None
     if track_id:
         t = track_by_id(container, track_id)
-        if t["kind"] != "audio":
+        if t["kind"] != "audio" and not project.locked(t):
             best = None
             for lo, hi in gaps(t):
                 if hi - lo >= dur:
@@ -1439,7 +1441,7 @@ def new_compound(root, container, at_us, track_id=None, static=False):
     kid = add_compound(root, static, (size.get("width", 1920), size.get("height", 1080)))
     if track_id is None:
         track_id = next((t["id"] for t in reversed(container["tracks"]) if t["kind"] == "video"
-                         and free_range(t, at_us, at_us + STILL_DEFAULT_US) is not None), None)
+                         and not project.locked(t) and free_range(t, at_us, at_us + STILL_DEFAULT_US) is not None), None)
     return place_compound(root, container, kid, track_id, at_us)
 
 

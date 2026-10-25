@@ -27,7 +27,9 @@ python -m kiasecut project.kiasecut.json   # open a saved project
 
 Project manager (專案管理器, shown when it starts without a project, and from 檔案 >
 專案管理器… / Ctrl+Shift+O): every project - those in the projects folder (where 新專案
-puts them) and those on the recent list - as cards, newest first, with a search box.
+puts them) and those on the recent list - as cards, newest first, with a search box. Each
+card shows the project's title (檔案 > 專案資訊), its folder's name and when it was last
+saved; one without a title shows just the folder and the time.
 Double-click one to open it; 新增專案… and 開啟其他專案… are also there, and right-click a
 card to open its folder or take its thumbnail away. A project has no thumbnail at first:
 檔案 > 把目前畫面設為專案縮圖 saves the frame the preview shows, or make a static compound

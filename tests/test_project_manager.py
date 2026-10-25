@@ -16,7 +16,7 @@ from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import edit, project, thumbnail, workspace  # noqa: E402
-from kiasecut.ui.project_manager import ProjectManager  # noqa: E402
+from kiasecut.ui.project_manager import ProjectManager, label  # noqa: E402
 from test_edit import S, clip  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -87,6 +87,26 @@ class ThumbnailTests(Base):
         self.assertEqual(thumbnail.update(proj, path), "compound")
         got = thumbnail.load(path)
         self.assertEqual(got.pixelColor(got.width() // 2, got.height() // 2).name(), "#ff0000")
+
+
+class LabelTests(Base):
+    def test_title_folder_time(self):
+        proj, path = self.make("Folder A")
+        proj["info"]["title"] = "我的影片"
+        project.save(proj, path)
+        lines = label(path).split("\n")
+        self.assertEqual(lines[:2], ["我的影片", "Folder A"])
+        self.assertRegex(lines[2], r"^\d{4}-\d\d-\d\d \d\d:\d\d$")
+        proj["info"]["title"] = "  "                                         # no title: folder and time
+        project.save(proj, path)
+        self.assertEqual(label(path).split("\n")[0], "Folder A")
+        self.assertEqual(len(label(path).split("\n")), 2)
+        del proj["info"]
+        project.save(proj, path)
+        self.assertEqual(len(label(path).split("\n")), 2)
+        with open(path, "w", encoding="utf-8") as fh:                        # unreadable: the same
+            fh.write("{broken")
+        self.assertEqual(label(path).split("\n")[0], "Folder A")
 
 
 class DialogTests(Base):

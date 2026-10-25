@@ -2,7 +2,9 @@
 
 Shown when the program starts without a project (and from 檔案 > 專案管理器…). It lists the
 project files in the projects folder (the 新專案 location: there and one folder down) and
-those in the recent list, newest first. A project without a thumbnail shows a blank card.
+those in the recent list, newest first. Under each card: the project's title (檔案 > 專案資訊),
+its folder's name and when it was last saved - without a title, just the folder and the
+time. A project without a thumbnail shows a blank card.
 Double-click (or 開啟) opens one; 新增專案… and 開啟其他專案… do what the 檔案 menu does.
 Right-click a card to open its folder or take its thumbnail away. The choice is left in
 `choice`: ("open", project file), ("new",) or ("browse",).
@@ -36,6 +38,15 @@ def card(path):
     return pix
 
 
+def label(path):
+    """A card's text: the project's title, its folder's name and when it was last saved, one
+    per line (no title: just the folder and the time)."""
+    when = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
+    folder = os.path.basename(workspace.root_of(path))
+    title = workspace.stored_title(path)
+    return "\n".join(([title] if title else []) + [folder, when])
+
+
 class ProjectManager(QDialog):
     def __init__(self, parent, location, recent=()):
         super().__init__(parent)
@@ -58,7 +69,7 @@ class ProjectManager(QDialog):
         self.list = QListWidget()
         self.list.setViewMode(QListView.IconMode)
         self.list.setIconSize(CARD)
-        self.list.setGridSize(QSize(CARD.width() + 24, CARD.height() + 56))
+        self.list.setGridSize(QSize(CARD.width() + 24, CARD.height() + 72))       # (three lines under it)
         self.list.setResizeMode(QListView.Adjust)
         self.list.setMovement(QListView.Static)
         self.list.setWordWrap(True)
@@ -96,8 +107,7 @@ class ProjectManager(QDialog):
     def fill(self):
         self.list.clear()
         for path in workspace.find_projects(self.location, self.recent):
-            when = datetime.datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M")
-            it = QListWidgetItem(QIcon(card(path)), f"{workspace.project_name(path)}\n{when}")
+            it = QListWidgetItem(QIcon(card(path)), label(path))
             it.setData(Qt.UserRole, path)
             it.setToolTip(path)
             self.list.addItem(it)

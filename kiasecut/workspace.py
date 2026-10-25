@@ -11,6 +11,7 @@ proj["info"] = {title, author, genre, url, comments, created, last_opened, last_
                 time_spent_s, opens}   the project information (File > Project info)
 """
 import datetime
+import json
 import os
 import re
 import shutil
@@ -96,6 +97,17 @@ def project_name(path):
 def other_projects(root):
     """The project files in a folder (several can share the media, as FL projects do)."""
     return sorted(f for f in os.listdir(root) if f.endswith(EXTS))
+
+
+def stored_title(path):
+    """The title in a project file's info (File > Project info), "" when it has none or the
+    file cannot be read."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            title = (json.load(fh).get("info") or {}).get("title")
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return title.strip() if isinstance(title, str) else ""
 
 
 def thumbnail_file(path):

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import edit, project  # noqa: E402
 from kiasecut.ui.preview import Preview  # noqa: E402
-from kiasecut.ui.timeline import HEADER_W, US, Timeline  # noqa: E402
+from kiasecut.ui.timeline import HEADER_MIN, HEADER_W, US, Timeline  # noqa: E402
 from test_edit import S, clip, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -92,6 +92,29 @@ class TimelineTests(unittest.TestCase):
 
     def test_no_drop_onto_it(self):
         self.assertIsNone(self.tl._drop_row(self.tl.tops[self.row] + 10))
+
+
+class HeaderWidthTests(unittest.TestCase):
+    def test_drag_the_edge(self):
+        tl = Timeline()
+        tl.resize(1000, 400)
+        tl.set_project(proj())
+        tl.px_per_s, tl.scroll_s = 100.0, 0.0
+        y = tl.tops[0] + 10
+        self.assertEqual(tl._x(1.0), HEADER_W + 100)
+        QTest.mousePress(tl, Qt.LeftButton, NONE, QPoint(HEADER_W, y))
+        QTest.mouseMove(tl, QPoint(HEADER_W + 40, y))
+        QTest.mouseMove(tl, QPoint(HEADER_W + 90, y))
+        QTest.mouseRelease(tl, Qt.LeftButton, NONE, QPoint(HEADER_W + 90, y))
+        self.assertEqual(tl.header_w, HEADER_W + 90)
+        self.assertEqual(tl._x(1.0), HEADER_W + 190)                     # the clips move over with it
+        self.assertEqual(tl.view_state()["header_w"], HEADER_W + 90)
+        tl.set_view_state({"header_w": 5})                                  # held to its limits
+        self.assertEqual(tl.header_w, HEADER_MIN)
+        tl.set_view_state({"scroll_s": 0.0})                                # (missing: stays)
+        self.assertEqual(tl.header_w, HEADER_MIN)
+        r = dict(tl.header_buttons(0))["locked"]
+        self.assertLess(r.right(), tl.header_w)                            # the buttons follow the edge
 
 
 class PreviewTests(unittest.TestCase):

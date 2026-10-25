@@ -1,15 +1,19 @@
-"""Export settings: file, whole film or the marked range, frame rate, size, quality.
+"""Export settings: file, format, whole film or the marked range, frame rate, size, quality,
+and the advanced options: a transparent background, the sound, stems.
 
 The project is not tied to a frame rate or a pixel size: times are microseconds and
 positions are fractions of the canvas, so an export can use any frame rate and any size
 with the project's shape. Size is a multiple of the project's own resolution.
+Formats are formats.py's; the advanced options are renderexport.export's spec.
 """
 import os
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QVBoxLayout,
-                               QWidget)
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+                               QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QToolButton,
+                               QVBoxLayout, QWidget)
 
+from .. import formats
 from .inspector import SpinBox
 from .timeline import US, timecode
 
@@ -30,11 +34,14 @@ def export_size(width, height, scale):
 
 
 class ExportDialog(QDialog):
-    def __init__(self, parent, default_path, fps, length, mark_in, mark_out, width=1920, height=1080, out_fps=None):
+    def __init__(self, parent, default_path, fps, length, mark_in, mark_out, width=1920, height=1080, out_fps=None,
+                 spec=None):
         """fps, length, mark_in / mark_out: the editor's frames (時間線精度); out_fps: the frame
-        rate offered for the file (the project's), fps when None."""
+        rate offered for the file (the project's), fps when None; spec: the advanced settings
+        last used (renderexport.export's)."""
         super().__init__(parent)
         self.setWindowTitle("匯出影片")
+        spec = dict(spec or {})
         self.fps, self.length = fps, length
         self.W, self.H = width, height
         lay = QVBoxLayout(self)
@@ -48,6 +55,11 @@ class ExportDialog(QDialog):
         rl.addWidget(self.path, 1)
         rl.addWidget(browse)
         form.addRow("檔案", row)
+        self.format_box = QComboBox()
+        for f in formats.FORMATS:
+            self.format_box.addItem(f.label, f.key)
+        self.format_box.setCurrentIndex(max(0, self.format_box.findData(formats.get(spec.get("format")).key)))
+        form.addRow("格式", self.format_box)
         self.whole = QRadioButton(f"整部影片（{self._tc(0)} – {self._tc(length)}）")
         has_range = mark_in is not None or mark_out is not None
         a = mark_in or 0
@@ -82,7 +94,53 @@ class ExportDialog(QDialog):
         for name, _ in QUALITY:
             self.quality.addItem(name)
         form.addRow("畫質", self.quality)
+        self.form = form
         lay.addLayout(form)
+
+        # advanced: transparency, the sound, stems
+        self.more = QToolButton()
+        self.more.setText("進階匯出選項")
+        self.more.setCheckable(True)
+        self.more.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.more.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
+        self.more.toggled.connect(self._show_more)
+        lay.addWidget(self.more)
+        self.adv = QWidget()
+        adv = QFormLayout(self.adv)
+        adv.setContentsMargins(16, 0, 0, 0)
+        self.alpha = QCheckBox("透明背景（沒有畫面的地方是透明的）")
+        adv.addRow("畫面", self.alpha)
+        self.audio = QCheckBox("包含混音")
+        self.audio.setChecked(spec.get("audio", True))
+        adv.addRow("聲音", self.audio)
+        self.multitrack = QCheckBox("多音軌：每條軌道的聲音另成一個音訊串流（剪輯軟體可分開調整）")
+        self.multitrack.setChecked(bool(spec.get("multitrack")))
+        adv.addRow("", self.multitrack)
+        self.stems = QCheckBox("分軌音檔：每條軌道的聲音各存一個檔案")
+        self.stems.setChecked(bool(spec.get("stems")))
+        self.stem_fmt = QComboBox()
+        for ext in formats.STEM_FORMATS:
+            self.stem_fmt.addItem(ext.upper(), ext)
+        self.stem_fmt.setCurrentIndex(max(0, self.stem_fmt.findData(spec.get("stems") or "wav")))
+        adv.addRow("", self._pair(self.stems, self.stem_fmt))
+        self.adv_note = QLabel()
+        self.adv_note.setWordWrap(True)
+        self.adv_note.setStyleSheet("color: #9a9aa0;")
+        adv.addRow("", self.adv_note)
+        lay.addWidget(self.adv)
+        self.alpha_choice = {}                 # format key -> the user's transparency choice
+        if spec.get("alpha") is not None:
+            self.alpha_choice[self.format().key] = bool(spec["alpha"])
+        self.format_box.currentIndexChanged.connect(self._format_changed)
+        self.alpha.toggled.connect(self._alpha_toggled)
+        for w in (self.audio, self.multitrack, self.stems):
+            w.toggled.connect(self._update)
+        self.stem_fmt.currentIndexChanged.connect(self._update)
+        self.path.textChanged.connect(self._update)
+        self._format_changed()
+        self.more.setChecked(bool(spec.get("alpha") or spec.get("stems") or spec.get("multitrack")
+                                  or not spec.get("audio", True)))
+        self._show_more(self.more.isChecked())
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("匯出")
         buttons.accepted.connect(self.accept)
@@ -119,6 +177,63 @@ class ExportDialog(QDialog):
         self.scale_custom.setVisible(self.scale_box.currentIndex() == len(SCALE_CHOICES))
         w, h = export_size(self.W, self.H, self.scale())
         self.size_lbl.setText(f"{w}×{h}")
+        if not hasattr(self, "adv_note"):          # (still being built)
+            return
+        f = self.format()
+        self.stem_fmt.setEnabled(self.stems.isChecked())
+        name = os.path.basename(self._stem_path())
+        notes = []
+        if f.kind == "sequence":
+            notes.append(f"每格存成一張 PNG，放在「{name}」資料夾。")
+        if f.kind == "gif":
+            notes.append("GIF 沒有聲音、只有 256 色，適合短片段與低幀率。")
+        if self.alpha.isEnabled() and self.alpha.isChecked():
+            notes.append("透明背景的檔案可放進 Premiere、After Effects、DaVinci Resolve 等，疊在其他畫面上。")
+        if self.stems.isChecked():
+            notes.append(f"分軌音檔放在「{name} - 分軌」資料夾（只含有聲音、沒被靜音的軌道）。")
+        self.adv_note.setText("\n".join(notes))
+        self.adv_note.setVisible(bool(notes))
+
+    def format(self):
+        return formats.get(self.format_box.currentData())
+
+    def _format_changed(self, *_):
+        f = self.format()
+        p = self.path.text().strip()
+        if p:
+            base, ext = os.path.splitext(p)
+            self.path.setText((base if ext.lower() in formats.EXTS else p) + f.ext)
+        self.alpha.setEnabled(f.can_alpha)
+        self.alpha.blockSignals(True)
+        self.alpha.setChecked(f.can_alpha and self.alpha_choice.get(f.key, bool(f.alpha)))
+        self.alpha.blockSignals(False)
+        self.audio.setEnabled(f.has_video and f.audio is not None)
+        self.multitrack.setEnabled(f.multitrack)
+        for w in (self.fps_box, self.scale_box):
+            self.form.setRowVisible(w.parentWidget(), f.has_video)
+        self.form.setRowVisible(self.quality, f.quality)
+        self.setWindowTitle("匯出影片" if f.has_video else "匯出音訊")
+        self._update()
+
+    def _alpha_toggled(self, on):
+        self.alpha_choice[self.format().key] = on
+        self._update()
+
+    def _show_more(self, on):
+        self.more.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
+        self.adv.setVisible(on)
+        self.adjustSize()
+
+    def _stem_path(self):
+        return os.path.splitext(self.path.text().strip() or "export")[0]
+
+    def spec(self):
+        """The advanced settings: renderexport.export's spec."""
+        f = self.format()
+        return {"format": f.key, "alpha": f.can_alpha and self.alpha.isChecked(),
+                "audio": self.audio.isChecked() if self.audio.isEnabled() else f.audio is not None,
+                "multitrack": f.multitrack and self.multitrack.isChecked(),
+                "stems": self.stem_fmt.currentData() if self.stems.isChecked() else None}
 
     def out_fps(self):
         i = self.fps_box.currentIndex()
@@ -132,16 +247,19 @@ class ExportDialog(QDialog):
         return timecode(frame / self.fps * US, self.fps)
 
     def _browse(self):
-        fn, _ = QFileDialog.getSaveFileName(self, "匯出影片", self.path.text(), "MP4 (*.mp4)")
+        ext = self.format().ext
+        fn, _ = QFileDialog.getSaveFileName(self, self.windowTitle(), self.path.text(),
+                                            f"{ext[1:].upper()} (*{ext})")
         if fn:
-            self.path.setText(fn if fn.lower().endswith(".mp4") else fn + ".mp4")
+            self.path.setText(fn if fn.lower().endswith(ext) else fn + ext)
 
     def result_options(self):
         """(path, first us, end us, {width, height, fps}, encoder options)."""
         a, b = self.range if self.marked.isChecked() else (0, self.length - 1)
         path = self.path.text().strip()
-        if path and not path.lower().endswith(".mp4"):
-            path += ".mp4"
+        ext = self.format().ext
+        if path and not path.lower().endswith(ext):
+            path += ext
         w, h = export_size(self.W, self.H, self.scale())
         fmt = {"width": w, "height": h, "fps": self.out_fps()}
         return (os.path.abspath(path) if path else "", a / self.fps * US, (b + 1) / self.fps * US, fmt,

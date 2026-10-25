@@ -2400,11 +2400,17 @@ class MainWindow(QMainWindow):
                    if self.root else os.path.join(os.path.expanduser("~"), "Videos", "KiaseCut.mp4"))
         if len(self.proj["timelines"]) > 1:              # one file per timeline
             default = default[:-4] + f" - {project.timeline(self.proj)['name']}.mp4"
+        try:
+            last_spec = json.loads(self.settings().value("export_spec", "") or "{}")
+        except (TypeError, ValueError):
+            last_spec = {}
         dlg = ExportDialog(self, default, self.fps, total, self.timeline.mark_in, self.timeline.mark_out,
-                           self.proj["width"], self.proj["height"], out_fps=self.proj["fps"])
+                           self.proj["width"], self.proj["height"], out_fps=self.proj["fps"], spec=last_spec)
         if dlg.exec() != QDialog.Accepted:
             return
         out, t0, t1, fmt, opts = dlg.result_options()
+        spec = dlg.spec()
+        self.settings().setValue("export_spec", json.dumps(spec))
         fps = fmt["fps"]
         first = round(t0 / US * fps)                    # frames of the export's own rate
         last = max(first, round(t1 / US * fps) - 1)
@@ -2420,9 +2426,16 @@ class MainWindow(QMainWindow):
         def work(progress):
             os.makedirs(cache, exist_ok=True)
             os.makedirs(os.path.dirname(out), exist_ok=True)
-            if renderexport.needs_renderer(snapshot):      # filters, blend modes: our own renderer
+            if renderexport.needs_renderer(snapshot) or not renderexport.uses_mlt(spec):
+                # filters, blend modes, the other formats, transparency: our own renderer
                 return renderexport.export(snapshot, out, (fmt["width"], fmt["height"]), fps, first, last, opts,
-                                           progress, cache)
+                                           progress, cache, spec=spec)
+            r = mlt_export(progress)
+            if spec.get("stems"):
+                r = dict(r, stems=renderexport.stems(snapshot, out, fps, first, last, spec["stems"], cache))
+            return r
+
+        def mlt_export(progress):
             xml = build.build(snapshot, cache, os.path.join(cache, "export.mlt"),   # originals, no proxies
                               size=(fmt["width"], fmt["height"]), fps=fps)
             enc = gpu.mlt_video_opts(opts, (fmt["width"], fmt["height"]))
@@ -2444,7 +2457,11 @@ class MainWindow(QMainWindow):
             prog.close()
             extra = ("\n\n" + "\n".join(r["errors"])) if r.get("errors") else ""
             enc = f"，{r['encoder']}" if r.get("encoder") else ""
-            QMessageBox.information(self, "匯出完成", f"{out}\n{fmt['width']}×{fmt['height']}，{fps:g} fps{enc}\n"
+            what = (f"{fmt['width']}×{fmt['height']}，{fps:g} fps{enc}" if dlg.format().has_video
+                    else enc.lstrip("，"))
+            stems = (f"\n分軌音檔 {len(r['stems'])} 個：{renderexport.stems_dir(out)}" if r.get("stems")
+                     else "\n沒有可分軌的聲音" if spec.get("stems") else "")
+            QMessageBox.information(self, "匯出完成", f"{r.get('done', out)}\n{what}{stems}\n"
                                     f"耗時 {r['elapsed']:.0f} 秒{extra}")
 
         self.run_task(work, done, lambda m: (prog.close(), QMessageBox.critical(self, "匯出失敗", m)),

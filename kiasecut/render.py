@@ -225,10 +225,11 @@ class Renderer:
         p.restore()
 
     # -- frames -----------------------------------------------------------------------------------
-    def render(self, view, frame, width, height):
-        """RGB frame `frame` of a project-like view, drawn at width x height."""
+    def render(self, view, frame, width, height, alpha=False):
+        """RGB frame `frame` of a project-like view, drawn at width x height; on a transparent
+        background instead of black with alpha (transparent exports)."""
         img = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
-        img.fill(QColor("black"))
+        img.fill(Qt.transparent if alpha else QColor("black"))
         p = QPainter(img)
         p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         p.scale(width / view["width"], height / view["height"])

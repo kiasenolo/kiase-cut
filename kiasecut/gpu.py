@@ -35,10 +35,11 @@ def _works(job, args):
         return _found[job]
 
 
-def nvenc():
-    """Whether ffmpeg can encode H.264 on an NVIDIA card here."""
-    return enabled and _works("nvenc", ["-f", "lavfi", "-i", "color=black:s=256x256:d=0.1", "-c:v", "h264_nvenc",
-                                        "-f", "null", "-"])
+def nvenc(codec="h264"):
+    """Whether ffmpeg can encode H.264 (or codec: hevc) on an NVIDIA card here."""
+    return enabled and _works("nvenc" if codec == "h264" else "nvenc_" + codec,
+                              ["-f", "lavfi", "-i", "color=black:s=256x256:d=0.1", "-c:v", codec + "_nvenc",
+                               "-f", "null", "-"])
 
 
 def cuda():
@@ -56,8 +57,8 @@ def cq(crf):
     return max(0, min(51, int(crf) + 2))
 
 
-def nvenc_for(size):
-    return max(size) <= NVENC_MAX and nvenc()
+def nvenc_for(size, codec="h264"):
+    return max(size) <= NVENC_MAX and nvenc(codec)
 
 
 def ffmpeg_video_args(opts, size):

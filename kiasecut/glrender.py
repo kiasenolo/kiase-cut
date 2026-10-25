@@ -350,12 +350,13 @@ class GLRenderer(render.Renderer):
         self.gl = GL()
         self.gl_stills = {}            # still key -> Layer (static compounds)
 
-    def render(self, view, frame, width, height):
-        """RGBA frame `frame` of a project-like view, drawn at width x height (RGBA8888)."""
+    def render(self, view, frame, width, height, alpha=False):
+        """RGBA frame `frame` of a project-like view, drawn at width x height (RGBA8888); on a
+        transparent background instead of black with alpha (premultiplied RGBA8888 then)."""
         gl = self.gl
         with gl.ctx:                    # (another renderer's filters may have made theirs current)
             gl.new_frame()
-            tgt = gl.layer(width, height, (0.0, 0.0, 0.0, 1.0))
+            tgt = gl.layer(width, height, (0.0, 0.0, 0.0, 0.0 if alpha else 1.0))
             self.begin(view)
             try:
                 base = QTransform.fromScale(width / view["width"], height / view["height"])
@@ -364,7 +365,8 @@ class GLRenderer(render.Renderer):
                 data = tgt.fbo.read(components=4)
             finally:
                 gl.release(tgt)
-        return QImage(data, width, height, width * 4, QImage.Format_RGBA8888).copy()
+        fmt = QImage.Format_RGBA8888_Premultiplied if alpha else QImage.Format_RGBA8888
+        return QImage(data, width, height, width * 4, fmt).copy()
 
     def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu):
         f = round(t_us * fps / US)

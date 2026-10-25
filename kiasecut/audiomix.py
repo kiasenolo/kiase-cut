@@ -33,10 +33,13 @@ class Source:
         return (c["media"]["path"], c.get("source_start_us", 0), c["duration_us"])
 
 
-def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0):
-    """Every clip that makes sound, compound clips included, with its timeline placement."""
+def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None):
+    """Every clip that makes sound, compound clips included, with its timeline placement.
+    only: one of tracks, to hear that track alone (as it sounds in the mix: an export's stem)."""
     out = []
     for tr in tracks:
+        if only is not None and tr is not only:
+            continue
         g = gain * project.sounds(tr, tracks)
         if g <= 0:
             continue
@@ -64,9 +67,10 @@ class Mixer:
         self.thread = None
         self.master = 1.0                     # the project's master volume
 
-    def set_view(self, view):
+    def set_view(self, view, only=None):
+        """only: one of the view's tracks, to mix that track alone."""
         self.master = float(view.get("master_gain", 1.0))
-        srcs = sources(view["tracks"])
+        srcs = sources(view["tracks"], only=only)
         with self.lock:
             for s in srcs:
                 if s.key() in self.decoded:
@@ -140,3 +144,9 @@ class Mixer:
             if hi > lo:
                 acc[lo - i0:hi - i0] += s.pcm[lo:hi] * g
         return np.clip(acc * self.master, -32768, 32767).astype(np.int16).tobytes()
+
+
+def stem_tracks(view):
+    """The tracks heard in the mix (not muted, not silenced by another's solo) that have a
+    clip making sound: one stem file each."""
+    return [tr for tr in view["tracks"] if project.sounds(tr, view["tracks"]) > 0 and sources([tr])]

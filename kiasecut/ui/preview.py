@@ -29,7 +29,9 @@ cannot be moved, scaled or turned there, and a click on another clip just select
 mask outline is drawn where it cuts the clip (dimmed while the mask is switched off). Drag inside it to move it, the squares on its edges / corner to size it, the
 round handle to rotate it and the arrow below it for the feather. The mask snaps to the
 clip's centre and edges (and to a square, to full size, to feather 0 / 1) while it is dragged; Alt
-drags freely. Snapped lines show in amber.
+drags freely. Snapped lines show in amber. A 複合片段 mask is a frame like a rectangle (no
+feather) whose corner keeps the compound's proportions (Shift: free); the renderer draws the
+compound itself in it (matte_preview, see render.py).
 
 Ctrl+wheel zooms the view around the mouse (to reach handles of clips larger than the
 canvas), the middle button drags it; zooming back to about 100% fits it again.
@@ -199,7 +201,7 @@ class MaskGeo:
     def handles(self, k):
         """[(name, canvas point)]; k = canvas px per screen px."""
         out = []
-        if self.kind in ("rectangle", "circle"):
+        if self.kind in ("rectangle", "circle", "compound"):
             out += [("w", self.xf.map(QPointF(self.hw, 0))), ("h", self.xf.map(QPointF(0, -self.hh))),
                     ("wh", self.xf.map(QPointF(self.hw, -self.hh)))]
         elif self.kind == "mirror":
@@ -207,7 +209,8 @@ class MaskGeo:
         u, hh = self.down()
         c = self.centre()
         out.append(("rot", c - u * (hh + ROT_PX * k)))
-        out.append(("feather", c + u * (hh + (14 + self.feather * 80) * k)))
+        if self.kind != "compound":                             # (a compound's picture has no feather)
+            out.append(("feather", c + u * (hh + (14 + self.feather * 80) * k)))
         return out
 
     def contains(self, p):
@@ -764,9 +767,10 @@ class Preview(QWidget):
         xf = box.xf()
         return xf.map(a), xf.map(b)
 
-    def _snap_mask(self, kind, vals, g, box, free):
+    def _snap_mask(self, kind, vals, g, box, free, keep=None):
         """Snap the mask values being dragged (move: cx / cy, size: w / h, feather) to the clip's
-        centre and edges. Returns the values; self.mask_guides gets the lines shown."""
+        centre and edges; keep = h / w to hold (a compound's corner: one side snaps, the other
+        follows). Returns the values; self.mask_guides gets the lines shown."""
         self.mask_guides = []
         if free:
             return vals
@@ -794,7 +798,15 @@ class Preview(QWidget):
                 if hit:
                     vals["w"] = round(vals["w"] + hit[0], 4)
                     guides += [("x", cx - vals["w"]), ("x", cx + vals["w"])]
-            if "h" in vals:
+            if keep is not None:              # one side snaps, the other keeps the proportions
+                hit = None if guides else self._best([vals["h"]], [1.0 - cy, 1.0 + cy, 1.0], ty)
+                if hit:
+                    vals["h"] = round(vals["h"] + hit[0], 4)
+                    vals["w"] = round(vals["h"] / keep, 4)
+                    guides += [("y", cy - vals["h"]), ("y", cy + vals["h"])]
+                else:
+                    vals["h"] = round(vals["w"] * keep, 4)
+            elif "h" in vals:
                 hit = self._best([vals["h"]], [1.0 - cy, 1.0 + cy, 1.0], ty)
                 if hit:
                     vals["h"] = round(vals["h"] + hit[0], 4)
@@ -864,6 +876,11 @@ class Preview(QWidget):
             out["w"] = round(max(0.01, 2 * abs(q.x()) / g.dw), 4)
         if "h" in kind:
             out["h"] = round(max(0.01, 2 * abs(q.y()) / g.dh), 4)
+        if kind == "wh" and g.kind == "compound" and not free:   # a compound keeps its proportions (Shift: free)
+            vx, vy = g.mw * g.dw, g.mh * g.dh                       # the corner, from the centre
+            f = max(0.01 / max(g.mw, g.mh, 1e-6), (abs(q.x()) * vx + abs(q.y()) * vy) * 2 / max(vx * vx + vy * vy, 1e-9))
+            out = {"w": round(g.mw * f, 4), "h": round(g.mh * f, 4)}
+            return "mask", self._snap_mask("w", out, g, box, bool(e.modifiers() & Qt.AltModifier), keep=g.mh / max(g.mw, 1e-9))
         return "mask", self._snap_mask(kind, out, g, box, bool(e.modifiers() & Qt.AltModifier))
 
     def _scale_values(self, box, d, m, mods):

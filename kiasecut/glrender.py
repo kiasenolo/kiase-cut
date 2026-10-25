@@ -27,7 +27,7 @@ from .render import TEXT_FIELDS, US, quantize
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
                "color_dodge": 6, "color_burn": 7, "hard_light": 8, "soft_light": 9, "difference": 10,
                "exclusion": 11, "add": 12}
-MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4}
+MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5}
 MAX_LAYER = 8192
 TEX_CACHE = 160
 
@@ -38,14 +38,26 @@ void main() { gl_Position = vec4(pos / size * 2.0 - 1.0, 0.0, 1.0); }
 """
 
 MASK_GLSL = """
-uniform int mkind;           // 0: no mask; 1 line, 2 mirror, 3 circle, 4 rectangle (masks.alpha)
+uniform int mkind;           // 0: no mask; 1 line, 2 mirror, 3 circle, 4 rectangle (masks.alpha),
+                             // 5 a compound's picture (mtex) over the w x h frame
 uniform int minvert;
 uniform mat3 dev_mask;       // device px -> mask space (origin at its centre, y up)
 uniform vec2 mwh;            // mask width / height in clip units
 uniform float msoft;         // feather half-width in clip units (at least half a device pixel)
+uniform sampler2D mtex;      // kind 5: the compound's picture (premultiplied)
+uniform int mluma;           // kind 5: its brightness lets the clip through, not its alpha
 float mask_at(vec2 p) {
     if (mkind == 0) return 1.0;
     vec2 m = (dev_mask * vec3(p, 1.0)).xy;
+    if (mkind == 5) {
+        vec2 uv = vec2(m.x / mwh.x + 0.5, 0.5 - m.y / mwh.y);
+        float c = 0.0;
+        if (uv.x >= 0.0 && uv.x < 1.0 && uv.y >= 0.0 && uv.y < 1.0) {
+            vec4 s = texture(mtex, uv);
+            c = mluma == 1 ? dot(s.rgb, vec3(0.2126, 0.7152, 0.0722)) : s.a;
+        }
+        return minvert == 1 ? 1.0 - c : c;
+    }
     float d;
     if (mkind == 1) d = m.y;
     else if (mkind == 2) d = mwh.y / 2.0 - abs(m.y);
@@ -177,6 +189,7 @@ class GL:
         self.moving_used = {}
         self.free = {}                  # (w, h) -> [Layer]
         self.backdrops = {}             # (w, h) -> Layer
+        self.matte = None               # texture of the compound mask about to be drawn with (unit 2)
 
     # -- textures and layers --------------------------------------------------------------------
     def _upload(self, tex, img):
@@ -251,13 +264,21 @@ class GL:
             prog["mkind"].value = 0
             return
         v = lambda k, d: curves.value(mask.get(k, d), t)
-        prog["mkind"].value = MASK_INDEX.get(v("kind", "rectangle"), 4)
+        kind = MASK_INDEX.get(v("kind", "rectangle"), 4)
+        if kind == 5 and self.matte is None:             # (no picture to cut with: cut nothing)
+            prog["mkind"].value = 0
+            return
+        prog["mkind"].value = kind
         prog["minvert"].value = 1 if v("invert", False) else 0
         prog["dev_mask"].value = mat3(inv_world * mask_frame(mask, t, disp))
         w, h = v("w", 1.0) * disp[0], v("h", 1.0) * disp[1]
-        prog["mwh"].value = (w, h)
+        prog["mwh"].value = (max(w, 1e-6), max(h, 1e-6))
         feather = v("feather", 0.0)
-        prog["msoft"].value = feather * min(w, h) / 2 if feather > 1e-3 else 0.0
+        prog["msoft"].value = feather * min(w, h) / 2 if feather > 1e-3 and kind != 5 else 0.0
+        if kind == 5:
+            self.matte.use(2)
+            prog["mtex"].value = 2
+            prog["mluma"].value = 1 if v("matte", "alpha") == "luma" else 0
 
     def _quad(self, tgt, pts):
         self.vbo.write(np.array([c for q in pts for c in (q.x(), q.y())], "f4").tobytes())
@@ -335,6 +356,7 @@ class GLRenderer(render.Renderer):
         with gl.ctx:                    # (another renderer's filters may have made theirs current)
             gl.new_frame()
             tgt = gl.layer(width, height, (0.0, 0.0, 0.0, 1.0))
+            self.begin(view)
             try:
                 base = QTransform.fromScale(width / view["width"], height / view["height"])
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
@@ -444,25 +466,68 @@ class GLRenderer(render.Renderer):
         else:
             return
         disp = (bw, bh)
-        mask = c["mask"] if project.active_mask(c) else None
+        mask = self.clip_mask(c, t)
         blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
         effects = [e for e in c.get("effects") or [] if not e.get("disabled")]
+        matte = self.gl_matte(mask, t, disp, world, fps)
         try:
             if effects:
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
                     gl.draw(lay, tex, straight, rect, world)
                     out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp)
+                    gl.matte = matte and matte[0].tex
                     gl.draw_layer(tgt, out, opacity, mask, t, disp, inv, blend)
                     if out is not lay:
                         gl.release(out)
                 finally:
                     gl.release(lay)
             else:
+                gl.matte = matte and matte[0].tex
                 gl.draw(tgt, tex, straight, rect, world, opacity, mask, t, disp, blend)
         finally:
+            gl.matte = None
+            if matte and matte[1]:
+                gl.release(matte[0])
             if held is not None:
                 gl.release(held)
+        if self.matte_preview and self.matte_preview.get("clip") == c["id"]:
+            self.gl_matte_ghost(tgt, c.get("mask"), t, disp, world, fps, self.matte_preview.get("opacity", 0.4))
+
+    def gl_matte(self, mask, t, disp, world, fps):
+        """(layer, give it back after) with a compound mask's picture (see render.matte_image),
+        or None for other masks."""
+        comp = self.matte_compound(mask, t)
+        if comp is None:
+            return None
+        kid = mask.get("compound_id")
+        k = self.matte_k(mask, t, disp, comp, world)
+        self._matting.add(kid)
+        try:
+            if comp.get("static"):
+                return self.gl_still(comp, k, fps), False
+            cw, ch = comp["width"], comp["height"]
+            k = min(k, self.MATTE_MAX_PX / max(cw, ch))
+            lay = self.gl.layer(max(1, math.ceil(cw * k)), max(1, math.ceil(ch * k)))
+            self.gl_tracks(lay, QTransform.fromScale(k, k), comp["tracks"], cw, ch, fps, render.matte_time(comp, t, fps), k)
+            return lay, True
+        finally:
+            self._matting.discard(kid)
+
+    def gl_matte_ghost(self, tgt, mask, t, disp, world, fps, opacity):
+        """A compound mask's picture over the clip, to place it (as render.draw_matte_ghost)."""
+        matte = self.gl_matte(mask, t, disp, world, fps)
+        if matte is None:
+            return
+        v = lambda k, d: curves.value(mask.get(k, d), t)
+        w, h = v("w", 1.0) * disp[0], v("h", 1.0) * disp[1]
+        local = QTransform().translate(v("cx", 0.0) * disp[0] / 2, -v("cy", 0.0) * disp[1] / 2).rotate(v("rotation", 0.0))
+        try:
+            if w > 1e-6 and h > 1e-6:
+                self.gl.draw(tgt, matte[0].tex, False, QRectF(-w / 2, -h / 2, w, h), local * world, opacity)
+        finally:
+            if matte[1]:
+                self.gl.release(matte[0])
 
     def gl_still(self, comp, k, fps):
         """A static compound's picture as a layer (drawn once, kept while unchanged)."""
@@ -521,14 +586,20 @@ class GLRenderer(render.Renderer):
         if not ok:
             return
         snap = gl.layer(tgt.w, tgt.h)
+        mask = self.clip_mask(c, t)
+        matte = None
         try:
             gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
             out = self.gl_effects(effects, snap, t, c["duration_us"], fps, wt, (W, H))
-            mask = c["mask"] if project.active_mask(c) else None
+            matte = self.gl_matte(mask, t, (W, H), wt, fps)
+            gl.matte = matte and matte[0].tex
             gl.mix(tgt, snap.tex, out.tex, strength, mask, t, (W, H), inv)
             if out is not snap:
                 gl.release(out)
         finally:
+            gl.matte = None
+            if matte and matte[1]:
+                gl.release(matte[0])
             gl.release(snap)
 
 

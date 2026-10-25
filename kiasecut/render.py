@@ -9,7 +9,10 @@ follows the same rules as build.py:
     clip centre; pictures are fitted into the canvas, texts are textlayout images;
   * masks live in material space (they move with the clip), drawn as clip paths;
   * compound clips render their tracks into a layer first, at time - start + source start;
-    a static compound (靜態片段) always at its still_us, drawn once and reused like a picture.
+    a static compound (靜態片段) always at its still_us, drawn once and reused like a picture;
+  * a compound mask (kind "compound") cuts with a compound's picture (view["compounds"]):
+    its alpha or luma, at clip time (a static one: its still). view["matte_preview"] =
+    {clip, opacity} (the editor, while the mask is edited) draws that picture over the clip.
 QPainter on QImage is usable from any thread, so the player renders off the UI thread.
 glrender.py draws the same frames on the GPU (and is used when it can be); this one is the
 reference and the fallback.
@@ -48,6 +51,9 @@ class Renderer:
         self.errors = []            # clips that could not be drawn, reported by the player
         self._fx = None             # filter engine (an OpenGL context of the thread that renders)
         self._fx_error = None
+        self.compounds = {}         # the view's compounds (what compound masks cut with)
+        self.matte_preview = None   # {clip, opacity}: show that clip's mask compound over it
+        self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
 
     # -- assets -----------------------------------------------------------------------------------
     def asset(self, p, w, h):
@@ -143,6 +149,80 @@ class Renderer:
             cache.pop(next(iter(cache)))
         cache[key] = value
 
+    # -- compound masks ---------------------------------------------------------------------------
+    MATTE_MAX_PX = 2048
+
+    def begin(self, view):
+        """Take what a frame of view needs besides its tracks."""
+        self.compounds = view.get("compounds") or {}
+        self.matte_preview = view.get("matte_preview")
+
+    def matte_compound(self, mask, t=0):
+        """The compound a compound mask cuts with, or None (not a compound mask, none chosen,
+        deleted, or that compound is being drawn as a mask already)."""
+        if not mask or curves.value(mask.get("kind"), t) != "compound":
+            return None
+        kid = mask.get("compound_id")
+        return None if kid in self._matting else self.compounds.get(kid)
+
+    def clip_mask(self, c, t):
+        """The mask that cuts clip c now (None: none, off, or a compound mask without its compound)."""
+        m = project.active_mask(c)
+        if m and curves.value(m.get("kind"), t) == "compound" and self.matte_compound(m, t) is None:
+            return None
+        return m
+
+    def matte_k(self, mask, t, disp, comp, world):
+        """Px per compound unit for a mask's compound to be as sharp as it shows through world."""
+        kd = math.sqrt(abs(world.determinant())) or 1.0
+        return max(curves.value(mask.get("w", 1.0), t) * disp[0], 1.0) * kd / comp["width"]
+
+    def matte_image(self, mask, comp, t, k, fps):
+        """A mask's compound drawn at k px per compound unit: a static one's still, else its
+        frame at clip time t (held at its last frame after its end)."""
+        kid = mask.get("compound_id")
+        self._matting.add(kid)
+        try:
+            if comp.get("static"):
+                return self.still(comp, k, fps)
+            cw, ch = comp["width"], comp["height"]
+            k = min(k, self.MATTE_MAX_PX / max(cw, ch))
+            im = QImage(max(1, math.ceil(cw * k)), max(1, math.ceil(ch * k)), QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent)
+            lp = QPainter(im)
+            lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+            lp.scale(k, k)
+            self.draw_tracks(lp, comp["tracks"], cw, ch, fps, matte_time(comp, t, fps), k)
+            lp.end()
+            return im
+        finally:
+            self._matting.discard(kid)
+
+    def mask_coverage(self, mask, t, disp, wt, W, H, fps):
+        """coverage() of any mask, compound masks included."""
+        comp = self.matte_compound(mask, t)
+        if comp is None:
+            return coverage(mask, t, disp, wt, W, H, curves.value(mask.get("feather", 0.0), t))
+        img = self.matte_image(mask, comp, t, self.matte_k(mask, t, disp, comp, wt), fps)
+        return matte_coverage(mask, t, disp, wt, W, H, img)
+
+    def draw_matte_ghost(self, p, mask, t, disp, fps, opacity):
+        """A compound mask's picture over the clip (p: in the clip's own space), to place it."""
+        comp = self.matte_compound(mask, t)
+        if comp is None:
+            return
+        img = self.matte_image(mask, comp, t, self.matte_k(mask, t, disp, comp, p.worldTransform()), fps)
+        v = lambda k, d: curves.value(mask.get(k, d), t)
+        w, h = v("w", 1.0) * disp[0], v("h", 1.0) * disp[1]
+        p.save()
+        p.setClipping(False)
+        p.setOpacity(opacity)
+        p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        p.translate(v("cx", 0.0) * disp[0] / 2, -v("cy", 0.0) * disp[1] / 2)
+        p.rotate(v("rotation", 0.0))
+        p.drawImage(QRectF(-w / 2, -h / 2, w, h), img)
+        p.restore()
+
     # -- frames -----------------------------------------------------------------------------------
     def render(self, view, frame, width, height):
         """RGB frame `frame` of a project-like view, drawn at width x height."""
@@ -151,6 +231,7 @@ class Renderer:
         p = QPainter(img)
         p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         p.scale(width / view["width"], height / view["height"])
+        self.begin(view)
         self.draw_tracks(p, view["tracks"], view["width"], view["height"], view["fps"],
                          frame / view["fps"] * US, width / view["width"])
         p.end()
@@ -267,19 +348,21 @@ class Renderer:
         p.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
         p.rotate(v("rotation", 0.0))                       # clockwise on a y-down canvas
         p.scale(sx * (-1 if tf.get("flip_h") else 1), sy * (-1 if tf.get("flip_v") else 1))
-        mask = c["mask"] if project.active_mask(c) else None
+        mask = self.clip_mask(c, t)
         feather = curves.value(mask.get("feather", 0.0), t) if mask else 0.0
-        if mask and feather > 1e-3:
-            self.draw_soft(p, mask, t, disp, feather, draw)      # a clip path has no soft edge
+        if mask and (feather > 1e-3 or self.matte_compound(mask, t)):
+            self.draw_soft(p, mask, t, disp, draw, fps)      # a clip path has no soft edge (nor a picture)
         else:
             if mask:
                 p.setClipPath(mask_path(mask, t, disp))
             draw()
+        if self.matte_preview and self.matte_preview.get("clip") == c["id"]:
+            self.draw_matte_ghost(p, c.get("mask"), t, disp, fps, self.matte_preview.get("opacity", 0.4))
         p.restore()
 
-    def draw_soft(self, p, mask, t, disp, feather, draw):
-        """Draw the clip through a feathered mask: the clip goes to a layer the size of the
-        target, which is multiplied by the mask's coverage (masks.alpha) and drawn back."""
+    def draw_soft(self, p, mask, t, disp, draw, fps):
+        """Draw the clip through a feathered (or compound) mask: the clip goes to a layer the
+        size of the target, which is multiplied by the mask's coverage and drawn back."""
         dev = p.device()
         W, H = dev.width(), dev.height()
         wt = p.worldTransform()
@@ -292,7 +375,7 @@ class Renderer:
         lp.setTransform(wt)
         draw(lp)
         lp.end()
-        m8 = (coverage(mask, t, disp, wt, W, H, feather) * 255 + 0.5).astype(np.uint16)
+        m8 = (self.mask_coverage(mask, t, disp, wt, W, H, fps) * 255 + 0.5).astype(np.uint16)
         px = np.ndarray((H, W, 4), np.uint8, buffer=layer.bits(), strides=(layer.bytesPerLine(), 4, 1))
         px[...] = ((px.astype(np.uint16) * m8[..., None] + 127) // 255).astype(np.uint8)
         p.save()
@@ -379,9 +462,9 @@ class Renderer:
         base = base.convertToFormat(QImage.Format_ARGB32_Premultiplied)
         out = self.run_effects(c["effects"], base, t, c["duration_us"], fps, wt, (W, H))
         cov = np.full((h, w), strength, np.float32)
-        if project.active_mask(c):
-            mk = c["mask"]
-            cov = cov * coverage(mk, t, (W, H), wt, w, h, curves.value(mk.get("feather", 0.0), t))
+        mk = self.clip_mask(c, t)
+        if mk:
+            cov = cov * self.mask_coverage(mk, t, (W, H), wt, w, h, fps)
         a, b = image_to_array(base).astype(np.float32), image_to_array(out).astype(np.float32)
         res = np.ascontiguousarray((a + (b - a) * cov[..., None]).round().astype(np.uint8))
         p.save()
@@ -393,10 +476,8 @@ class Renderer:
         p.restore()
 
 
-def coverage(mask, t, disp, wt, W, H, feather):
-    """How much of each device pixel (H x W) a mask lets through, 0..1. The mask lives in the
-    clip's own space (centre origin, y up, disp = the clip's size there); wt maps that space
-    to the device."""
+def _mask_points(mask, t, disp, wt, W, H):
+    """Each device pixel (H x W) in the mask's own frame (centre origin, y down)."""
     inv, ok = wt.inverted()
     v = lambda k, d: curves.value(mask.get(k, d), t)
     dw, dh = disp
@@ -405,12 +486,45 @@ def coverage(mask, t, disp, wt, W, H, feather):
     ly = inv.m12() * gx + inv.m22() * gy + inv.dy()
     mx, my = lx - v("cx", 0.0) * dw / 2, ly + v("cy", 0.0) * dh / 2
     b = math.radians(v("rotation", 0.0))
-    fx_ = mx * math.cos(b) + my * math.sin(b)                       # the mask's own frame
-    fy_ = -mx * math.sin(b) + my * math.cos(b)
-    m = masks.alpha(v("kind", "rectangle"), v("w", 1.0) * dw, v("h", 1.0) * dh, feather, fx_, -fy_)
+    return mx * math.cos(b) + my * math.sin(b), -mx * math.sin(b) + my * math.cos(b)
+
+
+def coverage(mask, t, disp, wt, W, H, feather):
+    """How much of each device pixel (H x W) a mask lets through, 0..1. The mask lives in the
+    clip's own space (centre origin, y up, disp = the clip's size there); wt maps that space
+    to the device."""
+    v = lambda k, d: curves.value(mask.get(k, d), t)
+    fx_, fy_ = _mask_points(mask, t, disp, wt, W, H)
+    m = masks.alpha(v("kind", "rectangle"), v("w", 1.0) * disp[0], v("h", 1.0) * disp[1], feather, fx_, -fy_)
     if v("invert", False):
         m = 1 - m
     return m.astype(np.float32)
+
+
+LUMA = np.array([0.2126, 0.7152, 0.0722], np.float32)
+
+
+def matte_coverage(mask, t, disp, wt, W, H, img):
+    """coverage() of a compound mask whose picture is img, stretched over its w x h frame:
+    the picture's alpha, or its brightness (matte "luma"); nothing outside the frame."""
+    v = lambda k, d: curves.value(mask.get(k, d), t)
+    fx_, fy_ = _mask_points(mask, t, disp, wt, W, H)
+    u = fx_ / max(v("w", 1.0) * disp[0], 1e-6) + 0.5
+    vv = fy_ / max(v("h", 1.0) * disp[1], 1e-6) + 0.5
+    arr = image_to_array(img).astype(np.float32) / 255
+    ih, iw = arr.shape[:2]
+    inside = (u >= 0) & (u < 1) & (vv >= 0) & (vv < 1)
+    px = arr[np.clip((vv * ih).astype(int), 0, ih - 1), np.clip((u * iw).astype(int), 0, iw - 1)]
+    val = px[..., :3] @ LUMA if v("matte", "alpha") == "luma" else px[..., 3]      # (premultiplied: luma on black)
+    m = np.where(inside, val, 0.0)
+    if v("invert", False):
+        m = 1 - m
+    return m.astype(np.float32)
+
+
+def matte_time(comp, t, fps):
+    """Compound time for a mask at clip time t: the same, held at the compound's last frame."""
+    return min(max(0.0, t), max(0.0, (comp.get("duration_us") or 0) - US / fps))
 
 
 def image_to_array(img):

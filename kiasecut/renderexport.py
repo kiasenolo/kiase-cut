@@ -24,13 +24,13 @@ def _blend_or_mask_keys(c):
     if curves.is_animated(c.get("blend")) or c.get("blend", "normal") != "normal":
         return True
     m = c.get("mask") or {}
-    return curves.is_animated(m.get("kind")) or curves.is_animated(m.get("invert"))
+    return curves.is_animated(m.get("kind")) or curves.is_animated(m.get("invert")) or m.get("kind") == "compound"
 
 
 def needs_renderer(proj):
     """Whether the project needs this export rather than MLT's: a clip has an effect, is a
-    filter clip or a static clip, has a blend mode or a keyframed mask shape / invert, or is a
-    built-in asset with keyframes."""
+    filter clip or a static clip, has a blend mode, a keyframed mask shape / invert or a
+    compound mask, or is a built-in asset with keyframes."""
     return any(c["type"] == "filter" or c.get("effects") or project.is_static(c) or _blend_or_mask_keys(c)
                or assets.animated(c.get("asset")) for c in project.all_clips(proj))
 

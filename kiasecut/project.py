@@ -24,7 +24,12 @@ clip     {id, type: image | video | audio | text | compound, name,
           asset: {key, family, w, h, color, ...}            built-in assets (assets.py): an
                      image clip drawn from these parameters, at its own size (picture_size)
           mask: {kind, invert, cx, cy, w, h, rotation, feather, enabled} or None;
-                a mask with enabled: false keeps its settings but cuts nothing
+                a mask with enabled: false keeps its settings but cuts nothing. kind
+                "compound" (no keyframes) cuts with a compound's picture, stretched over the
+                w x h frame: + compound_id (an entry of project.compounds; none chosen or
+                gone: nothing is cut), matte "alpha" | "luma" (its opacity or its brightness
+                lets the clip through); a live compound plays at clip time (held at its last
+                frame), a static one shows its still; no feather
           text: {content, font_path, size, color, letter_spacing, line_spacing,
                  italic_deg, styles}                        text clips
           volume, fade_in_us, fade_out_us                   clips with sound

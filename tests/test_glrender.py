@@ -148,6 +148,21 @@ class GpuMatchesCpu(unittest.TestCase):
         self.check("compound", self.view([self.top()], [self.compound()]))
         self.check("static", self.view([self.top()], [self.compound(static=True)]))
 
+    def test_compound_masks(self):
+        for static in (False, True):
+            comp = self.compound(static)["compound"]
+            for matte, invert, rot in (("alpha", False, 0.0), ("luma", True, 20.0)):
+                mask = {"kind": "compound", "compound_id": "k1", "matte": matte, "invert": invert,
+                        "cx": 0.1, "cy": 0.05, "w": 0.8, "h": 0.8, "rotation": rot, "feather": 0.0}
+                view = self.view([self.top(transform=tf(scale=1.2))], [self.bg(mask=mask, transform=tf(rotation=10))])
+                view["compounds"] = {"k1": comp}
+                self.check(f"compound mask {static} {matte}", view, far_max=0.02)
+        view = self.view([self.bg(mask={"kind": "compound", "compound_id": "k1", "cx": 0.0, "cy": 0.0, "w": 1.0,
+                                        "h": 1.0, "rotation": 0.0})])
+        view["compounds"] = {"k1": comp}
+        view["matte_preview"] = {"clip": "bg", "opacity": 0.5}
+        self.check("compound mask shown", view, far_max=0.02)
+
     def test_effects(self):
         e = fx.new_effect("builtin:invert", "e1")
         e["mask"] = {"kind": "circle", "invert": False, "cx": 0.0, "cy": 0.0, "w": 0.5, "h": 0.8, "rotation": 0.0,

@@ -9,7 +9,9 @@ of the content and can be any length.
 Drag a compound onto the timeline to place another clip showing it (every clip shows the
 same content, so editing one edits all). Click a use to select it on its timeline,
 double-click a use (or the compound) to open it. Right-click to rename or delete a compound
-(with the clips that show it), a timeline, or one use.
+(with the clips that show it), a timeline, or one use, and anywhere in the list to add a
+timeline, a compound or a static compound (createRequested: "timeline" / "compound" /
+"static"; the new compounds start empty, with a clip at the playhead to enter them by).
 """
 from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QLabel, QMenu, QTreeWidget, QTreeWidgetItem,
@@ -50,6 +52,7 @@ class CompoundPanel(QWidget):
     deleteRequested = Signal(str)                # compound id
     timelineRequested = Signal(str)              # timeline id to open
     useDeleteRequested = Signal(str, list, str)  # timeline id, parent path, clip id: delete that clip
+    createRequested = Signal(str)                # "timeline", "compound" or "static": a new empty one
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -141,10 +144,22 @@ class CompoundPanel(QWidget):
 
     def _menu(self, pos):
         it = self.tree.itemAt(pos)
-        if it is None:
-            return
-        d = it.data(0, Qt.UserRole)
         menu = QMenu(self)
+        if it is not None:
+            self._item_actions(menu, it.data(0, Qt.UserRole))
+            menu.addSeparator()
+        self._create_actions(menu)
+        menu.exec(self.tree.viewport().mapToGlobal(pos))
+
+    def _create_actions(self, menu):
+        for text, kind, tip in (("新增時間線", "timeline", "一條新的空白時間線"),
+                                ("新增複合片段", "compound", "空白的複合片段，片段放在播放頭；按兩下進入編輯"),
+                                ("新增靜態複合片段", "static", "空白的靜態片段（像圖片），片段放在播放頭；按兩下進入編輯")):
+            a = menu.addAction(text, lambda k=kind: self.createRequested.emit(k))
+            a.setToolTip(tip)
+        menu.setToolTipsVisible(True)
+
+    def _item_actions(self, menu, d):
         if d[0] == "use":
             menu.addAction("選取", lambda: self.showRequested.emit(d[3], list(d[2]), d[1]))
             menu.addAction("進入編輯", lambda: self.openRequested.emit(d[3], list(d[2]) + [d[1]]))
@@ -160,4 +175,3 @@ class CompoundPanel(QWidget):
                 n = len(self.uses.get(kid, []))
                 menu.addAction("刪除" + (f"（連同 {n} 個使用的片段）" if n else ""),
                                lambda: self.deleteRequested.emit(kid))
-        menu.exec(self.tree.viewport().mapToGlobal(pos))

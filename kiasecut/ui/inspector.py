@@ -12,7 +12,9 @@ add a 素材參數 section: size in canvas pixels, colours and the shape's own s
 with its ◆ like any other value.
 
 One class serves two tabs: part="main" (type, text, picture, sound) and part="mask" (the
-mask: on / off, shape, invert and its values), each with its own keyframe controls.
+mask: on / off, shape, invert and its values), each with its own keyframe controls. A
+複合片段 mask also picks its compound (set_compounds gives the list), whether its alpha or
+its brightness cuts, and 預覽複合片段: the compound shown whole over the clip instead of faint.
 
 With several clips selected the form shows what they have in common: a value they share
 is shown, one that differs shows "--", and typing a value sets it on all of them.
@@ -51,7 +53,9 @@ PARAMS = {
              ("feather", "羽化", 0.0, 1.0, 0.01, 2, 1, 0.0)),
     "clip": (("volume", "音量 %", 0.0, 1000.0, 1.0, 0, 100, 1.0),),
 }
-MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"))
+MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"),
+              ("複合片段", "compound"))
+MATTE_NAMES = (("Alpha（不透明度）", "alpha"), ("明度", "luma"))
 EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
 BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "screen"), ("疊加", "overlay"),
                ("變暗", "darken"), ("變亮", "lighten"), ("顏色減淡", "color_dodge"), ("顏色加深", "color_burn"),
@@ -173,6 +177,9 @@ class Inspector(QWidget):
     maskKindChosen = Signal(list, object)           # clip ids, kind or None
     maskInvertChosen = Signal(list, bool)           # clip ids, invert
     maskEnabledChosen = Signal(list, bool)          # clip ids, on
+    maskCompoundChosen = Signal(list, str)          # clip ids, compound id (a compound mask's)
+    maskMatteChosen = Signal(list, str)             # clip ids, "alpha" / "luma"
+    mattePreviewChosen = Signal(bool)               # 預覽複合片段: the compound shown whole
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
 
@@ -188,6 +195,8 @@ class Inspector(QWidget):
         lay.addStretch()
         self._last_font = None
         self.fonts = []                   # [{path, name}] installed fonts (fonts.py), for the picker
+        self.compounds = []               # [(id, name)] compounds a compound mask can use here
+        self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.clip_ids = []
         self.shape = None                 # what the form was built for
         self.widgets = {}
@@ -298,6 +307,12 @@ class Inspector(QWidget):
             path = path.replace("\\", "/")
         self._emit_now(self.paramEdited, "text", "font_path", path)      # keyframed fonts get a key here
 
+    def set_compounds(self, items):
+        """The compounds a compound mask can cut with here: [(id, name)]."""
+        if list(items) != self.compounds:
+            self.compounds = list(items)
+            self.shape = None             # (the list is built with the form)
+
     def _show_font(self, path):
         """Show the font of the clip(s): `path`, "--" when they differ."""
         box = self.widgets.get("font")
@@ -332,8 +347,10 @@ class Inspector(QWidget):
         kind.activated.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
         self.widgets["mask_kind"] = kind
         row.addWidget(kind, 1)
-        if c.get("mask"):
+        compound = kind_tag(c.get("mask")) == "compound"
+        if c.get("mask") and not compound:                # (a compound mask cannot change by keyframes)
             row.addWidget(self._key_button("mask", "kind"))
+        if c.get("mask"):
             drop = QPushButton("移除")
             drop.setToolTip("刪除遮罩和它的設定")
             drop.clicked.connect(lambda: self._emit_now(self.maskKindChosen, None))
@@ -345,18 +362,45 @@ class Inspector(QWidget):
             hint.setWordWrap(True)
             form.addRow(hint)
             return
+        if compound:
+            pick = ComboBox()
+            pick.setPlaceholderText("選擇複合片段…")
+            for kid, name in self.compounds:
+                pick.addItem(name, kid)
+            pick.activated.connect(lambda i: self._emit_now(self.maskCompoundChosen, pick.itemData(i)))
+            pick.setToolTip("用這個複合片段的畫面裁切；一般的複合片段跟著片段的時間播放，靜態片段用它那一格")
+            self.widgets["mask_compound"] = pick
+            form.addRow("複合片段", pick)
+            matte = ComboBox()
+            for name, k in MATTE_NAMES:
+                matte.addItem(name, k)
+            matte.setToolTip("Alpha：複合片段不透明的地方留下；明度：越亮的地方越留下")
+            matte.activated.connect(lambda i: self._emit_now(self.maskMatteChosen, matte.itemData(i)))
+            self.widgets["mask_matte"] = matte
+            form.addRow("類型", matte)
+            show = QCheckBox("預覽複合片段")
+            show.setToolTip("在預覽上完整顯示整個複合片段（關掉時只淡淡地顯示），方便對位置")
+            show.setChecked(self.matte_preview)
+            show.toggled.connect(self._matte_preview_toggled)
+            self.widgets["matte_preview"] = show
+            form.addRow("", show)
         inv = QCheckBox("反轉")
         inv.setTristate(False)
         inv.toggled.connect(lambda v: self._emit_now(self.maskInvertChosen, v))
         self.widgets["mask_invert"] = inv
         form.addRow("", self._with_key(inv, "mask", "invert"))
-        rows = [r for r in PARAMS["mask"] if not (kind_tag(c["mask"]) == "line" and r[0] in ("w", "h"))]
+        rows = [r for r in PARAMS["mask"] if not (kind_tag(c["mask"]) == "line" and r[0] in ("w", "h"))
+                and not (compound and r[0] == "feather")]
         self._rows(form, "mask", rows, (("cx", "cy", "中心"), ("w", "h", "大小")))
-        hint = QLabel("在預覽上拖曳：中間移動、方塊調大小、圓點旋轉、箭頭羽化")
+        hint = QLabel("在預覽上拖曳：中間移動、方塊調大小、圓點旋轉" + ("" if compound else "、箭頭羽化"))
         hint.setStyleSheet("color: #9a9aa0;")
         hint.setWordWrap(True)
         form.addRow(hint)
         self._key_section(form)
+
+    def _matte_preview_toggled(self, on):
+        self.matte_preview = on
+        self.mattePreviewChosen.emit(on)
 
     def _key_section(self, form):
         form.addRow(section("關鍵幀"))                  # (previous / next: in the curve editor)
@@ -605,6 +649,10 @@ class Inspector(QWidget):
             self._set_combo(w["mask_kind"], kinds.pop() if len(kinds) == 1 else "--")
             if ("key", "mask", "kind") in w:
                 self._key_state(w[("key", "mask", "kind")], [k["mask"].get("kind") for k in clips], clips, ts)
+        for key, field in (("mask_compound", "compound_id"), ("mask_matte", "matte")):
+            if key in w:
+                vals = {(k.get("mask") or {}).get(field, "alpha" if field == "matte" else None) for k in clips}
+                self._set_combo(w[key], vals.pop() if len(vals) == 1 else "--")
         if "mask_invert" in w:
             inv = {bool(curves.value(k["mask"].get("invert", False), t)) for k, t in zip(clips, ts)}
             w["mask_invert"].blockSignals(True)

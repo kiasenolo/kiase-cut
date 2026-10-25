@@ -760,8 +760,16 @@ def _aspect(c):
     return 16 / 9
 
 
+MATTES = ("alpha", "luma")          # what of a compound mask's picture lets the clip through
+
+
 def _new_mask(old, kind, aspect):
     """A mask of `kind` keeping what it can of the old one (shape keyframes too)."""
+    if kind == "compound":             # a compound's picture cuts the clip: chosen next
+        return {"kind": "compound", "compound_id": old.get("compound_id"), "matte": old.get("matte", "alpha"),
+                "invert": old.get("invert", False), "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
+                "w": old.get("w", 1.0), "h": old.get("h", 1.0), "rotation": old.get("rotation", 0.0),
+                "feather": old.get("feather", 0.0)}
     size = {"line": (1.0, 1.0), "mirror": (1.0, 0.3), "circle": (0.5, 0.5 * aspect),
             "rectangle": (0.5, 0.5 * aspect)}[kind]
     line = kind == "line" and not curves.is_animated(old.get("kind"))
@@ -781,14 +789,34 @@ def set_mask(proj, clip_id, kind, t=None):
     if kind is None:
         c.pop("mask", None)
         return c
-    if kind not in MASK_KINDS:
+    if kind not in MASK_KINDS and kind != "compound":
         raise EditError(f"unknown mask {kind}")
     old = c.get("mask") or {}
-    if curves.is_animated(old.get("kind")):
+    if curves.is_animated(old.get("kind")) and kind != "compound":
         return set_param(proj, clip_id, "mask", "kind", kind, t)
-    c["mask"] = _new_mask(old, kind, _aspect(c))
+    c["mask"] = _new_mask(dict(old, kind=None) if curves.is_animated(old.get("kind")) else old, kind, _aspect(c))
     if old.get("enabled") is False:
         c["mask"]["enabled"] = False
+    return c
+
+
+def set_mask_compound(proj, clip_id, compound_id=None, comp=None, matte=None):
+    """A compound mask's compound (compound_id, its entry comp: the mask takes the compound's
+    proportions, fitted into the clip) and / or what of its picture cuts: "alpha" or "luma"."""
+    _, c = find(proj, clip_id)
+    m = c.get("mask")
+    if not m or m.get("kind") != "compound":
+        raise EditError("這個片段的遮罩不是複合片段")
+    if compound_id is not None:
+        if comp is None:
+            raise EditError("找不到這個複合片段")
+        a, b = _aspect(c), comp["width"] / comp["height"]      # the clip's material, the compound
+        m["compound_id"] = compound_id
+        m["w"], m["h"] = (1.0, round(a / b, 4)) if b > a else (round(b / a, 4), 1.0)
+    if matte is not None:
+        if matte not in MATTES:
+            raise EditError(f"unknown matte {matte}")
+        m["matte"] = matte
     return c
 
 
@@ -1358,13 +1386,25 @@ def make_compound(root, container, clip_ids, at_us=None, static=False):
 
 def new_static(root, container, at_us, track_id=None):
     """An empty static clip at at_us (enter it to build its picture)."""
+    return new_compound(root, container, at_us, track_id, static=True)
+
+
+def new_compound(root, container, at_us, track_id=None, static=False):
+    """A new empty compound (static: a static one) and a clip showing it at at_us: on
+    track_id, or else on the topmost picture track with room there, or a new track. Enter
+    the clip to fill it."""
     comps = root.setdefault("compounds", {})
-    n = sum(1 for k in comps.values() if k.get("static")) + 1
+    n = sum(1 for k in comps.values() if bool(k.get("static")) == static) + 1
     size = root if container is root or "width" not in container else container
     kid = project.new_compound_id(root)
-    comps[kid] = {"name": f"靜態片段 {n}", "width": size.get("width", 1920), "height": size.get("height", 1080),
-                  "duration_us": STILL_DEFAULT_US, "static": True, "still_us": 0,
+    comps[kid] = {"name": f"{'靜態片段' if static else '複合片段'} {n}", "width": size.get("width", 1920),
+                  "height": size.get("height", 1080), "duration_us": STILL_DEFAULT_US,
                   "tracks": [{"id": "t0", "kind": "video", "name": "V1", "clips": []}]}
+    if static:
+        comps[kid].update(static=True, still_us=0)
+    if track_id is None:
+        track_id = next((t["id"] for t in reversed(container["tracks"]) if t["kind"] == "video"
+                         and free_range(t, at_us, at_us + STILL_DEFAULT_US) is not None), None)
     return place_compound(root, container, kid, track_id, at_us)
 
 

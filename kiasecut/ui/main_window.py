@@ -242,6 +242,7 @@ class MainWindow(QMainWindow):
         self.compounds.timelineRequested.connect(self.switch_timeline)
         self.compounds.deleteRequested.connect(self.delete_compound_item)
         self.compounds.useDeleteRequested.connect(self.delete_use)
+        self.compounds.createRequested.connect(self.create_from_panel)
         self.ulpanel = UserLibraryPanel()
         self.ulpanel.settingsRequested.connect(self.open_settings)
         self.ulpanel.newFilterRequested.connect(self.new_filter_file)
@@ -297,6 +298,11 @@ class MainWindow(QMainWindow):
         mp.maskInvertChosen.connect(lambda ids, on: self.apply_each_timed("反轉遮罩", edit.set_mask_invert, ids, on))
         mp.maskEnabledChosen.connect(
             lambda ids, on: self.apply_each("啟用遮罩" if on else "停用遮罩", edit.set_mask_enabled, ids, on))
+        mp.maskCompoundChosen.connect(lambda ids, kid: self.apply_each(
+            "遮罩複合片段", lambda lvl, cid: edit.set_mask_compound(lvl, cid, kid, self.proj["compounds"].get(kid)), ids))
+        mp.maskMatteChosen.connect(lambda ids, matte: self.apply_each(
+            "遮罩類型", lambda lvl, cid: edit.set_mask_compound(lvl, cid, matte=matte), ids))
+        mp.mattePreviewChosen.connect(lambda _on: self._matte_preview_changed(force=True))
         mp.keyJump.connect(self.jump_key)
         mask_scroll = QScrollArea()
         mask_scroll.setWidget(mp)
@@ -356,6 +362,7 @@ class MainWindow(QMainWindow):
                 self.preview.set_mask_mode(True, "fxmask:" + ef.mask_edit)
             else:
                 self.preview.set_mask_mode(False)
+            self._matte_preview_changed()
         self.side.currentChanged.connect(lambda _: mask_mode())
         ef.maskEditChanged.connect(mask_mode)
         self.side.addTab(cv, "關鍵幀曲線")
@@ -814,7 +821,7 @@ class MainWindow(QMainWindow):
         return {"width": node["width"], "height": node["height"], "fps": self.proj["fps"],
                 "master_gain": self.proj.get("master_gain", 1.0),
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
-                "tracks": node["tracks"]}
+                "tracks": node["tracks"], "compounds": self.proj.get("compounds", {})}
 
     def show_compound(self, tl_id, parent_path, cid):
         """From the compound list: open the level holding the clip, select it, seek to it."""
@@ -1461,6 +1468,19 @@ class MainWindow(QMainWindow):
             self.timeline.selected_id = None
             self.apply_root("刪除複合片段", lambda root: edit.delete_compound(root, kid, force=True))
 
+    def create_from_panel(self, kind):
+        """From the compound list's menu: a new timeline, or a new empty compound / static
+        compound with a clip showing it at the playhead of the open level (selected)."""
+        if not self.proj:
+            return
+        if kind == "timeline":
+            self.apply_root("新增時間線", edit.add_timeline)
+            return
+        static, at = kind == "static", self.playhead_us()
+        self.apply_root("新增靜態片段" if static else "新增複合片段",
+                        lambda root: edit.new_compound(root, self.container(root), at, static=static),
+                        select=lambda c: c["id"])
+
     def delete_use(self, tl_id, path, cid):
         self.timeline.selected_id = None
         self.apply_root("刪除片段", lambda root: edit.delete_use(root, tl_id, path, cid))
@@ -1559,6 +1579,8 @@ class MainWindow(QMainWindow):
         clips, t = self.timeline.selected_clips_primary_first(), self.playhead_us()
         self.inspector.show_clips(clips, t, self.fps)
         self.effects.show_clips(clips, t, self.fps)
+        if self.proj is not None:
+            self.mask_panel.set_compounds(self.mask_compounds())
         self.mask_panel.show_clips(clips, t, self.fps)
         self.beats.show_clips(clips)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
@@ -1974,6 +1996,7 @@ class MainWindow(QMainWindow):
         self.curves.set_clip(sel, self.playhead_us() - sel["start_us"] if sel else 0, self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
+        self._matte_preview_changed()
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------
@@ -1982,7 +2005,38 @@ class MainWindow(QMainWindow):
         frames (時間線精度) and played at the project's frame rate."""
         v = json.loads(json.dumps(self.view()))
         v["play_fps"], v["fps"] = self.proj["fps"], self.fps
+        shown = self._matte_shown = self.matte_target()
+        if shown:
+            v["matte_preview"] = shown
         return v
+
+    def matte_target(self):
+        """{clip, opacity} while the 遮罩 tab edits a compound mask that has its compound: the
+        preview draws that compound over the clip, faint (whole with 預覽複合片段)."""
+        sel = self.timeline.selected if self.proj else None
+        m = (sel or {}).get("mask") or {}
+        if not (self.preview.mask_mode and self.preview.mask_group == "mask" and m.get("kind") == "compound"
+                and m.get("compound_id") in self.proj.get("compounds", {})):
+            return None
+        return {"clip": sel["id"], "opacity": 1.0 if self.mask_panel.matte_preview else 0.35}
+
+    def _matte_preview_changed(self, force=False):
+        """Draw the frame again when what matte_target() shows has changed."""
+        if self.proj is not None and (force or self.matte_target() != getattr(self, "_matte_shown", None)):
+            self.rebuild()
+
+    def mask_compounds(self):
+        """[(id, name)] of the compounds a clip of the open level can be masked with: not one
+        that shows this level (it would cut with itself)."""
+        here, node = self.proj["active_timeline"], self.proj
+        for cid in self.path_ids:                        # (the open level: the last compound clip's content)
+            c = edit.find(node, cid)[1]
+            here, node = project.ref_of(c), c["compound"]
+        out = []
+        for kid, comp in self.proj.get("compounds", {}).items():
+            if not project.contains(self.proj, kid, here):
+                out.append((kid, ("◧ " if comp.get("static") else "") + (comp.get("name") or kid)))
+        return out
 
     def rebuild(self):
         """Hand the current project state to the live renderer: it shows on the next frame.

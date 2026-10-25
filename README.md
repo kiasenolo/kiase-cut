@@ -114,7 +114,9 @@ Compounds are reusable: each one is stored once in the project and any number of
 clips (on any timeline, nested too) show it, so editing it inside one clip changes every
 clip that shows it. The 複合片段 tab beside the media library lists them with how often
 they are used and where; drag one onto the timeline to use it again, click a use to select
-it, double-click to open it, right-click to rename (or delete an unused one). A clip's
+it, double-click to open it, right-click to rename (or delete an unused one). Right-click
+anywhere in that list for 新增時間線, 新增複合片段 or 新增靜態複合片段: a new compound
+starts empty, with a clip showing it at the playhead (double-click it to fill it). A clip's
 「設為獨立（不再共用）」 gives it its own copy. Older projects and Jianying drafts are
 converted on opening: identical copies become one shared compound. Right-click selected
 clips > 建立複合片段 puts them into a new compound (one clip takes their place).
@@ -208,6 +210,16 @@ the feather (a switched-off mask is drawn dimmed). Back on 屬性 the preview ed
 again. An effect's 範圍 (in the 效果 tab) is edited the same way: press 編輯遮罩 beside it
 (picking a shape for 範圍 switches it on too). Every drag
 shows live and is one undo step; keyframed values get their keyframe at the playhead.
+
+The 複合片段 shape cuts a clip with a compound's picture (a track matte): pick the
+compound and whether its Alpha (where it is opaque) or its 明度 (where it is bright) lets
+the clip through. A compound plays along with the clip's time (held at its last frame after
+its end); a static compound (◧) is one picture. The compound shows faintly over the clip
+while the 遮罩 tab is open: drag it to move it, the squares to size it (the corner keeps
+its proportions, Shift frees them) and the round handle to turn it. 預覽複合片段 shows it
+whole, which makes placing it easier. A compound that shows the clip's own level is not
+offered (it would cut with itself); projects with a compound mask export through the
+preview renderer.
 Ctrl+wheel zooms the preview (to reach handles of clips bigger than the canvas), the
 middle button drags it. F toggles fullscreen; double-click a text on the preview to type its
 words right there (Ctrl+Enter or a click elsewhere closes it, Esc puts the words back).
@@ -222,7 +234,7 @@ rotation / feather) has a ◆ button that adds or removes a keyframe at the play
 changing a value that already has keyframes edits or adds the keyframe at the playhead, as
 in Jianying. ◀/▶ jump between keyframes, and the curve menu sets linear / ease-in /
 ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, videos and
-compound clips take line, mirror, circle or rectangle masks (see the 遮罩 tab). The
+compound clips take line, mirror, circle, rectangle or compound masks (see the 遮罩 tab). The
 mouse wheel never changes a number field. Number fields work like Resolve's: press and
 drag up / down to change the value (Shift for fine steps, Ctrl for big ones), click to type
 one. Position X / Y (and a mask's centre and size) sit side by side on one row. The

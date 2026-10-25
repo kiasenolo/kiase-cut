@@ -1,7 +1,7 @@
 """Effects: the filters on the selected clip (or the filter of a filter clip).
 
 Each effect has its switch, name, order buttons, its parameters (every value can be
-keyframed with ◆, like the clip's own; on / off and shapes hold until their next keyframe)
+keyframed with ◆, like the clip's own; on / off, menus and shapes hold until their next keyframe)
 and an optional mask that limits where it works.
 The parameters come from the filter file's `// @param` lines (see filters/FORMAT.md), so
 the form of a user's filter is built the same way as a built-in one.
@@ -247,6 +247,13 @@ class EffectsPanel(QWidget):
             self.widgets[(group, p.name)] = cb
             row.addWidget(cb, 1)
             row.addWidget(self._key_button(group, p.name))
+        elif p.type == "menu":
+            box = ComboBox()
+            box.addItems(p.items)
+            box.activated.connect(lambda i, g=group, k=p.name, items=p.items: (self._queue(g, k, items[i]), self._flush()))
+            self.widgets[(group, p.name)] = box
+            row.addWidget(box, 1)
+            row.addWidget(self._key_button(group, p.name))
         elif p.type == "color":
             btn = QPushButton()
             btn.clicked.connect(lambda _=False, g=group, k=p.name: self._pick_color(g, k))
@@ -355,6 +362,12 @@ class EffectsPanel(QWidget):
                 cb.blockSignals(True)
                 cb.setChecked(bool(round(float(v))))
                 cb.blockSignals(False)
+        elif p.type == "menu":
+            box = w.get((group, p.name))
+            if box is not None:
+                box.blockSignals(True)
+                box.setCurrentIndex(fx.menu_index(p, v))
+                box.blockSignals(False)
         elif p.type == "color":
             btn = w.get((group, p.name))
             if btn is not None:

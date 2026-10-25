@@ -87,6 +87,27 @@ class ChoiceEditTests(unittest.TestCase):
         edit.set_effect_mask_invert(self.p, "c1", e["id"], True, S)
         self.assertIs(e["mask"]["invert"], True)                               # not keyframed: set outright
 
+    def test_effect_menu_param(self):
+        path = os.path.join(self.tmp(), "menu.glsl")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write('// @param mode menu 平滑 "線性|平滑|銳利" "模式"\nvec4 effect(vec2 uv) { return src(uv); }\n')
+        e = edit.add_effect(self.p, "c1", path)
+        g = "fx:" + e["id"]
+        self.assertEqual(e["params"]["mode"], "平滑")
+        edit.toggle_key(self.p, "c1", g, "mode", 0)
+        edit.set_param(self.p, "c1", g, "mode", "銳利", S)
+        self.assertEqual(curves.value(e["params"]["mode"], S - 1), "平滑")    # a choice holds until its key
+        self.assertEqual(curves.value(e["params"]["mode"], S), "銳利")
+        with self.assertRaises(edit.EditError):
+            edit.set_param(self.p, "c1", g, "mode", "模糊", S)
+
+    def tmp(self):
+        import shutil
+        import tempfile
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        return d
+
     def test_export_route(self):
         self.assertFalse(renderexport.needs_renderer(self.p))
         edit.set_param(self.p, "c1", "clip", "blend", "screen")

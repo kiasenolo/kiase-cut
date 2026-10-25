@@ -27,11 +27,11 @@ vec4 effect(vec2 uv) {
 | `// @category 分類` | 清單裡的分類（選填） |
 | `// @description 說明` | 一行說明（選填） |
 | `// @passes N` | 要繪製幾次（預設 1，最多 8）。第 2 次起 `src()` 讀到的是上一次的結果，可以用來做分離式模糊 |
-| `// @param 名稱 型別 預設值 [最小 最大] ["顯示名稱"]` | 宣告一個參數，見下面 |
+| `// @param 名稱 型別 預設值 [最小 最大] ["顯示名稱"]` | 宣告一個參數，見下面（`menu` 是 `// @param 名稱 menu 預設選項 "選項1\|選項2\|…" ["顯示名稱"]`） |
 
 ### 參數
 
-`@param` 宣告的參數會在程式的「濾鏡」面板長出對應的欄位（數字、勾選框、顏色選擇器），
+`@param` 宣告的參數會在程式的「濾鏡」面板長出對應的欄位（數字、勾選框、顏色選擇器、下拉選單），
 在 shader 裡就是同名的 `uniform`，直接用名字讀就好。
 
 | 型別 | 預設值寫法 | 在 shader 裡的型別 | 面板上的欄位 |
@@ -42,9 +42,13 @@ vec4 effect(vec2 uv) {
 | `color` | `#rrggbb` 或 `#rrggbbaa` | `vec4`（RGBA，0~1，**沒有**預乘） | 顏色選擇器 |
 | `vec2` | `0.5,0.5` | `vec2` | 兩個數字欄（X、Y） |
 | `vec3` | `0.1,0.2,0.3` | `vec3` | 三個數字欄（X、Y、Z） |
+| `menu` | 選項名稱，或它的編號（0 起算） | `int`（選到第幾個，0 起算） | 下拉選單 |
 
 - `float`、`int`、`vec2`、`vec3` 可以接 `最小 最大`，限制面板欄位的範圍（不寫就是 -1000 ~ 1000）。
 - 最後可以放用雙引號包起來的顯示名稱，例如 `"半徑"`。
+- `menu` 的選項寫在預設值後面，用 `|` 隔開、整串用雙引號包起來，例如
+  `// @param mode menu 平滑 "線性|平滑|銳利" "模式"`；shader 裡 `mode` 是 0、1、2。
+  和勾選框一樣，選項的關鍵幀不會漸變，會維持到下一個關鍵幀。
 - 名稱只能用英文字母、數字、底線，不能以數字開頭，也不能跟下面的內建名稱重複。
 
 ## 程式提供的東西
@@ -87,8 +91,10 @@ vec4 effect(vec2 uv) {
 - 畫面（片段的圖）從哪裡來：群組輸入裡叫 `Image` 或 `Input` 的 Color 插槽（沒有就用第一個 Color 輸入）、
   沒接線的群組節點的 `Image`／`Input` 插槽，或叫「Input」的 Image 節點。所以 Blender 裡不需要一直載著一張圖片。
 - 群組的輸入（Image／Input 以外）會變成參數，面板上可以調、可以打關鍵幀：Float → `float`、Integer → `int`、Boolean → `bool`、
-  Color → `color`、Vector → `vec3`（2D 向量 → `vec2`）。群組輸入的最小／最大值就是欄位範圍。
+  Color → `color`、Vector → `vec3`（2D 向量 → `vec2`）、Menu → `menu`。群組輸入的最小／最大值就是欄位範圍。
+- Menu 輸入：接到 Menu Switch（可以隔著轉接點、穿進內層群組的 Menu 輸入）就會變成下拉選單，選項就是 Menu Switch 的項目，
+  匯出後還能切換、打關鍵幀。接到其他節點的選單（例如 Blur 的類型）則固定在預設的選項，匯出時會出警告。
 - `Scene Time` 節點用片段時間（`time`）；`Blur`、`Glare`、`Dilate/Erode`、`Pixelate` 的取樣數等寫在檔案裡的 `#define` 區，可以自己改。
 - `#define LINEARIZE 1`：照 Blender 的方式在線性光裡運算（預設）；`FLIP_Y`、`COMPOSITE_OVER_SCREEN` 同樣在 `#define` 區。
-- 限制：決定結構的選項（Menu Switch、Interpolation 等）在匯出時就固定了；Switch / Index Switch 若接到群組輸入（參數）或計算出來的值，匯出後仍可切換；`String to Image` 不支援（文字請用編輯器的文字片段）。
+- 限制：決定結構的選項（Interpolation、節點自己的類型選單等）在匯出時就固定了；Switch / Index Switch 若接到群組輸入（參數）或計算出來的值、Menu Switch 若接到群組的 Menu 輸入，匯出後仍可切換；`String to Image` 不支援（文字請用編輯器的文字片段）。
 

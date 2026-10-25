@@ -23,7 +23,7 @@ DOC_PATH = os.path.join(PKG, "FORMAT.md")
 TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
 MAX_PASSES = 8
-TYPES = ("float", "int", "bool", "color", "vec2", "vec3")
+TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu")
 RESERVED = {"source", "resolution", "time", "progress", "frame", "scale", "pass_index", "src", "effect",
             "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
 
@@ -33,9 +33,10 @@ class FilterError(Exception):
 
 
 class Param:
-    def __init__(self, name, type_, default, lo=-1000.0, hi=1000.0, label=None):
+    def __init__(self, name, type_, default, lo=-1000.0, hi=1000.0, label=None, items=()):
         self.name, self.type, self.default = name, type_, default
         self.lo, self.hi, self.label = lo, hi, label or name
+        self.items = list(items)                 # a menu's choices, in order (the shader gets the index)
 
     def __repr__(self):
         return f"Param({self.name}, {self.type}, {self.default})"
@@ -85,6 +86,8 @@ def _param(rest):
             extra = extra[1:]
         except ValueError:
             break
+    if typ == "menu":
+        return _menu_param(name, default, extra)
     if len(nums) >= 2:
         lo, hi = nums[0], nums[1]
     if extra:
@@ -103,6 +106,22 @@ def _param(rest):
         if len(d) != n:
             raise ValueError(f"{typ} 的預設值要寫成 {','.join('xyz'[:n])}")
     return Param(name, typ, d, lo, hi, label)
+
+
+def _menu_param(name, default, extra):
+    """`// @param name menu default "A|B|C" ["label"]`: the default is one of the choices, or its
+    number (0 is the first)."""
+    items = [x.strip() for x in extra[0].split("|")] if extra else []
+    if not items or not all(items):
+        raise ValueError("menu 要寫出選項，用 | 隔開，例如 \"線性|平滑|銳利\"")
+    if len(set(items)) != len(items):
+        raise ValueError("menu 的選項重複了")
+    if default not in items:
+        try:
+            default = items[int(default)]
+        except (ValueError, IndexError):
+            raise ValueError(f"menu 的預設值要是其中一個選項（{'、'.join(items)}）") from None
+    return Param(name, "menu", default, 0, len(items) - 1, extra[1] if len(extra) > 1 else None, items)
 
 
 def parse(text, ref, fallback_name="濾鏡"):
@@ -187,9 +206,21 @@ def label(ref):
     return get(ref).name
 
 
+def menu_index(p, v):
+    """Index of choice v of menu parameter p (a choice that is not there: the default's)."""
+    if isinstance(v, str) and v in p.items:
+        return p.items.index(v)
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return min(max(int(round(v)), 0), len(p.items) - 1)
+    return p.items.index(p.default)
+
+
 def uniform_value(p, stored, t):
-    """The value to give the shader for parameter p (stored: a number / list / curve)."""
+    """The value to give the shader for parameter p (stored: a number / list / curve; a menu
+    stores the name of its choice)."""
     v = curves.value(stored if stored is not None else p.default, t)
+    if p.type == "menu":
+        return menu_index(p, v)
     if p.type == "float":
         return float(v)
     if p.type == "int":
@@ -229,7 +260,8 @@ in vec2 pos;
 out vec2 uv_;
 void main() { uv_ = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }
 """
-GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "vec2": "vec2", "vec3": "vec3"}
+GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "vec2": "vec2", "vec3": "vec3",
+              "menu": "int"}
 
 
 def shader_source(d):

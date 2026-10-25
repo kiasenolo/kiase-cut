@@ -562,6 +562,10 @@ def _check_choice(c, group, key, value):
             raise EditError("blend modes go on pictures, videos, texts and compound clips")
         if value not in BLEND_MODES:
             raise EditError(f"unknown blend mode {value}")
+    if group.startswith("fx:"):
+        p = next((q for q in fx.get(_effect(c, group[3:])["filter"]).params if q.name == key), None)
+        if p is not None and p.type == "menu" and value not in p.items:
+            raise EditError(f"{key} has no choice {value!r}")
 
 
 def linked(h):

@@ -593,7 +593,7 @@ class Timeline(QWidget):
                 p.setPen(QPen(QColor("#ffb020"), 2))
                 p.setBrush(QColor(255, 176, 32, 40))
                 box = QRectF(x0, self.tops[row] + 2, max(2.0, x1 - x0), self.row_h(row) - 6)
-                p.drawRoundedRect(box, 3, 3)
+                p.drawRect(box)
                 if self.drop_replace:                   # (written on the part of the clip in view)
                     shown = box.intersected(QRectF(self.header_w, box.top(), w - self.header_w, box.height()))
                     p.setPen(QColor("#ffd34d"))
@@ -735,15 +735,15 @@ class Timeline(QWidget):
         edge.setAlpha(190 if ghost else 255)
         p.setBrush(fill)
         p.setPen(Qt.NoPen)
-        p.drawRoundedRect(r, 3, 3)
+        p.drawRect(r)
         p.setBrush(Qt.NoBrush)
         if sel:
             p.setPen(QPen(edge, 4))
-            p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 3, 3)
+            p.drawRect(r.adjusted(1, 1, -1, -1))
             p.setPen(QPen(QColor("#ffffff"), 1.5))
         else:
             p.setPen(QPen(edge, 2))
-        p.drawRoundedRect(r.adjusted(1, 1, -1, -1), 3, 3)
+        p.drawRect(r.adjusted(1, 1, -1, -1))
         audio = c["type"] == "audio"
         wx0, wx1 = max(r.left() + 1, self.header_w), min(r.right() - 1, w)
         if wx1 - wx0 >= 2:

@@ -1440,7 +1440,7 @@ class Timeline(QWidget):
                      ("在播放頭分割", "split"), ("刪除", "delete")]
             if c["type"] == "compound":
                 items = [("編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
-                         ("設為獨立（不再共用）", "unique"), None] + items
+                         ("在新的分頁開啟", "open_tab"), ("設為獨立（不再共用）", "unique"), None] + items
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立靜態片段", "make_static"), ("建立複合片段", "make_compound")]
             else:

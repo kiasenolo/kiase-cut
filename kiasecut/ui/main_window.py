@@ -154,7 +154,35 @@ def walk_path(root, path):
 class TimelineTabs(QTabBar):
     """Timeline tabs; dragging a tab onto the timeline nests that timeline (as in Resolve).
     A tab opens when the button is let go over it, not when it is pressed, so a tab can be
-    dragged down without the timeline below changing first."""
+    dragged down without the timeline below changing first. A compound (or timeline) dragged
+    from the compound list onto the tabs opens in a tab of its own (tabRequested)."""
+    tabRequested = Signal(str)                     # compound or timeline id dropped on the tabs
+
+    def __init__(self):
+        super().__init__()
+        self.setAcceptDrops(True)
+
+    def _dropped_id(self, e):
+        md = e.mimeData()
+        if not md.hasFormat(MEDIA_MIME):
+            return None
+        first = bytes(md.data(MEDIA_MIME)).decode("utf-8", "replace").split(",")[0]
+        return first[len("cmp:"):] if first.startswith("cmp:") else None
+
+    def dragEnterEvent(self, e):
+        if self._dropped_id(e) and e.source() is not self:
+            e.acceptProposedAction()
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        self.dragEnterEvent(e)
+
+    def dropEvent(self, e):
+        kid = self._dropped_id(e)
+        if kid:
+            e.acceptProposedAction()
+            self.tabRequested.emit(kid)
 
     def mousePressEvent(self, e):
         self._press = (e.position(), self.tabAt(e.position().toPoint())) if e.button() == Qt.LeftButton else None
@@ -286,6 +314,7 @@ class MainWindow(QMainWindow):
         self.compounds.useDeleteRequested.connect(self.delete_use)
         self.compounds.createRequested.connect(self.create_from_panel)
         self.compounds.entryRequested.connect(self.open_compound_entry)
+        self.compounds.tabRequested.connect(self.open_in_tab)
         self.ulpanel = UserLibraryPanel()
         self.ulpanel.settingsRequested.connect(self.open_settings)
         self.ulpanel.newFilterRequested.connect(self.new_filter_file)
@@ -513,6 +542,7 @@ class MainWindow(QMainWindow):
         self.tl_tabs.setDrawBase(False)
         self.tl_tabs.setTabsClosable(False)         # our own X buttons (see _update_timeline_tabs)
         self.tl_tabs.currentChanged.connect(self._tab_switched)
+        self.tl_tabs.tabRequested.connect(self.open_in_tab)
         self.tl_tabs.tabBarDoubleClicked.connect(lambda i: self.timeline_action("rename", i))
         self.tl_tabs.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tl_tabs.customContextMenuRequested.connect(self._timeline_menu)
@@ -728,58 +758,117 @@ class MainWindow(QMainWindow):
             self.buttons[k].setEnabled(has)
         self.buttons["delete"].setEnabled(has and self.timeline.selected is not None)
 
+    def current_tab(self):
+        """The tab the editor shows: "cmp:<id>" for a compound open in a tab of its own, else
+        the open timeline's id."""
+        if self.path_ids and self.path_ids[0].startswith(OPEN_PREFIX) and self.path_ids[0] in (self.open_tls or []):
+            return self.path_ids[0]
+        return self.proj["active_timeline"]
+
     def _update_timeline_tabs(self):
-        """One tab per open timeline, each with an X (closing hides the tab, the timeline stays
-        in the project and in the compound list). The open one always has a tab."""
+        """One tab per open timeline - and per compound opened in a tab of its own - each with
+        an X (closing hides the tab, the timeline or compound stays in the project and in the
+        compound list). The open timeline always has a tab."""
         self._tabs_updating = True
         while self.tl_tabs.count():
             self.tl_tabs.removeTab(0)
         if self.proj:
             ids = [tl["id"] for tl in self.proj["timelines"]]
+            comps = self.proj.get("compounds", {})
             if self.open_tls is None:
                 self.open_tls = list(ids)
-            self.open_tls = [t for t in self.open_tls if t in ids]
+            self.open_tls = [t for t in self.open_tls if t in ids or
+                             (t.startswith(OPEN_PREFIX) and t[len(OPEN_PREFIX):] in comps)]
             if self.proj["active_timeline"] not in self.open_tls:
                 self.open_tls.append(self.proj["active_timeline"])
             many = len(self.open_tls) > 1
-            for tid in self.open_tls:
-                tl = project.timeline(self.proj, tid)
-                i = self.tl_tabs.addTab(tl["name"])
-                self.tl_tabs.setTabData(i, tid)
-                close = self.tool("close", "關閉這個時間線（內容保留，可從「複合片段」重新打開）",
-                                  lambda _=False, t=tid: self.close_timeline(t))
+            current = self.current_tab()
+            for key in self.open_tls:
+                if key.startswith(OPEN_PREFIX):
+                    comp = comps[key[len(OPEN_PREFIX):]]
+                    name = ("◧ " if comp.get("static") else "⧉ ") + (comp.get("name") or "複合片段")
+                    tip = "關閉這個分頁（複合片段保留）"
+                else:
+                    name, tip = project.timeline(self.proj, key)["name"], "關閉這個時間線（內容保留，可從「複合片段」重新打開）"
+                i = self.tl_tabs.addTab(name)
+                self.tl_tabs.setTabData(i, key)
+                close = self.tool("close", tip, lambda _=False, t=key: self.close_timeline(t))
                 close.setIconSize(QSize(12, 12))
                 close.setFixedSize(18, 18)
                 self.tl_tabs.setTabButton(i, QTabBar.RightSide, close)
                 close.setVisible(many)                    # (setTabButton shows it)
-                if tid == self.proj["active_timeline"]:
+                if key == current:
                     self.tl_tabs.setCurrentIndex(i)
         self._tabs_updating = False
 
     def close_timeline(self, tid):
-        """Close a timeline's tab; the one before / after it opens if it was the open one."""
+        """Close a tab (a timeline's or a compound's); the one before / after it opens if it
+        was the one shown."""
         if not self.proj or self.open_tls is None or len(self.open_tls) < 2 or tid not in self.open_tls:
             return
+        shown = self.current_tab() == tid
         i = self.open_tls.index(tid)
-        self.open_tls.remove(tid)
-        if tid == self.proj["active_timeline"]:
-            self.switch_timeline(self.open_tls[max(0, i - 1)])
-        else:
-            self._update_timeline_tabs()
+        rest = [t for t in self.open_tls if t != tid]
+        if not tid.startswith(OPEN_PREFIX) and not any(not t.startswith(OPEN_PREFIX) for t in rest):
+            return                                       # a timeline must keep a tab
+        if shown:                                        # show the tab before it first
+            self.open_tab(rest[max(0, i - 1)])
+        if tid == self.proj["active_timeline"]:          # (a compound tab is shown: its timeline goes)
+            edit.open_timeline(self.proj, next(t for t in rest if not t.startswith(OPEN_PREFIX)))
+            self.dirty = True
+        self.open_tls = rest
+        self._update_timeline_tabs()
 
     def _tab_switched(self, i):
         if not self._tabs_updating and i >= 0:
-            self.switch_timeline(self.tl_tabs.tabData(i))
+            self.open_tab(self.tl_tabs.tabData(i))
+
+    def open_in_tab(self, ref):
+        """Open a compound (or timeline) in a tab of its own (added when it has none)."""
+        if not self.proj:
+            return
+        key = ref if any(t["id"] == ref for t in self.proj["timelines"]) else OPEN_PREFIX + ref
+        if key.startswith(OPEN_PREFIX) and ref not in self.proj.get("compounds", {}):
+            return
+        if self.open_tls is None:
+            self.open_tls = [t["id"] for t in self.proj["timelines"]]
+        if key not in self.open_tls:
+            self.open_tls.append(key)
+        self.open_tab(key)
+
+    def open_tab(self, key):
+        """Show a tab: a timeline (as it was left) or a compound opened by itself."""
+        if not self.proj:
+            return
+        cur = self.current_tab()
+        if key == cur:
+            self._update_timeline_tabs()
+            return
+        self.tl_views[cur] = self.level_view()
+        if key.startswith(OPEN_PREFIX):
+            v = self.tl_views.get(key) or {}
+            self.path_ids = [key]
+            try:
+                pos = max(0, int(v.get("pos", 0)))
+            except (TypeError, ValueError):
+                pos = 0
+            self._switch_level(pos)
+            if v.get("px_per_s"):
+                self.timeline.set_view_state(v)
+                self.follow = False
+        else:
+            if key != self.proj["active_timeline"]:
+                edit.open_timeline(self.proj, key)
+                self.dirty = True
+            self.path_ids = []
+            self.open_view(self.tl_views.get(key, {}))
+        self._update_title()
 
     def switch_timeline(self, tl_id):
         """Open another timeline of the project (not an edit: undo does not step through it)."""
-        if not self.proj or tl_id == self.proj["active_timeline"]:
+        if not self.proj or (tl_id == self.proj["active_timeline"] and self.current_tab() == tl_id):
             return
-        self.tl_views[self.proj["active_timeline"]] = self.level_view()
-        edit.open_timeline(self.proj, tl_id)
-        self.dirty = True
-        self.open_view(self.tl_views.get(tl_id, {}))
-        self._update_title()
+        self.open_tab(tl_id)
 
     def level_view(self):
         """Where the open timeline is looked at: playhead, open compounds, scroll, zoom,
@@ -792,8 +881,10 @@ class MainWindow(QMainWindow):
     def view_state(self):
         """Every timeline's level_view, stored in the project file when it is saved."""
         tls = dict(self.tl_views)
-        tls[self.proj["active_timeline"]] = self.level_view()
+        tls[self.current_tab()] = self.level_view()
         out = {"vzoom": round(self.timeline.vzoom, 4), "timelines": tls}
+        if self.open_tls:
+            out["tabs"] = list(self.open_tls)
         if self.fps != self.proj["fps"]:
             out["edit_fps"] = self.fps
         return out
@@ -1244,6 +1335,9 @@ class MainWindow(QMainWindow):
             self.timeline.set_vzoom(float(saved["vzoom"]))
         views = saved.get("timelines") if isinstance(saved.get("timelines"), dict) else {}
         self.tl_views = {k: v for k, v in views.items() if isinstance(v, dict) and k != proj["active_timeline"]}
+        if isinstance(saved.get("tabs"), list):          # the tabs that were open (compounds' too)
+            self.open_tls = [str(t) for t in saved["tabs"]]
+            self._update_timeline_tabs()
         if isinstance(views.get(proj["active_timeline"]), dict):
             self.open_view(views[proj["active_timeline"]])
         self._last_tick = time.monotonic()
@@ -1924,6 +2018,8 @@ class MainWindow(QMainWindow):
         _, c = edit.find(self.container(), cid)
         if action == "enter":
             self.enter_compound(cid)
+        elif action == "open_tab":
+            self.open_in_tab(project.ref_of(c))
         elif action == "rename":
             name, ok = QInputDialog.getText(self, "片段名稱", "名稱", text=self.timeline.clip_label(c))
             if ok:

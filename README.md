@@ -114,7 +114,10 @@ track name to size that track alone (double-click it to reset).
 
 Timelines: a project holds several timelines (as in DaVinci Resolve) sharing its media
 and compounds; they are tabs above the timeline: click to open one (it opens when the button
-is let go, so a tab can be dragged down without switching first), + for a new one (with
+is let go, so a tab can be dragged down without switching first). A compound can have a tab
+too: right-click a compound clip (or a compound in the 複合片段 tab) > 在新的分頁開啟, or drag
+it from the 複合片段 tab onto the tabs - it opens by itself there (⧉, ◧ for a static one),
+and each tab keeps its own playhead and view; the open tabs are saved with the project. + for a new one (with
 V1 / A1), double-click to rename, right-click to duplicate or delete. Each keeps its own
 tracks; edits, playback and export work on the open one. A timeline can be used inside
 another (nested, as in Resolve): drag its tab, or its ⧉ row in the 複合片段 tab, onto the

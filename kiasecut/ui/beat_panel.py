@@ -78,7 +78,7 @@ class BeatPanel(QWidget):
         self.body.hide()
 
     def show_clips(self, clips, _t_us=None, _fps=None):
-        c = clips[0] if len(clips) == 1 and clips[0]["type"] == "audio" else None
+        c = clips[0] if len(clips) == 1 and edit.has_sound(clips[0]) else None
         self.clip_id = c["id"] if c else None
         self.hint.setVisible(c is None)
         self.body.setVisible(c is not None)

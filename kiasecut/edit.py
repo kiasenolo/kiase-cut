@@ -848,12 +848,17 @@ BEAT_DIVS = (0.25, 0.5, 1, 2, 3, 4, 6)
 BPM_MIN, BPM_MAX = 1.0, 999.0
 
 
+def has_sound(c):
+    """Whether a clip plays sound of its own: a sound clip, or a video with a sound track."""
+    return c.get("type") == "audio" or (c.get("type") == "video" and "volume" in c)
+
+
 def set_beat(proj, clip_id, **fields):
     """Change a sound clip's BPM grid (on, bpm, offset_us, div); a clip without one gets
     the defaults first. Switching it off keeps the numbers."""
     _, c = find(proj, clip_id)
-    if c["type"] != "audio":
-        raise EditError("只有聲音片段可以 BPM 對齊")
+    if not has_sound(c):
+        raise EditError("只有有聲音的片段可以 BPM 對齊")
     beat = c.setdefault("beat", dict(BEAT_DEFAULT))
     for k, v in fields.items():
         if k not in BEAT_DEFAULT:

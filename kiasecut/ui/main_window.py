@@ -150,11 +150,26 @@ def walk_path(root, path):
 
 
 class TimelineTabs(QTabBar):
-    """Timeline tabs; dragging a tab onto the timeline nests that timeline (as in Resolve)."""
+    """Timeline tabs; dragging a tab onto the timeline nests that timeline (as in Resolve).
+    A tab opens when the button is let go over it, not when it is pressed, so a tab can be
+    dragged down without the timeline below changing first."""
 
     def mousePressEvent(self, e):
         self._press = (e.position(), self.tabAt(e.position().toPoint())) if e.button() == Qt.LeftButton else None
+        if self._press and self._press[1] >= 0:
+            e.accept()                                     # (QTabBar would switch right away)
+            return
         super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        press = getattr(self, "_press", None)
+        self._press = None
+        if press and press[1] >= 0 and e.button() == Qt.LeftButton:
+            if self.tabAt(e.position().toPoint()) == press[1]:
+                self.setCurrentIndex(press[1])
+            e.accept()
+            return
+        super().mouseReleaseEvent(e)
 
     def mouseMoveEvent(self, e):
         press = getattr(self, "_press", None)
@@ -392,6 +407,9 @@ class MainWindow(QMainWindow):
         self.side.currentChanged.connect(lambda _: mask_mode())
         ef.maskEditChanged.connect(mask_mode)
         self.side.addTab(cv, "關鍵幀曲線")
+        # tabs show only when the selection can use them (see _update_side_tabs)
+        self.side_pages = {"fx": fx_scroll, "mask": mask_scroll, "beat": beat_scroll,
+                           "subtitle": self.subtitles, "curves": cv}
 
         def tool(name, tip, fn, checkable=False):
             b = QPushButton()
@@ -1687,6 +1705,22 @@ class MainWindow(QMainWindow):
         self.mask_panel.show_clips(clips, t, self.fps)
         self.beats.show_clips(clips)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
+        self._update_side_tabs(clips)
+
+    def _update_side_tabs(self, clips):
+        """The side tabs a selection has use for (屬性 always): 效果 for pictures, texts and
+        filters, 遮罩 for what takes a mask, 節拍 for one clip with sound, 字幕 for texts,
+        關鍵幀曲線 for any clip. A tab that goes away leaves the panel on another one."""
+        maskable = ("image", "video", "compound", "filter")
+        show = {"fx": bool(clips) and all(c["type"] in edit.VISUAL for c in clips),
+                "mask": bool(clips) and all(c["type"] in maskable for c in clips),
+                "beat": len(clips) == 1 and edit.has_sound(clips[0]),
+                "subtitle": any(c["type"] == "text" for c in clips),
+                "curves": bool(clips)}
+        for key, page in self.side_pages.items():
+            i = self.side.indexOf(page)
+            if i >= 0 and self.side.isTabVisible(i) != show[key]:
+                self.side.setTabVisible(i, show[key])
 
     def on_easing(self, ids, easing, groups):
         """Apply a curve preset to every parameter (of these groups) with a keyframe at the playhead."""
@@ -2127,14 +2161,15 @@ class MainWindow(QMainWindow):
         return v
 
     def matte_target(self):
-        """{clip, opacity} while the 遮罩 tab edits a compound mask that has its compound: the
-        preview draws that compound over the clip, faint (whole with 預覽複合片段)."""
+        """{clip, opacity} while the 遮罩 tab edits a compound mask that has its compound and
+        預覽複合片段 is on: the preview draws that compound over the clip, at the opacity
+        typed beside it."""
         sel = self.timeline.selected if self.proj else None
         m = (sel or {}).get("mask") or {}
         if not (self.preview.mask_mode and self.preview.mask_group == "mask" and m.get("kind") == "compound"
-                and m.get("compound_id") in self.proj.get("compounds", {})):
+                and m.get("compound_id") in self.proj.get("compounds", {}) and self.mask_panel.matte_preview):
             return None
-        return {"clip": sel["id"], "opacity": 1.0 if self.mask_panel.matte_preview else 0.35}
+        return {"clip": sel["id"], "opacity": self.mask_panel.matte_opacity}
 
     def _matte_preview_changed(self, force=False):
         """Draw the frame again when what matte_target() shows has changed."""

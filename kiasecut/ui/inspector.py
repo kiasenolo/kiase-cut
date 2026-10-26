@@ -14,7 +14,8 @@ with its ◆ like any other value.
 One class serves two tabs: part="main" (type, text, picture, sound) and part="mask" (the
 mask: on / off, shape, invert and its values), each with its own keyframe controls. A
 複合片段 mask also picks its compound (set_compounds gives the list), whether its alpha or
-its brightness cuts, and 預覽複合片段: the compound shown whole over the clip instead of faint.
+its brightness cuts, and 預覽複合片段: the compound shown over the clip (only while it is on),
+at the 不透明度 typed beside it.
 
 With several clips selected the form shows what they have in common: a value they share
 is shown, one that differs shows "--", and typing a value sets it on all of them.
@@ -179,7 +180,7 @@ class Inspector(QWidget):
     maskEnabledChosen = Signal(list, bool)          # clip ids, on
     maskCompoundChosen = Signal(list, str)          # clip ids, compound id (a compound mask's)
     maskMatteChosen = Signal(list, str)             # clip ids, "alpha" / "luma"
-    mattePreviewChosen = Signal(bool)               # 預覽複合片段: the compound shown whole
+    mattePreviewChosen = Signal(bool)               # 預覽複合片段 or its opacity changed
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
 
@@ -197,6 +198,7 @@ class Inspector(QWidget):
         self.fonts = []                   # [{path, name}] installed fonts (fonts.py), for the picker
         self.compounds = []               # [(id, name)] compounds a compound mask can use here
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
+        self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
         self.clip_ids = []
         self.shape = None                 # what the form was built for
         self.widgets = {}
@@ -379,11 +381,28 @@ class Inspector(QWidget):
             self.widgets["mask_matte"] = matte
             form.addRow("類型", matte)
             show = QCheckBox("預覽複合片段")
-            show.setToolTip("在預覽上完整顯示整個複合片段（關掉時只淡淡地顯示），方便對位置")
+            show.setToolTip("在預覽上把複合片段疊在片段上顯示，方便對位置（關掉時不顯示）")
             show.setChecked(self.matte_preview)
             show.toggled.connect(self._matte_preview_toggled)
             self.widgets["matte_preview"] = show
-            form.addRow("", show)
+            op = SpinBox()
+            op.setRange(0, 100)
+            op.setDecimals(0)
+            op.setSuffix(" %")
+            op.setToolTip("預覽的不透明度：複合片段疊在上面顯示得多清楚")
+            op.show_value(round(self.matte_opacity * 100))
+            op.setEnabled(self.matte_preview)
+            op.edited.connect(self._matte_opacity_changed)
+            show.toggled.connect(op.setEnabled)
+            self.widgets["matte_opacity"] = op
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.addWidget(show)
+            lay.addStretch()
+            lay.addWidget(QLabel("不透明度"))
+            lay.addWidget(op)
+            form.addRow("", row)
         inv = QCheckBox("反轉")
         inv.setTristate(False)
         inv.toggled.connect(lambda v: self._emit_now(self.maskInvertChosen, v))
@@ -401,6 +420,10 @@ class Inspector(QWidget):
     def _matte_preview_toggled(self, on):
         self.matte_preview = on
         self.mattePreviewChosen.emit(on)
+
+    def _matte_opacity_changed(self, v):
+        self.matte_opacity = min(1.0, max(0.0, v / 100))
+        self.mattePreviewChosen.emit(self.matte_preview)
 
     def _key_section(self, form):
         form.addRow(section("關鍵幀"))                  # (previous / next: in the curve editor)

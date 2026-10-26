@@ -98,7 +98,8 @@ Track height: Alt+wheel or the 軌道高度 slider scales every track; drag the 
 track name to size that track alone (double-click it to reset).
 
 Timelines: a project holds several timelines (as in DaVinci Resolve) sharing its media
-and compounds; they are tabs above the timeline: click to open one, + for a new one (with
+and compounds; they are tabs above the timeline: click to open one (it opens when the button
+is let go, so a tab can be dragged down without switching first), + for a new one (with
 V1 / A1), double-click to rename, right-click to duplicate or delete. Each keeps its own
 tracks; edits, playback and export work on the open one. A timeline can be used inside
 another (nested, as in Resolve): drag its tab, or its ⧉ row in the 複合片段 tab, onto the
@@ -203,7 +204,7 @@ the clip's proportions; unlinked, a corner sets X and Y freely (Shift keeps the 
 and an edge changes only its own axis. Drag the round handle above it to rotate it (it
 settles on right angles; Shift turns in 15° steps).
 
-Beat alignment (節拍 tab, for a selected sound clip): switch on BPM 對齊 and enter the
+Beat alignment (節拍 tab, for a selected sound clip or a video with sound): switch on BPM 對齊 and enter the
 BPM and the start offset (the first beat's time in the sound); 細分 splits each beat into
 1, 1/2, 1/3, 1/4 or 1/6, or thins it to a line every 2 or 4 beats (BPM ÷2 / ÷4: 180 → 90,
 the BPM typed in stays as it is).
@@ -216,6 +217,10 @@ switches it off.
 
 Saving also stores the view: the playhead, the open compound clip, the timeline's scroll
 and zoom and the track heights of each timeline come back when the project is opened.
+
+Side tabs show only when the selection has use for them: 屬性 always, 效果 for pictures,
+texts and filters, 遮罩 for what takes a mask, 節拍 for one clip with sound (a silent video
+has none), 字幕 for texts and 關鍵幀曲線 for any clip.
 
 Masks have their own tab (遮罩, beside 屬性): switch the mask on or off (off keeps its
 settings; on for a clip without one adds a rectangle), pick its shape, invert it, remove
@@ -230,10 +235,11 @@ shows live and is one undo step; keyframed values get their keyframe at the play
 The 複合片段 shape cuts a clip with a compound's picture (a track matte): pick the
 compound and whether its Alpha (where it is opaque) or its 明度 (where it is bright) lets
 the clip through. A compound plays along with the clip's time (held at its last frame after
-its end); a static compound (◧) is one picture. The compound shows faintly over the clip
-while the 遮罩 tab is open: drag it to move it, the squares to size it (the corner keeps
-its proportions, Shift frees them) and the round handle to turn it. 預覽複合片段 shows it
-whole, which makes placing it easier. A compound that shows the clip's own level is not
+its end); a static compound (◧) is one picture. While the 遮罩 tab is open the mask's frame
+is on the preview: drag it to move it, the squares to size it (the corner keeps its
+proportions, Shift frees them) and the round handle to turn it. The compound itself is only
+drawn over the clip with 預覽複合片段 on, at the 不透明度 typed beside it (how strongly the
+preview shows it), which makes placing it easier. A compound that shows the clip's own level is not
 offered (it would cut with itself); projects with a compound mask export through the
 preview renderer.
 Ctrl+wheel zooms the preview (to reach handles of clips bigger than the canvas), the

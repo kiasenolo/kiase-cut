@@ -8,6 +8,8 @@ follows the same rules as build.py:
   * position in half-canvas units (y up), clockwise rotation, uniform scale about the
     clip centre; pictures are fitted into the canvas, texts are textlayout images;
   * masks live in material space (they move with the clip), drawn as clip paths;
+  * a clip whose effects go to the background (project.backdrop_of) runs them on what is
+    under it, inside its shape, then draws itself on top unless its body is hidden;
   * compound clips render their tracks into a layer first, at time - start + source start;
     a static compound (靜態片段) always at time 0 (its first frame), drawn once and reused
     like a picture;
@@ -351,11 +353,25 @@ class Renderer:
             disp = (bw, bh)
         else:
             return
-        if project.visual_effects(c):
+        backdrop, hide = project.backdrop_of(c)
+        if backdrop:                                       # 套用至背景: the effects work on what is under it
+            self.draw_backdrop(p, c, W, H, t, disp, fps, lambda q: self.paint_body(q, c, W, H, t, disp, draw, opacity, fps))
+            if hide:
+                return
+        elif project.visual_effects(c):
             plain = draw
 
             def draw(q=p):
                 self.draw_filtered(q, plain, c, t, disp, fps)
+        self.paint_body(p, c, W, H, t, disp, draw, opacity, fps)
+
+    def paint_body(self, p, c, W, H, t, disp, draw, opacity, fps):
+        """A clip's picture (draw(painter) in its own space) put on p: opacity, blend mode,
+        transform and mask."""
+        tf = c.get("transform") or {}
+        v = lambda k, d: curves.value(tf.get(k, d), t)
+        sx = v("scale", 1.0)
+        sy = curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t)
         p.save()
         p.setOpacity(p.opacity() * opacity)
         p.setCompositionMode(BLEND_OPS.get(curves.value(c.get("blend", "normal"), t), QPainter.CompositionMode_SourceOver))
@@ -369,9 +385,37 @@ class Renderer:
         else:
             if mask:
                 p.setClipPath(mask_path(mask, t, disp))
-            draw()
+            draw(p)
         if self.matte_preview and self.matte_preview.get("clip") == c["id"]:
             self.draw_matte_ghost(p, c.get("mask"), t, disp, fps, self.matte_preview.get("opacity", 0.4))
+        p.restore()
+
+    def draw_backdrop(self, p, c, W, H, t, disp, fps, body):
+        """套用至背景: what has been drawn so far goes through the clip's effects inside the clip's
+        coverage (body(painter) paints the clip as it would show: its alpha, mask, opacity)."""
+        dev = p.device()
+        if not isinstance(dev, QImage):
+            return
+        dw, dh = dev.width(), dev.height()
+        cov = QImage(dw, dh, QImage.Format_ARGB32_Premultiplied)
+        cov.fill(Qt.transparent)
+        cp = QPainter(cov)
+        cp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        cp.setTransform(p.worldTransform())
+        body(cp)
+        cp.end()
+        base = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        out = self.run_effects(c["effects"], base, t, c["duration_us"], fps, clip_world(c, t, W, H) * p.worldTransform(),
+                               disp)
+        a = image_to_array(cov)[..., 3:4].astype(np.float32) / 255
+        b0, b1 = image_to_array(base).astype(np.float32), image_to_array(out).astype(np.float32)
+        res = np.ascontiguousarray((b0 + (b1 - b0) * a).round().astype(np.uint8))
+        p.save()
+        p.resetTransform()
+        p.setClipping(False)
+        p.setOpacity(1.0)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.drawImage(0, 0, array_to_image(res))
         p.restore()
 
     def draw_soft(self, p, mask, t, disp, draw, fps):
@@ -552,6 +596,15 @@ def array_to_image(arr):
     h, w = arr.shape[:2]
     im = QImage(np.ascontiguousarray(arr).data, w, h, w * 4, QImage.Format_RGBA8888_Premultiplied).copy()
     return im.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+
+
+def clip_world(c, t, W, H):
+    """Clip space (centre origin, y down) -> canvas, as draw_clip places a clip at clip time t."""
+    tf = c.get("transform") or {}
+    v = lambda k, d: curves.value(tf.get(k, d), t)
+    return QTransform().translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2).rotate(v("rotation", 0.0)) \
+        .scale(v("scale", 1.0) * (-1 if tf.get("flip_h") else 1),
+               curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t) * (-1 if tf.get("flip_v") else 1))
 
 
 def asset_rect(q, bw, bh):

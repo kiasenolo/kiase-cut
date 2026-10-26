@@ -1059,6 +1059,21 @@ def set_mask_offset(proj, clip_id, t_off):
     return c
 
 
+def set_backdrop(proj, clip_id, on=None, hide=None):
+    """套用至背景 (on) and 隱藏本體 (hide) of a clip's effects (project.backdrop_of)."""
+    _, c = find(proj, clip_id)
+    if c["type"] not in VISUAL or c["type"] == "filter":
+        raise EditError("只有畫面片段可以把效果套用到背景")
+    b = c.setdefault("backdrop", {"on": False, "hide": False})
+    if on is not None:
+        b["on"] = bool(on)
+    if hide is not None:
+        b["hide"] = bool(hide)
+    if not b["on"] and not b["hide"]:
+        c.pop("backdrop")
+    return c
+
+
 def set_mask_invert(proj, clip_id, invert, t=None):
     _, c = find(proj, clip_id)
     if not c.get("mask"):

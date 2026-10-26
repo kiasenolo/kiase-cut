@@ -416,6 +416,8 @@ class MainWindow(QMainWindow):
         ef.keyToggled.connect(self.on_key_toggled)
         ef.liveEdited.connect(self.on_live_edit)
         ef.liveCancelled.connect(self.rebuild)
+        ef.backdropChosen.connect(lambda cid, on, hide: self.apply(
+            "套用至背景" if on else "取消套用至背景" if on is not None else "隱藏本體", edit.set_backdrop, cid, on, hide))
         ef.docRequested.connect(self.show_filter_doc)
         ef.revealFilter.connect(self.reveal_path)
         fx_scroll = QScrollArea()

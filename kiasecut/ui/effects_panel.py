@@ -6,6 +6,8 @@ and an optional mask that limits where it works.
 The parameters come from the filter file's `// @param` lines (see filters/FORMAT.md), so
 the form of a user's filter is built the same way as a built-in one.
 """
+import json
+
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
@@ -38,6 +40,7 @@ class EffectsPanel(QWidget):
     keyToggled = Signal(list, str, str)
     liveEdited = Signal(list, str, str, object)
     liveCancelled = Signal()                 # a colour being picked was given up: show what is there
+    backdropChosen = Signal(str, object, object)    # clip id, 套用至背景 (or None), 隱藏本體 (or None)
     docRequested = Signal()
     revealFilter = Signal(str)                      # filter ref: show its file
 
@@ -129,8 +132,32 @@ class EffectsPanel(QWidget):
                                      "也可以在 Library 的「濾鏡」頁雙擊，放成獨立的濾鏡片段，"
                                      "它會作用在下面所有的軌道。" if c["type"] != "filter"
                                      else "這個濾鏡片段沒有效果了，按「新增效果」加一個。"))
+        if effects and c["type"] != "filter":
+            lay.addWidget(self._backdrop_row(c))
         for i, e in enumerate(effects):
             lay.addWidget(self._effect_box(c, e, i, len(effects)))
+
+    def _backdrop_row(self, c):
+        """套用至背景 and 隱藏本體 (a built-in asset's choice; any other clip hides itself)."""
+        b = c.get("backdrop") or {}
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 4)
+        on = QCheckBox("套用至背景")
+        on.setChecked(bool(b.get("on")))
+        on.setToolTip("效果作用在片段下面的畫面上（只在片段的形狀範圍內），像毛玻璃；不一定要用模糊")
+        on.clicked.connect(lambda v: self.clip_id and self.backdropChosen.emit(self.clip_id, bool(v), None))
+        rl.addWidget(on)
+        hide = QCheckBox("隱藏本體")
+        own = bool(c.get("asset"))
+        hide.setChecked(bool(b.get("hide")) or not own)
+        hide.setEnabled(own and bool(b.get("on")))
+        hide.setToolTip("不畫出片段本身，只留下背景的效果" if own else "圖片、影片、文字和複合片段套用至背景時一定會隱藏本體")
+        hide.clicked.connect(lambda v: self.clip_id and self.backdropChosen.emit(self.clip_id, None, bool(v)))
+        rl.addWidget(hide)
+        rl.addStretch(1)
+        self.widgets["backdrop"] = (on, hide)
+        return row
 
     @staticmethod
     def _note(text):
@@ -313,7 +340,8 @@ class EffectsPanel(QWidget):
         if c is not None:
             shape = (c["id"], c["type"], tuple((e["id"], e["filter"], bool(e.get("disabled")),
                                                 kind_tag(e.get("mask")), fx.get(e["filter"]).key(),
-                                                fx.get(e["filter"]).error) for e in c.get("effects") or []))
+                                                fx.get(e["filter"]).error) for e in c.get("effects") or []),
+                     json.dumps(c.get("backdrop"), sort_keys=True))
         if shape != self.shape:
             self._flush()
             self.shape = shape

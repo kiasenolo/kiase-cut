@@ -36,6 +36,11 @@ clip     {id, type: image | video | audio | text | compound, name,
           text: {content, font_path, size, color, letter_spacing, line_spacing,
                  italic_deg, styles}                        text clips
           volume, fade_in_us, fade_out_us                   clips with sound
+          backdrop: {on, hide}                              visual clips with effects, optional:
+                     套用至背景 - the effects work on what is under the clip, inside its
+                     shape (its alpha, mask and opacity), like CSS backdrop-filter; hide
+                     (隱藏本體) leaves the clip itself undrawn - always so but for built-in
+                     assets (backdrop_of())
           speed                                             videos, sounds and (not static)
                      compound clips, optional (1): how fast the source plays - clip time t
                      shows source time source_start_us + t * speed (source_time())
@@ -236,6 +241,15 @@ def stepped(c, t):
                 step = 1_000_000 / rate
                 return int(t // step * step)
     return t
+
+
+def backdrop_of(c):
+    """(on, hide body) of a clip's 套用至背景: off without effects that draw; a clip that is
+    not a built-in asset always hides its body."""
+    b = c.get("backdrop") or {}
+    if not b.get("on") or not visual_effects(c):
+        return False, False
+    return True, bool(b.get("hide")) or not c.get("asset")
 
 
 def visual_effects(c):

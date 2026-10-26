@@ -140,6 +140,19 @@ void main() {
 """ % {"mask": MASK_GLSL}
 
 
+MIX_COVER = """#version 330
+uniform vec2 size;
+uniform sampler2D a_tex;     // before
+uniform sampler2D b_tex;     // after (filtered)
+uniform sampler2D c_tex;     // the clip as it shows: its alpha says where b goes (套用至背景)
+out vec4 frag;
+void main() {
+    vec2 uv = gl_FragCoord.xy / size;
+    frag = mix(texture(a_tex, uv), texture(b_tex, uv), texture(c_tex, uv).a);
+}
+"""
+
+
 def mat3(t):
     """A QTransform as a GLSL mat3 (column first)."""
     return (t.m11(), t.m12(), 0.0, t.m21(), t.m22(), 0.0, t.dx(), t.dy(), 1.0)
@@ -188,8 +201,10 @@ class GL:
         mgl, ctx = self.mgl, self.ctx
         self.composite = ctx.program(vertex_shader=VERTEX, fragment_shader=COMPOSITE)
         self.mixer = ctx.program(vertex_shader=VERTEX, fragment_shader=MIX)
+        self.coverer = ctx.program(vertex_shader=VERTEX, fragment_shader=MIX_COVER)
         self.vbo = ctx.buffer(reserve=4 * 2 * 4, dynamic=True)
-        self.vao = {id(p): ctx.vertex_array(p, [(self.vbo, "2f", "pos")]) for p in (self.composite, self.mixer)}
+        self.vao = {id(p): ctx.vertex_array(p, [(self.vbo, "2f", "pos")])
+                    for p in (self.composite, self.mixer, self.coverer)}
         self.fx = fx.Engine(mgl, ctx)
         self.textures = {}              # QImage cacheKey -> texture (pictures, texts)
         self.moving = {}                # (w, h) -> [texture], reused every frame (video frames)
@@ -349,6 +364,19 @@ class GL:
         self.vao[id(prog)].render(self.mgl.TRIANGLE_STRIP)
 
 
+    def mix_cover(self, dst, a, b, cover):
+        """dst = a and b mixed by cover's alpha (whole layers of dst's size; no blending)."""
+        prog = self.coverer
+        self._quad(dst, [QPointF(0, 0), QPointF(dst.w, 0), QPointF(0, dst.h), QPointF(dst.w, dst.h)])
+        prog["size"].value = (dst.w, dst.h)
+        a.use(0)
+        b.use(1)
+        cover.use(2)
+        prog["a_tex"].value, prog["b_tex"].value, prog["c_tex"].value = 0, 1, 2
+        self.ctx.disable(self.mgl.BLEND)
+        self.vao[id(prog)].render(self.mgl.TRIANGLE_STRIP)
+
+
 class GLRenderer(render.Renderer):
     """render.Renderer's pictures, composited on the GPU (same interface)."""
 
@@ -480,9 +508,26 @@ class GLRenderer(render.Renderer):
         mask = self.clip_mask(c, t)
         blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
         effects = project.visual_effects(c)
+        backdrop, hide = project.backdrop_of(c)
         matte = self.gl_matte(mask, t, disp, world, fps)
         try:
-            if effects:
+            if backdrop:                                 # 套用至背景: the effects work on what is under it
+                gl.matte = matte and matte[0].tex
+                cover = gl.layer(tgt.w, tgt.h)
+                snap = gl.layer(tgt.w, tgt.h)
+                try:
+                    gl.draw(cover, tex, straight, rect, world, opacity, mask, t, disp)
+                    gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
+                    out = self.gl_effects(effects, snap, t, c["duration_us"], fps, world, disp)
+                    gl.mix_cover(tgt, snap.tex, out.tex, cover.tex)
+                    if out is not snap:
+                        gl.release(out)
+                finally:
+                    gl.release(cover)
+                    gl.release(snap)
+                if not hide:
+                    gl.draw(tgt, tex, straight, rect, world, opacity, mask, t, disp, blend)
+            elif effects:
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
                     gl.draw(lay, tex, straight, rect, world)

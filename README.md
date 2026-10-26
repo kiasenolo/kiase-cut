@@ -324,6 +324,13 @@ on / off parameters and range shape have ◆ buttons like the numbers. Their key
 (a step, no blending or curve) until the next keyframe; picking another value at the
 playhead edits or adds the keyframe there.
 
+Background effects (套用至背景, at the top of the 效果 tab once a clip has an effect): the clip's
+effects work on what is under it instead of on the clip, only inside its shape (its alpha,
+mask and opacity) - a frosted-glass panel is a shape with 模糊 and 套用至背景, but any effect
+works (invert, pixelate, colour…). A built-in shape can still be drawn on top (to tint the
+glass) or hidden with 隱藏本體; a picture, video, text or compound clip with 套用至背景 always
+hides itself, leaving only its effect on the background.
+
 Blend modes (混合模式, under 畫面 for pictures, videos, texts and compound clips): normal,
 multiply, screen, overlay, darken, lighten, colour dodge / burn, hard / soft light,
 difference, exclusion and add, mixing the clip with what the tracks below show. The

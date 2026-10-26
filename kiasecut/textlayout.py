@@ -27,6 +27,7 @@ _fonts = {}
 
 def font(path, size):
     path = fonts.resolve(path)                  # a font this system lacks: its stand-in (font map)
+    size = max(size, 0.01)                      # (字號 0: FreeType wants more than nothing; draws nothing seen)
     key = (path, round(size * 100))
     if key not in _fonts:
         for p in [path] + FALLBACK_FONTS:

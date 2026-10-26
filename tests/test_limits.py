@@ -11,7 +11,7 @@ from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from kiasecut.ui.inspector import SpinBox, hard_limits  # noqa: E402
+from kiasecut.ui.inspector import PARAMS, SpinBox, hard_limits  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 NONE, ALT = Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.AltModifier
@@ -68,6 +68,12 @@ class LimitTests(unittest.TestCase):
         self.assertEqual(hard_limits("transform", "x"), (None, None))
         self.assertEqual(hard_limits("asset", "stroke"), (0, None))
         self.assertEqual(hard_limits("asset", "arc_sweep"), (0, 100))
+
+    def test_scale_and_font_size_reach_zero(self):
+        for group, key in (("transform", "scale"), ("transform", "scale_y"), ("text", "size")):
+            self.assertEqual(hard_limits(group, key)[0], 0.0)
+            soft_lo = next(f[2] for f in PARAMS[group] if f[0] == key)
+            self.assertEqual(soft_lo, 0.0)                   # plain dragging gets there too
 
 
 if __name__ == "__main__":

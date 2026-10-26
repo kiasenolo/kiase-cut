@@ -44,14 +44,14 @@ DEBOUNCE_MS = 350
 
 # group, key, label, min, max, step, decimals, display factor, default
 PARAMS = {
-    "text": (("size", "字號", 0.5, 200.0, 0.1, 2, 1, 5.0),
+    "text": (("size", "字號", 0.0, 200.0, 0.1, 2, 1, 5.0),
              ("letter_spacing", "字距", -0.5, 5.0, 0.01, 2, 1, 0.0),
              ("line_spacing", "行距", -0.5, 5.0, 0.01, 2, 1, 0.0),
              ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0, 1, 0.0)),
     "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
-                  ("scale", "縮放 X", 0.01, 50.0, 0.01, 3, 1, 1.0),
-                  ("scale_y", "縮放 Y", 0.01, 50.0, 0.01, 3, 1, 1.0),
+                  ("scale", "縮放 X", 0.0, 50.0, 0.01, 3, 1, 1.0),
+                  ("scale_y", "縮放 Y", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
                   ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0)),
     "mask": (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0),
@@ -65,8 +65,8 @@ PARAMS = {
 # hard limits (Blender's), in stored units: typing, or dragging with Alt, reaches them; plain
 # dragging stays in PARAMS' min / max (the soft limits). None: no limit that way; not listed:
 # none at all.
-HARD = {("text", "size"): (0.01, None), ("text", "italic_deg"): (-89.0, 89.0),
-        ("transform", "scale"): (0.001, None), ("transform", "scale_y"): (0.001, None),
+HARD = {("text", "size"): (0.0, None), ("text", "italic_deg"): (-89.0, 89.0),
+        ("transform", "scale"): (0.0, None), ("transform", "scale_y"): (0.0, None),
         ("transform", "opacity"): (0.0, 1.0),
         ("mask", "w"): (0.0, None), ("mask", "h"): (0.0, None), ("mask", "feather"): (0.0, None),
         ("clip", "volume"): (0.0, None)}

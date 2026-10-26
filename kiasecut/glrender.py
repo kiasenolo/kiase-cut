@@ -313,7 +313,7 @@ class GL:
         """Draw texture tex, which covers clip-space rect, onto layer tgt through world (clip ->
         device), with opacity, mask (in clip space, disp = the clip's size there) and blend."""
         inv, ok = world.inverted()
-        if not ok:
+        if not ok or rect.isEmpty():               # (縮放 / 字號 0: nothing to draw)
             return
         prog = self.composite
         k = math.sqrt(abs(world.determinant())) or 1.0

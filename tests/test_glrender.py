@@ -135,6 +135,16 @@ class GpuMatchesCpu(unittest.TestCase):
                 "transform": tf(y=0.3, rotation=-8)}
         self.check("text", self.view([self.bg()], [text]), mean_max=2.5, far_max=0.02)
 
+    def test_zero_scale_and_font_size(self):
+        """縮放 0 and 字號 0 draw nothing, without an error, on both renderers."""
+        text = {"id": "tx", "type": "text", "name": "tx", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,
+                "text": {"content": "KiaseCut", "font_path": project.DEFAULT_FONT, "size": 0.0}, "transform": tf()}
+        for name, layer in (("scale 0", self.top(transform=dict(tf(scale=0.0), scale_y=0.0))),
+                            ("scale x 0", self.top(transform=dict(tf(scale=0.0), scale_y=1.0))),
+                            ("font size 0", text)):
+            self.check(name, self.view([self.bg()], [layer]))
+            self.check(name + " alone", self.view([layer]))
+
     def compound(self, static=False):
         comp = {"name": "k", "width": 640, "height": 360, "duration_us": 2 * S,
                 "tracks": [{"id": "i0", "kind": "video", "name": "v", "clips": [self.bg(transform=tf(scale=0.7))]},

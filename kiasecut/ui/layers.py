@@ -22,7 +22,7 @@ With Alt held, media dropped on a picture layer replace its source (替換素材
 several selected layers, every selected picture layer gets them (批量替換), one undo step.
 
 A static component (靜態元件, components.py) is edited the same way, with its parameters listed
-under the layers (params.ParamList): right-click layers > 設為參數 makes a new parameter of one
+beside the layers (params.ParamList): right-click layers > 設為參數 makes a new parameter of one
 of their properties (文字內容, 文字顏色, a shape's colours, 圖片, 顯示), or hands it to a
 parameter that is there (one parameter can set several layers), 解除參數 lets it go; a layer a
 parameter sets is marked ❖. A plain static compound has 轉為元件 at the top.
@@ -310,8 +310,12 @@ class LayerPanel(QWidget):
         self.thumb = None               # thumb(clip, level) -> QPixmap or None: a layer's small picture
         self.opened = set()             # groups open in the list
         self._shown = None              # (level, selected ids, primary): what the list shows
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 4, 6, 4)
+        outer = QHBoxLayout(self)                   # the layers, and a component's parameters beside them
+        outer.setContentsMargins(6, 4, 6, 4)
+        outer.setSpacing(12)
+        lay = QVBoxLayout()
+        lay.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(lay, 3)
         head = QHBoxLayout()
         title = QLabel("圖層")
         title.setObjectName("title")
@@ -361,13 +365,13 @@ class LayerPanel(QWidget):
         button("刪除", "刪除選取的圖層", "delete")
         bar.addStretch(1)
         lay.addLayout(bar)
-        self.params_box = ParamList()               # a component's parameters
-        self.params_box.list.setMaximumHeight(140)
+        self.params_box = ParamList()               # a component's parameters (to the right)
+        self.params_box.layout().setContentsMargins(0, 0, 0, 0)      # its title level with 圖層
         self.params_box.selectionPicked.connect(self.selectionPicked)
         self.params_box.paramUnbind.connect(self.paramUnbind)
         self.params_box.paramAction.connect(self.paramAction)
         self.params = self.params_box.list
-        lay.addWidget(self.params_box)
+        outer.addWidget(self.params_box, 2)
 
     def _menu(self, where):
         """Right-click on the selected layers: what the buttons do, and rename / hide / lock."""

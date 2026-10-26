@@ -42,7 +42,7 @@ CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎�
 DEFAULT_COLORS = ("#ffffff", "#000000")
 SHAPE_PX = 400                             # a new shape's size on a 1080-high canvas
 
-# field: label, kind, min, max, step, decimals
+# field: label, kind, min, max, step, decimals (min / max: the soft limits a drag keeps to)
 FIELD_INFO = {
     "w": ("寬", "number", 1, 16384, 1, 0),
     "h": ("高", "number", 1, 16384, 1, 0),
@@ -65,6 +65,19 @@ FIELD_INFO = {
     "stroke_align": ("外框位置", "choice", (("內側", "inside"), ("居中", "center"), ("外側", "outside"))),
     "join": ("轉角", "choice", (("直角", "miter"), ("圓角", "round"), ("倒角", "bevel"))),
 }
+# the hard limits of numbers (typing or Alt-dragging reaches them; None: unlimited), when not
+# the soft ones; clean() keeps values inside them
+HARD = {"w": (1, 65536), "h": (1, 65536), "angle": (None, None), "radius": (0, None),
+        "sides": (3, 100), "points": (3, 100), "inner": (1, 99), "stroke": (0, None),
+        "arc_start": (None, None), "skew": (-89, 89)}
+
+
+def hard_range(f):
+    """(lo, hi) a number field can be typed to; None: no limit."""
+    info = FIELD_INFO[f]
+    return HARD.get(f, (info[2], info[3]))
+
+
 STROKE = ("fill", "stroke_on", "stroke_color", "stroke", "stroke_align", "join")
 FIELDS = {                                 # what each family has besides w, h and color
     "solid": (),
@@ -203,7 +216,8 @@ def clean(f, v):
         v = float(v)
     except (TypeError, ValueError):
         v = float(info[2])
-    return min(max(v, info[2]), info[3])
+    lo, hi = hard_range(f)
+    return min(max(v, -math.inf if lo is None else lo), math.inf if hi is None else hi)
 
 
 def make(a, c1, c2, canvas_w, canvas_h):

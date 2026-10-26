@@ -20,8 +20,8 @@ at the 不透明度 typed beside it.
 With several clips selected the form shows what they have in common: a value they share
 is shown, one that differs shows "--", and typing a value sets it on all of them.
 """
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QValidator
 import os
 
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
@@ -55,6 +55,24 @@ PARAMS = {
              ("feather", "羽化", 0.0, 1.0, 0.01, 2, 1, 0.0)),
     "clip": (("volume", "音量 %", 0.0, 1000.0, 1.0, 0, 100, 1.0),),
 }
+# hard limits (Blender's), in stored units: typing, or dragging with Alt, reaches them; plain
+# dragging stays in PARAMS' min / max (the soft limits). None: no limit that way; not listed:
+# none at all.
+HARD = {("text", "size"): (0.01, None), ("text", "italic_deg"): (-89.0, 89.0),
+        ("transform", "scale"): (0.001, None), ("transform", "scale_y"): (0.001, None),
+        ("transform", "opacity"): (0.0, 1.0),
+        ("mask", "w"): (0.0, None), ("mask", "h"): (0.0, None), ("mask", "feather"): (0.0, None),
+        ("clip", "volume"): (0.0, None)}
+
+
+def hard_limits(group, key):
+    """(lo, hi) a value of group / key can be typed to (None: unlimited)."""
+    if group == "asset":
+        from .. import assets
+        return assets.hard_range(key)
+    return HARD.get((group, key), (None, None))
+
+
 MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"),
               ("複合片段", "compound"))
 MATTE_NAMES = (("Alpha（不透明度）", "alpha"), ("明度", "luma"))
@@ -72,13 +90,19 @@ class SpinBox(QDoubleSpinBox):
     Press and drag up / down to change the value (a step per 2 px; Shift for tenths, Ctrl
     for tens of steps); a click without dragging starts typing. It can show "--" (values
     that differ across a selection); `edited` fires for the user's changes, including
-    typing the very number that was hidden behind "--"."""
+    typing the very number that was hidden behind "--".
+
+    Limits work like Blender's (set_limits): dragging stays inside the soft limits (or the
+    value it started from, when that is already outside them); typing a number, or dragging
+    with Alt held, goes up to the hard limits, which may be none at all."""
     edited = Signal(float)
     SCRUB_PX = 3
+    UNBOUNDED = 1e9
 
     def __init__(self, *a):
         super().__init__(*a)
         self.mixed = False
+        self.soft = None                 # (lo, hi) dragging keeps to; None: the hard range
         self._typed = False              # the user typed over "--" and has not finished yet
         self._scrub = None               # press position / value while dragging the number
         self.editing = False             # typing (after a click), until Enter / leaving
@@ -109,7 +133,11 @@ class SpinBox(QDoubleSpinBox):
             self._scrub["moved"] = True
             k = 0.1 if e.modifiers() & Qt.ShiftModifier else 10 if e.modifiers() & Qt.ControlModifier else 1
             v = self._scrub["v"] + round(dy / 2) * self.singleStep() * k
-            v = min(max(v, self.minimum()), self.maximum())
+            lo, hi = self.minimum(), self.maximum()
+            if self.soft and not e.modifiers() & Qt.AltModifier:      # Alt: past the soft limits
+                lo = max(lo, min(self.soft[0], self._scrub["v"]))
+                hi = min(hi, max(self.soft[1], self._scrub["v"]))
+            v = min(max(v, lo), hi)
             if abs(v - self.value()) > 1e-12 or self.mixed:
                 self.mixed = False
                 self.setValue(v)
@@ -127,6 +155,52 @@ class SpinBox(QDoubleSpinBox):
 
     def wheelEvent(self, e):
         e.ignore()
+
+    def set_limits(self, lo, hi, hard_lo=None, hard_hi=None):
+        """Soft limits lo..hi for dragging; hard ones (None: unlimited) for typing and Alt."""
+        self.setRange(-self.UNBOUNDED if hard_lo is None else hard_lo,
+                      self.UNBOUNDED if hard_hi is None else hard_hi)
+        self.soft = (max(lo, self.minimum()), min(hi, self.maximum()))
+        self.updateGeometry()
+
+    def _hint(self, base):
+        """Sized for the soft range (an unlimited one would make the field enormous)."""
+        if not self.soft:
+            return base
+        fm = self.fontMetrics()
+        text = lambda v: self.prefix() + QDoubleSpinBox.textFromValue(self, v) + self.suffix()
+        w = max(fm.horizontalAdvance(text(v)) for v in self.soft)
+        return QSize(min(base.width(), w + 16), base.height())
+
+    def _number(self, text):
+        """The number typed (prefix and suffix left out), or None."""
+        body = text
+        for part in (self.prefix(), self.suffix()):
+            if part:
+                body = body.replace(part, "")
+        try:
+            return float(body.strip().replace(",", "."))
+        except ValueError:
+            return None
+
+    def validate(self, text, pos):
+        """A number past the hard limits is taken too (and set to the limit), not refused."""
+        out = super().validate(text, pos)
+        if out[0] != QValidator.Acceptable and self._number(text) is not None:
+            return QValidator.Acceptable, text, pos
+        return out
+
+    def valueFromText(self, text):
+        v = self._number(text)
+        if v is None:
+            return super().valueFromText(text)
+        return min(max(v, self.minimum()), self.maximum())
+
+    def sizeHint(self):
+        return self._hint(super().sizeHint())
+
+    def minimumSizeHint(self):
+        return self._hint(super().minimumSizeHint())
 
     def show_value(self, v):
         self.blockSignals(True)
@@ -442,7 +516,8 @@ class Inspector(QWidget):
 
     def _spin(self, key, lo, hi, step, dec, factor=1):
         s = SpinBox()
-        s.setRange(lo, hi)
+        hard = [None if v is None else v * factor for v in hard_limits(*key)]
+        s.set_limits(lo, hi, *hard)
         s.setSingleStep(step)
         s.setDecimals(dec)
         s.setKeyboardTracking(False)

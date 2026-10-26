@@ -271,7 +271,11 @@ ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, 
 compound clips take line, mirror, circle, rectangle or compound masks (see the 遮罩 tab). The
 mouse wheel never changes a number field. Number fields work like Resolve's: press and
 drag up / down to change the value (Shift for fine steps, Ctrl for big ones), click to type
-one. Position X / Y (and a mask's centre and size) sit side by side on one row. The
+one. Limits work like Blender's soft and hard limits: dragging stops at a field's usual
+range (or where the value already is, when it is outside it), while typing a number or
+dragging with Alt held goes past it, up to a hard limit where one makes sense (opacity
+0 - 100 %, sizes not below 0) and without any for the rest - effect parameters included.
+Position X / Y (and a mask's centre and size) sit side by side on one row. The
 previous / next keyframe buttons (◀ ▶) are in the curve editor.
 
 Choices keyframe too: the font, the blend mode, a mask's shape and invert, and a filter's

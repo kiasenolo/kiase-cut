@@ -72,8 +72,8 @@ class AssetTests(unittest.TestCase):
 
     def test_normalize(self):
         p = changed(assets.make(assets.get("shape.star"), "#fff", "", 1920, 1080),
-                    points=99, w=-5, color="nope", radius=3)
-        self.assertEqual((p["points"], p["w"], p["color"]), (24, 1, [1.0, 1.0, 1.0, 1.0]))
+                    points=999, w=-5, color="nope", radius=3)
+        self.assertEqual((p["points"], p["w"], p["color"]), (100, 1, [1.0, 1.0, 1.0, 1.0]))
         self.assertNotIn("radius", p)                     # stars have no corners
         self.assertEqual(assets.at(p, 0)["color"], "#ffffff")
         self.assertEqual(assets.to_rgba("#ff000080")[3], 128 / 255)
@@ -155,8 +155,10 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(project.picture_size(c, 1920, 1080, 2.0), (800, 800))
         edit.set_param(p, "c1", "asset", "w", 600, 0)
         self.assertEqual(project.picture_size(c, 1920, 1080), (600, 400))
-        edit.set_param(p, "c1", "asset", "radius", 99999, 0)                 # kept in range
-        self.assertEqual(c["asset"]["radius"], assets.FIELD_INFO["radius"][3])
+        edit.set_param(p, "c1", "asset", "radius", 99999, 0)                 # typed past the soft limit
+        self.assertEqual(c["asset"]["radius"], 99999)
+        edit.set_param(p, "c1", "asset", "radius", -5, 0)                    # never below the hard one
+        self.assertEqual(c["asset"]["radius"], 0)
         edit.set_param(p, "c1", "asset", "color", "#00ff00", 0)
         self.assertEqual(c["asset"]["color"], [0.0, 1.0, 0.0, 1.0])
         with self.assertRaises(edit.EditError):

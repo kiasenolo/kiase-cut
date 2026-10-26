@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QMenu, QP
 
 from .. import curves, edit, fx
 from .colorpick import pick_color, qcolor, rgba
-from .inspector import MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, kind_tag, section
+from .inspector import MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, kind_tag, section
 
 DEBOUNCE_MS = 350
 
@@ -217,7 +217,11 @@ class EffectsPanel(QWidget):
         lab.setMinimumWidth(70)
         row.addWidget(lab)
         s = SpinBox()
-        s.setRange(lo, hi)
+        if group.startswith("fx:"):                  # a filter's own numbers: typing goes past its range
+            s.set_limits(lo, hi)
+        else:
+            g = "mask" if group.startswith("fxmask:") else group
+            s.set_limits(lo, hi, *[None if v is None else v * factor for v in hard_limits(g, key)])
         s.setSingleStep(step)
         s.setDecimals(dec)
         s.setKeyboardTracking(False)
@@ -266,7 +270,7 @@ class EffectsPanel(QWidget):
             n = 3 if p.type == "vec3" else 2
             for i in range(n):
                 s = SpinBox()
-                s.setRange(p.lo, p.hi)
+                s.set_limits(p.lo, p.hi)
                 s.setSingleStep(step_for(p))
                 s.setDecimals(3)
                 s.setKeyboardTracking(False)

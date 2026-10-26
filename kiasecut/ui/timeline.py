@@ -252,10 +252,27 @@ class Timeline(QWidget):
         self.drag = None
         if not keep_view:
             self.selected_id = None
-            dur = max(proj["duration_us"] / US, 1)
-            self.px_per_s = max(2.0, (self.width() - self.header_w - 20) / dur)
-            self.scroll_s = 0
+            self.zoom_fit()
         self._layout()
+        self.update()
+
+    def zoom_fit(self):
+        """Shift+Z: the whole timeline in view."""
+        if self.proj is None:
+            return
+        dur = max(self.proj["duration_us"] / US, 1)
+        self.px_per_s = min(self.max_zoom(), max(2.0, (self.width() - self.header_w - 20) / dur))
+        self.scroll_s = 0
+        self.update()
+
+    def zoom_by(self, k, at_s):
+        """Ctrl+= / Ctrl+-: zoom the time by k, at_s (seconds) staying where it is on screen -
+        or, out of view, put a fifth of the way in."""
+        x = self._x(at_s)
+        if not self.header_w <= x <= self.width():
+            x = self.header_w + (self.width() - self.header_w) * 0.2
+        self.px_per_s = min(self.max_zoom(), max(1.0, self.px_per_s * k))
+        self.scroll_s = max(0.0, at_s - (x - self.header_w) / self.px_per_s)
         self.update()
 
     @property

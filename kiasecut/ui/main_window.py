@@ -19,7 +19,7 @@ import time
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QImage, QKeySequence, QPainter, QPixmap
-from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
                                QMenu, QPushButton, QScrollArea, QSlider, QStackedWidget, QTabBar,
                                QVBoxLayout,
@@ -763,8 +763,8 @@ class MainWindow(QMainWindow):
     def _menus(self):
         def add(menu, text, key, fn):
             a = QAction(text, self)
-            if key:
-                a.setShortcut(QKeySequence(key))
+            if key:                                      # (a tuple: more than one key does it)
+                a.setShortcuts([QKeySequence(k) for k in ((key,) if isinstance(key, str) else key)])
             a.triggered.connect(fn)
             menu.addAction(a)
 
@@ -799,9 +799,12 @@ class MainWindow(QMainWindow):
         add(m, "建立副本", "Ctrl+Shift+C", self.do_duplicate)
         m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
+        add(m, "向左裁剪（刪掉播放頭之前）", "Q", lambda: self.do_trim_to_playhead("start"))
+        add(m, "向右裁剪（刪掉播放頭之後）", "W", lambda: self.do_trim_to_playhead("end"))
         add(m, "頭尾對齊拍子", "Alt+Q", self.do_snap_beats)
         add(m, "打亂順序", "Alt+R", self.do_shuffle)
-        add(m, "刪除", "Delete", self.do_delete)
+        add(m, "刪除", ("Delete", "Backspace"), self.do_delete)
+        add(m, "波紋刪除（後面的片段補上空隙）", ("Shift+Delete", "Shift+Backspace"), self.do_ripple_delete)
         add(m, "移到上面的軌道", "Ctrl+Up", lambda: self.do_move_rows(-1))
         add(m, "移到下面的軌道", "Ctrl+Down", lambda: self.do_move_rows(1))
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
@@ -811,6 +814,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         add(m, "建立群組", "Ctrl+G", lambda: self.make_group())
         add(m, "解散群組", "Ctrl+Shift+G", lambda: self.ungroup())
+        add(m, "建立複合片段", "Alt+G", self.do_make_compound)
         m.addSeparator()
         add(m, "字體對應…", None, lambda: self.check_fonts(auto=False))
         m = self.menuBar().addMenu("濾鏡")
@@ -831,6 +835,7 @@ class MainWindow(QMainWindow):
         add(m, "開啟佈局資料夾", None, self.reveal_layouts)
         add(m, "下一個佈局", "Ctrl+PgDown", lambda: self.step_layout(1))
         add(m, "上一個佈局", "Ctrl+PgUp", lambda: self.step_layout(-1))
+        add(m, "關閉目前分頁", "Ctrl+W", lambda: self.close_timeline(self.current_tab()) if self.proj else None)
         m.addSeparator()
         self.panel_menu = m
         self.panel_actions = []
@@ -862,6 +867,17 @@ class MainWindow(QMainWindow):
         add(m, "取消選區", "Ctrl+Shift+D", lambda: self.set_mark(None))
         add(m, "自動吸附", "N", lambda: self.snap_btn.toggle())
         m.addSeparator()
+        add(m, "上一個剪輯點", "Up", lambda: self.jump_edit(-1))
+        add(m, "下一個剪輯點", "Down", lambda: self.jump_edit(1))
+        add(m, "後退一秒", "Shift+Left", lambda: self.step(-round(self.fps)))
+        add(m, "前進一秒", "Shift+Right", lambda: self.step(round(self.fps)))
+        add(m, "上一個關鍵幀", "Alt+Left", lambda: self.jump_key(-1))
+        add(m, "下一個關鍵幀", "Alt+Right", lambda: self.jump_key(1))
+        m.addSeparator()
+        add(m, "時間軸放大", ("Ctrl+=", "Ctrl++"), lambda: self.timeline.zoom_by(1.25, self.pos / self.fps))
+        add(m, "時間軸縮小", "Ctrl+-", lambda: self.timeline.zoom_by(0.8, self.pos / self.fps))
+        add(m, "時間軸縮放至適合", "Shift+Z", lambda: self.timeline.zoom_fit())
+        m.addSeparator()
         add(m, "全螢幕預覽", "F", self.toggle_fullscreen)
         add(m, "返回上一層", "Esc", self.leave_compound)
         for key, fn in (("Space", self.toggle_play), ("Left", lambda: self.step(-1)),
@@ -872,6 +888,16 @@ class MainWindow(QMainWindow):
             a.setShortcutContext(Qt.WindowShortcut)
             a.triggered.connect(fn)
             self.addAction(a)
+        QApplication.instance().installEventFilter(self)
+
+    def eventFilter(self, obj, e):
+        # ↑ / ↓ (剪輯點) stay with a focused widget that steps with them: a number field, a
+        # menu box, a slider, a list
+        if (e.type() == QEvent.ShortcutOverride and e.key() in (Qt.Key_Up, Qt.Key_Down)
+                and not e.modifiers() & ~Qt.KeypadModifier
+                and isinstance(QApplication.focusWidget(), (QAbstractSpinBox, QComboBox, QAbstractSlider, QAbstractItemView))):
+            e.accept()
+        return False
 
     def _update_title(self):
         name = workspace.title_of(self.proj, self.path) if self.proj else ""
@@ -1816,6 +1842,32 @@ class MainWindow(QMainWindow):
 
         self.apply("分割", split_all)
 
+    def do_trim_to_playhead(self, side):
+        """Q / W (向左 / 向右裁剪, as in Jianying): the selected clips - or, none selected, every
+        clip under the playhead - lose what is before / after the playhead."""
+        if not self.proj:
+            return
+        ids = [c["id"] for c in self.timeline.selected_clips()] or [
+            k["id"] for tr in self.container()["tracks"] if not project.locked(tr) for k in tr["clips"]]
+        self.apply("向左裁剪" if side == "start" else "向右裁剪", edit.trim_to, ids, self.playhead_us(), side)
+
+    def do_ripple_delete(self):
+        """Shift+Delete: the selected clips go and the later clips of their tracks close up."""
+        ids = [c["id"] for c in self.timeline.selected_clips()]
+        if not ids:
+            self.do_delete()                             # (tracks picked by their headers)
+            return
+        self.timeline.selected_id = None
+        self.apply("波紋刪除", edit.ripple_delete, ids)
+
+    def do_make_compound(self):
+        """Alt+G: the selected clips into a new compound clip."""
+        ids = sorted(self.timeline.selected_ids)
+        if not self.proj or not ids:
+            self.statusBar().showMessage("先在時間軸上選取片段", 3000)
+            return
+        self.on_clip_action("make_compound", ids[0])
+
     def do_delete(self):
         if self.timeline.selected_tracks and not self.editing_static():     # tracks picked by their headers
             self.delete_tracks([t["id"] for t in self.timeline.rows if t["id"] in self.timeline.selected_tracks])
@@ -2261,9 +2313,26 @@ class MainWindow(QMainWindow):
 
         self.apply("曲線", ease_all)
 
+    def jump_edit(self, d):
+        """↑ / ↓ (as in Jianying): the playhead to the clip start or end before / after it, of
+        any clip of the open level."""
+        if not self.proj:
+            return
+        pts = {0}
+        for c in self.timeline.level_clips():
+            s = self.placed(c)["start_us"]
+            pts |= {round(s / US * self.fps), round((s + c["duration_us"]) / US * self.fps)}
+        pts = {min(f, max(0, self.length - 1)) for f in pts}
+        cands = [f for f in pts if (f > self.pos if d > 0 else f < self.pos)]
+        if not cands:
+            self.statusBar().showMessage("沒有更多剪輯點", 2000)
+            return
+        self.seek(min(cands) if d > 0 else max(cands))
+
     def jump_key(self, direction):
         c = self.timeline.selected
         if c is None:
+            self.statusBar().showMessage("先在時間軸上選取片段", 2000)
             return
         t = self.clip_time(c["id"])
         times = edit.key_times(c)

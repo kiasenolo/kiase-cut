@@ -358,6 +358,34 @@ def delete_many(proj, clip_ids):
         delete(proj, cid)
 
 
+def ripple_delete(proj, clip_ids):
+    """波紋刪除: delete the clips and close the gaps they leave - each later clip of their
+    tracks moves left by the time the deleted clips before it covered."""
+    cut = {}                                             # id(track) -> (track, [(start, end)])
+    for cid in clip_ids:
+        t, c = find(proj, cid)
+        cut.setdefault(id(t), (t, []))[1].append((c["start_us"], end(c)))
+        t["clips"].remove(c)
+    for t, spans in cut.values():
+        for c in t["clips"]:
+            c["start_us"] -= sum(e - s for s, e in spans if e <= c["start_us"])
+
+
+def trim_to(proj, clip_ids, at_us, side):
+    """向左裁剪 / 向右裁剪: what is before (side "start") or after ("end") at_us (the level's
+    time) is cut off each clip at_us is inside; the others stay. Returns the clips trimmed."""
+    done = []
+    for cid in clip_ids:
+        t, c = find(proj, cid)
+        at = at_us - (abs_start(proj, cid) - c["start_us"])         # (a group's clip: in its group's time)
+        if c["start_us"] + MIN_US <= at <= end(c) - MIN_US:
+            (trim_start if side == "start" else trim_end)(proj, cid, at)
+            done.append(c)
+    if not done:
+        raise EditError("播放頭下沒有片段")
+    return done
+
+
 def display_groups(proj):
     """(pictures, sound) tracks as the timeline lists them, top row first."""
     visual = [t for t in proj["tracks"] if t["kind"] != "audio"]

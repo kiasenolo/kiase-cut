@@ -122,19 +122,32 @@ def resolve(path):
     return _map.get(norm(path), path)
 
 
+def of_clip(c):
+    """The font files a text clip names (keyframes and styled ranges too), as written with
+    forward slashes."""
+    from . import curves
+    tx = c.get("text")
+    if not tx:
+        return set()
+    p = tx.get("font_path")
+    vals = [k[1] for k in p["keys"]] if curves.is_animated(p) else [p]
+    vals += [st.get("font_path") for st in tx.get("styles") or []]
+    return {norm(v) for v in vals if isinstance(v, str) and v}
+
+
 def used(proj):
-    """Every font file the project's texts name (keyframes and styled ranges too), as written
-    with forward slashes."""
-    from . import curves, project
-    out = set()
+    """Every font file the project's texts name."""
+    from . import project
+    return set().union(*map(of_clip, project.all_clips(proj)))
+
+
+def usage(proj):
+    """{font file: how many texts use it}."""
+    from . import project
+    out = {}
     for c in project.all_clips(proj):
-        tx = c.get("text")
-        if not tx:
-            continue
-        p = tx.get("font_path")
-        vals = [k[1] for k in p["keys"]] if curves.is_animated(p) else [p]
-        vals += [st.get("font_path") for st in tx.get("styles") or []]
-        out |= {norm(v) for v in vals if isinstance(v, str) and v}
+        for f in of_clip(c):
+            out[f] = out.get(f, 0) + 1
     return out
 
 

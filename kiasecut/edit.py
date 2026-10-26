@@ -555,6 +555,33 @@ def set_texts(proj, contents):
         set_text(proj, cid, content=content)
 
 
+def replace_fonts(proj, mapping):
+    """字體對應's 換成: every text of the project (all timelines and compounds, keyframes and
+    styled ranges too) that uses a font file of mapping {old file: new file} uses the new one
+    instead. Returns how many texts changed."""
+    want = {k.replace("\\", "/"): v for k, v in mapping.items() if v}
+    swap = lambda v: want.get(v.replace("\\", "/"), v) if isinstance(v, str) else v
+    n = 0
+    for c in project.all_clips(proj):
+        tx = c.get("text")
+        if not tx:
+            continue
+        before = json.dumps(tx, sort_keys=True)
+        p = tx.get("font_path")
+        if curves.is_animated(p):
+            for k in p["keys"]:
+                k[1] = swap(k[1])
+        else:
+            tx["font_path"] = swap(p)
+        for st in tx.get("styles") or []:
+            if "font_path" in st:
+                st["font_path"] = swap(st["font_path"])
+        n += json.dumps(tx, sort_keys=True) != before
+    if not n:
+        raise EditError("沒有文字用到這些字體")
+    return n
+
+
 STYLE_TEXT_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align")
 
 

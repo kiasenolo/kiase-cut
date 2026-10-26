@@ -313,10 +313,14 @@ lists them with a stand-in to pick for each (one is suggested: what was picked f
 before on this computer, a font with the same file name, or the usual equivalent, such as
 Noto Sans CJK for 微軟正黑體 or Liberation Sans for Arial). It does not block the editor;
 closing it (or 之後再說) leaves those texts in a default font, and it comes back the next
-time the project opens. 編輯 > 字體對應… opens it any time, the fonts already given a
-stand-in included. The choice is kept in the project per operating system: the clips keep
+time the project opens. 編輯 > 字體對應… opens it any time and lists every font the
+project's texts use (with how many texts use each). The choice is kept in the project per
+operating system: the clips keep
 their own font, Linux uses its stand-in and Windows its own font (or its own stand-in for a
-font picked on Linux). It is not an edit, so undo leaves it alone.
+font picked on Linux). It is not an edit, so undo leaves it alone. A font this computer has
+can be swapped there too (換成, 「（不變）」 by default): every text using it - keyframes and
+styled ranges included, in every timeline and compound - takes the new font. That one is an
+edit of the texts (for every system), and Ctrl+Z undoes it.
 
 Replacing a clip's source (替換素材): hold Alt while dropping media (from the library, the
 Library tab or the 複合片段 tab) on a clip: the clip lights up with 替換素材, and on release

@@ -3369,19 +3369,22 @@ class MainWindow(QMainWindow):
         mapping = self.font_map_here()
         gone = fonts.missing(self.proj, mapping)
         known = self.remembered_fonts()
-        rows = [(p, fonts.guess(p, self.fonts, known), True) for p in gone]
-        if not auto:
+        rows = [(p, fonts.guess(p, self.fonts, known), "gone") for p in gone]
+        if not auto:                                   # every font the project uses
             used = fonts.used(self.proj)
-            rows += [(p, mapping[p], False) for p in sorted(mapping) if p in used and p not in gone]
+            rows += [(p, mapping[p], "mapped") for p in sorted(mapping) if p in used and p not in gone]
+            rows += [(p, None, "here") for p in sorted(used) if p not in gone and p not in mapping
+                     and os.path.exists(p)]
             if not rows:
-                self.statusBar().showMessage("專案用到的字體這台電腦都有", 4000)
+                self.statusBar().showMessage("專案裡還沒有文字", 4000)
                 return
         if not rows:
             return
         if self.font_dlg is not None:
             self.font_dlg.close()
-        dlg = FontMapDialog(self, rows, self.fonts)
+        dlg = FontMapDialog(self, rows, self.fonts, fonts.usage(self.proj))
         dlg.applied.connect(self.apply_font_map)
+        dlg.replaced.connect(self.replace_fonts)
         dlg.destroyed.connect(lambda *_: setattr(self, "font_dlg", None) if self.font_dlg is dlg else None)
         self.font_dlg = dlg
         dlg.show()
@@ -3415,6 +3418,12 @@ class MainWindow(QMainWindow):
         self.timeline.update()
         n = sum(1 for r in choices.values() if r)
         self.statusBar().showMessage(f"已設定 {n} 個字體對應（只用在這個系統）", 4000)
+
+    def replace_fonts(self, swaps):
+        """字體對應's 換成: {font file: new font file} in every text of the project (an edit)."""
+        n = self.apply_root("更換字體", edit.replace_fonts, swaps)
+        if n:
+            self.statusBar().showMessage(f"已更換 {len(swaps)} 個字體（{n} 個文字）", 4000)
 
     def apply_text_style(self, path, new_if_none=True, force_new=False):
         try:

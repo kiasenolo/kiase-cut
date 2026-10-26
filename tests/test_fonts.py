@@ -91,16 +91,46 @@ class FontMapTests(unittest.TestCase):
     def test_dialog(self):
         from kiasecut.ui.font_dialog import FontMapDialog
         installed = [{"path": "/f/a.ttf", "name": "Alpha"}, {"path": "/f/b.ttf", "name": "Beta Sans"}]
-        dlg = FontMapDialog(None, [(GONE, "/f/b.ttf", True), ("D:/c.ttf", None, True)], installed)
+        dlg = FontMapDialog(None, [(GONE, "/f/b.ttf", "gone"), ("D:/c.ttf", None, "gone")], installed)
         self.assertFalse(dlg.isModal())
         self.assertEqual(dlg.choices(), {GONE: "/f/b.ttf", "D:/c.ttf": None})
         box = dlg.boxes["D:/c.ttf"]
         box.setEditText("alpha")                                    # typed, any case
         got = []
         dlg.applied.connect(got.append)
+        dlg.replaced.connect(got.append)
         dlg._apply()
         self.assertEqual(got, [{GONE: "/f/b.ttf", "D:/c.ttf": "/f/a.ttf"}])
 
+    def test_dialog_lists_fonts_that_are_here(self):
+        from kiasecut.ui.font_dialog import FontMapDialog
+        installed = [{"path": "/f/a.ttf", "name": "Alpha"}, {"path": "/f/b.ttf", "name": "Beta Sans"}]
+        dlg = FontMapDialog(None, [(GONE, "/f/b.ttf", "mapped"), ("/f/a.ttf", None, "here")], installed,
+                            {"/f/a.ttf": 3})
+        box = dlg.boxes["/f/a.ttf"]
+        self.assertEqual(box.findData("/f/a.ttf"), -1)              # (not swapped for itself)
+        self.assertEqual(dlg.swaps(), {})                           # (不變) by default
+        box.setEditText("beta sans")
+        stand_ins, swaps = [], []
+        dlg.applied.connect(stand_ins.append)
+        dlg.replaced.connect(swaps.append)
+        dlg._apply()
+        self.assertEqual(stand_ins, [{GONE: "/f/b.ttf"}])
+        self.assertEqual(swaps, [{"/f/a.ttf": "/f/b.ttf"}])
+
+    def test_replace_fonts(self):
+        p, c = with_text("/f/a.ttf", styles=[{"start": 0, "end": 1, "font_path": "C:\\f\\x.ttf"}])
+        k = edit.add_text(p, 5 * S, "鍵")
+        k["text"]["font_path"] = {"keys": [[0, "/f/a.ttf", 0, 0, 0, 0], [S, "/f/z.ttf", 0, 0, 0, 0]]}
+        self.assertEqual(fonts.usage(p), {"/f/a.ttf": 2, "C:/f/x.ttf": 1, "/f/z.ttf": 1})
+        h = edit.History(p)
+        n = h.do("更換字體", edit.replace_fonts, {"/f/a.ttf": "/f/b.ttf", "C:/f/x.ttf": "/f/y.ttf"})
+        self.assertEqual(n, 2)
+        self.assertEqual(fonts.used(p), {"/f/b.ttf", "/f/y.ttf", "/f/z.ttf"})
+        h.undo()
+        self.assertEqual(fonts.used(p), {"/f/a.ttf", "C:/f/x.ttf", "/f/z.ttf"})
+        with self.assertRaises(edit.EditError):
+            edit.replace_fonts(p, {"/f/none.ttf": "/f/b.ttf"})
 
 if __name__ == "__main__":
     unittest.main()

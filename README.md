@@ -149,7 +149,8 @@ never out of it) and trimmed like any clip; groups go inside groups too. While o
 is as tall as the most lanes any open group on it needs, so heights stay put while playing;
 folded it is its usual height (the open groups are saved with the view). A group never cuts
 its clips: it can be made longer, not shorter than them, and cutting it (Ctrl+B) cuts its
-clips too. On the preview a group is one box around its clips: drag it to move it, scale and
+clips too. On the preview a group is one box around its clips: click one of its clips to
+select it, then drag anywhere inside the box (its clips or the space between them) to move it; scale and
 turn it in the inspector (its own transform, keyframes too); double-click it to pick the clip
 under the mouse, which can then be edited on the canvas like any clip (while the group is not
 moved, scaled or turned). Effects, masks, blend modes and opacity on a group work on the group

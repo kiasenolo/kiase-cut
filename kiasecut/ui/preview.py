@@ -37,8 +37,8 @@ feather) whose corner keeps the compound's proportions (Shift: free); the render
 compound itself in it (matte_preview, see render.py).
 
 Groups (群組): a group is one box around its clips (GroupBox, through the group's transform):
-click it to select it and drag it to move it (its transform; scale and turn it in the
-inspector); double-click picks the clip under the mouse inside it (groupPicked). A clip of a
+click one of its clips to select it, then drag it by anything inside its box - its clips or
+the space between them - to move it (its transform; scale and turn it in the inspector); double-click picks the clip under the mouse inside it (groupPicked). A clip of a
 group selected on the timeline is moved, scaled and turned on the canvas like any clip while
 its groups are not moved, scaled or turned.
 
@@ -207,6 +207,16 @@ class GroupBox(Box):
 
     def contains(self, x, y):
         return self.kid_at(x, y) is not None
+
+    def grabs(self, x, y):
+        """Whether a press at (x, y) takes hold of it once it is selected: anywhere in its box."""
+        l, r, t, b = self._box
+        return l <= x <= r and t <= y <= b
+
+
+def grabs(b, x, y):
+    """A selected clip is taken hold of where it is (a selected group: anywhere in its box)."""
+    return b.grabs(x, y) if getattr(b, "group", False) else b.contains(x, y)
 
 
 class MaskGeo:
@@ -850,7 +860,7 @@ class Preview(QWidget):
         boxes = self.visible_boxes()
         adding = bool(e.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)) and not self.mask_mode
         pickable = [b for b in boxes if not b.locked]          # clips on locked tracks are not picked
-        sel = next((b for b in pickable if b.clip["id"] in self.selected_ids and b.contains(x, y)), None)
+        sel = next((b for b in pickable if b.clip["id"] in self.selected_ids and grabs(b, x, y)), None)
         hit = sel or next((b for b in pickable if b.contains(x, y)), None)
         if hit is None:
             if not self.mask_mode:                       # a box around the clips to select
@@ -1190,7 +1200,7 @@ class Preview(QWidget):
             pad = 2 * PICK_PX * k
             if (gap := self._gap_at(m, k)) is not None:
                 cur, hover = (Qt.SizeHorCursor if gap[0] == "x" else Qt.SizeVerCursor), "handle"
-            elif any(bx.contains(x, y) for bx in boxes):
+            elif any(grabs(bx, x, y) for bx in boxes):
                 cur, hover = Qt.SizeAllCursor, "group"
             elif l - pad <= x <= r + pad and t - pad <= y <= b + pad:
                 hover = "group"
@@ -1201,7 +1211,7 @@ class Preview(QWidget):
                 sx, sy = side
                 cur = (Qt.SizeHorCursor if not sy else Qt.SizeVerCursor if not sx else
                        Qt.SizeFDiagCursor if sx == sy else Qt.SizeBDiagCursor)
-            elif box.contains(x, y):
+            elif grabs(box, x, y):
                 cur = Qt.SizeAllCursor
         if hover != self.gap_hover:                      # the gap bars show while over the selection
             self.gap_hover = hover

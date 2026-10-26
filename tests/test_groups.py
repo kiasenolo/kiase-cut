@@ -151,5 +151,35 @@ class GroupRenderTests(unittest.TestCase):
             self.assertEqual(rgb(img, 40, 18), (255, 0, 0), name)
 
 
+class GroupPreviewTests(unittest.TestCase):
+    def test_selected_group_is_dragged_from_its_empty_space(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.preview import Preview
+        QApplication.instance() or QApplication([])
+        p = scene()
+        for cid, x in (("c1", -0.6), ("c4", 0.6)):
+            edit.find(p, cid)[1]["transform"].update(scale=0.1, x=x)
+        g = edit.make_group(p, p, ["c1", "c4"])
+        pv = Preview()
+        pv.resize(960, 540)
+        moved = []
+        pv.paramsCommitted.connect(lambda cid, group, vals: moved.append((cid, vals)))
+        at = lambda cx, cy: QPoint(round(pv._rect().x() + cx / 2), round(pv._rect().y() + cy / 2))
+        pv.set_scene(p, 1500_000, None)
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, at(960, 540))      # nothing there yet: no group
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, at(960, 540))
+        self.assertIsNone(pv.selected_id)
+        pv.set_scene(p, 1500_000, g["id"])
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, at(960, 540))      # between its clips
+        for i in range(1, 6):
+            QTest.mouseMove(pv, at(960 + 40 * i, 540))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, at(1160, 540))
+        self.assertEqual(moved[-1][0], g["id"])
+        self.assertGreater(moved[-1][1]["x"], 0.1)
+
+
 if __name__ == "__main__":
     unittest.main()

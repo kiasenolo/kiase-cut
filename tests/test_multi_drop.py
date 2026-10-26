@@ -167,7 +167,7 @@ class FileManagerDropTests(unittest.TestCase):
         self.selected = []
         self.win = SimpleNamespace(
             ensure_project=lambda: True, root=self.root, proj=self.p, fs_epoch=0,
-            statusBar=lambda: mock.MagicMock(), library=mock.MagicMock(), left=mock.MagicMock(),
+            statusBar=lambda: mock.MagicMock(), library=mock.MagicMock(), panels=mock.MagicMock(),
             ulpanel=mock.MagicMock(), refresh_library=lambda: None, request_sync=lambda delay=0: None, container=lambda root=None: root or self.p,
             run_task=lambda work, done, err, prog: done(work(lambda _p: None)),
             apply_root=lambda label, fn, *a, select=None: self.h.do(label, fn, *a),

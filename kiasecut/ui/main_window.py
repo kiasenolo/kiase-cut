@@ -20,18 +20,19 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
-                               QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QStackedWidget, QTabBar, QTabWidget,
+                               QMenu, QPushButton, QScrollArea, QSlider, QStackedWidget, QTabBar,
                                QVBoxLayout,
                                QWidget)
 
-from .. import (assets, build, curves, edit, fonts, fx, gpu, library, project, recovery, render, renderexport, thumbnail,
-               userlib, waveform, workspace)
+from .. import (assets, build, curves, edit, fonts, fx, gpu, layouts, library, project, recovery, render, renderexport,
+               thumbnail, userlib, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
 from .colorpick import pick_color
 from .font_dialog import FontMapDialog
 from .compounds import CompoundPanel
+from .docks import Panels
 from .curve_editor import CurveEditor
 from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
@@ -89,6 +90,12 @@ QLabel#title { color: #8e8e94; font-weight: 600; font-size: 11px; }
 QLabel#crumb { color: #d0d0d2; font-weight: 600; }
 QWidget#bar { background: #232326; border-top: 1px solid #0e0e10; border-bottom: 1px solid #0e0e10; }
 QTabWidget::pane { border: none; border-top: 1px solid #0e0e10; }
+QWidget#docktitle { background: #18181a; border-bottom: 1px solid #0e0e10; }
+QMainWindow::separator { background: #0e0e10; width: 3px; height: 3px; }
+QMainWindow::separator:hover { background: #4a4a52; }
+QTabBar#layouts { background: transparent; }
+QTabBar#layouts::tab { padding: 3px 12px; border: none; background: transparent; }
+QTabBar#layouts::tab:selected { background: #2b2b2f; color: #ffffff; border-radius: 3px; }
 QTabBar { background: #18181a; }
 QTabBar::tab { background: #18181a; color: #8e8e94; padding: 6px 14px; border: none; border-right: 1px solid #0e0e10; }
 QTabBar::tab:selected { background: #232326; color: #ffffff; }
@@ -345,12 +352,6 @@ class MainWindow(QMainWindow):
         self.vfx.docRequested.connect(self.show_filter_doc)
         self.assets = AssetsPanel()
         self.assets.addRequested.connect(lambda ident: self.place_asset(ident, "", self.playhead_us()))
-        self.left = QTabWidget()
-        self.left.addTab(self.library, "專案素材")
-        self.left.addTab(self.assets, "內建素材")
-        self.left.addTab(self.ulpanel, "Library")
-        self.left.addTab(self.vfx, "VFX")
-        self.left.addTab(self.compounds, "複合片段")
 
         self.preview = Preview()
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
@@ -436,37 +437,14 @@ class MainWindow(QMainWindow):
         fx_scroll = QScrollArea()
         fx_scroll.setWidget(ef)
         fx_scroll.setWidgetResizable(True)
-        self.side = QTabWidget()
-        self.side.addTab(scroll, "屬性")
-        self.side.addTab(fx_scroll, "效果")
-        self.side.addTab(mask_scroll, "遮罩")
         self.beats = BeatPanel()
         self.beats.beatEdited.connect(self.on_beat_edited)
         self.beats.resetRequested.connect(lambda cid: self.apply("重置 BPM 對齊", edit.clear_beat, cid))
         beat_scroll = QScrollArea()
         beat_scroll.setWidget(self.beats)
         beat_scroll.setWidgetResizable(True)
-        self.side.addTab(beat_scroll, "節拍")
         self.subtitles = SubtitlePanel()
         self.subtitles.textsEdited.connect(lambda contents: self.apply("批量修改文字", edit.set_texts, contents))
-        self.side.addTab(self.subtitles, "字幕")
-        # the 遮罩 tab (or 編輯遮罩 of an effect in the 效果 tab) turns the preview into the mask editor
-        def mask_mode():
-            w = self.side.currentWidget()
-            if w is mask_scroll:
-                self.preview.set_mask_mode(True, "mask")
-            elif w is fx_scroll and ef.mask_edit:
-                self.preview.set_mask_mode(True, "fxmask:" + ef.mask_edit)
-            else:
-                self.preview.set_mask_mode(False)
-            self._matte_preview_changed()
-            self._update_matte_region()
-        self.side.currentChanged.connect(lambda _: mask_mode())
-        ef.maskEditChanged.connect(mask_mode)
-        self.side.addTab(cv, "關鍵幀曲線")
-        # tabs show only when the selection can use them (see _update_side_tabs)
-        self.side_pages = {"fx": fx_scroll, "mask": mask_scroll, "beat": beat_scroll,
-                           "subtitle": self.subtitles, "curves": cv}
 
         def tool(name, tip, fn, checkable=False):
             b = QPushButton()
@@ -518,12 +496,6 @@ class MainWindow(QMainWindow):
         cl.addWidget(self.preview, 1)
         cl.addWidget(bar_w)
 
-        top = QSplitter(Qt.Horizontal)
-        top.addWidget(self.left)
-        top.addWidget(center)
-        top.addWidget(self.side)
-        top.setStretchFactor(1, 1)
-        top.setSizes([360, 840, 420])
 
         # timeline with its toolbar and the compound breadcrumb
         self.timeline = Timeline()
@@ -676,11 +648,26 @@ class MainWindow(QMainWindow):
         self.lower_stack.addWidget(self.layers)
         ll.addWidget(self.lower_stack, 1)
 
-        main = QSplitter(Qt.Vertical)
-        main.addWidget(top)
-        main.addWidget(lower)
-        main.setSizes([560, 360])
-        self.setCentralWidget(main)
+        # every panel is a dock: moved, put in tabs, split, floated freely (docks.py); a layout
+        # (佈局) is one arrangement of them (layouts.py)
+        self.panels = Panels(self, {
+            "library": self.library, "assets": self.assets, "userlib": self.ulpanel, "vfx": self.vfx,
+            "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_scroll,
+            "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "timeline": lower})
+        # the 遮罩 panel in use (or 編輯遮罩 of an effect in the 效果 one) turns the preview into the mask editor
+        def mask_mode():
+            pn = self.panels
+            if pn.is_active("mask"):
+                self.preview.set_mask_mode(True, "mask")
+            elif pn.is_active("effects") and ef.mask_edit:
+                self.preview.set_mask_mode(True, "fxmask:" + ef.mask_edit)
+            else:
+                self.preview.set_mask_mode(False)
+            self._matte_preview_changed()
+            self._update_matte_region()
+        self.panels.activeChanged.connect(lambda _k: mask_mode())
+        ef.maskEditChanged.connect(mask_mode)
+        self.layout_key = None          # the layout the panels are in (layouts.py key)
 
         self.player = Player(self)
         w = self.player.worker
@@ -709,6 +696,7 @@ class MainWindow(QMainWindow):
         self.apply_library_root(self.library_root())
         self.start_font_scan()
         self._menus()
+        self.start_layout()
         self._update_title()
         self._update_crumb()
         self._update_buttons()
@@ -773,6 +761,39 @@ class MainWindow(QMainWindow):
         add(m, "新增自訂濾鏡檔…", None, lambda: self.new_filter_file(None))
         add(m, "濾鏡寫法說明…", None, self.show_filter_doc)
         add(m, "檢查所有濾鏡", None, self.check_filters)
+        m = self.menuBar().addMenu("視窗")
+        self.layout_menu = m.addMenu("佈局")
+        self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
+        add(m, "儲存目前佈局", None, self.save_layout)
+        add(m, "另存為新佈局…", None, self.save_layout_as)
+        add(m, "重設目前佈局", None, lambda: self.reset_layout(self.layout_key))
+        add(m, "開啟佈局資料夾", None, self.reveal_layouts)
+        add(m, "下一個佈局", "Ctrl+PgDown", lambda: self.step_layout(1))
+        add(m, "上一個佈局", "Ctrl+PgUp", lambda: self.step_layout(-1))
+        m.addSeparator()
+        self.panel_menu = m
+        self.panel_actions = []
+        m.aboutToShow.connect(self._fill_panel_actions)
+        # the layouts as tabs at the right of the menu bar, as Blender's workspaces
+        corner = QWidget()
+        row = QHBoxLayout(corner)
+        row.setContentsMargins(0, 0, 6, 0)
+        row.setSpacing(2)
+        self.layout_tabs = QTabBar()
+        self.layout_tabs.setObjectName("layouts")
+        self.layout_tabs.setDrawBase(False)
+        self.layout_tabs.setExpanding(False)
+        self.layout_tabs.setFocusPolicy(Qt.NoFocus)
+        self.layout_tabs.setToolTip("佈局：面板的排法（右鍵：重設、覆寫、重新命名、刪除）")
+        self.layout_tabs.currentChanged.connect(self._layout_tab_switched)
+        self.layout_tabs.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.layout_tabs.customContextMenuRequested.connect(self._layout_tab_menu)
+        row.addWidget(self.layout_tabs)
+        plus = self.tool("plus", "把目前的排法存成新佈局（存在 KiaseCut/preset/layout）", self.save_layout_as)
+        plus.setIconSize(QSize(14, 14))
+        row.addWidget(plus)
+        self.layout_corner = corner                      # (PySide would delete it with this function's locals)
+        self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)
         m = self.menuBar().addMenu("播放")
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
         add(m, "標記出點", "O", lambda: self.set_mark("out"))
@@ -1955,19 +1976,19 @@ class MainWindow(QMainWindow):
         self._update_side_tabs(clips)
 
     def _update_side_tabs(self, clips):
-        """The side tabs a selection has use for (屬性 always): 效果 for pictures, texts and
+        """The side panels a selection has use for (屬性 always): 效果 for pictures, texts and
         filters, 遮罩 for what takes a mask, 節拍 for one clip with sound, 字幕 for texts,
-        關鍵幀曲線 for any clip. A tab that goes away leaves the panel on another one."""
+        關鍵幀曲線 for any clip. One in tabs leaves them (they go on to another one), one on
+        its own says it has nothing to show (docks.Panels.set_usable)."""
         maskable = ("image", "video", "compound", "filter", "group")
         show = {"fx": bool(clips) and all(c["type"] in edit.VISUAL for c in clips),
                 "mask": bool(clips) and all(c["type"] in maskable for c in clips),
                 "beat": len(clips) == 1 and edit.has_sound(clips[0]),
                 "subtitle": any(c["type"] == "text" for c in clips),
                 "curves": bool(clips)}
-        for key, page in self.side_pages.items():
-            i = self.side.indexOf(page)
-            if i >= 0 and self.side.isTabVisible(i) != show[key]:
-                self.side.setTabVisible(i, show[key])
+        for key, dock in (("fx", "effects"), ("mask", "mask"), ("beat", "beats"), ("subtitle", "subtitles"),
+                          ("curves", "curves")):
+            self.panels.set_usable(dock, show[key])
 
     def on_easing(self, ids, easing, groups):
         """Apply a curve preset to every parameter (of these groups) with a keyframe at the playhead."""
@@ -2472,7 +2493,7 @@ class MainWindow(QMainWindow):
             self.fs_epoch += 1
             self.refresh_library()
             self.request_sync(300)                     # files already in Media go to their own folder
-            self.left.setCurrentWidget(self.library)
+            self.panels.show("library")
             if items and place is not None:
                 self._select_new(self.apply_root("匯入素材並加入時間軸", add_and_place, [it["id"] for it in items],
                                                  select=lambda cs: cs[-1]["id"]))
@@ -2575,7 +2596,7 @@ class MainWindow(QMainWindow):
             return
         self.ul_epoch += 1
         self.request_ul_sync(0)
-        self.left.setCurrentWidget(self.ulpanel)
+        self.panels.show("userlib")
         self.ulpanel.show_category("compounds")
         self.statusBar().showMessage(f"已存到 Library > 複合片段：{name.strip()}", 4000)
 
@@ -3464,7 +3485,7 @@ class MainWindow(QMainWindow):
         def done(_r):
             self.ul_epoch += 1
             self.request_ul_sync(0)
-            self.left.setCurrentWidget(self.ulpanel)
+            self.panels.show("userlib")
             self.ulpanel.show_category(key if key in todo else next(iter(todo)))
             self.statusBar().showMessage(f"已加入 {sum(len(v) for v in todo.values())} 個檔案到 Library", 4000)
 
@@ -3481,7 +3502,7 @@ class MainWindow(QMainWindow):
                 items.append(it)
         if not items:
             return
-        self.left.setCurrentWidget(self.ulpanel)
+        self.panels.show("userlib")
         cat = userlib.category_of(items[0]["path"], self.ulib.root)
         if cat in dict(userlib.CATEGORIES):
             self.ulpanel.show_category(cat)
@@ -3546,7 +3567,7 @@ class MainWindow(QMainWindow):
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first()
                if c["type"] in edit.VISUAL] if cid in sel else [cid]
         self.apply("新增效果", lambda lvl: [edit.add_effect(lvl, k, ref) for k in ids])
-        self.side.setCurrentIndex(1)
+        self.panels.show("effects")
 
     def apply_filter_to_selected(self, ref):
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]
@@ -3554,7 +3575,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("先在時間軸選一個畫面片段（圖片、影片、文字、複合片段）", 4000)
             return
         self.apply("新增效果", lambda lvl: [edit.add_effect(lvl, cid, ref) for cid in ids])
-        self.side.setCurrentIndex(1)
+        self.panels.show("effects")
 
     def browse_effect(self, cid):
         start = self.ulib.mirror("filters") if self.ulib else ""
@@ -3579,7 +3600,7 @@ class MainWindow(QMainWindow):
             fh.write(text)
         self.ul_epoch += 1
         self.request_ul_sync(0)
-        self.left.setCurrentWidget(self.ulpanel)
+        self.panels.show("userlib")
         self.ulpanel.show_category("filters")
         QDesktopServices.openUrl(QUrl.fromLocalFile(dst))
         self.statusBar().showMessage("已建立濾鏡檔，用編輯器改完存檔，預覽會自動更新（說明：Library > 濾鏡 > 說明）", 8000)
@@ -3763,15 +3784,218 @@ class MainWindow(QMainWindow):
         userlib.save_style(base, name.strip(), clips[0])
         self.ul_epoch += 1
         self.request_ul_sync(0)
-        self.left.setCurrentWidget(self.ulpanel)
+        self.panels.show("userlib")
         self.ulpanel.show_category("textstyles")
         self.statusBar().showMessage(f"已存到 Library > 文字樣式：{name.strip()}", 4000)
+
+    # -- layouts (佈局) -----------------------------------------------------------------------------
+    def layout_dir(self):
+        return layouts.folder(self.documents_dir())
+
+    def layout_keys(self):
+        return ([layouts.builtin_key(i) for i, _ in layouts.BUILTIN]
+                + [layouts.user_key(n) for n in layouts.list_user(self.layout_dir())])
+
+    def _live_layout(self, key):
+        """The panels of layout key as last left in this program, or None."""
+        raw = self.settings().value("layout_live/" + key)
+        if not raw:
+            return None
+        try:
+            return layouts.unpack(json.loads(str(raw)))
+        except (ValueError, TypeError):
+            return None
+
+    def keep_layout(self):
+        """Remember the panels as they are now for the layout they are in (each layout keeps
+        its own arrangement while switching between them, as Blender's workspaces)."""
+        if self.layout_key:
+            self.settings().setValue("layout_live/" + self.layout_key,
+                                     json.dumps(layouts.pack(self.panels.state(), self.panels.closed())))
+
+    def start_layout(self):
+        key = str(self.settings().value("layout", ""))
+        self.use_layout(key if key in self.layout_keys() else layouts.builtin_key("edit"), keep=False)
+
+    def use_layout(self, key, keep=True, fresh=False):
+        """Put the panels as layout key has them: as last left (unless fresh), else as it is
+        made (built in) or as its file has them (the user's)."""
+        if keep:
+            self.keep_layout()
+        kind, _, rest = key.partition(":")
+        self.panels.arrange(rest if kind == "builtin" else "edit")
+        got = None if fresh else self._live_layout(key)
+        if got is None and kind == "user":
+            try:
+                got = layouts.read(self.layout_dir(), rest)
+            except ValueError as exc:
+                self.statusBar().showMessage(str(exc), 6000)
+        if got is not None and not self.panels.restore(*got):
+            self.statusBar().showMessage(f"佈局「{layouts.title(key)}」用不了，面板照預設排", 6000)
+        self.layout_key = key
+        self.settings().setValue("layout", key)
+        self._update_side_tabs(self.timeline.selected_clips_primary_first())
+        self._fill_layout_tabs()
+
+    def step_layout(self, d):
+        keys = self.layout_keys()
+        i = keys.index(self.layout_key) if self.layout_key in keys else 0
+        self.use_layout(keys[(i + d) % len(keys)])
+
+    def reset_layout(self, key):
+        """Layout key back as it is made (built in) or as its file has it (the user's)."""
+        self.settings().remove("layout_live/" + key)
+        if key == self.layout_key:
+            self.use_layout(key, keep=False, fresh=True)
+
+    def save_layout(self):
+        """The panels as they are now into the user's layout (a built-in one: into a new one)."""
+        kind, _, name = (self.layout_key or "").partition(":")
+        if kind != "user":
+            self.save_layout_as()
+            return
+        self._write_layout(name)
+
+    def save_layout_as(self):
+        name, ok = QInputDialog.getText(self, "另存為新佈局", "佈局名稱（存在 KiaseCut/preset/layout）", text="我的佈局")
+        if not ok:
+            return
+        try:
+            name = layouts.clean_name(name)
+        except ValueError as exc:
+            QMessageBox.warning(self, "另存為新佈局", str(exc))
+            return
+        if name in layouts.list_user(self.layout_dir()) and QMessageBox.question(
+                self, "另存為新佈局", f"已經有叫「{name}」的佈局，要覆寫它嗎？") != QMessageBox.Yes:
+            return
+        self.keep_layout()                               # the one left keeps its arrangement too
+        self._write_layout(name)
+
+    def _write_layout(self, name):
+        try:
+            path = layouts.write(self.layout_dir(), name, self.panels.state(), self.panels.closed())
+        except OSError as exc:
+            QMessageBox.warning(self, "儲存佈局", f"存不了佈局：{exc}")
+            return
+        key = layouts.user_key(name)
+        self.settings().remove("layout_live/" + key)     # the file is now how it is
+        self.layout_key = key
+        self.settings().setValue("layout", key)
+        self._fill_layout_tabs()
+        self.statusBar().showMessage(f"已儲存佈局「{name}」：{path}", 5000)
+
+    def rename_layout(self, key):
+        old = key.partition(":")[2]
+        name, ok = QInputDialog.getText(self, "重新命名佈局", "新名稱", text=old)
+        if not ok or name.strip() == old:
+            return
+        try:
+            name = layouts.clean_name(name)
+            layouts.rename(self.layout_dir(), old, name)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, "重新命名佈局", str(exc))
+            return
+        new = layouts.user_key(name)
+        live = self.settings().value("layout_live/" + key)
+        self.settings().remove("layout_live/" + key)
+        if live:
+            self.settings().setValue("layout_live/" + new, live)
+        if self.layout_key == key:
+            self.layout_key = new
+            self.settings().setValue("layout", new)
+        self._fill_layout_tabs()
+
+    def delete_layout(self, key):
+        name = key.partition(":")[2]
+        if QMessageBox.question(self, "刪除佈局", f"刪除佈局「{name}」？\n（它的檔案會從 KiaseCut/preset/layout 移除）") \
+                != QMessageBox.Yes:
+            return
+        try:
+            layouts.remove(self.layout_dir(), name)
+        except OSError as exc:
+            QMessageBox.warning(self, "刪除佈局", str(exc))
+            return
+        self.settings().remove("layout_live/" + key)
+        if self.layout_key == key:
+            self.use_layout(layouts.builtin_key("edit"), keep=False)
+        else:
+            self._fill_layout_tabs()
+
+    def reveal_layouts(self):
+        where = self.layout_dir()
+        os.makedirs(where, exist_ok=True)
+        self.reveal_path(where)
+
+    def _fill_layout_tabs(self):
+        tabs = self.layout_tabs
+        tabs.blockSignals(True)
+        while tabs.count():
+            tabs.removeTab(0)
+        for key in self.layout_keys():
+            i = tabs.addTab(layouts.title(key))
+            tabs.setTabData(i, key)
+            if key == self.layout_key:
+                tabs.setCurrentIndex(i)
+        tabs.blockSignals(False)
+
+    def _layout_tab_switched(self, i):
+        key = self.layout_tabs.tabData(i)
+        if key and key != self.layout_key:
+            QTimer.singleShot(0, lambda: self.use_layout(key))   # (not while the tab bar is switching)
+
+    def _layout_actions(self, menu, key):
+        user = key.startswith("user:")
+        menu.addAction("重設為" + ("檔案裡的排法" if user else "預設排法"), lambda: self.reset_layout(key))
+        if user:
+            a = menu.addAction("用目前的排法覆寫", lambda: self._write_layout(key.partition(":")[2]))
+            a.setEnabled(key == self.layout_key)
+            menu.addAction("重新命名…", lambda: self.rename_layout(key))
+            menu.addAction("刪除…", lambda: self.delete_layout(key))
+        menu.addSeparator()
+        menu.addAction("另存為新佈局…", self.save_layout_as)
+        menu.addAction("開啟佈局資料夾", self.reveal_layouts)
+
+    def _layout_tab_menu(self, pos):
+        i = self.layout_tabs.tabAt(pos)
+        menu = QMenu(self)
+        if i >= 0:
+            self._layout_actions(menu, self.layout_tabs.tabData(i))
+        else:
+            menu.addAction("另存為新佈局…", self.save_layout_as)
+            menu.addAction("開啟佈局資料夾", self.reveal_layouts)
+        menu.exec(self.layout_tabs.mapToGlobal(pos))
+
+    def _fill_layout_menu(self):
+        m = self.layout_menu
+        m.clear()
+        keys = self.layout_keys()
+        for key in keys:
+            a = m.addAction(layouts.title(key), lambda k=key: k != self.layout_key and self.use_layout(k))
+            a.setCheckable(True)
+            a.setChecked(key == self.layout_key)
+            if key.startswith("user:") and (len(m.actions()) == 1 or not keys[keys.index(key) - 1].startswith("user:")):
+                m.insertSeparator(a)
+        self._fill_layout_tabs()                         # (files added to the folder by hand)
+
+    def _fill_panel_actions(self):
+        """The 視窗 menu's panels: checked while open (not closed on purpose)."""
+        from .docks import ORDER, TITLES
+        for a in self.panel_actions:
+            self.panel_menu.removeAction(a)
+        self.panel_actions = []
+        for key in ORDER:
+            a = self.panel_menu.addAction(TITLES[key])
+            a.setCheckable(True)
+            a.setChecked(not self.panels[key].user_closed)
+            a.toggled.connect(lambda on, k=key: self.panels.show(k) if on else self.panels.close(k))
+            self.panel_actions.append(a)
 
     def closeEvent(self, e):
         if not self.maybe_save():
             e.ignore()
             return
         self.closing = True
+        self.keep_layout()
         if self.autosave_dir:                            # closed normally: nothing to bring back
             recovery.end(self.autosave_dir)
         if self.fullscreen:

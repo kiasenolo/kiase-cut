@@ -85,6 +85,11 @@ def _draw(p, name):
         p.setPen(QPen(pen.color(), 2.2, Qt.SolidLine, Qt.RoundCap))
         p.drawLine(QPointF(7, 7), QPointF(17, 17))
         p.drawLine(QPointF(17, 7), QPointF(7, 17))
+    elif name == "float":                                  # a window over another (a floating panel)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(pen.color(), 2))
+        p.drawRect(QRectF(9, 4, 11, 10))
+        p.drawPolyline(QPolygonF([QPointF(6, 9), QPointF(4, 9), QPointF(4, 20), QPointF(15, 20), QPointF(15, 17)]))
     elif name == "back":
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(pen.color(), 2))

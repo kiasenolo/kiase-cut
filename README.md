@@ -507,7 +507,9 @@ as R/G/B lines). 正規化 gives every curve the same height; untick it to read 
 axis. Click a keyframe to select it, Ctrl / Shift + click or a selection box for several,
 Ctrl+A for all, Ctrl+D for none; dragging moves the whole selection (time snaps to frames, Shift keeps to
 one direction). Drag the bezier handles to shape a curve, double-click to add a keyframe
-to the nearest curve, Delete to remove the selection. Alt+wheel zooms values, 全部顯示
+to the nearest curve, Delete to remove the selection. Alt+wheel zooms values; Ctrl+middle-drag
+zooms around where the drag started, as in Blender's graph editor (sideways: time, up and
+down: values; right / up: in), while a plain middle drag still moves the view. 全部顯示
 fits again; a click on the time ruler moves the playhead. The preview follows every drag. The segment
 after each selected keyframe takes a CSS `cubic-bezier(x1, y1, x2, y2)` typed in (y may
 overshoot, for bounces) or a preset (linear, ease in / out / in-out, back). Time and value

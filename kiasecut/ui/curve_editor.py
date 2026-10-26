@@ -10,8 +10,10 @@ the whole selection (time snaps to frames; hold Shift to keep to one axis). The 
 handles shape the ease of a selected keyframe. Double-click adds a keyframe to the nearest
 curve, Delete removes the selection, Ctrl+D clears it. The wheel moves the view up and
 down, Shift+wheel left and right, Ctrl+wheel zooms time around the mouse, Alt+wheel zooms
-values, the middle button drags the view; "全部顯示" fits everything again. A click on the
-time ruler (or empty space) moves the playhead.
+values, the middle button drags the view and Ctrl+middle-drag zooms it around where the drag
+started (as in Blender's graph editor: sideways zooms time, up and down values; right / up:
+in); "全部顯示" fits everything again. A click on the time ruler (or empty space) moves the
+playhead.
 
 The segment after each selected keyframe takes a typed CSS cubic-bezier or a preset. Edits
 show live in the preview while dragging and become one undo step on release.
@@ -370,8 +372,10 @@ class CurveCanvas(QWidget):
 
     def mousePressEvent(self, e):
         pos = e.position()
-        if e.button() == Qt.MiddleButton:
-            self.drag = {"kind": "pan", "pos": pos, "t0": self.t0, "t1": self.t1, "v": self.vrange}
+        if e.button() == Qt.MiddleButton:                    # Ctrl: zoom, else move the view
+            zoom = bool(e.modifiers() & Qt.ControlModifier)
+            self.drag = {"kind": "zoom" if zoom else "pan", "pos": pos, "t0": self.t0, "t1": self.t1,
+                         "v": self.vrange, "at": (self.t_of(pos.x()), self.p_of(pos.y()))}
             return
         if e.button() != Qt.LeftButton:
             return
@@ -410,6 +414,18 @@ class CurveCanvas(QWidget):
             dv = (pos.y() - d["pos"].y()) / max(1, self.height() - self.T - self.B) * (hi - lo)
             self.t0, self.t1 = d["t0"] - dt, d["t1"] - dt
             self.vrange = (lo + dv, hi + dv)
+            self._paths = None
+            self.update()
+            return
+        if d["kind"] == "zoom":                              # around the press; right / up: in
+            a, b = d["at"]
+            span = (d["t1"] - d["t0"]) * 2 ** (-(pos.x() - d["pos"].x()) / 200)
+            span = min(max(span, 4 * US / self.fps), max(self.duration, US) * 20)
+            k = (a - d["t0"]) / max(d["t1"] - d["t0"], 1)
+            self.t0, self.t1 = a - span * k, a - span * k + span
+            f = 2 ** ((pos.y() - d["pos"].y()) / 200)
+            lo, hi = d["v"]
+            self.vrange = (b - (b - lo) * f, b + (hi - b) * f)
             self._paths = None
             self.update()
             return

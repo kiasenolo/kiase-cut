@@ -7,6 +7,10 @@ from the mixer goes to a QAudioSink whose buffer paces the loop, so audio is the
 Video pictures come from ffmpeg streams while playing (videoreader.py, on the GPU for
 heavy codecs) and from the engine for a single jump.
 
+The sound output is made anew each time playing starts, on the system's default output at
+that moment, and again while playing when the outputs change (headphones out or back in), so
+the sound follows the device without restarting the program.
+
 Positions are frames of view["fps"], the editor's own rate (時間線精度, which can be finer
 than the project's). Playing shows a picture every step() of them, at view["play_fps"] (the
 project's frame rate), so a fine timeline costs nothing more while playing.
@@ -16,7 +20,7 @@ import time
 
 import numpy as np
 
-from PySide6.QtCore import QObject, QThread, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 
@@ -52,6 +56,7 @@ class Worker(QObject):
         self.shown_n = self.audio_n = 0     # pictures shown / sound frames queued since playing began
         self.audio_f = None         # next frame whose sound is to be queued
         self.peaks = {}             # sound frame number -> (left, right) level, shown with its picture
+        self.new_output = False     # the sound outputs changed: open the default one again
 
     # called from the UI thread -----------------------------------------------------------
     def set_view(self, view, cache_dir):
@@ -91,6 +96,12 @@ class Worker(QObject):
                 self.pos = 0
             self.cv.notify()
 
+    def outputs_changed(self):
+        """A sound device came or went (or the default changed): playing goes on there."""
+        with self.cv:
+            self.new_output = True
+            self.cv.notify()
+
     def stop(self):
         with self.cv:
             self.quit = True
@@ -117,13 +128,7 @@ class Worker(QObject):
     def run(self):
         self.view, self.renderer, self.mixer = None, self._renderer(), None
         self.readers = videoreader.Readers()
-        fmt = QAudioFormat()
-        fmt.setSampleRate(RATE)
-        fmt.setChannelCount(CHANNELS)
-        fmt.setSampleFormat(QAudioFormat.Int16)
-        sink = QAudioSink(QMediaDevices.defaultAudioOutput(), fmt)
-        sink.setBufferSize(RATE * CHANNELS * 2 // 8)        # ~125 ms
-        out = None
+        sink = out = None
         was_playing = False
         while True:
             with self.cv:
@@ -134,6 +139,7 @@ class Worker(QObject):
                     break
                 new, self.new_view = self.new_view, None
                 want, self.want = self.want, None
+                moved_output, self.new_output = self.new_output, False
                 playing = self.playing
             try:
                 if new:
@@ -152,23 +158,22 @@ class Worker(QObject):
                         want = self.pos
                 if playing != was_playing:
                     if playing:
-                        out = self._start_sink(sink)
+                        sink, out = self._start_sink(sink)
                         self.t0 = time.monotonic()
                         self.shown_n = self.audio_n = 0
                         self.audio_f, self.peaks = None, {}
                     else:
-                        sink.stop()
-                        out = None
+                        sink = out = self._stop_sink(sink)
                     was_playing = playing
                     self.stateChanged.emit(playing)
+                elif playing and (want is not None or moved_output):
+                    # a jump while playing, or another sound device: sound and clock start over
+                    sink, out = self._start_sink(sink)
+                    self.t0 = time.monotonic()
+                    self.shown_n = self.audio_n = 0
+                    self.audio_f, self.peaks = None, {}
                 if want is not None:
                     self.pos = min(want, self.length - 1)
-                    if playing and was_playing:           # a jump while playing: sound and clock start over
-                        sink.stop()
-                        out = self._start_sink(sink)
-                        self.t0 = time.monotonic()
-                        self.shown_n = self.audio_n = 0
-                        self.audio_f, self.peaks = None, {}
                 if self.view is None:
                     continue
                 if playing:
@@ -179,7 +184,7 @@ class Worker(QObject):
                 self.failed.emit(f"{type(exc).__name__}: {exc}")
                 with self.cv:
                     self.playing = False
-        sink.stop()
+        self._stop_sink(sink)
         self.readers.close()
         if self.engine:
             self.engine.close()
@@ -188,13 +193,30 @@ class Worker(QObject):
         """The GPU compositor when GPU acceleration is on (and works here), else QPainter."""
         return glrender.make(self._video) if gpu.enabled else render.Renderer(self._video)
 
-    def _start_sink(self, sink):
-        """Start the sound output with room for LEAD frames and a few more: a buffer shorter
+    def _start_sink(self, old):
+        """(sink, its device to write to): a new sound output on the default device as it is
+        now (old is stopped first), with room for LEAD frames and a few more: a buffer shorter
         than the lead (30 fps: 6 frames are 200 ms) kept every picture late, so most were
-        skipped (~8 fps)."""
+        skipped (~8 fps). Without a sound device it plays silently: (None, None)."""
+        self._stop_sink(old)
+        device = QMediaDevices.defaultAudioOutput()
+        if device.isNull():
+            return None, None
+        fmt = QAudioFormat()
+        fmt.setSampleRate(RATE)
+        fmt.setChannelCount(CHANNELS)
+        fmt.setSampleFormat(QAudioFormat.Int16)
+        sink = QAudioSink(device, fmt)
         per_frame = RATE * CHANNELS * 2 / max(1.0, self._play_fps())
         sink.setBufferSize(max(RATE * CHANNELS * 2 // 8, int(per_frame * (LEAD + 3))))
-        return sink.start()
+        out = sink.start()
+        return (sink, out) if out is not None else (None, None)
+
+    @staticmethod
+    def _stop_sink(sink):
+        if sink is not None:
+            sink.stop()
+        return None
 
     def _show(self, pos):
         v = self.view
@@ -224,7 +246,7 @@ class Worker(QObject):
         return max(1, round(self.view["fps"] / self._play_fps()))
 
     def _interrupted(self):
-        return bool(self.new_view or self.want is not None or not self.playing or self.quit)
+        return bool(self.new_view or self.want is not None or not self.playing or self.quit or self.new_output)
 
     def _feed(self, out, sink):
         """Queue the sound up to LEAD frames ahead of the picture. Playing begins with the
@@ -298,6 +320,8 @@ class Player(QObject):
         self.worker = Worker()
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
+        self.devices = QMediaDevices(self)                 # (its signals come on this, the UI, thread)
+        self.devices.audioOutputsChanged.connect(self.worker.outputs_changed, Qt.DirectConnection)
         self.thread.start()
 
     def shutdown(self):

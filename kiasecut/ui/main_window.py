@@ -3475,6 +3475,11 @@ class MainWindow(QMainWindow):
 
 
 def run(argv):
+    if sys.platform.startswith("linux"):
+        # Qt 6.12's own PipeWire sound output crashed the program as playing started (in
+        # pw_stream_connect); its PulseAudio one (PipeWire serves it too) does not.
+        # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
+        os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
     app = QApplication(argv)
     app.setStyleSheet(STYLE)
     win = MainWindow()

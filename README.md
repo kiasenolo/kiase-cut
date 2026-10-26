@@ -128,6 +128,12 @@ Space play/pause · ←/→ step a frame · Home/End · Ctrl+I import · Ctrl+S 
 Playback mode (播放, in the timeline toolbar): 停在暫停處 stops where playback is, 回到開始處
 goes back to where it began (as in DAWs). The choice is remembered.
 
+Sound plays on the system's default output and follows it: unplug headphones or plug them
+back in (or pick another output in the system) and playing goes on there, no restart needed.
+On Linux the preview's sound goes through Qt's PulseAudio output (PipeWire serves it too):
+Qt 6.12's own PipeWire output crashed the program as playing started. Setting
+`QT_AUDIO_BACKEND=pipewire` picks that one anyway.
+
 Timeline precision (精度, in the timeline toolbar): how many steps a second has while
 editing - the playhead, ←/→, splits and keyframes move in them, and the ruler marks each one
 when zoomed in (the zoom reaches 40 px per step). 跟專案 uses the project's frame rate. It

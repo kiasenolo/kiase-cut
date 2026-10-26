@@ -62,6 +62,11 @@ Ctrl+Up / Ctrl+Down move the selected clips to the track above / below (at the s
 nothing moves when one would land on another clip), Ctrl+Z / Ctrl+Y undo and redo. Right-click a track header or clip to rename it or give it
 a colour (double-click a track name to rename).
 
+Colour pickers show what they do while they are open: the colour under the mouse goes on the
+preview (texts, built-in assets, effects), the timeline (track and clip colours) or the
+內建素材 thumbnails at once; OK keeps it, Cancel puts back what was there. Every effect colour
+has an alpha (the picker's A channel).
+
 Time selection, as in FL Studio: drag with the right button anywhere on the timeline to
 select a span (it snaps like clips do); playback starts at it and loops
 inside it, and a marked export uses it. Ctrl+Shift+D (or Alt+X) clears it; a right click

@@ -8,10 +8,11 @@ the form of a user's filter is built the same way as a built-in one.
 """
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
+from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
                                QToolButton, QVBoxLayout, QWidget)
 
 from .. import curves, edit, fx
+from .colorpick import pick_color, qcolor, rgba
 from .inspector import MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, kind_tag, section
 
 DEBOUNCE_MS = 350
@@ -36,6 +37,7 @@ class EffectsPanel(QWidget):
     paramEdited = Signal(list, str, str, object)    # clip ids, group, key, value
     keyToggled = Signal(list, str, str)
     liveEdited = Signal(list, str, str, object)
+    liveCancelled = Signal()                 # a colour being picked was given up: show what is there
     docRequested = Signal()
     revealFilter = Signal(str)                      # filter ref: show its file
 
@@ -371,8 +373,8 @@ class EffectsPanel(QWidget):
         elif p.type == "color":
             btn = w.get((group, p.name))
             if btn is not None:
-                r, g, b = (int(round(min(1, max(0, x)) * 255)) for x in list(v)[:3])
-                btn.setText(f"#{r:02x}{g:02x}{b:02x}")
+                r, g, b, a = (int(round(min(1, max(0, x)) * 255)) for x in (list(v) + [1.0] * 4)[:4])
+                btn.setText(f"#{r:02x}{g:02x}{b:02x}" + (f"{a:02x}" if a < 255 else ""))
                 btn.setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
         else:
             for i in range(3 if p.type == "vec3" else 2):
@@ -397,9 +399,12 @@ class EffectsPanel(QWidget):
 
     def _pick_color(self, group, key):
         btn = self.widgets[(group, key)]
-        col = QColorDialog.getColor(QColor(btn.text()), self, "顏色")
-        if col.isValid():
-            self._queue(group, key, [col.redF(), col.greenF(), col.blueF(), 1.0])
+        cid = self.clip_id
+        col = pick_color(self, qcolor(btn.text()), "顏色",
+                         live=lambda c: cid and self.liveEdited.emit([cid], group, key, rgba(c)),
+                         cancel=self.liveCancelled.emit)
+        if col is not None:
+            self._queue(group, key, rgba(col))
             self._flush()
 
     def _now(self, signal, *args):

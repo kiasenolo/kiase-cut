@@ -7,10 +7,11 @@ double-click to add it at the playhead. The two colours at the top paint the sha
 from PySide6.QtCore import QByteArray, QMimeData, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import (QAbstractItemView, QColorDialog, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from .. import assets
+from .colorpick import hex_of, pick_color, qcolor
 from .timeline import MEDIA_MIME
 
 ROLE_KEY = Qt.UserRole + 1
@@ -145,10 +146,14 @@ class AssetsPanel(QWidget):
                     it.setIcon(QIcon(thumbnail(a, *self.colors)))
 
     def _pick(self, k):
-        col = QColorDialog.getColor(QColor(self.colors[k]), self, f"顏色 {k + 1}", QColorDialog.ShowAlphaChannel)
-        if col.isValid():
-            self.colors[k] = col.name() + (f"{col.alpha():02x}" if col.alpha() < 255 else "")
+        was = self.colors[k]
+
+        def show(col):
+            self.colors[k] = hex_of(col)
             self.refresh()
+        col = pick_color(self, qcolor(was), f"顏色 {k + 1}", live=show)
+        self.colors[k] = hex_of(col) if col is not None else was
+        self.refresh()
 
     def _swap(self):
         self.colors.reverse()

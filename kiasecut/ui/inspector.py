@@ -24,12 +24,13 @@ from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 import os
 
-from PySide6.QtWidgets import (QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, curves, edit, project
 from .. import fonts as fontlib
 from . import icons
+from .colorpick import pick_color, qcolor, rgba
 from .timeline import US, timecode
 
 DEBOUNCE_MS = 350
@@ -183,6 +184,7 @@ class Inspector(QWidget):
     mattePreviewChosen = Signal(bool)               # 預覽複合片段 or its opacity changed
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
+    liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
 
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
@@ -582,10 +584,12 @@ class Inspector(QWidget):
 
     def _pick_asset_color(self, f):
         cur = self.widgets[("asset", f)].text()
-        col = QColorDialog.getColor(QColor(cur[:7]) if cur.startswith("#") else QColor("white"), self, "顏色",
-                                    QColorDialog.ShowAlphaChannel)
-        if col.isValid():
-            self._queue("asset", f, [col.redF(), col.greenF(), col.blueF(), col.alphaF()])
+        ids = list(self.clip_ids)
+        col = pick_color(self, qcolor(cur), assets.FIELD_INFO[f][0],
+                         live=lambda c: self.liveEdited.emit(ids, "asset", f, rgba(c)),
+                         cancel=self.liveCancelled.emit)
+        if col is not None:
+            self._queue("asset", f, rgba(col))
             self._flush()
 
     def _key_button(self, group, key):
@@ -764,8 +768,11 @@ class Inspector(QWidget):
 
     def _pick_color(self):
         cur = QColor(self.widgets["color"].text()) if self.widgets["color"].text() != "--" else QColor("white")
-        col = QColorDialog.getColor(cur, self, "文字顏色")
-        if col.isValid():
+        ids = list(self.clip_ids)
+        col = pick_color(self, cur, "文字顏色", alpha=False,
+                         live=lambda c: self.liveEdited.emit(ids, "text", "color", rgba(c)[:3]),
+                         cancel=self.liveCancelled.emit)
+        if col is not None:
             self._queue("text*", "color", [col.redF(), col.greenF(), col.blueF()])
             self._flush()
 

@@ -18,7 +18,7 @@ import time
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QImage, QKeySequence
-from PySide6.QtWidgets import (QApplication, QColorDialog, QComboBox, QDialog, QFileDialog, QHBoxLayout,
+from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
                                QWidget)
@@ -27,6 +27,7 @@ from .. import assets, build, curves, edit, fonts, fx, gpu, library, project, re
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
+from .colorpick import pick_color
 from .font_dialog import FontMapDialog
 from .compounds import CompoundPanel
 from .curve_editor import CurveEditor
@@ -350,6 +351,7 @@ class MainWindow(QMainWindow):
         mask_scroll.setWidgetResizable(True)
         ins.keyJump.connect(self.jump_key)
         ins.liveEdited.connect(self.on_live_edit)
+        ins.liveCancelled.connect(self.rebuild)
         mp.liveEdited.connect(self.on_live_edit)
         scroll = QScrollArea()
         scroll.setWidget(self.inspector)
@@ -375,6 +377,7 @@ class MainWindow(QMainWindow):
         ef.paramEdited.connect(self.on_param_edited)
         ef.keyToggled.connect(self.on_key_toggled)
         ef.liveEdited.connect(self.on_live_edit)
+        ef.liveCancelled.connect(self.rebuild)
         ef.docRequested.connect(self.show_filter_doc)
         ef.revealFilter.connect(self.reveal_path)
         fx_scroll = QScrollArea()
@@ -1796,6 +1799,25 @@ class MainWindow(QMainWindow):
 
         self.apply("移動位置", set_all)
 
+    def pick_live(self, initial, title, holders):
+        """A colour for tracks or clips (holders), shown on the timeline while it is picked;
+        what they had comes back before the edit is made (or when it is cancelled)."""
+        old = [(h, h.get("color")) for h in holders]
+
+        def show(col):
+            for h, _ in old:
+                h["color"] = col.name()
+            self.timeline.update()
+
+        col = pick_color(self, initial, title, alpha=False, live=show)
+        for h, was in old:
+            if was is None:
+                h.pop("color", None)
+            else:
+                h["color"] = was
+        self.timeline.update()
+        return col
+
     def on_track_action(self, action, tid):
         t = edit.track_by_id(self.container(), tid)
         if action == "rename":
@@ -1803,8 +1825,8 @@ class MainWindow(QMainWindow):
             if ok:
                 self.apply("重新命名軌道", edit.rename_track, tid, name)
         elif action == "color":
-            col = QColorDialog.getColor(parent=self, title="軌道顏色")
-            if col.isValid():
+            col = self.pick_live(QColor(t.get("color") or "#888888"), "軌道顏色", [t])
+            if col is not None:
                 self.apply("軌道顏色", edit.set_track_color, tid, col.name())
         elif action == "nocolor":
             self.apply("軌道顏色", edit.set_track_color, tid, None)
@@ -1812,8 +1834,8 @@ class MainWindow(QMainWindow):
             self.apply("片段顏色", edit.set_track_clip_colors, tid, t.get("color"))
         elif action == "clips:pick":
             first = next((c.get("color") for c in t["clips"] if c.get("color")), None)
-            col = QColorDialog.getColor(QColor(first or t.get("color") or "#888888"), self, "所有片段的顏色")
-            if col.isValid():
+            col = self.pick_live(QColor(first or t.get("color") or "#888888"), "所有片段的顏色", t["clips"])
+            if col is not None:
                 self.apply("片段顏色", edit.set_track_clip_colors, tid, col.name())
         elif action == "clips:none":
             self.apply("片段顏色", edit.set_track_clip_colors, tid, None)
@@ -1871,8 +1893,10 @@ class MainWindow(QMainWindow):
             if action == "nocolor":
                 self.apply_each("片段顏色", edit.set_clip_color, ids, None)
             else:
-                col = QColorDialog.getColor(QColor(c.get("color") or "#888888"), self, "片段顏色")
-                if col.isValid():
+                level = self.container()
+                col = self.pick_live(QColor(c.get("color") or "#888888"), "片段顏色",
+                                     [edit.find(level, i)[1] for i in ids])
+                if col is not None:
                     self.apply_each("片段顏色", edit.set_clip_color, ids, col.name())
         elif action == "unique":
             self.apply_root("設為獨立", lambda root: edit.make_unique(root, self.container(root), cid))

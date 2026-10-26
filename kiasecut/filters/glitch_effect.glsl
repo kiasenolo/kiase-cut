@@ -1,4 +1,4 @@
-// @filter Glich Effect
+// @filter Glitch Effect
 // @category 風格
 // @description 每一行的紅、綠、藍各自隨機左右錯開（在線性光裡運算）
 // @param base_offset float -0.5 -2 2 "基準偏移"

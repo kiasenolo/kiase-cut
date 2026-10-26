@@ -96,7 +96,9 @@ on Windows the copy inside Kdenlive or Shotcut (found automatically, or set
 
 Or start it with `start_kiasecut.bat` (Windows: installs the packages if missing) or
 `./start_kiasecut.sh` (Linux: installs them into `.venv` on the first run, warns when
-ffmpeg or MLT is missing, passes its arguments on).
+ffmpeg or MLT is missing, passes its arguments on). `update.bat` / `./update.sh` pull the
+latest version into a git checkout (fast-forward only: changes made in the folder are never
+merged over); the next start installs any missing packages.
 
 ```
 python -m kiasecut                         # the project manager: pick a project

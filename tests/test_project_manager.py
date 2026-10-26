@@ -128,5 +128,78 @@ class DialogTests(Base):
         self.assertTrue(empty.list.isHidden() and not empty.empty.isHidden())
 
 
+class FolderTests(Base):
+    """The manager as a small file manager: folders, rename, move, copy, delete."""
+
+    def test_browse_folders_and_projects(self):
+        _, a = self.make("A")
+        group = workspace.new_folder(self.home, "客戶")
+        _, b = self.make("B", group)
+        folders, projects = workspace.browse(self.home)
+        self.assertEqual([os.path.basename(f) for f in folders], ["客戶"])        # B's folder is not a project
+        self.assertEqual([workspace.project_name(p) for p in projects], ["A"])
+        self.assertEqual([workspace.project_name(p) for p in workspace.browse(group)[1]], ["B"])
+        self.assertEqual(sorted(workspace.project_name(p) for p in workspace.find_all(self.home)), ["A", "B"])
+
+    def test_rename_move_copy_delete(self):
+        _, a = self.make("A")
+        im = QImage(32, 18, QImage.Format_RGB32)
+        im.fill(QColor("#ff0000"))
+        thumbnail.save_image(im, a)
+        b = workspace.rename_project(a, "Bee")
+        self.assertTrue(b.endswith("/Bee/Bee.kiasecut.json") and os.path.exists(b))
+        self.assertFalse(os.path.exists(a))
+        self.assertIsNotNone(thumbnail.load(b))                                  # the thumbnail followed
+        group = workspace.new_folder(self.home, "G")
+        moved = workspace.move_project(b, group)
+        self.assertEqual(os.path.dirname(os.path.dirname(moved)), group)
+        copy = workspace.copy_project(moved)
+        self.assertTrue(os.path.exists(copy))
+        self.assertIn("副本", workspace.project_name(copy))
+        self.assertEqual(project.load(copy)["format"], "kiasecut")
+        gone = []
+        workspace.remove_project(copy, lambda p: (gone.append(p), shutil.rmtree(p)))
+        self.assertEqual(gone, [workspace.root_of(copy)])                         # its whole folder
+        self.assertTrue(os.path.exists(moved))
+        with self.assertRaises(ValueError):
+            workspace.move_folder(group, os.path.join(group, "x"))               # not into itself
+
+    def test_shared_folder_is_not_moved(self):
+        proj, a = self.make("A")
+        other = os.path.join(workspace.root_of(a), "Other" + workspace.EXT)
+        project.save(proj, other)
+        self.assertFalse(workspace.owns_folder(a))
+        with self.assertRaises(ValueError):
+            workspace.move_project(a, self.dir)
+        gone = []
+        workspace.remove_project(a, lambda p: (gone.append(p), os.remove(p)))
+        self.assertEqual(gone, [a])                                               # just the file
+        self.assertTrue(os.path.exists(other))
+
+    def test_dialog_folders(self):
+        _, a = self.make("A")
+        group = workspace.new_folder(self.home, "G")
+        _, b = self.make("B", group)
+        dlg = ProjectManager(None, self.home, [], current=a)
+        kinds = [dlg.list.item(i).data(Qt.UserRole + 1) for i in range(dlg.list.count())]
+        self.assertEqual(kinds, ["folder", "project"])
+        folder_item = next(dlg.list.item(i) for i in range(dlg.list.count()) if kinds[i] == "folder")
+        dlg.list.itemActivated.emit(folder_item)                                 # go in
+        self.assertEqual(dlg.paths(), [b])
+        self.assertEqual(dlg.list.item(0).data(Qt.UserRole + 1), "up")
+        dlg.list.moveRequested.emit(b, self.home)                                # dragged onto 上一層
+        self.assertEqual(dlg.paths(), [])
+        dlg.go_up()
+        self.assertEqual(sorted(workspace.project_name(p) for p in dlg.paths()), ["A", "B"])
+        self.assertTrue(dlg.moved)
+        from unittest import mock
+        with mock.patch("kiasecut.ui.project_manager.QMessageBox.information") as told:
+            dlg.list.moveRequested.emit(a, group)                                # the open one stays
+        self.assertTrue(told.called)
+        self.assertTrue(os.path.exists(a))
+        dlg.search.setText("b")                                                   # search sees every folder
+        self.assertEqual([workspace.project_name(p) for p in dlg.paths()], ["B"])
+
+
 if __name__ == "__main__":
     unittest.main()

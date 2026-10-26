@@ -30,8 +30,15 @@ Project manager (專案管理器, shown when it starts without a project, and fr
 puts them) and those on the recent list - as cards, newest first, with a search box. Each
 card shows the project's title (檔案 > 專案資訊), its folder's name and when it was last
 saved; one without a title shows just the folder and the time.
-Double-click one to open it; 新增專案… and 開啟其他專案… are also there, and right-click a
-card to open its folder or take its thumbnail away. A project has no thumbnail at first:
+It works like a small file manager over the projects folder: folders that group projects
+show as folder cards (double-click to go in, 上一層 - or the ↑ card - to go back; the search
+box looks through every folder), 新增資料夾 makes one, 新增專案… makes a project in the folder
+shown. Right-click a card to rename it, copy it (建立副本), move it to another folder (or drag
+it onto a folder card or ↑), delete it (to the recycle bin - a project that owns its folder
+goes with the whole folder, a project sharing its folder with others only with its file),
+open its folder or take its thumbnail away. The project open in the editor is not moved,
+renamed or deleted there; the recent list follows what was moved or deleted.
+Double-click one to open it; 開啟其他專案… is also there. A project has no thumbnail at first:
 檔案 > 把目前畫面設為專案縮圖 saves the frame the preview shows, or make a static compound
 named `_thumbnail` (it has to be static; another kind cannot take that name) - its picture
 becomes the thumbnail every time the project is saved, and wins over a saved frame. The

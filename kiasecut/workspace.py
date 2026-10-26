@@ -141,6 +141,166 @@ def find_projects(location, extra=()):
     return sorted(out, key=lambda p: -os.path.getmtime(p))
 
 
+# -- the project manager's folders (專案管理器): folders that group projects ------------------------------
+SPECIAL = (MEDIA, CACHE, EXPORTS, BACKUP)
+
+
+def is_project_dir(path):
+    """Whether a folder is a project folder (it holds a project file)."""
+    try:
+        return bool(other_projects(path))
+    except OSError:
+        return False
+
+
+def browse(folder):
+    """(folders, project files) shown in a folder of the projects folder: sub-folders that
+    hold no project file are folders that group projects (opened to see inside); a project
+    folder shows as its project files, as do project files lying in folder itself. Folders by
+    name, projects newest first."""
+    folders, found = [], []
+    try:
+        entries = sorted(os.scandir(folder), key=lambda e: e.name.lower()) if os.path.isdir(folder) else []
+    except OSError:
+        entries = []
+    for e in entries:
+        if e.is_file() and e.name.endswith(EXTS):
+            found.append(e.path)
+        elif e.is_dir() and e.name not in SPECIAL and not e.name.startswith("."):
+            if is_project_dir(e.path):
+                found += [os.path.join(e.path, f) for f in other_projects(e.path)]
+            else:
+                folders.append(e.path.replace("\\", "/"))
+    found = [os.path.abspath(p).replace("\\", "/") for p in found]
+    return folders, sorted(found, key=lambda p: -os.path.getmtime(p))
+
+
+def find_all(location, depth=4):
+    """Every project file under location, into folders of folders (depth levels), newest first."""
+    out, todo = [], [(location, 0)]
+    while todo:
+        folder, d = todo.pop()
+        folders, found = browse(folder)
+        out += found
+        if d < depth:
+            todo += [(f, d + 1) for f in folders]
+    return sorted(set(out), key=lambda p: -os.path.getmtime(p))
+
+
+def owns_folder(path):
+    """Whether a project file is the only one in its folder (its folder is the project: it is
+    moved, renamed, copied and deleted with it)."""
+    root = root_of(path)
+    try:
+        return other_projects(root) == [os.path.basename(path)]
+    except OSError:
+        return False
+
+
+def _unique(folder, name):
+    """name, or "name 2", "name 3"... - whichever is free in folder."""
+    out, n = name, 1
+    while os.path.exists(os.path.join(folder, out)):
+        n += 1
+        out = f"{name} {n}"
+    return out
+
+
+def new_folder(parent, name="新資料夾"):
+    """A new folder for grouping projects. Returns its path."""
+    path = os.path.join(parent, _unique(parent, safe_name(name, "新資料夾")))
+    os.makedirs(path)
+    return path.replace("\\", "/")
+
+
+def _project_files(path):
+    """The project file and the files that go with it in its folder (its thumbnail)."""
+    thumb = thumbnail_file(path)
+    return [path] + ([thumb] if os.path.exists(thumb) else [])
+
+
+def rename_project(path, name):
+    """Rename a project: its folder too when it owns one (the file inside follows the
+    folder's new name). Returns the project file's new path."""
+    name = safe_name(name)
+    if owns_folder(path):
+        root = root_of(path)
+        parent = os.path.dirname(root)
+        if os.path.basename(root) != name:
+            new_root = os.path.join(parent, _unique(parent, name))
+            os.rename(root, new_root)
+        else:
+            new_root = root
+        path = os.path.join(new_root, os.path.basename(path))
+        root = new_root
+    else:
+        root = root_of(path)
+    new = project_file(root, name)
+    if os.path.abspath(new) != os.path.abspath(path):
+        if os.path.exists(new):
+            raise FileExistsError(f"「{name}」已經有了")
+        old_thumb = thumbnail_file(path)
+        os.rename(path, new)
+        if os.path.exists(old_thumb):
+            os.rename(old_thumb, thumbnail_file(new))
+    return new.replace("\\", "/")
+
+
+def move_project(path, folder):
+    """Move a project that owns its folder into another folder. Returns its new path."""
+    if not owns_folder(path):
+        raise ValueError("這個專案和其他專案共用資料夾，只能在檔案總管裡搬移")
+    root = root_of(path)
+    if os.path.abspath(os.path.dirname(root)) == os.path.abspath(folder):
+        return path
+    if os.path.abspath(folder).startswith(os.path.abspath(root) + os.sep):
+        raise ValueError("不能移到專案自己的資料夾裡")
+    dst = os.path.join(folder, _unique(folder, os.path.basename(root)))
+    shutil.move(root, dst)
+    return os.path.join(dst, os.path.basename(path)).replace("\\", "/")
+
+
+def move_folder(path, folder):
+    """Move a grouping folder into another one. Returns its new path."""
+    if os.path.abspath(folder) == os.path.abspath(path) or \
+            os.path.abspath(folder).startswith(os.path.abspath(path) + os.sep):
+        raise ValueError("不能把資料夾移到它自己裡面")
+    if os.path.abspath(os.path.dirname(path)) == os.path.abspath(folder):
+        return path
+    dst = os.path.join(folder, _unique(folder, os.path.basename(path)))
+    shutil.move(path, dst)
+    return dst.replace("\\", "/")
+
+
+def copy_project(path):
+    """A copy of a project next to it ("… 副本"): its whole folder when it owns one (the
+    backups and the cache left out), else the file. Returns the copy's project file."""
+    name = project_name(path) + " 副本"
+    if owns_folder(path):
+        root = root_of(path)
+        parent = os.path.dirname(root)
+        dst = os.path.join(parent, _unique(parent, safe_name(name)))
+        shutil.copytree(root, dst, ignore=lambda d, names: [n for n in names if d == root and n in (CACHE, BACKUP)])
+        copied = os.path.join(dst, os.path.basename(path))
+        return rename_project(copied, os.path.basename(dst))
+    root = root_of(path)
+    new = project_file(root, _unique(root, safe_name(name)))
+    for src in _project_files(path):
+        dst = new if src == path else thumbnail_file(new)
+        shutil.copy2(src, dst)
+    return new.replace("\\", "/")
+
+
+def remove_project(path, trash):
+    """Delete a project with trash(path) (to the recycle bin): its whole folder when it owns
+    one, else the file and its thumbnail."""
+    if owns_folder(path):
+        trash(root_of(path))
+    else:
+        for f in _project_files(path):
+            trash(f)
+
+
 # -- project info -----------------------------------------------------------------------------------
 def new_info(title):
     t = now_iso()

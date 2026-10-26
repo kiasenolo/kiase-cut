@@ -1028,14 +1028,19 @@ class MainWindow(QMainWindow):
 
     def show_project_manager(self):
         """Every project with its thumbnail; open one, or start / find another."""
-        dlg = ProjectManager(self, self.default_location(), self.recent())
-        if dlg.exec() != QDialog.Accepted or not dlg.choice:
+        dlg = ProjectManager(self, self.default_location(), self.recent(), current=self.path)
+        accepted = dlg.exec() == QDialog.Accepted
+        if dlg.moved or dlg.removed:                     # projects moved, renamed or deleted there
+            moved = dict(dlg.moved)
+            rec = [moved.get(p, p) for p in self.recent() if p not in dlg.removed]
+            self.settings().setValue("recent", rec)
+        if not accepted or not dlg.choice:
             return
         what = dlg.choice[0]
         if what == "open":
             self.open_recent(dlg.choice[1])
         elif what == "new":
-            self.new_project()
+            self.new_project(dlg.choice[1])
         else:
             self.open_project()
 
@@ -1080,10 +1085,10 @@ class MainWindow(QMainWindow):
         """Media goes into a project folder, so there has to be a project first."""
         return bool(self.proj) or self.new_project()
 
-    def new_project(self):
+    def new_project(self, location=None):
         if not self.maybe_save():
             return False
-        dlg = NewProjectDialog(self, self.default_location())
+        dlg = NewProjectDialog(self, location or self.default_location())
         if dlg.exec() != QDialog.Accepted:
             return False
         location, name, w, h, fps = dlg.values()

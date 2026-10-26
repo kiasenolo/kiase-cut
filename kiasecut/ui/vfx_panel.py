@@ -4,13 +4,15 @@ Drag one onto the timeline: on an empty spot it becomes a filter clip that works
 below it, on a clip it is added to that clip's effects. Double-click puts a filter clip at the
 playhead; the right-click menu applies it to the selected clips."""
 import json
+import queue
+import threading
 
-from PySide6.QtCore import QMimeData, QSize, Qt, Signal
+from PySide6.QtCore import QMimeData, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QLabel, QLineEdit, QMenu, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
-from .. import fx
+from .. import fx, fxthumbs
 
 FX_MIME = "application/x-kiasecut-fx"          # the filter's ref (a "builtin:…" name or a file path), utf-8,
                                                # or an effect dragged from a clip (effect_mime)
@@ -18,31 +20,22 @@ ROLE_REF = Qt.UserRole + 1
 THUMB = (64, 36)
 
 
-def sample_picture(w=160, h=90):
-    """A small picture to show what a filter does: colour ramp, a disc, a square and stripes
-    (premultiplied RGBA, uint8)."""
-    import numpy as np
-    y, x = np.mgrid[0:h, 0:w].astype(np.float32)
-    img = np.zeros((h, w, 4), np.float32)
-    img[..., 0] = 255 * x / w
-    img[..., 1] = 90 + 60 * y / h
-    img[..., 2] = 255 * (1 - x / w)
-    img[..., 3] = 255
-    disc = (x - w * 0.55) ** 2 + (y - h * 0.5) ** 2 < (h * 0.3) ** 2
-    img[disc] = (255, 220, 40, 255)
-    img[int(h * 0.15):int(h * 0.4), int(w * 0.08):int(w * 0.25)] = (20, 200, 90, 255)
-    img[int(h * 0.8):int(h * 0.86), :] = 255
-    return img.round().astype(np.uint8)
-
-
-class Thumbs:
-    """Pictures of the filters at their default settings, made on the GPU the first time they
-    are asked for. When the filter engine is not available there are none."""
+class Thumbs(QObject):
+    """Pictures of the filters at their default settings, made by a process of their own
+    (fxthumbs.py: the first compile of a big filter can take the driver half a minute, which
+    must not freeze the window). get() is None until the picture is made; ready(ref) says when
+    it is. When the filter engine is not available there are none."""
+    ready = Signal(str)
+    _made = Signal(object, object)          # (ref, filter key), QImage or None: from the thread
 
     def __init__(self):
-        self.engine = None
+        super().__init__()
         self.failed = False
-        self.cache = {}
+        self.cache = {}                     # (ref, filter key) -> QPixmap or None
+        self.asked = set()
+        self.todo = queue.Queue()
+        self.thread = None
+        self._made.connect(self._keep)
 
     def get(self, ref):
         if self.failed:
@@ -50,23 +43,41 @@ class Thumbs:
         key = (ref, fx.get(ref).key())
         if key in self.cache:
             return self.cache[key]
-        pix = None
+        if key not in self.asked:
+            self.asked.add(key)
+            self.todo.put(key)
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._run, name="filter thumbnails", daemon=True)
+                self.thread.start()
+        return None
+
+    def _run(self):                         # waits on the process, so the window goes on
         try:
-            if self.engine is None:
-                self.engine = fx.Engine()
-            d = fx.get(ref)
-            if not d.error:
-                src = sample_picture()
-                vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
-                out = self.engine.run(d, vals, src, time=0.7, progress=0.5, frame=17)
-                h, w = out.shape[:2]
-                img = QImage(out.tobytes(), w, h, w * 4, QImage.Format_RGBA8888_Premultiplied).copy()
-                pix = QPixmap.fromImage(img).scaled(*THUMB, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-        except Exception:
-            self.failed = self.engine is None
-            pix = None
-        self.cache[key] = pix
-        return pix
+            worker = fxthumbs.Worker()
+        except OSError:
+            self.failed = True
+            return
+        while True:
+            key = self.todo.get()
+            img = None
+            try:
+                if fx.get(key[0]).key() == key[1]:
+                    out = worker.make(key[0])
+                    if out is not None:
+                        h, w = out.shape[:2]
+                        img = QImage(out.tobytes(), w, h, w * 4, QImage.Format_RGBA8888_Premultiplied).copy()
+            except OSError:                 # the process is gone: no more pictures
+                self.failed = True
+                return
+            except Exception:
+                img = None
+            self._made.emit(key, img)
+
+    def _keep(self, key, img):
+        self.cache[key] = None if img is None else \
+            QPixmap.fromImage(img).scaled(*THUMB, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        if img is not None:
+            self.ready.emit(key[0])
 
 
 def effect_mime(effect, clip_id):
@@ -131,6 +142,7 @@ class VfxPanel(QWidget):
         lay.addWidget(self.search)
         lay.addWidget(self.tree, 1)
         self.thumbs = Thumbs()
+        self.thumbs.ready.connect(self._thumb_ready)
         self.mine = []                      # (name, ref) of the Library's filters
         self.rebuild()
         self.setMinimumWidth(260)
@@ -168,6 +180,16 @@ class VfxPanel(QWidget):
                 top.addChild(it)
             top.setExpanded(True)
         self._filter(self.search.text())
+
+    def _thumb_ready(self, ref):
+        pix = self.thumbs.get(ref)
+        if pix is None:
+            return
+        for i in range(self.tree.topLevelItemCount()):
+            top = self.tree.topLevelItem(i)
+            for j in range(top.childCount()):
+                if top.child(j).data(0, ROLE_REF) == ref:
+                    top.child(j).setIcon(0, QIcon(pix))
 
     def _filter(self, text):
         text = text.strip().lower()

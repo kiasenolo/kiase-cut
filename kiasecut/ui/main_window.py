@@ -275,6 +275,7 @@ class MainWindow(QMainWindow):
         self.font_check = None          # 字體對應 waiting for the font list (auto or not), or None
         self.font_dlg = None            # the 字體對應 window while it is open
         self.closing = False
+        self.layer_drop_at = None       # media dropped on the layer list: (layers above, layers before, when)
         self.autosave_dir = None        # recovery: the autosave folder once this program's session began
         self._autosaved = None          # the project as last autosaved (not written again unchanged)
         self.sync_busy = False
@@ -654,6 +655,11 @@ class MainWindow(QMainWindow):
         lp.flagToggled.connect(lambda tid, flag, on: self.apply(
             {"hidden": "隱藏", "locked": "鎖定"}[flag] + "圖層" if on else "取消" + {"hidden": "隱藏", "locked": "鎖定"}[flag],
             edit.set_track_flag, tid, flag, on))
+        lp.flagsToggled.connect(lambda tids, flag, on: self.apply(
+            {"hidden": "隱藏", "locked": "鎖定"}[flag] + "圖層" if on else "取消" + {"hidden": "隱藏", "locked": "鎖定"}[flag],
+            lambda lvl: [edit.set_track_flag(lvl, tid, flag, on) for tid in tids]))
+        lp.mediaDropped.connect(self.layer_drop)
+        lp.fxDropped.connect(self.layer_fx_drop)
         lp.renameRequested.connect(lambda cid: self.on_clip_action("rename", cid))
         lp.actionRequested.connect(self.layer_action)
         lp.shapeRequested.connect(lambda key: self.place_asset(assets.ident(key, *self.assets.colors), "", 0))
@@ -1666,6 +1672,7 @@ class MainWindow(QMainWindow):
 
     def after_edit(self, label):
         self.dirty = True
+        self._place_dropped_layers()
         self.meter.set_gain(self.proj.get("master_gain", 1.0))
         try:
             self.container()
@@ -2083,6 +2090,59 @@ class MainWindow(QMainWindow):
                 if 0 <= j < len(order) and order[j] not in ids:
                     order[i], order[j] = order[j], order[i]
             self.apply("圖層順序", edit.set_layer_order, order)
+
+    def layer_drop(self, idents, paths, above):
+        """Media dropped on the layer list: new layers, `above` layers from the top. They are
+        placed as on the timeline (at the picture's moment, 0) and moved there when they come
+        (_place_dropped_layers; files are imported first)."""
+        if not self.proj:
+            return
+        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic())
+        if paths:
+            self.drop_files(paths, self.library.current_folder(), ("", 0, False))
+            return
+        media = [i for i in idents if i.startswith("m")]
+        if len(media) > 1:
+            self.place_media_many(media, "", 0, False)
+        else:
+            for ident in idents:
+                if ident.startswith("cmp:"):
+                    self.place_compound(ident[4:], "", 0)
+                elif ident.startswith(assets.PREFIX):
+                    self.place_asset(ident, "", 0)
+                elif ident.startswith("m"):
+                    self.place_media(ident, "", 0)
+        self.layer_drop_at = None                        # (placed by now; only imports come later)
+
+    def _place_dropped_layers(self):
+        """After an edit: layers that came from a drop on the layer list go where it was."""
+        pend = self.layer_drop_at
+        if not pend or not self.editing_static():
+            return
+        above, before, when = pend
+        if time.monotonic() - when > 120:                # (an import that never came)
+            self.layer_drop_at = None
+            return
+        level = self.container()
+        order = [c["id"] for c in edit.layers(level)]
+        new = [cid for cid in order if cid not in before]
+        if not new:
+            return
+        self.layer_drop_at = None
+        old = [cid for cid in order if cid in before]
+        i = min(above, len(old))
+        if order != old[:i] + new + old[i:]:             # (part of the same undo step)
+            edit.set_layer_order(level, old[:i] + new + old[i:])
+
+    def layer_fx_drop(self, ref, cid, above):
+        """An effect dropped on the layer list: onto the layer it landed on, or a filter layer
+        between layers."""
+        if cid:
+            self.on_filter_dropped(ref, cid, "", 0)
+            return
+        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic())
+        self.add_filter_clip(ref, "", 0)
+        self.layer_drop_at = None
 
     def make_group(self, ids=None):
         """建立群組 (Ctrl+G): the selected picture clips into a new group, opened."""

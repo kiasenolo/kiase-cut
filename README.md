@@ -276,7 +276,12 @@ takes the timeline's place, as in Photoshop - every picture clip is a layer, the
 first. Click (Ctrl / Shift for several) to select, drag layers to restack them (one per
 track), the dot hides a layer and the padlock locks it, double-click a name to rename it;
 文字 and 形狀 ▾ add a layer at the top (shapes in the 內建素材 tab's colours), 上移 / 下移
-restack the selection, 群組 groups it, 複製 copies it right above itself, 刪除 removes it. A
+restack the selection, 群組 groups it, 複製 copies it right above itself, 刪除 removes it;
+right-clicking the selection offers the same, plus 重新命名 and hiding / locking them all. Drag
+media onto the list - from the media library, the Library tab, 內建素材, the 複合片段 list or the
+file manager - and they become layers where they are dropped (between the two nearest layers;
+one undo step). An effect from the VFX tab dropped on a layer goes onto it; dropped between
+layers it becomes a filter layer there. A
 layer that does not cover the picture's moment shows dimmed (only that moment is drawn). The
 preview, the inspector and every edit work on the selected layers as on clips.
 

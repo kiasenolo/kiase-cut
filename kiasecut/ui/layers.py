@@ -6,22 +6,33 @@ Each picture clip is a layer, the top one first (edit.layers). Click a layer to 
 and every edit work on them as usual), drag layers up and down to restack them (one per
 track: edit.set_layer_order), the eye hides a layer and the padlock locks it (its track's
 switches), double-click its name to rename it. The buttons add a text or a shape at the top,
-copy, delete, group and restack the selection. A layer that does not cover the picture's
-moment (time 0 - a static compound shows only that) is listed dimmed.
+copy, delete, group and restack the selection; right-click a layer for the same. A layer that
+does not cover the picture's moment (time 0 - a static compound shows only that) is listed
+dimmed.
+
+Media dropped on the list (from the media library, the Library tab, 內建素材, the compound
+list or the file manager) become new layers where they are dropped; an effect from the VFX
+tab dropped on a layer goes onto it (between layers or below them: a filter layer there).
 """
 from PySide6.QtCore import QItemSelectionModel, QSize, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
                                QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, edit, project
+from .timeline import FX_MIME, MEDIA_MIME
 
 ROLE = Qt.UserRole
+TRACK = Qt.UserRole + 1          # (track id, {"hidden", "locked"}) of a layer
 KINDS = {"image": "▧", "video": "▶", "text": "T", "compound": "▣", "group": "▾", "filter": "✦"}
 
 
 class LayerList(QListWidget):
-    """The layers; dropping one in a new place reports the new order (top first)."""
+    """The layers; dropping one in a new place reports the new order (top first). Drops from
+    elsewhere report where they land."""
     reordered = Signal(list)
+    mediaDropped = Signal(list, list, int)       # media / asset / compound idents, file paths, layers above
+    fxDropped = Signal(str, str, int)            # effect ref, the layer it was dropped on ("": between), layers above
+    menuRequested = Signal(object)               # global position of a right-click on the selection
 
     def __init__(self):
         super().__init__()
@@ -30,9 +41,59 @@ class LayerList(QListWidget):
         self.setDefaultDropAction(Qt.MoveAction)
         self.setSpacing(1)
 
+    @staticmethod
+    def _outside(e):
+        md = e.mimeData()
+        return not isinstance(e.source(), LayerList) and (md.hasFormat(MEDIA_MIME) or md.hasFormat(FX_MIME)
+                                                          or md.hasUrls())
+
+    def drop_index(self, pos):
+        """How many layers are above a drop at pos (it goes between two rows: the nearer gap)."""
+        it = self.itemAt(pos.toPoint())
+        if it is None:
+            return self.count()
+        r = self.visualItemRect(it)
+        return self.row(it) + (1 if pos.y() > r.center().y() else 0)
+
+    def dragEnterEvent(self, e):
+        if self._outside(e):
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+        else:
+            super().dragEnterEvent(e)
+
+    def dragMoveEvent(self, e):
+        if self._outside(e):
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+        else:
+            super().dragMoveEvent(e)
+
     def dropEvent(self, e):
-        super().dropEvent(e)
-        self.reordered.emit([self.item(i).data(ROLE) for i in range(self.count())])
+        if not self._outside(e):
+            super().dropEvent(e)
+            self.reordered.emit([self.item(i).data(ROLE) for i in range(self.count())])
+            return
+        md, pos = e.mimeData(), e.position()
+        at = self.drop_index(pos)
+        if md.hasFormat(FX_MIME):
+            it = self.itemAt(pos.toPoint())
+            self.fxDropped.emit(bytes(md.data(FX_MIME)).decode("utf-8"), it.data(ROLE) if it else "", at)
+        elif md.hasFormat(MEDIA_MIME):
+            ids = [i for i in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",") if i]
+            self.mediaDropped.emit(ids, [], at)
+        else:
+            self.mediaDropped.emit([], [u.toLocalFile() for u in md.urls() if u.isLocalFile()], at)
+        e.setDropAction(Qt.CopyAction)
+        e.accept()
+
+    def contextMenuEvent(self, e):
+        it = self.itemAt(e.pos())
+        if it is not None and not it.isSelected():
+            self.setCurrentItem(it)                 # (a right-click on another layer picks it)
+        if not self.selectedItems():
+            return
+        self.menuRequested.emit(e.globalPos())
 
 
 class LayerRow(QWidget):
@@ -75,9 +136,12 @@ class LayerPanel(QWidget):
     selectionPicked = Signal(object, object)       # {clip ids}, the primary one
     orderChanged = Signal(list)                    # clip ids, top first
     flagToggled = Signal(str, str, bool)           # track id, "hidden" / "locked", on
+    flagsToggled = Signal(list, str, bool)         # the same for several layers' tracks
     renameRequested = Signal(str)                  # clip id
     actionRequested = Signal(str)                  # "text", "copy", "delete", "group", "up", "down"
     shapeRequested = Signal(str)                   # an asset ident (assets.ident): a shape at the top
+    mediaDropped = Signal(list, list, int)         # idents, file paths, how many layers are above the drop
+    fxDropped = Signal(str, str, int)              # effect ref, layer it landed on or "", layers above
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -96,6 +160,9 @@ class LayerPanel(QWidget):
         self.list.itemSelectionChanged.connect(self._selected)
         self.list.reordered.connect(self.orderChanged)
         self.list.itemDoubleClicked.connect(lambda it: self.renameRequested.emit(it.data(ROLE)))
+        self.list.mediaDropped.connect(self.mediaDropped)
+        self.list.fxDropped.connect(self.fxDropped)
+        self.list.menuRequested.connect(self._menu)
         lay.addWidget(self.list, 1)
         bar = QHBoxLayout()
         bar.setSpacing(3)
@@ -124,6 +191,23 @@ class LayerPanel(QWidget):
         bar.addStretch(1)
         lay.addLayout(bar)
 
+    def _menu(self, where):
+        """Right-click on the selected layers: what the buttons do, and rename / hide / lock."""
+        items = self.list.selectedItems()
+        menu = QMenu(self)
+        if len(items) == 1:
+            cid = items[0].data(ROLE)
+            menu.addAction("重新命名", lambda: self.renameRequested.emit(cid))
+        for text, action in (("上移", "up"), ("下移", "down"), ("群組", "group"), ("複製", "copy"),
+                             ("刪除", "delete")):
+            menu.addAction(text, lambda a=action: self.actionRequested.emit(a))
+        menu.addSeparator()
+        tracks = [it.data(TRACK) for it in items]               # (track id, its switches)
+        for text, flag in (("隱藏 / 顯示", "hidden"), ("鎖定 / 解鎖", "locked")):
+            on = not all(t[1].get(flag) for t in tracks)         # all on: off, else on
+            menu.addAction(text, lambda f=flag, on=on: self.flagsToggled.emit([t[0] for t in tracks], f, on))
+        menu.exec(where)
+
     def set_layers(self, level, selected_ids, primary):
         """Show the layers of level (a static compound's content), selection included."""
         self._filling = True
@@ -133,6 +217,7 @@ class LayerPanel(QWidget):
             t = tracks[c["id"]]
             it = QListWidgetItem()
             it.setData(ROLE, c["id"])
+            it.setData(TRACK, (t["id"], {"hidden": bool(t.get("hidden")), "locked": bool(t.get("locked"))}))
             it.setSizeHint(QSize(200, 28))
             if project.locked(t):
                 it.setFlags(it.flags() & ~Qt.ItemIsSelectable)

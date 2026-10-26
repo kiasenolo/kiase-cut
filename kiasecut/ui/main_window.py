@@ -747,6 +747,7 @@ class MainWindow(QMainWindow):
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
         add(m, "新增文字", "Ctrl+T", self.do_text)
+        add(m, "清除空軌道", None, self.clear_empty_tracks)
         m.addSeparator()
         add(m, "建立群組", "Ctrl+G", lambda: self.make_group())
         add(m, "解散群組", "Ctrl+Shift+G", lambda: self.ungroup())
@@ -1753,6 +1754,9 @@ class MainWindow(QMainWindow):
         self.apply("分割", split_all)
 
     def do_delete(self):
+        if self.timeline.selected_tracks and not self.editing_static():     # tracks picked by their headers
+            self.delete_tracks([t["id"] for t in self.timeline.rows if t["id"] in self.timeline.selected_tracks])
+            return
         ids = [c["id"] for c in self.timeline.selected_clips()]
         if ids:
             self.timeline.selected_id = None
@@ -2351,10 +2355,28 @@ class MainWindow(QMainWindow):
         elif action.startswith("add:"):
             self.apply("新增軌道", edit.add_track, action.split(":", 1)[1], tid)
         elif action == "delete":
-            if t["clips"] and QMessageBox.question(
-                    self, "刪除軌道", f"軌道上有 {len(t['clips'])} 個片段，一起刪除嗎？") != QMessageBox.Yes:
-                return
-            self.apply("刪除軌道", edit.delete_track, tid)
+            sel = self.timeline.selected_tracks
+            self.delete_tracks(sorted(sel) if tid in sel else [tid])
+        elif action == "clear_empty":
+            self.clear_empty_tracks()
+
+    def delete_tracks(self, tids):
+        """Delete tracks of the open level (asking first when clips are on them), one undo step."""
+        level = self.container()
+        n = sum(len(edit.track_by_id(level, tid)["clips"]) for tid in tids)
+        what = "軌道上" if len(tids) == 1 else f"這 {len(tids)} 條軌道上"
+        if n and QMessageBox.question(self, "刪除軌道", f"{what}有 {n} 個片段，一起刪除嗎？") != QMessageBox.Yes:
+            return
+        self.timeline.selected_tracks = set()
+        self.apply("刪除軌道" if len(tids) == 1 else f"刪除 {len(tids)} 條軌道", edit.delete_tracks, tids)
+
+    def clear_empty_tracks(self):
+        if self.proj is None:
+            return
+        if not any(not t["clips"] for t in self.container()["tracks"]):
+            self.statusBar().showMessage("沒有空軌道", 3000)
+            return
+        self.apply("清除空軌道", edit.remove_empty_tracks)
 
     def on_clip_action(self, action, cid):
         if action == "paste":

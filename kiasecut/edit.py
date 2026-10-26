@@ -1700,6 +1700,23 @@ def delete_track(proj, track_id):
     proj["tracks"].remove(t)
 
 
+def delete_tracks(proj, track_ids):
+    """Delete several tracks of the level (and their clips) at once."""
+    gone = [track_by_id(proj, tid) for tid in dict.fromkeys(track_ids)]
+    proj["tracks"][:] = [t for t in proj["tracks"] if not any(t is g for g in gone)]
+    return len(gone)
+
+
+def remove_empty_tracks(proj):
+    """清除空軌道: delete every track of the level with no clips; returns how many."""
+    kept = [t for t in proj["tracks"] if t["clips"]]
+    n = len(proj["tracks"]) - len(kept)
+    if not n:
+        raise EditError("沒有空軌道")
+    proj["tracks"][:] = kept
+    return n
+
+
 def move_track(proj, track_id, up):
     """Move a track one row up or down on screen, among tracks of its group (pictures / audio)."""
     t = track_by_id(proj, track_id)

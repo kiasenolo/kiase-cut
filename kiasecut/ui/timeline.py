@@ -54,6 +54,10 @@ matteOffsetEdited on release: the compound's time at the clip's start).
 Audio and video clips show their waveform (scaled by the clip volume and fades). Track
 headers have mute / solo buttons (sound), a hide button (pictures) and a padlock: a locked
 track (hatched) cannot have its clips selected or grabbed, and moves and drops skip it.
+Click a track header to select the track (Ctrl+click: in or out of the selection, Shift+click:
+every track from the last one picked); selected tracks are deleted together (Delete, or the
+header's menu), and the menu's 清除空軌道 removes every track with nothing on it. Picking
+tracks clears the clip selection and picking clips clears the tracks'.
 Drag the headers' right edge to make them wider (longer track names) or narrower; the
 width (header_w) is kept in view_state with the scroll and zoom. On the ruler that edge is
 left to the playhead.
@@ -173,6 +177,8 @@ class Timeline(QWidget):
         self.header_w = HEADER_W                   # width of the track headers: drag their right edge
         self._primary = None
         self.selected_ids = set()
+        self.selected_tracks = set()               # ids of the tracks picked by their headers
+        self.track_anchor = None                   # the track a Shift+click selects from
         self.band = None                           # selection box (QRectF) while dragging
         self.snapping = True                       # 自動吸附: moves / trims snap to edges and the playhead
         self.rows = []
@@ -218,6 +224,7 @@ class Timeline(QWidget):
         visual = [t for t in proj["tracks"] if t["kind"] != "audio"]
         audio = [t for t in proj["tracks"] if t["kind"] == "audio"]
         self.rows = list(reversed(visual)) + audio
+        self.selected_tracks &= {t["id"] for t in self.rows}
         self._layout()
         self.drag = None
         if not keep_view:
@@ -260,6 +267,8 @@ class Timeline(QWidget):
                 or next((c["id"] for c in self.level_clips() if c["id"] in ids), None)
         self._primary = primary
         self.selected_ids = ids if primary else set()
+        if self.selected_ids:
+            self.selected_tracks = set()
         self.clipSelected.emit(self.selected)
         self.update()
 
@@ -275,8 +284,31 @@ class Timeline(QWidget):
         if clip and clip["id"] in self.locked_ids():
             clip = None
         self.selected_id = clip["id"] if clip else None
+        if clip:
+            self.selected_tracks = set()
         self.clipSelected.emit(clip)
         self.update()
+
+    def select_tracks(self, ids, anchor=None):
+        """Pick tracks (by id) by their headers; the clip selection goes."""
+        self.selected_tracks = {t["id"] for t in self.rows if t["id"] in set(ids)}
+        if anchor is not None:
+            self.track_anchor = anchor
+        if self.selected_ids:
+            self.set_selection(set())
+        self.update()
+
+    def _click_header(self, row, mods):
+        tid = self.rows[row]["id"]
+        if mods & Qt.ShiftModifier and self.track_anchor in [t["id"] for t in self.rows]:
+            a = next(i for i, t in enumerate(self.rows) if t["id"] == self.track_anchor)
+            lo, hi = sorted((a, row))
+            self.select_tracks({t["id"] for t in self.rows[lo:hi + 1]} | (
+                self.selected_tracks if mods & Qt.ControlModifier else set()))
+        elif mods & Qt.ControlModifier:
+            self.select_tracks(self.selected_tracks ^ {tid}, tid)
+        else:
+            self.select_tracks({tid}, tid)
 
     def view_state(self):
         """Where the view is (scroll, zoom, track heights, header width), to save with the project."""
@@ -666,10 +698,14 @@ class Timeline(QWidget):
                 continue
             y, h = self.tops[i], self.row_h(i)
             p.fillRect(0, y, w, h - 1, row_color(tr))       # the track colour: its row, and clip_color
-            p.fillRect(0, y, self.header_w, h - 1, QColor("#242427"))     # header column, as in Resolve
+            picked = tr["id"] in self.selected_tracks
+            p.fillRect(0, y, self.header_w, h - 1, QColor("#3a3a42" if picked else "#242427"))   # as in Resolve
             p.fillRect(self.header_w - 1, y, 1, h - 1, QColor("#0e0e10"))
             if tr.get("color"):
                 p.fillRect(0, y, 3, h - 1, QColor(tr["color"]))
+            if picked:
+                p.setPen(QPen(QColor("#c9c9cd"), 1))
+                p.drawRect(QRectF(0.5, y + 0.5, self.header_w - 2, h - 2))
             # V1 is the bottom picture track, A1 the first sound track (Resolve's numbering)
             if tr["kind"] == "audio":
                 label = f"A{sum(1 for t in self.rows[:i] if t['kind'] == 'audio') + 1}"
@@ -1164,7 +1200,12 @@ class Timeline(QWidget):
                 for flag, r in self.header_buttons(row):
                     if r.contains(e.position()):
                         self.trackAction.emit("toggle:" + flag, self.rows[row]["id"])
+                        return
+                self._click_header(row, e.modifiers())
             return
+        if self.selected_tracks:                                  # a click among the clips: no tracks picked
+            self.selected_tracks = set()
+            self.update()
         pos = e.position()
         mr, mc = self._matte_rect()
         if mr is not None and mr.contains(pos) and not e.modifiers():     # 編輯區域: the compound's part
@@ -1687,6 +1728,9 @@ class Timeline(QWidget):
         if pos.x() < self.header_w:
             tr = self.rows[row]
             tid = tr["id"]
+            if tid not in self.selected_tracks:
+                self.select_tracks({tid}, tid)
+            n = len(self.selected_tracks)
             if tr["clips"]:
                 ids = {c["id"] for c in tr["clips"]}
                 menu.addAction("選取軌道上的所有片段", lambda: self.set_selection(ids, tr["clips"][0]["id"]))
@@ -1700,7 +1744,7 @@ class Timeline(QWidget):
                 items += [("軌道音量…", "gain")]
             items += [("上移", "up"), ("下移", "down"), None,
                       ("新增影片軌道", "add:video"), ("新增文字軌道", "add:text"), ("新增音訊軌道", "add:audio"),
-                      None, ("刪除軌道", "delete")]
+                      None, (f"刪除 {n} 條軌道" if n > 1 else "刪除軌道", "delete"), ("清除空軌道", "clear_empty")]
             for it in items:
                 if it is None:
                     menu.addSeparator()

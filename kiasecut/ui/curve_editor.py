@@ -17,6 +17,9 @@ playhead.
 
 The segment after each selected keyframe takes a typed CSS cubic-bezier or a preset. Edits
 show live in the preview while dragging and become one undo step on release.
+
+批量: with more clips selected, the keyframes of theirs alike the shown clip's (keybatch.py)
+are ringed and change with them while "一起修改" is ticked.
 """
 import copy
 import math
@@ -99,6 +102,7 @@ class CurveCanvas(QWidget):
         self.vrange = (0.0, 1.0)     # visible plot values
         self.ranges = []             # per curve (lo, hi) for normalising
         self._paths = None           # cached curve paths for the current view
+        self.linked = {}             # {curve index: {key index: other clips with an alike key}} (批量)
 
     # -- state ------------------------------------------------------------------------------------
     def set_curves(self, specs, duration, fps, t, keep_view=False):
@@ -318,6 +322,12 @@ class CurveCanvas(QWidget):
                 p.setPen(QPen(QColor("#ffffff") if on else QColor(c["pen"]), 1.5))
                 p.setBrush(QColor("#ffb020") if on else QColor("#26262b"))
                 p.drawPolygon(QPolygonF([pt + QPointF(0, -r), pt + QPointF(r, 0), pt + QPointF(0, r), pt + QPointF(-r, 0)]))
+                if i in self.linked.get(ci, ()):            # changes with other clips' keys (批量)
+                    q = r + 4
+                    p.setPen(QPen(QColor("#5ad6ff"), 1.5))
+                    p.setBrush(Qt.NoBrush)
+                    p.drawPolygon(QPolygonF([pt + QPointF(0, -q), pt + QPointF(q, 0), pt + QPointF(0, q),
+                                             pt + QPointF(-q, 0)]))
         if self.band is not None:
             p.setPen(QPen(QColor("#e6e6e6"), 1, Qt.DashLine))
             p.setBrush(QColor(255, 255, 255, 35))
@@ -612,6 +622,12 @@ class CurveEditor(QWidget):
         fit = QPushButton("全部顯示")
         fit.clicked.connect(lambda: self.canvas.fit())
         top.addWidget(self.norm)
+        self.batch = QCheckBox("一起修改")
+        self.batch.setChecked(True)
+        self.batch.setStyleSheet("QCheckBox { color: #5ad6ff; }")
+        self.batch.toggled.connect(lambda _on: self._show_links())
+        self.batch.hide()
+        top.addWidget(self.batch)
         top.addStretch()
         top.addWidget(only)
         top.addWidget(fit)
@@ -683,6 +699,7 @@ class CurveEditor(QWidget):
         self.rows = []               # every parameter of the clip
         self.checked = set()         # (group, key) ticked; kept from clip to clip
         self.shown = []              # rows ticked, in list order
+        self.links = (0, 0, {})      # (other clips selected, those with alike keys, {(group, key): {key index: n}})
         self.set_clip(None, 0, 60.0)
 
     # -- state ------------------------------------------------------------------------------------
@@ -771,7 +788,28 @@ class CurveEditor(QWidget):
             specs.append({"label": lab, "factor": factor, "keys": keys, "slot": slot,
                           "static": p if not keys else default})
         self.canvas.set_curves(specs, c["duration_us"] if c else 1, self.fps, self.t, keep_view=not fit)
+        self._show_links()
         self._show_key()
+
+    def set_links(self, others, linked, links):
+        """批量: others other clips are selected, linked of them have keyframes alike this
+        clip's; links {(group, key): {key index: how many clips}} (keybatch.match)."""
+        self.links = (others, linked, links)
+        self._show_links()
+
+    def batch_on(self):
+        return self.links[1] > 0 and self.batch.isChecked()
+
+    def _show_links(self):
+        others, linked, links = self.links
+        self.batch.setVisible(others > 0)
+        self.batch.setEnabled(linked > 0)
+        self.batch.setText(f"一起修改另外 {linked} 個片段" if linked else "其他選取的片段沒有相近的關鍵幀")
+        self.batch.setToolTip("多選時，其他片段在同一參數、相差一幀內、數值相差 1% 內的關鍵幀（藍框）會跟著一起改："
+                              "移動、改數值、改曲線、刪除、新增")
+        on = linked > 0 and self.batch.isChecked()
+        self.canvas.linked = {ci: links.get(r[:2], {}) for ci, r in enumerate(self.shown)} if on else {}
+        self.canvas.update()
 
     def _single(self):
         cv = self.canvas

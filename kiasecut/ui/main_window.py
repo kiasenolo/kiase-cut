@@ -25,8 +25,8 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QH
                                QVBoxLayout,
                                QWidget)
 
-from .. import (assets, build, components, curves, edit, fonts, fx, gpu, layouts, library, project, recovery, render,
-               renderexport, sysmem, thumbnail, userlib, waveform, workspace)
+from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
+               render, renderexport, sysmem, thumbnail, userlib, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -34,7 +34,7 @@ from .colorpick import pick_color, qcolor, rgba
 from .font_dialog import FontMapDialog
 from .compounds import CompoundPanel
 from .docks import Panels
-from .curve_editor import CurveEditor
+from .curve_editor import CurveEditor, param_rows as curve_param_rows
 from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
@@ -242,6 +242,22 @@ def edit_rate(proj):
     except (TypeError, ValueError):
         r = 0
     return r if 1 <= r <= 1000 else proj["fps"]
+
+
+def same_group(c, other, group):
+    """The group of clip other that matches group of clip c: itself, or for a filter's
+    parameters (fx:<effect id>) the same filter at the same place among other's filters of
+    that kind; None when other has none."""
+    if not group.startswith(("fx:", "fxmask:")):
+        return group
+    kind, eid = group.split(":", 1)
+    mine = c.get("effects") or []
+    e = next((e for e in mine if e["id"] == eid), None)
+    if e is None:
+        return None
+    n = [x["id"] for x in mine if x["filter"] == e["filter"]].index(eid)
+    theirs = [x for x in other.get("effects") or [] if x["filter"] == e["filter"]]
+    return f"{kind}:{theirs[n]['id']}" if n < len(theirs) else None
 
 
 def group_holder(c, group, create=False):
@@ -2024,24 +2040,92 @@ class MainWindow(QMainWindow):
 
     def on_curve_keys(self, cid, changes, final):
         """Curve editor edits ([(group, key, keys, value if no keys are left)]): shown live
-        while dragging, one undo step when released."""
+        while dragging, one undo step when released. With 一起修改 (批量) the alike keyframes
+        of the other selected clips change with them."""
+        every = [(cid, *ch) for ch in changes] + self.curve_batch(cid, changes)
         if final:
             def set_all(level):
-                for g, k, keys, keep in changes:
+                for c_id, g, k, keys, keep in every:
                     if keys:
-                        edit.set_keys(level, cid, g, k, keys)
+                        edit.set_keys(level, c_id, g, k, keys)
                     else:
-                        edit.clear_keys(level, cid, g, k, keep)
+                        edit.clear_keys(level, c_id, g, k, keep)
 
-            self.apply("刪除關鍵幀" if all(not ch[2] for ch in changes) else "編輯曲線", set_all)
+            n = len({e[0] for e in every}) - 1
+            label = "刪除關鍵幀" if all(not ch[2] for ch in changes) else "編輯曲線"
+            self.apply(label + (f"（另 {n} 個片段）" if n else ""), set_all)
             return
         view = self.snapshot()
-        for tr in view["tracks"]:
+        by_id = {}
+        for c_id, g, k, keys, keep in every:
+            by_id.setdefault(c_id, []).append((g, k, keys, keep))
+        for tr in project.all_tracks(view["tracks"]):
             for c in tr["clips"]:
-                if c["id"] == cid:
-                    for g, k, keys, keep in changes:
-                        group_holder(c, g, create=True)[k] = {"keys": keys} if keys else keep
+                for g, k, keys, keep in by_id.get(c["id"], ()):
+                    group_holder(c, g, create=True)[k] = {"keys": keys} if keys else keep
         self.player.worker.set_view(view, self.cache_dir())
+
+    def _batch_clips(self, cid):
+        """(clip cid, [the other selected clips]) of the open level, for 批量."""
+        level = self.container()
+        try:
+            c = edit.find(level, cid)[1]
+        except edit.EditError:
+            return None, []
+        others = []
+        for oid in sorted(self.timeline.selected_ids - {cid}):
+            try:
+                others.append(edit.find(level, oid)[1])
+            except edit.EditError:
+                pass
+        return c, others
+
+    def _alike(self, c, others, g, k):
+        """[(other clip, its group, its curve)] of others with keyframes on the parameter g / k
+        of clip c, and c's curve (None when c's is not animated)."""
+        mine = group_holder(c, g).get(k)
+        if not curves.is_animated(mine):
+            return None, []
+        out = []
+        for o in others:
+            og = same_group(c, o, g)
+            p = group_holder(o, og).get(k) if og else None
+            if curves.is_animated(p):
+                out.append((o, og, p))
+        return mine, out
+
+    def curve_batch(self, cid, changes):
+        """批量: the curve editor's edit of clip cid done to the alike keyframes of the other
+        selected clips (keybatch.carry): [(clip id, group, key, keys, value if none are left)]."""
+        if not self.curves.batch_on():
+            return []
+        c, others = self._batch_clips(cid)
+        out = []
+        for g, k, keys, _keep in (changes if c else ()):
+            mine, theirs = self._alike(c, others, g, k)
+            for o, og, p in theirs:
+                r = keybatch.carry(mine["keys"], keys, p["keys"], self.proj["fps"], o["duration_us"], edit.KEY_TOL_US)
+                if r is not None:
+                    out.append((o["id"], og, k, r[0], r[1] if r[1] is not None else curves.value(p, 0)))
+        return out
+
+    def curve_links(self, sel):
+        """批量, for the curve editor: (other clips selected, those with keyframes alike sel's,
+        {(group, key): {sel's key index: how many clips have an alike one}})."""
+        if sel is None or len(self.timeline.selected_ids) < 2:
+            return 0, 0, {}
+        c, others = self._batch_clips(sel["id"])
+        if c is None:
+            return 0, 0, {}
+        links, linked = {}, set()
+        for g, k, *_ in curve_param_rows(c):
+            mine, theirs = self._alike(c, others, g, k)
+            for o, _og, p in theirs:
+                for i in keybatch.match(mine["keys"], p["keys"], self.proj["fps"]):
+                    links.setdefault((g, k), {}).setdefault(i, 0)
+                    links[(g, k)][i] += 1
+                    linked.add(o["id"])
+        return len(others), len(linked), links
 
     def show_selection_props(self):
         clips, t = [self.placed(c) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
@@ -3053,6 +3137,7 @@ class MainWindow(QMainWindow):
         sel = self.timeline.selected
         self.show_selection_props()
         self.curves.set_clip(sel, self.clip_time(sel["id"]) if sel else 0, self.fps)
+        self.curves.set_links(*self.curve_links(sel))
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
         sp = self.preview.spacing() if self.proj else None

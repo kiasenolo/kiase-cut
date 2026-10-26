@@ -24,8 +24,8 @@ TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
 MAX_PASSES = 8
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu")
-RESERVED = {"source", "resolution", "time", "progress", "frame", "scale", "pass_index", "src", "effect",
-            "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
+RESERVED = {"source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "src",
+            "original", "effect", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
 
 
 class FilterError(Exception):
@@ -238,6 +238,7 @@ def uniform_value(p, stored, t):
 # -- the shader -------------------------------------------------------------------------------------
 PRELUDE = """#version 330
 uniform sampler2D source;
+uniform sampler2D original_;
 uniform vec2 resolution;
 uniform float time;
 uniform float progress;
@@ -248,6 +249,7 @@ uniform int pass_index;
 in vec2 uv_;
 out vec4 fragColor;
 vec4 src(vec2 uv) { return texture(source, clamp(uv, 0.0, 1.0)); }
+vec4 original(vec2 uv) { return texture(original_, clamp(uv, 0.0, 1.0)); }
 vec4 unpremultiply(vec4 c) { return c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(0.0); }
 vec4 premultiply(vec4 c) { return vec4(c.rgb * c.a, c.a); }
 float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -295,7 +297,7 @@ class Engine:
         quad = np.array([-1, -1, 1, -1, -1, 1, 1, 1], dtype="f4")
         self.quad = self.ctx.buffer(quad.tobytes())
         self.programs = {}
-        self.targets = {}            # (w, h) -> [(texture, fbo)] x 2
+        self.targets = {}            # (w, h) -> [(texture, fbo)] x 3
 
     def _program(self, d):
         key = d.key()
@@ -319,7 +321,7 @@ class Engine:
             if len(self.targets) > 6:
                 self.targets.clear()
             t = []
-            for _ in range(2):
+            for _ in range(3):              # the input can stay one of them while two take turns
                 tex = self.ctx.texture((w, h), 4)
                 tex.filter = (self.mgl.LINEAR, self.mgl.LINEAR)
                 tex.repeat_x = tex.repeat_y = False
@@ -332,7 +334,7 @@ class Engine:
         for the shader}. Returns the same kind of array."""
         h, w = rgba.shape[:2]
         with self.ctx:                           # this engine's context, whatever else the thread uses
-            (ta, _), _ = self._targets(w, h)
+            (ta, _), _, _ = self._targets(w, h)
             ta.write(np.ascontiguousarray(rgba).tobytes())
             out = self.run_tex(d, values, ta, w, h, time, progress, frame)
             data = out.read()
@@ -342,7 +344,7 @@ class Engine:
         """Filter the w x h texture src (premultiplied RGBA) on the card; returns the texture
         holding the result, one of this engine's own (valid until its next run at that size)."""
         prog, vao = self._program(d)
-        (ta, fa), (tb, fb) = self._targets(w, h)
+        targets = self._targets(w, h)
         for name, v in (("resolution", (float(w), float(h))), ("time", float(time)), ("progress", float(progress)),
                         ("frame", int(frame)), ("scale", h / 1080.0)):
             if name in prog:
@@ -352,15 +354,18 @@ class Engine:
                 prog[p.name].value = values[p.name]
         if "source" in prog:
             prog["source"].value = 0
+        if "original_" in prog:
+            prog["original_"].value = 1
         self.ctx.disable(self.mgl.BLEND)
         read = src
         for i in range(d.passes):
             if "pass_index" in prog:
                 prog["pass_index"].value = i
-            dst_tex, dst_fbo = (ta, fa) if read is not ta else (tb, fb)
+            dst_tex, dst_fbo = next(t for t in targets if t[0] is not read and t[0] is not src)
             dst_fbo.use()
             self.ctx.viewport = (0, 0, w, h)
             read.use(0)
+            src.use(1)
             vao.render(self.mgl.TRIANGLE_STRIP)
             read = dst_tex
         return read

@@ -31,8 +31,11 @@ to move every keyframe at that time (it snaps to frames, the playhead and other 
 starts, ends and keyframes), click it to go there.
 
 Sound clips have a volume line (as in Jianying): drag it up or down to change the clip's
-volume (with volume keyframes, all of them change together); the keyframes are points on
-the line that can be dragged up / down (value) and sideways (time). The line's height is
+volume. With volume keyframes only a level stretch can be dragged - between two points of
+the same volume (both move), or before the first / after the last point (that point moves);
+a sloping stretch cannot. Alt+drag anywhere on the line moves all of it (every keyframe);
+the keyframes are points on the line that can be dragged up / down (value) and sideways
+(time). The line's height is
 in dB: the top is +20 dB (1000 %), 0 dB (100 %) two thirds of the way up.
 
 Audio and video clips show their waveform (scaled by the clip volume and fades). Track
@@ -94,6 +97,20 @@ BEAT_PX = 5                                          # beat grid lines at least 
 BEAT_COLORS = {0: "#ffd34d", 1: "#ffd34d", 2: "#ff8a3d", 3: "#ff6bd5", 4: "#4dd2ff", 6: "#b48cff"}
 BEAT_TICKS = {0: (0.55, 12, 2.5), 1: (0.3, 8, 1.8), 2: (0.24, 7, 1.5), 3: (0.2, 6, 1.4), 4: (0.2, 6, 1.4),
               6: (0.15, 5, 1.2)}                    # share of the clip's height, at least px; pen width
+
+
+def level_stretch(keys, t, tol_db=0.05):
+    """Indices of the keys bounding a level stretch of a volume line at clip time t: the two
+    around t when they have the same volume, the first / last alone before / after them;
+    None on a sloping stretch."""
+    after = next((i for i, k in enumerate(keys) if k[0] > t), len(keys))
+    if after == 0:
+        return (0,)
+    if after == len(keys):
+        return (len(keys) - 1,)
+    a, b = keys[after - 1][1], keys[after][1]
+    db = lambda g: 20 * math.log10(g) if g > 1e-5 else -100.0
+    return (after - 1, after) if abs(db(a) - db(b)) <= tol_db else None
 
 
 def timecode(us, fps):
@@ -841,8 +858,10 @@ class Timeline(QWidget):
             return d["vol"]
         return c.get("volume", 1.0)
 
-    def _vol_hit(self, pos):
-        """("vol" | "volkey", clip, row, key index) under pos, or None."""
+    def _vol_hit(self, pos, alt=False):
+        """("vol" | "volkey", clip, row, key index or the keys a "vol" drag moves) under pos, or
+        None. A keyframed line is only grabbed on a level stretch (its keys move), or anywhere
+        with alt (every key: None)."""
         row = self._row_at(pos.y())
         if row is None or pos.x() < self.header_w or project.locked(self.rows[row]):
             return None
@@ -859,7 +878,11 @@ class Timeline(QWidget):
                         return "volkey", c, row, i
             t = (self._sec(pos.x()) * US) - c["start_us"]
             if abs(pos.y() - self._vol_y(curves.value(vol, t), band)) <= 4:
-                return "vol", c, row, None
+                if alt or not curves.is_animated(vol):
+                    return "vol", c, row, None
+                seg = level_stretch(vol["keys"], t)
+                if seg is not None:
+                    return "vol", c, row, seg
         return None
 
     def _draw_volume(self, p, c, row, r):
@@ -950,14 +973,15 @@ class Timeline(QWidget):
             self.drag = {"clip": None, "mode": "seek", "moved": False}
             self.update()
             return
-        vh = self._vol_hit(pos) if not e.modifiers() else None
+        mods = e.modifiers()
+        vh = self._vol_hit(pos, alt=mods == Qt.AltModifier) if mods in (Qt.NoModifier, Qt.AltModifier) else None
         if vh is not None:
             kind, c, row, i = vh
             self.select(c)
             vol = copy.deepcopy(c.get("volume", 1.0))
             self.drag = {"clip": c, "mode": kind, "row": row, "i": i, "y0": pos.y(), "x0": pos.x(), "x": pos.x(),
                          "orig": copy.deepcopy(vol), "vol": vol, "moved": False,
-                         "shown": curves.value(vol, self._sec(pos.x()) * US - c["start_us"]) if i is None
+                         "shown": curves.value(vol, self._sec(pos.x()) * US - c["start_us"]) if kind == "vol"
                          else vol["keys"][i][1]}
             return
         kc, kt = self._key_hit(pos)
@@ -1017,7 +1041,7 @@ class Timeline(QWidget):
             if self.proj and self._key_hit(pos)[0] is not None:
                 self.setCursor(Qt.SizeHorCursor)
                 return
-            vh = self._vol_hit(pos) if self.proj else None
+            vh = self._vol_hit(pos, alt=bool(e.modifiers() & Qt.AltModifier)) if self.proj else None
             if vh is not None:
                 self.setCursor(Qt.SizeAllCursor if vh[0] == "volkey" else Qt.SizeVerCursor)
                 return
@@ -1042,12 +1066,14 @@ class Timeline(QWidget):
             d["x"] = pos.x()
             band = self._vol_band(d["clip"], d["row"])
             c, orig = d["clip"], d["orig"]
-            if d["mode"] == "vol":                         # the whole volume, in dB steps
+            if d["mode"] == "vol":                         # the whole volume (or a level stretch), in dB steps
                 db = -(pos.y() - d["y0"]) / max(1.0, band[1] - band[0]) * (self.DB_HI - self.DB_LO)
                 k = 10 ** (db / 20)
                 clamp = lambda g: min(10.0, max(0.0, g * k))
                 if curves.is_animated(orig):
-                    d["vol"] = {"keys": [[q[0], clamp(q[1])] + q[2:] for q in orig["keys"]]}
+                    moving = d["i"]                         # None: every key
+                    d["vol"] = {"keys": [[q[0], clamp(q[1]) if moving is None or j in moving else q[1]] + q[2:]
+                                         for j, q in enumerate(orig["keys"])]}
                     d["shown"] = clamp(curves.value(orig, self._sec(d["x0"]) * US - c["start_us"]))
                 else:
                     d["vol"] = d["shown"] = clamp(curves.value(orig, 0))

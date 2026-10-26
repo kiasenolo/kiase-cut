@@ -74,8 +74,11 @@ without dragging opens the menu. I / O still set its ends at the playhead.
 
 Volume line: every sound clip shows a line at its volume (in dB: 0 dB two thirds up, +20 dB
 at the top), following its volume keyframes, which are points on it. Drag the line up or
-down to change the clip's volume (keyframed clips: all keyframes together, in dB); drag a
-point to change that keyframe (up / down) or its time (sideways). The value is shown
+down to change the clip's volume. With keyframes only a level stretch moves - between two
+points of the same volume (both points go up or down together, the rest stays), or before
+the first / after the last point; a sloping stretch cannot be grabbed. Alt+drag moves the
+whole line (every keyframe, in dB). Drag a point to change that keyframe (up / down) or its
+time (sideways). The value is shown
 while dragging.
 
 Output: right of the timeline a level meter shows the left / right peak of what is playing

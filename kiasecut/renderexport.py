@@ -179,6 +179,52 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
             "errors": errors, "encoder": encoder, "stems": files}
 
 
+# 截取並匯出當下幀: one frame as a picture file
+STILL_FORMATS = (("PNG", ".png", True), ("JPEG", ".jpg", False), ("WebP", ".webp", True),
+                 ("TIFF", ".tif", True), ("BMP", ".bmp", False))      # (name, extension, can be transparent)
+
+
+def still(view, t_us, size, out, alpha=True, background=None, quality=92):
+    """Draw the moment t_us of a project-like view at size (w, h) and save it to out (its
+    extension picks the format): on a transparent background with alpha (where the format
+    keeps it), else on background (a QColor, black when None). The clips the renderer could
+    not draw are returned."""
+    from PySide6.QtGui import QColor, QPainter
+    W, H = size
+    readers = videoreader.Readers()
+    engine = None
+
+    def video(path, us, w, h):
+        nonlocal engine
+        img = readers.get(path, us, w, h)
+        if img is not None:
+            return img
+        if engine is None:
+            from .client import EngineClient
+            engine = EngineClient(max(W, 3840), max(H, 2160))
+        px, rw, rh = engine.media_frame(path, us, view["fps"], max(1, int(w)), max(1, int(h)))
+        return QImage(px, rw, rh, rw * 4, QImage.Format_RGBA8888).copy()
+
+    renderer = glrender.make(video) if gpu.enabled else render.Renderer(video)
+    try:
+        frame = round(t_us * view["fps"] / US)
+        img = renderer.render(view, frame, W, H, alpha=True)
+    finally:
+        readers.close()
+    ext = os.path.splitext(out)[1].lower()
+    keeps = next((a for _n, e, a in STILL_FORMATS if e == ext or (ext == ".jpeg" and e == ".jpg")), False)
+    if not (alpha and keeps):
+        flat = QImage(W, H, QImage.Format_ARGB32_Premultiplied)
+        flat.fill(background if background is not None else QColor("black"))
+        p = QPainter(flat)
+        p.drawImage(0, 0, img)
+        p.end()
+        img = flat
+    if not img.save(out, None, quality):
+        raise RuntimeError(f"無法寫入 {out}")
+    return list(renderer.errors)
+
+
 def sequence_dir(out):
     """The folder a picture sequence export out is written to."""
     return os.path.splitext(out)[0]

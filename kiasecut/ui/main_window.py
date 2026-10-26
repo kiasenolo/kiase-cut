@@ -40,6 +40,7 @@ from .player import Player
 from .project_dialogs import NewProjectDialog, ProjectInfoDialog
 from .project_manager import ProjectManager
 from .settings_dialog import SettingsDialog
+from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel
@@ -666,6 +667,7 @@ class MainWindow(QMainWindow):
         add(m, "匯入剪映草稿…", "Ctrl+I", self.import_draft)
         add(m, "匯入素材…", "Ctrl+Shift+I", lambda: self.import_media(self.library.current_folder()))
         add(m, "匯出影片…", "Ctrl+E", self.export)
+        add(m, "匯出目前畫面…", "Ctrl+Shift+E", self.export_still)
         m = self.menuBar().addMenu("編輯")
         add(m, "復原", "Ctrl+Z", self.do_undo)
         add(m, "重做", "Ctrl+Y", self.do_redo)
@@ -2564,6 +2566,38 @@ class MainWindow(QMainWindow):
                       lambda p: prog.setValue(int(p * 1000)))
 
     # -- settings ---------------------------------------------------------------------------------
+    def export_still(self):
+        """截取並匯出當下幀: the frame at the playhead (of the open level) as a picture file."""
+        if not self.proj:
+            return
+        view = json.loads(json.dumps(self.view()))
+        view["fps"] = self.proj["fps"]
+        name = workspace.project_name(self.path) if self.path else "KiaseCut"
+        stamp = timecode(self.playhead_us(), self.fps).replace(":", "-")
+        folder = workspace.exports_dir(self.root) if self.root else os.path.join(os.path.expanduser("~"), "Pictures")
+        try:
+            last = json.loads(self.settings().value("still_spec", "") or "{}")
+        except (TypeError, ValueError):
+            last = {}
+        dlg = StillDialog(self, os.path.join(folder, f"{name} {stamp}.png"), view["width"], view["height"], last)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        out, size, alpha, bg, quality, st = dlg.options()
+        if not out:
+            return
+        self.settings().setValue("still_spec", json.dumps(st))
+        t = self.playhead_us()
+
+        def work(_progress):
+            os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+            return renderexport.still(view, t, size, out, alpha, bg, quality)
+
+        def done(errors):
+            self.statusBar().showMessage(f"已匯出目前畫面：{out}" + (f"（{len(errors)} 個片段畫不出來）" if errors else ""),
+                                         6000)
+
+        self.run_task(work, done, lambda m: QMessageBox.warning(self, "匯出目前畫面", m))
+
     def documents_dir(self):
         return QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or os.path.expanduser("~")
 

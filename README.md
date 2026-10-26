@@ -358,6 +358,13 @@ a pixel size: times are microseconds and positions, text sizes and masks are fra
 the canvas, so every rate and size renders the same picture. The project's own fps only
 sets the timeline's frame grid, and its width and height the canvas shape.
 
+Export the current frame (檔案 > 匯出目前畫面…, Ctrl+Shift+E): the frame at the playhead (of
+the timeline or compound that is open) as a picture - PNG, JPEG, WebP, TIFF or BMP - at a
+multiple of the project's resolution, as the video export. PNG, WebP and TIFF can keep a
+transparent background; without it (or in JPEG / BMP) the empty parts get the background
+colour picked there. JPEG and WebP take a quality. The choices are remembered; the file goes
+to the project's Exports folder, named after the project and the time.
+
 ## Project folder
 
 A project is a folder, as in FL Studio (File > New project asks for a name and a place):

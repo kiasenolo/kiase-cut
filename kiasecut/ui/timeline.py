@@ -76,13 +76,14 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QApplication, QMenu, QScrollBar, QWidget
 
-from .. import curves, edit, project, waveform
+from .. import components, curves, edit, project, waveform
 
 US = 1_000_000
 MEDIA_MIME = "application/x-kiasecut-media"
 FX_MIME = "application/x-kiasecut-fx"                # a filter dragged from the VFX tab: its ref
 COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
-          "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e", "static": "#3f7378", "group": "#7a5c96"}                              # DaVinci Resolve
+          "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e", "static": "#3f7378", "group": "#7a5c96",
+          "component": "#4d5fa8"}                              # DaVinci Resolve
 ROW_BG = QColor("#1f1f21")
 WAVE_TILE = 256                                      # waveforms are drawn in pixmaps this wide,
 WAVE_BYTES = 64 << 20                                # kept up to about this much memory
@@ -108,8 +109,12 @@ def row_color(track):
 def clip_color(c, track=None):
     """A clip's colour: its own, else its track's (a coloured track colours the clips that
     keep the default), else the default for its kind."""
-    kind = "static" if project.is_static(c) else c["type"]
-    return QColor(c.get("color") or (track or {}).get("color") or COLORS.get(kind, "#555"))
+    return QColor(c.get("color") or (track or {}).get("color") or COLORS.get(clip_kind(c), "#555"))
+
+
+def clip_kind(c):
+    """What a clip is for its colour: its type, or "static" / "component" (元件)."""
+    return "component" if components.of_clip(c) else "static" if project.is_static(c) else c["type"]
 RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140   # HEADER_W: the track headers' default width
 HEADER_MIN, HEADER_MAX = 110, 520                          # how narrow / wide dragging makes them
 BTN = 18                                             # header button size
@@ -989,7 +994,7 @@ class Timeline(QWidget):
         if x1 < self.header_w or x0 > w:
             return
         r = QRectF(max(x0, self.header_w) + 0.5, y + 3, max(1.0, x1 - max(x0, self.header_w) - 1), h - 8)
-        kind = "static" if project.is_static(c) else c["type"]
+        kind = clip_kind(c)
         col = clip_color(c, track)
         sel = c["id"] in self.selected_ids
         if dim:
@@ -1031,7 +1036,8 @@ class Timeline(QWidget):
             p.setPen(QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
             label = self.clip_label(c).replace("\n", " ")
             if c["type"] == "compound":
-                label = ("⧉ " if c.get("timeline_id") else "◧ " if kind == "static" else "▣ ") + label
+                label = ("⧉ " if c.get("timeline_id") else components.ICON + " " if kind == "component"
+                         else "◧ " if kind == "static" else "▣ ") + label
             elif c["type"] == "filter":
                 label = "✦ " + label
             elif project.is_group(c):                    # its ▸ / ▾ (click to open or fold it)
@@ -1872,8 +1878,13 @@ class Timeline(QWidget):
                      ("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
                      ("在播放頭分割", "split"), ("刪除", "delete")]
             if c["type"] == "compound":
-                head = [("編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
+                comp = components.of_clip(c)
+                head = [("編輯元件" if comp else "編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
                         ("在新的分頁開啟", "open_tab"), ("設為獨立（不再共用）", "unique")]
+                if comp:
+                    head.append(("轉回靜態片段", "from_component"))
+                elif project.is_static(c) and c.get("compound_id"):
+                    head.append(("轉為元件", "to_component"))
                 if c.get("compound_id"):                     # (not a nested timeline)
                     head.append(("存到 Library…", "save_library"))
                 items = head + [None] + items
@@ -1887,7 +1898,8 @@ class Timeline(QWidget):
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立群組", "group")]
             if all(k["type"] != "audio" for k in self.selected_clips()):
-                items += [None, ("建立靜態片段", "make_static"), ("建立複合片段", "make_compound")]
+                items += [None, ("建立靜態片段", "make_static"), ("建立元件", "make_component"),
+                          ("建立複合片段", "make_compound")]
             else:
                 items += [None, ("建立複合片段", "make_compound")]
             if c["type"] == "video":
@@ -1910,6 +1922,7 @@ class Timeline(QWidget):
             if row is not None and self.rows[row]["kind"] != "audio":
                 tid = self.rows[row]["id"]
                 menu.addAction("新增空白靜態片段（在播放頭）", lambda: self.clipAction.emit("new_static", tid))
+                menu.addAction("新增空白元件（在播放頭）", lambda: self.clipAction.emit("new_component", tid))
         menu.exec(global_pos)
 
     def mouseDoubleClickEvent(self, e):

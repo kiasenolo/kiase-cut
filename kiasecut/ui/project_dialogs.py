@@ -14,13 +14,13 @@ FPS = (24, 25, 30, 50, 60)
 
 
 class CompoundSizeDialog(QDialog):
-    """The name and shape of a new compound / static compound made from the compound list.
-    Only its proportions matter: the content stays vector and is drawn at whatever size it
-    is shown or exported at."""
+    """The name and shape of a new compound / static compound / component made from the
+    compound list. Only its proportions matter: the content stays vector and is drawn at
+    whatever size it is shown or exported at."""
 
-    def __init__(self, parent, name, width, height, static=False):
+    def __init__(self, parent, name, width, height, static=False, title=None):
         super().__init__(parent)
-        self.setWindowTitle("新增靜態複合片段" if static else "新增複合片段")
+        self.setWindowTitle(title or ("新增靜態複合片段" if static else "新增複合片段"))
         form = QFormLayout()
         self.name = QLineEdit(name)
         form.addRow("名稱", self.name)

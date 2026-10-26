@@ -15,7 +15,8 @@ follows the same rules as build.py:
     above), which goes through the group's transform, effects and mask;
   * compound clips render their tracks into a layer first, at time - start + source start;
     a static compound (靜態片段) always at time 0 (its first frame), drawn once and reused
-    like a picture;
+    like a picture; a component's instance (元件, components.py) draws the component with
+    its own parameter values put in, at clip time;
   * a compound mask (kind "compound") cuts with a compound's picture (view["compounds"]):
     its alpha or luma, at clip time + its t_off (a static one: its still); an image mask
     (kind "image") the same way with a picture file. view["matte_preview"] =
@@ -32,7 +33,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 
-from . import assets, curves, fonts, fx, masks, project, svgimage, textlayout
+from . import assets, components, curves, fonts, fx, masks, project, svgimage, textlayout
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align")
@@ -353,7 +354,7 @@ class Renderer:
             draw = lambda q=p: q.drawImage(rect, pic)
             disp = (bw, bh)
         elif kind in ("compound", "group"):
-            comp = c["compound"] if kind == "compound" else group_content(c, W, H)
+            comp = components.content(c, t) if kind == "compound" else group_content(c, W, H)
             cw, ch = comp["width"], comp["height"]
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit

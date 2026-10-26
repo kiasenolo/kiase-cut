@@ -11,7 +11,7 @@ import math
 import time
 import uuid
 
-from . import assets, curves, fx, project
+from . import assets, components, curves, fx, project
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -176,7 +176,7 @@ def source_length(c):
 def _params(c):
     """Every animatable parameter dict in a clip, for shifting keyframes."""
     out = []
-    for group in (c.get("transform"), c.get("mask"), c.get("text"), c.get("asset")):
+    for group in (c.get("transform"), c.get("mask"), c.get("text"), c.get("asset"), c.get("params")):
         if group:
             out += [v for v in group.values() if curves.is_animated(v)]
     for key in ("volume", "blend"):
@@ -646,6 +646,8 @@ def _valid_key(c, group, key):
         return key in GROUP_FIELDS["mask"]
     if group == "asset":
         return bool(c.get("asset")) and key in assets.fields_of(c["asset"].get("family"))
+    if group == "params":                        # a component instance's own values (元件參數)
+        return components.param(components.of_clip(c), key) is not None
     return key in GROUP_FIELDS.get(group, ())
 
 
@@ -676,6 +678,10 @@ def _holder(c, group):
         if not c.get("asset"):
             raise EditError("not a built-in asset")
         return c["asset"]
+    if group == "params":
+        if components.of_clip(c) is None:
+            raise EditError("不是元件")
+        return c.setdefault("params", {})
     return c.setdefault("transform", {})
 
 
@@ -763,6 +769,11 @@ def set_param(proj, clip_id, group, key, value, t=None):
         if not _valid_key(c, group, key):
             raise EditError(f"unknown asset field {key}")
         value = assets.clean(key, value)
+    if group == "params":
+        p = components.param(components.of_clip(c), key)
+        if p is None:
+            raise EditError("元件沒有這個參數")
+        value = components.clean(p, value)
     _set_one(c, h, group, key, value, t)
     return c
 
@@ -808,7 +819,9 @@ def toggle_key(proj, clip_id, group, key, t):
 
 
 def _toggle_one(c, h, group, key, t):
-    if key in DISCRETE_DEFAULTS and not group.startswith("fx:"):
+    if group == "params":                        # (a component's own value until then)
+        default = components.default(c["compound"], components.param(c["compound"], key))
+    elif key in DISCRETE_DEFAULTS and not group.startswith("fx:"):
         _check_choice(c, group, key, DISCRETE_DEFAULTS[key])
         default = DISCRETE_DEFAULTS[key]
     else:
@@ -866,7 +879,7 @@ def easing_at(p, t):
 def key_times(c):
     """Sorted clip-time positions of every keyframe in a clip."""
     times = set()
-    for group in ("transform", "mask", "text", "asset"):
+    for group in ("transform", "mask", "text", "asset", "params"):
         for v in (c.get(group) or {}).values():
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
@@ -2038,13 +2051,20 @@ def freeze_at(tracks, t_us):
     return tracks
 
 
-def make_compound(root, container, clip_ids, at_us=None, static=False):
+def new_name(comps, static, component=False):
+    """"元件 n", "靜態片段 n" or "複合片段 n": the next number of that kind."""
+    kind = (component, bool(static))
+    n = sum(1 for k in comps.values() if (components.is_component(k), bool(k.get("static"))) == kind) + 1
+    return f"{'元件' if component else '靜態片段' if static else '複合片段'} {n}"
+
+
+def make_compound(root, container, clip_ids, at_us=None, static=False, component=False):
     """Move clips of the open level into a new shared compound and leave one clip showing it
     in their place: over their whole span, on the topmost picture track they used (or a new
     one above it when that has no room). The tracks they were on come along, in order.
     static makes a static compound (靜態片段), which shows only its first frame, like a
     picture: the content is re-timed (freeze_at) so the moment at at_us (the playhead, kept
-    inside the span) is that frame."""
+    inside the span) is that frame. component (with static) makes it a component (元件)."""
     picked = [find(container, cid) for cid in dict.fromkeys(clip_ids)]
     if not picked:
         raise EditError("先在時間軸上選取片段")
@@ -2063,13 +2083,14 @@ def make_compound(root, container, clip_ids, at_us=None, static=False):
         inner.append(dict({k: v for k, v in t.items() if k != "clips"}, clips=moved))
     size = root if container is root or "width" not in container else container
     comps = root.setdefault("compounds", {})
-    n = sum(1 for k in comps.values() if bool(k.get("static")) == static) + 1
-    comp = {"name": f"{'靜態片段' if static else '複合片段'} {n}", "width": size.get("width", 1920),
+    comp = {"name": new_name(comps, static, component), "width": size.get("width", 1920),
             "height": size.get("height", 1080), "duration_us": int(span), "tracks": inner}
     if static:
         t = span // 2 if at_us is None else at_us - s0
         freeze_at(inner, min(max(t, 0), max(0, span - 1)))
         comp["static"] = True
+        if component:
+            comp.update(component=True, params=[])
     kid = project.new_compound_id(root)
     comps[kid] = comp
     clip = {"id": new_clip_id(), "type": "compound", "name": comp["name"], "start_us": int(s0),
@@ -2092,26 +2113,29 @@ def new_static(root, container, at_us, track_id=None):
     return new_compound(root, container, at_us, track_id, static=True)
 
 
-def add_compound(root, static=False, size=None):
-    """A new empty compound entry (static: a static one), size (width, height) or the
-    project's; no clip shows it yet (it can be opened by itself). Returns its id."""
+def add_compound(root, static=False, size=None, component=False):
+    """A new empty compound entry (static: a static one; component: a component, 元件),
+    size (width, height) or the project's; no clip shows it yet (it can be opened by
+    itself). Returns its id."""
     comps = root.setdefault("compounds", {})
-    n = sum(1 for k in comps.values() if bool(k.get("static")) == static) + 1
+    static = static or component
     w, h = size or (root.get("width", 1920), root.get("height", 1080))
     kid = project.new_compound_id(root)
-    comps[kid] = {"name": f"{'靜態片段' if static else '複合片段'} {n}", "width": w, "height": h,
+    comps[kid] = {"name": new_name(comps, static, component), "width": w, "height": h,
                   "duration_us": STILL_DEFAULT_US, "tracks": [{"id": "t0", "kind": "video", "name": "V1", "clips": []}]}
     if static:
         comps[kid]["static"] = True
+    if component:
+        comps[kid].update(component=True, params=[])
     return kid
 
 
-def new_compound(root, container, at_us, track_id=None, static=False):
-    """A new empty compound (static: a static one) and a clip showing it at at_us: on
-    track_id, or else on the topmost picture track with room there, or a new track. Enter
-    the clip to fill it."""
+def new_compound(root, container, at_us, track_id=None, static=False, component=False):
+    """A new empty compound (static: a static one; component: a component) and a clip
+    showing it at at_us: on track_id, or else on the topmost picture track with room there,
+    or a new track. Enter the clip to fill it."""
     size = root if container is root or "width" not in container else container
-    kid = add_compound(root, static, (size.get("width", 1920), size.get("height", 1080)))
+    kid = add_compound(root, static, (size.get("width", 1920), size.get("height", 1080)), component)
     if track_id is None:
         track_id = next((t["id"] for t in reversed(container["tracks"]) if t["kind"] == "video"
                          and not project.locked(t) and free_range(t, at_us, at_us + STILL_DEFAULT_US) is not None), None)
@@ -2155,6 +2179,155 @@ def delete_compound(root, compound_id, force=False):
             t["clips"] = [c for c in t["clips"] if id(c) not in shown]
     root["compounds"].pop(compound_id, None)
     project.link(root)
+
+
+# -- components (元件: static compounds with parameters, components.py) ------------------------------
+def _component(root, kid):
+    comp = (root.get("compounds") or {}).get(kid)
+    if not components.is_component(comp):
+        raise EditError("不是元件")
+    return comp
+
+
+def make_component(root, kid):
+    """Make static compound kid a component (元件): its layers can be given parameters, which
+    every clip showing it sets for itself."""
+    comp = (root.get("compounds") or {}).get(kid)
+    if not comp or not comp.get("static"):
+        raise EditError("只有靜態片段可以轉成元件")
+    comp["component"] = True
+    comp.setdefault("params", [])
+
+
+def unmake_component(root, kid):
+    """A component back to a static compound: its parameters go, and what the clips showing
+    it had set for them."""
+    comp = _component(root, kid)
+    comp.pop("component", None)
+    comp.pop("params", None)
+    for _tl, _path, c in project.compound_uses(root).get(kid) or []:
+        c.pop("params", None)
+
+
+def _check_binds(comp, kind, binds):
+    index = components.layer_index(comp)
+    out = []
+    for cid, prop in binds:
+        if cid not in index or prop not in components.props_of(index[cid][1]):
+            raise EditError("這個圖層沒有那個屬性")
+        if components.PROPS[prop][0] != kind:
+            raise EditError(f"「{components.PROPS[prop][1]}」不是{components.KINDS[kind]}參數能設的")
+        out.append([cid, prop])
+    return out
+
+
+def _unbind(comp, binds):
+    gone = {tuple(b) for b in binds}
+    for p in components.params(comp):
+        p["binds"] = [b for b in p.get("binds") or [] if tuple(b) not in gone]
+
+
+def add_param(root, kid, kind, name, binds):
+    """A new parameter of component kid setting prop of each layer of binds [(clip id,
+    prop)] (taken from any parameter that set it before: one parameter per property).
+    Returns it."""
+    comp = _component(root, kid)
+    if kind not in components.KINDS:
+        raise EditError(f"unknown parameter kind {kind}")
+    binds = _check_binds(comp, kind, binds)
+    _unbind(comp, binds)
+    ids = {p["id"] for p in components.params(comp)}
+    pid = next(f"p{i}" for i in range(1, len(ids) + 2) if f"p{i}" not in ids)
+    p = {"id": pid, "name": str(name).strip() or components.KINDS[kind], "kind": kind, "binds": binds}
+    comp.setdefault("params", []).append(p)
+    return p
+
+
+def bind_param(root, kid, pid, binds):
+    """Let parameter pid set these layers' props too."""
+    comp = _component(root, kid)
+    p = components.param(comp, pid)
+    if p is None:
+        raise EditError("元件沒有這個參數")
+    binds = _check_binds(comp, p["kind"], binds)
+    _unbind(comp, binds)
+    p["binds"] = (p.get("binds") or []) + binds
+
+
+def unbind_param(root, kid, binds):
+    """No parameter sets these [(clip id, prop)] any more."""
+    _unbind(_component(root, kid), binds)
+
+
+def rename_param(root, kid, pid, name):
+    p = components.param(_component(root, kid), pid)
+    if p is None:
+        raise EditError("元件沒有這個參數")
+    p["name"] = str(name).strip() or components.KINDS[p["kind"]]
+
+
+def move_param(root, kid, pid, d):
+    """A parameter d places up (-) or down (+) the list (the order the inspector shows)."""
+    ps = _component(root, kid)["params"]
+    i = next((i for i, p in enumerate(ps) if p["id"] == pid), None)
+    if i is None:
+        raise EditError("元件沒有這個參數")
+    j = min(max(i + d, 0), len(ps) - 1)
+    ps.insert(j, ps.pop(i))
+
+
+def delete_param(root, kid, pid):
+    """Remove a parameter, and every clip's value for it."""
+    comp = _component(root, kid)
+    comp["params"] = [p for p in comp["params"] if p["id"] != pid]
+    for _tl, _path, c in project.compound_uses(root).get(kid) or []:
+        own = c.get("params") or {}
+        own.pop(pid, None)
+        if not own:
+            c.pop("params", None)
+
+
+def set_param_default(root, kid, pid, value):
+    """A parameter's default: every layer it sets gets value (at the picture's moment)."""
+    comp = _component(root, kid)
+    p = components.param(comp, pid)
+    if p is None:
+        raise EditError("元件沒有這個參數")
+    value = components.clean(p, value)
+    index = components.layer_index(comp)
+    for cid, prop in p.get("binds") or []:
+        if cid not in index:
+            continue
+        t, c = index[cid]
+        at = max(0, -c["start_us"])
+        if prop == "content":
+            c["text"]["content"] = value
+        elif prop == "text_color":
+            set_param(comp, cid, "text", "color", value[:3], at)
+        elif prop in ("color", "color2", "stroke_color"):
+            set_param(comp, cid, "asset", prop, value, at)
+        elif prop == "source":
+            size = components.media_size(value) if value else None
+            if size is None:
+                raise EditError("讀不到這張圖片")
+            replace_media(comp, cid, {"kind": "image", "path": value, "width": size[0], "height": size[1]})
+        elif prop == "visible":
+            if value:
+                t.pop("hidden", None)
+            else:
+                t["hidden"] = True
+
+
+def reset_params(proj, clip_id, pids=None):
+    """A component clip's values for these parameters (None: all) go: it shows the
+    component's own again."""
+    _, c = find(proj, clip_id)
+    own = c.get("params") or {}
+    for pid in list(own) if pids is None else pids:
+        own.pop(pid, None)
+    if not own:
+        c.pop("params", None)
+    return c
 
 
 def delete_use(root, tl_id, path, clip_id):

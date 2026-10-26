@@ -53,7 +53,10 @@ clip     {id, type: image | video | audio | text | compound, name,
                      ÷2 / ÷4), are snap targets; offset_us is the first beat's time in the
                      source. Off keeps the numbers.
           compound_id                                       compound clips: which entry of
-                     project.compounds they show; clip.source_start_us selects the window}
+                     project.compounds they show; clip.source_start_us selects the window
+          params: {param id: value}                         clips of a component (元件), optional:
+                     their own values of its parameters (absent: the component's), animated
+                     like any parameter}
           timeline_id                                       nested timeline clips (as in
                      DaVinci Resolve): they show another timeline of the project, live
           tracks, matte: {on, show}                         group clips (type "group", 群組):
@@ -70,7 +73,9 @@ compound {name, width, height, duration_us, tracks}   reusable content: any numb
          is like a picture: it only ever shows its content's first frame (time 0); its clips
          can be any length and make no sound. (Older projects kept a still_us; loading
          re-times their content so that moment is the first frame.) One named _thumbnail
-         is the project's thumbnail (thumbnail_compound).
+         is the project's thumbnail (thumbnail_compound). optional (with static): component,
+         params - a component (元件, components.py): its layers' words, colours, pictures and
+         visibility are parameters that each clip showing it sets for itself (in its params).
 Numbers that animate are curve dicts, see curves.py.
 
 view     {vzoom, timelines: {timeline id: {pos, path, scroll_s, px_per_s, scroll_y, heights}}}
@@ -169,8 +174,9 @@ def _map_paths(data, fn):
     for it in data.get("library", {}).get("items", []):
         if it.get("path"):
             it["path"] = fn(it["path"])
+    comps = data.get("compounds", {})
     holders = [tl["tracks"] for tl in data.get("timelines", [])]
-    holders += [c["tracks"] for c in data.get("compounds", {}).values()]
+    holders += [c["tracks"] for c in comps.values()]
     holders.append(data.get("tracks", []) if "timelines" not in data else [])
     for tracks in holders:
         for t in all_tracks(tracks):
@@ -184,6 +190,17 @@ def _map_paths(data, fn):
                 for e in c.get("effects") or []:              # filter files (the built-in ones are not paths)
                     if e.get("filter") and not e["filter"].startswith("builtin:"):
                         e["filter"] = fn(e["filter"])
+                own = c.get("params") or {}                    # a component clip's own pictures
+                for p in (comps.get(c.get("compound_id")) or {}).get("params") or []:
+                    v = own.get(p["id"])
+                    if p["kind"] != "image" or not v:
+                        continue
+                    if isinstance(v, dict):
+                        for k in v.get("keys") or []:
+                            if k[1]:
+                                k[1] = fn(k[1])
+                    else:
+                        own[p["id"]] = fn(v)
 
 
 def end_us(tracks):

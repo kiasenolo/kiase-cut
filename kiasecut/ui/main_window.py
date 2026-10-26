@@ -24,12 +24,12 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QH
                                QVBoxLayout,
                                QWidget)
 
-from .. import (assets, build, curves, edit, fonts, fx, gpu, layouts, library, project, recovery, render, renderexport,
-               thumbnail, userlib, waveform, workspace)
+from .. import (assets, build, components, curves, edit, fonts, fx, gpu, layouts, library, project, recovery, render,
+               renderexport, thumbnail, userlib, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
-from .colorpick import pick_color
+from .colorpick import pick_color, qcolor, rgba
 from .font_dialog import FontMapDialog
 from .compounds import CompoundPanel
 from .docks import Panels
@@ -39,7 +39,7 @@ from .effects_panel import EffectsPanel
 from .export_dialog import ExportDialog
 from .inspector import Inspector
 from .library import LibraryPanel
-from .layers import LayerPanel
+from .layers import LayerPanel, layer_name
 from .player import Player
 from .project_dialogs import CompoundSizeDialog, NewProjectDialog, ProjectInfoDialog
 from .project_manager import ProjectManager
@@ -327,6 +327,7 @@ class MainWindow(QMainWindow):
         self.compounds.deleteRequested.connect(self.delete_compound_item)
         self.compounds.useDeleteRequested.connect(self.delete_use)
         self.compounds.createRequested.connect(self.create_from_panel)
+        self.compounds.componentRequested.connect(self.component_kind)
         self.compounds.entryRequested.connect(self.open_compound_entry)
         self.compounds.tabRequested.connect(self.open_in_tab)
         self.compounds.libraryRequested.connect(self.save_compound_to_library)
@@ -376,6 +377,8 @@ class MainWindow(QMainWindow):
         ins.paramEdited.connect(self.on_param_edited)
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
+        ins.paramReset.connect(lambda ids, pids: self.apply_each(
+            "重設元件參數", lambda lvl, cid: edit.reset_params(lvl, cid, pids), ids))
         self.mask_panel = Inspector(part="mask")
         mp = self.mask_panel
         mp.paramEdited.connect(self.on_param_edited)
@@ -645,6 +648,11 @@ class MainWindow(QMainWindow):
         lp.replaceDropped.connect(self.replace_source)
         lp.renameRequested.connect(lambda cid: self.on_clip_action("rename", cid))
         lp.actionRequested.connect(self.layer_action)
+        lp.paramBind.connect(self.layer_param_bind)
+        lp.paramUnbind.connect(lambda binds: self.open_kid() and self.apply_root(
+            "解除參數", edit.unbind_param, self.open_kid(), binds))
+        lp.paramAction.connect(self.layer_param_action)
+        lp.componentRequested.connect(lambda: self.open_kid() and self.component_kind(self.open_kid(), True))
         lp.shapeRequested.connect(lambda key: self.place_asset(assets.ident(key, *self.assets.colors), "", 0))
         tl_page = QWidget()
         tl_page.setLayout(tl_row)
@@ -1850,22 +1858,35 @@ class MainWindow(QMainWindow):
         if kind == "timeline":
             self.apply_root("新增時間線", edit.add_timeline)
             return
-        static = kind == "static"
-        n = sum(1 for k in self.proj.get("compounds", {}).values() if bool(k.get("static")) == static) + 1
-        dlg = CompoundSizeDialog(self, f"{'靜態片段' if static else '複合片段'} {n}",
-                                 self.proj["width"], self.proj["height"], static)
+        component = kind == "component"
+        static = kind == "static" or component
+        label = "新增元件" if component else "新增靜態片段" if static else "新增複合片段"
+        dlg = CompoundSizeDialog(self, edit.new_name(self.proj.get("compounds", {}), static, component),
+                                 self.proj["width"], self.proj["height"], static, label)
         if dlg.exec() != QDialog.Accepted:
             return
         name, size = dlg.result()
 
         def make(root):
-            kid = edit.add_compound(root, static, size)
+            kid = edit.add_compound(root, static, size, component)
             if name:
                 root["compounds"][kid]["name"] = name
             return kid
-        kid = self.apply_root("新增靜態片段" if static else "新增複合片段", make)
+        kid = self.apply_root(label, make)
         if kid:
             self.open_compound_entry(kid)
+
+    def component_kind(self, kid, on):
+        """Make a static compound a component (元件), or a component a static compound again
+        (asking first when clips have set its parameters: those values go)."""
+        if on:
+            self.apply_root("轉為元件", edit.make_component, kid)
+            return
+        n = sum(1 for _tl, _p, c in project.compound_uses(self.proj).get(kid) or [] if c.get("params"))
+        if n and QMessageBox.question(self, "轉回靜態片段", f"有 {n} 個片段自己設定了這個元件的參數，"
+                                      "轉回靜態片段後這些設定會消失。要繼續嗎？") != QMessageBox.Yes:
+            return
+        self.apply_root("轉回靜態片段", edit.unmake_component, kid)
 
     def delete_use(self, tl_id, path, cid):
         self.timeline.selected_id = None
@@ -1913,7 +1934,7 @@ class MainWindow(QMainWindow):
         """A value typed in the inspector: set on every selected clip (each at its own
         playhead time, so keyframed ones get or edit the keyframe there)."""
         label = ("調整效果" if group.startswith("fx") else "調整素材" if group == "asset" else
-                 "調整" + self.PARAM_LABELS.get((group, key), "遮罩"))
+                 "調整元件參數" if group == "params" else "調整" + self.PARAM_LABELS.get((group, key), "遮罩"))
         times = {cid: self.clip_time(cid) for cid in ids}
         self.apply_each(label, lambda lvl, cid: edit.set_param(lvl, cid, group, key, value, times[cid]), ids,
                         merge=("param", tuple(ids), group, key, round(times[ids[0]])))
@@ -1980,6 +2001,7 @@ class MainWindow(QMainWindow):
         if self.proj is not None:
             self.mask_panel.set_compounds(self.mask_compounds())
             self.mask_panel.set_images(self.mask_images())
+            self.inspector.set_images(self.mask_images())          # (a component's picture parameters)
         self.mask_panel.show_clips(clips, t, self.fps)
         self.beats.show_clips(clips)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
@@ -2095,6 +2117,67 @@ class MainWindow(QMainWindow):
         except (edit.EditError, KeyError):
             return False
         return bool(steps) and bool(steps[-1][1].get("static"))
+
+    def open_kid(self):
+        """The id of the open compound (None: a timeline is open)."""
+        try:
+            steps = walk_path(self.proj, self.path_ids) if self.proj else []
+        except (edit.EditError, KeyError):
+            return None
+        return steps[-1][2] if steps else None
+
+    def layer_param_bind(self, pid, prop, ids):
+        """設為參數: prop of layers ids set by parameter pid, or ("") by a new one (named now)."""
+        kid = self.open_kid()
+        comp = self.proj["compounds"].get(kid) if kid else None
+        if not components.is_component(comp):
+            return
+        binds = [(cid, prop) for cid in ids]
+        if pid:
+            self.apply_root("設為參數", edit.bind_param, kid, pid, binds)
+            return
+        c = edit.find(comp, ids[0])[1]
+        label = components.prop_label(c, prop)
+        name, ok = QInputDialog.getText(self, "新參數", "參數名稱（使用元件的片段在屬性裡看到的名字）：",
+                                        text=label if len(ids) > 1 else f"{layer_name(c)} {label}")
+        if ok:
+            self.apply_root("新增參數", edit.add_param, kid, components.PROPS[prop][0], name, binds)
+
+    def layer_param_action(self, action, pid):
+        """The 參數 list: set a parameter's default, rename, restack or delete it."""
+        kid = self.open_kid()
+        comp = self.proj["compounds"].get(kid) if kid else None
+        p = components.param(comp, pid)
+        if p is None:
+            return
+        if action == "rename":
+            name, ok = QInputDialog.getText(self, "重新命名參數", "參數名稱：", text=p["name"])
+            if ok:
+                self.apply_root("重新命名參數", edit.rename_param, kid, pid, name)
+        elif action in ("up", "down"):
+            self.apply_root("參數順序", edit.move_param, kid, pid, -1 if action == "up" else 1)
+        elif action == "delete":
+            n = sum(1 for _tl, _p, c in project.compound_uses(self.proj).get(kid) or []
+                    if pid in (c.get("params") or {}))
+            if n and QMessageBox.question(self, "刪除參數", f"有 {n} 個片段自己設定了「{p['name']}」，"
+                                          "刪除後這些設定會消失。要繼續嗎？") != QMessageBox.Yes:
+                return
+            self.apply_root("刪除參數", edit.delete_param, kid, pid)
+        elif action == "default":
+            v = components.default(comp, p)
+            if p["kind"] == "text":
+                v, ok = QInputDialog.getMultiLineText(self, p["name"], "預設的文字：", v)
+            elif p["kind"] == "color":
+                col = pick_color(self, qcolor(assets.hex_of(v)), p["name"])
+                v, ok = (rgba(col), True) if col is not None else (None, False)
+            elif p["kind"] == "image":
+                v, _ = QFileDialog.getOpenFileName(self, p["name"], self.root or "",
+                                                   "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff *.svg)")
+                v, ok = v.replace("\\", "/"), bool(v)
+            else:
+                v, ok = not v, True
+            if ok:
+                self.apply_root("參數預設值", edit.set_param_default, kid, pid, v)
 
     def _update_layers(self):
         """The layer panel in the timeline's place while a static compound is open."""
@@ -2476,18 +2559,23 @@ class MainWindow(QMainWindow):
         if action in ("copy", "cut", "duplicate"):
             {"copy": self.do_copy, "cut": lambda: self.do_copy(cut=True), "duplicate": self.do_duplicate}[action]()
             return
-        if action == "new_static":                            # (cid is the track's id here)
-            at = self.playhead_us()
-            self.apply_root("新增靜態片段", lambda root: edit.new_static(root, self.container(root), at, cid),
+        if action in ("new_static", "new_component"):         # (cid is the track's id here)
+            at, comp = self.playhead_us(), action == "new_component"
+            self.apply_root("新增元件" if comp else "新增靜態片段",
+                            lambda root: edit.new_compound(root, self.container(root), at, cid, True, comp),
                             select=lambda c: c["id"])
             return
-        if action in ("make_static", "make_compound"):
+        if action in ("make_static", "make_component", "make_compound"):
             sel = self.timeline.selected_ids
             ids = sorted(sel) if cid in sel else [cid]
-            static, at = action == "make_static", self.playhead_us()
-            self.apply_root("建立靜態片段" if static else "建立複合片段",
-                            lambda root: edit.make_compound(root, self.container(root), ids, at, static),
+            comp, at = action == "make_component", self.playhead_us()
+            static = action != "make_compound"
+            self.apply_root("建立元件" if comp else "建立靜態片段" if static else "建立複合片段",
+                            lambda root: edit.make_compound(root, self.container(root), ids, at, static, comp),
                             select=lambda c: c["id"])
+            return
+        if action in ("to_component", "from_component"):
+            self.component_kind(edit.find(self.container(), cid)[1]["compound_id"], action == "to_component")
             return
         if action == "group":
             sel = self.timeline.selected_ids

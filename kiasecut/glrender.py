@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, curves, fx, project, render, textlayout
+from . import assets, components, curves, fx, project, render, textlayout
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -499,7 +499,7 @@ class GLRenderer(render.Renderer):
                     return
                 tex, straight = gl.frame_texture(pic)
         elif kind in ("compound", "group"):
-            comp = c["compound"] if kind == "compound" else render.group_content(c, W, H)
+            comp = components.content(c, t) if kind == "compound" else render.group_content(c, W, H)
             cw, ch = comp["width"], comp["height"]
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit

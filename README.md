@@ -303,6 +303,20 @@ layer, centred where they were let go. A
 layer that does not cover the picture's moment shows dimmed (only that moment is drawn). The
 preview, the inspector and every edit work on the selected layers as on clips.
 
+Components (元件, ❖): static clips with parameters. Make one with right-click selected picture
+clips > 建立元件, a free spot on a picture track > 新增空白元件, the 複合片段 list > 新增元件, or
+turn a static clip into one (轉為元件: its clip's right-click menu, the compound list, or the
+button above its layers; 轉回靜態片段 goes back). It is edited as layers, with its parameters
+listed under them (參數): right-click layers > 設為參數 makes a parameter of a text's words
+(文字內容) or colour, a shape's fill, outline or gradient colour, a picture (圖片) or whether
+the layer shows (顯示) - or hands it to a parameter already there, so one parameter (a 主色,
+say) can set several layers; 解除參數 lets it go, and layers a parameter sets are marked ❖.
+Click a parameter to select its layers, double-click it to set its default (what its layers
+have), right-click to rename, restack or delete it. Every clip that shows the component
+then has 元件參數 in the inspector: its own value of each parameter, with ◆ keyframes like
+any value (colours blend, words, pictures and switches hold until the next key) and ↺ to go
+back to the component's own; one left alone follows the component as it changes.
+
 Media library (left): import files (Ctrl+Shift+I), organise them in folders by dragging,
 and drag media onto the timeline (or double-click to add at the playhead). Importing a
 Jianying draft fills the library with the media it uses. SVG files work like any picture

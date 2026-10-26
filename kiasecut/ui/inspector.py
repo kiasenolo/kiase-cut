@@ -9,7 +9,9 @@ Edits are reported after a short pause so typing or spinning produces one rebuil
 Scale has an X and a Y value with a link button between them: linked (the default), changing
 one changes the other in proportion and keyframes go on both. Built-in assets (assets.py)
 add a 素材參數 section: size in canvas pixels, colours and the shape's own settings, each
-with its ◆ like any other value.
+with its ◆ like any other value. A component's clip (元件, components.py) adds 元件參數: the
+component's parameters - words, colours, pictures, switches - as this clip's own values, each
+with ◆ and ↺ (back to what the component itself has).
 
 One class serves two tabs: part="main" (type, text, picture, sound) and part="mask" (the
 mask: on / off, shape, invert and its values), each with its own keyframe controls. A
@@ -31,7 +33,7 @@ import os
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
-from .. import assets, curves, edit, project
+from .. import assets, components, curves, edit, project
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
@@ -271,11 +273,12 @@ class Inspector(QWidget):
     groupMatteChosen = Signal(list, dict)           # group ids, {on / show / invert / body: bool} that changed
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
+    paramReset = Signal(list, list)                 # clip ids, component parameter ids: back to the component's
 
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
         self.part = part
-        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset"]
+        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset", "params"]
         self.setMinimumWidth(300)
         lay = QVBoxLayout(self)
         lay.addWidget(section("遮罩" if part == "mask" else "屬性"))
@@ -373,6 +376,8 @@ class Inspector(QWidget):
             else:
                 if c.get("asset"):
                     self._build_asset(form, c["asset"]["family"])
+                if components.of_clip(c) is not None:
+                    self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
                 self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"), ("scale", "scale_y", "縮放")))
                 blend = ComboBox()
@@ -859,6 +864,112 @@ class Inspector(QWidget):
             self._queue("asset", f, rgba(col))
             self._flush()
 
+    def _build_params(self, form, comp):
+        """元件參數: the component's parameters as this clip's own values, each with ◆ and ↺."""
+        form.addRow(section("元件參數"))
+        if not components.params(comp):
+            note = QLabel("這個元件還沒有參數：進入編輯它，在圖層上按右鍵 > 設為參數")
+            note.setWordWrap(True)
+            note.setStyleSheet("color: #8e8e94;")
+            form.addRow(note)
+            return
+        for p in components.params(comp):
+            pid, kind = p["id"], p["kind"]
+            if kind == "text":
+                w = QPlainTextEdit()
+                w.setFixedHeight(54)
+                w.textChanged.connect(lambda w=w, pid=pid: self._queue("params", pid, w.toPlainText()))
+            elif kind == "color":
+                w = QPushButton()
+                w.clicked.connect(lambda _=False, p=p: self._pick_param_color(p))
+            elif kind == "image":
+                w = ComboBox()
+                w.setPlaceholderText("--")
+                for path, name in self.images:
+                    w.addItem(name, path)
+                w.addItem("瀏覽…", "")
+                w.activated.connect(lambda i, w=w, pid=pid: self._param_image(pid, w.itemData(i)))
+            else:
+                w = QCheckBox("顯示")
+                w.clicked.connect(lambda on, pid=pid: self._emit_now(self.paramEdited, "params", pid, bool(on)))
+            self.widgets[("params", pid)] = w
+            row = self._with_key(w, "params", pid)
+            reset = QPushButton("↺")
+            reset.setFixedWidth(26)
+            reset.setToolTip("回到元件本身的值（這個片段不再自己設定）")
+            reset.clicked.connect(lambda _=False, pid=pid: self._emit_now(self.paramReset, [pid]))
+            self.widgets[("reset", pid)] = reset
+            row.layout().addWidget(reset)
+            form.addRow(p["name"], row)
+
+    def _show_params(self, clips, ts, easings):
+        """The parameters' values at the playhead (each clip at its own time), their ◆ and
+        whether a clip sets them itself (↺ lit)."""
+        for p in components.params(components.of_clip(clips[0])):
+            wid = self.widgets.get(("params", p["id"]))
+            if wid is None:
+                continue
+            ps = [(k.get("params") or {}).get(p["id"]) for k in clips]
+            vals = [components.value(k, p, t) for k, t in zip(clips, ts)]
+            for q, t in zip(ps, ts):
+                if edit.key_at(q, t) is not None:
+                    easings.add(edit.easing_at(q, t))
+            v = vals[0] if len({repr(x) for x in vals}) == 1 else None
+            kind = p["kind"]
+            if kind == "text":
+                wid.setPlaceholderText("--" if v is None else "")
+                if wid.toPlainText() != (v or "") and not wid.hasFocus():
+                    wid.blockSignals(True)
+                    wid.setPlainText(v or "")
+                    wid.blockSignals(False)
+            elif kind == "color":
+                if v is None:
+                    wid.setText("--")
+                    wid.setStyleSheet("")
+                else:
+                    hx = assets.hex_of(v)
+                    wid.setText(hx)
+                    wid.setStyleSheet(f"background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'};")
+            elif kind == "image":
+                i = wid.findData(v) if v else -1
+                if i < 0 and v:                          # a picture that is not in the media library
+                    wid.insertItem(0, os.path.basename(v), v)
+                    i = 0
+                wid.blockSignals(True)
+                wid.setCurrentIndex(i)
+                wid.blockSignals(False)
+            else:
+                wid.blockSignals(True)
+                wid.setTristate(v is None)
+                wid.setCheckState(Qt.PartiallyChecked if v is None else Qt.Checked if v else Qt.Unchecked)
+                wid.blockSignals(False)
+            own = any(q is not None for q in ps)
+            reset = self.widgets[("reset", p["id"])]
+            reset.setEnabled(own)
+            reset.setStyleSheet("color: #6fb3ff;" if own else "")
+            self._key_state(self.widgets[("key", "params", p["id"])], ps, clips, ts)
+
+    def _pick_param_color(self, p):
+        cur = self.widgets[("params", p["id"])].text()
+        ids, pid = list(self.clip_ids), p["id"]
+        col = pick_color(self, qcolor(cur), p["name"],
+                         live=lambda c: self.liveEdited.emit(ids, "params", pid, rgba(c)),
+                         cancel=self.liveCancelled.emit)
+        if col is not None:
+            self._queue("params", pid, rgba(col))
+            self._flush()
+
+    def _param_image(self, pid, path):
+        """A picture chosen for an image parameter ("": pick a file)."""
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "選一張圖片", "",
+                                                  "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff *.svg)")
+            if not path:
+                self.shape = None                        # (the form shows what is set again)
+                return
+            path = path.replace("\\", "/")
+        self._emit_now(self.paramEdited, "params", pid, path)
+
     def _key_button(self, group, key):
         b = QPushButton(KEY_OFF)
         b.setFixedWidth(26)
@@ -877,7 +988,9 @@ class Inspector(QWidget):
         self.fps = fps or self.fps
         shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")),
                                          kind_tag(c.get("mask")), "volume" in c, (c.get("asset") or {}).get("family"),
-                                         (c.get("mask") or {}).get("compound_id"))
+                                         (c.get("mask") or {}).get("compound_id"),
+                                         tuple((p["id"], p["kind"], p["name"]) for p in
+                                               components.params(components.of_clip(c))))
         if shape != self.shape:
             self._flush()
             self.clip_ids = [k["id"] for k in clips]
@@ -889,7 +1002,8 @@ class Inspector(QWidget):
         ts = [t_us - k["start_us"] for k in clips]
         names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段", "group": "群組",
                  "filter": "濾鏡片段"}
-        kinds = sorted({"靜態片段" if project.is_static(k) else names.get(k["type"], k["type"]) for k in clips})
+        kinds = sorted({"元件" if components.of_clip(k) else "靜態片段" if project.is_static(k) else
+                        names.get(k["type"], k["type"]) for k in clips})
         same = lambda vals: len(set(vals)) == 1
         if "類型" in w:
             w["類型"].setText(kinds[0] if len(clips) == 1 else f"{len(clips)} 個片段（{'、'.join(kinds)}）")
@@ -951,6 +1065,8 @@ class Inspector(QWidget):
             w["scale_link"].blockSignals(False)
         if ("asset", "w") in w:
             self._show_asset(clips, ts, easings)
+        if any(isinstance(k, tuple) and k[0] == "reset" for k in w):
+            self._show_params(clips, ts, easings)
         if "speed" in w:
             self._show_time(clips, ts)
         if "group_matte" in w:
@@ -1108,4 +1224,6 @@ def common(clips):
     out["timed"] = all(k["type"] in edit.TIMED and not project.is_static(k) for k in clips)
     if all(k.get("asset") for k in clips) and len({k["asset"]["family"] for k in clips}) == 1:
         out["asset"] = first["asset"]
+    if components.of_clip(first) is not None and len({k.get("compound_id") for k in clips}) == 1:
+        out["compound"], out["compound_id"] = first["compound"], first["compound_id"]     # one component
     return out

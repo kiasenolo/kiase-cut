@@ -264,6 +264,16 @@ the level it is in without asking); drag it onto a timeline to use it. A clip's
 converted on opening: identical copies become one shared compound. Right-click selected
 clips > 建立複合片段 puts them into a new compound (one clip takes their place).
 
+Compounds in the Library (Library tab > 複合片段): right-click a compound in the 複合片段 list,
+or a compound clip on the timeline, > 存到 Library… (or select the clip and press
+存選取的複合片段) to keep it for every project - a transition, a title, a lower third. It is
+saved as one `.kccomp` file with the compounds it shows; files it uses that are not in the
+Library are copied into the Library's hidden `compounds/.media` folder, so it still works
+when the first project is gone or on another computer that has the Library. Drag it onto a
+timeline (or the layer list, or a static compound's picture), or right-click > 放到播放頭: the
+project gets its own copy, once - using it again places the same compound until the file is
+saved over. A compound that shows a timeline cannot be saved this way.
+
 Static clips (靜態片段, ◧): a picture built in the editor. Right-click selected picture
 clips > 建立靜態片段 turns them into one, frozen as they look at the playhead (that moment
 becomes its first frame: like a picture, a static clip only ever shows its first frame, so

@@ -4,6 +4,8 @@
         videos/  images/  sounds/     media the user keeps for reuse
         filters/                       filter files (.glsl, see filters/FORMAT.md)
         textstyles/                    saved text looks (.json)
+        compounds/                     saved compounds (.kccomp): transitions, titles, …
+            .media/                    files they use that were not in the Library (hidden)
 
 Inside a category the user can make folders as they like. A file inside the Library is not
 copied into a project's Media folder: clips use it where it is (the project file stores it
@@ -19,11 +21,13 @@ from . import library, project, workspace
 
 APP_FOLDER = "KiaseCut"
 CATEGORIES = (("videos", "影片"), ("images", "圖片"), ("sounds", "音效"), ("filters", "濾鏡"),
-              ("textstyles", "文字樣式"))
+              ("textstyles", "文字樣式"), ("compounds", "複合片段"))
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".ts", ".mts"}
 SOUND_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
 EXTS = {"videos": VIDEO_EXT, "images": library.IMAGE_EXT, "sounds": SOUND_EXT,
-        "filters": {".glsl"}, "textstyles": {".json"}}
+        "filters": {".glsl"}, "textstyles": {".json"}, "compounds": {".kccomp"}}
+COMPOUND_EXT = ".kccomp"
+COMPOUND_MEDIA = ".media"       # (a hidden folder: not listed in the Library)
 INDEX = ".index.json"
 
 
@@ -97,6 +101,8 @@ class Prober:
             info = {"kind": "filter"}
         elif ext == ".json":
             info = {"kind": "textstyle"}
+        elif ext == COMPOUND_EXT:
+            info = {"kind": "compound"}
         else:
             info = library.probe(path)
         self.cache[path] = {"key": key, "info": info}
@@ -197,6 +203,75 @@ def load_style(path):
     return d
 
 
+# -- compounds ---------------------------------------------------------------------------------------
+def compound_deps(proj, kid):
+    """kid and every compound it shows, inside it as deep as they go (each once, kid first)."""
+    out, todo = [], [kid]
+    while todo:
+        k = todo.pop(0)
+        if k in out:
+            continue
+        if k.startswith("tl"):
+            raise ValueError("複合片段裡面用到了時間線，不能存到 Library")
+        out.append(k)
+        for c in project.walk_clips(proj["compounds"][k]["tracks"]):
+            ref = project.ref_of(c)
+            if ref:
+                todo.append(ref)
+    return out
+
+
+def save_compound(root, folder, name, proj, kid):
+    """Save compound kid of proj (with the compounds it shows) as a .kccomp file in folder of
+    the Library's compounds. Files it uses that are not in the Library are copied into
+    compounds/.media, so it works in any project and on another computer with the Library."""
+    import hashlib
+    root = library.norm(root)
+    stored = json.loads(project.dumps(proj))["compounds"]
+    comps = {k: stored[k] for k in compound_deps(proj, kid)}
+    store = os.path.join(category_dir(root, "compounds"), COMPOUND_MEDIA)
+    copied = {}
+
+    def keep(path):
+        p = library.norm(path)
+        if library.within(p, root) or not os.path.isfile(p):
+            return p                                     # (in the Library already, or missing)
+        if p not in copied:
+            st = os.stat(p)
+            tag = hashlib.sha1(f"{p}|{st.st_size}|{st.st_mtime}".encode()).hexdigest()[:10]
+            dst = os.path.join(store, tag, os.path.basename(p))
+            if not os.path.exists(dst):
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(p, dst)
+            copied[p] = library.norm(dst)
+        return copied[p]
+
+    def portable(p):                                     # "@library/…" inside the Library
+        p = library.norm(p)
+        return project.LIB_TAG + p[len(root) + 1:] if library.within(p, root) else p
+    pack = {"format": "kiasecut-compound", "root": kid, "name": name, "compounds": comps}
+    project._map_paths(pack, lambda p: portable(keep(p)))
+    name = workspace.safe_name(name, "複合片段")
+    os.makedirs(folder, exist_ok=True)
+    dst = os.path.join(folder, library.unique_name(folder, name + COMPOUND_EXT))
+    with open(dst, "w", encoding="utf-8") as fh:
+        json.dump(pack, fh, ensure_ascii=False, indent=1)
+    return dst
+
+
+def load_compound(path):
+    """A saved compound (save_compound) with its paths made absolute again; "source" says
+    which file (and version of it) it came from."""
+    with open(path, encoding="utf-8") as fh:
+        pack = json.load(fh)
+    if pack.get("format") != "kiasecut-compound" or pack.get("root") not in (pack.get("compounds") or {}):
+        raise ValueError("不是複合片段檔")
+    project._map_paths(pack, lambda p: project.to_abs(p, os.path.dirname(path)))
+    st = os.stat(path)
+    pack["source"] = f"{library.norm(path)}|{st.st_size}|{round(st.st_mtime, 2)}"
+    return pack
+
+
 # -- sorting files into categories ------------------------------------------------------------------
 def category_for(path, prefer=None):
     """Which category a file belongs to by its extension (None: not for the Library). `prefer`
@@ -204,7 +279,7 @@ def category_for(path, prefer=None):
     ext = os.path.splitext(path)[1].lower()
     if prefer and ext in EXTS[prefer]:
         return prefer
-    for key in ("videos", "images", "sounds", "filters"):
+    for key in ("videos", "images", "sounds", "filters", "compounds"):
         if ext in EXTS[key]:
             return key
     return None

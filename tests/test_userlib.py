@@ -139,3 +139,69 @@ class FilterFileTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LibraryCompoundTests(unittest.TestCase):
+    """複合片段 in the Library: saved with what they show and the files they use, then used in
+    another project (once per version of the file)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = library.norm(os.path.realpath(self.tmp.name))
+        self.root = base + "/Library"
+        userlib.ensure_layout(self.root)
+        self.old = project.LIBRARY_ROOT
+        project.LIBRARY_ROOT = self.root
+        self.addCleanup(lambda: setattr(project, "LIBRARY_ROOT", self.old))
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from test_edit import S, clip, proj
+        self.S = S
+        self.outside = png(base + "/Project A/Media/wipe.png")
+        self.mine = png(self.root + "/images/logo.png")
+        p = proj()
+        p["tracks"][0]["clips"][0]["media"] = {"path": self.outside, "width": 32, "height": 18}
+        p["tracks"][1]["clips"].append(clip("c4", 0, S, media={"path": self.mine, "width": 32, "height": 18}))
+        inner = edit.make_compound(p, p, ["c4"])                       # a compound inside the one saved
+        self.kid = edit.make_compound(p, p, ["c1", inner["id"]])["compound_id"]
+        p["compounds"][self.kid]["name"] = "轉場"
+        self.p = p
+        self.folder = userlib.category_dir(self.root, "compounds")
+
+    def test_save_and_use(self):
+        path = userlib.save_compound(self.root, self.folder, "轉場", self.p, self.kid)
+        self.assertTrue(path.endswith("轉場.kccomp"))
+        self.assertEqual(userlib.category_for(path), "compounds")
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read()
+        self.assertIn("@library/images/logo.png", raw)                  # Library files stay where they are
+        self.assertIn("@library/compounds/.media/", raw)                # others are copied in
+        self.assertEqual(len(json.loads(raw)["compounds"]), 2)          # with the compound inside it
+        shutil.rmtree(os.path.dirname(os.path.dirname(self.outside)))   # (the first project is gone)
+
+        from test_edit import proj
+        q = proj()
+        pack = userlib.load_compound(path)
+        kid = edit.add_library_compound(q, pack)
+        comp = q["compounds"][kid]
+        self.assertEqual(comp["name"], "轉場")
+        paths = [c["media"]["path"] for c in project.walk_clips(comp["tracks"]) if c.get("media")]
+        self.assertIn(self.mine, paths)
+        copied = next(x for x in paths if "/.media/" in x)
+        self.assertTrue(os.path.exists(copied))
+        nested = next(c for c in project.walk_clips(comp["tracks"]) if c.get("compound_id"))
+        self.assertIn(nested["compound_id"], q["compounds"])
+        self.assertIs(nested["compound"], q["compounds"][nested["compound_id"]])      # linked
+        clip_ids = [c["id"] for c in project.all_clips(q)]
+        self.assertEqual(len(clip_ids), len(set(clip_ids)))
+        self.assertNotIn("c4", clip_ids)                                 # new ids
+        c = edit.place_compound(q, q, kid, None, 3 * self.S)
+        self.assertEqual(c["compound_id"], kid)
+        self.assertEqual(edit.add_library_compound(q, userlib.load_compound(path)), kid)   # used again
+        self.assertEqual(len(q["compounds"]), 2)
+
+    def test_timelines_are_refused(self):
+        self.p["compounds"][self.kid]["tracks"][0]["clips"][0]["timeline_id"] = "tl1"
+        self.p["compounds"][self.kid]["tracks"][0]["clips"][0].pop("compound_id", None)
+        with self.assertRaises(ValueError):
+            userlib.compound_deps(self.p, self.kid)

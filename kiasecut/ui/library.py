@@ -8,7 +8,8 @@ from .. import svgimage
 
 MIME = "application/x-kiasecut-media"
 ROLE_ID = Qt.UserRole
-KIND_NAMES = {"image": "圖片", "video": "影片", "audio": "音訊", "filter": "濾鏡", "textstyle": "文字樣式"}
+KIND_NAMES = {"image": "圖片", "video": "影片", "audio": "音訊", "filter": "濾鏡", "textstyle": "文字樣式",
+              "compound": "複合片段"}
 
 
 def svg_pixmap(path, w):
@@ -179,6 +180,8 @@ class LibraryPanel(QWidget):
             return self.icons.setdefault("#filter", glyph_icon("fx", "#8a6f2e"))
         if it["kind"] == "textstyle":
             return self.icons.setdefault("#textstyle", glyph_icon("Aa", "#7c5574"))
+        if it["kind"] == "compound":
+            return self.icons.setdefault("#compound", glyph_icon("⧉", "#4a6a9a"))
         if it["kind"] == "image":
             if it["path"] not in self.icons:
                 pm = svg_pixmap(it["path"], 160) if svgimage.is_svg(it["path"]) else QPixmap(it["path"])

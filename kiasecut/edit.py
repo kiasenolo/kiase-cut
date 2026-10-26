@@ -1766,6 +1766,33 @@ def _container_id(root, container):
     return None
 
 
+def add_library_compound(root, pack):
+    """A compound from the Library (userlib.load_compound) into the project, with the
+    compounds it shows: new ids for them and their clips. The same file, unchanged since,
+    is added once: its compound is used again. Returns the compound's id here."""
+    comps = root.setdefault("compounds", {})
+    for k, comp in comps.items():
+        if comp.get("library_source") == pack["source"]:
+            return k
+    ids = {}
+    for old in pack["compounds"]:
+        ids[old] = project.new_compound_id(root)
+        comps[ids[old]] = {"tracks": []}                 # (taken, for the next new id)
+    for old, comp in pack["compounds"].items():
+        comp = copy.deepcopy(comp)
+        for t in project.all_tracks(comp["tracks"]):
+            for c in t["clips"]:
+                c["id"] = new_clip_id()
+                if c.get("compound_id") in ids:
+                    c["compound_id"] = ids[c["compound_id"]]
+        comps[ids[old]] = comp
+    comps[ids[pack["root"]]]["library_source"] = pack["source"]
+    if pack.get("name"):                                 # named as it was saved
+        comps[ids[pack["root"]]]["name"] = pack["name"]
+    project.link(root)
+    return ids[pack["root"]]
+
+
 def place_compound(root, container, ref, track_id, start_us):
     """A new clip showing shared compound (or another timeline, nested as in Resolve) ref in
     container (the open timeline or an open compound) at start_us: on track_id when it has

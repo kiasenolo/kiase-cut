@@ -321,10 +321,12 @@ class MainWindow(QMainWindow):
         self.compounds.createRequested.connect(self.create_from_panel)
         self.compounds.entryRequested.connect(self.open_compound_entry)
         self.compounds.tabRequested.connect(self.open_in_tab)
+        self.compounds.libraryRequested.connect(self.save_compound_to_library)
         self.ulpanel = UserLibraryPanel()
         self.ulpanel.settingsRequested.connect(self.open_settings)
         self.ulpanel.newFilterRequested.connect(self.new_filter_file)
         self.ulpanel.saveStyleRequested.connect(self.save_text_style)
+        self.ulpanel.saveCompoundRequested.connect(self.save_selected_compound)
         self.ulpanel.docRequested.connect(self.show_filter_doc)
         self.ulpanel.checkRequested.connect(self.check_filters)
         for key, panel in self.ulpanel.panels.items():
@@ -2362,6 +2364,8 @@ class MainWindow(QMainWindow):
             self.enter_compound(cid)
         elif action == "open_tab":
             self.open_in_tab(project.ref_of(c))
+        elif action == "save_library":
+            self.save_compound_to_library(c.get("compound_id"))
         elif action == "rename":
             name, ok = QInputDialog.getText(self, "片段名稱", "名稱", text=self.timeline.clip_label(c))
             if ok:
@@ -2410,9 +2414,13 @@ class MainWindow(QMainWindow):
         """Files (or folders of them) dragged in: they join the media library where they are,
         and the timeline too when dropped there
         (place = (track id, start us, across): stacked, or one after another with Alt)."""
+        saved = [p for p in paths if p.lower().endswith(userlib.COMPOUND_EXT) and os.path.isfile(p)]
+        for p in saved if place is not None else ():    # compounds saved in a Library: onto the timeline
+            self.place_library_compound(p, place[0], place[1])
         files = library.media_files(paths)
         if not files:
-            self.statusBar().showMessage("沒有可以匯入的圖片、影片或音訊檔案", 4000)
+            if not saved:
+                self.statusBar().showMessage("沒有可以匯入的圖片、影片或音訊檔案", 4000)
             return
         mine = [f for f in files if library.in_user_library(f)]      # in the Library: used where they are
         if mine:
@@ -2526,6 +2534,51 @@ class MainWindow(QMainWindow):
                 self.after_edit("刪除素材")
                 self.request_sync(300)
 
+    def place_library_compound(self, path, track_id, start_us):
+        """A compound saved in the Library: into the project (once per version of the file) and
+        onto the open level, as a compound clip."""
+        try:
+            pack = userlib.load_compound(path)
+        except (OSError, ValueError) as exc:
+            self.statusBar().showMessage(f"讀不到複合片段：{exc}", 5000)
+            return
+
+        def fn(root):
+            kid = edit.add_library_compound(root, pack)
+            if self.root:                                # built-in assets are drawn again for this project
+                assets.restore(project.walk_clips(root["compounds"][kid]["tracks"]), workspace.media_dir(self.root))
+            return edit.place_compound(root, self.container(root), kid, track_id or None, start_us)
+        self.apply_root("加入複合片段", fn, select=lambda c: c["id"])
+
+    def save_compound_to_library(self, kid, folder=None):
+        """存到 Library: compound kid (with what it shows) as a file in the Library's 複合片段,
+        to use in any project."""
+        if not self.proj or not self.ulib or kid not in self.proj.get("compounds", {}):
+            return
+        comp = self.proj["compounds"][kid]
+        name, ok = QInputDialog.getText(self, "存到 Library", "名稱", text=comp.get("name") or "複合片段")
+        if not ok or not name.strip():
+            return
+        base = library.folder_dir(self.ulib.proj("compounds"), self.ulib.mirror("compounds"), folder)
+        try:
+            userlib.save_compound(self.ulib.root, base, name.strip(), self.proj, kid)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "存到 Library", str(exc))
+            return
+        self.ul_epoch += 1
+        self.request_ul_sync(0)
+        self.left.setCurrentWidget(self.ulpanel)
+        self.ulpanel.show_category("compounds")
+        self.statusBar().showMessage(f"已存到 Library > 複合片段：{name.strip()}", 4000)
+
+    def save_selected_compound(self, folder):
+        """The Library's 存選取的複合片段: the compound the selected compound clip shows."""
+        c = next((k for k in self.timeline.selected_clips_primary_first() if k.get("compound_id")), None)
+        if c is None:
+            self.statusBar().showMessage("先在時間軸選一個複合片段（或在「複合片段」分頁按右鍵 > 存到 Library）", 5000)
+            return
+        self.save_compound_to_library(c["compound_id"], folder)
+
     def place_compound(self, kid, track_id, start_us):
         if not self.proj:
             return
@@ -2553,6 +2606,8 @@ class MainWindow(QMainWindow):
                 self.add_filter_clip(it["path"], track_id, start_us)
             elif key == "textstyles":
                 self.apply_text_style(it["path"])
+            elif key == "compounds":
+                self.place_library_compound(it["path"], track_id, start_us)
             else:
                 self.apply_root("加入素材", lambda root: library.place_item(
                     self.container(root), it, track_id or None, start_us), select=lambda c: c["id"])
@@ -2570,7 +2625,7 @@ class MainWindow(QMainWindow):
         for iid in item_ids:
             if iid.startswith("mu"):                         # the user's Library: media only
                 key, it = self.ulib.find(iid)
-                if it is not None and key not in ("filters", "textstyles"):
+                if it is not None and key not in ("filters", "textstyles", "compounds"):
                     items.append(it)
             else:
                 it = next((i for i in library.lib(self.proj)["items"] if i["id"] == iid), None)
@@ -3330,7 +3385,7 @@ class MainWindow(QMainWindow):
         "videos": "影片 (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.flv *.wmv *.ts *.mts)",
         "images": "圖片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff *.svg)",
         "sounds": "音效 (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus *.wma)",
-        "filters": "GLSL 濾鏡 (*.glsl)", "textstyles": "文字樣式 (*.json)"}
+        "filters": "GLSL 濾鏡 (*.glsl)", "textstyles": "文字樣式 (*.json)", "compounds": "複合片段 (*.kccomp)"}
 
     def ul_import(self, key, folder):
         files, _ = QFileDialog.getOpenFileNames(self, "加入 Library", "", self.IMPORT_FILTERS[key] + ";;All files (*)")
@@ -3405,6 +3460,8 @@ class MainWindow(QMainWindow):
             menu.addAction("放成濾鏡片段（播放頭位置）", lambda: self.add_filter_clip(it["path"]))
             menu.addAction("套用到選取的片段", lambda: self.apply_filter_to_selected(it["path"]))
             menu.addAction("用編輯器開啟（改完存檔就會更新）", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(it["path"])))
+        elif key == "compounds":
+            menu.addAction("放到播放頭", lambda: self.place_library_compound(it["path"], "", self.playhead_us()))
         elif key == "textstyles":
             menu.addAction("套用到選取的文字", lambda: self.apply_text_style(it["path"], new_if_none=False))
             menu.addAction("用這個樣式新增文字", lambda: self.apply_text_style(it["path"], force_new=True))

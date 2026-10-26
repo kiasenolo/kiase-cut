@@ -1,5 +1,5 @@
 """The user's Library panel: one tab for each kind of thing (videos, images, sounds, filters,
-text styles), each a tree of the folders and files of that part of the Library folder."""
+text styles, compounds), each a tree of the folders and files of that part of the Library folder."""
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QTabWidget, QVBoxLayout, QWidget
 
@@ -7,13 +7,14 @@ from .. import userlib
 from .library import LibraryPanel
 
 IMPORT_LABELS = {"videos": "加入影片", "images": "加入圖片", "sounds": "加入音效", "filters": "加入檔案",
-                 "textstyles": "加入檔案"}
+                 "textstyles": "加入檔案", "compounds": "加入檔案"}
 
 
 class UserLibraryPanel(QWidget):
     settingsRequested = Signal()
     newFilterRequested = Signal(object)         # folder id or None
     saveStyleRequested = Signal(object)         # folder id or None
+    saveCompoundRequested = Signal(object)      # folder id or None
     docRequested = Signal()
     checkRequested = Signal()
 
@@ -59,6 +60,12 @@ class UserLibraryPanel(QWidget):
         b.setToolTip("把選取的文字片段的字體、顏色等存成樣式")
         b.clicked.connect(lambda: self.saveStyleRequested.emit(t.current_folder()))
         t.bar2.addWidget(b)
+        k = self.panels["compounds"]
+        b = QPushButton("存選取的複合片段")
+        b.setToolTip("把時間軸上選取的複合片段（連同它用到的東西）存進 Library，在任何專案都能用：\n"
+                     "拖到時間軸上，或在「複合片段」分頁按右鍵 > 存到 Library")
+        b.clicked.connect(lambda: self.saveCompoundRequested.emit(k.current_folder()))
+        k.bar2.addWidget(b)
         lay.addWidget(self.tabs, 1)
         self.setMinimumWidth(260)
 

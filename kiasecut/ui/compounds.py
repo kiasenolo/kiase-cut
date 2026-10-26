@@ -56,6 +56,7 @@ class CompoundPanel(QWidget):
     createRequested = Signal(str)                # "timeline", "compound" or "static": a new empty one
     entryRequested = Signal(str)                 # compound id: edit it by itself (no clip needed)
     tabRequested = Signal(str)                   # compound or timeline id: open it in a tab of its own
+    libraryRequested = Signal(str)               # compound id: save it in the user's Library
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -178,6 +179,8 @@ class CompoundPanel(QWidget):
                 menu.addAction("進入編輯", lambda: self.entryRequested.emit(kid))
             menu.addAction("在新的分頁開啟", lambda: self.tabRequested.emit(kid))
             menu.addAction("重新命名…", lambda: self.renameRequested.emit(kid))
+            if not kid.startswith("tl"):
+                menu.addAction("存到 Library…", lambda: self.libraryRequested.emit(kid))
             if kid.startswith("tl"):
                 a = menu.addAction("刪除時間線", lambda: self.deleteRequested.emit(kid))
                 a.setEnabled(self.tl_count > 1)

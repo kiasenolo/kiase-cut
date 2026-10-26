@@ -1683,8 +1683,11 @@ class Timeline(QWidget):
                      ("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
                      ("在播放頭分割", "split"), ("刪除", "delete")]
             if c["type"] == "compound":
-                items = [("編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
-                         ("在新的分頁開啟", "open_tab"), ("設為獨立（不再共用）", "unique"), None] + items
+                head = [("編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
+                        ("在新的分頁開啟", "open_tab"), ("設為獨立（不再共用）", "unique")]
+                if c.get("compound_id"):                     # (not a nested timeline)
+                    head.append(("存到 Library…", "save_library"))
+                items = head + [None] + items
             if project.is_group(c):
                 masked = bool((c.get("matte") or {}).get("on"))
                 items = [("摺疊群組" if self.is_open(c) else "展開群組", "fold"), ("解散群組", "ungroup"),

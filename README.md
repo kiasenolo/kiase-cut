@@ -334,6 +334,21 @@ overshoot, for bounces) or a preset (linear, ease in / out / in-out, back). Time
 can be typed too: with several keyframes selected they show "--" where they differ, and a
 typed number goes to all of them.
 
+Speed and freeze frames (速度, in 屬性 for videos, sounds and compound clips, static ones
+excepted): 速度 plays the source faster or slower (2 × twice as fast, 0.5 × half as fast;
+dragging keeps to 0.1 - 10 ×, typing reaches 0.01 - 100 ×). The clip keeps the same stretch of
+its source, so it gets shorter or longer - as far as the room after it allows - and its
+keyframes and fades stretch with it; the sound is resampled (its pitch follows, like a tape),
+the beat grid and the waveform follow, and a compound clip's whole content runs at that
+speed. 凍結幀 holds the clip on one frame for its whole length, like a picture (silent, and it
+can then be any length); 第 … 格 picks which frame, counted from the clip's start (drag or
+type to fine-tune), and 播放頭 takes the frame under the playhead. Projects with either export
+through the preview renderer.
+
+降低幀數 (in the effect list, under 時間): the clip moves in steps of its 每秒幾格 - videos,
+compound content, keyframe animation and the other effects all update only that often, for a
+choppy, stop-motion look; it changes no pixels itself.
+
 Sound and tracks: audio and video clips show their waveform on the timeline (white, the
 highest and lowest sample of every millisecond, so zooming in shows detail; following
 the clip volume and fades). Audio track headers have mute and solo buttons, picture

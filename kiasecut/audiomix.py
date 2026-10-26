@@ -2,7 +2,9 @@
 
 Follows the export rules (build.py / MLT): a clip plays source time source_start + t,
 volume and fades apply as in build.Builder.audio, and an MP3's start_time (encoder delay)
-shifts its sound later. Decoding runs in a background thread; clips not decoded yet are
+shifts its sound later. A clip with a speed (project.speed) plays its source faster or slower
+- resampled, so the pitch follows, as a tape would - and so does everything inside a compound
+clip with a speed; a frozen clip (凍結幀) is silent. Decoding runs in a background thread; clips not decoded yet are
 silent until they are.
 """
 import hashlib
@@ -20,22 +22,26 @@ US = 1_000_000
 
 
 class Source:
-    def __init__(self, clip, start_us, win, gain=1.0):
+    def __init__(self, clip, start_us, win, gain=1.0, rate=1.0):
         self.clip = clip
         self.gain = gain                      # track gains (and mute / solo) above it
         self.start_us = start_us              # clip start on the mixed timeline
+        self.rate = rate                      # clip time per mixed time (compounds with a speed above it)
         self.win = win                        # (lo, hi) us where it may sound
         self.pcm = None                       # int16 [n, 2] once decoded
         self.offset = 0                       # samples of leading silence (encoder delay)
 
     def key(self):
+        """(file, first source us, source us decoded): the source range the clip plays."""
         c = self.clip
-        return (c["media"]["path"], c.get("source_start_us", 0), c["duration_us"])
+        return (c["media"]["path"], c.get("source_start_us", 0), round(c["duration_us"] * project.speed(c)))
 
 
-def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None):
+def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rate=1.0):
     """Every clip that makes sound, compound clips included, with its timeline placement.
-    only: one of tracks, to hear that track alone (as it sounds in the mix: an export's stem)."""
+    only: one of tracks, to hear that track alone (as it sounds in the mix: an export's stem).
+    Inside a compound clip with a speed, its content's time runs rate times the mix's: a clip
+    at content time s sounds at offset_us + s / rate."""
     out = []
     for tr in tracks:
         if only is not None and tr is not only:
@@ -44,15 +50,17 @@ def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None):
         if g <= 0:
             continue
         for c in tr["clips"]:
-            s = offset_us + c["start_us"]
-            e = s + c["duration_us"]
+            s = offset_us + c["start_us"] / rate
+            e = s + c["duration_us"] / rate
             lo, hi = max(s, win[0]), min(e, win[1])
-            if hi <= lo:
+            if hi <= lo or project.frozen(c) is not None:            # (a frozen clip is silent)
                 continue
             if c["type"] in ("audio", "video") and c.get("media"):
-                out.append(Source(c, s, (lo, hi), g))
+                out.append(Source(c, s, (lo, hi), g, rate))
             elif c["type"] == "compound" and not project.is_static(c):     # a static one is a picture
-                out += sources(c["compound"]["tracks"], s - c.get("source_start_us", 0), (lo, hi), g)
+                inner = rate * project.speed(c)
+                out += sources(c["compound"]["tracks"], s - c.get("source_start_us", 0) / inner, (lo, hi), g,
+                               rate=inner)
     return out
 
 
@@ -130,7 +138,7 @@ class Mixer:
             if s.pcm is None or not (s.win[0] <= t_frame < s.win[1]):
                 continue
             c = s.clip
-            t = t_frame - s.start_us                    # time into the clip
+            t = (t_frame - s.start_us) * s.rate         # time into the clip
             g = curves.value(c.get("volume", 1.0), t) * s.gain
             fi, fo, dur = c.get("fade_in_us", 0), c.get("fade_out_us", 0), c["duration_us"]
             if fi and t < fi:
@@ -139,10 +147,19 @@ class Mixer:
                 g *= max(0.0, (dur - t) / fo)
             if g <= 0:
                 continue
-            i0 = round(t / US * RATE) - s.offset        # sample index into the decoded range
-            lo, hi = max(i0, 0), min(i0 + n, len(s.pcm))
-            if hi > lo:
-                acc[lo - i0:hi - i0] += s.pcm[lo:hi] * g
+            step = s.rate * project.speed(c)            # source samples per mixed sample
+            if abs(step - 1.0) < 1e-9:
+                i0 = round(t / US * RATE) - s.offset    # sample index into the decoded range
+                lo, hi = max(i0, 0), min(i0 + n, len(s.pcm))
+                if hi > lo:
+                    acc[lo - i0:hi - i0] += s.pcm[lo:hi] * g
+            else:                                       # faster / slower: resampled (pitch follows)
+                pos = t * project.speed(c) / US * RATE - s.offset + np.arange(n) * step
+                ok = (pos >= 0) & (pos < len(s.pcm) - 1)
+                if ok.any():
+                    i = pos[ok].astype(np.int64)
+                    f = (pos[ok] - i)[:, None]
+                    acc[ok] += (s.pcm[i] * (1 - f) + s.pcm[i + 1] * f) * g
         return np.clip(acc * self.master, -32768, 32767).astype(np.int16).tobytes()
 
 

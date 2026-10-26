@@ -265,6 +265,8 @@ class Inspector(QWidget):
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
+    speedChosen = Signal(list, float)               # clip ids, speed
+    freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
 
     def __init__(self, parent=None, part="main"):
@@ -283,6 +285,8 @@ class Inspector(QWidget):
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
         self.clip_ids = []
+        self.fps = 60.0                   # the editor's frames per second (凍結幀 counts in them)
+        self.playhead_t = 0               # the playhead in the primary clip's time
         self.shape = None                 # what the form was built for
         self.widgets = {}
         self.pending = {}
@@ -374,6 +378,8 @@ class Inspector(QWidget):
                 blend.activated.connect(lambda i: self._emit_now(self.paramEdited, "clip", "blend", blend.itemData(i)))
                 self.widgets["blend"] = blend
                 form.addRow("混合模式", self._with_key(blend, "clip", "blend"))
+        if c.get("timed", c["type"] in edit.TIMED and not project.is_static(c)):
+            self._build_time(form)
         if "volume" in c:
             form.addRow(section("聲音"))
             form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
@@ -419,6 +425,57 @@ class Inspector(QWidget):
         self.widgets["gap"] = gap
         lay.addWidget(gap, 1)
         form.addRow("間距", row)
+
+    def _build_time(self, form):
+        """速度 and 凍結幀 (videos, sounds, compound clips)."""
+        form.addRow(section("速度"))
+        sp = SpinBox()
+        sp.set_limits(0.1, 10.0, edit.SPEED_MIN, edit.SPEED_MAX)
+        sp.setDecimals(2)
+        sp.setSingleStep(0.05)
+        sp.setSuffix(" ×")
+        sp.setToolTip("播放速度：2 × 快一倍（片段變短），0.5 × 慢一倍（片段變長）；聲音的音高跟著變")
+        sp.edited.connect(lambda v: self._emit_now(self.speedChosen, float(v)))
+        self.widgets["speed"] = sp
+        form.addRow("速度", sp)
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        on = QCheckBox("凍結幀")
+        on.setToolTip("整個片段都停在同一格（不播放、沒有聲音），像一張圖片")
+        on.clicked.connect(lambda v: self._emit_now(self.freezeChosen, bool(v), None))
+        self.widgets["freeze"] = on
+        lay.addWidget(on)
+        lay.addWidget(QLabel("第"))
+        at = SpinBox()
+        at.set_limits(0, 600, 0, None)
+        at.setDecimals(0)
+        at.setSuffix(" 格")
+        at.setToolTip("停在片段的第幾格（從片段開頭算，照時間線精度）；拖曳或輸入來微調")
+        at.edited.connect(lambda v: self._emit_now(self.freezeChosen, True, v / max(self.fps, 1e-9) * US))
+        self.widgets["freeze_at"] = at
+        lay.addWidget(at, 1)
+        here = QPushButton("播放頭")
+        here.setToolTip("凍結在播放頭所在的那一格")
+        here.clicked.connect(lambda: self._emit_now(self.freezeChosen, True, max(0.0, self.playhead_t)))
+        self.widgets["freeze_here"] = here
+        lay.addWidget(here)
+        form.addRow("", row)
+
+    def _show_time(self, clips, ts):
+        w = self.widgets
+        speeds = {round(project.speed(k), 4) for k in clips}
+        self._set("speed", speeds.pop() if len(speeds) == 1 else None)
+        frozen = [project.frozen(k) for k in clips]
+        on = {f is not None for f in frozen}
+        w["freeze"].blockSignals(True)
+        w["freeze"].setTristate(len(on) > 1)
+        w["freeze"].setCheckState(Qt.PartiallyChecked if len(on) > 1 else Qt.Checked if on.pop() else Qt.Unchecked)
+        w["freeze"].blockSignals(False)
+        frames = {round((f - k.get("source_start_us", 0)) / project.speed(k) / US * self.fps)
+                  for k, f in zip(clips, frozen) if f is not None}
+        self._set("freeze_at", frames.pop() if len(frames) == 1 else None)
+        self.playhead_t = ts[0] if ts else 0
 
     def show_spacing(self, gaps):
         """The gaps between the selected clips (None: fewer than two show)."""
@@ -759,6 +816,7 @@ class Inspector(QWidget):
     def show_clips(self, clips, t_us, fps):
         """Show the selected clips (the first is the primary one); t_us is the playhead time."""
         c = common(clips)
+        self.fps = fps or self.fps
         shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")),
                                          kind_tag(c.get("mask")), "volume" in c, (c.get("asset") or {}).get("family"))
         if shape != self.shape:
@@ -834,6 +892,8 @@ class Inspector(QWidget):
             w["scale_link"].blockSignals(False)
         if ("asset", "w") in w:
             self._show_asset(clips, ts, easings)
+        if "speed" in w:
+            self._show_time(clips, ts)
         if "mask_on" in w:
             on = {bool(project.active_mask(k)) for k in clips}
             w["mask_on"].blockSignals(True)
@@ -975,6 +1035,7 @@ def common(clips):
             out["mask"] = first["mask"]
     if all("volume" in k for k in clips):
         out["volume"] = first["volume"]
+    out["timed"] = all(k["type"] in edit.TIMED and not project.is_static(k) for k in clips)
     if all(k.get("asset") for k in clips) and len({k["asset"]["family"] for k in clips}) == 1:
         out["asset"] = first["asset"]
     return out

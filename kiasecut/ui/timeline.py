@@ -699,8 +699,8 @@ class Timeline(QWidget):
         """Waveform polygon of an audio / video clip between screen x0..x1, or None."""
         if self.peaks is None or not c.get("media") or c["type"] not in ("audio", "video"):
             return None
-        key = (c["id"], start, c["duration_us"], c.get("source_start_us", 0), round(x0), round(x1),
-               top, height, self.px_per_s, self.scroll_s)
+        key = (c["id"], start, c["duration_us"], c.get("source_start_us", 0), c.get("speed"), str(c.get("freeze")),
+               round(x0), round(x1), top, height, self.px_per_s, self.scroll_s)
         if key in self._waves:
             return self._waves[key]
         res = self.peaks.get(c["media"]["path"])
@@ -710,8 +710,10 @@ class Timeline(QWidget):
         n = max(1, int(x1 - x0))
         t0 = self._sec(x0) - start / US                     # seconds into the clip
         t1 = self._sec(x0 + n) - start / US
-        src = c.get("source_start_us", 0) / US
-        hi, lo = waveform.columns(peaks, lead, src + t0, src + t1, n)      # highest / lowest sample per px
+        if project.frozen(c) is not None:                   # (a frozen clip is silent)
+            return None
+        src, k = c.get("source_start_us", 0) / US, project.speed(c)
+        hi, lo = waveform.columns(peaks, lead, src + t0 * k, src + t1 * k, n)   # highest / lowest sample per px
         # the clip's volume and fades, sampled every few columns
         vol, fi, fo, dur = c.get("volume", 1.0), c.get("fade_in_us", 0), c.get("fade_out_us", 0), c["duration_us"]
         if curves.is_animated(vol) or fi or fo:

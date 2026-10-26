@@ -258,7 +258,7 @@ class Renderer:
 
     def draw_clip(self, p, c, W, H, fps, t_us, px_per_unit):
         tf = c.get("transform") or {}
-        t = t_us - c["start_us"]
+        t = project.stepped(c, t_us - c["start_us"])           # (降低幀數: in steps)
         v = lambda k, d: curves.value(tf.get(k, d), t)
         opacity = min(1.0, max(0.0, v("opacity", 1.0)))
         if opacity <= 0:
@@ -298,7 +298,7 @@ class Renderer:
             elif kind == "image":
                 pic = self.image(m["path"], tw, th)
             else:
-                pic = self.video_frame(m["path"], c.get("source_start_us", 0) + t,
+                pic = self.video_frame(m["path"], project.source_time(c, t),
                                        max(1, round(tw)), max(1, round(th))) if self.video_frame else None
                 if pic is None:
                     return
@@ -336,14 +336,14 @@ class Renderer:
                 lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
                 lp.scale(k, k)
                 lp.translate(-ux, -uy)
-                self.draw_tracks(lp, comp["tracks"], cw, ch, fps, t + c.get("source_start_us", 0), k)
+                self.draw_tracks(lp, comp["tracks"], cw, ch, fps, project.source_time(c, t), k)
                 lp.end()
                 q.drawImage(QRectF(vis.left(), vis.top(), layer.width() / k * fit, layer.height() / k * fit), layer)
             draw = draw or draw_live
             disp = (bw, bh)
         else:
             return
-        if any(not e.get("disabled") for e in c.get("effects") or []):
+        if project.visual_effects(c):
             plain = draw
 
             def draw(q=p):
@@ -403,7 +403,7 @@ class Renderer:
     def run_effects(self, effects, img, t, duration, fps, wt, disp):
         """Apply a chain of effects to img (QImage ARGB32 premultiplied) at clip time t; each
         effect's own mask (clip-local, through world transform wt) limits where it shows."""
-        todo = [e for e in effects if not e.get("disabled")]
+        todo = [e for e in effects if not e.get("disabled") and e.get("filter") != project.TIME_FILTER]
         eng = self.engine() if todo else None
         if eng is None:
             return img
@@ -450,7 +450,7 @@ class Renderer:
         t = t_us - c["start_us"]
         v = lambda k, d: curves.value(tf.get(k, d), t)
         strength = min(1.0, max(0.0, v("opacity", 1.0)))
-        if strength <= 0 or not any(not e.get("disabled") for e in c.get("effects") or []):
+        if strength <= 0 or not project.visual_effects(c):
             return
         dev = p.device()
         w, h = dev.width(), dev.height()

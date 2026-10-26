@@ -384,6 +384,8 @@ class MainWindow(QMainWindow):
         ins.keyJump.connect(self.jump_key)
         ins.liveEdited.connect(self.on_live_edit)
         ins.liveCancelled.connect(self.rebuild)
+        ins.speedChosen.connect(lambda ids, v: self.apply_each("速度", edit.set_speed, ids, v))
+        ins.freezeChosen.connect(self.on_freeze)
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
         ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)
@@ -1013,7 +1015,7 @@ class MainWindow(QMainWindow):
         if project.is_static(c):                         # its picture is its first frame
             inner = 0
         else:
-            inner = round((self.playhead_us() - c["start_us"] + c.get("source_start_us", 0)) / US * self.fps)
+            inner = round(project.source_time(c, self.playhead_us() - c["start_us"]) / US * self.fps)
         self.path_ids.append(cid)
         self._switch_level(max(0, inner))
 
@@ -1035,7 +1037,9 @@ class MainWindow(QMainWindow):
         if project.is_static(c):                         # (its time does not map onto the outer one)
             outer = round(c["start_us"] / US * self.fps)
         else:
-            outer = round((c["start_us"] - c.get("source_start_us", 0)) / US * self.fps) + self.pos
+            k = project.speed(c)                         # inner time back to outer time
+            outer = round((c["start_us"] + (self.pos / self.fps * US - c.get("source_start_us", 0)) / k)
+                          / US * self.fps)
         self._switch_level(max(0, outer), select=c)
 
     def _switch_level(self, pos, select=None):
@@ -1917,6 +1921,17 @@ class MainWindow(QMainWindow):
                     edit.set_param(level, cid, "transform", key, v, times[cid])
 
         self.apply("移動位置", set_all)
+
+    def on_freeze(self, ids, on, t):
+        """凍結幀 switched, or its frame chosen (t: clip time, None: keep the one it has)."""
+        level = self.container()
+
+        def src(cid):
+            c = edit.find(level, cid)[1]
+            return None if t is None else project.source_time(dict(c, freeze=None), t)
+        srcs = {cid: src(cid) for cid in ids}
+        self.apply("凍結幀" if on else "取消凍結幀",
+                   lambda lvl: [edit.set_freeze(lvl, cid, on, srcs[cid]) for cid in ids])
 
     def align_or_space(self, label, moves):
         """The align / spacing buttons: the selected clips go to moves (one edit)."""

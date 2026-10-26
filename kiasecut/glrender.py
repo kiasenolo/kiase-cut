@@ -388,7 +388,7 @@ class GLRenderer(render.Renderer):
     def gl_clip(self, tgt, base, c, W, H, fps, t_us, ppu):
         gl = self.gl
         tf = c.get("transform") or {}
-        t = t_us - c["start_us"]
+        t = project.stepped(c, t_us - c["start_us"])           # (降低幀數: in steps)
         v = lambda k, d: curves.value(tf.get(k, d), t)
         opacity = min(1.0, max(0.0, v("opacity", 1.0)))
         if opacity <= 0:
@@ -434,7 +434,7 @@ class GLRenderer(render.Renderer):
             elif kind == "image":
                 tex, straight = gl.picture(self.image(m["path"], tw, th), mipmap=True)
             else:
-                pic = self.video_frame(m["path"], c.get("source_start_us", 0) + t,
+                pic = self.video_frame(m["path"], project.source_time(c, t),
                                        max(1, round(tw)), max(1, round(th))) if self.video_frame else None
                 if pic is None:
                     return
@@ -464,7 +464,7 @@ class GLRenderer(render.Renderer):
                 inner = QTransform()
                 inner.scale(k, k)
                 inner.translate(-(vis.left() + bw / 2) / fit, -(vis.top() + bh / 2) / fit)
-                self.gl_tracks(held, inner, comp["tracks"], cw, ch, fps, t + c.get("source_start_us", 0), k)
+                self.gl_tracks(held, inner, comp["tracks"], cw, ch, fps, project.source_time(c, t), k)
                 tex = held.tex
                 rect = QRectF(vis.left(), vis.top(), held.w / k * fit, held.h / k * fit)
         else:
@@ -472,7 +472,7 @@ class GLRenderer(render.Renderer):
         disp = (bw, bh)
         mask = self.clip_mask(c, t)
         blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
-        effects = [e for e in c.get("effects") or [] if not e.get("disabled")]
+        effects = project.visual_effects(c)
         matte = self.gl_matte(mask, t, disp, world, fps)
         try:
             if effects:
@@ -578,7 +578,7 @@ class GLRenderer(render.Renderer):
         t = t_us - c["start_us"]
         v = lambda k, d: curves.value(tf.get(k, d), t)
         strength = min(1.0, max(0.0, v("opacity", 1.0)))
-        effects = [e for e in c.get("effects") or [] if not e.get("disabled")]
+        effects = project.visual_effects(c)
         if strength <= 0 or not effects:
             return
         local = QTransform()

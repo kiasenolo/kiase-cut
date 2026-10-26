@@ -34,6 +34,12 @@ clip     {id, type: image | video | audio | text | compound, name,
           text: {content, font_path, size, color, letter_spacing, line_spacing,
                  italic_deg, styles}                        text clips
           volume, fade_in_us, fade_out_us                   clips with sound
+          speed                                             videos, sounds and (not static)
+                     compound clips, optional (1): how fast the source plays - clip time t
+                     shows source time source_start_us + t * speed (source_time())
+          freeze: {on, src_us}                              the same clips, optional: with on,
+                     the source holds at source time src_us for the whole clip (凍結幀; a
+                     frozen clip makes no sound)
           beat: {on, bpm, offset_us, div}                   sound clips, optional: BPM alignment
                      (節拍): with on, its beats, split into div (1, 2, 3, 4, 6) lines per
                      beat or thinned to one line every 2 / 4 beats (div 0.5 / 0.25: BPM
@@ -188,6 +194,48 @@ def sounds(track, tracks):
     if any(t.get("solo") for t in tracks) and not track.get("solo"):
         return 0.0
     return float(track.get("gain", 1.0))
+
+
+def speed(c):
+    """How fast a clip's source plays (1: as recorded)."""
+    try:
+        v = float(c.get("speed", 1.0))
+    except (TypeError, ValueError):
+        return 1.0
+    return v if v > 0 else 1.0
+
+
+def frozen(c):
+    """The source time a frozen clip holds at (凍結幀), or None."""
+    f = c.get("freeze")
+    return float(f.get("src_us", c.get("source_start_us", 0))) if f and f.get("on") else None
+
+
+def source_time(c, t):
+    """The source time a clip shows at clip time t: with its speed, held when frozen."""
+    f = frozen(c)
+    return f if f is not None else c.get("source_start_us", 0) + t * speed(c)
+
+
+TIME_FILTER = "builtin:frame_rate"      # 降低幀數: a clip's time steps at its fps (no picture change)
+
+
+def stepped(c, t):
+    """Clip time t held to the frame grid of the clip's 降低幀數 effect (the first one that is
+    on), else t: the content, keyframes and effects all move in its steps."""
+    for e in c.get("effects") or ():
+        if e.get("filter") == TIME_FILTER and not e.get("disabled"):
+            from . import curves
+            rate = curves.value((e.get("params") or {}).get("fps", 12.0), t)
+            if rate > 0:
+                step = 1_000_000 / rate
+                return int(t // step * step)
+    return t
+
+
+def visual_effects(c):
+    """The effects that change a clip's picture: on, and not a time effect (stepped())."""
+    return [e for e in c.get("effects") or () if not e.get("disabled") and e.get("filter") != TIME_FILTER]
 
 
 def active_mask(c):

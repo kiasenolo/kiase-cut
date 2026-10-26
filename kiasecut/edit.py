@@ -214,12 +214,12 @@ def trim_start(proj, clip_id, new_start_us):
     rng = free_range(t, c["start_us"], e, ignore=c)
     lo = rng[0]
     if c["type"] in ("video", "audio", "compound") and not project.is_static(c):
-        lo = max(lo, c["start_us"] - c.get("source_start_us", 0))    # cannot go before the source
+        lo = max(lo, c["start_us"] - c.get("source_start_us", 0) / project.speed(c))    # not before the source
     new_start_us = int(min(max(new_start_us, lo), e - MIN_US))
     d = new_start_us - c["start_us"]
     c["start_us"] = new_start_us
     c["duration_us"] = e - new_start_us
-    c["source_start_us"] = c.get("source_start_us", 0) + d
+    c["source_start_us"] = max(0, round(c.get("source_start_us", 0) + d * project.speed(c)))
     shift_keys(c, d)
     return c
 
@@ -230,8 +230,8 @@ def trim_end(proj, clip_id, new_end_us):
     rng = free_range(t, c["start_us"], end(c), ignore=c)
     hi = rng[1]
     src_len = source_length(c)
-    if src_len is not None:
-        hi = min(hi, c["start_us"] + src_len - c.get("source_start_us", 0))
+    if src_len is not None and project.frozen(c) is None:      # (a frozen clip can be any length)
+        hi = min(hi, c["start_us"] + (src_len - c.get("source_start_us", 0)) / project.speed(c))
     new_end_us = int(max(min(new_end_us, hi), c["start_us"] + MIN_US))
     c["duration_us"] = new_end_us - c["start_us"]
     return c
@@ -250,7 +250,7 @@ def split(proj, clip_id, at_us):
     right["id"] = new_clip_id(proj)
     right["start_us"] = at_us
     right["duration_us"] = end(c) - at_us
-    right["source_start_us"] = c.get("source_start_us", 0) + d
+    right["source_start_us"] = round(c.get("source_start_us", 0) + d * project.speed(c))
     shift_keys(right, d)
     c["duration_us"] = d
     if c.get("fade_out_us"):                  # fades belong to the outer ends
@@ -939,8 +939,9 @@ def beat_grid(c, lo=None, hi=None, bars=False):
     if not beat or not beat.get("on") or not beat.get("bpm"):
         return []
     div = beat.get("div", 1) if beat.get("div", 1) in BEAT_DIVS else 1
-    period = 60 * US / beat["bpm"] / div
-    zero = c["start_us"] - c.get("source_start_us", 0) + beat.get("offset_us", 0)   # timeline time of beat 0
+    k = project.speed(c)                                 # (the beats are the source's: faster with it)
+    period = 60 * US / beat["bpm"] / div / k
+    zero = c["start_us"] + (beat.get("offset_us", 0) - c.get("source_start_us", 0)) / k   # timeline time of beat 0
     a, b = c["start_us"], end(c)
     if lo is not None:
         a = max(a, lo)
@@ -958,6 +959,67 @@ def beat_grid(c, lo=None, hi=None, bars=False):
         d = div // math.gcd(k % div, div)
         out.append((zero + k * period, 0 if meter and d == 1 and (k // div) % meter == 0 else d))
     return out
+
+
+TIMED = ("video", "audio", "compound")          # clips with a source time: speed and 凍結幀
+SPEED_MIN, SPEED_MAX = 0.01, 100.0
+
+
+def _timed(c):
+    if c["type"] not in TIMED or project.is_static(c):
+        raise EditError("只有影片、聲音和複合片段可以調速度或凍結")
+
+
+def scale_keys(c, k):
+    """Every keyframe's time (and bezier handles) times k: the clip's time stretched."""
+    for p in _params(c):
+        for key in p["keys"]:
+            key[0] = round(key[0] * k)
+            for i in (2, 4):
+                if len(key) > i:
+                    key[i] = round(key[i] * k)
+
+
+def set_speed(proj, clip_id, value):
+    """A clip's speed: its source plays value times as fast. The clip keeps the same stretch
+    of its source, so it gets shorter or longer - as far as the room after it allows (and its
+    source lasts); keyframes and fades stretch with it."""
+    t, c = find(proj, clip_id)
+    _timed(c)
+    value = min(SPEED_MAX, max(SPEED_MIN, float(value)))
+    old = project.speed(c)
+    k = old / value                                      # the clip's new length / its old one
+    dur = c["duration_us"] * k
+    room = free_range(t, c["start_us"], end(c), ignore=c)[1] - c["start_us"]
+    src_len = source_length(c)
+    if src_len is not None and project.frozen(c) is None:
+        room = min(room, (src_len - c.get("source_start_us", 0)) / value)
+    new_dur = int(max(MIN_US, min(dur, room)))
+    scale_keys(c, new_dur / c["duration_us"] if c["duration_us"] else k)
+    for f in ("fade_in_us", "fade_out_us"):
+        if c.get(f):
+            c[f] = int(min(c[f] * k, new_dur))
+    c["duration_us"] = new_dur
+    if abs(value - 1.0) < 1e-9:
+        c.pop("speed", None)
+    else:
+        c["speed"] = value
+    return c
+
+
+def set_freeze(proj, clip_id, on, src_us=None):
+    """凍結幀: hold the clip at source time src_us (default: where it is now held, else its
+    first frame) - or let it play again."""
+    _, c = find(proj, clip_id)
+    _timed(c)
+    f = c.setdefault("freeze", {"on": False, "src_us": c.get("source_start_us", 0)})
+    f["on"] = bool(on)
+    if src_us is not None:
+        length = source_length(c)
+        f["src_us"] = int(max(0, min(src_us, (length - 1) if length else src_us)))
+    if not f["on"] and src_us is None:
+        c.pop("freeze", None)
+    return c
 
 
 def set_mask_invert(proj, clip_id, invert, t=None):

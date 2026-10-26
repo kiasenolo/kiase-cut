@@ -24,7 +24,8 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QH
                                QVBoxLayout,
                                QWidget)
 
-from .. import assets, build, curves, edit, fonts, fx, gpu, library, project, renderexport, thumbnail, userlib, waveform, workspace
+from .. import (assets, build, curves, edit, fonts, fx, gpu, library, project, recovery, renderexport, thumbnail, userlib,
+               waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -274,6 +275,8 @@ class MainWindow(QMainWindow):
         self.font_check = None          # 字體對應 waiting for the font list (auto or not), or None
         self.font_dlg = None            # the 字體對應 window while it is open
         self.closing = False
+        self.autosave_dir = None        # recovery: the autosave folder once this program's session began
+        self._autosaved = None          # the project as last autosaved (not written again unchanged)
         self.sync_busy = False
         self.sync_retries = 0
         self._last_tick = time.monotonic()
@@ -1308,6 +1311,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "儲存失敗", str(exc))
             return False
         self.dirty = False
+        self._session(autosave=None)
         self.remember(self.path)
         self._update_title()
         self.statusBar().showMessage("已儲存", 3000)
@@ -1347,6 +1351,7 @@ class MainWindow(QMainWindow):
         self.history = edit.History(proj)
         self.meter.set_gain(proj.get("master_gain", 1.0))
         self.dirty = False
+        self._session(autosave=None)
         self.path_ids = []
         self.open_tls = None
         self.tl_views = {}
@@ -1410,13 +1415,72 @@ class MainWindow(QMainWindow):
             info = workspace.info(self.proj)
             info["time_spent_s"] = round(float(info.get("time_spent_s", 0)) + dt, 1)
 
+    def _session(self, **fields):
+        """Tell this program's session file (recovery.py) which project is open and its newest
+        autosave (None: nothing unsaved to bring back)."""
+        if self.autosave_dir:
+            recovery.note(self.autosave_dir, project=self.path, **fields)
+
     def _autosave(self):
-        if self.proj and self.path and self.dirty:
-            self.proj["view"] = self.view_state()
-            try:
-                workspace.autosave(self.proj, self.path)
-            except OSError:
-                pass
+        """Every few minutes: unsaved changes go to the autosave folder (recovery.py), from
+        where the next start offers them back if this program ends unexpectedly."""
+        if not (self.autosave_dir and self.proj and self.dirty):
+            return
+        self.proj["view"] = self.view_state()
+        state = project.dumps(self.proj)
+        if state == self._autosaved:
+            return
+        try:
+            recovery.autosave(self.autosave_dir, self.proj, self.path, self.autosave_limit())
+            self._autosaved = state
+        except OSError as exc:
+            self.statusBar().showMessage(f"自動存檔失敗：{exc}", 6000)
+
+    def begin_session(self):
+        """At start: this program's session in the autosave folder (~/Documents/KiaseCut/auto-save)."""
+        self.autosave_dir = recovery.folder(self.documents_dir())
+        try:
+            recovery.begin(self.autosave_dir)
+        except OSError:
+            self.autosave_dir = None
+
+    def offer_recovery(self):
+        """At start: a program that ended unexpectedly left unsaved changes in an autosave;
+        offer to open them (as unsaved changes of their project). Whether it was opened."""
+        if not self.autosave_dir:
+            return False
+        found = recovery.crashed(self.autosave_dir)
+        if not found:
+            return False
+        session, data = found[0]                         # (others are offered at the next start)
+        save, path = data["autosave"], data.get("project")
+        when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(save)))
+        box = QMessageBox(QMessageBox.Warning, "回復自動存檔",
+                          "KiaseCut 上次沒有正常結束，留下了尚未儲存的修改。\n\n"
+                          f"專案：{recovery.stem(path)}\n自動存檔時間：{when}\n\n"
+                          "要打開自動存檔的內容嗎？打開後記得儲存（Ctrl+S）。", parent=self)
+        yes = box.addButton("回復", QMessageBox.AcceptRole)
+        box.addButton("不要", QMessageBox.RejectRole)
+        box.setDefaultButton(yes)
+        box.exec()
+        recovery.forget(session)
+        if box.clickedButton() is not yes:
+            return False                                 # (the file stays in the folder, within the limit)
+        try:
+            proj = project.load(save)
+        except Exception as exc:
+            QMessageBox.critical(self, "無法回復", f"{save}\n{exc}")
+            return False
+        if path and os.path.exists(path):
+            self.open_loaded(proj, path)
+        else:                                            # its folder is gone: an unsaved project
+            self.path = None
+            self.set_project(proj)
+        self.dirty = True
+        self._session(autosave=save)                     # (still unsaved: kept for another time)
+        self._update_title()
+        self.statusBar().showMessage(f"已從自動存檔回復（{when}）：記得儲存", 10000)
+        return True
 
     def reveal(self, ident):
         """Show a library entry (None: the Media folder) in the file manager."""
@@ -2903,18 +2967,29 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             return 5
 
+    def autosave_limit(self):
+        """How many autosave files are kept."""
+        try:
+            return max(1, int(self.settings().value("autosave_limit", recovery.LIMIT)))
+        except (TypeError, ValueError):
+            return recovery.LIMIT
+
     def open_settings(self):
         dlg = SettingsDialog(self, self.ulib.root if self.ulib else self.library_root(), self.default_library_root(),
-                             self.default_location(), self.autosave_min(), gpu.enabled)
+                             self.default_location(), self.autosave_min(), gpu.enabled, self.autosave_limit(),
+                             self.autosave_dir or recovery.folder(self.documents_dir()))
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
         s = self.settings()
         s.setValue("project_dir", v["project_dir"])
         s.setValue("autosave_min", v["autosave_min"])
+        s.setValue("autosave_limit", v["autosave_limit"])
         s.setValue("gpu", v["gpu"])
         gpu.enabled = v["gpu"]
         self.autosave_timer.setInterval(v["autosave_min"] * 60 * 1000)
+        if self.autosave_dir:
+            recovery.prune(self.autosave_dir, v["autosave_limit"])
         if v["library"] != (self.ulib.root if self.ulib else None):
             self.change_library_root(v["library"], v["copy_library"])
 
@@ -3463,6 +3538,8 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self.closing = True
+        if self.autosave_dir:                            # closed normally: nothing to bring back
+            recovery.end(self.autosave_dir)
         if self.fullscreen:
             self.fullscreen.close()
         self.player.shutdown()
@@ -3484,7 +3561,10 @@ def run(argv):
     app.setStyleSheet(STYLE)
     win = MainWindow()
     win.show()
-    if len(argv) > 1:
+    win.begin_session()
+    if win.offer_recovery():
+        pass
+    elif len(argv) > 1:
         a = argv[1]
         if a.endswith(workspace.EXTS):
             win.open_path(os.path.abspath(a))

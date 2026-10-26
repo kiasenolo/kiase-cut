@@ -391,17 +391,10 @@ def make_backup(path, tag=None):
     dest = os.path.join(folder, f"{stem} {stamp}{' ' + tag if tag else ''}{EXT}")
     shutil.copy2(path, dest)
     mine = sorted(f for f in os.listdir(folder) if f.startswith(stem + " ") and f.endswith(EXTS)
-                  and not any(f.endswith(" autosave" + e) for e in EXTS))
+                  and not any(f.endswith(" autosave" + e) for e in EXTS))     # (autosaves of older versions)
     for old in mine[:-BACKUPS_KEPT]:
         os.remove(os.path.join(folder, old))
     return dest
-
-
-def autosave(proj, path):
-    """Write the unsaved state beside the backups; the project file itself is left alone."""
-    folder = sub(root_of(path), BACKUP)
-    os.makedirs(folder, exist_ok=True)
-    project.save(proj, os.path.join(folder, project_name(path) + " autosave" + EXT))
 
 
 # -- statistics -------------------------------------------------------------------------------------

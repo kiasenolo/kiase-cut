@@ -71,14 +71,12 @@ class Layout(Base):
         p = library.lib(back)["items"][0]["path"]
         self.assertTrue(p.startswith(new.replace("\\", "/")) and os.path.exists(p))
 
-    def test_backup_on_second_save_and_autosave(self):
+    def test_backup_on_second_save(self):
         workspace.save(self.proj, self.path)
         workspace.save(self.proj, self.path)
         b = os.listdir(os.path.join(self.root, workspace.BACKUP))
         self.assertEqual(len(b), 1)
         self.assertIsNotNone(workspace.make_backup(self.path, tag="x"))
-        workspace.autosave(self.proj, self.path)
-        self.assertIn("My Video autosave.kiasecut.json", os.listdir(os.path.join(self.root, workspace.BACKUP)))
 
     def test_old_project_gets_info(self):
         old = project.new()

@@ -537,8 +537,18 @@ My Video/
     Media/                  the media library: its sub-folders are the library folders
     Cache/                  waveforms, proxies
     Exports/                rendered videos (the export dialog starts here)
-    Backup/                 earlier copies of the project file, one per save; autosave
+    Backup/                 earlier copies of the project file, one per save
 ```
+
+Autosave and recovery: while a project has unsaved changes, a copy is written every few
+minutes (設定 > 自動存檔間隔) to `~/Documents/KiaseCut/auto-save`, named after the project and
+the time; only the newest ones are kept (設定 > 自動存檔上限, 30 at first - 開啟資料夾 shows
+them). The project file itself is not touched. If KiaseCut ends without closing (a crash, a
+power cut), the next start asks whether to bring the newest autosave back: it opens as
+unsaved changes of its project, to be saved as usual (or, when its project folder is gone, as
+a project without a folder). Each running KiaseCut keeps a `session-<pid>.json` there, removed
+when it closes normally; `crash.log` beside them collects Python's record of a crash (every
+thread's stack), for reporting it.
 
 The media library is the Media folder: imports (dialog, or files dragged in from the file
 manager) are copied into it, new folders / renaming / moving / deleting in the library do the
@@ -560,6 +570,7 @@ folder (File > Save as).
 | `curves.py` | keyframe evaluation (Jianying's bezier handles) |
 | `edit.py` | move / trim / split / delete / keyframe / mask / name edits with undo |
 | `library.py` | media library: folders, probing, placing media on a timeline |
+| `recovery.py` | autosave folder, crash recovery, crash.log |
 | `textlayout.py` | text rendering calibrated to Jianying's layout |
 | `masks.py` | line / mirror / circle / rectangle masks as MLT splines (or baked mattes) |
 | `render.py`, `audiomix.py` | live preview: frames drawn with QPainter, audio mixed with numpy |

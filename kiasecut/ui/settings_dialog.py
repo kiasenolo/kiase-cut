@@ -1,5 +1,6 @@
-"""Settings: where the Library lives, the default place for new projects, backups, GPU
-acceleration, and a check that the filter engine works on this computer."""
+"""Settings: where the Library lives, the default place for new projects, autosave (how often,
+how many are kept), GPU acceleration, and a check that the filter engine works on this
+computer."""
 import os
 
 from PySide6.QtCore import QUrl
@@ -11,7 +12,8 @@ from .. import fx, gpu, library
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, parent, library_dir, default_library, project_dir, autosave_min, use_gpu=True):
+    def __init__(self, parent, library_dir, default_library, project_dir, autosave_min, use_gpu=True,
+                 autosave_limit=30, autosave_dir=""):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(600)
@@ -56,7 +58,24 @@ class SettingsDialog(QDialog):
         self.autosave.setRange(1, 60)
         self.autosave.setValue(autosave_min)
         self.autosave.setSuffix(" 分鐘")
-        form.addRow("自動備份間隔", self.autosave)
+        form.addRow("自動存檔間隔", self.autosave)
+        row = QHBoxLayout()
+        self.autosave_limit = QSpinBox()
+        self.autosave_limit.setRange(1, 999)
+        self.autosave_limit.setValue(autosave_limit)
+        self.autosave_limit.setSuffix(" 個檔案")
+        show = QPushButton("開啟資料夾")
+        show.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(autosave_dir))
+                             if os.path.isdir(autosave_dir) else None)
+        row.addWidget(self.autosave_limit)
+        row.addWidget(show)
+        row.addStretch(1)
+        form.addRow("自動存檔上限", row)
+        note = QLabel(f"有未儲存的修改時，每隔一段時間存一份到 {autosave_dir}，只留最新的幾份。\n"
+                      "程式沒有正常結束（當掉、斷電）時，下次開啟會問要不要回復。")
+        note.setStyleSheet("color: #9a9aa0;")
+        note.setWordWrap(True)
+        form.addRow("", note)
 
         self.gpu = QCheckBox("使用 GPU 加速（NVIDIA：匯出用 NVENC 編碼，HEVC / AV1 / VP9 影片用 GPU 解碼）")
         self.gpu.setChecked(use_gpu)
@@ -129,4 +148,5 @@ class SettingsDialog(QDialog):
         return {"library": library.norm(self.library.text().strip()),
                 "copy_library": self.copy.isVisible() and self.copy.isChecked(),
                 "project_dir": self.projects.text().strip(), "autosave_min": self.autosave.value(),
+                "autosave_limit": self.autosave_limit.value(),
                 "gpu": self.gpu.isChecked()}

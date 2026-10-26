@@ -407,38 +407,65 @@ class GLRenderer(render.Renderer):
         fmt = QImage.Format_RGBA8888_Premultiplied if alpha else QImage.Format_RGBA8888
         return QImage(data, width, height, width * 4, fmt).copy()
 
-    def gl_content(self, tgt, base, comp, W, H, fps, t_us, ppu):
-        """A compound's or a group's tracks (as render.draw_content: a group's matte)."""
+    def gl_content(self, tgt, base, comp, W, H, fps, t_us, ppu, through=False):
+        """A compound's or a group's tracks (as render.draw_content: a group's matte); through
+        (穿透): what tgt has is under them, not a clear layer."""
         matte = (comp.get("matte") or {}) if comp.get("group") else {}
         tracks = [tr for tr in comp["tracks"] if tr["kind"] != "audio"]
         if not matte.get("on") or len(tracks) < 2:
             self.gl_tracks(tgt, base, comp["tracks"], W, H, fps, t_us, ppu)
             return
         gl = self.gl
-        cut, above, kept, empty = (gl.layer(tgt.w, tgt.h) for _ in range(4))
+        cut, under, above, kept = (gl.layer(tgt.w, tgt.h) for _ in range(4))
         try:
             self.gl_tracks(cut, base, tracks[:1], W, H, fps, t_us, ppu)
-            show, body, invert = matte.get("show"), matte.get("body", True), matte.get("invert")
-            if show and body:
-                # as Photoshop's clipping masks: the clips above are drawn on the shown one, so
-                # their blend modes mix with it, and kept where it is (inverted: where it is not)
-                gl.ctx.copy_framebuffer(above.tex, cut.fbo)
+            if through:
+                gl.ctx.copy_framebuffer(under.tex, tgt.fbo)
+            if matte.get("show"):
+                gl.draw_layer(under, cut)
+            out = under
+            if matte.get("body", True):                              # (顯示主體)
+                # as Photoshop's clipping masks: the clips above are drawn on what is under them
+                # (the shown mask object), so their blend modes mix with it, and kept where the
+                # mask object is (inverted: where it is not)
+                gl.ctx.copy_framebuffer(above.tex, under.fbo)
                 self.gl_tracks(above, base, tracks[1:], W, H, fps, t_us, ppu)
-                gl.mix_cover(kept, cut.tex, above.tex, cut.tex, flip=invert)
-                gl.draw_layer(tgt, kept)
-                return
-            self.gl_tracks(above, base, tracks[1:], W, H, fps, t_us, ppu)
-            if invert:                                               # kept where the bottom one is not
-                gl.mix_cover(kept, above.tex, empty.tex, cut.tex)
-            else:                                                    # kept where the bottom one is
-                gl.mix_cover(kept, empty.tex, above.tex, cut.tex)
-            if show:
-                gl.draw_layer(tgt, cut)
-            if body:                                                 # (顯示主體)
-                gl.draw_layer(tgt, kept)
+                gl.mix_cover(kept, under.tex, above.tex, cut.tex, flip=matte.get("invert"))
+                out = kept
+            if through:
+                gl.ctx.copy_framebuffer(tgt.tex, out.fbo)
+            else:
+                gl.draw_layer(tgt, out)
         finally:
-            for lay in (cut, above, kept, empty):
+            for lay in (cut, under, above, kept):
                 gl.release(lay)
+
+    def gl_through(self, tgt, c, comp, base, t, fps, ppu, opacity, disp, world, inv):
+        """穿透 (as Photoshop's pass-through groups): group c's clips drawn straight on tgt, so
+        their blend modes mix with what is under the group; its opacity and mask fade between
+        that and what was there (base: group content -> device)."""
+        gl = self.gl
+        mask = self.clip_mask(c, t)
+        fade = opacity < 1 or mask is not None
+        before = now = matte = None
+        try:
+            if fade:
+                before = gl.layer(tgt.w, tgt.h)
+                gl.ctx.copy_framebuffer(before.tex, tgt.fbo)
+            self.gl_content(tgt, base, comp, comp["width"], comp["height"], fps, t, ppu, through=True)
+            if fade:
+                now = gl.layer(tgt.w, tgt.h)
+                gl.ctx.copy_framebuffer(now.tex, tgt.fbo)
+                matte = self.gl_matte(mask, t, disp, world, fps)
+                gl.matte = matte and matte[0].tex
+                gl.mix(tgt, before.tex, now.tex, opacity, mask, t, disp, inv)
+        finally:
+            gl.matte = None
+            if matte and matte[1]:
+                gl.release(matte[0])
+            for lay in (before, now):
+                if lay is not None:
+                    gl.release(lay)
 
     def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu):
         f = round(t_us * fps / US)
@@ -518,6 +545,11 @@ class GLRenderer(render.Renderer):
             bw, bh = cw * fit, ch * fit
             k = fit * max(abs(sx), abs(sy), 0.01) * ppu       # layer px per compound unit
             straight = False
+            if kind == "group" and curves.value(c.get("blend", "normal"), t) == "pass_through" \
+                    and not project.visual_effects(c):          # (effects need a layer of its own)
+                to_clip = QTransform(fit, 0, 0, fit, -bw / 2, -bh / 2)
+                self.gl_through(tgt, c, comp, to_clip * world, t, fps, k, opacity, (bw, bh), world, inv)
+                return
             if comp.get("static"):
                 tex = self.gl_still(comp, k, fps).tex
                 rect = QRectF(-bw / 2, -bh / 2, bw, bh)

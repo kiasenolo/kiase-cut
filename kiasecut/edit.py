@@ -648,9 +648,10 @@ GROUP_FIELDS = {
     "mask": ("cx", "cy", "w", "h", "rotation", "feather", "kind", "invert"),
     "clip": ("volume", "blend"),
 }
-# how a picture mixes with what is under it (render.BLEND_OPS draws them)
+# how a picture mixes with what is under it (render.BLEND_OPS draws them); a group's can also be
+# pass_through (穿透, as in Photoshop: its clips mix with what is under the group themselves)
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "color_dodge", "color_burn",
-               "hard_light", "soft_light", "difference", "exclusion", "add")
+               "hard_light", "soft_light", "difference", "exclusion", "add", "pass_through")
 DISCRETE_DEFAULTS = {"font_path": project.DEFAULT_FONT, "kind": "rectangle", "invert": False, "blend": "normal",
                      "align": "center"}
 KEY_TOL_US = 1_000_000 // 120      # half a 60 fps frame
@@ -752,6 +753,8 @@ def _check_choice(c, group, key, value):
             raise EditError("blend modes go on pictures, videos, texts and compound clips")
         if value not in BLEND_MODES:
             raise EditError(f"unknown blend mode {value}")
+        if value == "pass_through" and c["type"] != "group":
+            raise EditError("only groups pass through")
     if group.startswith("fx:"):
         p = next((q for q in fx.get(_effect(c, group[3:])["filter"]).params if q.name == key), None)
         if p is not None and p.type == "menu" and value not in p.items:

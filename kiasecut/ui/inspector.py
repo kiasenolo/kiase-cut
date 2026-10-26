@@ -89,6 +89,7 @@ BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "s
                ("變暗", "darken"), ("變亮", "lighten"), ("顏色減淡", "color_dodge"), ("顏色加深", "color_burn"),
                ("強光", "hard_light"), ("柔光", "soft_light"), ("差值", "difference"), ("排除", "exclusion"),
                ("相加", "add"))
+PASS_THROUGH = ("穿透", "pass_through")          # (groups only)
 KEY_ON, KEY_OFF = "◆", "◇"
 
 
@@ -384,9 +385,11 @@ class Inspector(QWidget):
                 self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"), ("scale", "scale_y", "縮放")))
                 blend = ComboBox()
                 blend.setPlaceholderText("--")
-                for name, k in BLEND_NAMES:
+                for name, k in ((PASS_THROUGH,) if c["type"] == "group" else ()) + BLEND_NAMES:
                     blend.addItem(name, k)
-                blend.setToolTip("這個片段和下面的畫面怎麼混合")
+                blend.setToolTip("這個片段和下面的畫面怎麼混合" + ("。穿透：群組裡的片段直接和群組下面的畫面混合"
+                                                              "（像 Photoshop 的群組；群組有特效時當作正常）"
+                                                              if c["type"] == "group" else ""))
                 blend.activated.connect(lambda i: self._emit_now(self.paramEdited, "clip", "blend", blend.itemData(i)))
                 self.widgets["blend"] = blend
                 form.addRow("混合模式", self._with_key(blend, "clip", "blend"))

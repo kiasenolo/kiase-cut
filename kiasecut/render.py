@@ -254,10 +254,11 @@ class Renderer:
         p.end()
         return img
 
-    def draw_content(self, p, comp, W, H, fps, t_us, px_per_unit):
+    def draw_content(self, p, comp, W, H, fps, t_us, px_per_unit, through=False):
         """A compound's or a group's tracks; a group with its matte on: its bottom track's clips
         cut the clips above them (by their alpha) - with invert, cut them out of them - and are
-        drawn too with show; the clips above are left out with body off (顯示主體)."""
+        drawn too with show; the clips above are left out with body off (顯示主體). through
+        (穿透): what p has is under them, not a clear layer."""
         matte = (comp.get("matte") or {}) if comp.get("group") else {}
         tracks = [tr for tr in comp["tracks"] if tr["kind"] != "audio"]
         if not matte.get("on") or len(tracks) < 2 or not isinstance(p.device(), QImage):
@@ -265,9 +266,12 @@ class Renderer:
             return
         dev = p.device()
 
-        def layer(trs):
-            im = QImage(dev.width(), dev.height(), QImage.Format_ARGB32_Premultiplied)
-            im.fill(Qt.transparent)
+        def layer(trs, under=None):
+            if under is None:
+                im = QImage(dev.width(), dev.height(), QImage.Format_ARGB32_Premultiplied)
+                im.fill(Qt.transparent)
+            else:
+                im = under.copy()
             lp = QPainter(im)
             lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
             lp.setTransform(p.worldTransform())
@@ -275,45 +279,62 @@ class Renderer:
             lp.end()
             return im
         cut = layer(tracks[:1])
-        if matte.get("show") and matte.get("body", True):
-            # as Photoshop's clipping masks: the clips above are drawn on the shown one, so their
-            # blend modes mix with it; then it and that mixed by its alpha (inverted: 1 - alpha)
-            on = cut.copy()
-            lp = QPainter(on)
-            lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-            lp.setTransform(p.worldTransform())
-            self.draw_tracks(lp, tracks[1:], W, H, fps, t_us, px_per_unit)
-            inside, outside = QPainter.CompositionMode_DestinationIn, QPainter.CompositionMode_DestinationOut
-            keep_on, keep_cut = (outside, inside) if matte.get("invert") else (inside, outside)
-            lp.resetTransform()
-            lp.setCompositionMode(keep_on)
-            lp.drawImage(0, 0, cut)
-            rest = cut.copy()
-            cp = QPainter(rest)
-            cp.setCompositionMode(keep_cut)
-            cp.drawImage(0, 0, cut)
-            cp.end()
-            lp.setCompositionMode(QPainter.CompositionMode_Plus)
-            lp.drawImage(0, 0, rest)
-            lp.end()
-            p.save()
-            p.resetTransform()
-            p.drawImage(0, 0, on)
-            p.restore()
-            return
-        above = layer(tracks[1:])
-        lp = QPainter(above)
-        # kept where the bottom one is (inverted: where it is not)
-        lp.setCompositionMode(QPainter.CompositionMode_DestinationOut if matte.get("invert")
-                              else QPainter.CompositionMode_DestinationIn)
-        lp.drawImage(0, 0, cut)
-        lp.end()
+        under = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied) if through else None
+        if matte.get("show"):
+            if under is None:
+                under = cut
+            else:
+                up = QPainter(under)
+                up.drawImage(0, 0, cut)
+                up.end()
+        if under is None:
+            under = layer([])
+        out = under
+        if matte.get("body", True):
+            # as Photoshop's clipping masks: the clips above are drawn on what is under them (the
+            # shown mask object), so their blend modes mix with it, and kept where the mask object
+            # is (inverted: where it is not)
+            above = layer(tracks[1:], under)
+            a = image_to_array(cut)[..., 3:4].astype(np.float32) / 255
+            if matte.get("invert"):
+                a = 1 - a
+            b0, b1 = image_to_array(under).astype(np.float32), image_to_array(above).astype(np.float32)
+            out = array_to_image(np.ascontiguousarray((b0 + (b1 - b0) * a).round().astype(np.uint8)))
         p.save()
         p.resetTransform()
-        if matte.get("show"):
-            p.drawImage(0, 0, cut)
-        if matte.get("body", True):
-            p.drawImage(0, 0, above)
+        if through:
+            p.setClipping(False)
+            p.setOpacity(1.0)
+            p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.drawImage(0, 0, out)
+        p.restore()
+
+    def draw_through(self, p, c, comp, t, fps, opacity, disp, fit, k, W, H):
+        """穿透 (as Photoshop's pass-through groups): group c's clips drawn straight on p, so their
+        blend modes mix with what is under the group; its opacity and mask fade between that and
+        what was there."""
+        dev = p.device()
+        world = clip_world(c, t, W, H) * p.worldTransform()
+        mask = self.clip_mask(c, t)
+        fade = opacity < 1 or mask is not None
+        before = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied) if fade else None
+        p.save()
+        p.setTransform(QTransform(fit, 0, 0, fit, -disp[0] / 2, -disp[1] / 2) * world)
+        self.draw_content(p, comp, comp["width"], comp["height"], fps, t, k, through=True)
+        p.restore()
+        if not fade:
+            return
+        a = np.full((dev.height(), dev.width(), 1), opacity, np.float32)
+        if mask is not None:
+            a *= self.mask_coverage(mask, t, disp, world, dev.width(), dev.height(), fps)[..., None]
+        now = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        b0, b1 = image_to_array(before).astype(np.float32), image_to_array(now).astype(np.float32)
+        p.save()
+        p.resetTransform()
+        p.setClipping(False)
+        p.setOpacity(1.0)
+        p.setCompositionMode(QPainter.CompositionMode_Source)
+        p.drawImage(0, 0, array_to_image(np.ascontiguousarray((b0 + (b1 - b0) * a).round().astype(np.uint8))))
         p.restore()
 
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
@@ -386,6 +407,10 @@ class Renderer:
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
             k = fit * max(abs(sx), abs(sy), 0.01) * px_per_unit       # layer px per compound unit
+            if kind == "group" and curves.value(c.get("blend", "normal"), t) == "pass_through" \
+                    and not project.visual_effects(c) and isinstance(p.device(), QImage):
+                self.draw_through(p, c, comp, t, fps, opacity, (bw, bh), fit, k, W, H)
+                return
             if comp.get("static"):
                 pic = self.still(comp, k, fps)
                 draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)

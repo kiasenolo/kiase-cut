@@ -179,6 +179,63 @@ class GroupRenderTests(unittest.TestCase):
             self.assertEqual(rgb(img, 12, 18)[0], 255, name)                  # half red on white
             self.assertAlmostEqual(rgb(img, 12, 18)[1], 128, delta=2)
 
+    def through(self, matte=None, blend="pass_through", opacity=1.0):
+        """A group whose red clip is set to screen, over a blue picture."""
+        v = self.view(matte)
+        g = v["tracks"][0]["clips"][0]
+        g["blend"] = blend
+        g["transform"]["opacity"] = opacity
+        g["tracks"][1]["clips"][0]["blend"] = "screen"
+        if not (matte or {}).get("on"):
+            g["tracks"] = g["tracks"][1:]                                   # the red one alone
+        v["tracks"].insert(0, {"id": "t9", "kind": "video", "name": "bg", "clips": [self.s.pic("bg", self.s.blue)]})
+        return v
+
+    def test_pass_through(self):
+        """穿透: the group's clips mix with what is under the group, as in Photoshop."""
+        from test_compound_mask import rgb
+        magenta, blue = (255, 0, 255), (0, 0, 255)
+        for r in self.renderers():
+            name = type(r).__name__
+            img = r.render(self.through(blend="normal"), 0, 64, 36)
+            self.assertEqual(r.errors, [], name)
+            self.assertEqual(rgb(img, 52, 18), (255, 0, 0), name)             # a group of its own: on nothing
+            img = r.render(self.through(), 0, 64, 36)
+            self.assertEqual(r.errors, [], name)
+            self.assertEqual(rgb(img, 12, 18), magenta, name)                 # red screened on the blue
+            self.assertEqual(rgb(img, 52, 18), magenta, name)
+            img = r.render(self.through(opacity=0.5), 0, 64, 36)
+            self.assertAlmostEqual(rgb(img, 52, 18)[0], 128, delta=2, msg=name)   # halfway from the blue
+            self.assertEqual(rgb(img, 52, 18)[2], 255, name)
+            img = r.render(self.through({"on": True, "show": True}), 0, 64, 36)
+            self.assertEqual(rgb(img, 12, 18), (255, 255, 255), name)         # screened on the white mask object
+            self.assertEqual(rgb(img, 52, 18), blue, name)                    # cut away: the blue under it
+            img = r.render(self.through({"on": True, "show": False}), 0, 64, 36)
+            self.assertEqual(rgb(img, 12, 18), magenta, name)                 # screened on the blue
+            self.assertEqual(rgb(img, 52, 18), blue, name)
+            img = r.render(self.through({"on": True, "show": False, "invert": True}), 0, 64, 36)
+            self.assertEqual(rgb(img, 12, 18), blue, name)
+            self.assertEqual(rgb(img, 52, 18), magenta, name)
+            v = self.through()
+            v["tracks"][1]["clips"][0]["mask"] = {"kind": "rectangle", "invert": False, "cx": -0.5, "cy": 0.0,
+                                                  "w": 0.5, "h": 1.0, "rotation": 0.0, "feather": 0.0}
+            img = r.render(v, 0, 64, 36)                                       # the group's mask: its left half
+            self.assertEqual(rgb(img, 12, 18), magenta, name)
+            self.assertEqual(rgb(img, 52, 18), blue, name)
+
+    def test_only_groups_pass_through(self):
+        from kiasecut.ui.inspector import Inspector
+        v = self.through()
+        edit.set_param(v, "g", "clip", "blend", "pass_through")
+        with self.assertRaises(edit.EditError):
+            edit.set_param(v, "bg", "clip", "blend", "pass_through")
+        ins = Inspector()
+        ins.show_clips([edit.find(v, "g")[1]], 0, 30)
+        self.assertEqual(ins.widgets["blend"].itemData(0), "pass_through")
+        self.assertEqual(ins.widgets["blend"].currentData(), "pass_through")
+        ins.show_clips([edit.find(v, "bg")[1]], 0, 30)
+        self.assertEqual(ins.widgets["blend"].findData("pass_through"), -1)
+
 
 class GroupPreviewTests(unittest.TestCase):
     def test_selected_group_is_dragged_from_its_empty_space(self):

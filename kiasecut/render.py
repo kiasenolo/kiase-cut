@@ -12,7 +12,8 @@ follows the same rules as build.py:
     a static compound (靜態片段) always at time 0 (its first frame), drawn once and reused
     like a picture;
   * a compound mask (kind "compound") cuts with a compound's picture (view["compounds"]):
-    its alpha or luma, at clip time (a static one: its still). view["matte_preview"] =
+    its alpha or luma, at clip time + its t_off (a static one: its still); an image mask
+    (kind "image") the same way with a picture file. view["matte_preview"] =
     {clip, opacity} (the editor, while the mask is edited) draws that picture over the clip.
 QPainter on QImage is usable from any thread, so the player renders off the UI thread.
 glrender.py draws the same frames on the GPU (and is used when it can be); this one is the
@@ -160,17 +161,22 @@ class Renderer:
         self.matte_preview = view.get("matte_preview")
 
     def matte_compound(self, mask, t=0):
-        """The compound a compound mask cuts with, or None (not a compound mask, none chosen,
-        deleted, or that compound is being drawn as a mask already)."""
-        if not mask or curves.value(mask.get("kind"), t) != "compound":
+        """What a picture mask cuts with: the compound of a compound mask, or for an image mask
+        {image, width, height}; None when it is not one, has none (chosen, deleted, a file that
+        is gone) or that compound is being drawn as a mask already."""
+        kind = curves.value(mask.get("kind"), t) if mask else None
+        if kind == "image":
+            path, w, h = mask.get("image"), mask.get("img_w"), mask.get("img_h")
+            return {"image": path, "width": w, "height": h} if path and w and h else None
+        if kind != "compound":
             return None
         kid = mask.get("compound_id")
         return None if kid in self._matting else self.compounds.get(kid)
 
     def clip_mask(self, c, t):
-        """The mask that cuts clip c now (None: none, off, or a compound mask without its compound)."""
+        """The mask that cuts clip c now (None: none, off, or a picture mask without its picture)."""
         m = project.active_mask(c)
-        if m and curves.value(m.get("kind"), t) == "compound" and self.matte_compound(m, t) is None:
+        if m and curves.value(m.get("kind"), t) in ("compound", "image") and self.matte_compound(m, t) is None:
             return None
         return m
 
@@ -181,7 +187,9 @@ class Renderer:
 
     def matte_image(self, mask, comp, t, k, fps):
         """A mask's compound drawn at k px per compound unit: a static one's still, else its
-        frame at clip time t (held at its last frame after its end)."""
+        frame at clip time t + t_off (held at its first / last frame); an image mask's picture."""
+        if comp.get("image"):
+            return self.image(comp["image"], comp["width"] * k, comp["height"] * k)
         kid = mask.get("compound_id")
         self._matting.add(kid)
         try:
@@ -194,7 +202,7 @@ class Renderer:
             lp = QPainter(im)
             lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
             lp.scale(k, k)
-            self.draw_tracks(lp, comp["tracks"], cw, ch, fps, matte_time(comp, t, fps), k)
+            self.draw_tracks(lp, comp["tracks"], cw, ch, fps, matte_time(comp, t + mask.get("t_off", 0), fps), k)
             lp.end()
             return im
         finally:

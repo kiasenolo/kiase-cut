@@ -282,6 +282,15 @@ drawn over the clip with 預覽複合片段 on, at the 不透明度 typed beside
 preview shows it), which makes placing it easier. A compound that shows the clip's own level is not
 offered (it would cut with itself); projects with a compound mask export through the
 preview renderer.
+編輯區域 (live compounds only - a static one has no time): with it ticked, the mask's
+compound shows as a ghost over the clip on the timeline, lying where its time runs along the
+clip; drag it sideways to pick which part of the compound cuts the clip (it snaps to frames,
+one undo step; before its start / after its end the compound holds its first / last frame).
+
+The 圖片 shape cuts with a picture file the same way: pick one of the media library's pictures
+(or 瀏覽圖片檔…), its Alpha or its 明度, then move, size (the corner keeps its proportions,
+Shift frees them) and turn its frame on the preview; 預覽圖片 shows it over the clip at the
+不透明度 typed beside it. Its path is stored relative to the project folder like any media.
 Ctrl+wheel zooms the preview (to reach handles of clips bigger than the canvas), the
 middle button drags it. F toggles fullscreen; double-click a text on the preview to type its
 words right there (Ctrl+Enter or a click elsewhere closes it, Esc puts the words back).

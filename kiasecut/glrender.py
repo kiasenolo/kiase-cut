@@ -27,7 +27,7 @@ from .render import TEXT_FIELDS, US, quantize
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
                "color_dodge": 6, "color_burn": 7, "hard_light": 8, "soft_light": 9, "difference": 10,
                "exclusion": 11, "add": 12}
-MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5}
+MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5, "image": 5}
 MAX_LAYER = 8192
 TEX_CACHE = 160
 
@@ -158,6 +158,13 @@ def mask_frame(mask, t, disp):
     move = QTransform.fromTranslate(-v("cx", 0.0) * dw / 2, v("cy", 0.0) * dh / 2)
     turn = QTransform(math.cos(b), math.sin(b), math.sin(b), -math.cos(b), 0, 0)
     return move * turn
+
+
+class Picture:
+    """A texture where a layer is expected (an image mask's picture: never given back)."""
+
+    def __init__(self, tex):
+        self.tex = tex
 
 
 class Layer:
@@ -504,8 +511,12 @@ class GLRenderer(render.Renderer):
         comp = self.matte_compound(mask, t)
         if comp is None:
             return None
-        kid = mask.get("compound_id")
         k = self.matte_k(mask, t, disp, comp, world)
+        if comp.get("image"):                            # an image mask: its picture as a texture
+            tex, _straight = self.gl.picture(self.image(comp["image"], comp["width"] * k, comp["height"] * k),
+                                             mipmap=True)
+            return Picture(tex), False
+        kid = mask.get("compound_id")
         self._matting.add(kid)
         try:
             if comp.get("static"):
@@ -513,7 +524,8 @@ class GLRenderer(render.Renderer):
             cw, ch = comp["width"], comp["height"]
             k = min(k, self.MATTE_MAX_PX / max(cw, ch))
             lay = self.gl.layer(max(1, math.ceil(cw * k)), max(1, math.ceil(ch * k)))
-            self.gl_tracks(lay, QTransform.fromScale(k, k), comp["tracks"], cw, ch, fps, render.matte_time(comp, t, fps), k)
+            self.gl_tracks(lay, QTransform.fromScale(k, k), comp["tracks"], cw, ch, fps,
+                           render.matte_time(comp, t + mask.get("t_off", 0), fps), k)
             return lay, True
         finally:
             self._matting.discard(kid)

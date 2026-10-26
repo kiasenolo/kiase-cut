@@ -377,6 +377,8 @@ class MainWindow(QMainWindow):
         mp.maskMatteChosen.connect(lambda ids, matte: self.apply_each(
             "遮罩類型", lambda lvl, cid: edit.set_mask_compound(lvl, cid, matte=matte), ids))
         mp.mattePreviewChosen.connect(lambda _on: self._matte_preview_changed(force=True))
+        mp.maskImageChosen.connect(self.on_mask_image)
+        mp.matteRegionChosen.connect(lambda _on: self._update_matte_region())
         mp.keyJump.connect(self.jump_key)
         mask_scroll = QScrollArea()
         mask_scroll.setWidget(mp)
@@ -443,6 +445,7 @@ class MainWindow(QMainWindow):
             else:
                 self.preview.set_mask_mode(False)
             self._matte_preview_changed()
+            self._update_matte_region()
         self.side.currentChanged.connect(lambda _: mask_mode())
         ef.maskEditChanged.connect(mask_mode)
         self.side.addTab(cv, "關鍵幀曲線")
@@ -516,6 +519,8 @@ class MainWindow(QMainWindow):
         tl.trimRequested.connect(
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
         tl.groupMoveRequested.connect(lambda ids, dt, dr: self.apply("移動", edit.move_many, ids, dt, dr))
+        tl.matteOffsetLive.connect(lambda cid, off: self.on_live_edit([cid], "mask", "t_off", off))
+        tl.matteOffsetEdited.connect(lambda cid, off: self.apply("編輯區域", edit.set_mask_offset, cid, off))
         tl.dupMoveRequested.connect(lambda ids, dt, dr: self._select_new(self.apply_root(
             "複製並移動", lambda root: edit.duplicate_moved(root, self.container(root), ids, dt, dr))))
         tl.marksChanged.connect(self.marks_changed)
@@ -1828,6 +1833,7 @@ class MainWindow(QMainWindow):
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
             self.mask_panel.set_compounds(self.mask_compounds())
+            self.mask_panel.set_images(self.mask_images())
         self.mask_panel.show_clips(clips, t, self.fps)
         self.beats.show_clips(clips)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
@@ -2325,6 +2331,7 @@ class MainWindow(QMainWindow):
         sp = self.preview.spacing() if self.proj else None
         self.inspector.show_spacing(sp[1] if sp else None)
         self._matte_preview_changed()
+        self._update_matte_region()
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------
@@ -2344,10 +2351,41 @@ class MainWindow(QMainWindow):
         typed beside it."""
         sel = self.timeline.selected if self.proj else None
         m = (sel or {}).get("mask") or {}
-        if not (self.preview.mask_mode and self.preview.mask_group == "mask" and m.get("kind") == "compound"
-                and m.get("compound_id") in self.proj.get("compounds", {}) and self.mask_panel.matte_preview):
+        has = (m.get("compound_id") in self.proj.get("compounds", {}) if m.get("kind") == "compound"
+               else bool(m.get("image")) if m.get("kind") == "image" else False)
+        if not (self.preview.mask_mode and self.preview.mask_group == "mask" and has and self.mask_panel.matte_preview):
             return None
         return {"clip": sel["id"], "opacity": self.mask_panel.matte_opacity}
+
+    def _update_matte_region(self):
+        """編輯區域: the ghost of the selected clip's (live) compound mask on the timeline, while
+        the 遮罩 tab edits it with 編輯區域 on."""
+        sel = self.timeline.selected if self.proj else None
+        m = (sel or {}).get("mask") or {}
+        comp = self.proj.get("compounds", {}).get(m.get("compound_id")) if self.proj else None
+        on = (self.mask_panel.matte_region and self.preview.mask_mode and self.preview.mask_group == "mask"
+              and m.get("kind") == "compound" and comp is not None and not comp.get("static"))
+        self.timeline.set_matte_region({"clip": sel["id"], "t_off": int(m.get("t_off", 0)),
+                                        "duration": comp.get("duration_us") or 0, "name": comp.get("name")}
+                                       if on else None)
+
+    def mask_images(self):
+        """[(path, name)] of the media library's pictures (what an image mask can cut with)."""
+        return [(it["path"], it.get("name") or os.path.basename(it["path"]))
+                for it in library.lib(self.proj)["items"] if it.get("kind") == "image" and it.get("path")]
+
+    def on_mask_image(self, ids, path):
+        """An image mask's picture: one of the library's, or ("") a file picked now."""
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "遮罩圖片", self.root or "",
+                                                  "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.svg)")
+            if not path:
+                self.refresh_inspector()
+                return
+            path = path.replace("\\", "/")
+        info = library.probe(path) if os.path.exists(path) else {}
+        w, h = info.get("width"), info.get("height")
+        self.apply_each("遮罩圖片", lambda lvl, cid: edit.set_mask_image(lvl, cid, path, w, h), ids)
 
     def _matte_preview_changed(self, force=False):
         """Draw the frame again when what matte_target() shows has changed."""

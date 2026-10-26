@@ -803,15 +803,22 @@ def _aspect(c):
 
 
 MATTES = ("alpha", "luma")          # what of a compound mask's picture lets the clip through
+PICTURE_MASKS = ("compound", "image")   # masks that cut with a picture: a compound's, or an image file
 
 
 def _new_mask(old, kind, aspect):
     """A mask of `kind` keeping what it can of the old one (shape keyframes too)."""
-    if kind == "compound":             # a compound's picture cuts the clip: chosen next
-        return {"kind": "compound", "compound_id": old.get("compound_id"), "matte": old.get("matte", "alpha"),
-                "invert": old.get("invert", False), "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
-                "w": old.get("w", 1.0), "h": old.get("h", 1.0), "rotation": old.get("rotation", 0.0),
-                "feather": old.get("feather", 0.0)}
+    if kind in PICTURE_MASKS:          # a compound's / an image's picture cuts the clip: chosen next
+        m = {"kind": kind, "matte": old.get("matte", "alpha"),
+             "invert": old.get("invert", False), "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
+             "w": old.get("w", 1.0), "h": old.get("h", 1.0), "rotation": old.get("rotation", 0.0),
+             "feather": old.get("feather", 0.0)}
+        for k in (("compound_id", "t_off") if kind == "compound" else ("image", "img_w", "img_h")):
+            if old.get(k) is not None:
+                m[k] = old[k]
+        if kind == "compound":
+            m.setdefault("compound_id", None)
+        return m
     size = {"line": (1.0, 1.0), "mirror": (1.0, 0.3), "circle": (0.5, 0.5 * aspect),
             "rectangle": (0.5, 0.5 * aspect)}[kind]
     line = kind == "line" and not curves.is_animated(old.get("kind"))
@@ -831,10 +838,10 @@ def set_mask(proj, clip_id, kind, t=None):
     if kind is None:
         c.pop("mask", None)
         return c
-    if kind not in MASK_KINDS and kind != "compound":
+    if kind not in MASK_KINDS and kind not in PICTURE_MASKS:
         raise EditError(f"unknown mask {kind}")
     old = c.get("mask") or {}
-    if curves.is_animated(old.get("kind")) and kind != "compound":
+    if curves.is_animated(old.get("kind")) and kind not in PICTURE_MASKS:
         return set_param(proj, clip_id, "mask", "kind", kind, t)
     c["mask"] = _new_mask(dict(old, kind=None) if curves.is_animated(old.get("kind")) else old, kind, _aspect(c))
     if old.get("enabled") is False:
@@ -847,7 +854,7 @@ def set_mask_compound(proj, clip_id, compound_id=None, comp=None, matte=None):
     proportions, fitted into the clip) and / or what of its picture cuts: "alpha" or "luma"."""
     _, c = find(proj, clip_id)
     m = c.get("mask")
-    if not m or m.get("kind") != "compound":
+    if not m or m.get("kind") not in PICTURE_MASKS or (compound_id is not None and m.get("kind") != "compound"):
         raise EditError("這個片段的遮罩不是複合片段")
     if compound_id is not None:
         if comp is None:
@@ -1019,6 +1026,36 @@ def set_freeze(proj, clip_id, on, src_us=None):
         f["src_us"] = int(max(0, min(src_us, (length - 1) if length else src_us)))
     if not f["on"] and src_us is None:
         c.pop("freeze", None)
+    return c
+
+
+def set_mask_image(proj, clip_id, path, width, height):
+    """An image mask's picture: the file at path (width x height px); the mask takes its
+    proportions, fitted into the clip."""
+    _, c = find(proj, clip_id)
+    m = c.get("mask")
+    if not m or m.get("kind") != "image":
+        raise EditError("這個片段的遮罩不是圖片")
+    if not path or not width or not height:
+        raise EditError("找不到這張圖片")
+    a, b = _aspect(c), width / height
+    m.update(image=path, img_w=int(width), img_h=int(height))
+    m["w"], m["h"] = (1.0, round(a / b, 4)) if b > a else (round(b / a, 4), 1.0)
+    return c
+
+
+def set_mask_offset(proj, clip_id, t_off):
+    """編輯區域: which part of a (live) compound mask's compound plays - its time at the clip's
+    start (us; the compound plays on from there with the clip)."""
+    _, c = find(proj, clip_id)
+    m = c.get("mask")
+    if not m or m.get("kind") != "compound":
+        raise EditError("這個片段的遮罩不是複合片段")
+    t_off = int(round(t_off))
+    if t_off:
+        m["t_off"] = t_off
+    else:
+        m.pop("t_off", None)
     return c
 
 

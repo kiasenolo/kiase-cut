@@ -210,7 +210,7 @@ class MaskGeo:
     def handles(self, k):
         """[(name, canvas point)]; k = canvas px per screen px."""
         out = []
-        if self.kind in ("rectangle", "circle", "compound"):
+        if self.kind in ("rectangle", "circle", "compound", "image"):
             out += [("w", self.xf.map(QPointF(self.hw, 0))), ("h", self.xf.map(QPointF(0, -self.hh))),
                     ("wh", self.xf.map(QPointF(self.hw, -self.hh)))]
         elif self.kind == "mirror":
@@ -218,7 +218,7 @@ class MaskGeo:
         u, hh = self.down()
         c = self.centre()
         out.append(("rot", c - u * (hh + ROT_PX * k)))
-        if self.kind != "compound":                             # (a compound's picture has no feather)
+        if self.kind not in ("compound", "image"):              # (a picture mask has no feather)
             out.append(("feather", c + u * (hh + (14 + self.feather * 80) * k)))
         return out
 
@@ -952,7 +952,7 @@ class Preview(QWidget):
             out["w"] = round(max(0.01, 2 * abs(q.x()) / g.dw), 4)
         if "h" in kind:
             out["h"] = round(max(0.01, 2 * abs(q.y()) / g.dh), 4)
-        if kind == "wh" and g.kind == "compound" and not free:   # a compound keeps its proportions (Shift: free)
+        if kind == "wh" and g.kind in ("compound", "image") and not free:   # a picture keeps its proportions (Shift: free)
             vx, vy = g.mw * g.dw, g.mh * g.dh                       # the corner, from the centre
             f = max(0.01 / max(g.mw, g.mh, 1e-6), (abs(q.x()) * vx + abs(q.y()) * vy) * 2 / max(vx * vx + vy * vy, 1e-9))
             out = {"w": round(g.mw * f, 4), "h": round(g.mh * f, 4)}

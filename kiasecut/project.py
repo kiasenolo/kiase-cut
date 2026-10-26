@@ -29,8 +29,10 @@ clip     {id, type: image | video | audio | text | compound, name,
                 "compound" (no keyframes) cuts with a compound's picture, stretched over the
                 w x h frame: + compound_id (an entry of project.compounds; none chosen or
                 gone: nothing is cut), matte "alpha" | "luma" (its opacity or its brightness
-                lets the clip through); a live compound plays at clip time (held at its last
-                frame), a static one shows its still; no feather
+                lets the clip through); a live compound plays at clip time + t_off (編輯區域,
+                optional, us; held at its first / last frame), a static one shows its still;
+                no feather. kind "image" cuts the same way with a picture file: image (its
+                path), img_w / img_h (its size, for its proportions)
           text: {content, font_path, size, color, letter_spacing, line_spacing,
                  italic_deg, styles}                        text clips
           volume, fade_in_us, fade_out_us                   clips with sound
@@ -163,6 +165,9 @@ def _map_paths(data, fn):
                 m = c.get("media")
                 if m and m.get("path"):
                     m["path"] = fn(m["path"])
+                mk = c.get("mask")
+                if isinstance(mk, dict) and mk.get("image"):         # an image mask's picture
+                    mk["image"] = fn(mk["image"])
                 for e in c.get("effects") or []:              # filter files (the built-in ones are not paths)
                     if e.get("filter") and not e["filter"].startswith("builtin:"):
                         e["filter"] = fn(e["filter"])

@@ -78,7 +78,7 @@ def hard_limits(group, key):
 
 
 MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"),
-              ("複合片段", "compound"))
+              ("複合片段", "compound"), ("圖片", "image"))
 MATTE_NAMES = (("Alpha（不透明度）", "alpha"), ("明度", "luma"))
 ALIGN_NAMES = (("靠左", "left"), ("置中", "center"), ("靠右", "right"), ("齊頭尾（左右對齊）", "justify"))
 EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
@@ -259,6 +259,8 @@ class Inspector(QWidget):
     maskInvertChosen = Signal(list, bool)           # clip ids, invert
     maskEnabledChosen = Signal(list, bool)          # clip ids, on
     maskCompoundChosen = Signal(list, str)          # clip ids, compound id (a compound mask's)
+    maskImageChosen = Signal(list, str)             # clip ids, picture file (an image mask's; "" : browse)
+    matteRegionChosen = Signal(bool)                # 編輯區域: a compound mask's part, on the timeline
     maskMatteChosen = Signal(list, str)             # clip ids, "alpha" / "luma"
     mattePreviewChosen = Signal(bool)               # 預覽複合片段 or its opacity changed
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
@@ -282,6 +284,8 @@ class Inspector(QWidget):
         self._last_font = None
         self.fonts = []                   # [{path, name}] installed fonts (fonts.py), for the picker
         self.compounds = []               # [(id, name)] compounds a compound mask can use here
+        self.images = []                  # [(path, name)] pictures an image mask can use
+        self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
         self.clip_ids = []
@@ -519,6 +523,12 @@ class Inspector(QWidget):
             path = path.replace("\\", "/")
         self._emit_now(self.paramEdited, "text", "font_path", path)      # keyframed fonts get a key here
 
+    def set_images(self, items):
+        """The pictures an image mask can cut with here: [(path, name)] (the media library's)."""
+        if list(items) != self.images:
+            self.images = list(items)
+            self.shape = None
+
     def set_compounds(self, items):
         """The compounds a compound mask can cut with here: [(id, name)]."""
         if list(items) != self.compounds:
@@ -559,8 +569,9 @@ class Inspector(QWidget):
         kind.activated.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
         self.widgets["mask_kind"] = kind
         row.addWidget(kind, 1)
+        picture = kind_tag(c.get("mask")) in ("compound", "image")
         compound = kind_tag(c.get("mask")) == "compound"
-        if c.get("mask") and not compound:                # (a compound mask cannot change by keyframes)
+        if c.get("mask") and not picture:                 # (a picture mask cannot change by keyframes)
             row.addWidget(self._key_button("mask", "kind"))
         if c.get("mask"):
             drop = QPushButton("移除")
@@ -583,15 +594,35 @@ class Inspector(QWidget):
             pick.setToolTip("用這個複合片段的畫面裁切；一般的複合片段跟著片段的時間播放，靜態片段用它那一格")
             self.widgets["mask_compound"] = pick
             form.addRow("複合片段", pick)
+            comp = next((n for k, n in self.compounds if k == c["mask"].get("compound_id")), "")
+            if c["mask"].get("compound_id") and not comp.startswith("◧"):     # (a static one has no time)
+                region = QCheckBox("編輯區域")
+                region.setToolTip("在時間線上，這個片段上面會出現複合片段的幽靈：左右拖曳它，決定用複合片段的哪一段時間來裁切")
+                region.setChecked(self.matte_region)
+                region.toggled.connect(self._matte_region_toggled)
+                self.widgets["matte_region"] = region
+                form.addRow("", region)
+        elif picture:
+            pick = ComboBox()
+            pick.setPlaceholderText("選擇圖片…")
+            for path, name in self.images:
+                pick.addItem(name, path)
+            pick.addItem("瀏覽圖片檔…", "")
+            pick.activated.connect(lambda i: self._emit_now(self.maskImageChosen, pick.itemData(i)))
+            pick.setToolTip("用這張圖片裁切（專案素材裡的圖片，或瀏覽一個圖片檔）")
+            self.widgets["mask_image"] = pick
+            form.addRow("圖片", pick)
+        if picture:
+            what = "複合片段" if compound else "圖片"
             matte = ComboBox()
             for name, k in MATTE_NAMES:
                 matte.addItem(name, k)
-            matte.setToolTip("Alpha：複合片段不透明的地方留下；明度：越亮的地方越留下")
+            matte.setToolTip(f"Alpha：{what}不透明的地方留下；明度：越亮的地方越留下")
             matte.activated.connect(lambda i: self._emit_now(self.maskMatteChosen, matte.itemData(i)))
             self.widgets["mask_matte"] = matte
             form.addRow("類型", matte)
-            show = QCheckBox("預覽複合片段")
-            show.setToolTip("在預覽上把複合片段疊在片段上顯示，方便對位置（關掉時不顯示）")
+            show = QCheckBox("預覽" + what)
+            show.setToolTip(f"在預覽上把{what}疊在片段上顯示，方便對位置（關掉時不顯示）")
             show.setChecked(self.matte_preview)
             show.toggled.connect(self._matte_preview_toggled)
             self.widgets["matte_preview"] = show
@@ -599,7 +630,7 @@ class Inspector(QWidget):
             op.setRange(0, 100)
             op.setDecimals(0)
             op.setSuffix(" %")
-            op.setToolTip("預覽的不透明度：複合片段疊在上面顯示得多清楚")
+            op.setToolTip(f"預覽的不透明度：{what}疊在上面顯示得多清楚")
             op.show_value(round(self.matte_opacity * 100))
             op.setEnabled(self.matte_preview)
             op.edited.connect(self._matte_opacity_changed)
@@ -619,13 +650,17 @@ class Inspector(QWidget):
         self.widgets["mask_invert"] = inv
         form.addRow("", self._with_key(inv, "mask", "invert"))
         rows = [r for r in PARAMS["mask"] if not (kind_tag(c["mask"]) == "line" and r[0] in ("w", "h"))
-                and not (compound and r[0] == "feather")]
+                and not (picture and r[0] == "feather")]
         self._rows(form, "mask", rows, (("cx", "cy", "中心"), ("w", "h", "大小")))
-        hint = QLabel("在預覽上拖曳：中間移動、方塊調大小、圓點旋轉" + ("" if compound else "、箭頭羽化"))
+        hint = QLabel("在預覽上拖曳：中間移動、方塊調大小、圓點旋轉" + ("" if picture else "、箭頭羽化"))
         hint.setStyleSheet("color: #9a9aa0;")
         hint.setWordWrap(True)
         form.addRow(hint)
         self._key_section(form)
+
+    def _matte_region_toggled(self, on):
+        self.matte_region = on
+        self.matteRegionChosen.emit(on)
 
     def _matte_preview_toggled(self, on):
         self.matte_preview = on
@@ -818,7 +853,8 @@ class Inspector(QWidget):
         c = common(clips)
         self.fps = fps or self.fps
         shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")),
-                                         kind_tag(c.get("mask")), "volume" in c, (c.get("asset") or {}).get("family"))
+                                         kind_tag(c.get("mask")), "volume" in c, (c.get("asset") or {}).get("family"),
+                                         (c.get("mask") or {}).get("compound_id"))
         if shape != self.shape:
             self._flush()
             self.clip_ids = [k["id"] for k in clips]
@@ -910,7 +946,7 @@ class Inspector(QWidget):
             self._set_combo(w["mask_kind"], kinds.pop() if len(kinds) == 1 else "--")
             if ("key", "mask", "kind") in w:
                 self._key_state(w[("key", "mask", "kind")], [k["mask"].get("kind") for k in clips], clips, ts)
-        for key, field in (("mask_compound", "compound_id"), ("mask_matte", "matte")):
+        for key, field in (("mask_compound", "compound_id"), ("mask_image", "image"), ("mask_matte", "matte")):
             if key in w:
                 vals = {(k.get("mask") or {}).get(field, "alpha" if field == "matte" else None) for k in clips}
                 self._set_combo(w[key], vals.pop() if len(vals) == 1 else "--")

@@ -39,6 +39,11 @@ the keyframes are points on the line that can be dragged up / down (value) and s
 (time). The line's height is
 in dB: the top is +20 dB (1000 %), 0 dB (100 %) two thirds of the way up.
 
+編輯區域 (set_matte_region): while a clip's compound mask is edited that way, the mask's
+compound shows as a ghost over the clip, placed where its time runs along the clip; dragging
+it sideways picks which part of the compound cuts the clip (matteOffsetLive while dragging,
+matteOffsetEdited on release: the compound's time at the clip's start).
+
 Audio and video clips show their waveform (scaled by the clip volume and fades). Track
 headers have mute / solo buttons (sound), a hide button (pictures) and a padlock: a locked
 track (hatched) cannot have its clips selected or grabbed, and moves and drops skip it.
@@ -126,6 +131,8 @@ class Timeline(QWidget):
     clipSelected = Signal(object)                    # clip dict or None (the primary selection)
     groupMoveRequested = Signal(list, int, int)      # clip ids, shift us, rows down (negative: up)
     dupMoveRequested = Signal(list, int, int)        # the same with Alt held: copies go there, the clips stay
+    matteOffsetLive = Signal(str, int)               # clip id, its compound mask's t_off: while dragged
+    matteOffsetEdited = Signal(str, int)             # the same on release
     keyMoveRequested = Signal(str, int, int)         # clip id, keyframe clip time from, to (us)
     marksChanged = Signal()                          # the time selection (mark_in / mark_out) changed
     volumeEdited = Signal(str, object)               # clip id, new volume (number or {"keys": ...})
@@ -169,6 +176,7 @@ class Timeline(QWidget):
         self.hover_playhead = False                # the mouse is on the playhead line (it can be dragged)
         self.drop_clip = None                      # clip a filter from the VFX tab would go onto
         self.drop_replace = False                  # drop_clip would get the dragged media as its source (Alt)
+        self.matte_region = None                   # 編輯區域: {clip, t_off, duration, name} or None
         self.drop_many = None                      # (count, across) while several media items hover
         self.tops = []                             # y of each row (on screen)
         self.vzoom = 1.0                           # track height factor
@@ -602,6 +610,7 @@ class Timeline(QWidget):
                 y = self.tops[d["row"]]
             self._draw_clip(p, dragged, y, d["start"], d["end"] - d["start"], ghost=True,
                             track=None if d.get("new") else self.rows[d["row"]], h=h)
+        self._draw_matte_region(p)
         if self.band is not None:
             p.setPen(QPen(QColor("#e6e6e6"), 1, Qt.DashLine))
             p.setBrush(QColor(255, 255, 255, 35))
@@ -833,6 +842,44 @@ class Timeline(QWidget):
                     p.setBrush(QColor("#ffffff") if moving else QColor("#ffb020"))
                     p.drawPolygon([QPointF(kx, ky - 5), QPointF(kx + 5, ky), QPointF(kx, ky + 5), QPointF(kx - 5, ky)])
 
+    # -- 編輯區域 (a compound mask's part) ------------------------------------------------------
+    def set_matte_region(self, region):
+        """{clip: id, t_off: us, duration: the compound's us, name} to show, or None."""
+        if region != self.matte_region:
+            self.matte_region = region
+            self.update()
+
+    def _matte_rect(self):
+        """(screen rect of the ghost, the clip) or (None, None)."""
+        mr = self.matte_region
+        if not mr:
+            return None, None
+        for i, t in enumerate(self.rows):
+            for c in t["clips"]:
+                if c["id"] == mr["clip"]:
+                    d = self.drag if self.drag and self.drag.get("mode") == "matte" else None
+                    off = d["t_off"] if d else mr["t_off"]
+                    k = project.speed(c)
+                    x0 = self._x((c["start_us"] - off / k) / US)
+                    x1 = self._x((c["start_us"] + (mr["duration"] - off) / k) / US)
+                    y, h = self.tops[i], self.row_h(i)
+                    return QRectF(x0, y + 2, max(4.0, x1 - x0), h - 5), c
+        return None, None
+
+    def _draw_matte_region(self, p):
+        r, c = self._matte_rect()
+        if r is None:
+            return
+        p.save()
+        p.setClipRect(QRectF(self.header_w, RULER_H, self.width() - self.header_w, self.height() - RULER_H))
+        p.setPen(QPen(QColor("#d6a8ff"), 1.5, Qt.DashLine))
+        p.setBrush(QColor(170, 110, 255, 60))
+        p.drawRect(r)
+        p.setPen(QColor("#f0e0ff"))
+        name = self.matte_region.get("name") or "複合片段"
+        p.drawText(r.adjusted(6, 0, -6, 0), Qt.AlignLeft | Qt.AlignBottom, f"⧉ {name}（編輯區域：左右拖曳）")
+        p.restore()
+
     # -- volume line ----------------------------------------------------------------------------
     DB_LO, DB_HI = -40.0, 20.0
 
@@ -974,6 +1021,12 @@ class Timeline(QWidget):
                         self.trackAction.emit("toggle:" + flag, self.rows[row]["id"])
             return
         pos = e.position()
+        mr, mc = self._matte_rect()
+        if mr is not None and mr.contains(pos) and not e.modifiers():     # 編輯區域: the compound's part
+            self.drag = {"clip": None, "mode": "matte", "x0": pos.x(), "t_off0": self.matte_region["t_off"],
+                         "t_off": self.matte_region["t_off"], "cid": mc["id"], "speed": project.speed(mc),
+                         "moved": False}
+            return
         if self._on_playhead(pos) and not e.modifiers():         # the playhead line: drag it
             self.drag = {"clip": None, "mode": "seek", "moved": False}
             self.update()
@@ -1052,6 +1105,16 @@ class Timeline(QWidget):
                 return
             _, c, zone = self._hit(pos) if self.proj else (None, None, None)
             self.setCursor(Qt.SizeHorCursor if zone in ("start", "end") else Qt.ArrowCursor)
+            return
+        if d["mode"] == "matte":
+            if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX:
+                return
+            d["moved"] = True
+            frame = US / self.fps
+            off = d["t_off0"] - (pos.x() - d["x0"]) / self.px_per_s * US * d["speed"]
+            d["t_off"] = int(round(off / frame) * frame)
+            self.matteOffsetLive.emit(d["cid"], d["t_off"])
+            self.update()
             return
         if d["mode"] == "region":
             if not d["moved"] and abs(pos.x() - d["pos"].x()) < DRAG_PX:
@@ -1215,6 +1278,12 @@ class Timeline(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
+        if d and d["mode"] == "matte":
+            if d["moved"]:
+                self.matte_region = dict(self.matte_region, t_off=d["t_off"])
+                self.matteOffsetEdited.emit(d["cid"], d["t_off"])
+            self.update()
+            return
         if d and d["mode"] == "region":
             if not d["moved"]:
                 self._menu(e.position().toPoint(), e.globalPosition().toPoint())

@@ -143,6 +143,9 @@ class GroupLayerTests(unittest.TestCase):
                              .findChildren(QLabel)]
         self.assertIn("遮罩", marks("c4"))
         self.assertNotIn("遮罩", marks("c5"))
+        edit.set_group_matte(self.p, self.g["id"], invert=True)
+        panel.set_layers(self.p, set(), None)
+        self.assertIn("反轉遮罩", marks("c4"))
         self.assertIsInstance(panel.list.itemWidget(panel.list.item(0)), LayerRow)
 
     def test_menu_toggles_group_matte(self):
@@ -153,6 +156,8 @@ class GroupLayerTests(unittest.TestCase):
                               apply=lambda label, fn: h.do(label, fn))
         MainWindow.toggle_group_matte(win, [self.g["id"], "c1"])
         self.assertTrue(self.g["matte"]["on"])
+        MainWindow.toggle_group_matte(win, [self.g["id"]], "invert")
+        self.assertTrue(self.g["matte"]["invert"])
         MainWindow.toggle_group_matte(win, [self.g["id"]])
         self.assertFalse(edit.find(self.p, self.g["id"])[1]["matte"]["on"])
 
@@ -217,3 +222,29 @@ class PreviewDropTests(unittest.TestCase):
         self.assertEqual(top["media"]["path"], "n.png")                           # the top layer,
         self.assertEqual((top["transform"]["x"], top["transform"]["y"]), (got[0][1], got[0][2]))  # centred there
         self.assertEqual(len(h.undo_stack), 1)
+
+
+class GroupInspectorTests(unittest.TestCase):
+    def test_invert_shows_once_the_mask_is_on(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.inspector import Inspector
+        QApplication.instance() or QApplication([])
+        p = proj()
+        g = edit.make_group(p, p, ["c1"])
+        ins = Inspector()
+        ins.resize(400, 900)
+        ins.show()
+        got = []
+        ins.groupMatteChosen.connect(lambda ids, on, show, invert: got.append((on, show, invert)))
+        ins.show_clips([g], 0, 30)
+        shown = lambda key: ins._group_form.isRowVisible(ins.widgets[key])
+        self.assertTrue(shown("group_matte"))
+        self.assertFalse(shown("group_invert"))                              # the mask is off: not offered
+        self.assertFalse(shown("group_show"))
+        edit.set_group_matte(p, g["id"], on=True)
+        ins.show_clips([g], 0, 30)
+        self.assertTrue(shown("group_invert"))
+        self.assertFalse(ins.widgets["group_invert"].isChecked())
+        ins.widgets["group_invert"].click()
+        self.assertEqual(got, [(None, None, True)])

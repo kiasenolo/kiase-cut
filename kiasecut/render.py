@@ -255,7 +255,8 @@ class Renderer:
 
     def draw_content(self, p, comp, W, H, fps, t_us, px_per_unit):
         """A compound's or a group's tracks; a group with its matte on: its bottom track's clips
-        cut the clips above them (by their alpha), and are drawn too with show."""
+        cut the clips above them (by their alpha) - with invert, cut them out of them - and are
+        drawn too with show."""
         matte = (comp.get("matte") or {}) if comp.get("group") else {}
         tracks = [tr for tr in comp["tracks"] if tr["kind"] != "audio"]
         if not matte.get("on") or len(tracks) < 2 or not isinstance(p.device(), QImage):
@@ -274,7 +275,9 @@ class Renderer:
             return im
         cut, above = layer(tracks[:1]), layer(tracks[1:])
         lp = QPainter(above)
-        lp.setCompositionMode(QPainter.CompositionMode_DestinationIn)      # kept where the bottom one is
+        # kept where the bottom one is (inverted: where it is not)
+        lp.setCompositionMode(QPainter.CompositionMode_DestinationOut if matte.get("invert")
+                              else QPainter.CompositionMode_DestinationIn)
         lp.drawImage(0, 0, cut)
         lp.end()
         p.save()

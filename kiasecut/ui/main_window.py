@@ -398,8 +398,8 @@ class MainWindow(QMainWindow):
         ins.liveCancelled.connect(self.rebuild)
         ins.speedChosen.connect(lambda ids, v: self.apply_each("速度", edit.set_speed, ids, v))
         ins.freezeChosen.connect(self.on_freeze)
-        ins.groupMatteChosen.connect(lambda ids, on, show: self.apply_each(
-            "群組遮罩", edit.set_group_matte, ids, on, show))
+        ins.groupMatteChosen.connect(lambda ids, on, show, invert: self.apply_each(
+            "群組遮罩", edit.set_group_matte, ids, on, show, invert))
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
         ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)
@@ -2133,6 +2133,8 @@ class MainWindow(QMainWindow):
             self.make_group(ids)
         elif action == "group_matte":
             self.toggle_group_matte(ids)
+        elif action == "group_invert":
+            self.toggle_group_matte(ids, "invert")
         elif action == "copy" and ids:                       # copies right above, at the same moment
             self._select_new(self.apply_root("複製圖層", lambda root: edit.duplicate_moved(
                 root, self.container(root), ids, moves={})))
@@ -2210,14 +2212,16 @@ class MainWindow(QMainWindow):
         self.add_filter_clip(ref, "", 0)
         self.layer_drop_at = None
 
-    def toggle_group_matte(self, ids):
-        """最下面的物件當遮罩 from a menu: on for the groups when any is off, else off."""
+    def toggle_group_matte(self, ids, field="on"):
+        """最下面的物件當遮罩 (field "on") or 反轉遮罩 ("invert") from a menu: on for the groups when
+        any is off, else off."""
         groups = [c for c in (edit.find(self.container(), k)[1] for k in ids) if project.is_group(c)]
         if not groups:
             return
-        on = not all((g.get("matte") or {}).get("on") for g in groups)
-        self.apply("群組遮罩" if on else "取消群組遮罩",
-                   lambda lvl: [edit.set_group_matte(lvl, g["id"], on=on) for g in groups])
+        on = not all((g.get("matte") or {}).get(field) for g in groups)
+        name = {"on": "群組遮罩", "invert": "反轉遮罩"}[field]
+        self.apply(name if on else "取消" + name,
+                   lambda lvl: [edit.set_group_matte(lvl, g["id"], **{field: on}) for g in groups])
 
     def make_group(self, ids=None):
         """建立群組 (Ctrl+G): the selected picture clips into a new group, opened."""
@@ -2360,6 +2364,8 @@ class MainWindow(QMainWindow):
             self.ungroup(cid)
         elif action == "group_matte":
             self.toggle_group_matte([cid])
+        elif action == "group_invert":
+            self.toggle_group_matte([cid], "invert")
         elif action == "enter":
             self.enter_compound(cid)
         elif action == "open_tab":

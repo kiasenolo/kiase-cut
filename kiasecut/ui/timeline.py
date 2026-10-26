@@ -1689,9 +1689,12 @@ class Timeline(QWidget):
                     head.append(("存到 Library…", "save_library"))
                 items = head + [None] + items
             if project.is_group(c):
-                masked = bool((c.get("matte") or {}).get("on"))
-                items = [("摺疊群組" if self.is_open(c) else "展開群組", "fold"), ("解散群組", "ungroup"),
-                         ("✓ 最下面的物件當遮罩" if masked else "最下面的物件當遮罩", "group_matte"), None] + items
+                m = c.get("matte") or {}
+                head = [("摺疊群組" if self.is_open(c) else "展開群組", "fold"), ("解散群組", "ungroup"),
+                        ("✓ 最下面的物件當遮罩" if m.get("on") else "最下面的物件當遮罩", "group_matte")]
+                if m.get("on"):
+                    head.append(("✓ 反轉遮罩" if m.get("invert") else "反轉遮罩", "group_invert"))
+                items = head + [None] + items
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立群組", "group")]
             if all(k["type"] != "audio" for k in self.selected_clips()):

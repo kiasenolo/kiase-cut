@@ -268,7 +268,7 @@ class Inspector(QWidget):
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
     speedChosen = Signal(list, float)               # clip ids, speed
-    groupMatteChosen = Signal(list, object, object)  # group ids, 遮罩 on (or None), show it (or None)
+    groupMatteChosen = Signal(list, object, object, object)  # group ids, 遮罩 on, show it, invert it (each or None)
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
 
@@ -438,14 +438,21 @@ class Inspector(QWidget):
         form.addRow(section("群組"))
         on = QCheckBox("最下面的物件當遮罩")
         on.setToolTip("群組最下面那條軌道的片段裁切它上面的所有片段（照它們的不透明度）")
-        on.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, bool(v), None))
+        on.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, bool(v), None, None))
         self.widgets["group_matte"] = on
         form.addRow("", on)
+        # (these two show once the mask is on)
         show = QCheckBox("顯示遮罩物件")
         show.setToolTip("遮罩物件本身也畫出來（關掉時只用它的形狀）")
-        show.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, None, bool(v)))
+        show.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, None, bool(v), None))
         self.widgets["group_show"] = show
         form.addRow("", show)
+        invert = QCheckBox("反轉遮罩")
+        invert.setToolTip("反過來：留下遮罩物件以外的部分，遮罩物件的形狀變成挖空")
+        invert.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, None, None, bool(v)))
+        self.widgets["group_invert"] = invert
+        form.addRow("", invert)
+        self._group_form = form
 
     def _build_time(self, form):
         """速度 and 凍結幀 (videos, sounds, compound clips)."""
@@ -948,13 +955,15 @@ class Inspector(QWidget):
         if "speed" in w:
             self._show_time(clips, ts)
         if "group_matte" in w:
-            for key, field in (("group_matte", "on"), ("group_show", "show")):
+            for key, field in (("group_matte", "on"), ("group_show", "show"), ("group_invert", "invert")):
                 vals = {bool((k.get("matte") or {}).get(field)) for k in clips}
                 w[key].blockSignals(True)
                 w[key].setTristate(len(vals) > 1)
                 w[key].setCheckState(Qt.PartiallyChecked if len(vals) > 1 else Qt.Checked if vals.pop() else Qt.Unchecked)
                 w[key].blockSignals(False)
-            w["group_show"].setEnabled(any((k.get("matte") or {}).get("on") for k in clips))
+            on = any((k.get("matte") or {}).get("on") for k in clips)
+            for key in ("group_show", "group_invert"):
+                self._group_form.setRowVisible(w[key], on)
         if "mask_on" in w:
             on = {bool(project.active_mask(k)) for k in clips}
             w["mask_on"].blockSignals(True)

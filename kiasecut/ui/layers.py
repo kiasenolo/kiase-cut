@@ -26,7 +26,7 @@ from .timeline import FX_MIME, MEDIA_MIME
 ROLE = Qt.UserRole
 TRACK = Qt.UserRole + 1          # (track id, {"hidden", "locked"}) of a layer
 PARENT = Qt.UserRole + 2         # the group it is in ("": the level itself)
-MATTE = Qt.UserRole + 3          # a group's 最下面的物件當遮罩: on
+MATTE = Qt.UserRole + 3          # a group's 遮罩: {on, invert}
 THUMB_H = 26                     # px: the height of a layer's picture
 KINDS = {"image": "▧", "video": "▶", "text": "T", "compound": "▣", "group": "▾", "filter": "✦"}
 
@@ -110,9 +110,10 @@ class LayerList(QListWidget):
 
 
 class LayerRow(QWidget):
-    def __init__(self, c, track, shown, depth=0, thumb=None, opened=None, mask=False):
-        """opened: for a group, whether it is open in the list (None: not a group); mask: it is
-        its group's mask (the bottom track of a group whose bottom object is a mask)."""
+    def __init__(self, c, track, shown, depth=0, thumb=None, opened=None, mask=None):
+        """opened: for a group, whether it is open in the list (None: not a group); mask: when it
+        is its group's mask (the bottom track of a group whose bottom object is a mask), that
+        group's matte."""
         super().__init__()
         lay = QHBoxLayout(self)
         lay.setContentsMargins(4, 1, 4, 1)
@@ -161,8 +162,9 @@ class LayerRow(QWidget):
         lay.addWidget(tag)
         lay.addWidget(self.name)
         if mask:
-            m = QLabel("遮罩")
-            m.setToolTip("群組的遮罩：裁切它上面的圖層")
+            m = QLabel("反轉遮罩" if mask.get("invert") else "遮罩")
+            m.setToolTip("群組的遮罩：在它上面的圖層挖掉它的形狀" if mask.get("invert")
+                         else "群組的遮罩：裁切它上面的圖層")
             m.setStyleSheet("color: #c9a0ff; border: 1px solid #6a5090; border-radius: 3px; padding: 0 3px;")
             lay.addWidget(m)
         elif opened is not None and (c.get("matte") or {}).get("on"):
@@ -251,7 +253,11 @@ class LayerPanel(QWidget):
         if mattes:                                         # groups: their bottom object cuts the rest
             act = menu.addAction("最下面的物件當遮罩", lambda: self.actionRequested.emit("group_matte"))
             act.setCheckable(True)
-            act.setChecked(all(mattes))
+            act.setChecked(all(m["on"] for m in mattes))
+            if all(m["on"] for m in mattes):
+                act = menu.addAction("反轉遮罩", lambda: self.actionRequested.emit("group_invert"))
+                act.setCheckable(True)
+                act.setChecked(all(m["invert"] for m in mattes))
         menu.addSeparator()
         tracks = [it.data(TRACK) for it in items]               # (track id, its switches)
         for text, flag in (("隱藏 / 顯示", "hidden"), ("鎖定 / 解鎖", "locked")):
@@ -277,7 +283,8 @@ class LayerPanel(QWidget):
                 it.setData(ROLE, c["id"])
                 it.setData(TRACK, (t["id"], {"hidden": bool(t.get("hidden")), "locked": bool(t.get("locked"))}))
                 it.setData(PARENT, parent)
-                it.setData(MATTE, bool((c.get("matte") or {}).get("on")) if project.is_group(c) else None)
+                it.setData(MATTE, {k: bool((c.get("matte") or {}).get(k)) for k in ("on", "invert")}
+                           if project.is_group(c) else None)
                 it.setSizeHint(QSize(200, THUMB_H + 6))
                 if lock:
                     it.setFlags(it.flags() & ~Qt.ItemIsSelectable)
@@ -285,7 +292,8 @@ class LayerPanel(QWidget):
                 group = project.is_group(c)
                 opened = c["id"] in self.opened if group else None
                 row = LayerRow(c, t, c["start_us"] <= at_us < c["start_us"] + c["duration_us"], depth,
-                               self.thumb(c, level) if self.thumb else None, opened, t is bottom)
+                               self.thumb(c, level) if self.thumb else None, opened,
+                               holder["matte"] if t is bottom else None)
                 row.eye.clicked.connect(lambda _=False, t=t: self.flagToggled.emit(t["id"], "hidden", not t.get("hidden")))
                 row.lock.clicked.connect(lambda _=False, t=t: self.flagToggled.emit(t["id"], "locked", not t.get("locked")))
                 if row.arrow is not None:

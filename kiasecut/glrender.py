@@ -415,7 +415,10 @@ class GLRenderer(render.Renderer):
         try:
             self.gl_tracks(cut, base, tracks[:1], W, H, fps, t_us, ppu)
             self.gl_tracks(above, base, tracks[1:], W, H, fps, t_us, ppu)
-            gl.mix_cover(kept, empty.tex, above.tex, cut.tex)        # kept where the bottom one is
+            if matte.get("invert"):                                  # kept where the bottom one is not
+                gl.mix_cover(kept, above.tex, empty.tex, cut.tex)
+            else:                                                    # kept where the bottom one is
+                gl.mix_cover(kept, empty.tex, above.tex, cut.tex)
             if matte.get("show"):
                 gl.draw_layer(tgt, cut)
             gl.draw_layer(tgt, kept)

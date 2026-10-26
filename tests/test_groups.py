@@ -146,6 +146,9 @@ class GroupRenderTests(unittest.TestCase):
             img = r.render(self.view({"on": True, "show": False}), 0, 64, 36)
             self.assertEqual(rgb(img, 12, 18), (255, 0, 0), name)              # red where the cut is opaque
             self.assertEqual(rgb(img, 52, 18), (0, 0, 0), name)                # nothing where it is clear
+            img = r.render(self.view({"on": True, "show": False, "invert": True}), 0, 64, 36)   # 反轉遮罩
+            self.assertEqual(rgb(img, 12, 18), (0, 0, 0), name)                # cut out where it is opaque
+            self.assertEqual(rgb(img, 52, 18), (255, 0, 0), name)              # kept where it is clear
             img = r.render(self.view({"on": True, "show": False}, gx=1.0), 0, 64, 36)   # the group moved right
             self.assertEqual(rgb(img, 12, 18), (0, 0, 0), name)
             self.assertEqual(rgb(img, 40, 18), (255, 0, 0), name)

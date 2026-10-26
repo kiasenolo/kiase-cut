@@ -1176,7 +1176,7 @@ def set_mask_offset(proj, clip_id, t_off):
 
 
 # -- groups (群組) ----------------------------------------------------------------------------------
-GROUP_MATTE_DEFAULT = {"on": False, "show": False}
+GROUP_MATTE_DEFAULT = {"on": False, "show": False, "invert": False}
 
 
 def make_group(root, level, clip_ids):
@@ -1281,9 +1281,10 @@ def _map_value(v, fn):
     return fn(float(v))
 
 
-def set_group_matte(proj, clip_id, on=None, show=None):
+def set_group_matte(proj, clip_id, on=None, show=None, invert=None):
     """A group's 遮罩: its bottom track's clips cut the clips above them (on), and are drawn
-    too (show) - else only their shape counts."""
+    too (show) - else only their shape counts; invert (反轉遮罩): the clips above are kept
+    where the bottom ones are not (a hole in their shape)."""
     _, g = find(proj, clip_id)
     if not project.is_group(g):
         raise EditError("這不是群組")
@@ -1292,6 +1293,8 @@ def set_group_matte(proj, clip_id, on=None, show=None):
         m["on"] = bool(on)
     if show is not None:
         m["show"] = bool(show)
+    if invert is not None:
+        m["invert"] = bool(invert)
     return g
 
 

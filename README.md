@@ -139,7 +139,10 @@ it, double-click to open it, right-click to rename (or delete an unused one). A 
 that no clip shows (a `_thumbnail`, one a mask uses) opens by itself: double-click it, or
 right-click any compound > 進入編輯 (返回上一層 goes back to where you were). Right-click
 anywhere in that list for 新增時間線, 新增複合片段 or 新增靜態複合片段: a new compound
-starts empty and opens by itself to be filled; drag it onto a timeline to use it. A clip's
+asks for its name and resolution (the project's, a preset or any size - only its proportions
+matter: what is in it stays vector and is drawn at the size it is shown or exported at),
+starts empty and opens by itself to be filled (made on the timeline, it takes the size of
+the level it is in without asking); drag it onto a timeline to use it. A clip's
 「設為獨立（不再共用）」 gives it its own copy. Older projects and Jianying drafts are
 converted on opening: identical copies become one shared compound. Right-click selected
 clips > 建立複合片段 puts them into a new compound (one clip takes their place).

@@ -37,7 +37,7 @@ from .export_dialog import ExportDialog
 from .inspector import Inspector
 from .library import LibraryPanel
 from .player import Player
-from .project_dialogs import NewProjectDialog, ProjectInfoDialog
+from .project_dialogs import CompoundSizeDialog, NewProjectDialog, ProjectInfoDialog
 from .project_manager import ProjectManager
 from .settings_dialog import SettingsDialog
 from .still_dialog import StillDialog
@@ -1609,7 +1609,19 @@ class MainWindow(QMainWindow):
             self.apply_root("新增時間線", edit.add_timeline)
             return
         static = kind == "static"
-        kid = self.apply_root("新增靜態片段" if static else "新增複合片段", lambda root: edit.add_compound(root, static))
+        n = sum(1 for k in self.proj.get("compounds", {}).values() if bool(k.get("static")) == static) + 1
+        dlg = CompoundSizeDialog(self, f"{'靜態片段' if static else '複合片段'} {n}",
+                                 self.proj["width"], self.proj["height"], static)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        name, size = dlg.result()
+
+        def make(root):
+            kid = edit.add_compound(root, static, size)
+            if name:
+                root["compounds"][kid]["name"] = name
+            return kid
+        kid = self.apply_root("新增靜態片段" if static else "新增複合片段", make)
         if kid:
             self.open_compound_entry(kid)
 

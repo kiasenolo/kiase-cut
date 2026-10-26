@@ -13,6 +13,57 @@ PRESETS = (("1920 × 1080 橫式", 1920, 1080), ("3840 × 2160 橫式（4K）", 
 FPS = (24, 25, 30, 50, 60)
 
 
+class CompoundSizeDialog(QDialog):
+    """The name and shape of a new compound / static compound made from the compound list.
+    Only its proportions matter: the content stays vector and is drawn at whatever size it
+    is shown or exported at."""
+
+    def __init__(self, parent, name, width, height, static=False):
+        super().__init__(parent)
+        self.setWindowTitle("新增靜態複合片段" if static else "新增複合片段")
+        form = QFormLayout()
+        self.name = QLineEdit(name)
+        form.addRow("名稱", self.name)
+        self.preset = QComboBox()
+        self.preset.addItem(f"跟專案（{width} × {height}）", (width, height))
+        for label, w, h in PRESETS:
+            if (w, h) != (width, height):
+                self.preset.addItem(label, (w, h))
+        self.preset.addItem("自訂…", None)
+        form.addRow("解析度", self.preset)
+        self.custom = QWidget()
+        cl = QHBoxLayout(self.custom)
+        cl.setContentsMargins(0, 0, 0, 0)
+        self.cw, self.ch = QSpinBox(), QSpinBox()
+        for sb, v in ((self.cw, width), (self.ch, height)):
+            sb.setRange(1, 16384)
+            sb.setValue(v)
+        cl.addWidget(self.cw)
+        cl.addWidget(QLabel("×"))
+        cl.addWidget(self.ch)
+        cl.addStretch(1)
+        form.addRow("自訂大小", self.custom)
+        self.custom.setVisible(False)
+        self.preset.currentIndexChanged.connect(lambda _i: self.custom.setVisible(self.preset.currentData() is None))
+        note = QLabel("只用來決定畫面的比例：裡面的內容一樣是向量，顯示和匯出時照實際的大小重新畫，不會變模糊。")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #9a9aa0;")
+        form.addRow("", note)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("建立")
+        bb.button(QDialogButtonBox.Cancel).setText("取消")
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(bb)
+
+    def result(self):
+        """(name, (width, height))."""
+        size = self.preset.currentData() or (self.cw.value(), self.ch.value())
+        return self.name.text().strip(), size
+
+
 class NewProjectDialog(QDialog):
     """Name + where to put the project folder (+ size and frame rate for an empty project)."""
 

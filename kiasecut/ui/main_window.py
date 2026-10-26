@@ -766,6 +766,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "頭尾對齊拍子", "Alt+Q", self.do_snap_beats)
+        add(m, "打亂順序", "Alt+R", self.do_shuffle)
         add(m, "刪除", "Delete", self.do_delete)
         add(m, "移到上面的軌道", "Ctrl+Up", lambda: self.do_move_rows(-1))
         add(m, "移到下面的軌道", "Ctrl+Down", lambda: self.do_move_rows(1))
@@ -1855,6 +1856,14 @@ class MainWindow(QMainWindow):
             return
         self.apply("頭尾對齊拍子", edit.snap_to_beats, ids)
 
+    def do_shuffle(self):
+        """Alt+R: the selected clips in a random order (each track's run of them)."""
+        ids = [c["id"] for c in self.timeline.selected_clips()]
+        if not self.proj or len(ids) < 2:
+            self.statusBar().showMessage("先在時間軸上選取兩個以上的片段", 3000)
+            return
+        self.apply("打亂順序", edit.shuffle_clips, ids)
+
     def _select_new(self, clips):
         if clips:
             self.timeline.set_selection({c["id"] for c in clips}, clips[-1]["id"])
@@ -2595,9 +2604,9 @@ class MainWindow(QMainWindow):
         if action == "paste":
             self.do_paste()
             return
-        if action in ("copy", "cut", "duplicate", "snap_beats"):
+        if action in ("copy", "cut", "duplicate", "snap_beats", "shuffle"):
             {"copy": self.do_copy, "cut": lambda: self.do_copy(cut=True), "duplicate": self.do_duplicate,
-             "snap_beats": self.do_snap_beats}[action]()
+             "snap_beats": self.do_snap_beats, "shuffle": self.do_shuffle}[action]()
             return
         if action in ("new_static", "new_component"):         # (cid is the track's id here)
             at, comp = self.playhead_us(), action == "new_component"

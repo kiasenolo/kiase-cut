@@ -9,6 +9,7 @@ import bisect
 import copy
 import json
 import math
+import random
 import time
 import uuid
 
@@ -397,6 +398,36 @@ def move_many(proj, clip_ids, d_us, d_rows=0):
         _sort(src)
         _sort(dst)
     return [c for _, c in moving]
+
+
+def shuffle_clips(proj, clip_ids, rng=random):
+    """Alt+R: the clips in a random order, on each track - one run of clips next to each other
+    (no other clip between them) at a time: they take the run's places one after another, the
+    gaps between them kept, so the run spans what it did. Never the same order again (when
+    there are two or more). Returns the clips."""
+    ids = set(clip_ids)
+    for t in project.all_tracks(proj["tracks"]):
+        runs, run = [], []
+        for c in sorted(t["clips"], key=lambda c: c["start_us"]):
+            if c["id"] in ids:
+                run.append(c)
+            elif run:
+                runs.append(run)
+                run = []
+        runs.append(run)
+        for run in runs:
+            if len(run) < 2:
+                continue
+            gaps_ = [b["start_us"] - end(a) for a, b in zip(run, run[1:])] + [0]
+            order = list(run)
+            while order == run:
+                rng.shuffle(order)
+            at = run[0]["start_us"]
+            for c, gap in zip(order, gaps_):
+                c["start_us"] = at
+                at += c["duration_us"] + gap
+        _sort(t)
+    return [find(proj, cid)[1] for cid in clip_ids]
 
 
 def copy_clips(level, clip_ids):

@@ -233,6 +233,17 @@ class CopyPasteTests(unittest.TestCase):
         self.assertEqual(p["compounds"], {})
         self.assertFalse(any(c["type"] == "compound" for t in tl2["tracks"] for c in t["clips"]))
 
+    def test_shuffle_keeps_the_places(self):
+        import random
+        p = proj()
+        t1 = p["tracks"][1]["clips"]
+        t1 += [clip("a", 0, S), clip("b", S, 2 * S), clip("c", 4 * S, S)]     # a gap of 1 s before c
+        edit.shuffle_clips(p, ["a", "b", "c"], random.Random(1))
+        got = [(c["id"], c["start_us"], edit.end(c)) for c in p["tracks"][1]["clips"]]
+        self.assertNotEqual([g[0] for g in got], ["a", "b", "c"])
+        self.assertEqual((got[0][1], got[-1][2]), (0, 5 * S))           # the same span
+        self.assertEqual((got[1][1] - got[0][2], got[2][1] - got[1][2]), (0, S))   # the gaps kept
+
     def test_clone_compound_clip_and_entry(self):
         p = proj()
         edit.add_timeline(p)

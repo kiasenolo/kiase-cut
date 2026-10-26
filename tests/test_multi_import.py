@@ -37,6 +37,7 @@ class FilterFilesTests(unittest.TestCase):
         self.p = proj()
         self.h = edit.History(self.p)
         self.win = SimpleNamespace(ulib=None, apply=lambda label, fn, *a: self.h.do(label, fn, *a))
+        self.win.add_effects_to = lambda ids, refs: MainWindow.add_effects_to(self.win, ids, refs)
 
     def effects(self):
         return [e["filter"] for e in edit.find(self.p, "c1")[1].get("effects", [])]
@@ -44,7 +45,7 @@ class FilterFilesTests(unittest.TestCase):
     def browse(self, picked):
         fake, calls = dialog(picked)
         with mock.patch.object(main_window, "QFileDialog", fake):
-            MainWindow.browse_effect(self.win, "c1")
+            MainWindow.browse_effect(self.win, ["c1"])
         return calls
 
     def test_several_files_one_undo_step(self):

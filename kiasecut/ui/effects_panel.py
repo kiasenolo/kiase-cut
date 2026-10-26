@@ -1,4 +1,6 @@
 """Effects: the filters on the selected clip (or the filter of a filter clip).
+With several clips selected only 新增效果 is offered: it adds the filter to each picture clip
+of the selection (批量), as does a filter dropped in the panel then.
 
 Each effect has its switch, name, order buttons, its parameters (every value can be
 keyframed with ◆, like the clip's own; on / off, menus and shapes hold until their next keyframe)
@@ -66,8 +68,8 @@ class Grip(QLabel):
 
 
 class EffectsPanel(QWidget):
-    addRequested = Signal(str, str)                 # clip id, filter ref
-    browseRequested = Signal(str)                   # clip id: pick a filter file
+    addRequested = Signal(list, str)                # clip ids, filter ref
+    browseRequested = Signal(list)                  # clip ids: pick a filter file
     removeRequested = Signal(str, str)              # clip id, effect id
     enabledChosen = Signal(str, str, bool)
     moveRequested = Signal(str, str, int)           # clip id, effect id, -1 / +1
@@ -82,6 +84,7 @@ class EffectsPanel(QWidget):
     docRequested = Signal()
     revealFilter = Signal(str)                      # filter ref: show its file
     effectDropped = Signal(str, str, int)           # clip id, what FX_MIME carries, place in its chain
+    effectsDropped = Signal(list, str)              # clip ids of a multi-selection, what FX_MIME carries
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -89,6 +92,7 @@ class EffectsPanel(QWidget):
         self.user_filters = []                      # [(name, path)] from the user's Library
         self.clip_id = None
         self.clip = None                            # the clip as last shown (what a drag copies)
+        self.ids = []                               # the picture clips of a multi-selection (批量)
         self.boxes = []                             # the effects' boxes, in order
         self.mask_edit = None                       # effect id whose mask the preview edits (編輯遮罩)
         self.shape = None
@@ -142,15 +146,21 @@ class EffectsPanel(QWidget):
             mine.addAction(name, lambda _=False, path=path: self._add(path))
         if not self.user_filters:
             mine.addAction("（Library 的「濾鏡」分頁還沒有檔案）").setEnabled(False)
-        menu.addAction("選擇濾鏡檔案…", lambda: self.clip_id and self.browseRequested.emit(self.clip_id))
+        menu.addAction("選擇濾鏡檔案…", lambda: self.targets() and self.browseRequested.emit(self.targets()))
+
+    def targets(self):
+        """The clips 新增效果 adds to: the one shown, or each picture clip of a multi-selection."""
+        return [self.clip_id] if self.clip_id else list(self.ids)
 
     def _add(self, ref):
-        if self.clip_id:
+        if self.targets():
             self.add_btn.menu().hide()
-            self.addRequested.emit(self.clip_id, ref)
+            self.addRequested.emit(self.targets(), ref)
 
     # -- the form ---------------------------------------------------------------------------------
-    def _build(self, c):
+    def _build(self, c, count=0):
+        """The form of clip c; None: of nothing, or of a multi-selection of count clips (self.ids
+        the picture ones)."""
         old = self.body
         self.body = QWidget()
         self.layout().replaceWidget(old, self.body)
@@ -160,9 +170,14 @@ class EffectsPanel(QWidget):
         self.boxes = []
         lay = QVBoxLayout(self.body)
         lay.setContentsMargins(0, 0, 0, 0)
-        self.add_btn.setEnabled(c is not None and c["type"] in edit.VISUAL)
+        self.add_btn.setEnabled(c is not None and c["type"] in edit.VISUAL or bool(self.ids))
+        if c is None and count > 1:
+            lay.addWidget(self._note(
+                f"選了 {count} 個片段：按「新增效果」（或把濾鏡拖到這裡）會加到其中 {len(self.ids)} 個畫面片段上。\n"
+                "要調整效果的參數，請只選一個片段。" if self.ids else "選取的都是聲音片段，不能加濾鏡"))
+            return
         if c is None:
-            lay.addWidget(self._note("在時間軸上選一個片段（只選一個）"))
+            lay.addWidget(self._note("在時間軸上選一個片段"))
             return
         if c["type"] not in edit.VISUAL:
             lay.addWidget(self._note("聲音片段不能加濾鏡"))
@@ -392,7 +407,7 @@ class EffectsPanel(QWidget):
 
     # -- dropping effects in the list -------------------------------------------------------------
     def _takes(self, e):
-        return (self.clip is not None and self.clip["type"] in edit.VISUAL
+        return ((self.clip is not None and self.clip["type"] in edit.VISUAL or bool(self.ids))
                 and e.mimeData().hasFormat(FX_MIME))
 
     def _drop_index(self, y):
@@ -433,12 +448,16 @@ class EffectsPanel(QWidget):
         i, _y = self._drop_index(e.position().y())
         e.acceptProposedAction()
         self._flush()
+        if self.clip is None:                       # a multi-selection: onto each of its clips
+            self.effectsDropped.emit(list(self.ids), bytes(e.mimeData().data(FX_MIME)).decode("utf-8"))
+            return
         self.effectDropped.emit(self.clip_id, bytes(e.mimeData().data(FX_MIME)).decode("utf-8"), i)
 
     def show_clips(self, clips, t_us, fps):
         c = clips[0] if len(clips) == 1 else None
         self.clip = c
-        shape = None
+        self.ids = [k["id"] for k in clips if k["type"] in edit.VISUAL] if len(clips) > 1 else []
+        shape = ("multi", len(clips), tuple(self.ids)) if len(clips) > 1 else None
         if c is not None:
             shape = (c["id"], c["type"], tuple((e["id"], e["filter"], bool(e.get("disabled")),
                                                 kind_tag(e.get("mask")), fx.get(e["filter"]).key(),
@@ -451,7 +470,7 @@ class EffectsPanel(QWidget):
             if self.mask_edit and not any(e["id"] == self.mask_edit and e.get("mask")
                                           for e in (c.get("effects") or [] if c else [])):
                 self.mask_edit = None               # that effect or its mask is gone
-            self._build(c)
+            self._build(c, len(clips))
             self.maskEditChanged.emit()
         if c is None or c["type"] not in edit.VISUAL:
             return

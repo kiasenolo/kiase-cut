@@ -441,13 +441,14 @@ class MainWindow(QMainWindow):
         cv.keyJump.connect(self.jump_key)
         self.effects = EffectsPanel()
         ef = self.effects
-        ef.addRequested.connect(lambda cid, ref: self.apply("新增效果", edit.add_effect, cid, ref))
+        ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.browseRequested.connect(self.browse_effect)
         ef.removeRequested.connect(lambda cid, eid: self.apply("移除效果", edit.remove_effect, cid, eid))
         ef.enabledChosen.connect(lambda cid, eid, on: self.apply(
             "啟用效果" if on else "停用效果", edit.set_effect_enabled, cid, eid, on))
         ef.moveRequested.connect(lambda cid, eid, d: self.apply("調整效果順序", edit.move_effect, cid, eid, d))
         ef.effectDropped.connect(self.effect_dropped)
+        ef.effectsDropped.connect(self.effects_dropped)
         ef.maskKindChosen.connect(lambda cid, eid, kind: self.apply(
             "效果範圍" if kind else "移除效果範圍", edit.set_effect_mask, cid, eid, kind, self.clip_time(cid)))
         ef.maskInvertChosen.connect(lambda cid, eid, on: self.apply(
@@ -4082,6 +4083,13 @@ class MainWindow(QMainWindow):
         else:
             self.apply("複製效果" if effect else "新增效果", edit.put_effect, cid, effect or ref, index)
 
+    def effects_dropped(self, ids, payload):
+        """A filter or an effect (a copy with its settings) dropped in the effects panel while
+        several clips are selected: onto each of clips ids (批量)."""
+        ref, effect, _src = dropped_fx(payload)
+        self.apply(("複製效果" if effect else "新增效果") + (f"（{len(ids)} 個片段）" if len(ids) > 1 else ""),
+                   lambda lvl: [edit.put_effect(lvl, cid, effect or ref) for cid in ids])
+
     def apply_filter_to_selected(self, ref):
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]
         if not ids:
@@ -4090,11 +4098,16 @@ class MainWindow(QMainWindow):
         self.apply("新增效果", lambda lvl: [edit.add_effect(lvl, cid, ref) for cid in ids])
         self.panels.show("effects")
 
-    def browse_effect(self, cid):
+    def add_effects_to(self, ids, refs):
+        """Filters refs added to each of clips ids (批量: the picture clips of a selection), one undo step."""
+        self.apply("新增效果" + (f"（{len(ids)} 個片段）" if len(ids) > 1 else ""),
+                   lambda lvl: [edit.add_effects(lvl, cid, refs) for cid in ids])
+
+    def browse_effect(self, ids):
         start = self.ulib.mirror("filters") if self.ulib else ""
         paths, _ = QFileDialog.getOpenFileNames(self, "選擇濾鏡檔案", str(start), "GLSL 濾鏡 (*.glsl)")
         if paths:                                   # several at once: one undo step
-            self.apply("新增效果", edit.add_effects, cid, [library.norm(p) for p in paths])
+            self.add_effects_to(ids, [library.norm(p) for p in paths])
 
     def new_filter_file(self, folder):
         """A new filter file made from the template, opened in the user's editor."""

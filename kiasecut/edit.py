@@ -1274,6 +1274,136 @@ def ungroup(root, level, group_id):
     return out
 
 
+def _flat_group(g):
+    """(x, y, scale x, scale y) of a group that is not turned, flipped or animated in place
+    or size (its clips' canvas place folds in and out of it exactly), else EditError."""
+    tf = g.get("transform") or {}
+    if any(curves.is_animated(tf.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation")) \
+            or abs(curves.value(tf.get("rotation", 0.0), 0)) > 1e-9 or tf.get("flip_h") or tf.get("flip_v"):
+        raise EditError(f"「{g.get('name') or '群組'}」有旋轉或關鍵幀動畫：片段沒辦法不移動地放進去")
+    gs = float(tf.get("scale", 1.0))
+    gsy = float(tf.get("scale_y", gs))
+    if abs(gs) < 1e-9 or abs(gsy) < 1e-9:
+        raise EditError("群組的縮放是 0")
+    return float(tf.get("x", 0.0)), float(tf.get("y", 0.0)), gs, gsy
+
+
+def _groups_around(level, track):
+    """The groups a track is inside, innermost first."""
+    out, g = [], group_of(level, track)
+    while g is not None:
+        out.append(g)
+        g = group_of(level, find(level, g["id"])[0])
+    return out
+
+
+def _refit(c, out_of, into):
+    """Clip c's place and size from the space inside the groups out_of (innermost first) to
+    the space inside into (innermost first), the same on the canvas."""
+    ktf = c.get("transform")
+    if ktf is None:
+        return
+    fx = [_flat_group(g) for g in out_of]
+    tx = [_flat_group(g) for g in reversed(into)]                 # outermost first
+
+    def axis(v, i):
+        for f in fx:
+            v = f[i] + f[2 + i] * v
+        for f in tx:
+            v = (v - f[i]) / f[2 + i]
+        return v
+
+    def size(v, i):
+        for f in fx:
+            v *= f[2 + i]
+        for f in tx:
+            v /= f[2 + i]
+        return v
+    sx = ktf.get("scale", 1.0)
+    sy = ktf.get("scale_y", sx)
+    ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: axis(v, 0))
+    ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: axis(v, 1))
+    if "scale_y" in ktf or any(abs(f[2] - f[3]) > 1e-9 for f in fx + tx):
+        ktf["scale_y"] = _map_value(sy, lambda v: size(v, 1))
+    ktf["scale"] = _map_value(sx, lambda v: size(v, 0))
+
+
+def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=None):
+    """移入群組: put picture clips of the open level (on it or in another group of it) into a
+    group, the same on the canvas (the groups' places and sizes folded out of theirs and into
+    the new one's) and in time; the group grows to take them in. track_id: a track of the group
+    to put them on when there is room (else each goes on a track of its kind in the group with
+    room, going up, or on a new one on top); start_us: where the first of them starts, in the
+    level's time (else they keep their times). Returns the clips."""
+    gt, g = find(level, group_id)
+    if not project.is_group(g):
+        raise EditError("這不是群組")
+    picked = [find(level, cid) for cid in dict.fromkeys(clip_ids)]
+    picked = [(t, c) for t, c in picked if not any(t is x for x in g["tracks"])]   # (already in it)
+    if not picked:
+        raise EditError("片段已經在這個群組裡")
+    for t, c in picked:
+        if t["kind"] == "audio":
+            raise EditError("群組只放畫面片段：選取裡有聲音片段")
+        if c is g or (project.is_group(c) and any(k is g for k in project.walk_clips(c["tracks"]))):
+            raise EditError("群組不能放進自己裡面")
+    into = [g] + _groups_around(level, gt)
+    for x in into:
+        _flat_group(x)                                             # (refused before anything changes)
+    starts = {c["id"]: abs_start(level, c["id"]) for _, c in picked}
+    shift = 0 if start_us is None else int(start_us) - min(starts.values())
+    lo = min(starts.values()) + shift
+    hi = max(starts[c["id"]] + c["duration_us"] for _, c in picked) + shift
+    if lo < 0:
+        raise EditError("片段不能放到時間 0 之前")
+    g0 = abs_start(level, group_id)
+    leaving = {id(c) for _, c in picked}
+    room = free_range({"clips": [k for k in gt["clips"] if id(k) not in leaving]}, g["start_us"], end(g), ignore=g) \
+        or (g["start_us"], end(g))
+    outer = group_of(level, gt)
+    if outer is not None:                                          # (a group in a group stays inside it)
+        room = (room[0], min(room[1], outer["duration_us"]))
+    if lo < g0:                                                    # grows to the left
+        d = g0 - lo
+        if g["start_us"] - d < room[0]:
+            raise EditError("群組前面沒有空間放這些片段")
+        g["start_us"] -= d
+        g["duration_us"] += d
+        shift_keys(g, -d)
+        for ct in g["tracks"]:
+            for k in ct["clips"]:
+                k["start_us"] += d
+        g0 = lo
+    if hi > g0 + g["duration_us"]:                                 # and to the right
+        if g["start_us"] + (hi - g0) > room[1]:
+            raise EditError("群組後面沒有空間放這些片段")
+        g["duration_us"] = hi - g0
+    for t, c in picked:
+        _refit(c, _groups_around(level, t), into)
+        t["clips"].remove(c)
+    out = []
+    for t, c in sorted(picked, key=lambda tc: starts[tc[1]["id"]]):
+        c["start_us"] = starts[c["id"]] + shift - g0
+        kind = "text" if t["kind"] == "text" else "video"
+        want = next((x for x in g["tracks"] if x["id"] == track_id and x["kind"] != "audio"), None)
+        cands = ([want] if want else []) + [x for x in g["tracks"] if x["kind"] == kind]
+        dst = next((x for x in cands if free_range(x, c["start_us"], end(c)) is not None), None)
+        if dst is None:
+            n = sum(1 for x in g["tracks"] if x["kind"] == kind) + 1
+            dst = {"id": "g" + uuid.uuid4().hex[:8], "kind": kind, "name": f"{kind} {n}", "clips": []}
+            g["tracks"].append(dst)
+        dst["clips"].append(c)
+        _sort(dst)
+        out.append(c)
+    project.link(root)
+    return out
+
+
+def group_ids(level):
+    """[(group id, name)] of every group in the level, nested ones too, in order."""
+    return [(c["id"], c.get("name") or "群組") for c in project.walk_clips(level["tracks"]) if project.is_group(c)]
+
+
 def _map_value(v, fn):
     """fn applied to a value, or to every keyframe value of a curve."""
     if curves.is_animated(v):

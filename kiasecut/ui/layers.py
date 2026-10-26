@@ -12,8 +12,11 @@ copy, delete, group and restack the selection; right-click a layer for the same.
 does not cover the picture's moment (time 0 - a static compound shows only that) is listed
 dimmed.
 
-Media dropped on the list (from the media library, the Library tab, 內建素材, the compound
-list or the file manager) become new layers where they are dropped; an effect from the VFX
+Layers dragged in under an open group's row, among its layers, or onto a group's row go into
+that group (移入群組, as the menu's 移入群組 does), the same on the canvas. Media dropped on
+the list (from the media library, the Library tab, 內建素材, the compound list or the file
+manager) become new layers where they are dropped (inside an open group there, or on a
+group's row: in that group); an effect from the VFX
 tab dropped on a layer goes onto it (between layers or below them: a filter layer there).
 With Alt held, media dropped on a picture layer replace its source (替換素材); dropped on one of
 several selected layers, every selected picture layer gets them (批量替換), one undo step.
@@ -39,7 +42,8 @@ class LayerList(QListWidget):
     """The layers; dropping one in a new place reports the new order (top first). Drops from
     elsewhere report where they land."""
     reordered = Signal(dict)                     # {group id or "": its layers' ids, top first}
-    mediaDropped = Signal(list, list, int)       # media / asset / compound idents, file paths, layers above
+    movedInto = Signal(list, str, list)          # layer ids, the group they go into, its layers' ids then (top first)
+    mediaDropped = Signal(list, list, int, str)  # idents, file paths, layers above, group id or ""
     fxDropped = Signal(str, str, int)            # effect ref, the layer it was dropped on ("": between), layers above
     menuRequested = Signal(object)               # global position of a right-click on the selection
     replaceDropped = Signal(str, str)            # media ident, layer it was Alt-dropped on: 替換素材
@@ -58,13 +62,41 @@ class LayerList(QListWidget):
         return not isinstance(e.source(), LayerList) and (md.hasFormat(MEDIA_MIME) or md.hasFormat(FX_MIME)
                                                           or md.hasUrls())
 
-    def drop_index(self, pos):
-        """How many layers of the level (open groups' layers not counted) are above a drop at
-        pos (it goes between two rows: the nearer gap)."""
+    def _opened(self, it):
+        """Whether the row is a group open in the list (its layers follow it)."""
+        gid = it.data(ROLE)
+        return it.data(KIND) == "group" and any(self.item(i).data(PARENT) == gid for i in range(self.count()))
+
+    def _parent_below(self, above):
+        """The group a layer put right under row `above` (None: at the top) is in."""
+        if above is None:
+            return ""
+        return above.data(ROLE) if self._opened(above) else (above.data(PARENT) or "")
+
+    def _on_group(self, pos):
+        """The group row in the middle of which pos is (a drop there goes into it), or None."""
+        it = self.itemAt(pos.toPoint())
+        if it is None or it.data(KIND) != "group":
+            return None
+        r = self.visualItemRect(it)
+        return it if abs(pos.y() - r.center().y()) < r.height() / 4 else None
+
+    def drop_target(self, pos):
+        """(group id or "", how many of its layers are above) for a drop at pos: between two rows
+        (the nearer gap), in the group whose layers are there; on a group's row: at its top."""
+        g = self._on_group(pos)
+        if g is not None:
+            return g.data(ROLE), 0
         it = self.itemAt(pos.toPoint())
         row = self.count() if it is None else \
             self.row(it) + (1 if pos.y() > self.visualItemRect(it).center().y() else 0)
-        return sum(1 for i in range(row) if not self.item(i).data(PARENT))
+        parent = self._parent_below(self.item(row - 1) if row > 0 else None)
+        return parent, sum(1 for i in range(row) if (self.item(i).data(PARENT) or "") == parent)
+
+    def drop_index(self, pos):
+        """How many layers of the level (open groups' layers not counted) are above a drop at pos."""
+        parent, above = self.drop_target(pos)
+        return above if not parent else 0
 
     def orders(self):
         """{group id or "": its layers' ids in the order the list shows them}."""
@@ -125,11 +157,10 @@ class LayerList(QListWidget):
                            "替換素材" + (f"（{n} 個）" if n > 1 else ""))
     def dropEvent(self, e):
         if not self._outside(e):
-            super().dropEvent(e)
-            self.reordered.emit(self.orders())         # (a layer stays in its own group)
+            self._drop_inside(e)
             return
         md, pos = e.mimeData(), e.position()
-        at = self.drop_index(pos)
+        group, at = self.drop_target(pos)
         lit, self.replacing = self._replace_rows(e), []
         self.viewport().update()
         if lit:                                         # Alt: the layer's (layers') source
@@ -140,11 +171,37 @@ class LayerList(QListWidget):
             self.fxDropped.emit(bytes(md.data(FX_MIME)).decode("utf-8"), it.data(ROLE) if it else "", at)
         elif md.hasFormat(MEDIA_MIME):
             ids = [i for i in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",") if i]
-            self.mediaDropped.emit(ids, [], at)
+            self.mediaDropped.emit(ids, [], at, group)
         else:
-            self.mediaDropped.emit([], [u.toLocalFile() for u in md.urls() if u.isLocalFile()], at)
+            self.mediaDropped.emit([], [u.toLocalFile() for u in md.urls() if u.isLocalFile()], at, group)
         e.setDropAction(Qt.CopyAction)
         e.accept()
+
+    def _drop_inside(self, e):
+        """Layers dragged within the list: restacked in their own groups, or into another group
+        (under an open group's row or among its layers, or on a group's row)."""
+        moving = self.selectedItems()
+        ids = [it.data(ROLE) for it in moving]
+        onto = self._on_group(e.position())
+        if onto is not None and onto.data(ROLE) not in ids:          # on a group's row: into it, on top
+            gid = onto.data(ROLE)
+            inner = [self.item(i).data(ROLE) for i in range(self.count())
+                     if self.item(i).data(PARENT) == gid and self.item(i).data(ROLE) not in ids]
+            e.ignore()
+            self.movedInto.emit(ids, gid, ids + inner)
+            return
+        super().dropEvent(e)
+        if moving:
+            r = min(self.row(it) for it in moving)
+            above = next((self.item(i) for i in range(r - 1, -1, -1) if not self.item(i).isSelected()), None)
+            parent = self._parent_below(above)
+            into = [it for it in moving if (it.data(PARENT) or "") != parent]
+            if parent and into and not any(it.data(ROLE) == parent for it in moving):
+                order = [self.item(i).data(ROLE) for i in range(self.count())
+                         if (self.item(i).data(PARENT) or "") == parent or self.item(i) in into]
+                self.movedInto.emit([it.data(ROLE) for it in into], parent, order)
+                return
+        self.reordered.emit(self.orders())         # (a layer stays in its own group)
 
     def contextMenuEvent(self, e):
         it = self.itemAt(e.pos())
@@ -231,7 +288,8 @@ class LayerPanel(QWidget):
     renameRequested = Signal(str)                  # clip id
     actionRequested = Signal(str)                  # "text", "copy", "delete", "group", "up", "down"
     shapeRequested = Signal(str)                   # an asset ident (assets.ident): a shape at the top
-    mediaDropped = Signal(list, list, int)         # idents, file paths, how many layers are above the drop
+    mediaDropped = Signal(list, list, int, str)    # idents, file paths, layers above the drop, group id or ""
+    movedInto = Signal(list, str, list)            # layer ids, group id, that group's layers then (top first)
     fxDropped = Signal(str, str, int)              # effect ref, layer it landed on or "", layers above
     replaceDropped = Signal(str, str)              # media ident, layer it was Alt-dropped on (替換素材)
 
@@ -256,6 +314,7 @@ class LayerPanel(QWidget):
         self.list.reordered.connect(self.orderChanged)
         self.list.itemDoubleClicked.connect(lambda it: self.renameRequested.emit(it.data(ROLE)))
         self.list.mediaDropped.connect(self.mediaDropped)
+        self.list.movedInto.connect(self.movedInto)
         self.list.fxDropped.connect(self.fxDropped)
         self.list.replaceDropped.connect(self.replaceDropped)
         self.list.menuRequested.connect(self._menu)
@@ -297,6 +356,19 @@ class LayerPanel(QWidget):
         for text, action in (("上移", "up"), ("下移", "down"), ("群組", "group"), ("複製", "copy"),
                              ("刪除", "delete")):
             menu.addAction(text, lambda a=action: self.actionRequested.emit(a))
+        level = self._shown[0] if self._shown else None
+        if level is not None:                               # 移入群組: one of the picture's groups
+            ids = {it.data(ROLE) for it in items}
+            skip = set(ids)
+            for cid in ids:
+                c = edit.find(level, cid)[1]
+                if project.is_group(c):
+                    skip |= {k["id"] for k in project.walk_clips(c["tracks"])}
+            groups = [(gid, name) for gid, name in edit.group_ids(level) if gid not in skip]
+            if groups:
+                sub = menu.addMenu("移入群組")
+                for gid, name in groups:
+                    sub.addAction(name, lambda g=gid: self.actionRequested.emit("into:" + g))
         mattes = [it.data(MATTE) for it in items if it.data(MATTE) is not None]
         if mattes:                                         # groups: their bottom object cuts the rest
             act = menu.addAction("最下面的物件當遮罩", lambda: self.actionRequested.emit("group_matte"))

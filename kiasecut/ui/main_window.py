@@ -282,7 +282,8 @@ class MainWindow(QMainWindow):
         self.font_check = None          # 字體對應 waiting for the font list (auto or not), or None
         self.font_dlg = None            # the 字體對應 window while it is open
         self.closing = False
-        self.layer_drop_at = None       # media dropped on the layer list: (layers above, layers before, when, where)
+        self.layer_drop_at = None       # media dropped on the layer list: (layers above, layers before, when, where, group)
+        self.group_drop_at = None       # media dropped on a group's lane: (group, its track, start, clips before, when)
         self.autosave_dir = None        # recovery: the autosave folder once this program's session began
         self._autosaved = None          # the project as last autosaved (not written again unchanged)
         self.sync_busy = False
@@ -366,7 +367,7 @@ class MainWindow(QMainWindow):
         self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
         self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
-        self.preview.mediaDropped.connect(lambda ids, paths, x, y: self.layer_drop(ids, paths, 0, (x, y)))
+        self.preview.mediaDropped.connect(lambda ids, paths, x, y, g: self.layer_drop(ids, paths, 0, (x, y), g or None))
         self.preview.replaceDropped.connect(self.replace_source)
 
         self.inspector = Inspector()
@@ -524,6 +525,8 @@ class MainWindow(QMainWindow):
         tl.filterDropped.connect(self.on_filter_dropped)
         tl.filesDropped.connect(lambda paths, tid, start, across: self.drop_files(
             paths, self.library.current_folder(), (tid, start, across)))
+        tl.intoGroupRequested.connect(lambda ids, gid, tid, start: self.move_into_group(ids, gid, tid, start))
+        tl.groupDropped.connect(self.group_drop)
         tl.newTrackRequested.connect(
             lambda cid, start, top: self.apply("移到新軌道", edit.move_to_new_track, cid, start, top))
         # timelines (as in DaVinci Resolve: several per project, one open), as tabs
@@ -635,7 +638,8 @@ class MainWindow(QMainWindow):
         lp.flagsToggled.connect(lambda tids, flag, on: self.apply(
             {"hidden": "隱藏", "locked": "鎖定"}[flag] + "圖層" if on else "取消" + {"hidden": "隱藏", "locked": "鎖定"}[flag],
             lambda lvl: [edit.set_track_flag(lvl, tid, flag, on) for tid in tids]))
-        lp.mediaDropped.connect(self.layer_drop)
+        lp.mediaDropped.connect(lambda ids, paths, above, g: self.layer_drop(ids, paths, above, None, g or None))
+        lp.movedInto.connect(self.layers_into_group)
         lp.fxDropped.connect(self.layer_fx_drop)
         lp.replaceDropped.connect(self.replace_source)
         lp.renameRequested.connect(lambda cid: self.on_clip_action("rename", cid))
@@ -1701,6 +1705,7 @@ class MainWindow(QMainWindow):
     def after_edit(self, label):
         self.dirty = True
         self._place_dropped_layers()
+        self._place_into_group()
         self.meter.set_gain(self.proj.get("master_gain", 1.0))
         try:
             self.container()
@@ -2152,7 +2157,9 @@ class MainWindow(QMainWindow):
         level = self.container()
         ids = [c["id"] for t in project.all_tracks(level["tracks"]) for c in t["clips"]   # (inside groups too)
                if c["id"] in self.timeline.selected_ids]
-        if action == "text":
+        if action.startswith("into:"):
+            self.move_into_group(ids, action[5:])
+        elif action == "text":
             self.do_text()
         elif action == "delete":
             self.do_delete()
@@ -2181,36 +2188,104 @@ class MainWindow(QMainWindow):
                         order[i], order[j] = order[j], order[i]
             self.restack_layers(orders)
 
-    def layer_drop(self, idents, paths, above, at=None):
+    def layer_drop(self, idents, paths, above, at=None, group=None):
         """Media dropped on the layer list (or the preview): new layers, `above` layers from the
-        top, centred at transform position at (x, y) when given. They are placed as on the
-        timeline (at the picture's moment, 0) and moved there when they come
-        (_place_dropped_layers; files are imported first)."""
+        top (of the group's layers when group: they go into it), centred at transform position
+        at (x, y) when given. They are placed as on the timeline (at the picture's moment, 0) and
+        moved there when they come (_place_dropped_layers; files are imported first)."""
         if not self.proj:
             return
-        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), at)
+        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), at, group)
         if paths:
             self.drop_files(paths, self.library.current_folder(), ("", 0, False))
             return
+        self._place_idents(idents, "", 0)
+        self.layer_drop_at = None                        # (placed by now; only imports come later)
+
+    def _place_idents(self, idents, tid, start):
+        """Media / assets / compounds by their drag idents, onto the level at start."""
         media = [i for i in idents if i.startswith("m")]
         if len(media) > 1:
-            self.place_media_many(media, "", 0, False)
+            self.place_media_many(media, tid, start, False)
         else:
             for ident in idents:
                 if ident.startswith("cmp:"):
-                    self.place_compound(ident[4:], "", 0)
+                    self.place_compound(ident[4:], tid, start)
                 elif ident.startswith(assets.PREFIX):
-                    self.place_asset(ident, "", 0)
+                    self.place_asset(ident, tid, start)
                 elif ident.startswith("m"):
-                    self.place_media(ident, "", 0)
-        self.layer_drop_at = None                        # (placed by now; only imports come later)
+                    self.place_media(ident, tid, start)
+
+    def layers_into_group(self, ids, gid, order):
+        """Layers dragged into a group in the layer list: moved in, then stacked as dropped."""
+        if not self.proj:
+            return
+
+        def fn(root):
+            level = self.container(root)
+            out = edit.move_into_group(root, level, ids, gid)
+            g = edit.find(level, gid)[1]
+            have = [c["id"] for c in edit.layers(g)]
+            want = [i for i in order if i in have]
+            if sorted(want) == sorted(have) and want != have:
+                edit.set_layer_order(level, want, gid)
+            return out
+        if self.apply_root("移入群組", fn) is not None:
+            self.layers.opened.add(gid)
+            self.timeline.open_groups.add(gid)
+        self._update_layers()                            # (refused: the list as it was)
+
+    def move_into_group(self, ids, gid, track_id=None, start_us=None):
+        """移入群組: clips of the open level into one of its groups, one undo step."""
+        ids = [i for i in ids if i != gid]
+        if not self.proj or not ids:
+            return
+        if self.apply_root("移入群組", lambda root: edit.move_into_group(
+                root, self.container(root), ids, gid, track_id or None, start_us)) is not None:
+            self.timeline.open_groups.add(gid)
+            self.layers.opened.add(gid)
+            self.timeline._layout()
+            self.timeline.update()
+
+    def group_drop(self, idents, paths, gid, track_id, start):
+        """Media dropped on an open group's lane: placed, then moved into the group there."""
+        if not self.proj:
+            return
+        before = {c["id"] for c in project.walk_clips(self.container()["tracks"])}
+        self.group_drop_at = (gid, track_id, start, before, time.monotonic())
+        if paths:
+            self.drop_files(paths, self.library.current_folder(), ("", start, False))
+            return
+        self._place_idents(idents, "", start)
+        self.group_drop_at = None
+
+    def _place_into_group(self):
+        """After an edit: clips that came from a drop on a group's lane go into it."""
+        pend = self.group_drop_at
+        if not pend:
+            return
+        gid, tid, start, before, when = pend
+        if time.monotonic() - when > 120:
+            self.group_drop_at = None
+            return
+        level = self.container()
+        new = [c["id"] for c in project.walk_clips(level["tracks"]) if c["id"] not in before]
+        if not new:
+            return
+        self.group_drop_at = None
+        try:                                             # (part of the same undo step)
+            edit.move_into_group(self.proj, level, new, gid, tid, start)
+        except edit.EditError as exc:
+            self.statusBar().showMessage(f"沒有放進群組：{exc}", 5000)
+            return
+        self.timeline.open_groups.add(gid)
 
     def _place_dropped_layers(self):
         """After an edit: layers that came from a drop on the layer list go where it was."""
         pend = self.layer_drop_at
         if not pend or not self.editing_static():
             return
-        above, before, when, at = pend
+        above, before, when, at, group = pend
         if time.monotonic() - when > 120:                # (an import that never came)
             self.layer_drop_at = None
             return
@@ -2221,13 +2296,24 @@ class MainWindow(QMainWindow):
             return
         self.layer_drop_at = None
         old = [cid for cid in order if cid in before]
-        i = min(above, len(old))
+        i = min(above, len(old)) if not group else 0
         if order != old[:i] + new + old[i:]:             # (part of the same undo step)
             edit.set_layer_order(level, old[:i] + new + old[i:])
         for cid in new if at else ():                    # dropped on the preview: centred there
             tf = edit.find(level, cid)[1].get("transform")
             if tf is not None and not curves.is_animated(tf.get("x")) and not curves.is_animated(tf.get("y")):
                 tf["x"], tf["y"] = at
+        if group:                                        # into the group, `above` of its layers from its top
+            try:
+                edit.move_into_group(self.proj, level, new, group)
+            except edit.EditError as exc:
+                self.statusBar().showMessage(f"沒有放進群組：{exc}", 5000)
+                return
+            g = edit.find(level, group)[1]
+            inner = [c["id"] for c in edit.layers(g) if c["id"] not in new]
+            j = min(above, len(inner))
+            edit.set_layer_order(level, inner[:j] + new + inner[j:], group)
+            self.layers.opened.add(group)
 
     def layer_fx_drop(self, ref, cid, above):
         """An effect dropped on the layer list: onto the layer it landed on, or a filter layer
@@ -2379,6 +2465,10 @@ class MainWindow(QMainWindow):
         self.apply("清除空軌道", edit.remove_empty_tracks)
 
     def on_clip_action(self, action, cid):
+        if action.startswith("into:"):                       # 移入群組 (the selection, or the clip)
+            sel = [c["id"] for c in self.timeline.selected_clips() if c["type"] != "audio"]
+            self.move_into_group(sel if cid in sel else [cid], action[5:])
+            return
         if action == "paste":
             self.do_paste()
             return

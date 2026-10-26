@@ -44,7 +44,9 @@ open or fold it. An open group's tracks lie under its track's row as lanes, its 
 at their times; the track grows by the most lanes any open group on it needs (nested groups
 add theirs), whether the playhead is on that group or not, so heights do not jump while
 playing. A lane's clips are picked, dragged (along their lane or onto another lane of the
-same group, never out of it) and trimmed like any clip.
+same group, never out of it) and trimmed like any clip. Clips of the level dragged onto an
+open group's lane, and media dropped there, go into that group (移入群組: intoGroupRequested,
+groupDropped; the lane lights up while they would).
 
 編輯區域 (set_matte_region): while a clip's compound mask is edited that way, the mask's
 compound shows as a ghost over the clip, placed where its time runs along the clip; dragging
@@ -153,6 +155,8 @@ class Timeline(QWidget):
     moveRequested = Signal(str, int, str)            # clip id, start us, track id
     trimRequested = Signal(str, str, int)            # clip id, "start" | "end", time us
     trackAction = Signal(str, str)                   # action, track id
+    intoGroupRequested = Signal(list, str, str, int)  # clip ids, group id, its track id, start (level time)
+    groupDropped = Signal(list, list, str, str, int)  # media idents, file paths, group id, its track id, start
     clipAction = Signal(str, str)                    # action, clip id
     mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
     mediaManyDropped = Signal(list, str, int, bool)  # library item ids, track id or "", start us, across (Alt)
@@ -194,6 +198,7 @@ class Timeline(QWidget):
         self.drop_replace = False                  # drop_clip would get the dragged media as its source (Alt)
         self.matte_region = None                   # 編輯區域: {clip, t_off, duration, name} or None
         self.open_groups = set()                   # ids of the groups shown open (their lanes)
+        self.into_lane = None                      # the open group's lane a drag or drop would go into
         self.drop_many = None                      # (count, across) while several media items hover
         self.tops = []                             # y of each row (on screen)
         self.vzoom = 1.0                           # track height factor
@@ -422,6 +427,30 @@ class Timeline(QWidget):
                         return ln, c, "body"
             return ln, None, None
         return None, None, None
+
+    def _into_lane(self, pos, ids=()):
+        """The lane of an open group under pos that clips ids (none: new media) could go into."""
+        ln = self._lane_hit(pos)[0]
+        if ln is None or ln["track"]["kind"] == "audio":
+            return None
+        g = ln["group"]
+        inside = {g["id"]} | {k["id"] for k in project.walk_clips(g["tracks"])}
+        if ids and (set(ids) & inside or any(project.is_group(c) and any(k is g for k in project.walk_clips(c["tracks"]))
+                                             for c in self.level_clips() if c["id"] in ids)):
+            return None
+        return ln
+
+    def _paint_into(self, p):
+        ln = self.into_lane
+        if ln is None:
+            return
+        x0 = max(self._x(ln["abs0"] / US), self.header_w)
+        x1 = self._x((ln["abs0"] + ln["group"]["duration_us"]) / US)
+        r = QRectF(x0, ln["y"], max(2.0, x1 - x0), ln["h"] - 1)
+        p.fillRect(r, QColor(122, 92, 150, 70))
+        p.setPen(QPen(QColor("#b48ee0"), 1.5))
+        p.drawRect(r)
+        p.drawText(r.adjusted(6, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, "移入群組：" + (ln["group"].get("name") or ""))
 
     def _fold_hit(self, pos):
         """The group whose ▸ / ▾ is under pos, or None."""
@@ -744,6 +773,7 @@ class Timeline(QWidget):
                 p.fillRect(QRectF(self.header_w, y, w - self.header_w, h - 2), QBrush(QColor(0, 0, 0, 70)))
                 p.fillRect(QRectF(self.header_w, y, w - self.header_w, h - 2), QBrush(QColor(255, 255, 255, 26), Qt.BDiagPattern))
                 p.restore()
+        self._paint_into(p)
         if group:                                         # the moving clips, on the rows they will land on
             dr = self.drag.get("drow", 0)
             for i, tr in enumerate(self.rows):
@@ -1284,6 +1314,9 @@ class Timeline(QWidget):
     def mouseMoveEvent(self, e):
         pos = e.position()
         d = self.drag
+        if d is not None and d["mode"] in ("body", "group") and d["moved"] and not d.get("dup"):
+            ids = d["ids"] if d["mode"] == "group" else [d["clip"]["id"]]
+            self.into_lane = self._into_lane(pos, ids)
         if d is None:
             on = bool(self.proj) and self._on_playhead(pos) and not self._on_header_edge(pos)    # (the edge wins)
             if on != self.hover_playhead:
@@ -1500,6 +1533,16 @@ class Timeline(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
+        into, self.into_lane = self.into_lane, None
+        if d and d["mode"] in ("body", "group") and d["moved"] and not d.get("dup") and into is not None:
+            if d["mode"] == "group":                    # (onto a group's lane: into it, at the same shift)
+                ids = sorted(d["ids"])
+                start = min(k["start_us"] for k in self.level_clips() if k["id"] in d["ids"]) + d["shift"]
+            else:
+                ids, start = [d["clip"]["id"]], d["start"]
+            self.intoGroupRequested.emit(ids, into["group"]["id"], into["track"]["id"], int(round(max(0, start))))
+            self.update()
+            return
         if d and d["mode"].startswith("lane_"):
             c = d["clip"]
             if d["moved"] and d["mode"] == "lane_body":
@@ -1599,6 +1642,10 @@ class Timeline(QWidget):
                 self.drop_clip = None
             if self.drop_clip is not None:                 # onto a clip: no time line, the clip is lit
                 self.drop_at = None
+            fx = e.mimeData().hasFormat(FX_MIME)
+            self.into_lane = None if fx or self.drop_clip is not None else self._into_lane(pos)
+            if self.into_lane is not None:                 # onto an open group's lane: it is lit
+                self.drop_at = None
         e.setDropAction(Qt.CopyAction)                     # (Alt must not turn the drop into a link)
         e.accept()
         self.update()
@@ -1650,6 +1697,7 @@ class Timeline(QWidget):
             self.update()
 
     def dragLeaveEvent(self, e):
+        self.into_lane = None
         self.drop_at = self.drop_clip = self.drop_many = None
         self.drop_replace = False
         self.update()
@@ -1657,6 +1705,7 @@ class Timeline(QWidget):
     def dropEvent(self, e):
         self.drop_at = self.drop_clip = self.drop_many = None
         self.drop_replace = False
+        self.into_lane = None
         pos = e.position()
         many = self._media_ids(e.mimeData())
         many = many if len(many) > 1 else None             # (with several, Alt lines them up instead)
@@ -1675,6 +1724,17 @@ class Timeline(QWidget):
                 c = self._fx_target(pos)
                 tid = self.rows[row]["id"] if row is not None and self.rows[row]["kind"] != "audio" else ""
                 self.filterDropped.emit(ref, c["id"] if c else "", tid, int(max(0.0, self._sec(pos.x())) * US))
+                e.acceptProposedAction()
+            self.update()
+            return
+        ln = self._into_lane(pos) if self.proj else None
+        if ln is not None:                                   # onto an open group's lane: into the group
+            md = e.mimeData()
+            ids = [i for i in bytes(md.data(MEDIA_MIME)).decode().split(",") if i] if md.hasFormat(MEDIA_MIME) else []
+            paths = [] if ids else self._file_paths(md)
+            if ids or paths:
+                self.groupDropped.emit(ids, paths, ln["group"]["id"], ln["track"]["id"],
+                                       int(max(0.0, self._sec(pos.x())) * US))
                 e.acceptProposedAction()
             self.update()
             return
@@ -1782,6 +1842,14 @@ class Timeline(QWidget):
                     menu.addSeparator()
                 else:
                     menu.addAction(it[0], lambda a=it[1]: self.clipAction.emit(a, c["id"]))
+            sel = self.selected_clips()
+            if all(k["type"] != "audio" for k in sel):           # 移入群組: one of the level's groups
+                skip = {k["id"] for g in sel for k in [g] + list(project.walk_clips(g.get("tracks") or []))}
+                groups = [(gid, name) for gid, name in edit.group_ids(self.proj) if gid not in skip]
+                if groups:
+                    sub = menu.addMenu("移入群組")
+                    for gid, name in groups:
+                        sub.addAction(name, lambda g=gid: self.clipAction.emit("into:" + g, c["id"]))
         else:                                          # a free spot on a track
             menu.addAction("貼上到播放頭", lambda: self.clipAction.emit("paste", ""))
             if row is not None and self.rows[row]["kind"] != "audio":

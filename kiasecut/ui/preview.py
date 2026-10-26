@@ -68,7 +68,8 @@ While a static compound is open (accept_media), media can be dragged onto the ca
 media library, the Library tab, 內建素材, the compound list or the file manager: mediaDropped
 reports them and where they were let go (they become the top layer, centred there). With Alt
 held, media dropped on a picture clip replace its source (replaceDropped; on one of several
-selected clips, all of them: 批量替換), and the clips that would change are outlined.
+selected clips, all of them: 批量替換), and the clips that would change are outlined. Dropped
+on a group (its box lit while they would), they go into it instead (移入群組).
 """
 import json
 import math
@@ -365,7 +366,7 @@ class Preview(QWidget):
     doubleClicked = Signal()
     textEdited = Signal(str, str)               # text clip id, its words: typed in on the canvas
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
-    mediaDropped = Signal(list, list, float, float)  # idents, file paths, transform x / y of the drop point
+    mediaDropped = Signal(list, list, float, float, str)  # idents, file paths, transform x / y there, group id or ""
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
 
     def __init__(self, parent=None, interactive=True):
@@ -393,6 +394,7 @@ class Preview(QWidget):
         self.accept_media = False               # media may be dropped on it (a static compound is open)
         self.drop_at = None                     # canvas point a drag from elsewhere is over
         self.drop_replace = []                  # boxes an Alt-drop there would give its media to
+        self.drop_group = None                  # the group box a drop there would go into
         self.setAcceptDrops(interactive)
         if interactive:                          # its keys work while the mouse is over it (see _view_key)
             QApplication.instance().installEventFilter(self)
@@ -574,13 +576,19 @@ class Preview(QWidget):
             return
         self.drop_replace = self._replace_boxes(e)
         self.drop_at = None if self.drop_replace else QPointF(*self._to_canvas(e.position()))
+        self.drop_group = None if self.drop_replace else self._group_at(*self._to_canvas(e.position()))
         e.setDropAction(Qt.CopyAction)
         e.accept()
         self.update()
 
     def dragLeaveEvent(self, e):
-        self.drop_at, self.drop_replace = None, []
+        self.drop_at, self.drop_replace, self.drop_group = None, [], None
         self.update()
+
+    def _group_at(self, x, y):
+        """The topmost group box (not locked) at canvas point x, y, or None."""
+        return next((b for b in self.visible_boxes() if getattr(b, "group", False) and not b.locked
+                     and b.contains(x, y)), None)
 
     def _replace_boxes(self, e):
         """With Alt held, media over a picture clip replace its source: its box, and the other
@@ -603,7 +611,7 @@ class Preview(QWidget):
     def dropEvent(self, e):
         from .timeline import MEDIA_MIME
         lit = self._replace_boxes(e) if self._takes(e.mimeData()) else []
-        self.drop_at, self.drop_replace = None, []
+        self.drop_at, self.drop_replace, self.drop_group = None, [], None
         self.update()
         md = e.mimeData()
         if not self._takes(md):
@@ -615,11 +623,13 @@ class Preview(QWidget):
             return
         x, y = self._to_canvas(e.position())
         tx, ty = round((x - self.W / 2) / (self.W / 2), 5), round((self.H / 2 - y) / (self.H / 2), 5)
+        g = self._group_at(x, y)
+        gid = g.clip["id"] if g is not None else ""
         if md.hasFormat(MEDIA_MIME):
             ids = [i for i in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",") if i]
-            self.mediaDropped.emit(ids, [], tx, ty)
+            self.mediaDropped.emit(ids, [], tx, ty, gid)
         else:
-            self.mediaDropped.emit([], [u.toLocalFile() for u in md.urls() if u.isLocalFile()], tx, ty)
+            self.mediaDropped.emit([], [u.toLocalFile() for u in md.urls() if u.isLocalFile()], tx, ty, gid)
         e.setDropAction(Qt.CopyAction)
         e.accept()
 
@@ -770,6 +780,17 @@ class Preview(QWidget):
                 p.setPen(QColor("#ffd34d"))
                 p.drawText(b.corners()[0] + QPointF(6 * k, -6 * k), "替換素材" + (f"（{n} 個）" if n > 1 else ""))
         p.setBrush(Qt.NoBrush)
+        if self.drop_group is not None:                  # dropped media go into this group
+            b = self.drop_group
+            p.setPen(QPen(QColor("#b48ee0"), 2 * k))
+            p.setBrush(QColor(122, 92, 150, 40))
+            p.drawPolygon(QPolygonF(b.corners()))
+            p.setBrush(Qt.NoBrush)
+            f = p.font()
+            f.setPixelSize(round(14 * k))
+            p.setFont(f)
+            p.setPen(QColor("#d6bdf5"))
+            p.drawText(b.corners()[0] + QPointF(6 * k, -6 * k), "移入群組：" + (b.clip.get("name") or ""))
         if self.drop_at is not None:                     # where dropped media will be centred
             d = self.drop_at
             p.setPen(QPen(QColor("#4aa3ff"), 1.5 * k))

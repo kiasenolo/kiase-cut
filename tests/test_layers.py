@@ -61,7 +61,7 @@ class LayerDropTests(unittest.TestCase):
         p = self.level()
         panel.set_layers(p, set(), None)
         got = []
-        panel.mediaDropped.connect(lambda ids, paths, at: got.append((ids, paths, at)))
+        panel.mediaDropped.connect(lambda ids, paths, at, g: got.append((ids, paths, at)))
         panel.fxDropped.connect(lambda ref, cid, at: got.append((ref, cid, at)))
         lst = panel.list
 
@@ -91,6 +91,7 @@ class LayerDropTests(unittest.TestCase):
             h.do("加入素材", lambda q: library.place_item(q, it, track_id or None, start))
             MainWindow._place_dropped_layers(win)
         win.place_media = place_media
+        win._place_idents = lambda ids, tid, start: MainWindow._place_idents(win, ids, tid, start)
         MainWindow.layer_drop(win, ["m9"], [], 2)
         order = [c["id"] for c in edit.layers(p)]
         self.assertEqual(order[:2], ["c4", "c1"])
@@ -200,7 +201,7 @@ class PreviewDropTests(unittest.TestCase):
         pv.resize(960, 540)
         pv.set_scene(p, 0, None)
         got = []
-        pv.mediaDropped.connect(lambda ids, paths, x, y: got.append((ids, x, y)))
+        pv.mediaDropped.connect(lambda ids, paths, x, y, g: got.append((ids, x, y)))
         md = QMimeData()
         md.setData(MEDIA_MIME, b"m9")
         r = pv._rect()
@@ -220,6 +221,7 @@ class PreviewDropTests(unittest.TestCase):
             h.do("加入素材", lambda q: library.place_item(q, it, track_id or None, start))
             MainWindow._place_dropped_layers(win)
         win.place_media = place_media
+        win._place_idents = lambda ids, tid, start: MainWindow._place_idents(win, ids, tid, start)
         MainWindow.layer_drop(win, ["m9"], [], 0, (got[0][1], got[0][2]))
         top = edit.layers(p)[0]
         self.assertEqual(top["media"]["path"], "n.png")                           # the top layer,

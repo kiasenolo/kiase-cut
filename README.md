@@ -357,7 +357,10 @@ Library tab or the 複合片段 tab) on a clip: the clip lights up with 替換�
 it shows the new media in its place, keeping its position, length, transform, mask,
 effects and keyframes. Pictures, videos and compounds replace pictures, videos and
 compound clips; sounds replace sounds. A clip longer than a new video or sound is
-shortened to it.
+shortened to it. Dropped on one of several selected clips, every selected clip that can take
+it is replaced (批量替換: they all light up while dragging), in one undo step. A compound kept
+in the Library can replace them too. In a static compound the same works on the layer list
+and on its picture (Alt + drop on a layer).
 
 Align and space (the buttons at the top of 屬性, as Lunacy's six): left, centre, right, top,
 middle, bottom - several selected clips line up with the box around them, one clip with the

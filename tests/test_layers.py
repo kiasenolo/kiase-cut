@@ -7,7 +7,10 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from kiasecut import edit  # noqa: E402
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from kiasecut import edit, project  # noqa: E402
+from kiasecut.ui.main_window import MainWindow  # noqa: E402
 from test_edit import S, clip, proj  # noqa: E402
 
 
@@ -251,3 +254,98 @@ class GroupInspectorTests(unittest.TestCase):
         ins.widgets["group_invert"].click()
         ins.widgets["group_body"].click()
         self.assertEqual(got, [{"invert": True}, {"body": False}])
+
+
+class ReplaceTests(unittest.TestCase):
+    """替換素材 in the static compound editor: Alt + drop on a layer (in the list or on the
+    picture); on one of several selected layers, every selected picture layer (批量替換)."""
+
+    def setUp(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        self.p = proj()
+        self.p["tracks"][1]["clips"].append(clip("c4", 0, S))
+        edit.set_layer_order(self.p, ["c4", "c1", "c2"])
+        edit.add_text(self.p, 0, "字")
+
+    def win(self, selected):
+        from types import SimpleNamespace
+        from kiasecut import library
+        library.lib(self.p)["items"].append({"id": "m9", "name": "new.png", "path": "/m/new.png", "kind": "image",
+                                             "width": 10, "height": 10, "folder": None})
+        h = edit.History(self.p)
+        clips = lambda: [c for c in project.all_clips(self.p) if c["id"] in selected]
+        tl = SimpleNamespace(selected_ids=set(selected), selected_clips_primary_first=clips)
+        win = SimpleNamespace(proj=self.p, timeline=tl, history=h, container=lambda *_: self.p,
+                              apply_root=lambda label, fn, select=None: (h.do(label, fn), self.labels.append(label)))
+        win.replace_targets = lambda cid, pic: MainWindow.replace_targets(win, cid, pic)
+        self.labels = []
+        return win
+
+    def paths(self):
+        return {c["id"]: (c.get("media") or {}).get("path") for c in edit.layers(self.p) if c["type"] == "image"}
+
+    def test_batch(self):
+        text = next(c["id"] for c in edit.layers(self.p) if c["type"] == "text")
+        win = self.win({"c1", "c4", text})
+        MainWindow.replace_source(win, "m9", "c4")                         # on a selected one: all of them
+        got = self.paths()
+        self.assertEqual((got["c1"], got["c4"]), ("/m/new.png", "/m/new.png"))
+        self.assertEqual(got["c2"], "x.png")                                # (not selected)
+        self.assertEqual(self.labels, ["替換素材（2 個）"])                # the text is left alone; one step
+        win.history.undo()
+        self.assertEqual(self.paths()["c1"], "x.png")
+
+    def test_unselected_layer_alone(self):
+        win = self.win({"c1", "c4"})
+        MainWindow.replace_source(win, "m9", "c2")
+        got = self.paths()
+        self.assertEqual((got["c2"], got["c1"]), ("/m/new.png", "x.png"))
+
+    def test_list_alt_drop(self):
+        from PySide6.QtCore import QMimeData, QPointF, Qt
+        from PySide6.QtGui import QDropEvent
+        from kiasecut.ui.layers import LayerPanel
+        from kiasecut.ui.timeline import MEDIA_MIME
+        panel = LayerPanel()
+        panel.resize(300, 300)
+        panel.show()
+        panel.set_layers(self.p, {"c1", "c4"}, "c1")
+        got, new = [], []
+        panel.replaceDropped.connect(lambda ident, cid: got.append((ident, cid)))
+        panel.mediaDropped.connect(lambda *a: new.append(a))
+        lst = panel.list
+        row = next(i for i in range(lst.count()) if lst.item(i).data(Qt.UserRole) == "c4")
+        md = QMimeData()
+        md.setData(MEDIA_MIME, b"m9")
+        pos = QPointF(lst.visualItemRect(lst.item(row)).center())
+        self.assertEqual(len(lst._replace_rows(QDropEvent(pos, Qt.CopyAction, md, Qt.LeftButton, Qt.AltModifier))), 2)
+        lst.dropEvent(QDropEvent(pos, Qt.CopyAction, md, Qt.LeftButton, Qt.AltModifier))
+        self.assertEqual((got, new), ([("m9", "c4")], []))
+        lst.dropEvent(QDropEvent(pos, Qt.CopyAction, md, Qt.LeftButton, Qt.NoModifier))   # no Alt: a new layer
+        self.assertEqual(len(got), 1)
+        self.assertEqual(len(new), 1)
+
+    def test_preview_alt_drop(self):
+        from PySide6.QtCore import QMimeData, QPointF, Qt
+        from PySide6.QtGui import QDropEvent
+        from kiasecut.ui.preview import Preview
+        from kiasecut.ui.timeline import MEDIA_MIME
+        for cid, x in (("c1", -0.5), ("c4", 0.5)):
+            edit.find(self.p, cid)[1]["transform"].update(scale=0.2, x=x)
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.accept_media = True
+        pv.set_scene(self.p, 0, "c1", {"c1", "c4"})
+        got, new = [], []
+        pv.replaceDropped.connect(lambda ident, cid: got.append((ident, cid)))
+        pv.mediaDropped.connect(lambda *a: new.append(a))
+        md = QMimeData()
+        md.setData(MEDIA_MIME, b"m9")
+        r = pv._rect()
+        at = QPointF(r.x() + r.width() * 0.75, r.y() + r.height() * 0.5)        # over c4
+        self.assertEqual(len(pv._replace_boxes(QDropEvent(at, Qt.CopyAction, md, Qt.LeftButton, Qt.AltModifier))), 2)
+        pv.dropEvent(QDropEvent(at, Qt.CopyAction, md, Qt.LeftButton, Qt.AltModifier))
+        self.assertEqual((got, new), ([("m9", "c4")], []))
+

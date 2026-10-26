@@ -61,7 +61,9 @@ A fullscreen window shows the same frames.
 
 While a static compound is open (accept_media), media can be dragged onto the canvas from the
 media library, the Library tab, 內建素材, the compound list or the file manager: mediaDropped
-reports them and where they were let go (they become the top layer, centred there).
+reports them and where they were let go (they become the top layer, centred there). With Alt
+held, media dropped on a picture clip replace its source (replaceDropped; on one of several
+selected clips, all of them: 批量替換), and the clips that would change are outlined.
 """
 import json
 import math
@@ -356,6 +358,7 @@ class Preview(QWidget):
     textEdited = Signal(str, str)               # text clip id, its words: typed in on the canvas
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
     mediaDropped = Signal(list, list, float, float)  # idents, file paths, transform x / y of the drop point
+    replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
 
     def __init__(self, parent=None, interactive=True):
         super().__init__(parent)
@@ -380,6 +383,7 @@ class Preview(QWidget):
         self.setMouseTracking(True)
         self.accept_media = False               # media may be dropped on it (a static compound is open)
         self.drop_at = None                     # canvas point a drag from elsewhere is over
+        self.drop_replace = []                  # boxes an Alt-drop there would give its media to
         self.setAcceptDrops(interactive)
 
     # -- state ------------------------------------------------------------------------------------
@@ -456,21 +460,46 @@ class Preview(QWidget):
         if not self._takes(e.mimeData()):
             e.ignore()
             return
-        self.drop_at = QPointF(*self._to_canvas(e.position()))
+        self.drop_replace = self._replace_boxes(e)
+        self.drop_at = None if self.drop_replace else QPointF(*self._to_canvas(e.position()))
         e.setDropAction(Qt.CopyAction)
         e.accept()
         self.update()
 
     def dragLeaveEvent(self, e):
-        self.drop_at = None
+        self.drop_at, self.drop_replace = None, []
         self.update()
+
+    def _replace_boxes(self, e):
+        """With Alt held, media over a picture clip replace its source: its box, and the other
+        selected picture clips' when it is selected (批量替換)."""
+        from PySide6.QtWidgets import QApplication
+        from .timeline import MEDIA_MIME
+        alt = (e.modifiers() | QApplication.queryKeyboardModifiers()) & Qt.AltModifier
+        if not alt or not e.mimeData().hasFormat(MEDIA_MIME):
+            return []
+        x, y = self._to_canvas(e.position())
+        boxes = [b for b in self.visible_boxes() if not b.locked]
+        hit = next((b for b in boxes if b.clip["type"] in edit.REPLACEABLE and b.contains(x, y)), None)
+        if hit is None:
+            return []
+        if hit.clip["id"] not in self.selected_ids:
+            return [hit]
+        return [hit] + [b for b in boxes if b is not hit and b.clip["id"] in self.selected_ids
+                        and b.clip["type"] in edit.REPLACEABLE]
 
     def dropEvent(self, e):
         from .timeline import MEDIA_MIME
-        self.drop_at = None
+        lit = self._replace_boxes(e) if self._takes(e.mimeData()) else []
+        self.drop_at, self.drop_replace = None, []
         self.update()
         md = e.mimeData()
         if not self._takes(md):
+            return
+        if lit:                                          # Alt: the clip's (clips') source
+            self.replaceDropped.emit(bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",")[0], lit[0].clip["id"])
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
             return
         x, y = self._to_canvas(e.position())
         tx, ty = round((x - self.W / 2) / (self.W / 2), 5), round((self.H / 2 - y) / (self.H / 2), 5)
@@ -609,6 +638,18 @@ class Preview(QWidget):
             p.setPen(QPen(QColor("#ffffff"), 1.5 * k))
             for b in self.drag["hits"]:
                 p.drawPolygon(QPolygonF(b.corners()))
+        for i, b in enumerate(self.drop_replace):         # an Alt-drop's clips (替換素材)
+            p.setPen(QPen(QColor("#ffb020"), 2 * k))
+            p.setBrush(QColor(255, 176, 32, 40))
+            p.drawPolygon(QPolygonF(b.corners()))
+            if i == 0:
+                n = len(self.drop_replace)
+                f = p.font()
+                f.setPixelSize(round(14 * k))
+                p.setFont(f)
+                p.setPen(QColor("#ffd34d"))
+                p.drawText(b.corners()[0] + QPointF(6 * k, -6 * k), "替換素材" + (f"（{n} 個）" if n > 1 else ""))
+        p.setBrush(Qt.NoBrush)
         if self.drop_at is not None:                     # where dropped media will be centred
             d = self.drop_at
             p.setPen(QPen(QColor("#4aa3ff"), 1.5 * k))

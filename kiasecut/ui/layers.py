@@ -15,9 +15,12 @@ dimmed.
 Media dropped on the list (from the media library, the Library tab, 內建素材, the compound
 list or the file manager) become new layers where they are dropped; an effect from the VFX
 tab dropped on a layer goes onto it (between layers or below them: a filter layer there).
+With Alt held, media dropped on a picture layer replace its source (替換素材); dropped on one of
+several selected layers, every selected picture layer gets them (批量替換), one undo step.
 """
 from PySide6.QtCore import QItemSelectionModel, QSize, Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
+from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
                                QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, edit, project
@@ -27,6 +30,7 @@ ROLE = Qt.UserRole
 TRACK = Qt.UserRole + 1          # (track id, {"hidden", "locked"}) of a layer
 PARENT = Qt.UserRole + 2         # the group it is in ("": the level itself)
 MATTE = Qt.UserRole + 3          # a group's 遮罩: {on, invert}
+KIND = Qt.UserRole + 4           # the clip's type
 THUMB_H = 26                     # px: the height of a layer's picture
 KINDS = {"image": "▧", "video": "▶", "text": "T", "compound": "▣", "group": "▾", "filter": "✦"}
 
@@ -38,9 +42,11 @@ class LayerList(QListWidget):
     mediaDropped = Signal(list, list, int)       # media / asset / compound idents, file paths, layers above
     fxDropped = Signal(str, str, int)            # effect ref, the layer it was dropped on ("": between), layers above
     menuRequested = Signal(object)               # global position of a right-click on the selection
+    replaceDropped = Signal(str, str)            # media ident, layer it was Alt-dropped on: 替換素材
 
     def __init__(self):
         super().__init__()
+        self.replacing = []             # rows an Alt-drag would give its media to (lit while dragging)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setDragDropMode(QAbstractItemView.InternalMove)
         self.setDefaultDropAction(Qt.MoveAction)
@@ -79,9 +85,44 @@ class LayerList(QListWidget):
         if self._outside(e):
             e.setDropAction(Qt.CopyAction)
             e.accept()
+            lit = self._replace_rows(e)
+            if lit != self.replacing:
+                self.replacing = lit
+                self.viewport().update()
         else:
             super().dragMoveEvent(e)
 
+    def dragLeaveEvent(self, e):
+        self.replacing = []
+        self.viewport().update()
+        super().dragLeaveEvent(e)
+
+    def _replace_rows(self, e):
+        """With Alt held, media over a picture layer replaces its source: that row, and the
+        other selected picture layers when it is selected (批量替換)."""
+        alt = (e.modifiers() | QApplication.queryKeyboardModifiers()) & Qt.AltModifier
+        it = self.itemAt(e.position().toPoint())
+        if not alt or it is None or not e.mimeData().hasFormat(MEDIA_MIME) or it.data(KIND) not in edit.REPLACEABLE:
+            return []
+        if not it.isSelected():
+            return [it]
+        return [it] + [x for x in self.selectedItems() if x is not it and x.data(KIND) in edit.REPLACEABLE]
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if not self.replacing:
+            return
+        p = QPainter(self.viewport())
+        for i, it in enumerate(self.replacing):
+            r = self.visualItemRect(it).adjusted(1, 1, -2, -2)
+            p.setPen(QPen(QColor("#ffb020"), 2))
+            p.fillRect(r, QColor(255, 176, 32, 40))
+            p.drawRect(r)
+            if i == 0:
+                p.setPen(QColor("#ffd34d"))
+                n = len(self.replacing)
+                p.drawText(r.adjusted(0, 0, -8, 0), Qt.AlignVCenter | Qt.AlignRight,
+                           "替換素材" + (f"（{n} 個）" if n > 1 else ""))
     def dropEvent(self, e):
         if not self._outside(e):
             super().dropEvent(e)
@@ -89,7 +130,12 @@ class LayerList(QListWidget):
             return
         md, pos = e.mimeData(), e.position()
         at = self.drop_index(pos)
-        if md.hasFormat(FX_MIME):
+        lit, self.replacing = self._replace_rows(e), []
+        self.viewport().update()
+        if lit:                                         # Alt: the layer's (layers') source
+            ident = bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",")[0]
+            self.replaceDropped.emit(ident, lit[0].data(ROLE))
+        elif md.hasFormat(FX_MIME):
             it = self.itemAt(pos.toPoint())
             self.fxDropped.emit(bytes(md.data(FX_MIME)).decode("utf-8"), it.data(ROLE) if it else "", at)
         elif md.hasFormat(MEDIA_MIME):
@@ -187,6 +233,7 @@ class LayerPanel(QWidget):
     shapeRequested = Signal(str)                   # an asset ident (assets.ident): a shape at the top
     mediaDropped = Signal(list, list, int)         # idents, file paths, how many layers are above the drop
     fxDropped = Signal(str, str, int)              # effect ref, layer it landed on or "", layers above
+    replaceDropped = Signal(str, str)              # media ident, layer it was Alt-dropped on (替換素材)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -210,6 +257,7 @@ class LayerPanel(QWidget):
         self.list.itemDoubleClicked.connect(lambda it: self.renameRequested.emit(it.data(ROLE)))
         self.list.mediaDropped.connect(self.mediaDropped)
         self.list.fxDropped.connect(self.fxDropped)
+        self.list.replaceDropped.connect(self.replaceDropped)
         self.list.menuRequested.connect(self._menu)
         lay.addWidget(self.list, 1)
         bar = QHBoxLayout()
@@ -283,6 +331,7 @@ class LayerPanel(QWidget):
                 it.setData(ROLE, c["id"])
                 it.setData(TRACK, (t["id"], {"hidden": bool(t.get("hidden")), "locked": bool(t.get("locked"))}))
                 it.setData(PARENT, parent)
+                it.setData(KIND, c["type"])
                 it.setData(MATTE, {k: bool((c.get("matte") or {}).get(k)) for k in ("on", "invert")}
                            if project.is_group(c) else None)
                 it.setSizeHint(QSize(200, THUMB_H + 6))

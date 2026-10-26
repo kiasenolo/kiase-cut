@@ -366,6 +366,7 @@ class MainWindow(QMainWindow):
         self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
         self.preview.mediaDropped.connect(lambda ids, paths, x, y: self.layer_drop(ids, paths, 0, (x, y)))
+        self.preview.replaceDropped.connect(self.replace_source)
 
         self.inspector = Inspector()
         ins = self.inspector
@@ -664,6 +665,7 @@ class MainWindow(QMainWindow):
             lambda lvl: [edit.set_track_flag(lvl, tid, flag, on) for tid in tids]))
         lp.mediaDropped.connect(self.layer_drop)
         lp.fxDropped.connect(self.layer_fx_drop)
+        lp.replaceDropped.connect(self.replace_source)
         lp.renameRequested.connect(lambda cid: self.on_clip_action("rename", cid))
         lp.actionRequested.connect(self.layer_action)
         lp.shapeRequested.connect(lambda key: self.place_asset(assets.ident(key, *self.assets.colors), "", 0))
@@ -2677,31 +2679,65 @@ class MainWindow(QMainWindow):
 
     def replace_source(self, ident, cid):
         """Media dropped on a clip with Alt held: the clip shows (or plays) it instead, keeping
-        its place, length, look and keyframes."""
+        its place, length, look and keyframes. Dropped on one of several selected clips, every
+        selected clip that can take it does (批量替換), in one undo step."""
         if not self.proj:
             return
+        picture = True
         if ident.startswith(assets.PREFIX):
             made = self.new_asset(ident)
-            if made is not None:
-                params, path = made
-                self.apply("替換素材", edit.replace_media, cid, assets.item(params, path), params,
-                           select=lambda c: c["id"])
-            return
-        if ident.startswith("cmp:"):
-            self.apply_root("替換素材", lambda root: edit.replace_with_compound(root, self.container(root), cid, ident[4:]),
-                            select=lambda c: c["id"])
-            return
-        if ident.startswith("mu"):                         # an item of the user's Library
-            key, it = self.ulib.find(ident)
-            if it is None or key not in ("videos", "images", "sounds"):
-                self.statusBar().showMessage("替換素材：只能換成圖片、影片或聲音", 4000)
+            if made is None:
                 return
+            params, path = made
+            one = lambda root, level, k: edit.replace_media(level, k, assets.item(params, path), params)
+        elif ident.startswith("cmp:"):
+            one = lambda root, level, k: edit.replace_with_compound(root, level, k, ident[4:])
         else:
-            try:
-                it = library.item(self.proj, ident)
-            except edit.EditError:
-                return
-        self.apply("替換素材", edit.replace_media, cid, dict(it), select=lambda c: c["id"])
+            if ident.startswith("mu"):                     # an item of the user's Library
+                key, it = self.ulib.find(ident)
+                if it is None or key not in ("videos", "images", "sounds", "compounds"):
+                    self.statusBar().showMessage("替換素材：只能換成圖片、影片、聲音或複合片段", 4000)
+                    return
+            else:
+                key = None
+                try:
+                    it = library.item(self.proj, ident)
+                except edit.EditError:
+                    return
+            if key == "compounds":                         # a compound kept in the Library
+                try:
+                    pack = userlib.load_compound(it["path"])
+                except (OSError, ValueError) as exc:
+                    self.statusBar().showMessage(f"讀不到複合片段：{exc}", 5000)
+                    return
+
+                def one(root, level, k):
+                    kid = edit.add_library_compound(root, pack)
+                    if self.root:
+                        assets.restore(project.walk_clips(root["compounds"][kid]["tracks"]), workspace.media_dir(self.root))
+                    return edit.replace_with_compound(root, level, k, kid)
+            else:
+                picture = it["kind"] != "audio"
+                one = lambda root, level, k: edit.replace_media(level, k, dict(it))
+        targets = self.replace_targets(cid, picture)
+
+        def fn(root):
+            level = self.container(root)
+            return [one(root, level, k) for k in targets]
+        if len(targets) == 1:
+            self.apply_root("替換素材", fn, select=lambda cs: cs[0]["id"])
+        else:                                            # (the selection stays as it was)
+            self.apply_root(f"替換素材（{len(targets)} 個）", fn)
+
+    def replace_targets(self, cid, picture):
+        """The clips a source dropped on clip cid replaces: cid, and when it is selected, the
+        other selected clips that can take it (pictures, videos and compounds for a picture,
+        sounds for a sound) - cid first."""
+        if cid not in self.timeline.selected_ids:
+            return [cid]
+        ok = edit.REPLACEABLE if picture else ("audio",)
+        return [cid] + [c["id"] for c in self.timeline.selected_clips_primary_first()
+                        if c["id"] != cid and c["type"] in ok]
 
     # -- inspector / preview overlay --------------------------------------------------------------
     def refresh_inspector(self):

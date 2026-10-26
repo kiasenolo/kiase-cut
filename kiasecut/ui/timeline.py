@@ -736,18 +736,22 @@ class Timeline(QWidget):
             p.setBrush(QColor(255, 255, 255, 35))
             p.drawRect(self.band)
         if self.drop_clip is not None:
-            row = next((i for i, t in enumerate(self.rows) if self.drop_clip in t["clips"]), None)
-            if row is not None:
-                x0 = max(self._x(self.drop_clip["start_us"] / US), self.header_w)
-                x1 = self._x((self.drop_clip["start_us"] + self.drop_clip["duration_us"]) / US)
+            lit = self.replace_lit() if self.drop_replace else [self.drop_clip]
+            for c in lit:
+                row = next((i for i, t in enumerate(self.rows) if c in t["clips"]), None)
+                if row is None:
+                    continue
+                x0 = max(self._x(c["start_us"] / US), self.header_w)
+                x1 = self._x((c["start_us"] + c["duration_us"]) / US)
                 p.setPen(QPen(QColor("#ffb020"), 2))
                 p.setBrush(QColor(255, 176, 32, 40))
                 box = QRectF(x0, self.tops[row] + 2, max(2.0, x1 - x0), self.row_h(row) - 6)
                 p.drawRect(box)
-                if self.drop_replace:                   # (written on the part of the clip in view)
+                if self.drop_replace and c is self.drop_clip:   # (written on the part of the clip in view)
                     shown = box.intersected(QRectF(self.header_w, box.top(), w - self.header_w, box.height()))
                     p.setPen(QColor("#ffd34d"))
-                    p.drawText(shown.adjusted(6, 0, -8, 0), Qt.AlignVCenter | Qt.AlignRight, "替換素材")
+                    p.drawText(shown.adjusted(6, 0, -8, 0), Qt.AlignVCenter | Qt.AlignRight,
+                               "替換素材" + (f"（{len(lit)} 個）" if len(lit) > 1 else ""))
         if self.drop_at is not None:
             row, t = self.drop_at
             dx = self._x(t / US)
@@ -1567,6 +1571,16 @@ class Timeline(QWidget):
         """The clip whose source media dropped at pos with Alt would replace."""
         _, c, _ = self._hit(pos)
         return c if c is not None and c["type"] in edit.REPLACEABLE + ("audio",) else None
+
+    def replace_lit(self):
+        """The clips an Alt-drop on drop_clip would give the new source: it, and with it the
+        other selected clips of its kind (pictures or sounds) when it is selected."""
+        c = self.drop_clip
+        if c is None or c["id"] not in self.selected_ids:
+            return [c] if c is not None else []
+        sound = c["type"] == "audio"
+        return [c] + [k for k in self.selected_clips() if k is not c and
+                      (k["type"] == "audio" if sound else k["type"] in edit.REPLACEABLE)]
 
     def _fx_target(self, pos):
         """The clip a filter dropped at pos goes onto (pictures, texts, compounds, filter clips)."""

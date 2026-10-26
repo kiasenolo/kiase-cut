@@ -1602,6 +1602,70 @@ def replace_effects(proj, clip_id, whats):
     return [put_effect(proj, clip_id, w) for w in whats]
 
 
+_FITS = {"float": "number", "int": "number", "bool": "bool", "menu": "choice", "color": 4, "vec2": 2, "vec3": 3}
+
+
+def _value_kind(v):
+    """What kind of parameter a stored value (or its keyframes') is: as _FITS's values."""
+    v = curves.value(v, 0)
+    if isinstance(v, bool):
+        return "bool"
+    if isinstance(v, (int, float)):
+        return "number"
+    if isinstance(v, str):
+        return "choice"
+    return len(v) if isinstance(v, list) else None
+
+
+def _map_keys(v, fn):
+    """Stored value v (a constant or keyframes) with each value turned by fn."""
+    if not curves.is_animated(v):
+        return fn(v)
+    out = copy.deepcopy(v)
+    for k in out["keys"]:
+        k[1] = fn(k[1])
+    return out
+
+
+def swap_filter(proj, clip_id, effect_id, what):
+    """Alt-drop of a filter (or an effect) onto effect effect_id of a clip: the effect becomes
+    that filter, keeping its place, switch and mask. When the parameters line up - as many, of
+    the same kinds, in the same order (the same filter rewritten or renamed) - the effect keeps
+    its values, keyframes included; else it takes what's settings (a dropped effect's, or the
+    filter's defaults). Returns whether the values were kept."""
+    _, c = find(proj, clip_id)
+    e = _effect(c, effect_id)
+    ref = what if isinstance(what, str) else what["filter"]
+    new = fx.get(ref).params
+    old = list((e.get("params") or {}).values())
+    kept = bool(new) and len(old) == len(new) and all(_value_kind(v) == _FITS[p.type] for v, p in zip(old, new))
+    if kept:
+        before = fx.get(e["filter"]).params                   # (none when its file is gone)
+        before = before if len(before) == len(new) else [None] * len(new)
+
+        def carry(v, p, q):
+            if p.type == "int":
+                return _map_keys(v, lambda x: int(round(x)))
+            if p.type != "menu":
+                return v
+
+            def choice(x):                                     # the same place in the new menu
+                if x in p.items:
+                    return x
+                if q is not None and q.type == "menu" and x in q.items and q.items.index(x) < len(p.items):
+                    return p.items[q.items.index(x)]
+                return p.default
+            return _map_keys(v, choice)
+        params = {p.name: carry(v, p, q) for v, p, q in zip(old, new, before)}
+    elif isinstance(what, str):
+        params = fx.default_params(fx.get(ref))
+    else:
+        params = copy.deepcopy(what.get("params") or {})
+    e["filter"] = ref
+    e["params"] = params
+    return kept
+
+
 def remove_effect(proj, clip_id, effect_id):
     _, c = find(proj, clip_id)
     c["effects"].remove(_effect(c, effect_id))

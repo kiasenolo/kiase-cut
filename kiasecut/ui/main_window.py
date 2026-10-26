@@ -455,6 +455,7 @@ class MainWindow(QMainWindow):
             "調整效果順序", ids, eid, lambda lvl, cid, e: edit.move_effect(lvl, cid, e, d)))
         ef.effectDropped.connect(self.effect_dropped)
         ef.effectsDropped.connect(self.effects_dropped)
+        ef.effectSwapped.connect(self.effect_swapped)
         ef.maskKindChosen.connect(lambda ids, eid, kind: self.fx_each(
             "效果範圍" if kind else "移除效果範圍", ids, eid,
             lambda lvl, cid, e: edit.set_effect_mask(lvl, cid, e, kind, self.clip_time(cid))))
@@ -4161,6 +4162,19 @@ class MainWindow(QMainWindow):
         else:
             self.apply(("複製效果" if effect else "新增效果") + many(ids),
                        lambda lvl: [edit.put_effect(lvl, cid, effect or ref, index) for cid in ids])
+
+    def effect_swapped(self, ids, eid, payload):
+        """A filter or an effect dropped with Alt onto effect eid of clips ids: that effect (and the
+        alike ones of the others, 批量) becomes it, keeping its values when the parameters line up
+        (edit.swap_filter)."""
+        ref, effect, _src = dropped_fx(payload)
+        if effect and effect["id"] == eid:
+            return
+        kept = []
+        self.fx_each("替換濾鏡", ids, eid, lambda lvl, cid, e: kept.append(edit.swap_filter(lvl, cid, e, effect or ref)))
+        if kept:
+            self.statusBar().showMessage("參數位置相同，沿用原本的參數" if all(kept) else
+                                         "參數不同，改用" + ("拖過來的效果的設定" if effect else "新濾鏡的預設值"), 4000)
 
     def effects_dropped(self, ids, payload):
         """A filter or an effect (a copy with its settings) dropped in the effects panel while

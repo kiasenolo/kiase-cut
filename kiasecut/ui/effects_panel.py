@@ -9,12 +9,15 @@ keyframed with ◆, like the clip's own; on / off, menus and shapes hold until t
 and an optional mask that limits where it works. Its ⠿ grip drags it: to another place in the
 list, or onto a clip (timeline, layers) to copy it there with its settings, or onto an empty spot
 of the timeline for a filter clip of it; filters of the VFX tab can be dropped in the list too.
+Dropped onto an effect with Alt held, a filter (or an effect) takes that effect's place instead,
+keeping its values when the parameters line up (edit.swap_filter): a filter whose file is gone
+swapped for its built-in version, say.
 The parameters come from the filter file's `// @param` lines (see filters/FORMAT.md), so
 the form of a user's filter is built the same way as a built-in one.
 """
 import json
 
-from PySide6.QtCore import QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
                                QToolButton, QVBoxLayout, QWidget)
@@ -111,6 +114,7 @@ class EffectsPanel(QWidget):
     revealFilter = Signal(str)                      # filter ref: show its file
     effectDropped = Signal(list, str, int)          # clip ids, what FX_MIME carries, place in the chain
     effectsDropped = Signal(list, str)              # clip ids whose effects are not alike, what FX_MIME carries
+    effectSwapped = Signal(list, str, str)          # clip ids, effect id, what FX_MIME carries (Alt-drop on it)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -149,6 +153,10 @@ class EffectsPanel(QWidget):
         self.drop_line.setStyleSheet("background: #6fb3ff;")
         self.drop_line.setFixedHeight(3)
         self.drop_line.hide()
+        self.swap_frame = QFrame(self)              # the effect an Alt-drop would replace
+        self.swap_frame.setStyleSheet("border: 2px solid #6fb3ff; background: transparent;")
+        self.swap_frame.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.swap_frame.hide()
         self.setAcceptDrops(True)
         self._build(None)
 
@@ -455,36 +463,65 @@ class EffectsPanel(QWidget):
             return len(tops), tops[-1][0] + tops[-1][1] + 1
         return 0, self.body.mapTo(self, QPoint(0, 0)).y()
 
+    def _swap_box(self, e):
+        """With Alt held: the index of the effect box under the drop (one of the form's), else None."""
+        if self.clip is None or not e.modifiers() & Qt.AltModifier:
+            return None
+        y = e.position().y()
+        for i, b in enumerate(self.boxes):
+            top = b.mapTo(self, QPoint(0, 0)).y()
+            if top <= y < top + b.height():
+                return i
+        return None
+
+    def _accept(self, e):
+        e.setDropAction(Qt.CopyAction)           # (Alt may propose a link, which the drags do not offer)
+        e.accept()
+
     def dragEnterEvent(self, e):
         if not self._takes(e):
             e.ignore()
             return
-        e.acceptProposedAction()
+        self._accept(e)
         self.dragMoveEvent(e)
 
     def dragMoveEvent(self, e):
         if not self._takes(e):
             e.ignore()
             return
-        _i, y = self._drop_index(e.position().y())
-        self.drop_line.setGeometry(self.body.mapTo(self, QPoint(0, 0)).x(), max(0, y), self.body.width(), 3)
-        self.drop_line.show()
-        self.drop_line.raise_()
-        e.acceptProposedAction()
+        k = self._swap_box(e)
+        if k is not None:
+            b = self.boxes[k]
+            self.drop_line.hide()
+            self.swap_frame.setGeometry(QRect(b.mapTo(self, QPoint(0, 0)), b.size()))
+            self.swap_frame.show()
+            self.swap_frame.raise_()
+        else:
+            _i, y = self._drop_index(e.position().y())
+            self.swap_frame.hide()
+            self.drop_line.setGeometry(self.body.mapTo(self, QPoint(0, 0)).x(), max(0, y), self.body.width(), 3)
+            self.drop_line.show()
+            self.drop_line.raise_()
+        self._accept(e)
 
     def dragLeaveEvent(self, e):
         self.drop_line.hide()
+        self.swap_frame.hide()
 
     def dropEvent(self, e):
         self.drop_line.hide()
+        self.swap_frame.hide()
         if not self._takes(e):
             e.ignore()
             return
         i, _y = self._drop_index(e.position().y())
-        e.acceptProposedAction()
+        k = self._swap_box(e)
+        self._accept(e)
         self._flush()
         payload = bytes(e.mimeData().data(FX_MIME)).decode("utf-8")
-        if self.clip is None:                       # clips with effects not alike: replacing them all
+        if k is not None:
+            self.effectSwapped.emit(list(self.ids), self.clip["effects"][k]["id"], payload)
+        elif self.clip is None:                       # clips with effects not alike: replacing them all
             self.effectsDropped.emit(list(self.ids), payload)
         else:
             self.effectDropped.emit(list(self.ids), payload, i)

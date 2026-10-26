@@ -48,8 +48,13 @@ canvas); spacing() and space_moves() put the same gap between neighbours (in the
 their centres along the direction they spread in most), a typed gap or their average one;
 a negative gap makes them overlap. Both give {clip id: {x / y}} for movesCommitted.
 
-Ctrl+wheel zooms the view around the mouse (to reach handles of clips larger than the
-canvas), the middle button drags it; zooming back to about 100% fits it again.
+The view is moved about as in Blender's image editor: the wheel zooms around the mouse
+(Ctrl+wheel too), the middle button drags the view (Shift+middle too), Ctrl+middle-drag
+zooms smoothly (right / up: in), a touchpad's two-finger scroll moves it and its pinch zooms.
+With the mouse over the preview (and no text being typed): Home fits the canvas in the view,
+numpad . frames the selection, numpad 1 shows it 1:1, numpad 2 / 4 / 8 at 1:2 / 1:4 / 1:8 and
+Ctrl+numpad 2 / 4 / 8 at 2:1 / 4:1 / 8:1, numpad + / - zoom in / out, and Shift+B then a drag
+zooms into the box dragged (Esc or the right button: not).
 
 Double-clicking a text clip opens a box over it to type its words in (textEdited while
 typing, one undo step); Ctrl+Enter or a click elsewhere closes it, Esc puts the words back.
@@ -70,7 +75,8 @@ import math
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
-from PySide6.QtWidgets import QApplication, QPlainTextEdit, QWidget
+from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit,
+                               QWidget)
 
 from .. import curves, edit, fonts, project, render, textlayout
 
@@ -80,6 +86,8 @@ HANDLE_PX = 9                 # handle size on screen
 ROT_PX = 34                   # rotation handle distance from the outline
 PICK_PX = 9
 ANGLE_SNAP = 3.0              # degrees within which rotation settles on a right angle
+ZOOM_STEP = 1.25              # one wheel notch (as Blender's)
+ZOOM_MIN, ZOOM_MAX = 0.05, 64.0   # view zoom, 1 = the canvas fits the widget
 _text_sizes = {}
 
 
@@ -379,12 +387,15 @@ class Preview(QWidget):
         self.live = None                        # (group, values) shown while dragging
         self.zoom = 1.0                         # view zoom (1 = canvas fits the widget)
         self.pan = QPointF(0, 0)                # view offset, screen px
+        self.box_zoom = False                   # Shift+B: the next left drag is a box to zoom into
         self.setMinimumSize(320, 180)
         self.setMouseTracking(True)
         self.accept_media = False               # media may be dropped on it (a static compound is open)
         self.drop_at = None                     # canvas point a drag from elsewhere is over
         self.drop_replace = []                  # boxes an Alt-drop there would give its media to
         self.setAcceptDrops(interactive)
+        if interactive:                          # its keys work while the mouse is over it (see _view_key)
+            QApplication.instance().installEventFilter(self)
 
     # -- state ------------------------------------------------------------------------------------
     def show_image(self, img):
@@ -427,22 +438,123 @@ class Preview(QWidget):
         dw, dh = dw * self.zoom, dh * self.zoom
         return QRectF((w - dw) / 2 + self.pan.x(), (h - dh) / 2 + self.pan.y(), dw, dh)
 
-    def wheelEvent(self, e):
-        if not self.interactive or not e.modifiers() & Qt.ControlModifier:
-            return
-        d = e.angleDelta().y() or e.angleDelta().x()
-        r0 = self._rect()
-        cx, cy = self._to_canvas(e.position())
-        z = min(8.0, max(0.2, self.zoom * (1.2 if d > 0 else 1 / 1.2)))
-        if abs(z - 1.0) < 0.09:                          # back to fitting the widget
-            self.zoom, self.pan = 1.0, QPointF(0, 0)
+    def _fit_size(self):
+        """(w, h) the canvas has on the widget at zoom 1."""
+        w, h = self.width(), self.height()
+        a = self.W / self.H
+        return (h * a, h) if w / max(1, h) > a else (w, w / a)
+
+    def zoom_to(self, z, at=None):
+        """Zoom the view to z, the canvas point under at (widget px; the middle) staying there."""
+        z = min(ZOOM_MAX, max(ZOOM_MIN, z))
+        at = QPointF(self.width() / 2, self.height() / 2) if at is None else QPointF(at)
+        cx, cy = self._to_canvas(at)
+        self.zoom = z
+        r = self._rect()
+        self.pan += at - QPointF(r.x() + cx / self.W * r.width(), r.y() + cy / self.H * r.height())
+        self._view_changed()
+
+    def view_fit(self):
+        self.zoom, self.pan = 1.0, QPointF(0, 0)
+        self._view_changed()
+
+    def view_ratio(self, ratio):
+        """Canvas pixels at ratio screen pixels each (1: 1:1), about the middle of the view."""
+        fw, _ = self._fit_size()
+        self.zoom_to(self.W * ratio / self.devicePixelRatioF() / max(1.0, fw))
+
+    def view_rect(self, l, r, t, b, margin=0.1):
+        """Zoom and move the view so the canvas rectangle (left, right, top, bottom) fills it."""
+        fw, fh = self._fit_size()
+        w, h = max(1.0, r - l), max(1.0, b - t)
+        z = min(ZOOM_MAX, max(ZOOM_MIN, min(self.W / w, self.H / h) / (1 + 2 * margin)))
+        dw, dh = fw * z, fh * z
+        self.zoom = z
+        self.pan = QPointF(dw * (0.5 - (l + r) / 2 / self.W), dh * (0.5 - (t + b) / 2 / self.H))
+        self._view_changed()
+
+    def view_selected(self):
+        boxes = self._picked_boxes()
+        if boxes:
+            self.view_rect(*self._union(boxes))
         else:
-            self.zoom = z
-            r = self._rect()                             # keep the canvas point under the mouse
-            self.pan += e.position() - QPointF(r.x() + cx / self.W * r.width(), r.y() + cy / self.H * r.height())
+            self.view_fit()
+
+    def _view_changed(self):
+        if self.text_box is not None:                    # it stays over its clip
+            box = next((b for b in self.visible_boxes() if b.clip["id"] == self.text_box.clip_id), None)
+            if box is not None:
+                self._place_text_box(box)
         self._report_size()
         self.update()
+
+    def wheelEvent(self, e):
+        if not self.interactive:
+            return
         e.accept()
+        touchpad = e.phase() != Qt.NoScrollPhase and not e.pixelDelta().isNull()
+        if touchpad and not e.modifiers() & Qt.ControlModifier:     # two-finger scroll: moves the view
+            self.pan += QPointF(e.pixelDelta())
+            self._view_changed()
+            return
+        if touchpad:
+            d = e.pixelDelta().y() or e.pixelDelta().x()
+            self.zoom_to(self.zoom * 2 ** (d / 300), e.position())
+            return
+        d = e.angleDelta().y() or e.angleDelta().x()
+        if d:
+            self.zoom_to(self.zoom * ZOOM_STEP ** (d / 120), e.position())
+
+    def event(self, e):
+        if (self.interactive and e.type() == QEvent.NativeGesture
+                and e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture):   # a touchpad's pinch
+            self.zoom_to(self.zoom * (1 + e.value()), e.position())
+            return True
+        return super().event(e)
+
+    def _typing(self):
+        w = QApplication.focusWidget()
+        return isinstance(w, (QLineEdit, QAbstractSpinBox, QPlainTextEdit, QTextEdit)) or (
+            isinstance(w, QComboBox) and w.isEditable())
+
+    def _view_key(self, e):
+        """The view action of key event e, or None: only while the mouse is over the preview, as
+        in Blender (the area under the mouse gets the keys), and nothing is being typed."""
+        if not self.view or not self.isVisible() or not self.underMouse() or self._typing():
+            return None
+        k, mods = e.key(), e.modifiers()
+        pad = bool(mods & Qt.KeypadModifier)
+        ctrl, shift = bool(mods & Qt.ControlModifier), bool(mods & Qt.ShiftModifier)
+        if k == Qt.Key_Home and not ctrl:
+            return self.view_fit
+        if pad and k in (Qt.Key_Period, Qt.Key_Comma):
+            return self.view_selected
+        ratios = {Qt.Key_1: 1, Qt.Key_2: 2, Qt.Key_4: 4, Qt.Key_8: 8}
+        if pad and k in ratios and not (ctrl and ratios[k] == 1):
+            n = ratios[k]
+            return lambda: self.view_ratio(n if ctrl else 1 / n)
+        if pad and k in (Qt.Key_Plus, Qt.Key_Minus):
+            return lambda: self.zoom_to(self.zoom * (ZOOM_STEP if k == Qt.Key_Plus else 1 / ZOOM_STEP))
+        if k == Qt.Key_B and shift and not ctrl:
+            return self._arm_box_zoom
+        if k == Qt.Key_Escape and self.box_zoom:
+            return lambda: self._arm_box_zoom(False)
+        return None
+
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if t in (QEvent.ShortcutOverride, QEvent.KeyPress) and isinstance(obj, QWidget) and obj.window() is self.window():
+            act = self._view_key(e)
+            if act is not None:
+                if t == QEvent.KeyPress:
+                    act()
+                e.accept()                               # (ShortcutOverride: no menu shortcut takes it)
+                return True
+        return False
+
+    def _arm_box_zoom(self, on=True):
+        self.box_zoom = on
+        self.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
 
     # -- drops ------------------------------------------------------------------------------------
     def _takes(self, md):
@@ -611,9 +723,13 @@ class Preview(QWidget):
             p.drawImage(r, self.img)
         if not self.interactive:
             return
-        if self.zoom != 1.0:
+        if self.zoom != 1.0 or self.pan != QPointF(0, 0):
             p.setPen(QColor("#9a9aa0"))
-            p.drawText(QRectF(8, 6, 200, 18), Qt.AlignLeft, f"{self.zoom * 100:.0f}%（Ctrl+滾輪）")
+            px = r.width() * self.devicePixelRatioF() / self.W * 100     # as canvas pixels to screen pixels
+            p.drawText(QRectF(8, 6, 260, 18), Qt.AlignLeft, f"{px:.0f}%（Home：適應視窗）")
+        if self.box_zoom:
+            p.setPen(QColor("#9a9aa0"))
+            p.drawText(QRectF(8, 24, 260, 18), Qt.AlignLeft, "拖出要放大的範圍（Esc：取消）")
         p.setRenderHint(QPainter.Antialiasing)
         p.translate(r.x(), r.y())
         p.scale(r.width() / self.W, r.height() / self.H)
@@ -630,6 +746,10 @@ class Preview(QWidget):
                 p.drawPolygon(QPolygonF(box.corners()))
             else:
                 self._paint_transform(p, box, k)
+        if self.drag and self.drag["kind"] == "zoombox" and self.drag["moved"]:
+            p.setPen(QPen(QColor("#e6e6e6"), 1 * k, Qt.DashLine))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(self.drag["rect"])
         if self.drag and self.drag["kind"] == "marquee" and self.drag["moved"]:
             p.setPen(QPen(QColor("#e6e6e6"), 1 * k, Qt.DashLine))
             p.setBrush(QColor(255, 255, 255, 28))
@@ -929,14 +1049,22 @@ class Preview(QWidget):
         return math.hypot(a.x() - b.x(), a.y() - b.y()) <= PICK_PX * k
 
     def mousePressEvent(self, e):
-        if self.interactive and e.button() == Qt.MiddleButton:
-            self.drag = {"kind": "pan", "pos": e.position(), "pan": QPointF(self.pan), "moved": False}
-            self.setCursor(Qt.ClosedHandCursor)
+        if self.interactive and e.button() == Qt.MiddleButton:       # Ctrl: zoom, else move the view
+            zoom = bool(e.modifiers() & Qt.ControlModifier)
+            self.drag = {"kind": "zoomdrag" if zoom else "pan", "pos": e.position(), "pan": QPointF(self.pan),
+                         "zoom": self.zoom, "moved": False}
+            self.setCursor(Qt.SizeVerCursor if zoom else Qt.ClosedHandCursor)
+            return
+        if self.box_zoom and e.button() == Qt.RightButton:
+            self._arm_box_zoom(False)
             return
         if not self.interactive or e.button() != Qt.LeftButton or not self.view:
             return
         x, y = self._to_canvas(e.position())
         m = QPointF(x, y)
+        if self.box_zoom:
+            self.drag = {"kind": "zoombox", "m0": m, "moved": False, "rect": QRectF(m, m)}
+            return
         k = self._k()
         box = self.selected_box()
         if box is not None and self.masking(box):
@@ -1253,7 +1381,12 @@ class Preview(QWidget):
             return
         if d["kind"] == "pan":
             self.pan = d["pan"] + e.position() - d["pos"]
-            self.update()
+            self._view_changed()
+            return
+        if d["kind"] == "zoomdrag":                      # right / up: in
+            v = e.position() - d["pos"]
+            want = d["zoom"] * 2 ** ((v.x() - v.y()) / 200)
+            self.zoom_to(want, d["pos"])
             return
         x, y = self._to_canvas(e.position())
         m = QPointF(x, y)
@@ -1262,6 +1395,10 @@ class Preview(QWidget):
             if math.hypot(m.x() - m0.x(), m.y() - m0.y()) < 3 * self._k():
                 return
         d["moved"] = True
+        if d["kind"] == "zoombox":
+            d["rect"] = QRectF(d["m0"], m).normalized()
+            self.update()
+            return
         if d["kind"] == "marquee":
             d["rect"] = QRectF(d["m0"], m).normalized()
             d["hits"] = self._marquee_hits(d["rect"])
@@ -1286,7 +1423,7 @@ class Preview(QWidget):
         super().leaveEvent(e)
 
     def _hover(self, e):
-        if not self.interactive or not self.view:
+        if not self.interactive or not self.view or self.box_zoom:
             return
         x, y = self._to_canvas(e.position())
         m, k = QPointF(x, y), self._k()
@@ -1325,8 +1462,15 @@ class Preview(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
-        if d and d["kind"] == "pan":
-            self.setCursor(Qt.ArrowCursor)
+        if d and d["kind"] in ("pan", "zoomdrag"):
+            self.setCursor(Qt.CrossCursor if self.box_zoom else Qt.ArrowCursor)
+            return
+        if d and d["kind"] == "zoombox":
+            self._arm_box_zoom(False)
+            if d["moved"]:
+                rc = d["rect"]
+                self.view_rect(rc.left(), rc.right(), rc.top(), rc.bottom(), margin=0)
+            self.update()
             return
         self.guides = []
         self.mask_guides = []
@@ -1381,15 +1525,18 @@ class Preview(QWidget):
         self.text_box = TextBox(self, box.clip["id"], box.clip["text"]["content"])
         self.text_box.edited.connect(lambda cid, words: self.textEdited.emit(cid, words))
         self.text_box.finished.connect(self.close_text_box)
+        self._place_text_box(box)
+        self.text_box.show()
+        self.text_box.setFocus()
+        self.text_box.selectAll()
+
+    def _place_text_box(self, box):
         sr = self._screen_rect(box)
         w = min(max(sr.width() + 24, 220), self.width() - 8)
         h = min(max(sr.height() + 16, 70), self.height() - 8)
         x = min(max(sr.center().x() - w / 2, 4), self.width() - w - 4)
         y = min(max(sr.center().y() - h / 2, 4), self.height() - h - 4)
         self.text_box.setGeometry(round(x), round(y), round(w), round(h))
-        self.text_box.show()
-        self.text_box.setFocus()
-        self.text_box.selectAll()
 
     def close_text_box(self):
         tb, self.text_box = self.text_box, None

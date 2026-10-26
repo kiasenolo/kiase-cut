@@ -238,6 +238,26 @@ class TextOnPreviewTests(unittest.TestCase):
         self.assertIsNone(self.pv.text_box)
         self.assertEqual(self.got[-1], (self.t["id"], "hello"))
 
+    def test_a_click_elsewhere_finishes(self):
+        tb = self.pv.text_box
+        tb.setPlainText("bye")
+        QTest.mouseClick(tb.viewport(), Qt.LeftButton, NONE, QPoint(5, 5))      # inside: still typing
+        self.assertIs(self.pv.text_box, tb)
+        QTest.mouseClick(self.pv, Qt.LeftButton, NONE, QPoint(5, 5))           # the preview never takes the focus
+        self.assertIsNone(self.pv.text_box)
+        self.assertEqual(self.got, [(self.t["id"], "bye")])
+
+    def test_a_click_on_another_part_finishes(self):
+        from PySide6.QtWidgets import QPushButton
+        other = QPushButton("x")
+        other.setFocusPolicy(Qt.NoFocus)                                         # (as the timeline's tools)
+        other.show()
+        self.addCleanup(other.close)
+        self.pv.text_box.setPlainText("done")
+        QTest.mouseClick(other, Qt.LeftButton)
+        self.assertIsNone(self.pv.text_box)
+        self.assertEqual(self.got, [(self.t["id"], "done")])
+
     def test_double_click_elsewhere_does_nothing(self):
         self.pv.close_text_box()
         self.pv.set_scene(self.p, S // 2, "c1")

@@ -68,9 +68,9 @@ selected clips, all of them: 批量替換), and the clips that would change are 
 import json
 import math
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
-from PySide6.QtWidgets import QPlainTextEdit, QWidget
+from PySide6.QtWidgets import QApplication, QPlainTextEdit, QWidget
 
 from .. import curves, edit, fonts, project, render, textlayout
 
@@ -1401,7 +1401,9 @@ class Preview(QWidget):
 
 class TextBox(QPlainTextEdit):
     """The words of a text clip typed in on the preview. Changes go out a moment after typing
-    stops (and when it closes); Esc puts the words it opened with back."""
+    stops (and when it closes); Esc puts the words it opened with back. A click anywhere else
+    in the program finishes it, as Ctrl+Enter does (the click still does what it does there):
+    the preview itself, among others, never takes the focus away, so losing it is not enough."""
     edited = Signal(str, str)                   # clip id, words
     finished = Signal()
 
@@ -1415,6 +1417,14 @@ class TextBox(QPlainTextEdit):
         self.timer = QTimer(self, singleShot=True, interval=300)
         self.timer.timeout.connect(self.flush)
         self.textChanged.connect(self.timer.start)
+        self.done = False
+        self.watch = ClickOutside(self)
+        self.finished.connect(self._finish)
+
+    def _finish(self):
+        if not self.done:
+            self.done = True
+            self.watch.stop()
 
     def flush(self):
         self.timer.stop()
@@ -1440,8 +1450,28 @@ class TextBox(QPlainTextEdit):
 
     def focusOutEvent(self, e):
         super().focusOutEvent(e)
-        if e.reason() != Qt.PopupFocusReason:   # (not for its own right-click menu)
+        if e.reason() != Qt.PopupFocusReason and not self.done:   # (not for its own right-click menu)
             self.finished.emit()
+
+
+class ClickOutside(QObject):
+    """Watches every mouse press in the program while a TextBox is open: one outside it (and
+    outside a popup, such as its own right-click menu) finishes it."""
+
+    def __init__(self, box):
+        super().__init__(box)
+        self.box = box
+        QApplication.instance().installEventFilter(self)
+
+    def stop(self):
+        QApplication.instance().removeEventFilter(self)
+
+    def eventFilter(self, obj, e):
+        if (e.type() == QEvent.MouseButtonPress and isinstance(obj, QWidget) and not self.box.done
+                and obj is not self.box and not self.box.isAncestorOf(obj)
+                and obj.window().windowType() != Qt.Popup):
+            self.box.finished.emit()
+        return False
 
 
 class SeekBar(QWidget):

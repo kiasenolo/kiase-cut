@@ -9,7 +9,8 @@ follows the same rules as build.py:
     clip centre; pictures are fitted into the canvas, texts are textlayout images;
   * masks live in material space (they move with the clip), drawn as clip paths;
   * a clip whose effects go to the background (project.backdrop_of) runs them on what is
-    under it, inside its shape, then draws itself on top unless its body is hidden;
+    under it, inside its shape (a built-in asset's: where it is, not its colours' alpha,
+    assets.cover), then draws itself on top unless its body is hidden;
   * a group (群組) is drawn like a compound the size of its level: its tracks go to a layer
     at group time (draw_content: with its matte on, the bottom track's clips cut the ones
     above), which goes through the group's transform, effects and mask;
@@ -362,6 +363,8 @@ class Renderer:
         sx = v("scale", 1.0)
         sy = curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t)
         kind = c["type"]
+        backdrop, hide = project.backdrop_of(c)
+        cover = None                                       # what 套用至背景 covers, when not draw
         if kind == "text":
             tx = c["text"]
             size = tx.get("size", 5.0)
@@ -391,6 +394,9 @@ class Renderer:
                 q = assets.at(c["asset"], t)
                 pic = self.asset(q, tw, th)
                 rect = asset_rect(q, bw, bh)
+                if backdrop:
+                    shape = self.asset(assets.cover(q), tw, th)
+                    cover = lambda qq=p: qq.drawImage(rect, shape)
             elif kind == "image":
                 pic = self.image(m["path"], tw, th)
             else:
@@ -443,9 +449,9 @@ class Renderer:
             disp = (bw, bh)
         else:
             return
-        backdrop, hide = project.backdrop_of(c)
         if backdrop:                                       # 套用至背景: the effects work on what is under it
-            self.draw_backdrop(p, c, W, H, t, disp, fps, lambda q: self.paint_body(q, c, W, H, t, disp, draw, opacity, fps))
+            self.draw_backdrop(p, c, W, H, t, disp, fps,
+                               lambda q: self.paint_body(q, c, W, H, t, disp, cover or draw, opacity, fps))
             if hide:
                 return
         elif project.visual_effects(c):

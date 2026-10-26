@@ -503,6 +503,8 @@ class GLRenderer(render.Renderer):
             return
         kind = c["type"]
         held = None                                     # a layer to give back when done
+        backdrop, hide = project.backdrop_of(c)
+        shape = None                                    # (texture, straight) 套用至背景 covers, when not tex's
         if kind == "text":
             tx = c["text"]
             size = tx.get("size", 5.0)
@@ -529,6 +531,8 @@ class GLRenderer(render.Renderer):
                 q = assets.at(c["asset"], t)
                 tex, straight = gl.picture(self.asset(q, tw, th), mipmap=True)
                 rect = render.asset_rect(q, bw, bh)
+                if backdrop:                             # where it is, not its colours' alpha
+                    shape = gl.picture(self.asset(assets.cover(q), tw, th), mipmap=True)
             elif kind == "image":
                 tex, straight = gl.picture(self.image(m["path"], tw, th), mipmap=True)
             else:
@@ -576,7 +580,6 @@ class GLRenderer(render.Renderer):
         mask = self.clip_mask(c, t)
         blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
         effects = project.visual_effects(c)
-        backdrop, hide = project.backdrop_of(c)
         matte = self.gl_matte(mask, t, disp, world, fps)
         try:
             if backdrop:                                 # 套用至背景: the effects work on what is under it
@@ -584,7 +587,7 @@ class GLRenderer(render.Renderer):
                 cover = gl.layer(tgt.w, tgt.h)
                 snap = gl.layer(tgt.w, tgt.h)
                 try:
-                    gl.draw(cover, tex, straight, rect, world, opacity, mask, t, disp)
+                    gl.draw(cover, *(shape or (tex, straight)), rect, world, opacity, mask, t, disp)
                     gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
                     out = self.gl_effects(effects, snap, t, c["duration_us"], fps, world, disp)
                     gl.mix_cover(tgt, snap.tex, out.tex, cover.tex)

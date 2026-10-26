@@ -35,12 +35,12 @@ class BackdropTests(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.dir, ignore_errors=True)
 
-    def view(self, hide=False, asset=True):
+    def view(self, hide=False, asset=True, color="#00ff00"):
         """Red picture under a half-width shape in the middle with 反相 (invert) applied to the background."""
         bg = self.s.pic("bg", self.s.red)
         top = clip("top", 0, 2 * S)
         if asset:
-            a = assets.make(assets.get("shape.rect"), "#00ff00", "", 1920, 1080)
+            a = assets.make(assets.get("shape.rect"), color, "", 1920, 1080)
             a.update(w=960, h=1080)
             top["asset"] = a
             top["media"] = {"path": "/none.svg", "width": 960, "height": 1080}
@@ -82,6 +82,30 @@ class BackdropTests(unittest.TestCase):
             self.assertEqual(rgb(img, 4, 18), (255, 0, 0), type(r).__name__)      # untouched outside it
             img = r.render(self.view(hide=False), 0, W, H)
             self.assertEqual(rgb(img, 32, 18), (0, 255, 0), type(r).__name__)     # the shape drawn on top
+
+    def test_a_see_through_shape_still_covers(self):
+        """A shape's 套用至背景 works where the shape is, not by its colour's alpha."""
+        if not self.fx:
+            self.skipTest("needs OpenGL for filters")
+        for r in self.renderers():
+            img = r.render(self.view(color="#00ff0000"), 0, W, H)               # filled, all see-through
+            self.assertEqual(r.errors, [], type(r).__name__)
+            self.assertEqual(rgb(img, 32, 18), (0, 255, 255), type(r).__name__)
+            self.assertEqual(rgb(img, 4, 18), (255, 0, 0), type(r).__name__)
+            img = r.render(self.view(color="#00ff0080"), 0, W, H)               # half: the effect in full
+            self.assertEqual(rgb(img, 4, 18), (255, 0, 0), type(r).__name__)
+            px = rgb(img, 32, 18)
+            self.assertTrue(px[0] < 8 and px[2] > 100, (type(r).__name__, px))  # green over cyan
+
+    def test_cover(self):
+        q = assets.at(dict(assets.make(assets.get("shape.circleframe"), "#ff000000", "#00000000", 1920, 1080),
+                           stroke_color=[0, 0, 0, 0]), 0)
+        c = assets.cover(q)
+        self.assertEqual((c["stroke_color"], c["fill"], c["stroke_on"]), ("#ffffff", False, True))   # its outline
+        q.update(stroke_on=False)
+        self.assertTrue(assets.cover(q)["fill"])                                # nothing drawn: its fill
+        g = assets.at(assets.make(assets.get("gradient.8"), "", "", 1920, 1080), 0)   # 暗角
+        self.assertEqual((assets.cover(g)["color"], assets.cover(g)["color2"]), ("#ffffff", "#ffffff"))
 
     def test_picture_always_hides_itself(self):
         if not self.fx:

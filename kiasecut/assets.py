@@ -516,6 +516,18 @@ def _shape(p, w, h):
     return _svg(w, h, "\n".join(body), defs, pad)
 
 
+def cover(p):
+    """Parameters p (as at() gives them) drawn opaque: where the asset is, whatever its colours'
+    alpha - what 套用至背景 works inside (a shape with neither fill nor outline: its fill)."""
+    q = dict(p)
+    for f in ("color", "color2", "stroke_color"):
+        if f in q:
+            q[f] = "#ffffff"
+    if q["family"] not in ("solid", "gradient") and not (q.get("fill", True) or stroked(q)):
+        q["fill"] = True
+    return q
+
+
 def svg(p):
     """The SVG text of asset parameters p as at() gives them."""
     w, h = p["w"], p["h"]

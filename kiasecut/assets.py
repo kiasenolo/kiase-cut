@@ -56,7 +56,7 @@ FIELD_INFO = {
     "inner": ("內徑 %", "number", 5, 95, 1, 0),
     "arc_start": ("開始 °", "number", -360, 360, 1, 0),
     "arc_sweep": ("弧掃 %", "number", 0, 100, 1, 1),
-    "ratio": ("比例 %", "number", 0, 99, 1, 1),
+    "ratio": ("比例 %", "number", 0, 100, 1, 1),
     "skew": ("斜度 °", "number", -80, 80, 1, 0),
     "fill": ("填充", "toggle"),
     "stroke_on": ("外框", "toggle"),
@@ -410,7 +410,7 @@ def _ellipse_d(w, h, start, sweep, ratio):
     over sweep % of a turn, with a hole of ratio % of the radius."""
     cx, cy, rx, ry = w / 2, h / 2, w / 2, h / 2
     sweep = min(max(sweep, 0.0), 100.0) / 100 * 360
-    k = min(max(ratio, 0.0), 99.0) / 100
+    k = min(max(ratio, 0.0), 100.0) / 100           # (100: no fill left, only the outline)
     n = _num
     pt = lambda a, s=1.0: (cx + rx * s * math.cos(math.radians(a)), cy + ry * s * math.sin(math.radians(a)))
     if sweep <= 0:

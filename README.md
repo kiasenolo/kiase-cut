@@ -299,7 +299,8 @@ polygon sides, star points and inner radius, a parallelogram's 斜度. A shape h
 its own colour, a width down to 0, a 外框位置 (inside the edge, centred on it or outside it -
 outside reaches past the frame) and a 轉角 (直角 miter, 圓角 round, 倒角 bevel). An ellipse is
 also an arc, as in Lunacy: 開始 ° (clockwise from 3 o'clock), 弧掃 % of a full turn and 比例 %
-(a hole of that share of the radius: a ring, or a slice of one). Shapes of older projects keep
+(a hole of that share of the radius: a ring, or a slice of one; 100 % leaves only the
+outline). Shapes of older projects keep
 their look (their filled / outline choice becomes these switches). Every
 one of them has a ◆ and keyframes like position or scale: sizes, angles and colours blend
 between keyframes (sides and points step), choices hold until the next one; the numbers

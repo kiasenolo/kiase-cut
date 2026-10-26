@@ -106,6 +106,10 @@ class AssetTests(unittest.TestCase):
         ring = changed(e, ratio=50)
         self.assertEqual(pixel(assets.store(self.dir, ring), 50, 50, 100).alpha(), 0)
         self.assertEqual(pixel(assets.store(self.dir, ring), 50, 10, 100).alpha(), 255)
+        whole = changed(e, ratio=100, stroke_on=True, stroke=4, stroke_align="center")
+        self.assertEqual(whole["ratio"], 100)                    # all the way: only the outline is left
+        self.assertEqual(pixel(assets.store(self.dir, whole), 50, 20, 100).alpha(), 0)
+        self.assertEqual(pixel(assets.store(self.dir, whole), 50, 7, 100).alpha(), 255)    # (the box has a margin)
         quarter = changed(e, arc_start=0, arc_sweep=25)          # 3 to 6 o'clock
         self.assertEqual(pixel(assets.store(self.dir, quarter), 70, 70, 100).alpha(), 255)
         self.assertEqual(pixel(assets.store(self.dir, quarter), 30, 30, 100).alpha(), 0)

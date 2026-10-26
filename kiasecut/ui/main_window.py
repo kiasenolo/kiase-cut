@@ -20,7 +20,8 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QImage, QKeySequence
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
-                               QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QTabBar, QTabWidget, QVBoxLayout,
+                               QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QStackedWidget, QTabBar, QTabWidget,
+                               QVBoxLayout,
                                QWidget)
 
 from .. import assets, build, curves, edit, fonts, fx, gpu, library, project, renderexport, thumbnail, userlib, waveform, workspace
@@ -36,6 +37,7 @@ from .effects_panel import EffectsPanel
 from .export_dialog import ExportDialog
 from .inspector import Inspector
 from .library import LibraryPanel
+from .layers import LayerPanel
 from .player import Player
 from .project_dialogs import CompoundSizeDialog, NewProjectDialog, ProjectInfoDialog
 from .project_manager import ProjectManager
@@ -641,7 +643,23 @@ class MainWindow(QMainWindow):
         self.meter = MeterPanel()
         self.meter.masterChanged.connect(self.on_master)
         tl_row.addWidget(self.meter)
-        ll.addLayout(tl_row, 1)
+        # a static compound (a picture) is edited as layers, as in Photoshop, not on a timeline
+        self.layers = LayerPanel()
+        lp = self.layers
+        lp.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
+        lp.orderChanged.connect(lambda ids: self.apply("圖層順序", edit.set_layer_order, ids))
+        lp.flagToggled.connect(lambda tid, flag, on: self.apply(
+            {"hidden": "隱藏", "locked": "鎖定"}[flag] + "圖層" if on else "取消" + {"hidden": "隱藏", "locked": "鎖定"}[flag],
+            edit.set_track_flag, tid, flag, on))
+        lp.renameRequested.connect(lambda cid: self.on_clip_action("rename", cid))
+        lp.actionRequested.connect(self.layer_action)
+        lp.shapeRequested.connect(lambda key: self.place_asset(assets.ident(key, *self.assets.colors), "", 0))
+        tl_page = QWidget()
+        tl_page.setLayout(tl_row)
+        self.lower_stack = QStackedWidget()
+        self.lower_stack.addWidget(tl_page)
+        self.lower_stack.addWidget(self.layers)
+        ll.addWidget(self.lower_stack, 1)
 
         main = QSplitter(Qt.Vertical)
         main.addWidget(top)
@@ -1963,6 +1981,46 @@ class MainWindow(QMainWindow):
         self.timeline._layout()
         self.timeline.select(c)
 
+    def editing_static(self):
+        """Whether the open level is a static compound (edited as layers)."""
+        try:
+            steps = walk_path(self.proj, self.path_ids) if self.proj else []
+        except (edit.EditError, KeyError):
+            return False
+        return bool(steps) and bool(steps[-1][1].get("static"))
+
+    def _update_layers(self):
+        """The layer panel in the timeline's place while a static compound is open."""
+        static = self.editing_static()
+        self.lower_stack.setCurrentIndex(1 if static else 0)
+        for k in ("split",):
+            self.buttons[k].setVisible(not static)
+        if static:
+            self.layers.set_layers(self.container(), self.timeline.selected_ids, self.timeline.selected_id)
+
+    def layer_action(self, action):
+        """The layer panel's buttons."""
+        level = self.container()
+        ids = [c["id"] for c in edit.layers(level) if c["id"] in self.timeline.selected_ids]
+        if action == "text":
+            self.do_text()
+        elif action == "delete":
+            self.do_delete()
+        elif action == "group":
+            self.make_group(ids)
+        elif action == "copy" and ids:                       # copies right above, at the same moment
+            self._select_new(self.apply_root("複製圖層", lambda root: edit.duplicate_moved(
+                root, self.container(root), ids, moves={})))
+        elif action in ("up", "down") and ids:
+            order = [c["id"] for c in edit.layers(level)]
+            step = -1 if action == "up" else 1
+            for cid in (ids if step < 0 else reversed(ids)):
+                i = order.index(cid)
+                j = i + step
+                if 0 <= j < len(order) and order[j] not in ids:
+                    order[i], order[j] = order[j], order[i]
+            self.apply("圖層順序", edit.set_layer_order, order)
+
     def make_group(self, ids=None):
         """建立群組 (Ctrl+G): the selected picture clips into a new group, opened."""
         ids = ids if ids else sorted(self.timeline.selected_ids)
@@ -2397,6 +2455,7 @@ class MainWindow(QMainWindow):
         self.inspector.show_spacing(sp[1] if sp else None)
         self._matte_preview_changed()
         self._update_matte_region()
+        self._update_layers()
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------

@@ -185,6 +185,14 @@ a free spot on a picture track > 新增空白靜態片段 starts an empty one. O
 behaves like a picture: any length, no sound, drawn once and reused. Double-click it to
 edit its content (the playhead opens at its first frame, the only one it shows); every clip that uses it
 changes with it, as with compounds.
+A static compound is edited as a picture, not on a timeline: while one is open a layer list
+takes the timeline's place, as in Photoshop - every picture clip is a layer, the top one
+first. Click (Ctrl / Shift for several) to select, drag layers to restack them (one per
+track), the dot hides a layer and the padlock locks it, double-click a name to rename it;
+文字 and 形狀 ▾ add a layer at the top (shapes in the 內建素材 tab's colours), 上移 / 下移
+restack the selection, 群組 groups it, 複製 copies it right above itself, 刪除 removes it. A
+layer that does not cover the picture's moment shows dimmed (only that moment is drawn). The
+preview, the inspector and every edit work on the selected layers as on clips.
 
 Media library (left): import files (Ctrl+Shift+I), organise them in folders by dragging,
 and drag media onto the timeline (or double-click to add at the playhead). Importing a

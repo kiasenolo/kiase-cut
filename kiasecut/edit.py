@@ -1571,6 +1571,37 @@ def set_track_flag(proj, track_id, flag, on):
         t.pop(flag, None)
 
 
+# -- layers (the static compound editor: a picture made of layers, as in Photoshop) -----------------
+def layers(level):
+    """The picture clips of a level as layers, the top one first: tracks from the top, a
+    track's clips by start."""
+    out = []
+    for t in reversed(level["tracks"]):
+        if t["kind"] != "audio":
+            out += sorted(t["clips"], key=lambda c: c["start_us"])
+    return out
+
+
+def set_layer_order(level, ids_top_first):
+    """Put a level's picture clips in this order, top first, one per track (as layers are):
+    each keeps its own track's switches (hidden, locked, colour); sound tracks stay below."""
+    ids = list(dict.fromkeys(ids_top_first))
+    clips = {c["id"]: (t, c) for t in level["tracks"] if t["kind"] != "audio" for c in t["clips"]}
+    if set(ids) != set(clips):
+        raise EditError("圖層的順序要包含每一個圖層")
+    tracks, used = [], set()
+    for cid in reversed(ids):                                   # bottom first
+        t, c = clips[cid]
+        kind = "text" if c["type"] == "text" else "video"
+        keep = {k: v for k, v in t.items() if k in ("hidden", "locked", "color", "name")} if id(t) not in used else {}
+        used.add(id(t))
+        tid = t["id"] if not any(x["id"] == t["id"] for x in tracks) else new_track_id({"tracks": tracks + level["tracks"]})
+        tracks.append(dict(keep, id=tid, kind=kind, name=keep.get("name") or c.get("name") or kind, clips=[c]))
+    audio = [t for t in level["tracks"] if t["kind"] == "audio"]
+    level["tracks"][:] = tracks + audio
+    return tracks
+
+
 def set_track_gain(proj, track_id, gain):
     t = track_by_id(proj, track_id)
     g = min(4.0, max(0.0, float(gain)))

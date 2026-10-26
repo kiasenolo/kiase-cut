@@ -1563,6 +1563,19 @@ def add_effect(proj, clip_id, ref):
     return e
 
 
+def put_effect(proj, clip_id, what, index=None):
+    """Put an effect on a clip: what is a filter ref (a new effect at its defaults) or an effect
+    (a copy of it, its settings, keyframes and mask included: one dragged from a clip), at index
+    in the clip's chain, else after the others."""
+    _, c = find(proj, clip_id)
+    if c["type"] not in VISUAL:
+        raise EditError("filters go on pictures, videos, texts, compound clips and filter clips")
+    e = fx.new_effect(what, new_effect_id()) if isinstance(what, str) else dict(copy.deepcopy(what), id=new_effect_id())
+    es = c.setdefault("effects", [])
+    es.insert(len(es) if index is None else max(0, min(index, len(es))), e)
+    return e
+
+
 def add_effects(proj, clip_id, refs):
     """Several filters on a clip, in order (the files picked together in 選擇濾鏡檔案)."""
     return [add_effect(proj, clip_id, ref) for ref in refs]
@@ -1596,6 +1609,16 @@ def move_effect(proj, clip_id, effect_id, delta):
         es[i], es[j] = es[j], es[i]
 
 
+def move_effect_to(proj, clip_id, effect_id, index):
+    """Move an effect to place index of its clip's chain (counted with it still in its place)."""
+    _, c = find(proj, clip_id)
+    es = c["effects"]
+    e = _effect(c, effect_id)
+    i = es.index(e)
+    es.remove(e)
+    es.insert(max(0, min(index - (index > i), len(es))), e)
+
+
 def set_effect_mask(proj, clip_id, effect_id, kind, t=None):
     """Limit an effect to a shape (None removes it): coverage in the clip's own space. A
     shape with keyframes gets its keyframe at clip time t set (or added)."""
@@ -1622,14 +1645,16 @@ def set_effect_mask_invert(proj, clip_id, effect_id, invert, t=None):
     set_param(proj, clip_id, "fxmask:" + effect_id, "invert", bool(invert), t)
 
 
-def add_filter_clip(proj, ref, at_us, duration_us=FILTER_DEFAULT_US, track_id=None):
+def add_filter_clip(proj, ref, at_us, duration_us=FILTER_DEFAULT_US, track_id=None, effect=None):
     """A filter as a clip of its own: it filters everything on the tracks below it while it
-    lasts. It goes on the given track, else on a track that only holds filters (topmost with
-    room), else on a new top picture track."""
+    lasts (with effect: a copy of that effect, settings and all, instead of ref at its
+    defaults). It goes on the given track, else on a track that only holds filters (topmost
+    with room), else on a new top picture track."""
     clip = {"id": new_clip_id(proj), "type": "filter", "name": fx.label(ref), "start_us": int(at_us),
             "duration_us": int(duration_us), "source_start_us": 0,
             "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0},
-            "effects": [fx.new_effect(ref, new_effect_id())]}
+            "effects": [fx.new_effect(ref, new_effect_id()) if effect is None
+                        else dict(copy.deepcopy(effect), id=new_effect_id())]}
     cands = []
     if track_id:
         t = track_by_id(proj, track_id)

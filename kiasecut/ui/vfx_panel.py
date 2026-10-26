@@ -3,6 +3,8 @@
 Drag one onto the timeline: on an empty spot it becomes a filter clip that works on everything
 below it, on a clip it is added to that clip's effects. Double-click puts a filter clip at the
 playhead; the right-click menu applies it to the selected clips."""
+import json
+
 from PySide6.QtCore import QMimeData, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QLabel, QLineEdit, QMenu, QTreeWidget, QTreeWidgetItem,
@@ -10,7 +12,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QLabel, QLineEdit, QMenu, QTre
 
 from .. import fx
 
-FX_MIME = "application/x-kiasecut-fx"          # the filter's ref (a "builtin:…" name or a file path), utf-8
+FX_MIME = "application/x-kiasecut-fx"          # the filter's ref (a "builtin:…" name or a file path), utf-8,
+                                               # or an effect dragged from a clip (effect_mime)
 ROLE_REF = Qt.UserRole + 1
 THUMB = (64, 36)
 
@@ -64,6 +67,22 @@ class Thumbs:
             pix = None
         self.cache[key] = pix
         return pix
+
+
+def effect_mime(effect, clip_id):
+    """A drag of an effect of clip clip_id (from the effects panel): its settings go along."""
+    md = QMimeData()
+    md.setData(FX_MIME, json.dumps({"effect": effect, "clip": clip_id}, ensure_ascii=False).encode("utf-8"))
+    return md
+
+
+def dropped_fx(payload):
+    """(filter ref, effect or None, clip id or None) of what FX_MIME carries: a filter of the VFX
+    tab, or an effect of a clip with its settings."""
+    if payload.startswith("{"):
+        d = json.loads(payload)
+        return d["effect"]["filter"], d["effect"], d.get("clip")
+    return payload, None, None
 
 
 class VfxTree(QTreeWidget):

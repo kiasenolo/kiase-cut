@@ -2,20 +2,23 @@
 
 Each effect has its switch, name, order buttons, its parameters (every value can be
 keyframed with ◆, like the clip's own; on / off, menus and shapes hold until their next keyframe)
-and an optional mask that limits where it works.
+and an optional mask that limits where it works. Its ⠿ grip drags it: to another place in the
+list, or onto a clip (timeline, layers) to copy it there with its settings, or onto an empty spot
+of the timeline for a filter clip of it; filters of the VFX tab can be dropped in the list too.
 The parameters come from the filter file's `// @param` lines (see filters/FORMAT.md), so
 the form of a user's filter is built the same way as a built-in one.
 """
 import json
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QDrag
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
                                QToolButton, QVBoxLayout, QWidget)
 
 from .. import curves, edit, fx
 from .colorpick import pick_color, qcolor, rgba
 from .inspector import MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, kind_tag, section
+from .vfx_panel import FX_MIME, effect_mime
 
 DEBOUNCE_MS = 350
 
@@ -25,6 +28,41 @@ def step_for(p):
     if p.type == "int":
         return 1.0
     return 0.01 if span <= 10 else 0.1 if span <= 100 else 1.0
+
+
+class Grip(QLabel):
+    """⠿ on an effect's title row: drags what mime() gives (the effect, its box as the picture)."""
+
+    def __init__(self, mime):
+        super().__init__("⠿")
+        self.mime = mime
+        self.press = None
+        self.setCursor(Qt.OpenHandCursor)
+        self.setStyleSheet("font-size: 16px; padding: 0 2px; color: #9a9aa0;")
+        self.setToolTip("拖曳：在清單裡調整順序；拖到時間軸或圖層上的片段＝把這個效果（連同設定）複製過去；"
+                        "拖到時間軸的空白處＝做成濾鏡片段")
+
+    def mousePressEvent(self, e):
+        self.press = e.position().toPoint() if e.button() == Qt.LeftButton else None
+
+    def mouseReleaseEvent(self, e):
+        self.press = None
+
+    def mouseMoveEvent(self, e):
+        if self.press is None or (e.position().toPoint() - self.press).manhattanLength() < QApplication.startDragDistance():
+            return
+        self.press = None
+        md = self.mime()
+        if md is None:
+            return
+        drag = QDrag(self)
+        drag.setMimeData(md)
+        pic = self.parentWidget().grab()
+        if pic.height() > 60:
+            pic = pic.copy(0, 0, pic.width(), 40)
+        drag.setPixmap(pic)
+        drag.setHotSpot(self.mapTo(self.parentWidget(), e.position().toPoint()))
+        drag.exec(Qt.CopyAction | Qt.MoveAction, Qt.CopyAction)
 
 
 class EffectsPanel(QWidget):
@@ -43,12 +81,15 @@ class EffectsPanel(QWidget):
     backdropChosen = Signal(str, object, object)    # clip id, 套用至背景 (or None), 隱藏本體 (or None)
     docRequested = Signal()
     revealFilter = Signal(str)                      # filter ref: show its file
+    effectDropped = Signal(str, str, int)           # clip id, what FX_MIME carries, place in its chain
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(300)
         self.user_filters = []                      # [(name, path)] from the user's Library
         self.clip_id = None
+        self.clip = None                            # the clip as last shown (what a drag copies)
+        self.boxes = []                             # the effects' boxes, in order
         self.mask_edit = None                       # effect id whose mask the preview edits (編輯遮罩)
         self.shape = None
         self.widgets = {}
@@ -73,6 +114,11 @@ class EffectsPanel(QWidget):
         self.body = QWidget()
         lay.addWidget(self.body)
         lay.addStretch(1)
+        self.drop_line = QFrame(self)               # where a dragged effect would go
+        self.drop_line.setStyleSheet("background: #6fb3ff;")
+        self.drop_line.setFixedHeight(3)
+        self.drop_line.hide()
+        self.setAcceptDrops(True)
         self._build(None)
 
     # -- the menu of filters ----------------------------------------------------------------------
@@ -111,6 +157,7 @@ class EffectsPanel(QWidget):
         old.hide()
         old.deleteLater()
         self.widgets = {}
+        self.boxes = []
         lay = QVBoxLayout(self.body)
         lay.setContentsMargins(0, 0, 0, 0)
         self.add_btn.setEnabled(c is not None and c["type"] in edit.VISUAL)
@@ -135,7 +182,9 @@ class EffectsPanel(QWidget):
         if effects and c["type"] != "filter":
             lay.addWidget(self._backdrop_row(c))
         for i, e in enumerate(effects):
-            lay.addWidget(self._effect_box(c, e, i, len(effects)))
+            box = self._effect_box(c, e, i, len(effects))
+            self.boxes.append(box)
+            lay.addWidget(box)
 
     def _backdrop_row(self, c):
         """套用至背景 and 隱藏本體 (a built-in asset's choice; any other clip hides itself)."""
@@ -172,6 +221,7 @@ class EffectsPanel(QWidget):
         box.setFrameShape(QFrame.StyledPanel)
         lay = QVBoxLayout(box)
         head = QHBoxLayout()
+        head.addWidget(Grip(lambda eid=e["id"]: self._drag_mime(eid)))
         on = QCheckBox(d.name)
         on.setChecked(not e.get("disabled"))
         on.setToolTip(d.description or "開／關這個效果")
@@ -185,7 +235,7 @@ class EffectsPanel(QWidget):
             b.setToolTip(tip)
             b.clicked.connect(fn)
             head.addWidget(b)
-        b_up, b_down = head.itemAt(1).widget(), head.itemAt(2).widget()
+        b_up, b_down = head.itemAt(2).widget(), head.itemAt(3).widget()
         b_up.setEnabled(index > 0)
         b_down.setEnabled(index < count - 1)
         lay.addLayout(head)
@@ -334,8 +384,60 @@ class EffectsPanel(QWidget):
             if r[0] in values and s is not None and not s.hasFocus():
                 s.show_value(round(values[r[0]] * r[6], r[5]))
 
+    def _drag_mime(self, eid):
+        """A drag of effect eid of the clip shown (its settings as they are now)."""
+        self._flush()
+        e = next((e for e in (self.clip or {}).get("effects") or [] if e["id"] == eid), None)
+        return effect_mime(e, self.clip_id) if e is not None else None
+
+    # -- dropping effects in the list -------------------------------------------------------------
+    def _takes(self, e):
+        return (self.clip is not None and self.clip["type"] in edit.VISUAL
+                and e.mimeData().hasFormat(FX_MIME))
+
+    def _drop_index(self, y):
+        """(place in the chain, the line's y) for a drop at y (panel coordinates)."""
+        tops = [(b.mapTo(self, QPoint(0, 0)).y(), b.height()) for b in self.boxes]
+        for i, (top, h) in enumerate(tops):
+            if y < top + h / 2:
+                return i, top - 3
+        if tops:
+            return len(tops), tops[-1][0] + tops[-1][1] + 1
+        return 0, self.body.mapTo(self, QPoint(0, 0)).y()
+
+    def dragEnterEvent(self, e):
+        if not self._takes(e):
+            e.ignore()
+            return
+        e.acceptProposedAction()
+        self.dragMoveEvent(e)
+
+    def dragMoveEvent(self, e):
+        if not self._takes(e):
+            e.ignore()
+            return
+        _i, y = self._drop_index(e.position().y())
+        self.drop_line.setGeometry(self.body.mapTo(self, QPoint(0, 0)).x(), max(0, y), self.body.width(), 3)
+        self.drop_line.show()
+        self.drop_line.raise_()
+        e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e):
+        self.drop_line.hide()
+
+    def dropEvent(self, e):
+        self.drop_line.hide()
+        if not self._takes(e):
+            e.ignore()
+            return
+        i, _y = self._drop_index(e.position().y())
+        e.acceptProposedAction()
+        self._flush()
+        self.effectDropped.emit(self.clip_id, bytes(e.mimeData().data(FX_MIME)).decode("utf-8"), i)
+
     def show_clips(self, clips, t_us, fps):
         c = clips[0] if len(clips) == 1 else None
+        self.clip = c
         shape = None
         if c is not None:
             shape = (c["id"], c["type"], tuple((e["id"], e["filter"], bool(e.get("disabled")),

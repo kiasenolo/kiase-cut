@@ -48,7 +48,7 @@ from .settings_dialog import SettingsDialog
 from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
-from .vfx_panel import VfxPanel
+from .vfx_panel import VfxPanel, dropped_fx
 from . import icons
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -430,6 +430,7 @@ class MainWindow(QMainWindow):
         ef.enabledChosen.connect(lambda cid, eid, on: self.apply(
             "啟用效果" if on else "停用效果", edit.set_effect_enabled, cid, eid, on))
         ef.moveRequested.connect(lambda cid, eid, d: self.apply("調整效果順序", edit.move_effect, cid, eid, d))
+        ef.effectDropped.connect(self.effect_dropped)
         ef.maskKindChosen.connect(lambda cid, eid, kind: self.apply(
             "效果範圍" if kind else "移除效果範圍", edit.set_effect_mask, cid, eid, kind, self.clip_time(cid)))
         ef.maskInvertChosen.connect(lambda cid, eid, on: self.apply(
@@ -2474,14 +2475,15 @@ class MainWindow(QMainWindow):
             edit.set_layer_order(level, inner[:j] + new + inner[j:], group)
             self.layers.opened.add(group)
 
-    def layer_fx_drop(self, ref, cid, above):
+    def layer_fx_drop(self, payload, cid, above):
         """An effect dropped on the layer list: onto the layer it landed on, or a filter layer
         between layers."""
         if cid:
-            self.on_filter_dropped(ref, cid, "", 0)
+            self.on_filter_dropped(payload, cid, "", 0)
             return
+        ref, effect, _src = dropped_fx(payload)
         self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), None)
-        self.add_filter_clip(ref, "", 0)
+        self.add_filter_clip(ref, "", 0, effect)
         self.layer_drop_at = None
 
     def toggle_group_matte(self, ids, field="on"):
@@ -3831,25 +3833,42 @@ class MainWindow(QMainWindow):
         if not n:
             mine.addAction("（Library 的「濾鏡」頁還沒有檔案）").setEnabled(False)
 
-    def add_filter_clip(self, ref, track_id="", start_us=None):
-        """A filter as a clip of its own: it works on everything below it while it lasts."""
+    def add_filter_clip(self, ref, track_id="", start_us=None, effect=None):
+        """A filter as a clip of its own: it works on everything below it while it lasts (with
+        effect: a copy of that one, settings and all)."""
         if not self.proj:
             return
         start = self.playhead_us() if start_us is None else start_us
-        self.apply("新增濾鏡片段", lambda lvl: edit.add_filter_clip(lvl, ref, start, track_id=track_id or None),
-                   select=lambda c: c["id"])
+        self.apply("新增濾鏡片段", lambda lvl: edit.add_filter_clip(lvl, ref, start, track_id=track_id or None,
+                                                                 effect=effect), select=lambda c: c["id"])
 
-    def on_filter_dropped(self, ref, cid, track_id, start_us):
-        """A filter dragged from the VFX tab: onto a clip it joins that clip's effects (all the
-        selected ones when it is one of them), elsewhere it becomes a filter clip."""
+    def on_filter_dropped(self, payload, cid, track_id, start_us):
+        """A filter dragged from the VFX tab, or an effect from the effects panel (a copy with
+        its settings): onto a clip it joins that clip's effects (all the selected ones when it is
+        one of them), elsewhere it becomes a filter clip."""
+        ref, effect, _src = dropped_fx(payload)
         if not cid:
-            self.add_filter_clip(ref, track_id, start_us)
+            self.add_filter_clip(ref, track_id, start_us, effect)
             return
         sel = self.timeline.selected_ids
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first()
                if c["type"] in edit.VISUAL] if cid in sel else [cid]
-        self.apply("新增效果", lambda lvl: [edit.add_effect(lvl, k, ref) for k in ids])
+        self.apply("複製效果" if effect else "新增效果", lambda lvl: [edit.put_effect(lvl, k, effect or ref) for k in ids])
         self.panels.show("effects")
+
+    def effect_dropped(self, cid, payload, index):
+        """Something dropped among the effects of clip cid at place index: one of its own effects
+        moves there, any other effect is copied there, a filter of the VFX tab is added there."""
+        ref, effect, src = dropped_fx(payload)
+        c = edit.find(self.container(), cid)[1] if cid else None
+        if c is None:
+            return
+        mine = [e["id"] for e in c.get("effects") or []]
+        if effect and src == cid and effect["id"] in mine:
+            if index not in (mine.index(effect["id"]), mine.index(effect["id"]) + 1):     # (where it is)
+                self.apply("調整效果順序", edit.move_effect_to, cid, effect["id"], index)
+        else:
+            self.apply("複製效果" if effect else "新增效果", edit.put_effect, cid, effect or ref, index)
 
     def apply_filter_to_selected(self, ref):
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]

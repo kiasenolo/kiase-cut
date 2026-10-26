@@ -990,8 +990,10 @@ class Inspector(QWidget):
     def show_clip(self, c, t_us, fps):
         self.show_clips([c] if c else [], t_us, fps)
 
-    def show_clips(self, clips, t_us, fps):
-        """Show the selected clips (the first is the primary one); t_us is the playhead time."""
+    def show_clips(self, clips, t_us, fps, times=None):
+        """Show the selected clips (the first is the primary one); t_us is the playhead time,
+        times each clip's own time its values and ◆ are shown at (default: the playhead's
+        place in it; 批量 gives clips the playhead is not over the main clip's)."""
         c = common(clips)
         self.fps = fps or self.fps
         shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")),
@@ -1007,7 +1009,7 @@ class Inspector(QWidget):
         if c is None:
             return
         w = self.widgets
-        ts = [t_us - k["start_us"] for k in clips]
+        ts = list(times) if times else [t_us - k["start_us"] for k in clips]
         names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段", "group": "群組",
                  "filter": "濾鏡片段"}
         kinds = sorted({("靜態元件" if project.is_static(k) else "元件") if components.of_clip(k) else

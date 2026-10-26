@@ -684,6 +684,19 @@ def _valid_key(c, group, key):
     return key in GROUP_FIELDS.get(group, ())
 
 
+def has_param(c, group, key):
+    """Whether clip c has the parameter group / key to keyframe: a transform, text or mask
+    of its own, a sound for the volume, a picture for the blend mode, that filter."""
+    if group in ("transform", "text", "mask") and not c.get(group):
+        return False
+    if group == "clip" and (key == "volume" and key not in c or key == "blend" and c["type"] not in VISUAL):
+        return False
+    try:
+        return _valid_key(c, group, key)
+    except EditError:
+        return False
+
+
 def holder(c, group):
     """The dict that holds the parameters of `group` of clip c."""
     return _holder(c, group)

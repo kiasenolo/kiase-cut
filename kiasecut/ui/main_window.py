@@ -1979,7 +1979,7 @@ class MainWindow(QMainWindow):
     def apply_each_timed(self, label, fn, ids, *args):
         """fn(level, clip id, *args, playhead time in that clip) for every clip of a selection
         (keyframed choices get their keyframe at the playhead)."""
-        times = {cid: self.clip_time(cid) for cid in ids}
+        times = self.key_times(ids)
         return self.apply_each(label, lambda lvl, cid, *a: fn(lvl, cid, *a, times[cid]), ids, *args)
 
     def on_text_edited(self, ids, fields):
@@ -2007,38 +2007,106 @@ class MainWindow(QMainWindow):
         playhead time, so keyframed ones get or edit the keyframe there)."""
         label = ("調整效果" if group.startswith("fx") else "調整素材" if group == "asset" else
                  "調整元件參數" if group == "params" else "調整" + self.PARAM_LABELS.get((group, key), "遮罩"))
-        times = {cid: self.clip_time(cid) for cid in ids}
+        times = self.key_times(ids)
         self.apply_each(label, lambda lvl, cid: edit.set_param(lvl, cid, group, key, value, times[cid]), ids,
                         merge=("param", tuple(ids), group, key, round(times[ids[0]])))
 
     def on_key_toggled(self, ids, group, key):
-        """◆: when every selected clip has a keyframe here, remove them; else add the missing."""
-        times = {cid: self.clip_time(cid) for cid in ids}
+        """◆ (批量): when every clip it reaches has a keyframe there, remove them; else add the
+        missing ones. One of a multi-selection reaches every selected clip with that
+        parameter (key_targets), each at its key_times time."""
+        targets = self.key_targets(ids, group, key)
+        times = self.key_times([cid for cid, _g in targets])
+        level = self.container()
+        targets = [(cid, g) for cid, g in targets
+                   if 0 <= times[cid] <= edit.find(level, cid)[1]["duration_us"]]
+        if not targets:
+            self.statusBar().showMessage("播放頭不在選取的片段上", 3000)
+            return
 
-        def has(cid):
+        def has(cid, g):
             c = edit.find(self.container(), cid)[1]
-            return edit.key_at(group_holder(c, group).get(key), times[cid]) is not None
+            return edit.key_at(group_holder(c, g).get(key), times[cid]) is not None
 
-        todo = ids if all(has(cid) for cid in ids) else [cid for cid in ids if not has(cid)]
-        self.apply_each("關鍵幀", lambda lvl, cid: edit.toggle_key(lvl, cid, group, key, times[cid]), todo)
+        todo = targets if all(has(*x) for x in targets) else [x for x in targets if not has(*x)]
+
+        def toggle_all(lvl):
+            for cid, g in todo:
+                edit.toggle_key(lvl, cid, g, key, times[cid])
+
+        self.apply("關鍵幀" + (f"（{len(todo)} 個片段）" if len(todo) > 1 else ""), toggle_all)
         self.curves.select_param(group, key)
 
     def add_key_at_playhead(self, cid, params):
         """The curve editor's "add here": a keyframe holding the current value, for every
-        shown parameter that has none at the playhead."""
-        t = self.clip_time(cid)
-        c = edit.find(self.container(), cid)[1]
-        todo = [(g, k) for g, k in params
-                if edit.key_at(group_holder(c, g).get(k), t) is None]
+        shown parameter that has none there - in every selected clip with that parameter
+        when cid is one of a multi-selection (批量, as ◆)."""
+        level = self.container()
+        todo = []
+        for g, k in params:
+            targets = self.key_targets([cid], g, k)
+            times = self.key_times([c_id for c_id, _g in targets])
+            for c_id, cg in targets:
+                c = edit.find(level, c_id)[1]
+                t = times[c_id]
+                if 0 <= t <= c["duration_us"] and edit.key_at(group_holder(c, cg).get(k), t) is None:
+                    todo.append((c_id, cg, k, t))
         if not todo:
             self.statusBar().showMessage("播放頭上已經有關鍵幀", 2000)
             return
 
         def add_all(level):
-            for g, k in todo:
-                edit.toggle_key(level, cid, g, k, t)
+            for c_id, g, k, t in todo:
+                edit.toggle_key(level, c_id, g, k, t)
 
-        self.apply("關鍵幀", add_all)
+        n = len({x[0] for x in todo})
+        self.apply("關鍵幀" + (f"（{n} 個片段）" if n > 1 else ""), add_all)
+
+    def key_targets(self, ids, group, key):
+        """[(clip id, its group)] that a ◆ of group / key on clips ids reaches: those, and when
+        the first is one of a multi-selection every other selected clip too (批量) - each
+        that has the parameter (a filter's: the same filter at the same place, same_group)."""
+        level = self.container()
+        try:
+            first = edit.find(level, ids[0])[1]
+        except edit.EditError:
+            return []
+        sel = self.timeline.selected_ids
+        every = list(ids) + ([i for i in sorted(sel) if i not in ids] if ids[0] in sel else [])
+        out = []
+        for cid in every:
+            try:
+                c = edit.find(level, cid)[1]
+            except edit.EditError:
+                continue
+            g = same_group(first, c, group)
+            if g is not None and edit.has_param(c, g, key):
+                out.append((cid, g))
+        return out
+
+    def key_times(self, ids):
+        """{clip id: the clip time a keyframe edit of it uses}: where the playhead is, for a clip
+        it is over; for one it is not over (批量: copies spread along the timeline), as far
+        from its start as the playhead is from the start of the main selected clip (or, when
+        the playhead is not over that one, the first selected clip it is over), when that
+        falls inside it."""
+        level = self.container()
+        ref = None
+        for c in self.timeline.selected_clips_primary_first():
+            own = self.clip_time(c["id"])
+            if 0 <= own <= c["duration_us"]:
+                ref = own
+                break
+        out = {}
+        for cid in ids:
+            own = self.clip_time(cid)
+            try:
+                dur = edit.find(level, cid)[1]["duration_us"]
+            except edit.EditError:
+                out[cid] = own
+                continue
+            out[cid] = ref if not 0 <= own <= dur and ref is not None and 0 <= ref <= dur else own
+        return out
 
     def seek_clip_time(self, t):
         c = self.placed(self.timeline.selected)
@@ -2136,7 +2204,8 @@ class MainWindow(QMainWindow):
 
     def show_selection_props(self):
         clips, t = [self.placed(c) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
-        self.inspector.show_clips(clips, t, self.fps)
+        times = self.key_times([c["id"] for c in clips])
+        self.inspector.show_clips(clips, t, self.fps, [times[c["id"]] for c in clips])
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
             self.mask_panel.set_compounds(self.mask_compounds())
@@ -2164,7 +2233,7 @@ class MainWindow(QMainWindow):
 
     def on_easing(self, ids, easing, groups):
         """Apply a curve preset to every parameter (of these groups) with a keyframe at the playhead."""
-        times = {cid: self.clip_time(cid) for cid in ids}
+        times = self.key_times(ids)
 
         def ease_all(level):
             done = 0

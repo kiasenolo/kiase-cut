@@ -411,7 +411,7 @@ class GLRenderer(render.Renderer):
         """A compound's or a group's tracks (as render.draw_content: a group's matte); through
         (穿透): what tgt has is under them, not a clear layer."""
         matte = (comp.get("matte") or {}) if comp.get("group") else {}
-        tracks = [tr for tr in comp["tracks"] if tr["kind"] != "audio"]
+        tracks = project.matte_tracks(comp["tracks"])
         if not matte.get("on") or len(tracks) < 2:
             self.gl_tracks(tgt, base, comp["tracks"], W, H, fps, t_us, ppu)
             return

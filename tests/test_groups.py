@@ -156,6 +156,23 @@ class GroupRenderTests(unittest.TestCase):
             self.assertEqual(rgb(img, 12, 18), (0, 0, 0), name)
             self.assertEqual(rgb(img, 40, 18), (255, 0, 0), name)
 
+    def test_mask_object_grouped(self):
+        """The mask object can be a group: grouping its clips (on two tracks) leaves the bottom
+        track empty, and that one does not count."""
+        from test_compound_mask import rgb
+        for r in self.renderers():
+            name = type(r).__name__
+            v = self.view({"on": True, "show": False})
+            g = v["tracks"][0]["clips"][0]
+            g["tracks"].insert(1, {"id": "a2", "kind": "video", "name": "a2", "clips": [self.s.pic("cut2", self.s.alpha)]})
+            inner = edit.make_group(v, v, [g["tracks"][0]["clips"][0]["id"], "cut2"])
+            self.assertEqual(g["tracks"][0]["clips"], [], name)               # (left empty below it)
+            self.assertIs(project.matte_tracks(g["tracks"])[0]["clips"][0], inner, name)
+            img = r.render(v, 0, 64, 36)
+            self.assertEqual(r.errors, [], name)
+            self.assertEqual(rgb(img, 12, 18), (255, 0, 0), name)              # red where the group is opaque
+            self.assertEqual(rgb(img, 52, 18), (0, 0, 0), name)
+
     def test_blend_modes_mix_with_the_shown_mask_object(self):
         """As Photoshop's clipping masks: the clips above are drawn on the shown mask object."""
         from test_compound_mask import rgb

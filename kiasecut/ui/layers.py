@@ -437,7 +437,7 @@ class LayerPanel(QWidget):
 
         def add(holder, depth, parent, at_us, locked):
             masked = parent and (holder.get("matte") or {}).get("on")
-            bottom = next((t for t in holder["tracks"] if t["kind"] != "audio"), None) if masked else None
+            bottom = next(iter(project.matte_tracks(holder["tracks"])), None) if masked else None
             for c in edit.layers(holder):
                 t = tracks[c["id"]]
                 lock = locked or project.locked(t)

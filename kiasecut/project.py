@@ -67,7 +67,7 @@ clip     {id, type: image | video | audio | text | compound, name,
                      from the group's start (like a compound's, but not shared and not a
                      canvas of its own: moving the group moves them, keeping their places).
                      The group is drawn as one layer through its own transform, effects and
-                     mask; with matte on, its bottom track's clips cut the clips above them
+                     mask; with matte on, its bottom track's clips (matte_tracks) cut the clips above them
                      (their alpha), and show draws them too (else only their shape counts)
 compound {name, width, height, duration_us, tracks}   reusable content: any number of compound
          clips (anywhere, nested too) show the same one, so editing it changes all of them.
@@ -217,6 +217,13 @@ def refresh_duration(p):
 
 def is_group(c):
     return c.get("type") == "group"
+
+
+def matte_tracks(tracks):
+    """A group's picture tracks that have clips, the bottom one first: with its matte on, the
+    first is the mask object's (a track left empty under it, as grouping the mask object's
+    clips leaves one, does not count)."""
+    return [t for t in tracks if t["kind"] != "audio" and t["clips"]]
 
 
 def walk_clips(tracks):

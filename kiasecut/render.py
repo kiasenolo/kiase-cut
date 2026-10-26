@@ -261,7 +261,7 @@ class Renderer:
         drawn too with show; the clips above are left out with body off (顯示主體). through
         (穿透): what p has is under them, not a clear layer."""
         matte = (comp.get("matte") or {}) if comp.get("group") else {}
-        tracks = [tr for tr in comp["tracks"] if tr["kind"] != "audio"]
+        tracks = project.matte_tracks(comp["tracks"])
         if not matte.get("on") or len(tracks) < 2 or not isinstance(p.device(), QImage):
             self.draw_tracks(p, comp["tracks"], W, H, fps, t_us, px_per_unit)
             return

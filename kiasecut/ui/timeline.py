@@ -1909,7 +1909,7 @@ class Timeline(QWidget):
                 self.select(c)
             items = [("複製", "copy"), ("剪下", "cut"), ("貼上到播放頭", "paste"), ("建立副本", "duplicate"), None,
                      ("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
-                     ("在播放頭分割", "split"), ("刪除", "delete")]
+                     ("在播放頭分割", "split"), ("頭尾對齊拍子", "snap_beats"), ("刪除", "delete")]
             if c["type"] == "compound":
                 comp = components.of_clip(c)
                 head = [("編輯元件" if comp else "編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),

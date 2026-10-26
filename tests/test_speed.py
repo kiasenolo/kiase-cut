@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import audiomix, edit, project, renderexport  # noqa: E402
-from test_edit import S, proj  # noqa: E402
+from test_edit import S, clip, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -81,6 +81,19 @@ class SpeedTests(unittest.TestCase):
         edit.set_beat(p, "c3", on=True, bpm=60, offset_us=S)         # beat 0 at source 1 s = clip start (2 s)
         edit.set_speed(p, "c3", 2.0)
         self.assertEqual([round(t) for t in edit.beat_times(c)][:3], [2 * S, int(2.5 * S), 3 * S])
+
+    def test_snap_to_beats(self):
+        p = proj()
+        edit.set_beat(p, "c3", on=True, bpm=60, offset_us=0)         # beats on whole seconds (2 s - 6 s)
+        t1 = p["tracks"][1]["clips"]
+        t1 += [clip("a", int(2.3 * S), int(1.3 * S)), clip("b", int(3.6 * S), int(0.8 * S))]
+        edit.snap_to_beats(p, ["a", "b"])
+        a, b = edit.find(p, "a")[1], edit.find(p, "b")[1]
+        self.assertEqual((a["start_us"], edit.end(a)), (2 * S, 4 * S))
+        self.assertEqual((b["start_us"], edit.end(b)), (4 * S, 5 * S))  # both ends on 4 s: the next beat
+        edit.set_beat(p, "c3", on=False)
+        with self.assertRaises(edit.EditError):
+            edit.snap_to_beats(p, ["a"])
 
     def test_sound_plays_faster(self):
         p = proj()

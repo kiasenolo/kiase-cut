@@ -765,6 +765,7 @@ class MainWindow(QMainWindow):
         add(m, "建立副本", "Ctrl+Shift+C", self.do_duplicate)
         m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
+        add(m, "頭尾對齊拍子", "Alt+Q", self.do_snap_beats)
         add(m, "刪除", "Delete", self.do_delete)
         add(m, "移到上面的軌道", "Ctrl+Up", lambda: self.do_move_rows(-1))
         add(m, "移到下面的軌道", "Ctrl+Down", lambda: self.do_move_rows(1))
@@ -1846,6 +1847,14 @@ class MainWindow(QMainWindow):
         self._select_new(self.apply_root("建立副本", lambda root: edit.duplicate_clips(
             root, self.container(root), ids)))
 
+    def do_snap_beats(self):
+        """Alt+Q: the selected clips' starts and ends trimmed to the nearest beats."""
+        ids = [c["id"] for c in self.timeline.selected_clips()]
+        if not self.proj or not ids:
+            self.statusBar().showMessage("先在時間軸上選取片段", 3000)
+            return
+        self.apply("頭尾對齊拍子", edit.snap_to_beats, ids)
+
     def _select_new(self, clips):
         if clips:
             self.timeline.set_selection({c["id"] for c in clips}, clips[-1]["id"])
@@ -2586,8 +2595,9 @@ class MainWindow(QMainWindow):
         if action == "paste":
             self.do_paste()
             return
-        if action in ("copy", "cut", "duplicate"):
-            {"copy": self.do_copy, "cut": lambda: self.do_copy(cut=True), "duplicate": self.do_duplicate}[action]()
+        if action in ("copy", "cut", "duplicate", "snap_beats"):
+            {"copy": self.do_copy, "cut": lambda: self.do_copy(cut=True), "duplicate": self.do_duplicate,
+             "snap_beats": self.do_snap_beats}[action]()
             return
         if action in ("new_static", "new_component"):         # (cid is the track's id here)
             at, comp = self.playhead_us(), action == "new_component"

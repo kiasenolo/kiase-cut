@@ -5,6 +5,7 @@ keyframes where they were on screen: keys are relative to the clip start, so tri
 head or splitting shifts them by the amount cut. Video, audio and compound clips cannot
 be trimmed past their source; images and texts can be stretched freely.
 """
+import bisect
 import copy
 import json
 import math
@@ -1095,6 +1096,49 @@ def beat_grid(c, lo=None, hi=None, bars=False):
         d = div // math.gcd(k % div, div)
         out.append((zero + k * period, 0 if meter and d == 1 and (k // div) % meter == 0 else d))
     return out
+
+
+def level_beats(proj):
+    """Every beat grid line (us, the level's time) of the level's sound clips with BPM
+    alignment on, a group's included, sorted."""
+    out = set()
+    for t in project.all_tracks(proj["tracks"]):
+        for c in t["clips"]:
+            if (c.get("beat") or {}).get("on"):
+                off = abs_start(proj, c["id"]) - c["start_us"]
+                out |= {round(x + off) for x in beat_times(c)}
+    return sorted(out)
+
+
+def snap_to_beats(proj, clip_ids):
+    """Alt+Q: trim each clip's start and end to the nearest beat grid line (level_beats); the
+    end goes to the next line after the start when both would land on one. Edges that move
+    in go first, so neighbours make room for the ones that move out. Returns the clips."""
+    beats = level_beats(proj)
+    if not beats:
+        raise EditError("沒有拍子：先在有聲音的片段上開啟 BPM 對齊")
+
+    def nearest(x):
+        i = bisect.bisect_left(beats, x)
+        return min(beats[max(0, i - 1):i + 1], key=lambda b: abs(b - x))
+    plans = []
+    for cid in clip_ids:
+        _, c = find(proj, cid)
+        off = abs_start(proj, cid) - c["start_us"]
+        s, e = nearest(c["start_us"] + off), nearest(end(c) + off)
+        if e <= s:
+            e = next((b for b in beats if b > s), None)
+            if e is None:
+                continue
+        plans.append((c, s - off, e - off))
+    for _ in range(2):                                   # (a second pass: room made by later clips)
+        for grow in (False, True):
+            for c, s, e in plans:
+                if s != c["start_us"] and (s < c["start_us"]) == grow:
+                    trim_start(proj, c["id"], s)
+                if e != end(c) and (e > end(c)) == grow:
+                    trim_end(proj, c["id"], e)
+    return [c for c, _, _ in plans]
 
 
 TIMED = ("video", "audio", "compound")          # clips with a source time: speed and 凍結幀

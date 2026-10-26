@@ -489,7 +489,8 @@ class GLRenderer(render.Renderer):
         t = project.stepped(c, t_us - c["start_us"])           # (降低幀數: in steps)
         v = lambda k, d: curves.value(tf.get(k, d), t)
         opacity = min(1.0, max(0.0, v("opacity", 1.0)))
-        if opacity <= 0:
+        backdrop, hide = project.backdrop_of(c)
+        if opacity <= 0 and not (backdrop and c.get("asset")):    # (a shape's 套用至背景: not faded by it)
             return
         sx = v("scale", 1.0)
         sy = curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t)
@@ -503,7 +504,6 @@ class GLRenderer(render.Renderer):
             return
         kind = c["type"]
         held = None                                     # a layer to give back when done
-        backdrop, hide = project.backdrop_of(c)
         shape = None                                    # (texture, straight) 套用至背景 covers, when not tex's
         if kind == "text":
             tx = c["text"]
@@ -587,7 +587,7 @@ class GLRenderer(render.Renderer):
                 cover = gl.layer(tgt.w, tgt.h)
                 snap = gl.layer(tgt.w, tgt.h)
                 try:
-                    gl.draw(cover, *(shape or (tex, straight)), rect, world, opacity, mask, t, disp)
+                    gl.draw(cover, *(shape or (tex, straight)), rect, world, 1.0 if shape else opacity, mask, t, disp)
                     gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
                     out = self.gl_effects(effects, snap, t, c["duration_us"], fps, world, disp)
                     gl.mix_cover(tgt, snap.tex, out.tex, cover.tex)
@@ -596,7 +596,7 @@ class GLRenderer(render.Renderer):
                 finally:
                     gl.release(cover)
                     gl.release(snap)
-                if not hide:
+                if not hide and opacity > 0:
                     gl.draw(tgt, tex, straight, rect, world, opacity, mask, t, disp, blend)
             elif effects:
                 lay = gl.layer(tgt.w, tgt.h)

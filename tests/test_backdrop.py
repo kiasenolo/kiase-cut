@@ -97,6 +97,21 @@ class BackdropTests(unittest.TestCase):
             px = rgb(img, 32, 18)
             self.assertTrue(px[0] < 8 and px[2] > 100, (type(r).__name__, px))  # green over cyan
 
+    def test_opacity_only_fades_the_shape(self):
+        if not self.fx:
+            self.skipTest("needs OpenGL for filters")
+        for r in self.renderers():
+            for op in (0.0, 0.5):
+                view = self.view()
+                view["tracks"][1]["clips"][0]["transform"]["opacity"] = op
+                img = r.render(view, 0, W, H)
+                px = rgb(img, 32, 18)
+                if op == 0:
+                    self.assertEqual(px, (0, 255, 255), type(r).__name__)               # the effect in full
+                else:
+                    self.assertTrue(px[0] < 8 and 100 < px[2] < 160, (type(r).__name__, px))  # green half over cyan
+                self.assertEqual(rgb(img, 4, 18), (255, 0, 0), type(r).__name__)
+
     def test_cover(self):
         q = assets.at(dict(assets.make(assets.get("shape.circleframe"), "#ff000000", "#00000000", 1920, 1080),
                            stroke_color=[0, 0, 0, 0]), 0)

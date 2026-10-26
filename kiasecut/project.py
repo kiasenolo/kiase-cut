@@ -38,7 +38,9 @@ clip     {id, type: image | video | audio | text | compound, name,
           volume, fade_in_us, fade_out_us                   clips with sound
           backdrop: {on, hide}                              visual clips with effects, optional:
                      套用至背景 - the effects work on what is under the clip, inside its
-                     shape (its alpha, mask and opacity), like CSS backdrop-filter; hide
+                     shape (its alpha, mask and opacity; a built-in asset's: where it is
+                     and its mask, not its colours' alpha nor opacity), like CSS
+                     backdrop-filter; hide
                      (隱藏本體) leaves the clip itself undrawn - always so but for built-in
                      assets (backdrop_of())
           speed                                             videos, sounds and (not static)

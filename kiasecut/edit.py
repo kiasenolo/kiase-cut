@@ -1581,6 +1581,14 @@ def add_effects(proj, clip_id, refs):
     return [add_effect(proj, clip_id, ref) for ref in refs]
 
 
+def replace_effects(proj, clip_id, whats):
+    """A clip's effects all replaced by whats (filter refs or effects, as put_effect): 新增效果 on
+    selected clips whose effects are not alike."""
+    _, c = find(proj, clip_id)
+    c.pop("effects", None)
+    return [put_effect(proj, clip_id, w) for w in whats]
+
+
 def remove_effect(proj, clip_id, effect_id):
     _, c = find(proj, clip_id)
     c["effects"].remove(_effect(c, effect_id))

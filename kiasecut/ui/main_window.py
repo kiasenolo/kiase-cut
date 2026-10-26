@@ -260,6 +260,11 @@ def same_group(c, other, group):
     return f"{kind}:{theirs[n]['id']}" if n < len(theirs) else None
 
 
+def many(clips):
+    """"（N 個片段）" for an undo label of an edit of several clips."""
+    return f"（{len(clips)} 個片段）" if len(clips) > 1 else ""
+
+
 def group_holder(c, group, create=False):
     """The dict of clip c that holds the parameters of `group` ("transform", "mask", "clip", ...,
     or "fx:<effect id>" / "fxmask:<effect id>" for a filter's own)."""
@@ -443,22 +448,23 @@ class MainWindow(QMainWindow):
         ef = self.effects
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.browseRequested.connect(self.browse_effect)
-        ef.removeRequested.connect(lambda cid, eid: self.apply("移除效果", edit.remove_effect, cid, eid))
-        ef.enabledChosen.connect(lambda cid, eid, on: self.apply(
-            "啟用效果" if on else "停用效果", edit.set_effect_enabled, cid, eid, on))
-        ef.moveRequested.connect(lambda cid, eid, d: self.apply("調整效果順序", edit.move_effect, cid, eid, d))
+        ef.removeRequested.connect(lambda ids, eid: self.fx_each("移除效果", ids, eid, edit.remove_effect))
+        ef.enabledChosen.connect(lambda ids, eid, on: self.fx_each(
+            "啟用效果" if on else "停用效果", ids, eid, lambda lvl, cid, e: edit.set_effect_enabled(lvl, cid, e, on)))
+        ef.moveRequested.connect(lambda ids, eid, d: self.fx_each(
+            "調整效果順序", ids, eid, lambda lvl, cid, e: edit.move_effect(lvl, cid, e, d)))
         ef.effectDropped.connect(self.effect_dropped)
         ef.effectsDropped.connect(self.effects_dropped)
-        ef.maskKindChosen.connect(lambda cid, eid, kind: self.apply(
-            "效果範圍" if kind else "移除效果範圍", edit.set_effect_mask, cid, eid, kind, self.clip_time(cid)))
-        ef.maskInvertChosen.connect(lambda cid, eid, on: self.apply(
-            "反轉效果範圍", edit.set_effect_mask_invert, cid, eid, on, self.clip_time(cid)))
-        ef.paramEdited.connect(self.on_param_edited)
+        ef.maskKindChosen.connect(lambda ids, eid, kind: self.fx_each(
+            "效果範圍" if kind else "移除效果範圍", ids, eid,
+            lambda lvl, cid, e: edit.set_effect_mask(lvl, cid, e, kind, self.clip_time(cid))))
+        ef.maskInvertChosen.connect(lambda ids, eid, on: self.fx_each(
+            "反轉效果範圍", ids, eid, lambda lvl, cid, e: edit.set_effect_mask_invert(lvl, cid, e, on, self.clip_time(cid))))
+        ef.paramEdited.connect(self.on_fx_param_edited)
         ef.keyToggled.connect(self.on_key_toggled)
-        ef.liveEdited.connect(self.on_live_edit)
+        ef.liveEdited.connect(self.on_fx_live_edit)
         ef.liveCancelled.connect(self.rebuild)
-        ef.backdropChosen.connect(lambda cid, on, hide: self.apply(
-            "套用至背景" if on else "取消套用至背景" if on is not None else "隱藏本體", edit.set_backdrop, cid, on, hide))
+        ef.backdropChosen.connect(self.on_backdrop_chosen)
         ef.docRequested.connect(self.show_filter_doc)
         ef.revealFilter.connect(self.reveal_path)
         fx_scroll = QScrollArea()
@@ -4069,26 +4075,29 @@ class MainWindow(QMainWindow):
         self.apply("複製效果" if effect else "新增效果", lambda lvl: [edit.put_effect(lvl, k, effect or ref) for k in ids])
         self.panels.show("effects")
 
-    def effect_dropped(self, cid, payload, index):
-        """Something dropped among the effects of clip cid at place index: one of its own effects
-        moves there, any other effect is copied there, a filter of the VFX tab is added there."""
+    def effect_dropped(self, ids, payload, index):
+        """Something dropped among the effects of clips ids (the main one's, the others alike) at
+        place index: one of its own effects moves there, any other effect is copied there, a
+        filter of the VFX tab is added there - in each of them (批量)."""
         ref, effect, src = dropped_fx(payload)
-        c = edit.find(self.container(), cid)[1] if cid else None
-        if c is None:
+        try:
+            c = edit.find(self.container(), ids[0])[1]
+        except (edit.EditError, IndexError):
             return
         mine = [e["id"] for e in c.get("effects") or []]
-        if effect and src == cid and effect["id"] in mine:
+        if effect and src == ids[0] and effect["id"] in mine:
             if index not in (mine.index(effect["id"]), mine.index(effect["id"]) + 1):     # (where it is)
-                self.apply("調整效果順序", edit.move_effect_to, cid, effect["id"], index)
+                self.fx_each("調整效果順序", ids, effect["id"],
+                             lambda lvl, cid, e: edit.move_effect_to(lvl, cid, e, index))
         else:
-            self.apply("複製效果" if effect else "新增效果", edit.put_effect, cid, effect or ref, index)
+            self.apply(("複製效果" if effect else "新增效果") + many(ids),
+                       lambda lvl: [edit.put_effect(lvl, cid, effect or ref, index) for cid in ids])
 
     def effects_dropped(self, ids, payload):
         """A filter or an effect (a copy with its settings) dropped in the effects panel while
-        several clips are selected: onto each of clips ids (批量)."""
+        the selected clips' effects are not alike: it replaces them all (add_effects_to)."""
         ref, effect, _src = dropped_fx(payload)
-        self.apply(("複製效果" if effect else "新增效果") + (f"（{len(ids)} 個片段）" if len(ids) > 1 else ""),
-                   lambda lvl: [edit.put_effect(lvl, cid, effect or ref) for cid in ids])
+        self.add_effects_to(ids, [effect or ref], "複製效果" if effect else "新增效果")
 
     def apply_filter_to_selected(self, ref):
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]
@@ -4098,10 +4107,74 @@ class MainWindow(QMainWindow):
         self.apply("新增效果", lambda lvl: [edit.add_effect(lvl, cid, ref) for cid in ids])
         self.panels.show("effects")
 
-    def add_effects_to(self, ids, refs):
-        """Filters refs added to each of clips ids (批量: the picture clips of a selection), one undo step."""
-        self.apply("新增效果" + (f"（{len(ids)} 個片段）" if len(ids) > 1 else ""),
-                   lambda lvl: [edit.add_effects(lvl, cid, refs) for cid in ids])
+    def add_effects_to(self, ids, whats, label="新增效果"):
+        """Filters or effects (put_effect's) added to each of clips ids (批量: the picture clips of
+        a selection), one undo step; when the clips' effects are not the same filters in the same
+        order, they replace all of them."""
+        level = self.container()
+        if len({tuple(e["filter"] for e in edit.find(level, cid)[1].get("effects") or []) for cid in ids}) > 1:
+            self.apply("覆寫效果" + many(ids), lambda lvl: [edit.replace_effects(lvl, cid, whats) for cid in ids])
+        else:
+            self.apply(label + many(ids), lambda lvl: [edit.put_effect(lvl, cid, w) for cid in ids for w in whats])
+
+    def fx_targets(self, ids, group):
+        """[(clip id, its group)] for an effect's group (fx:<id> / fxmask:<id>) of clip ids[0] in
+        each of clips ids: the same filter at the same place (same_group), where it has it."""
+        level = self.container()
+        try:
+            first = edit.find(level, ids[0])[1]
+        except (edit.EditError, IndexError):
+            return []
+        out = []
+        for cid in ids:
+            try:
+                g = same_group(first, edit.find(level, cid)[1], group)
+            except edit.EditError:
+                continue
+            if g is not None:
+                out.append((cid, g))
+        return out
+
+    def fx_each(self, label, ids, eid, fn):
+        """fn(level, clip id, its effect id) for effect eid of clip ids[0] and the alike ones of
+        the other clips ids (批量), as one undo step."""
+        targets = self.fx_targets(ids, "fx:" + eid)
+
+        def each(level):
+            for cid, g in targets:
+                fn(level, cid, g.split(":", 1)[1])
+
+        self.apply(label + many(targets), each)
+
+    def on_fx_param_edited(self, ids, group, key, value):
+        """A value of an effect typed in the effects panel: set on the alike effect of every clip
+        ids (each at its own playhead time, so keyframed ones get or edit the keyframe there)."""
+        targets = self.fx_targets(ids, group)
+        if not targets:
+            return
+        times = {cid: self.clip_time(cid) for cid, _g in targets}
+
+        def each(level):
+            for cid, g in targets:
+                edit.set_param(level, cid, g, key, value, times[cid])
+
+        self.apply("調整效果" + many(targets), each, merge=("param", tuple(ids), group, key, round(times[ids[0]])))
+
+    def on_fx_live_edit(self, ids, group, key, value):
+        """An effect's value being typed or scrubbed: the preview shows it at once, on each clip."""
+        targets = dict(self.fx_targets(ids, group))
+        view = self.snapshot()
+        for c in project.walk_clips(view["tracks"]):
+            if c["id"] in targets:
+                group_holder(c, targets[c["id"]], create=True)[key] = value
+        self.player.worker.set_view(view, self.cache_dir())
+
+    def on_backdrop_chosen(self, ids, on, hide):
+        """套用至背景 / 隱藏本體 for clips ids (a filter clip has none)."""
+        level = self.container()
+        ids = [cid for cid in ids if edit.find(level, cid)[1]["type"] != "filter"]
+        self.apply(("套用至背景" if on else "取消套用至背景" if on is not None else "隱藏本體") + many(ids),
+                   lambda lvl: [edit.set_backdrop(lvl, cid, on, hide) for cid in ids])
 
     def browse_effect(self, ids):
         start = self.ulib.mirror("filters") if self.ulib else ""

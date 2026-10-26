@@ -37,7 +37,10 @@ class EffectDragTests(unittest.TestCase):
 
     def host(self):
         p = self.p
-        return types.SimpleNamespace(container=lambda: p, apply=lambda _name, fn, *a: fn(p, *a))
+        h = types.SimpleNamespace(container=lambda: p, apply=lambda _name, fn, *a: fn(p, *a))
+        h.fx_each = MainWindow.fx_each.__get__(h)
+        h.fx_targets = MainWindow.fx_targets.__get__(h)
+        return h
 
     def test_move_effect_to(self):
         ids = [e["id"] for e in edit.find(self.p, "c1")[1]["effects"]]
@@ -85,16 +88,16 @@ class EffectDragTests(unittest.TestCase):
             return got[-1][2]
         self.assertEqual(drop_at(boxes[2], 0.8), 3)                         # below the last one
         self.assertEqual(drop_at(boxes[1], 0.2), 1)                         # above the second one
-        self.assertEqual(got[-1][0], "c1")
+        self.assertEqual(got[-1][0], ["c1"])
         # what the main window does with them
         host = self.host()
-        MainWindow.effect_dropped(host, "c1", got[0][1], 3)
+        MainWindow.effect_dropped(host, ["c1"], got[0][1], 3)
         self.assertEqual(chain(self.p, "c1"), ["builtin:invert", "builtin:sharpen", "builtin:blur"])
-        MainWindow.effect_dropped(host, "c1", got[0][1], 3)                 # where it is: nothing
+        MainWindow.effect_dropped(host, ["c1"], got[0][1], 3)                 # where it is: nothing
         self.assertEqual(len(chain(self.p, "c1")), 3)
-        MainWindow.effect_dropped(host, "c2", got[0][1], 0)                 # another clip's list: a copy
+        MainWindow.effect_dropped(host, ["c2"], got[0][1], 0)                 # another clip's list: a copy
         self.assertEqual(chain(self.p, "c2"), ["builtin:blur"])
-        MainWindow.effect_dropped(host, "c2", "builtin:invert", 0)          # from the VFX tab
+        MainWindow.effect_dropped(host, ["c2"], "builtin:invert", 0)          # from the VFX tab
         self.assertEqual(chain(self.p, "c2"), ["builtin:invert", "builtin:blur"])
         panel.hide()
 

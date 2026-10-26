@@ -36,7 +36,8 @@ class FilterFilesTests(unittest.TestCase):
     def setUp(self):
         self.p = proj()
         self.h = edit.History(self.p)
-        self.win = SimpleNamespace(ulib=None, apply=lambda label, fn, *a: self.h.do(label, fn, *a))
+        self.win = SimpleNamespace(ulib=None, container=lambda: self.p,
+                                   apply=lambda label, fn, *a: self.h.do(label, fn, *a))
         self.win.add_effects_to = lambda ids, refs: MainWindow.add_effects_to(self.win, ids, refs)
 
     def effects(self):

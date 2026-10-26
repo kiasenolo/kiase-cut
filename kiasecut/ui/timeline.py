@@ -15,8 +15,9 @@ the project's frame rate, which only the export uses); the ruler marks each of t
 they are far enough apart, and the zoom reaches 40 px per frame.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
-zooms time around the mouse, the middle button drags the view. Alt+wheel or the toolbar
-slider changes the track height; dragging the line under a track header resizes that track
+zooms time around the mouse, the middle button drags the view. Ctrl+middle-drag zooms around
+where the drag started, as in the curve editor: sideways the time, up and down the track
+height (right / up: in). Alt+wheel or the toolbar slider changes the track height; dragging the line under a track header resizes that track
 alone. Ctrl+D clears the selection. Dragging a picture clip above the top row, or a sound clip
 below the bottom row, puts it on a new track. Holding Alt while dragging clips leaves them
 where they are and drops copies there instead (dupMoveRequested). Media dropped on a clip with Alt held replaces
@@ -567,6 +568,14 @@ class Timeline(QWidget):
         self._layout()
         self.vzoomChanged.emit(z)
         self.update()
+
+    def _row_part(self, y):
+        """(row, fraction of its height) at widget y, to keep in place while zooming; below the
+        rows: (row count, px below them)."""
+        for i, top in enumerate(self.tops):
+            if y < top + self.row_h(i):
+                return i, min(1.0, max(0.0, (y - top) / self.row_h(i)))
+        return len(self.rows), y - self.rows_end
 
     def resizeEvent(self, e):
         self._layout()
@@ -1252,10 +1261,13 @@ class Timeline(QWidget):
             self.drag = {"clip": None, "mode": "region", "moved": False, "pos": e.position(),
                          "t0": self._snap(max(0.0, self._sec(e.position().x())) * US, None)}
             return
-        if self.proj and e.button() == Qt.MiddleButton:     # drag the view
-            self.drag = {"clip": None, "mode": "pan", "moved": False, "pos": e.position(),
-                         "s": self.scroll_s, "y": self.scroll_y}
-            self.setCursor(Qt.ClosedHandCursor)
+        if self.proj and e.button() == Qt.MiddleButton:     # drag the view (Ctrl: zoom it)
+            zoom = bool(e.modifiers() & Qt.ControlModifier)
+            self.drag = {"clip": None, "mode": "zoom" if zoom else "pan", "moved": False, "pos": e.position(),
+                         "s": self.scroll_s, "y": self.scroll_y, "px": self.px_per_s,
+                         "at": self._sec(e.position().x()), "row": self._row_part(max(RULER_H, e.position().y())),
+                         "vz": self.vzoom, "heights": dict(self.heights)}
+            self.setCursor(Qt.SizeAllCursor if zoom else Qt.ClosedHandCursor)
             return
         if not self.proj or e.button() != Qt.LeftButton:
             return
@@ -1488,6 +1500,17 @@ class Timeline(QWidget):
             self.vbar.setValue(round(d["y"] - (pos.y() - d["pos"].y())))
             self.update()
             return
+        if d["mode"] == "zoom":                                 # around the press; right / up: in
+            v = pos - d["pos"]
+            self.px_per_s = min(self.max_zoom(), max(1.0, d["px"] * 2 ** (v.x() / 200)))
+            self.scroll_s = max(0.0, d["at"] - (d["pos"].x() - self.header_w) / self.px_per_s)
+            self.heights, self.vzoom = dict(d["heights"]), d["vz"]   # from the press: no rounding creep
+            self.set_vzoom(d["vz"] * 2 ** (-v.y() / 200))
+            i, f = d["row"]
+            y = sum(self.row_h(j) for j in range(i)) + (f * self.row_h(i) if i < len(self.rows) else f)
+            self.vbar.setValue(round(y - max(0.0, d["pos"].y() - RULER_H)))
+            self.update()
+            return
         if d["mode"] == "header":
             d["moved"] = True
             self.header_w = int(min(HEADER_MAX, max(HEADER_MIN, d["w0"] + pos.x() - d["x0"])))
@@ -1635,7 +1658,7 @@ class Timeline(QWidget):
                 self.seekRequested.emit(round((d["clip"]["start_us"] + d["t0"]) / US * self.fps))
             self.update()
             return
-        if d and d["mode"] == "pan":
+        if d and d["mode"] in ("pan", "zoom"):
             self.setCursor(Qt.ArrowCursor)
         if d and d["mode"] == "seek":
             self.update()                               # (its guide line goes)
@@ -1650,7 +1673,7 @@ class Timeline(QWidget):
                 self._click_header(d["row"], Qt.NoModifier)
             self.update()
             return
-        if not d or d["mode"] in ("seek", "resize", "pan", "header"):
+        if not d or d["mode"] in ("seek", "resize", "pan", "zoom", "header"):
             return
         if d["mode"] == "band":
             self.band = None

@@ -185,7 +185,9 @@ clips' starts, ends and keyframes),
 click it to go there.
 
 Navigation (timeline and curve editor alike): the wheel moves up and down, Shift+wheel
-left and right, Ctrl+wheel zooms time around the mouse, the middle button drags the view.
+left and right, Ctrl+wheel zooms time around the mouse, the middle button drags the view and
+Ctrl+middle-drag zooms it around where the drag started, as in Blender: sideways the time,
+up and down the track height (the curve editor: the values); right / up zooms in.
 
 Selection: Ctrl / Shift + click adds or removes clips; keep the button down and drag on to
 sweep over more: they all follow the first clip (selected when it was not, deselected when

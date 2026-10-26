@@ -536,6 +536,7 @@ same to the files (deleting uses the recycle bin), and files added or removed in
 show up in the library. Clips follow renamed or moved files. Because of that, these are not
 part of Ctrl+Z. File > Project info (F11) holds title, author, genre, URL, comments and the
 project's history: when it was started, last opened and saved, and the time spent on it.
+What is typed there is kept however the window closes (關閉, Esc or its ×).
 Older projects (and Jianying drafts) are offered to be tidied into a project folder; File >
 Collect media into the project folder does it any time. Several project files can share one
 folder (File > Save as).

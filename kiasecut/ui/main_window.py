@@ -1394,8 +1394,7 @@ class MainWindow(QMainWindow):
                  f"長度 {timecode(self.proj['duration_us'], self.proj['fps'])}")
         dlg = ProjectInfoDialog(self, self.proj, self.path, stats)
         dlg.openFolder.connect(lambda: self.reveal(None))
-        if dlg.exec() != QDialog.Accepted:
-            return
+        dlg.exec()                                       # (closed with Esc too: the text is kept)
         info = workspace.info(self.proj)
         new = dlg.values()
         if any(info.get(k) != v for k, v in new.items()):

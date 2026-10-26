@@ -161,7 +161,8 @@ class NewProjectDialog(QDialog):
 
 
 class ProjectInfoDialog(QDialog):
-    """File > Project info: title, author, genre, comments, and the project's history."""
+    """File > Project info: title, author, genre, comments, and the project's history. What is
+    typed is kept however the window closes (Esc too): there is nothing to cancel."""
     openFolder = Signal()
 
     def __init__(self, parent, proj, path, stats):
@@ -204,11 +205,9 @@ class ProjectInfoDialog(QDialog):
         form.addRow("專案檔", ro(os.path.basename(path) if path else "—"))
         form.addRow("格式", ro(f"{proj['width']} × {proj['height']}，{proj['fps']:g} fps"))
         form.addRow("內容", ro(stats))
-        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.buttons.accepted.connect(self.accept)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Close)    # what is typed is kept however it closes
         self.buttons.rejected.connect(self.reject)
-        self.buttons.button(QDialogButtonBox.Ok).setText("確定")
-        self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        self.buttons.button(QDialogButtonBox.Close).setText("關閉")
         lay = QVBoxLayout(self)
         lay.addLayout(form)
         lay.addWidget(self.buttons)

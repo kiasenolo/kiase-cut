@@ -7,7 +7,7 @@
 // @param flicker float 0.2 0 1 "閃爍"
 vec4 effect(vec2 uv) {
     vec4 c = src(uv);
-    float y = uv.y * resolution.y / (spacing * scale) - time * speed;
+    float y = uv.y * resolution.y / spacing - time * speed;
     float line = 0.5 + 0.5 * sin(y * 6.2831853);
     float f = 1.0 - flicker * 0.25 * rand(vec2(float(frame), 3.7));
     return vec4(c.rgb * (1.0 - strength * line) * f, c.a);

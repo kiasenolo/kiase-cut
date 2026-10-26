@@ -475,7 +475,7 @@ class GLRenderer(render.Renderer):
                 if render.on_frame(c, t_us, fps):
                     try:
                         if c["type"] == "filter":
-                            self.gl_filter_clip(tgt, base, c, W, H, fps, t_us)
+                            self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu)
                         else:
                             self.gl_clip(tgt, base, c, W, H, fps, t_us, ppu)
                     except fx.FilterError as exc:
@@ -589,7 +589,7 @@ class GLRenderer(render.Renderer):
                 try:
                     gl.draw(cover, *(shape or (tex, straight)), rect, world, 1.0 if shape else opacity, mask, t, disp)
                     gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
-                    out = self.gl_effects(effects, snap, t, c["duration_us"], fps, world, disp)
+                    out = self.gl_effects(effects, snap, t, c["duration_us"], fps, world, disp, ppu)
                     gl.mix_cover(tgt, snap.tex, out.tex, cover.tex)
                     if out is not snap:
                         gl.release(out)
@@ -602,7 +602,7 @@ class GLRenderer(render.Renderer):
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
                     gl.draw(lay, tex, straight, rect, world)
-                    out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp)
+                    out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp, ppu)
                     gl.matte = matte and matte[0].tex
                     gl.draw_layer(tgt, out, opacity, mask, t, disp, inv, blend)
                     if out is not lay:
@@ -676,9 +676,9 @@ class GLRenderer(render.Renderer):
         self.gl_stills[key] = lay
         return lay
 
-    def gl_effects(self, effects, lay, t, duration, fps, world, disp):
-        """Run a chain of effects over layer lay; returns the layer with the result (lay itself
-        when nothing ran, else a new one the caller gives back)."""
+    def gl_effects(self, effects, lay, t, duration, fps, world, disp, ppu):
+        """Run a chain of effects over layer lay (ppu of its px per canvas px); returns the layer
+        with the result (lay itself when nothing ran, else a new one the caller gives back)."""
         gl = self.gl
         inv, _ = world.inverted()
         cur = lay
@@ -687,7 +687,8 @@ class GLRenderer(render.Renderer):
             vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
             try:
                 out = gl.fx.run_tex(d, vals, cur.tex, cur.w, cur.h, time=t / US,
-                                    progress=min(1.0, max(0.0, t / max(1, duration))), frame=max(0, round(t * fps / US)))
+                                    progress=min(1.0, max(0.0, t / max(1, duration))), frame=max(0, round(t * fps / US)),
+                                    unit=ppu)
             except fx.FilterError as exc:
                 self.errors.append(f"濾鏡「{d.name}」：{exc}")
                 continue
@@ -698,7 +699,7 @@ class GLRenderer(render.Renderer):
             cur = nxt
         return cur
 
-    def gl_filter_clip(self, tgt, base, c, W, H, fps, t_us):
+    def gl_filter_clip(self, tgt, base, c, W, H, fps, t_us, ppu):
         """A filter clip: what has been drawn so far goes through its effects, inside its mask
         and at its opacity (as render.draw_filter_clip)."""
         gl = self.gl
@@ -722,7 +723,7 @@ class GLRenderer(render.Renderer):
         matte = None
         try:
             gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
-            out = self.gl_effects(effects, snap, t, c["duration_us"], fps, wt, (W, H))
+            out = self.gl_effects(effects, snap, t, c["duration_us"], fps, wt, (W, H), ppu)
             matte = self.gl_matte(mask, t, (W, H), wt, fps)
             gl.matte = matte and matte[0].tex
             gl.mix(tgt, snap.tex, out.tex, strength, mask, t, (W, H), inv)

@@ -9,7 +9,7 @@ float lum(vec2 p) {
     return dot(src(p).rgb, vec3(0.299, 0.587, 0.114));
 }
 vec4 effect(vec2 uv) {
-    vec2 px = vec2(thickness * scale) / resolution;
+    vec2 px = vec2(thickness) / resolution;
     float tl = lum(uv + px * vec2(-1.0, -1.0)), t = lum(uv + px * vec2(0.0, -1.0)), tr = lum(uv + px * vec2(1.0, -1.0));
     float l = lum(uv + px * vec2(-1.0, 0.0)), r = lum(uv + px * vec2(1.0, 0.0));
     float bl = lum(uv + px * vec2(-1.0, 1.0)), b = lum(uv + px * vec2(0.0, 1.0)), br = lum(uv + px * vec2(1.0, 1.0));

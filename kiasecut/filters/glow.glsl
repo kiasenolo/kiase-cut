@@ -40,7 +40,7 @@ vec4 gauss(vec2 uv, vec2 dir, float sigma, float stride, bool extract) {
 vec4 effect(vec2 uv) {
     // each direction is blurred twice: finely (every pixel), then coarsely for the rest of
     // the radius; the two add up to one Gaussian of the whole radius
-    float sigma = radius * scale / 2.0;
+    float sigma = radius / 2.0;
     float s1 = min(sigma, 8.0);
     float s2 = sqrt(max(sigma * sigma - s1 * s1, 0.0));
     float stride2 = max(1.0, 3.0 * s2 / 64.0);

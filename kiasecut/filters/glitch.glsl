@@ -9,7 +9,7 @@ vec4 effect(vec2 uv) {
     float row = floor(uv.y * blocks);
     float on = step(1.0 - 0.6 * intensity, rand(vec2(row, t)));
     float off = (rand(vec2(row + 7.0, t)) - 0.5) * 0.25 * intensity * on;
-    float split = on * intensity * 6.0 * scale / resolution.x;
+    float split = on * intensity * 6.0 / resolution.x;
     vec2 p = vec2(uv.x + off, uv.y);
     vec4 r = src(p + vec2(split, 0.0));
     vec4 g = src(p);

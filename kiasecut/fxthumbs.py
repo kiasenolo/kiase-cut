@@ -43,7 +43,8 @@ def thumbnail(engine, ref):
     if d.error:
         return None
     vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
-    return engine.run(d, vals, sample_picture(), time=0.7, progress=0.5, frame=17)
+    pic = sample_picture()
+    return engine.run(d, vals, pic, time=0.7, progress=0.5, frame=17, unit=pic.shape[0] / 1080)   # (as on a 1080p canvas)
 
 
 class Worker:

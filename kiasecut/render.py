@@ -347,7 +347,7 @@ class Renderer:
                 if on_frame(c, t_us, fps):
                     try:
                         if c["type"] == "filter":
-                            self.draw_filter_clip(p, c, W, H, fps, t_us)
+                            self.draw_filter_clip(p, c, W, H, fps, t_us, px_per_unit)
                         else:
                             self.draw_clip(p, c, W, H, fps, t_us, px_per_unit)
                     except Exception as exc:          # one bad clip must not blank the preview
@@ -450,7 +450,7 @@ class Renderer:
         else:
             return
         if backdrop:                                       # 套用至背景: the effects work on what is under it
-            self.draw_backdrop(p, c, W, H, t, disp, fps,
+            self.draw_backdrop(p, c, W, H, t, disp, fps, px_per_unit,
                                lambda q: self.paint_body(q, c, W, H, t, disp, cover or draw,
                                                          1.0 if cover else opacity, fps))
             if hide or opacity <= 0:
@@ -459,7 +459,7 @@ class Renderer:
             plain = draw
 
             def draw(q=p):
-                self.draw_filtered(q, plain, c, t, disp, fps)
+                self.draw_filtered(q, plain, c, t, disp, fps, px_per_unit)
         self.paint_body(p, c, W, H, t, disp, draw, opacity, fps)
 
     def paint_body(self, p, c, W, H, t, disp, draw, opacity, fps):
@@ -487,9 +487,10 @@ class Renderer:
             self.draw_matte_ghost(p, c.get("mask"), t, disp, fps, self.matte_preview.get("opacity", 0.4))
         p.restore()
 
-    def draw_backdrop(self, p, c, W, H, t, disp, fps, body):
+    def draw_backdrop(self, p, c, W, H, t, disp, fps, unit, body):
         """套用至背景: what has been drawn so far goes through the clip's effects inside the clip's
-        coverage (body(painter) paints the clip as it would show: its alpha, mask, opacity)."""
+        coverage (body(painter) paints the clip as it would show: its alpha, mask, opacity;
+        unit: device px per canvas px)."""
         dev = p.device()
         if not isinstance(dev, QImage):
             return
@@ -503,7 +504,7 @@ class Renderer:
         cp.end()
         base = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)
         out = self.run_effects(c["effects"], base, t, c["duration_us"], fps, clip_world(c, t, W, H) * p.worldTransform(),
-                               disp)
+                               disp, unit)
         a = image_to_array(cov)[..., 3:4].astype(np.float32) / 255
         b0, b1 = image_to_array(base).astype(np.float32), image_to_array(out).astype(np.float32)
         res = np.ascontiguousarray((b0 + (b1 - b0) * a).round().astype(np.uint8))
@@ -549,9 +550,10 @@ class Renderer:
                 self.errors.append(f"濾鏡：{exc}")
         return self._fx
 
-    def run_effects(self, effects, img, t, duration, fps, wt, disp):
-        """Apply a chain of effects to img (QImage ARGB32 premultiplied) at clip time t; each
-        effect's own mask (clip-local, through world transform wt) limits where it shows."""
+    def run_effects(self, effects, img, t, duration, fps, wt, disp, unit):
+        """Apply a chain of effects to img (QImage ARGB32 premultiplied, unit of its px per canvas
+        px) at clip time t; each effect's own mask (clip-local, through world transform wt)
+        limits where it shows."""
         todo = [e for e in effects if not e.get("disabled") and e.get("filter") != project.TIME_FILTER]
         eng = self.engine() if todo else None
         if eng is None:
@@ -562,7 +564,7 @@ class Renderer:
             vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
             try:
                 out = eng.run(d, vals, arr, time=t / US, progress=min(1.0, max(0.0, t / max(1, duration))),
-                              frame=max(0, round(t * fps / US)))
+                              frame=max(0, round(t * fps / US)), unit=unit)
             except fx.FilterError as exc:
                 self.errors.append(f"濾鏡「{d.name}」：{exc}")
                 continue
@@ -574,8 +576,9 @@ class Renderer:
             arr = np.ascontiguousarray(out)
         return array_to_image(arr)
 
-    def draw_filtered(self, q, plain, c, t, disp, fps):
-        """Draw a clip's picture, run its effects over it, and put the result on q."""
+    def draw_filtered(self, q, plain, c, t, disp, fps, unit):
+        """Draw a clip's picture, run its effects over it (unit: q's px per canvas px), and put
+        the result on q."""
         dev = q.device()
         W, H = dev.width(), dev.height()
         wt = q.worldTransform()
@@ -586,13 +589,13 @@ class Renderer:
         lp.setTransform(wt)
         plain(lp)
         lp.end()
-        layer = self.run_effects(c["effects"], layer, t, c["duration_us"], fps, wt, disp)
+        layer = self.run_effects(c["effects"], layer, t, c["duration_us"], fps, wt, disp, unit)
         q.save()
         q.resetTransform()
         q.drawImage(0, 0, layer)
         q.restore()
 
-    def draw_filter_clip(self, p, c, W, H, fps, t_us):
+    def draw_filter_clip(self, p, c, W, H, fps, t_us, px_per_unit):
         """A filter clip: what has been drawn so far (the tracks below) goes through its
         effects, inside its mask and at its opacity."""
         tf = c.get("transform") or {}
@@ -615,7 +618,7 @@ class Renderer:
         if base is None:
             return
         base = base.convertToFormat(QImage.Format_ARGB32_Premultiplied)
-        out = self.run_effects(c["effects"], base, t, c["duration_us"], fps, wt, (W, H))
+        out = self.run_effects(c["effects"], base, t, c["duration_us"], fps, wt, (W, H), px_per_unit)
         cov = np.full((h, w), strength, np.float32)
         mk = self.clip_mask(c, t)
         if mk:

@@ -5,7 +5,7 @@
 // @param angle float 0 0 360 "角度"
 vec4 effect(vec2 uv) {
     float a = radians(angle);
-    vec2 o = vec2(cos(a), sin(a)) * amount * scale / resolution;
+    vec2 o = vec2(cos(a), sin(a)) * amount / resolution;
     vec4 r = src(uv + o);
     vec4 g = src(uv);
     vec4 b = src(uv - o);

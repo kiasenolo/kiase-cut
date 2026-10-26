@@ -13,7 +13,7 @@ float wobble(float x, float seed) {
 vec4 effect(vec2 uv) {
     float t = time * speed;
     vec2 asp = vec2(resolution.x / resolution.y, 1.0);
-    vec2 off = vec2(wobble(t, 1.0), wobble(t, 2.0)) * amount * scale / resolution;
+    vec2 off = vec2(wobble(t, 1.0), wobble(t, 2.0)) * amount / resolution;
     float a = wobble(t, 3.0) * radians(rotation);
     vec2 d = mat2(cos(a), sin(a), -sin(a), cos(a)) * ((uv - 0.5) * asp) / max(zoom, 0.01);
     return src(0.5 + d / asp + off);

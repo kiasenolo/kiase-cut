@@ -6,7 +6,7 @@
 // @param colored bool true "彩色網點"
 // @param paper color #ffffff "紙的顏色"
 vec4 effect(vec2 uv) {
-    float s = size * scale;
+    float s = size;
     float a = radians(angle);
     mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
     vec2 p = rot * (uv * resolution);

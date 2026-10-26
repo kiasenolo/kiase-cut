@@ -4,7 +4,7 @@
 // @passes 2
 // @param radius float 10 0 150 "半徑"
 vec4 effect(vec2 uv) {
-    float r = radius * scale;
+    float r = radius;
     if (r < 0.5) return src(uv);
     vec2 dir = pass_index == 0 ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
     vec2 px = dir / resolution;

@@ -333,24 +333,28 @@ class Engine:
             self.targets[(w, h)] = t
         return t
 
-    def run(self, d, values, rgba, time=0.0, progress=0.0, frame=0):
+    def run(self, d, values, rgba, time=0.0, progress=0.0, frame=0, unit=1.0):
         """Filter rgba (H x W x 4, uint8, premultiplied) with filter d. values: {param: value
-        for the shader}. Returns the same kind of array."""
+        for the shader}; unit: rgba's px per canvas px (see run_tex). Returns the same kind of array."""
         h, w = rgba.shape[:2]
         with self.ctx:                           # this engine's context, whatever else the thread uses
             (ta, _), _, _ = self._targets(w, h)
             ta.write(np.ascontiguousarray(rgba).tobytes())
-            out = self.run_tex(d, values, ta, w, h, time, progress, frame)
+            out = self.run_tex(d, values, ta, w, h, time, progress, frame, unit)
             data = out.read()
         return np.frombuffer(data, np.uint8).reshape(h, w, 4)
 
-    def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0):
+    def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0, unit=1.0):
         """Filter the w x h texture src (premultiplied RGBA) on the card; returns the texture
-        holding the result, one of this engine's own (valid until its next run at that size)."""
+        holding the result, one of this engine's own (valid until its next run at that size).
+        unit: texture px per canvas px. The filter is told the canvas size as its resolution, so
+        its pixel lengths are canvas px whatever size the picture is drawn at (a small preview,
+        full screen, the export)."""
         prog, vao = self._program(d)
         targets = self._targets(w, h)
-        for name, v in (("resolution", (float(w), float(h))), ("time", float(time)), ("progress", float(progress)),
-                        ("frame", int(frame)), ("scale", h / 1080.0)):
+        unit = unit if unit > 1e-9 else 1.0
+        for name, v in (("resolution", (w / unit, h / unit)), ("time", float(time)), ("progress", float(progress)),
+                        ("frame", int(frame)), ("scale", 1.0)):
             if name in prog:
                 prog[name].value = v
         for p in d.params:

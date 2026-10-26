@@ -51,6 +51,12 @@ class BeatPanel(QWidget):
         form.addRow("細分", self.div)
         legend = QLabel("　".join(f'<span style="color:{BEAT_COLORS[d]}">{"拍" if d == 1 else name}</span>'
                                  for d, name in DIV_NAMES.items() if d in BEAT_COLORS))
+        self.meter = ComboBox()
+        for n in edit.METERS:
+            self.meter.addItem("不分小節" if n == 0 else f"{n}/{8 if n in (6, 9, 12) else 4}", n)
+        self.meter.setToolTip("一小節幾拍：每小節第一拍的刻度比較長，方便看出小節的開始")
+        self.meter.currentIndexChanged.connect(lambda i: self._emit(meter=self.meter.itemData(i)))
+        form.addRow("拍號", self.meter)
         legend.setToolTip("片段上方刻度的顏色：格線落在拍子的哪個位置")
         form.addRow("", legend)
         self.offset = SpinBox()
@@ -91,12 +97,13 @@ class BeatPanel(QWidget):
         for spin, v in ((self.bpm, beat["bpm"]), (self.offset, beat["offset_us"] / US)):
             if not spin.editing and abs(spin.value() - v) > 1e-9:       # (never under the user's typing)
                 spin.show_value(v)
-        i = self.div.findData(beat["div"])
-        if i != self.div.currentIndex():
-            self.div.blockSignals(True)
-            self.div.setCurrentIndex(max(0, i))
-            self.div.blockSignals(False)
-        for w in (self.bpm, self.offset, self.div):
+        for box, v in ((self.div, beat["div"]), (self.meter, beat["meter"])):
+            i = box.findData(v)
+            if i != box.currentIndex():
+                box.blockSignals(True)
+                box.setCurrentIndex(max(0, i))
+                box.blockSignals(False)
+        for w in (self.bpm, self.offset, self.div, self.meter):
             w.setEnabled(bool(beat["on"]))
         step = 60 / beat["bpm"]
         self.period.setText(f"{step:.3f} 秒" + (f"（每格 {step / beat['div']:.3f} 秒）" if beat["div"] != 1 else ""))

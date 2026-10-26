@@ -89,10 +89,11 @@ MIN_H, MAX_H = 22, 240                               # track heights
 EDGE_PX, SNAP_PX, DRAG_PX = 6, 8, 3
 PLAYHEAD_PX = 4                 # how near the playhead line the mouse grabs it
 BEAT_PX = 5                                          # beat grid lines at least this far apart show
-# beat grid lines by their place in the beat (edit.beat_grid): colour, tick length
-BEAT_COLORS = {1: "#ffd34d", 2: "#ff8a3d", 3: "#ff6bd5", 4: "#4dd2ff", 6: "#b48cff"}
-BEAT_TICKS = {1: (0.55, 12, 2.5), 2: (0.4, 9, 1.5), 3: (0.3, 7, 1.5), 4: (0.3, 7, 1.5),
-              6: (0.22, 5, 1.2)}                    # share of the clip's height, at least px; pen width
+# beat grid lines by their place in the beat (edit.beat_grid; 0: a bar's first beat): colour,
+# tick length - a bar's first beat reaches about half way down, the other beats less
+BEAT_COLORS = {0: "#ffd34d", 1: "#ffd34d", 2: "#ff8a3d", 3: "#ff6bd5", 4: "#4dd2ff", 6: "#b48cff"}
+BEAT_TICKS = {0: (0.55, 12, 2.5), 1: (0.3, 8, 1.8), 2: (0.24, 7, 1.5), 3: (0.2, 6, 1.4), 4: (0.2, 6, 1.4),
+              6: (0.15, 5, 1.2)}                    # share of the clip's height, at least px; pen width
 
 
 def timecode(us, fps):
@@ -394,7 +395,7 @@ class Timeline(QWidget):
                     cands += [t for t, _ in self._beat_lines(c)]
         return cands
 
-    def _beat_lines(self, c, lo=None, hi=None):
+    def _beat_lines(self, c, lo=None, hi=None, bars=False):
         """A clip's beat grid lines [(time us, place in the beat)] that are far enough apart
         at this zoom to be seen (halves can show while sixths are too dense)."""
         beat = c.get("beat")
@@ -403,8 +404,8 @@ class Timeline(QWidget):
         period_px = 60 / beat["bpm"] * self.px_per_s
         div = beat.get("div", 1)
         if div < 1:                                      # a line every 2 / 4 beats
-            return edit.beat_grid(c, lo, hi) if period_px / div >= BEAT_PX else []
-        return [(t, d) for t, d in edit.beat_grid(c, lo, hi) if period_px / d >= BEAT_PX]
+            return edit.beat_grid(c, lo, hi, bars) if period_px / div >= BEAT_PX else []
+        return [(t, d) for t, d in edit.beat_grid(c, lo, hi, bars) if period_px / max(d, 1) >= BEAT_PX]
 
     def _snap(self, t_us, exclude, playhead=True):
         """Snap a time to the nearest _snap_targets within SNAP_PX. With snapping off, times
@@ -782,7 +783,7 @@ class Timeline(QWidget):
             # (the grid moves with a dragged clip)
             shift = start - c["start_us"]
             lo, hi = self._sec(self.header_w) * US - shift, self._sec(w) * US - shift
-            lines = self._beat_lines(c, lo, hi)
+            lines = self._beat_lines(c, lo, hi, bars=True)
             if lines:
                 p.save()
                 p.setClipRect(r)

@@ -219,10 +219,12 @@ settles on right angles; Shift turns in 15° steps).
 Beat alignment (節拍 tab, for a selected sound clip or a video with sound): switch on BPM 對齊 and enter the
 BPM and the start offset (the first beat's time in the sound); 細分 splits each beat into
 1, 1/2, 1/3, 1/4 or 1/6, or thins it to a line every 2 or 4 beats (BPM ÷2 / ÷4: 180 → 90,
-the BPM typed in stays as it is).
+the BPM typed in stays as it is). 拍號 sets how many beats make a bar (2/4 … 12/8, or 不分小節):
+the first beat of every bar, counted from the first beat, gets the long line and the other
+beats shorter ones, so bars can be told apart at a glance.
 The grid shows as lines down from the clip's top, coloured by where in the beat they fall
 (yellow beat, orange half, pink third, cyan quarter, violet sixth) and shorter and thinner
-the smaller the division (a beat line reaches about half way down the clip; lines too close
+the smaller the division (a bar's first beat reaches about half way down the clip; lines too close
 at the zoom are left out), and everything that snaps (clips, trims, keyframes, the playhead)
 lands on them. Switching it off keeps the numbers; 重置 deletes them (after asking) and
 switches it off.

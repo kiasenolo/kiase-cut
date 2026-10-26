@@ -841,7 +841,9 @@ def set_mask_enabled(proj, clip_id, on):
     return c
 
 
-BEAT_DEFAULT = {"on": False, "bpm": 120.0, "offset_us": 0, "div": 1}
+BEAT_DEFAULT = {"on": False, "bpm": 120.0, "offset_us": 0, "div": 1, "meter": 4}
+# meter (拍號): beats in a bar - the first beat of every bar gets a longer line; 0: no bars
+METERS = (0, 2, 3, 4, 5, 6, 7, 9, 12)
 # grid lines per beat: 0.25 / 0.5 a line every 4 / 2 beats (the BPM ÷4 / ÷2: 180 -> 90, the
 # BPM itself unchanged), 1 on every beat, 2 / 3 / 4 / 6 the beat split into halves ... sixths
 BEAT_DIVS = (0.25, 0.5, 1, 2, 3, 4, 6)
@@ -865,6 +867,11 @@ def set_beat(proj, clip_id, **fields):
             raise EditError(f"unknown beat field {k}")
         if k == "div" and v not in BEAT_DIVS:
             raise EditError(f"細分只能是 {BEAT_DIVS}")
+        if k == "meter":
+            if int(v) not in METERS:
+                raise EditError(f"拍號只能是 {METERS} 拍一小節")
+            beat[k] = int(v)
+            continue
         if k == "div":
             v = int(v) if v >= 1 else float(v)
         beat[k] = (bool(v) if k == "on" else v if k == "div" else int(round(v)) if k == "offset_us"
@@ -885,12 +892,13 @@ def beat_times(c, lo=None, hi=None):
     return [t for t, _ in beat_grid(c, lo, hi)]
 
 
-def beat_grid(c, lo=None, hi=None):
+def beat_grid(c, lo=None, hi=None, bars=False):
     """[(time us, d)] of a clip's grid lines: d is the line's place in the beat as the
     denominator of a reduced fraction - 1 on the beat, 2 on the half, 3 / 4 / 6 on thirds,
-    quarters, sixths (a grid of every 2 or 4 beats is all on beats). The grid belongs to the
-    sound: offset_us is the first beat's time in the source, so trimming or splitting the
-    clip keeps it on the music."""
+    quarters, sixths (a grid of every 2 or 4 beats is all on beats); with bars, 0 on the
+    first beat of a bar (every meter beats from beat 0). The grid belongs to the sound:
+    offset_us is the first beat's time in the source, so trimming or splitting the clip keeps
+    it on the music."""
     beat = c.get("beat")
     if not beat or not beat.get("on") or not beat.get("bpm"):
         return []
@@ -905,9 +913,15 @@ def beat_grid(c, lo=None, hi=None):
     if b < a:
         return []
     k0, k1 = math.ceil((a - zero) / period - 1e-9), math.floor((b - zero) / period + 1e-9)
+    meter = int(beat.get("meter", BEAT_DEFAULT["meter"]) or 0) if bars else 0
     if div < 1:
-        return [(zero + k * period, 1) for k in range(k0, k1 + 1)]
-    return [(zero + k * period, div // math.gcd(k % div, div)) for k in range(k0, k1 + 1)]
+        step = round(1 / div)                            # beats per line
+        return [(zero + k * period, 0 if meter and (k * step) % meter == 0 else 1) for k in range(k0, k1 + 1)]
+    out = []
+    for k in range(k0, k1 + 1):
+        d = div // math.gcd(k % div, div)
+        out.append((zero + k * period, 0 if meter and d == 1 and (k // div) % meter == 0 else d))
+    return out
 
 
 def set_mask_invert(proj, clip_id, invert, t=None):

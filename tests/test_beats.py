@@ -51,7 +51,7 @@ class BeatEdits(unittest.TestCase):
         edit.set_beat(p, "a1", on=True, bpm=95.5, offset_us=S)
         edit.set_beat(p, "a1", on=False)
         _, a = edit.find(p, "a1")
-        self.assertEqual(a["beat"], {"on": False, "bpm": 95.5, "offset_us": S, "div": 1})
+        self.assertEqual(a["beat"], {"on": False, "bpm": 95.5, "offset_us": S, "div": 1, "meter": 4})
         self.assertEqual(edit.beat_times(a), [])
         edit.set_beat(p, "a1", on=True)
         self.assertEqual(a["beat"]["bpm"], 95.5)
@@ -73,6 +73,23 @@ class BeatEdits(unittest.TestCase):
         self.assertEqual([d for _, d in edit.beat_grid(a, 10 * S, 11 * S)], [1, 3, 3, 1])
         with self.assertRaises(edit.EditError):
             edit.set_beat(p, "a1", div=5)
+
+    def test_bars(self):
+        """拍號: with bars, a bar's first beat is 0 (every meter beats from beat 0)."""
+        p = proj()
+        edit.set_beat(p, "a1", on=True, bpm=60, offset_us=2 * S, div=2)   # beat 0 at 10 s: bars at 10, 14, 18 s
+        _, a = edit.find(p, "a1")
+        self.assertEqual(a["beat"]["meter"], 4)
+        self.assertEqual([d for _, d in edit.beat_grid(a, 13 * S, 15 * S, bars=True)], [1, 2, 0, 2, 1])
+        self.assertEqual([d for _, d in edit.beat_grid(a, 13 * S, 15 * S)], [1, 2, 1, 2, 1])      # (snapping)
+        edit.set_beat(p, "a1", meter=3)                              # bars at 10, 13, 16 s
+        self.assertEqual([d for _, d in edit.beat_grid(a, 13 * S, 14 * S, bars=True)], [0, 2, 1])
+        edit.set_beat(p, "a1", meter=0)
+        self.assertNotIn(0, [d for _, d in edit.beat_grid(a, bars=True)])
+        edit.set_beat(p, "a1", div=0.5, meter=4)                     # a line every 2 beats: 10 (bar), 12, 14 (bar)
+        self.assertEqual([d for _, d in edit.beat_grid(a, 10 * S, 14 * S, bars=True)], [0, 1, 0])
+        with self.assertRaises(edit.EditError):
+            edit.set_beat(p, "a1", meter=8)
 
     def test_bpm_divided_in_the_list(self):
         p = proj()

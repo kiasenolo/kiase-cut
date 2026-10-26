@@ -176,9 +176,37 @@ class GroupPreviewTests(unittest.TestCase):
         QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, at(960, 540))      # between its clips
         for i in range(1, 6):
             QTest.mouseMove(pv, at(960 + 40 * i, 540))
+        l0, r0, _, _ = pv._live_box().extents()                             # its clips, not the canvas
+        self.assertGreater(r0 - l0, 0)
+        self.assertLess(r0 - l0, 1800)
         QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, at(1160, 540))
         self.assertEqual(moved[-1][0], g["id"])
         self.assertGreater(moved[-1][1]["x"], 0.1)
+
+    def test_dragged_group_box_keeps_to_its_clips(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.preview import Preview
+        QApplication.instance() or QApplication([])
+        p = scene()
+        for cid, x in (("c1", -0.3), ("c4", 0.3)):
+            edit.find(p, cid)[1]["transform"].update(scale=0.1, x=x)
+        g = edit.make_group(p, p, ["c1", "c4"])
+        pv = Preview()
+        pv.resize(960, 540)
+        at = lambda cx, cy: QPoint(round(pv._rect().x() + cx / 2), round(pv._rect().y() + cy / 2))
+        pv.set_scene(p, 1500_000, g["id"])
+        l0, r0, t0, b0 = pv._live_box().extents()
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, at(960, 540))
+        for i in range(1, 6):
+            QTest.mouseMove(pv, at(960 + 20 * i, 540 + 10 * i))
+        l1, r1, t1, b1 = pv._live_box().extents()                           # while dragging
+        self.assertAlmostEqual(r1 - l1, r0 - l0, delta=1)
+        self.assertAlmostEqual(b1 - t1, b0 - t0, delta=1)
+        self.assertGreater(l1, l0)
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, at(1060, 590))
 
 
 if __name__ == "__main__":

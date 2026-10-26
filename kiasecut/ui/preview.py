@@ -160,6 +160,10 @@ class Box:
         xs, ys = [p.x() for p in pts], [p.y() for p in pts]
         return min(xs), max(xs), min(ys), max(ys)
 
+    def moved(self, c):
+        """This box for c: its clip with the values being dragged."""
+        return Box(c, self.W, self.H, self.t)
+
     def rot_handle(self, k):
         """Canvas point of the rotation handle (above the top edge; k = canvas px per screen px)."""
         up = QPointF(math.sin(self.rot), -math.cos(self.rot))
@@ -189,6 +193,10 @@ class GroupBox(Box):
         pts = [self.gxf.map(q) for b in kids for q in b.corners()] or [QPointF(self.cx, self.cy)]
         xs, ys = [q.x() for q in pts], [q.y() for q in pts]
         self._box = (min(xs), max(xs), min(ys), max(ys))
+
+    def moved(self, c):
+        """(Its clips stay where they are in it: only the group's own transform changes.)"""
+        return GroupBox(c, self.W, self.H, self.t, self.kids)
 
     def corners(self, dx=0.0, dy=0.0):
         l, r, t, b = self._box
@@ -492,7 +500,7 @@ class Preview(QWidget):
         for b in self.visible_boxes():
             if b.clip["id"] in self.selected_ids:
                 if b.clip["id"] in moves:
-                    b = Box(dict(b.clip, transform=dict(b.clip["transform"], **moves[b.clip["id"]])), self.W, self.H, b.t)
+                    b = b.moved(dict(b.clip, transform=dict(b.clip["transform"], **moves[b.clip["id"]])))
                 out.append(b)
         return out
 
@@ -506,7 +514,7 @@ class Preview(QWidget):
         for g, v in (vals.items() if group == "multi" else [(group, vals)]):
             holder = c if g == "clip" else edit.holder(c, g) if g.startswith("fxmask:") else c.setdefault(g, {})
             holder.update(edit.with_linked_scale(holder, v, box.t) if g == "transform" else v)
-        return Box(c, self.W, self.H, box.t)
+        return box.moved(c)
 
     def masking(self, box):
         if not self.mask_mode or box is None or not self.mask_of(box.clip):

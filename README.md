@@ -153,12 +153,19 @@ gets a PNG drawn at the clip's largest size).
 
 Built-in assets (內建素材 tab): solid colours, gradients (presets, plus horizontal /
 vertical / diagonal / radial ones, a subtitle backing and a vignette) and basic shapes
-(rectangle, circle, triangle, star, heart, arrow, ring, frames, line…). The two colours at
-the top of the tab paint the shapes and the 自訂 ones (alpha works too). Drag one onto the
+(rectangle, circle, triangle, star, heart, arrow, parallelogram, arc, ring, frames, line…).
+The two colours at the top of the tab paint the 自訂 ones and the shapes (the first fills
+them, the second outlines them; alpha works too). Drag one onto the
 timeline or double-click it (Alt + drop on a picture clip replaces its source). The clip
 keeps its parameters: select it and the inspector's 素材參數 sets its size in canvas pixels
 (寬 / 高), its colours and what its kind has: gradient type and angle, corner radius,
-polygon sides, star points and inner radius, filled or outline and outline width. Every
+polygon sides, star points and inner radius, a parallelogram's 斜度. A shape has a fill
+(填充) and an outline (外框) that can each be switched on, together or alone; the outline has
+its own colour, a width down to 0, a 外框位置 (inside the edge, centred on it or outside it -
+outside reaches past the frame) and a 轉角 (直角 miter, 圓角 round, 倒角 bevel). An ellipse is
+also an arc, as in Lunacy: 開始 ° (clockwise from 3 o'clock), 弧掃 % of a full turn and 比例 %
+(a hole of that share of the radius: a ring, or a slice of one). Shapes of older projects keep
+their look (their filled / outline choice becomes these switches). Every
 one of them has a ◆ and keyframes like position or scale: sizes, angles and colours blend
 between keyframes (sides and points step), choices hold until the next one; the numbers
 also show in the curve editor. Unlike other pictures it is not fitted to the canvas but

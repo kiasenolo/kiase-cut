@@ -355,6 +355,10 @@ def normalize(p):
         if comp.get("static") and still:
             from .edit import freeze_at
             freeze_at(comp["tracks"], still)
+    from . import assets
+    for c in all_clips(p):                                 # built-in assets of older versions
+        if c.get("asset") and "outline" in c["asset"]:
+            c["asset"] = assets.normalize(c["asset"])
     p["version"] = VERSION
     return link(p)
 

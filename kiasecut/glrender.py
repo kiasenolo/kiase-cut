@@ -426,8 +426,11 @@ class GLRenderer(render.Renderer):
             m = c["media"]
             bw, bh = project.picture_size(c, W, H, t=t)
             tw, th = bw * abs(sx) * ppu, bh * abs(sy) * ppu
+            rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             if c.get("asset"):                       # drawn from its parameters at t
-                tex, straight = gl.picture(self.asset(assets.at(c["asset"], t), tw, th), mipmap=True)
+                q = assets.at(c["asset"], t)
+                tex, straight = gl.picture(self.asset(q, tw, th), mipmap=True)
+                rect = render.asset_rect(q, bw, bh)
             elif kind == "image":
                 tex, straight = gl.picture(self.image(m["path"], tw, th), mipmap=True)
             else:
@@ -436,7 +439,6 @@ class GLRenderer(render.Renderer):
                 if pic is None:
                     return
                 tex, straight = gl.frame_texture(pic)
-            rect = QRectF(-bw / 2, -bh / 2, bw, bh)
         elif kind == "compound":
             comp = c["compound"]
             cw, ch = comp["width"], comp["height"]

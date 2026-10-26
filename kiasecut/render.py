@@ -66,7 +66,8 @@ class Renderer:
         im = self.images.get(key)
         if im is None:
             k = side / max(p["w"], p["h"], 1)
-            im = svgimage.raster_text(text, p["w"] * k, p["h"] * k)
+            pad = 2 * assets.overflow(p)                 # (an outline reaching out of its frame)
+            im = svgimage.raster_text(text, (p["w"] + pad) * k, (p["h"] + pad) * k)
             if len(self.images) >= 48:
                 self.images.pop(next(iter(self.images)))
             self.images[key] = im
@@ -289,8 +290,11 @@ class Renderer:
             m = c["media"]
             bw, bh = project.picture_size(c, W, H, t=t)
             tw, th = bw * abs(sx) * px_per_unit, bh * abs(sy) * px_per_unit
+            rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             if c.get("asset"):                       # drawn from its parameters at t
-                pic = self.asset(assets.at(c["asset"], t), tw, th)
+                q = assets.at(c["asset"], t)
+                pic = self.asset(q, tw, th)
+                rect = asset_rect(q, bw, bh)
             elif kind == "image":
                 pic = self.image(m["path"], tw, th)
             else:
@@ -298,7 +302,7 @@ class Renderer:
                                        max(1, round(tw)), max(1, round(th))) if self.video_frame else None
                 if pic is None:
                     return
-            draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
+            draw = lambda q=p: q.drawImage(rect, pic)
             disp = (bw, bh)
         elif kind == "compound":
             comp = c["compound"]
@@ -540,6 +544,14 @@ def array_to_image(arr):
     h, w = arr.shape[:2]
     im = QImage(np.ascontiguousarray(arr).data, w, h, w * 4, QImage.Format_RGBA8888_Premultiplied).copy()
     return im.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+
+
+def asset_rect(q, bw, bh):
+    """Where a built-in asset's picture (parameters q, as assets.at gives them) goes for a
+    bw x bh frame centred on the origin: larger by the outline that reaches out of it."""
+    pad = assets.overflow(q)
+    kx, ky = bw / max(q["w"], 1e-9), bh / max(q["h"], 1e-9)
+    return QRectF(-bw / 2 - pad * kx, -bh / 2 - pad * ky, bw + 2 * pad * kx, bh + 2 * pad * ky)
 
 
 def quantize(scale):

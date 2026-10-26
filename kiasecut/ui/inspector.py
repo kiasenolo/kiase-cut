@@ -516,13 +516,23 @@ class Inspector(QWidget):
             lay.addWidget(self._spin(("asset", f), *info[2:6]), 1)
             lay.addWidget(self._key_button("asset", f))
         form.addRow("大小 px", row)
-        for f in ("color",) + assets.FIELDS[family]:
+        fields = ("color",) + assets.FIELDS[family]
+        if "fill" in fields:                              # the shape's own, then fill, then outline
+            own = tuple(f for f in fields if f not in assets.STROKE and f != "color")
+            fields = own + ("fill", "color") + tuple(f for f in assets.STROKE if f != "fill")
+        for f in fields:
             info = assets.FIELD_INFO[f]
-            if info[1] == "color":
+            if info[1] == "toggle":
+                box = QCheckBox(info[0])
+                box.clicked.connect(lambda on, f=f: self._emit_now(self.paramEdited, "asset", f, bool(on)))
+                self.widgets[("asset", f)] = box
+                form.addRow("", self._with_key(box, "asset", f))
+            elif info[1] == "color":
+                label = "填充顏色" if f == "color" and "fill" in fields else info[0]
                 b = QPushButton()
                 b.clicked.connect(lambda _=False, f=f: self._pick_asset_color(f))
                 self.widgets[("asset", f)] = b
-                form.addRow(info[0], self._with_key(b, "asset", f))
+                form.addRow(label, self._with_key(b, "asset", f))
             elif info[1] == "choice":
                 box = ComboBox()
                 box.setPlaceholderText("--")
@@ -550,7 +560,12 @@ class Inspector(QWidget):
                 if edit.key_at(p, t) is not None:
                     easings.add(edit.easing_at(p, t))
             v = vals[0] if len(set(map(str, vals))) == 1 else None
-            if kind == "color":
+            if kind == "toggle":
+                wid.blockSignals(True)
+                wid.setTristate(v is None)
+                wid.setCheckState(Qt.PartiallyChecked if v is None else Qt.Checked if v else Qt.Unchecked)
+                wid.blockSignals(False)
+            elif kind == "color":
                 if v is None:
                     wid.setText("--")
                     wid.setStyleSheet("")

@@ -35,9 +35,10 @@ def _blend_or_mask_keys(c):
 def needs_renderer(proj):
     """Whether the project needs this export rather than MLT's: a clip has an effect, is a
     filter clip or a static clip, has a blend mode, a keyframed mask shape / invert or a
-    compound mask, or is a built-in asset with keyframes."""
+    compound mask, or is a built-in asset with keyframes or an outline reaching out of its frame."""
     return any(c["type"] == "filter" or c.get("effects") or project.is_static(c) or _blend_or_mask_keys(c)
-               or assets.animated(c.get("asset")) for c in project.all_clips(proj))
+               or assets.animated(c.get("asset")) or (c.get("asset") and assets.overflow(assets.at(c["asset"], 0)))
+               for c in project.all_clips(proj))
 
 
 def uses_mlt(spec):

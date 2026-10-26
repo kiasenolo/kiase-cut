@@ -3,11 +3,22 @@
 A clip made from one is a picture clip that also holds its parameters:
 
 clip["asset"] = {key, family, w, h, color, ...}   key: the preset it came from; family: what
-                is drawn (solid, gradient, rect, ellipse, polygon, star, heart, arrow, line);
-                w, h: its size in canvas pixels; the rest depends on the family (FIELDS).
+                is drawn (solid, gradient, rect, ellipse, polygon, star, heart, arrow,
+                parallelogram, line); w, h: its size in canvas pixels; the rest depends on the
+                family (FIELDS).
                 Every field is a parameter like a clip's position: a value or a curve dict
                 with keyframes (curves.py). Colours are [r, g, b, a] (0 - 1), so their
-                keyframes blend; choices (gtype, outline) hold until the next keyframe.
+                keyframes blend; choices and switches (gtype, fill, stroke_align...) hold until
+                the next keyframe.
+
+Shapes have a fill (fill: on / off, in color) and an outline (stroke_on, in stroke_color,
+stroke px wide - 0 draws none) that can be on together. stroke_align puts the outline inside
+the shape's edge, on it or outside it; join shapes its corners (miter, round, bevel). An
+ellipse can be an arc (arc_start °, clockwise from 3 o'clock; arc_sweep % of the full turn)
+with a hole (ratio: the inner radius, % of the outer), as in Lunacy; a parallelogram leans
+by skew °. An outline outside or on the edge reaches past the w x h frame (overflow()): the
+SVG is drawn that much larger, around the same centre. Older projects had outline (filled or
+outline only): normalize() turns it into fill / stroke_on.
 
 Unlike other pictures, which are fitted into the canvas, an asset clip is drawn at its own
 size (project.picture_size), so 寬 / 高 are canvas pixels and corners or outlines keep their
@@ -43,23 +54,32 @@ FIELD_INFO = {
     "sides": ("邊數", "number", 3, 24, 1, 0),
     "points": ("角數", "number", 3, 24, 1, 0),
     "inner": ("內徑 %", "number", 5, 95, 1, 0),
-    "outline": ("樣式", "choice", (("填滿", False), ("外框", True))),
-    "stroke": ("邊框粗細", "number", 1, 2000, 1, 0),
+    "arc_start": ("開始 °", "number", -360, 360, 1, 0),
+    "arc_sweep": ("弧掃 %", "number", 0, 100, 1, 1),
+    "ratio": ("比例 %", "number", 0, 99, 1, 1),
+    "skew": ("斜度 °", "number", -80, 80, 1, 0),
+    "fill": ("填充", "toggle"),
+    "stroke_on": ("外框", "toggle"),
+    "stroke_color": ("外框顏色", "color"),
+    "stroke": ("外框粗細", "number", 0, 2000, 1, 0),
+    "stroke_align": ("外框位置", "choice", (("內側", "inside"), ("居中", "center"), ("外側", "outside"))),
+    "join": ("轉角", "choice", (("直角", "miter"), ("圓角", "round"), ("倒角", "bevel"))),
 }
-_OUTLINE = ("outline", "stroke")
+STROKE = ("fill", "stroke_on", "stroke_color", "stroke", "stroke_align", "join")
 FIELDS = {                                 # what each family has besides w, h and color
     "solid": (),
     "gradient": ("color2", "gtype", "angle"),
-    "rect": ("radius",) + _OUTLINE,
-    "ellipse": _OUTLINE,
-    "polygon": ("sides",) + _OUTLINE,
-    "star": ("points", "inner") + _OUTLINE,
-    "heart": _OUTLINE,
-    "arrow": _OUTLINE,
+    "rect": ("radius",) + STROKE,
+    "ellipse": ("arc_start", "arc_sweep", "ratio") + STROKE,
+    "polygon": ("sides",) + STROKE,
+    "star": ("points", "inner") + STROKE,
+    "heart": STROKE,
+    "arrow": STROKE,
+    "parallelogram": ("skew",) + STROKE,
     "line": (),
 }
 NAMES = {"solid": "純色", "gradient": "漸變", "rect": "矩形", "ellipse": "橢圓", "polygon": "多邊形",
-         "star": "星形", "heart": "心形", "arrow": "箭頭", "line": "線條"}
+         "star": "星形", "heart": "心形", "arrow": "箭頭", "parallelogram": "平行四邊形", "line": "線條"}
 
 
 class Asset:
@@ -95,9 +115,11 @@ _SHAPES = [("rect", "矩形", "rect", {}), ("roundrect", "圓角矩形", "rect",
            ("diamond", "菱形", "polygon", {"sides": 4}), ("pentagon", "五邊形", "polygon", {"sides": 5}),
            ("hexagon", "六邊形", "polygon", {"sides": 6}), ("star", "星形", "star", {"points": 5, "inner": 40}),
            ("heart", "心形", "heart", {}), ("arrow", "箭頭", "arrow", {"w": 480, "h": 300}),
-           ("ring", "圓環", "ellipse", {"outline": True, "stroke": 64}),
-           ("rectframe", "外框矩形", "rect", {"outline": True, "stroke": 24}),
-           ("circleframe", "外框圓形", "ellipse", {"outline": True, "stroke": 24}),
+           ("parallelogram", "平行四邊形", "parallelogram", {"w": 480, "h": 300, "skew": 20}),
+           ("arc", "扇形", "ellipse", {"arc_start": -90, "arc_sweep": 75}),
+           ("ring", "圓環", "ellipse", {"ratio": 68}),
+           ("rectframe", "外框矩形", "rect", {"fill": False, "stroke_on": True, "stroke": 24}),
+           ("circleframe", "外框圓形", "ellipse", {"fill": False, "stroke_on": True, "stroke": 24}),
            ("line", "線條", "line", {"w": 800, "h": 16})]
 
 ASSETS = ([Asset(f"solid.{i}", "solid", name, "solid", (c, c)) for i, (name, c) in enumerate(_SOLIDS)]
@@ -171,7 +193,9 @@ def clean(f, v):
     a number in range (sides and points are rounded when drawn)."""
     info = FIELD_INFO[f]
     if info[1] == "color":
-        return to_rgba(v, (0.0, 0.0, 0.0, 1.0) if f == "color2" else (1.0, 1.0, 1.0, 1.0))
+        return to_rgba(v, (0.0, 0.0, 0.0, 1.0) if f in ("color2", "stroke_color") else (1.0, 1.0, 1.0, 1.0))
+    if info[1] == "toggle":
+        return bool(_DEFAULTS.get(f) if v is None else v)
     if info[1] == "choice":
         vals = [x for _n, x in info[2]]
         return v if v in vals else vals[0]
@@ -189,9 +213,10 @@ def make(a, c1, c2, canvas_w, canvas_h):
     p = {"key": a.key, "family": a.family, "color": clean_color(c1)}
     if a.family == "gradient":
         p.update(color2=clean_color(c2, "#000000"), gtype="linear", angle=0)
+    if "stroke_color" in FIELDS[a.family]:                 # the tab's second colour outlines
+        p["stroke_color"] = clean_color(c2, "#000000")
     for f in FIELDS[a.family]:
-        p.setdefault(f, {"outline": False, "stroke": 24, "radius": 0, "sides": 6, "points": 5,
-                         "inner": 40}.get(f))
+        p.setdefault(f, _DEFAULTS.get(f))
     k = canvas_h / 1080
     if a.cat == "shape":
         p.update(w=S, h=S)
@@ -206,9 +231,22 @@ def make(a, c1, c2, canvas_w, canvas_h):
     return normalize(p)
 
 
+def _migrate(p):
+    """Parameters of an older project (outline: filled or outline only) as fill / stroke_on;
+    others as they are."""
+    if "outline" not in p or "fill" in p:
+        return p
+    p = dict(p)
+    o = p.pop("outline")
+    o = bool(o["keys"][0][1]) if curves.is_animated(o) else bool(o)
+    p.update(fill=not o, stroke_on=o, stroke_color=p.get("color"), stroke_align="inside", join="round")
+    return p
+
+
 def normalize(p):
     """Parameters made valid (clean() for every value and keyframe); fields the family does
     not have are dropped, missing ones get a default."""
+    p = _migrate(p)
     fam = p.get("family") if p.get("family") in FIELDS else "rect"
     out = {"key": str(p.get("key") or fam), "family": fam}
     for f in fields_of(fam):
@@ -220,13 +258,16 @@ def normalize(p):
     return out
 
 
-_DEFAULTS = {"outline": False, "stroke": 24, "radius": 0, "sides": 6, "points": 5, "inner": 40, "angle": 0,
+_DEFAULTS = {"fill": True, "stroke_on": False, "stroke": 8, "stroke_align": "inside", "join": "miter",
+             "stroke_color": "#000000", "radius": 0, "sides": 6, "points": 5, "inner": 40, "angle": 0,
+             "arc_start": 0, "arc_sweep": 100, "ratio": 0, "skew": 20,
              "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX}
 
 
 def at(p, t):
     """The parameters at clip time t, ready to draw: plain values, colours as #rrggbb[aa],
     sides and points whole."""
+    p = _migrate(p)
     fam = p.get("family") if p.get("family") in FIELDS else "rect"
     out = {"key": p.get("key"), "family": fam}
     for f in fields_of(fam):
@@ -262,11 +303,8 @@ def _alpha(c):
     return c[:7], (int(c[7:], 16) / 255 if len(c) == 9 else 1.0)
 
 
-def _paint(c, outline, stroke):
+def _fill(c):
     rgb, op = _alpha(c)
-    if outline:
-        return (f'fill="none" stroke="{rgb}" stroke-width="{stroke:g}" stroke-linejoin="round"'
-                + (f' stroke-opacity="{op:.3f}"' if op < 1 else ""))
     return f'fill="{rgb}"' + (f' fill-opacity="{op:.3f}"' if op < 1 else "")
 
 
@@ -275,8 +313,10 @@ def _stop(offset, c):
     return f'<stop offset="{offset}" stop-color="{rgb}" stop-opacity="{op:.3f}"/>'
 
 
-def _svg(w, h, body, defs=""):
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">\n'
+def _svg(w, h, body, defs="", pad=0.0):
+    """An SVG document of a w x h asset; pad: room around it for an outline reaching out."""
+    vb = f"{-pad:g} {-pad:g} {w + 2 * pad:g} {h + 2 * pad:g}" if pad else f"0 0 {w} {h}"
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w + 2 * pad:g}" height="{h + 2 * pad:g}" viewBox="{vb}">\n'
             + (f"<defs>{defs}</defs>\n" if defs else "") + body + "\n</svg>\n")
 
 
@@ -315,36 +355,125 @@ _HEART = [(0.5, 0.92), (0.12, 0.66), (0.0, 0.47), (0.0, 0.29), (0.0, 0.13), (0.1
 _ARROW = [(0, 0.35), (0.6, 0.35), (0.6, 0.12), (1, 0.5), (0.6, 0.88), (0.6, 0.65), (0, 0.65)]
 
 
-def _shape(p, w, h):
-    fam, c = p["family"], p["color"]
-    outline = p.get("outline", False)
-    s = min(p.get("stroke", 0), w / 2, h / 2) if outline else 0
-    paint = _paint(c, outline, s)
-    x0, y0, bw, bh = s / 2, s / 2, w - s, h - s           # an outline stays inside the box
-    pts = lambda q: " ".join(f"{x:.1f},{y:.1f}" for x, y in q)
+MITER_LIMIT = 4
+
+
+def stroked(p):
+    """Whether parameters p (as at() gives them) draw an outline."""
+    return bool(p.get("stroke_on")) and p.get("stroke", 0) > 0
+
+
+def overflow(p):
+    """How far (asset px) the outline of p (as at() gives it) reaches past its w x h frame:
+    all of it outside, half of it on the edge; sharp corners with miter joins reach further."""
+    if not stroked(p) or p.get("stroke_align") == "inside":
+        return 0.0
+    s = p["stroke"] * (1.0 if p["stroke_align"] == "outside" else 0.5)
+    return s * (MITER_LIMIT if p.get("join") == "miter" else 1.0)
+
+
+def _num(x):
+    return f"{x:.2f}".rstrip("0").rstrip(".")
+
+
+def _poly(q):
+    return "M" + " L".join(f"{_num(x)} {_num(y)}" for x, y in q) + " Z"
+
+
+def _rect_d(w, h, r):
+    r = min(r, w / 2, h / 2)
+    if r <= 0:
+        return _poly([(0, 0), (w, 0), (w, h), (0, h)])
+    k = r * (1 - 0.5522847498)
+    n = _num
+    return (f"M{n(r)} 0 L{n(w - r)} 0 C{n(w - k)} 0 {n(w)} {n(k)} {n(w)} {n(r)} L{n(w)} {n(h - r)} "
+            f"C{n(w)} {n(h - k)} {n(w - k)} {n(h)} {n(w - r)} {n(h)} L{n(r)} {n(h)} C{n(k)} {n(h)} 0 {n(h - k)} 0 {n(h - r)} "
+            f"L0 {n(r)} C0 {n(k)} {n(k)} 0 {n(r)} 0 Z")
+
+
+def _ellipse_d(w, h, start, sweep, ratio):
+    """An ellipse filling w x h; as Lunacy's: an arc from start ° (clockwise from 3 o'clock)
+    over sweep % of a turn, with a hole of ratio % of the radius."""
+    cx, cy, rx, ry = w / 2, h / 2, w / 2, h / 2
+    sweep = min(max(sweep, 0.0), 100.0) / 100 * 360
+    k = min(max(ratio, 0.0), 99.0) / 100
+    n = _num
+    pt = lambda a, s=1.0: (cx + rx * s * math.cos(math.radians(a)), cy + ry * s * math.sin(math.radians(a)))
+    if sweep <= 0:
+        return ""
+    if sweep >= 359.99:
+        def loop(s, cw):
+            (x0, y0), (x1, y1) = pt(start, s), pt(start + 180, s)
+            f = 1 if cw else 0
+            return (f"M{n(x0)} {n(y0)} A{n(rx * s)} {n(ry * s)} 0 1 {f} {n(x1)} {n(y1)} "
+                    f"A{n(rx * s)} {n(ry * s)} 0 1 {f} {n(x0)} {n(y0)} Z")
+        return loop(1.0, True) + (" " + loop(k, False) if k > 0 else "")
+    big = 1 if sweep > 180 else 0
+    (x0, y0), (x1, y1) = pt(start), pt(start + sweep)
+    d = f"M{n(x0)} {n(y0)} A{n(rx)} {n(ry)} 0 {big} 1 {n(x1)} {n(y1)} "
+    if k > 0:
+        (x2, y2), (x3, y3) = pt(start + sweep, k), pt(start, k)
+        d += f"L{n(x2)} {n(y2)} A{n(rx * k)} {n(ry * k)} 0 {big} 0 {n(x3)} {n(y3)} Z"
+    else:
+        d += f"L{n(cx)} {n(cy)} Z"
+    return d
+
+
+def _parallelogram(w, h, skew):
+    off = max(-w, min(w, h * math.tan(math.radians(min(max(skew, -89.0), 89.0)))))
+    if off >= 0:
+        return [(off, 0), (w, 0), (w - off, h), (0, h)]
+    return [(0, 0), (w + off, 0), (w, h), (-off, h)]
+
+
+def outline_d(p, w, h):
+    """The path (SVG d, in a w x h box) of a shape family."""
+    fam = p["family"]
     if fam in ("rect", "line"):
-        r = min(p.get("radius", 0), bw / 2, bh / 2)
-        body = f'<rect x="{x0:g}" y="{y0:g}" width="{bw:g}" height="{bh:g}"' + (f' rx="{r:g}"' if r else "") + f" {paint}/>"
-    elif fam == "ellipse":
-        body = f'<ellipse cx="{w / 2:g}" cy="{h / 2:g}" rx="{bw / 2:g}" ry="{bh / 2:g}" {paint}/>'
-    elif fam in ("polygon", "star"):
+        return _rect_d(w, h, p.get("radius", 0))
+    if fam == "ellipse":
+        return _ellipse_d(w, h, p.get("arc_start", 0), p.get("arc_sweep", 100), p.get("ratio", 0))
+    if fam in ("polygon", "star"):
         unit = _star_points(p["points"], p["inner"] / 100) if fam == "star" else _star_points(p["sides"], None)
-        body = f'<polygon points="{pts(_fit(unit, x0, y0, bw, bh))}" {paint}/>'
-    elif fam == "arrow":
-        body = f'<polygon points="{pts([(x0 + x * bw, y0 + y * bh) for x, y in _ARROW])}" {paint}/>'
-    else:                                  # heart: cubic segments through _HEART
-        q = [(x0 + x * bw, y0 + (y - 0.04) / 0.88 * bh) for x, y in _HEART]
-        d = f"M{q[0][0]:.1f} {q[0][1]:.1f} " + " ".join(
-            "C " + " ".join(f"{x:.1f} {y:.1f}" for x, y in q[i:i + 3]) for i in range(1, len(q), 3)) + " Z"
-        body = f'<path d="{d}" {paint}/>'
-    return _svg(w, h, body)
+        return _poly(_fit(unit, 0, 0, w, h))
+    if fam == "arrow":
+        return _poly([(x * w, y * h) for x, y in _ARROW])
+    if fam == "parallelogram":
+        return _poly(_parallelogram(w, h, p.get("skew", 0)))
+    q = [(x * w, (y - 0.04) / 0.88 * h) for x, y in _HEART]       # heart: cubic segments through _HEART
+    return (f"M{q[0][0]:.1f} {q[0][1]:.1f} " + " ".join(
+        "C " + " ".join(f"{x:.1f} {y:.1f}" for x, y in q[i:i + 3]) for i in range(1, len(q), 3)) + " Z")
+
+
+def _shape(p, w, h):
+    d = outline_d(p, w, h)
+    pad = overflow(p)
+    body, defs = [], ""
+    if p.get("fill", True) and d:
+        body.append(f'<path d="{d}" fill-rule="evenodd" {_fill(p["color"])}/>')
+    if stroked(p) and d:
+        rgb, op = _alpha(p.get("stroke_color", "#000000"))
+        align, s = p.get("stroke_align", "inside"), p["stroke"]
+        line = (f'fill="none" stroke="{rgb}" stroke-linejoin="{p.get("join", "miter")}" '
+                f'stroke-miterlimit="{MITER_LIMIT}"' + (f' stroke-opacity="{op:.3f}"' if op < 1 else ""))
+        if align == "center":
+            body.append(f'<path d="{d}" {line} stroke-width="{s:g}"/>')
+        else:                              # twice as wide, half of it masked off by the shape
+            big = f'x="{-pad - s:g}" y="{-pad - s:g}" width="{w + 2 * (pad + s):g}" height="{h + 2 * (pad + s):g}"'
+            if align == "inside":
+                defs = f'<mask id="s" maskUnits="userSpaceOnUse" {big}><path d="{d}" fill-rule="evenodd" fill="#fff"/></mask>'
+            else:
+                defs = (f'<mask id="s" maskUnits="userSpaceOnUse" {big}><rect {big} fill="#fff"/>'
+                        f'<path d="{d}" fill-rule="evenodd" fill="#000"/></mask>')
+            body.append(f'<path d="{d}" {line} stroke-width="{2 * s:g}" mask="url(#s)"/>')
+    return _svg(w, h, "\n".join(body), defs, pad)
 
 
 def svg(p):
     """The SVG text of asset parameters p as at() gives them."""
     w, h = p["w"], p["h"]
     if p["family"] == "solid":
-        return _svg(w, h, f'<rect width="{w}" height="{h}" {_paint(p["color"], False, 0)}/>')
+        return _svg(w, h, f'<rect width="{w}" height="{h}" {_fill(p["color"])}/>')
     if p["family"] == "gradient":
         return _gradient(p, w, h)
     return _shape(p, w, h)

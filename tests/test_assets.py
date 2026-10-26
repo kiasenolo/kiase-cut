@@ -47,10 +47,11 @@ class AssetTests(unittest.TestCase):
             img = svgimage.raster(path, 64)
             self.assertGreater(sum(img.pixelColor(x, y).alpha() for x in range(0, 64, 4)
                                    for y in range(0, img.height(), 2)), 0, a.key)
-            for out in (True, False):                     # outlines too
-                if "outline" in p:
-                    q = changed(p, outline=out, stroke=30, w=300, h=120)
-                    self.assertTrue(svgimage.size(assets.store(self.dir, q)) == (300, 120), a.key)
+            for fill, align in ((True, "inside"), (False, "inside"), (True, "outside")):     # outlines too
+                if "fill" in p:
+                    q = changed(p, fill=fill, stroke_on=True, stroke=30, stroke_align=align, join="round", w=300, h=120)
+                    pad = 30 if align == "outside" else 0      # (an outline outside makes the picture larger)
+                    self.assertEqual(svgimage.size(assets.store(self.dir, q)), (300 + 2 * pad, 120 + 2 * pad), a.key)
 
     def test_colours_and_parameters(self):
         p = assets.make(assets.get("solid.custom"), "#ff0000", "#000000", 16, 9)
@@ -63,10 +64,10 @@ class AssetTests(unittest.TestCase):
         flipped = changed(g, angle=180)
         self.assertGreater(pixel(assets.store(self.dir, flipped), 2, 5, 100).red(), 225)
         ring = changed(assets.make(assets.get("shape.circle"), "#ffffff", "", 1920, 1080),
-                       w=100, h=100, outline=True, stroke=10)
+                       w=100, h=100, fill=False, stroke_on=True, stroke=10)
         self.assertEqual(pixel(assets.store(self.dir, ring), 50, 50, 100).alpha(), 0)    # hollow
         self.assertEqual(pixel(assets.store(self.dir, ring), 50, 3, 100).alpha(), 255)
-        disc = changed(ring, outline=False)
+        disc = changed(ring, fill=True, stroke_on=False)
         self.assertEqual(pixel(assets.store(self.dir, disc), 50, 50, 100).alpha(), 255)
 
     def test_normalize(self):
@@ -77,6 +78,49 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(assets.at(p, 0)["color"], "#ffffff")
         self.assertEqual(assets.to_rgba("#ff000080")[3], 128 / 255)
         self.assertEqual(assets.hex_of([1, 0, 0, 0.5]), "#ff000080")
+
+    def test_fill_and_outline(self):
+        """Fill and outline together, the outline inside / on / outside the edge, none at 0 px."""
+        base = changed(assets.make(assets.get("shape.rect"), "#ff0000", "#0000ff", 1080, 1080), w=100, h=100,
+                       stroke_on=True, stroke=10)
+
+        def at(p, x, y):                                 # (x, y) in the frame's own px
+            q = assets.at(p, 0)
+            pad = assets.overflow(q)
+            img = svgimage.raster_text(assets.svg(q), q["w"] + 2 * pad, q["h"] + 2 * pad)
+            return img.pixelColor(round(x + pad), round(y + pad))
+        for align, inside, outside in (("inside", "#0000ff", None), ("center", "#0000ff", "#0000ff"),
+                                       ("outside", "#ff0000", "#0000ff")):
+            p = changed(base, stroke_align=align)
+            self.assertEqual(at(p, 50, 50).name(), "#ff0000", align)      # the fill
+            self.assertEqual(at(p, 2, 50).name(), inside, align)
+            if outside:
+                self.assertEqual(at(p, -3, 50).name(), outside, align)
+        self.assertEqual(assets.overflow(assets.at(changed(base, stroke_align="outside", join="miter"), 0)),
+                         10 * assets.MITER_LIMIT)
+        none = changed(base, fill=False, stroke=0)
+        self.assertEqual(at(none, 2, 50).alpha(), 0)
+
+    def test_arc_ring_and_parallelogram(self):
+        e = changed(assets.make(assets.get("shape.circle"), "#ffffff", "", 1080, 1080), w=100, h=100)
+        ring = changed(e, ratio=50)
+        self.assertEqual(pixel(assets.store(self.dir, ring), 50, 50, 100).alpha(), 0)
+        self.assertEqual(pixel(assets.store(self.dir, ring), 50, 10, 100).alpha(), 255)
+        quarter = changed(e, arc_start=0, arc_sweep=25)          # 3 to 6 o'clock
+        self.assertEqual(pixel(assets.store(self.dir, quarter), 70, 70, 100).alpha(), 255)
+        self.assertEqual(pixel(assets.store(self.dir, quarter), 30, 30, 100).alpha(), 0)
+        para = changed(assets.make(assets.get("shape.parallelogram"), "#ffffff", "", 1080, 1080),
+                       w=200, h=100, skew=30)
+        self.assertEqual(pixel(assets.store(self.dir, para), 3, 3, 200).alpha(), 0)
+        self.assertEqual(pixel(assets.store(self.dir, para), 3, 97, 200).alpha(), 255)
+
+    def test_older_outlines(self):
+        old = {"key": "shape.ring", "family": "ellipse", "w": 100, "h": 100, "color": "#00ff00",
+               "outline": True, "stroke": 10}
+        p = assets.normalize(old)
+        self.assertEqual((p["fill"], p["stroke_on"], p["stroke_color"]), (False, True, [0.0, 1.0, 0.0, 1.0]))
+        self.assertNotIn("outline", p)
+        self.assertEqual(pixel(assets.store(self.dir, p), 50, 50, 100).alpha(), 0)
 
     def test_store_reuses(self):
         p = assets.make(assets.get("shape.circle"), "#ffffff", "#000000", 1920, 1080)
@@ -143,6 +187,20 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(c["asset"]["color"], [1.0, 0.0, 0.0, 1.0])
         right = edit.split(p, "c1", S // 2)                                # keys follow a split
         self.assertEqual(project.picture_size(right, 1920, 1080), (600, 400))
+
+    def test_outline_outside_is_drawn(self):
+        """An outline outside the edge shows past the shape's frame; it goes to the own renderer."""
+        from kiasecut import render, renderexport
+        p = proj()
+        p["tracks"][0]["clips"] = p["tracks"][0]["clips"][:1]
+        params = changed(assets.make(assets.get("shape.rect"), "#ff0000", "#0000ff", 1920, 1080),
+                         w=400, h=400, stroke_on=True, stroke=40, stroke_align="outside", join="round")
+        edit.replace_media(p, "c1", assets.item(params, "/nowhere.svg"), params)
+        self.assertTrue(renderexport.needs_renderer(p))
+        img = render.Renderer().render(p, 0, 1920, 1080)
+        self.assertEqual(img.pixelColor(960, 540).name(), "#ff0000")              # the fill
+        self.assertEqual(img.pixelColor(960 - 200 - 20, 540).name(), "#0000ff")   # 20 px outside the frame
+        self.assertEqual(img.pixelColor(960 - 200 - 60, 540).name(), "#000000")   # past the outline
 
     def test_drawn_from_parameters(self):
         from kiasecut import render

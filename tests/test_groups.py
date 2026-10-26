@@ -156,6 +156,29 @@ class GroupRenderTests(unittest.TestCase):
             self.assertEqual(rgb(img, 12, 18), (0, 0, 0), name)
             self.assertEqual(rgb(img, 40, 18), (255, 0, 0), name)
 
+    def test_blend_modes_mix_with_the_shown_mask_object(self):
+        """As Photoshop's clipping masks: the clips above are drawn on the shown mask object."""
+        from test_compound_mask import rgb
+        for r in self.renderers():
+            name = type(r).__name__
+            for blend, left in (("normal", (255, 0, 0)), ("screen", (255, 255, 255)), ("multiply", (255, 0, 0))):
+                v = self.view({"on": True, "show": True})
+                v["tracks"][0]["clips"][0]["tracks"][1]["clips"][0]["blend"] = blend
+                img = r.render(v, 0, 64, 36)
+                self.assertEqual(r.errors, [], name)
+                self.assertEqual(rgb(img, 12, 18), left, (name, blend))      # red on the white mask object
+                self.assertEqual(rgb(img, 52, 18), (0, 0, 0), (name, blend))  # nothing where it is clear
+                v = self.view({"on": True, "show": True, "invert": True})
+                v["tracks"][0]["clips"][0]["tracks"][1]["clips"][0]["blend"] = blend
+                img = r.render(v, 0, 64, 36)
+                self.assertEqual(rgb(img, 12, 18), (255, 255, 255), (name, blend))   # cut out: the mask object
+                self.assertEqual(rgb(img, 52, 18), (255, 0, 0), (name, blend))       # kept (nothing under it)
+            v = self.view({"on": True, "show": True})
+            v["tracks"][0]["clips"][0]["tracks"][1]["clips"][0]["transform"]["opacity"] = 0.5
+            img = r.render(v, 0, 64, 36)
+            self.assertEqual(rgb(img, 12, 18)[0], 255, name)                  # half red on white
+            self.assertAlmostEqual(rgb(img, 12, 18)[1], 128, delta=2)
+
 
 class GroupPreviewTests(unittest.TestCase):
     def test_selected_group_is_dragged_from_its_empty_space(self):

@@ -145,10 +145,12 @@ uniform vec2 size;
 uniform sampler2D a_tex;     // before
 uniform sampler2D b_tex;     // after (filtered)
 uniform sampler2D c_tex;     // the clip as it shows: its alpha says where b goes (套用至背景)
+uniform int flip;            // b goes where c is clear instead
 out vec4 frag;
 void main() {
     vec2 uv = gl_FragCoord.xy / size;
-    frag = mix(texture(a_tex, uv), texture(b_tex, uv), texture(c_tex, uv).a);
+    float k = texture(c_tex, uv).a;
+    frag = mix(texture(a_tex, uv), texture(b_tex, uv), flip == 1 ? 1.0 - k : k);
 }
 """
 
@@ -364,11 +366,13 @@ class GL:
         self.vao[id(prog)].render(self.mgl.TRIANGLE_STRIP)
 
 
-    def mix_cover(self, dst, a, b, cover):
-        """dst = a and b mixed by cover's alpha (whole layers of dst's size; no blending)."""
+    def mix_cover(self, dst, a, b, cover, flip=False):
+        """dst = a and b mixed by cover's alpha (by 1 - alpha with flip; whole layers of dst's
+        size; no blending)."""
         prog = self.coverer
         self._quad(dst, [QPointF(0, 0), QPointF(dst.w, 0), QPointF(0, dst.h), QPointF(dst.w, dst.h)])
         prog["size"].value = (dst.w, dst.h)
+        prog["flip"].value = 1 if flip else 0
         a.use(0)
         b.use(1)
         cover.use(2)
@@ -414,14 +418,23 @@ class GLRenderer(render.Renderer):
         cut, above, kept, empty = (gl.layer(tgt.w, tgt.h) for _ in range(4))
         try:
             self.gl_tracks(cut, base, tracks[:1], W, H, fps, t_us, ppu)
+            show, body, invert = matte.get("show"), matte.get("body", True), matte.get("invert")
+            if show and body:
+                # as Photoshop's clipping masks: the clips above are drawn on the shown one, so
+                # their blend modes mix with it, and kept where it is (inverted: where it is not)
+                gl.ctx.copy_framebuffer(above.tex, cut.fbo)
+                self.gl_tracks(above, base, tracks[1:], W, H, fps, t_us, ppu)
+                gl.mix_cover(kept, cut.tex, above.tex, cut.tex, flip=invert)
+                gl.draw_layer(tgt, kept)
+                return
             self.gl_tracks(above, base, tracks[1:], W, H, fps, t_us, ppu)
-            if matte.get("invert"):                                  # kept where the bottom one is not
+            if invert:                                               # kept where the bottom one is not
                 gl.mix_cover(kept, above.tex, empty.tex, cut.tex)
             else:                                                    # kept where the bottom one is
                 gl.mix_cover(kept, empty.tex, above.tex, cut.tex)
-            if matte.get("show"):
+            if show:
                 gl.draw_layer(tgt, cut)
-            if matte.get("body", True):                              # (顯示主體)
+            if body:                                                 # (顯示主體)
                 gl.draw_layer(tgt, kept)
         finally:
             for lay in (cut, above, kept, empty):

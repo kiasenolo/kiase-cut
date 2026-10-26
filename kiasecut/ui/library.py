@@ -1,5 +1,5 @@
 """Media library panel: folders and media, drag into folders or onto the timeline."""
-from PySide6.QtCore import QMimeData, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMenu, QPushButton, QStyle,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
@@ -49,6 +49,57 @@ def fmt_dur(us):
 def dropped_paths(md):
     """Local file / folder paths in a drag from the file manager."""
     return [u.toLocalFile() for u in md.urls() if u.isLocalFile()] if md.hasUrls() else []
+
+
+class PictureDrop(QObject):
+    """Lets a picture be dropped on a widget (an image picker): picture_of(mime data) says which
+    picture a drag carries (a path, or None: not taken), on_path(path) gets it when dropped."""
+
+    def __init__(self, widget, picture_of, on_path, item_at=None):
+        super().__init__(widget)
+        self.widget, self.picture_of, self.on_path, self.item_at = widget, picture_of, on_path, item_at
+        widget.setAcceptDrops(True)
+        widget.installEventFilter(self)
+        self.style = None
+
+    def _takes(self, e):
+        if self.picture_of(e.mimeData()) is None:
+            return False
+        return self.item_at is None or self.item_at(e.position().toPoint()) is not None
+
+    def _lit(self, on):
+        if on and self.style is None:
+            self.style = self.widget.styleSheet()
+            self.widget.setStyleSheet(self.style + "border: 1px solid #6fb3ff;")
+        elif not on and self.style is not None:
+            self.widget.setStyleSheet(self.style)
+            self.style = None
+
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if t in (QEvent.DragEnter, QEvent.DragMove):
+            ok = self._takes(e)
+            e.setAccepted(ok)
+            if ok:
+                e.acceptProposedAction()
+            self._lit(ok)
+            return True
+        if t == QEvent.DragLeave:
+            self._lit(False)
+            return True
+        if t == QEvent.Drop:
+            self._lit(False)
+            path = self.picture_of(e.mimeData()) if self._takes(e) else None
+            if path is None:
+                e.ignore()
+                return True
+            e.acceptProposedAction()
+            if self.item_at is None:
+                self.on_path(path)
+            else:
+                self.on_path(self.item_at(e.position().toPoint()), path)
+            return True
+        return False
 
 
 class Tree(QTreeWidget):

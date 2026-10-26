@@ -3,13 +3,15 @@
 
 The list sits under the layers of a static component and beside the timeline of a live one.
 Click a parameter to select the clips it sets, double-click it to set its default (what
-every clip it sets gets), right-click to rename, restack, unbind a clip or delete it.
+every clip it sets gets; a picture parameter's: drop a picture on it too), right-click to
+rename, restack, unbind a clip or delete it.
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
 
 from .. import assets, components
+from .library import PictureDrop
 
 ROLE = Qt.UserRole
 
@@ -70,6 +72,7 @@ class ParamList(QWidget):
     selectionPicked = Signal(object, object)       # {clip ids} a parameter sets, the first one
     paramUnbind = Signal(list)                     # [(clip id, prop)] no parameter sets any more
     paramAction = Signal(str, str)                 # "default" / "rename" / "up" / "down" / "delete", parameter id
+    defaultDropped = Signal(str, str)              # parameter id, the picture dropped on it (its new default)
 
     def __init__(self, hint="在圖層上按右鍵 > 設為參數；按兩下參數設定預設值", parent=None):
         super().__init__(parent)
@@ -91,6 +94,15 @@ class ParamList(QWidget):
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
         lay.addWidget(self.list, 1)
+        self.picture_of = lambda md: None           # the picture a drag carries
+        self.list.setAcceptDrops(True)
+        PictureDrop(self.list.viewport(), lambda md: self.picture_of(md), self.defaultDropped.emit, self._image_param_at)
+
+    def _image_param_at(self, pos):
+        """The id of the picture parameter at pos in the list, or None."""
+        it = self.list.itemAt(pos)
+        p = components.param(self.comp, it.data(ROLE)) if it is not None and self.comp else None
+        return p["id"] if p and p["kind"] == "image" else None
 
     def set_component(self, comp):
         """Show the parameters of comp (a component's content)."""

@@ -37,6 +37,7 @@ from .. import assets, components, curves, edit, project
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
+from .library import PictureDrop
 from .timeline import US, timecode
 
 DEBOUNCE_MS = 350
@@ -289,6 +290,7 @@ class Inspector(QWidget):
         self.fonts = []                   # [{path, name}] installed fonts (fonts.py), for the picker
         self.compounds = []               # [(id, name)] compounds a compound mask can use here
         self.images = []                  # [(path, name)] pictures an image mask can use
+        self.picture_of = lambda md: None  # the picture a drag carries (dropped on an image picker)
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
@@ -637,7 +639,8 @@ class Inspector(QWidget):
                 pick.addItem(name, path)
             pick.addItem("瀏覽圖片檔…", "")
             pick.activated.connect(lambda i: self._emit_now(self.maskImageChosen, pick.itemData(i)))
-            pick.setToolTip("用這張圖片裁切（專案素材裡的圖片，或瀏覽一個圖片檔）")
+            pick.setToolTip("用這張圖片裁切（專案素材裡的圖片，或瀏覽一個圖片檔；也可以把素材或圖片檔拖進來）")
+            PictureDrop(pick, lambda md: self.picture_of(md), lambda path: self._emit_now(self.maskImageChosen, path))
             self.widgets["mask_image"] = pick
             form.addRow("圖片", pick)
         if picture:
@@ -889,6 +892,8 @@ class Inspector(QWidget):
                     w.addItem(name, path)
                 w.addItem("瀏覽…", "")
                 w.activated.connect(lambda i, w=w, pid=pid: self._param_image(pid, w.itemData(i)))
+                w.setToolTip("選一張圖片，或把素材或圖片檔拖進來")
+                PictureDrop(w, lambda md: self.picture_of(md), lambda path, pid=pid: self._param_image(pid, path))
             else:
                 w = QCheckBox("顯示")
                 w.clicked.connect(lambda on, pid=pid: self._emit_now(self.paramEdited, "params", pid, bool(on)))

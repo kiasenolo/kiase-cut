@@ -38,7 +38,7 @@ from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
 from .export_dialog import ExportDialog
 from .inspector import Inspector
-from .library import LibraryPanel
+from .library import LibraryPanel, dropped_paths
 from .layers import LayerPanel
 from .params import ParamList, clip_name
 from .player import Player
@@ -377,6 +377,7 @@ class MainWindow(QMainWindow):
         ins = self.inspector
         ins.textEdited.connect(self.on_text_edited)
         ins.paramEdited.connect(self.on_param_edited)
+        ins.picture_of = self.dropped_picture
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
         ins.paramReset.connect(lambda ids, pids: self.apply_each(
@@ -384,6 +385,7 @@ class MainWindow(QMainWindow):
         self.mask_panel = Inspector(part="mask")
         mp = self.mask_panel
         mp.paramEdited.connect(self.on_param_edited)
+        mp.picture_of = self.dropped_picture
         mp.keyToggled.connect(self.on_key_toggled)
         mp.easingChosen.connect(self.on_easing)
         mp.maskKindChosen.connect(self.on_mask_kind)
@@ -638,6 +640,8 @@ class MainWindow(QMainWindow):
         self.tl_params.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
         self.tl_params.paramUnbind.connect(self.unbind_params)
         self.tl_params.paramAction.connect(self.layer_param_action)
+        self.tl_params.defaultDropped.connect(self.param_default_dropped)
+        self.tl_params.picture_of = self.dropped_picture
         tl_row.addWidget(self.tl_params)
         self.meter = MeterPanel()
         self.meter.masterChanged.connect(self.on_master)
@@ -663,6 +667,8 @@ class MainWindow(QMainWindow):
         lp.paramBind.connect(self.layer_param_bind)
         lp.paramUnbind.connect(self.unbind_params)
         lp.paramAction.connect(self.layer_param_action)
+        lp.defaultDropped.connect(self.param_default_dropped)
+        lp.params_box.picture_of = self.dropped_picture
         lp.componentRequested.connect(lambda: self.open_kid() and self.component_kind(self.open_kid(), True))
         lp.shapeRequested.connect(lambda key: self.place_asset(assets.ident(key, *self.assets.colors), "", 0))
         tl_page = QWidget()
@@ -2220,6 +2226,27 @@ class MainWindow(QMainWindow):
                 v, ok = not v, True
             if ok:
                 self.apply_root("參數預設值", edit.set_param_default, kid, pid, v)
+
+    def param_default_dropped(self, pid, path):
+        """A picture dropped on a picture parameter in the 參數 list: its new default."""
+        kid = self.open_kid()
+        if kid and components.param(self.proj["compounds"].get(kid), pid) is not None:
+            self.apply_root("參數預設值", edit.set_param_default, kid, pid, path.replace("\\", "/"))
+
+    def dropped_picture(self, md):
+        """The picture a drag carries: a picture of the media library or of the user's Library,
+        or a picture file from the file manager (the first one); None when it carries none."""
+        is_pic = lambda path: bool(path) and os.path.splitext(path)[1].lower() in library.IMAGE_EXT
+        if md.hasFormat(MEDIA_MIME):
+            for iid in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(","):
+                if iid.startswith("mu"):
+                    it = self.ulib.find(iid)[1] if self.ulib else None
+                else:
+                    it = next((i for i in library.lib(self.proj)["items"] if i["id"] == iid), None) if self.proj else None
+                if it and is_pic(it.get("path")):
+                    return it["path"]
+            return None
+        return next((path for path in dropped_paths(md) if is_pic(path) and os.path.isfile(path)), None)
 
     def _update_layers(self):
         """The layer panel in the timeline's place while a static compound is open."""

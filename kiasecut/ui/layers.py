@@ -302,6 +302,7 @@ class LayerPanel(QWidget):
     paramBind = Signal(str, str, list)             # parameter id ("": a new one), prop, layer ids
     paramUnbind = Signal(list)                     # [(layer id, prop)] no parameter sets any more
     paramAction = Signal(str, str)                 # "default" / "rename" / "up" / "down" / "delete", parameter id
+    defaultDropped = Signal(str, str)              # parameter id, a picture dropped on it
     componentRequested = Signal()                  # 轉為元件: the open static compound becomes a component
 
     def __init__(self, parent=None):
@@ -370,6 +371,7 @@ class LayerPanel(QWidget):
         self.params_box.selectionPicked.connect(self.selectionPicked)
         self.params_box.paramUnbind.connect(self.paramUnbind)
         self.params_box.paramAction.connect(self.paramAction)
+        self.params_box.defaultDropped.connect(self.defaultDropped)
         self.params = self.params_box.list
         outer.addWidget(self.params_box, 2)
 

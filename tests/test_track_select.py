@@ -47,6 +47,25 @@ class EditTests(unittest.TestCase):
         self.assertEqual(len(p["tracks"]), 5)
 
 
+class OrderTests(unittest.TestCase):
+    def test_set_track_order(self):
+        p = with_empty(proj())                               # on screen: e1, v, a1, a2, e2
+        tracks = p["tracks"]
+        edit.set_track_order(p, ["v", "e1", "a2", "e2", "a1"])
+        self.assertIs(p["tracks"], tracks)                    # (the same list: the timeline's)
+        self.assertEqual([t["id"] for t in p["tracks"]], ["e1", "v", "a2", "e2", "a1"])   # pictures bottom first
+        with self.assertRaises(edit.EditError):
+            edit.set_track_order(p, ["a1", "v", "e1", "a2", "e2"])     # sound above pictures
+        with self.assertRaises(edit.EditError):
+            edit.set_track_order(p, ["v", "e1"])
+
+    def test_reordered(self):
+        ids = ["a", "b", "c", "d", "e"]
+        self.assertEqual(edit.reordered(ids, {"d"}, 0), ["d", "a", "b", "c", "e"])
+        self.assertEqual(edit.reordered(ids, {"a", "c"}, 5), ["b", "d", "e", "a", "c"])
+        self.assertEqual(edit.reordered(ids, {"b", "c"}, 2), ids)
+
+
 class HeaderTests(unittest.TestCase):
     def setUp(self):
         self.tl = Timeline()
@@ -76,6 +95,38 @@ class HeaderTests(unittest.TestCase):
         self.assertEqual(self.tl.selected_ids, set())
         self.tl.set_selection({"vid"}, "vid")
         self.assertEqual(self.tl.selected_tracks, set())
+
+    def drag(self, row_from, y_to, mods=NONE):
+        got = []
+        self.tl.tracksReordered.connect(got.append)
+        a = QPoint(30, int(self.tl.tops[row_from] + 5))
+        b = QPoint(30, int(y_to))
+        QTest.mousePress(self.tl, Qt.LeftButton, mods, a)
+        QTest.mouseMove(self.tl, QPoint(30, (a.y() + b.y()) // 2))
+        QTest.mouseMove(self.tl, b)
+        QTest.mouseRelease(self.tl, Qt.LeftButton, mods, b)
+        return got
+
+    def test_drag_a_header(self):
+        tl = self.tl
+        got = self.drag(1, tl.tops[0] + 2)                    # v above e1
+        self.assertEqual(got, [["v", "e1", "a1", "a2", "e2"]])
+        self.assertEqual(tl.selected_tracks, {"v"})
+
+    def test_drag_picked_tracks_together_within_their_kind(self):
+        tl = self.tl
+        self.click(2)
+        self.click(4, Qt.ControlModifier)                      # a1 and e2
+        self.click(1, Qt.ControlModifier)                      # and v (a picture: stays behind)
+        got = self.drag(4, tl.tops[0] + 2)                     # dragged to the very top: sound stays below
+        self.assertEqual(got, [["e1", "v", "a1", "e2", "a2"]])
+        self.assertEqual(tl.selected_tracks, {"a1", "e2", "v"})
+
+    def test_click_on_a_picked_track_picks_it_alone(self):
+        self.click(1)
+        self.click(3, Qt.ControlModifier)
+        self.click(1)
+        self.assertEqual(self.tl.selected_tracks, {"v"})
 
     def test_gone_tracks_leave_the_selection(self):
         self.click(0)

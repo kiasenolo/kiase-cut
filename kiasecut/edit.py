@@ -1861,6 +1861,27 @@ def move_track(proj, track_id, up):
     proj["tracks"][a], proj["tracks"][b] = proj["tracks"][b], proj["tracks"][a]
 
 
+def set_track_order(proj, ids_on_screen):
+    """The level's tracks in this order on screen, top first (as the timeline shows them:
+    pictures, the top layer first, then sound); every track once, pictures above sound."""
+    by_id = {t["id"]: t for t in proj["tracks"]}
+    ids = list(dict.fromkeys(ids_on_screen))
+    if set(ids) != set(by_id) or len(ids) != len(proj["tracks"]):
+        raise EditError("軌道的順序要包含每一條軌道")
+    rows = [by_id[i] for i in ids]
+    sound = [t["kind"] == "audio" for t in rows]
+    if sound != sorted(sound):
+        raise EditError("畫面軌道要在聲音軌道上面")
+    proj["tracks"][:] = [t for t in reversed(rows) if t["kind"] != "audio"] + [t for t in rows if t["kind"] == "audio"]
+
+
+def reordered(ids, moving, slot):
+    """ids (screen order) with the ids in moving taken out and put, in their order, before the
+    row that was at index slot (len(ids): at the end)."""
+    keep = [i for i in ids[:slot] if i not in moving]
+    return keep + [i for i in ids if i in moving] + [i for i in ids[slot:] if i not in moving]
+
+
 def move_to_new_track(proj, clip_id, start_us, top):
     """Move a clip onto a new track: for pictures a new top layer (top) or bottom layer,
     for sound a new last audio row (top=False) or first one."""

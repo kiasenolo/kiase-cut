@@ -58,7 +58,10 @@ headers have mute / solo buttons (sound), a hide button (pictures) and a padlock
 track (hatched) cannot have its clips selected or grabbed, and moves and drops skip it.
 Click a track header to select the track (Ctrl+click: in or out of the selection, Shift+click:
 every track from the last one picked); selected tracks are deleted together (Delete, or the
-header's menu), and the menu's 清除空軌道 removes every track with nothing on it. Picking
+header's menu), and the menu's 清除空軌道 removes every track with nothing on it. Drag a
+header up or down to move its track (a picked one: every picked track of its kind, pictures
+among pictures and sound among sound; a line shows where: tracksReordered); the menu's
+上移 / 下移 still move one row. Picking
 tracks clears the clip selection and picking clips clears the tracks'.
 Drag the headers' right edge to make them wider (longer track names) or narrower; the
 width (header_w) is kept in view_state with the scroll and zoom. On the ruler that edge is
@@ -155,6 +158,7 @@ class Timeline(QWidget):
     moveRequested = Signal(str, int, str)            # clip id, start us, track id
     trimRequested = Signal(str, str, int)            # clip id, "start" | "end", time us
     trackAction = Signal(str, str)                   # action, track id
+    tracksReordered = Signal(list)                   # every track id of the level, in the new order on screen
     intoGroupRequested = Signal(list, str, str, int)  # clip ids, group id, its track id, start (level time)
     groupDropped = Signal(list, list, str, str, int)  # media idents, file paths, group id, its track id, start
     clipAction = Signal(str, str)                    # action, clip id
@@ -439,6 +443,28 @@ class Timeline(QWidget):
                                              for c in self.level_clips() if c["id"] in ids)):
             return None
         return ln
+
+    def _track_slot(self, y, sound):
+        """Where dragged tracks would go: before the row at the returned index, among the rows
+        of their kind (pictures / sound)."""
+        mine = [i for i, t in enumerate(self.rows) if (t["kind"] == "audio") == sound]
+        if not mine:
+            return None
+        for i in mine:
+            if y < self.tops[i] + self.row_h(i) / 2:
+                return i
+        return mine[-1] + 1
+
+    def _paint_track_drag(self, p):
+        d = self.drag
+        if not d or d["mode"] != "tracks" or not d["moved"] or d["slot"] is None:
+            return
+        for i, t in enumerate(self.rows):                # the tracks being moved: dimmed in place
+            if t["id"] in d["ids"]:
+                p.fillRect(QRectF(0, self.tops[i], self.width(), self.row_h(i) - 1), QColor(0, 0, 0, 90))
+        i = d["slot"]
+        y = self.tops[i] if i < len(self.rows) else self.tops[i - 1] + self.row_h(i - 1)
+        p.fillRect(QRectF(0, y - 1.5, self.width(), 3), QColor("#e6e6e6"))
 
     def _paint_into(self, p):
         ln = self.into_lane
@@ -774,6 +800,7 @@ class Timeline(QWidget):
                 p.fillRect(QRectF(self.header_w, y, w - self.header_w, h - 2), QBrush(QColor(255, 255, 255, 26), Qt.BDiagPattern))
                 p.restore()
         self._paint_into(p)
+        self._paint_track_drag(p)
         if group:                                         # the moving clips, on the rows they will land on
             dr = self.drag.get("drow", 0)
             for i, tr in enumerate(self.rows):
@@ -1231,7 +1258,16 @@ class Timeline(QWidget):
                     if r.contains(e.position()):
                         self.trackAction.emit("toggle:" + flag, self.rows[row]["id"])
                         return
-                self._click_header(row, e.modifiers())
+                mods = e.modifiers()
+                tid = self.rows[row]["id"]
+                later = tid in self.selected_tracks and not mods & (Qt.ControlModifier | Qt.ShiftModifier)
+                if not later:                                # (a picked one: it may be dragged with the rest)
+                    self._click_header(row, mods)
+                sound = self.rows[row]["kind"] == "audio"
+                moving = [t["id"] for t in self.rows if t["id"] in self.selected_tracks
+                          and (t["kind"] == "audio") == sound] if tid in self.selected_tracks else [tid]
+                self.drag = {"clip": None, "mode": "tracks", "row": row, "y0": e.position().y(), "moved": False,
+                             "ids": moving, "slot": None, "later": later}
             return
         if self.selected_tracks:                                  # a click among the clips: no tracks picked
             self.selected_tracks = set()
@@ -1441,6 +1477,14 @@ class Timeline(QWidget):
             self.header_w = int(min(HEADER_MAX, max(HEADER_MIN, d["w0"] + pos.x() - d["x0"])))
             self.update()
             return
+        if d["mode"] == "tracks":
+            if not d["moved"] and abs(pos.y() - d["y0"]) < 4:
+                return
+            d["moved"] = True
+            d["slot"] = self._track_slot(pos.y(), self.rows[d["row"]]["kind"] == "audio")
+            self.setCursor(Qt.ClosedHandCursor)
+            self.update()
+            return
         if d["mode"] == "resize":
             h = min(MAX_H, max(MIN_H, round(d["h0"] + pos.y() - d["y0"])))
             self.heights[self.rows[d["row"]]["id"]] = h
@@ -1579,6 +1623,17 @@ class Timeline(QWidget):
             self.setCursor(Qt.ArrowCursor)
         if d and d["mode"] == "seek":
             self.update()                               # (its guide line goes)
+        if d and d["mode"] == "tracks":
+            self.setCursor(Qt.ArrowCursor)
+            if d["moved"] and d["slot"] is not None:
+                ids = [t["id"] for t in self.rows]
+                order = edit.reordered(ids, set(d["ids"]), d["slot"])
+                if order != ids:
+                    self.tracksReordered.emit(order)
+            elif not d["moved"] and d["later"]:              # a plain click on a picked track: it alone
+                self._click_header(d["row"], Qt.NoModifier)
+            self.update()
+            return
         if not d or d["mode"] in ("seek", "resize", "pan", "header"):
             return
         if d["mode"] == "band":

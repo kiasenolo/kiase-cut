@@ -527,6 +527,7 @@ class MainWindow(QMainWindow):
             paths, self.library.current_folder(), (tid, start, across)))
         tl.intoGroupRequested.connect(lambda ids, gid, tid, start: self.move_into_group(ids, gid, tid, start))
         tl.groupDropped.connect(self.group_drop)
+        tl.tracksReordered.connect(lambda order: self.apply("移動軌道", edit.set_track_order, order))
         tl.newTrackRequested.connect(
             lambda cid, start, top: self.apply("移到新軌道", edit.move_to_new_track, cid, start, top))
         # timelines (as in DaVinci Resolve: several per project, one open), as tabs

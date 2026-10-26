@@ -3,7 +3,8 @@
     My Video/
         My Video.kiasecut.json    the project file (media paths stored relative to the folder)
         Media/                    the media library: its sub-folders are the library folders
-        Cache/                    waveforms, proxies, temporary renders
+        Cache/                    waveforms, proxies, temporary renders (設定 > 緩存位置: here, or
+                                  outside the project so it moves light)
         Exports/                  rendered videos
         Backup/                   copies of the project file from earlier saves
 
@@ -11,6 +12,7 @@ proj["info"] = {title, author, genre, url, comments, created, last_opened, last_
                 time_spent_s, opens}   the project information (File > Project info)
 """
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -71,8 +73,40 @@ def media_dir(root):
     return sub(root, MEDIA)
 
 
-def cache_dir(root):
-    return sub(root, CACHE)
+# where a project's cache goes (設定 > 緩存位置): the user's cache folder, the project's Cache/, or
+# a folder the user picked; outside the project each project folder has its own sub-folder there
+CACHE_DEFAULT, CACHE_PROJECT, CACHE_CUSTOM = "default", "project", "custom"
+CACHE_MODES = (CACHE_DEFAULT, CACHE_PROJECT, CACHE_CUSTOM)
+
+
+def cache_id(proj, root):
+    """The name of a project's cache folder outside it: from when the project was started, so it
+    stays the project's when the project is moved or renamed (a copy of the project shares it:
+    what is cached is named by its content)."""
+    key = (proj.get("info") or {}).get("created") or os.path.normcase(os.path.abspath(root))
+    return hashlib.sha1(str(key).encode()).hexdigest()[:16]
+
+
+def cache_dir(root, base=None, ident=None):
+    """The project folder root's cache: base/ident when a base is given (outside the project),
+    else its Cache/."""
+    return sub(base, ident) if base else sub(root, CACHE)
+
+
+def cache_dirs(root, ident, bases=()):
+    """Every place a project's cache can be: its folder's Cache/ and its folder in each base."""
+    return [cache_dir(root)] + [cache_dir(root, b, ident) for b in bases if b]
+
+
+def clear_cache(dirs):
+    """Delete these cache folders (what is in them is made again when needed). Returns the
+    bytes freed."""
+    freed = 0
+    for d in dirs:
+        if os.path.isdir(d):
+            freed += folder_size(d)
+            shutil.rmtree(d, ignore_errors=True)
+    return freed
 
 
 def exports_dir(root):
@@ -80,7 +114,7 @@ def exports_dir(root):
 
 
 def ensure_layout(root):
-    for d in (MEDIA, CACHE, EXPORTS, BACKUP):
+    for d in (MEDIA, EXPORTS, BACKUP):             # (Cache/ is made when something is cached in it)
         os.makedirs(sub(root, d), exist_ok=True)
 
 

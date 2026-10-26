@@ -69,6 +69,7 @@ class Peaks:
         n = round(RATE * BIN_S)
         pcm = pcm[: len(pcm) // n * n].reshape(-1, n)
         peaks = np.stack([pcm.max(axis=1), pcm.min(axis=1)], axis=1).astype(np.float32) / 32768.0
+        os.makedirs(self.dir, exist_ok=True)            # (the project's cache may have been cleared)
         np.save(cached, peaks)
         return peaks, start
 

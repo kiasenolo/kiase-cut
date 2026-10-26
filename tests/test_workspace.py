@@ -38,8 +38,9 @@ class Base(unittest.TestCase):
 
 class Layout(Base):
     def test_create(self):
-        for d in (workspace.MEDIA, workspace.CACHE, workspace.EXPORTS, workspace.BACKUP):
+        for d in (workspace.MEDIA, workspace.EXPORTS, workspace.BACKUP):
             self.assertTrue(os.path.isdir(os.path.join(self.root, d)))
+        self.assertFalse(os.path.isdir(os.path.join(self.root, workspace.CACHE)))   # made when needed
         self.assertTrue(self.path.endswith("My Video.kiasecut.json"))
         i = self.proj["info"]
         self.assertEqual((i["title"], i["time_spent_s"], i["opens"]), ("My Video", 0, 1))

@@ -124,6 +124,7 @@ class Mixer:
                             "-i", path, "-vn", "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "-"],
                            capture_output=True, timeout=120)
         pcm = np.frombuffer(r.stdout, np.int16).reshape(-1, CHANNELS).copy()
+        os.makedirs(self.dir, exist_ok=True)            # (the project's cache may have been cleared)
         np.save(cached, pcm)
         return pcm, offset
 

@@ -587,10 +587,16 @@ A project is a folder, as in FL Studio (File > New project asks for a name and a
 My Video/
     My Video.kiasecut.json   the project file (media paths are stored relative to the folder)
     Media/                  the media library: its sub-folders are the library folders
-    Cache/                  waveforms, proxies
+    Cache/                  waveforms, proxies (only with 設定 > 緩存位置 > 專案內)
     Exports/                rendered videos (the export dialog starts here)
     Backup/                 earlier copies of the project file, one per save
 ```
+
+The cache (waveforms, decoded sound, drawn texts and masks, proxy pictures) goes where
+設定 > 緩存位置 says: 預設 puts it in `~/.cache/KiaseCut/projects` (one folder per project, kept
+when the project is moved or renamed), 專案內 in the project's Cache folder, 專案外 in a folder
+you pick. Outside the project, moving or copying a project leaves the cache behind. File >
+清除專案緩存… deletes the open project's cache wherever it is; it is made again when needed.
 
 Autosave and recovery: while a project has unsaved changes, a copy is written every few
 minutes (設定 > 自動存檔間隔) to `~/Documents/KiaseCut/auto-save`, named after the project and

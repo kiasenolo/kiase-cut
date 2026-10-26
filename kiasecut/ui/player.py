@@ -15,6 +15,7 @@ Positions are frames of view["fps"], the editor's own rate (時間線精度, whi
 than the project's). Playing shows a picture every step() of them, at view["play_fps"] (the
 project's frame rate), so a fine timeline costs nothing more while playing.
 """
+import os
 import threading
 import time
 
@@ -146,7 +147,7 @@ class Worker(QObject):
                     view, cache = new
                     first = self.view is None
                     self.view = view
-                    if self.mixer is None:
+                    if self.mixer is None or self.mixer.dir != os.path.join(cache, "audio"):   # (設定 > 緩存位置)
                         self.mixer = Mixer(cache)
                     self.mixer.set_view(view)
                     self.length = render.frame_count(view)

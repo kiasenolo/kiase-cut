@@ -721,6 +721,7 @@ class MainWindow(QMainWindow):
         self.clock.timeout.connect(self._tick)
         self.clock.start()
         gpu.enabled = str(self.settings().value("gpu", True)).lower() not in ("false", "0")
+        self.cache_base = self.cache_base_of(self.cache_mode(), self.cache_custom())
         self.autosave_timer = QTimer(self, interval=self.autosave_min() * 60 * 1000)
         self.autosave_timer.timeout.connect(self._autosave)
         self.autosave_timer.start()
@@ -755,6 +756,7 @@ class MainWindow(QMainWindow):
         add(m, "把目前畫面設為專案縮圖", None, self.thumbnail_from_frame)
         add(m, "開啟專案資料夾", None, lambda: self.reveal(None))
         add(m, "整理素材到專案資料夾", None, self.collect_external)
+        add(m, "清除專案緩存…", None, self.clear_project_cache)
         m.addSeparator()
         add(m, "設定…", "Ctrl+,", self.open_settings)
         m.addSeparator()
@@ -1160,7 +1162,8 @@ class MainWindow(QMainWindow):
     # -- project ----------------------------------------------------------------------------------
     def cache_dir(self):
         if self.root:
-            return workspace.cache_dir(self.root)
+            base = self.cache_base
+            return workspace.cache_dir(self.root, base, workspace.cache_id(self.proj, self.root) if base else None)
         base = QStandardPaths.writableLocation(QStandardPaths.CacheLocation)
         key = hashlib.sha1(str(id(self.proj)).encode()).hexdigest()[:10]
         return os.path.join(base, "unsaved", key)
@@ -3498,6 +3501,57 @@ class MainWindow(QMainWindow):
         s = self.settings().value("library_dir")
         return library.norm(str(s)) if s else self.default_library_root()
 
+    def default_cache_base(self):
+        """Where project caches go by default (設定 > 緩存位置 > 預設): the user's cache folder."""
+        base = QStandardPaths.writableLocation(QStandardPaths.GenericCacheLocation)   # (~/.cache, AppData/Local/cache)
+        return os.path.join(base, "KiaseCut", "projects").replace("\\", "/")
+
+    def cache_mode(self):
+        m = str(self.settings().value("cache_mode", workspace.CACHE_DEFAULT))
+        return m if m in workspace.CACHE_MODES else workspace.CACHE_DEFAULT
+
+    def cache_custom(self):
+        d = self.settings().value("cache_custom_dir")
+        return library.norm(str(d)) if d else ""
+
+    def cache_base_of(self, mode, custom):
+        """The folder project caches go in for a 緩存位置 choice; None: in the project (Cache/)."""
+        if mode == workspace.CACHE_PROJECT:
+            return None
+        return custom if mode == workspace.CACHE_CUSTOM and custom else self.default_cache_base()
+
+    def set_cache_base(self, base):
+        """Cache in a new place from now on (what was cached stays where it was)."""
+        if base == self.cache_base:
+            return
+        self.cache_base = base
+        if self.proj is not None:
+            if self.timeline.peaks is not None:
+                self.timeline.peaks.dir = os.path.join(self.cache_dir(), "peaks")
+            self.rebuild()                            # the player's sound cache follows
+
+    def clear_project_cache(self):
+        """Delete the open project's cache wherever it is (in the project, in the default place,
+        in the folder picked in 設定): it is made again when needed."""
+        if self.proj is None:
+            return
+        if self.root:
+            dirs = workspace.cache_dirs(self.root, workspace.cache_id(self.proj, self.root),
+                                        [self.default_cache_base(), self.cache_custom()])
+        else:
+            dirs = [self.cache_dir()]
+        size = sum(workspace.folder_size(d) for d in dirs if os.path.isdir(d))
+        if not size:
+            self.statusBar().showMessage("這個專案沒有緩存", 4000)
+            return
+        if QMessageBox.question(self, "清除專案緩存",
+                                f"要刪除這個專案的緩存（{workspace.show_size(size)}）嗎？\n"
+                                "波形、聲音、文字和遮罩的圖片、代理圖片會在需要時重新產生，素材和專案不受影響。") \
+                != QMessageBox.Yes:
+            return
+        freed = workspace.clear_cache(dirs)
+        self.statusBar().showMessage(f"已清除專案緩存（{workspace.show_size(freed)}）", 4000)
+
     def autosave_min(self):
         try:
             return max(1, int(self.settings().value("autosave_min", 5)))
@@ -3514,7 +3568,8 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         dlg = SettingsDialog(self, self.ulib.root if self.ulib else self.library_root(), self.default_library_root(),
                              self.default_location(), self.autosave_min(), gpu.enabled, self.autosave_limit(),
-                             self.autosave_dir or recovery.folder(self.documents_dir()))
+                             self.autosave_dir or recovery.folder(self.documents_dir()),
+                             self.cache_mode(), self.cache_custom(), self.default_cache_base())
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
@@ -3523,6 +3578,9 @@ class MainWindow(QMainWindow):
         s.setValue("autosave_min", v["autosave_min"])
         s.setValue("autosave_limit", v["autosave_limit"])
         s.setValue("gpu", v["gpu"])
+        s.setValue("cache_mode", v["cache_mode"])
+        s.setValue("cache_custom_dir", v["cache_custom"])
+        self.set_cache_base(self.cache_base_of(v["cache_mode"], v["cache_custom"]))
         gpu.enabled = v["gpu"]
         self.autosave_timer.setInterval(v["autosave_min"] * 60 * 1000)
         if self.autosave_dir:

@@ -11,8 +11,9 @@ itself (componentRequested turns a compound into one and back).
 Drag a compound onto the timeline to place another clip showing it (every clip shows the
 same content, so editing one edits all). Click a use to select it on its timeline,
 double-click a use to open it there. Double-click a compound that no clip shows (or pick
-進入編輯 on any compound) to edit it by itself (entryRequested). Right-click to rename or
-delete a compound (with the clips that show it), a timeline, or one use, and anywhere in
+進入編輯 on any compound) to edit it by itself (entryRequested). Right-click to rename, copy
+(建立副本, cloneRequested: a compound of its own) or delete a compound (with the clips that
+show it) or a timeline, or to delete one use, and anywhere in
 the list to add a timeline, a compound or a static compound (createRequested: "timeline" /
 "compound" / "static" / "component" / "static_component"; a new compound starts empty and opens by itself).
 """
@@ -60,6 +61,7 @@ class CompoundPanel(QWidget):
     entryRequested = Signal(str)                 # compound id: edit it by itself (no clip needed)
     tabRequested = Signal(str)                   # compound or timeline id: open it in a tab of its own
     libraryRequested = Signal(str)               # compound id: save it in the user's Library
+    cloneRequested = Signal(str)                 # compound or timeline id: a copy of it of its own
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -190,6 +192,7 @@ class CompoundPanel(QWidget):
                 menu.addAction("進入編輯", lambda: self.entryRequested.emit(kid))
             menu.addAction("在新的分頁開啟", lambda: self.tabRequested.emit(kid))
             menu.addAction("重新命名…", lambda: self.renameRequested.emit(kid))
+            menu.addAction("建立副本", lambda: self.cloneRequested.emit(kid))
             if not kid.startswith("tl"):
                 menu.addAction("存到 Library…", lambda: self.libraryRequested.emit(kid))
                 comp = self.comps.get(kid) or {}

@@ -2147,21 +2147,45 @@ def new_compound(root, container, at_us, track_id=None, static=False, component=
     return place_compound(root, container, kid, track_id, at_us)
 
 
+def _copy_compound(root, src):
+    """A new compound entry with a copy of src's content (a compound, or a nested timeline),
+    named "… 副本". Returns its id (link the project afterwards)."""
+    copy_ = {k: v for k, v in src.items() if k not in ("id", "tracks")}
+    copy_["tracks"] = json.loads(json.dumps(project._tracks_out(src["tracks"])))
+    kid = project.new_compound_id(root)
+    copy_["name"] = (src.get("name") or "複合片段") + " 副本"
+    root.setdefault("compounds", {})[kid] = copy_
+    return kid
+
+
+def clone_compound(root, compound_id):
+    """A copy of compound compound_id as a compound of its own (no clip shows it yet).
+    Returns its id."""
+    kid = _copy_compound(root, root["compounds"][compound_id])
+    project.link(root)
+    return kid
+
+
 def make_unique(root, container, clip_id):
     """Give one compound clip its own copy of its compound (edits no longer reach the others)."""
     _, c = find(container, clip_id)
     if not project.ref_of(c):
         raise EditError("not a compound clip")
-    src = c["compound"]                                  # a compound, or a nested timeline
-    copy_ = {k: v for k, v in src.items() if k not in ("id", "tracks")}
-    copy_["tracks"] = json.loads(json.dumps(project._tracks_out(src["tracks"])))
-    kid = project.new_compound_id(root)
-    copy_["name"] = (src.get("name") or "複合片段") + " 副本"
-    root["compounds"][kid] = copy_
+    kid = _copy_compound(root, c["compound"])
     c.pop("timeline_id", None)
     c["compound_id"] = kid
     project.link(root)
     return c
+
+
+def clone_clips(root, level, clip_ids):
+    """建立獨立副本: copies of the clips right after them, as duplicate_clips, each compound
+    copy with its own copy of its compound (editing it leaves the original alone)."""
+    new = duplicate_clips(root, level, clip_ids)
+    for c in new:
+        if project.ref_of(c):
+            make_unique(root, level, c["id"])
+    return new
 
 
 def rename_compound(root, compound_id, name):

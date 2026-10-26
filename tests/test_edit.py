@@ -233,6 +233,21 @@ class CopyPasteTests(unittest.TestCase):
         self.assertEqual(p["compounds"], {})
         self.assertFalse(any(c["type"] == "compound" for t in tl2["tracks"] for c in t["clips"]))
 
+    def test_clone_compound_clip_and_entry(self):
+        p = proj()
+        edit.add_timeline(p)
+        clip_ = edit.place_compound(p, p, p["timelines"][0]["id"], None, 0)
+        edit.make_unique(p, p, clip_["id"])
+        kid = clip_["compound_id"]
+        new = edit.clone_clips(p, p, [clip_["id"]])             # 建立獨立副本: its own compound
+        self.assertEqual(len(new), 1)
+        self.assertNotEqual(new[0]["compound_id"], kid)
+        self.assertEqual(new[0]["start_us"], clip_["start_us"] + clip_["duration_us"])
+        self.assertIsNot(new[0]["compound"]["tracks"], clip_["compound"]["tracks"])
+        k2 = edit.clone_compound(p, kid)                        # from the compound list
+        self.assertEqual(p["compounds"][k2]["name"], p["compounds"][kid]["name"] + " 副本")
+        self.assertFalse(project.compound_uses(p).get(k2))
+
 
 if __name__ == "__main__":
     unittest.main()

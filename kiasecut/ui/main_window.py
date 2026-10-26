@@ -332,6 +332,7 @@ class MainWindow(QMainWindow):
         self.compounds.entryRequested.connect(self.open_compound_entry)
         self.compounds.tabRequested.connect(self.open_in_tab)
         self.compounds.libraryRequested.connect(self.save_compound_to_library)
+        self.compounds.cloneRequested.connect(self.clone_compound_item)
         self.ulpanel = UserLibraryPanel()
         self.ulpanel.settingsRequested.connect(self.open_settings)
         self.ulpanel.newFilterRequested.connect(self.new_filter_file)
@@ -1861,6 +1862,13 @@ class MainWindow(QMainWindow):
             self.timeline.selected_id = None
             self.apply_root("刪除複合片段", lambda root: edit.delete_compound(root, kid, force=True))
 
+    def clone_compound_item(self, kid):
+        """From the compound list: a copy of a timeline, or of a compound as one of its own."""
+        if kid.startswith("tl"):
+            self.timeline_do("duplicate", kid)
+        else:
+            self.apply_root("建立副本", edit.clone_compound, kid)
+
     def create_from_panel(self, kind):
         """From the compound list's menu: a new timeline, or a new empty compound / static
         compound, opened by itself to be filled (drag it onto a timeline to use it)."""
@@ -2635,6 +2643,11 @@ class MainWindow(QMainWindow):
                     self.apply_each("片段顏色", edit.set_clip_color, ids, col.name())
         elif action == "unique":
             self.apply_root("設為獨立", lambda root: edit.make_unique(root, self.container(root), cid))
+        elif action == "clone":
+            sel = self.timeline.selected_ids
+            ids = sorted(sel) if cid in sel else [cid]
+            self._select_new(self.apply_root("建立獨立副本", lambda root: edit.clone_clips(
+                root, self.container(root), ids)))
         elif action == "detach_audio":
             self.apply("分離音訊", edit.detach_audio, cid)
         elif action == "split":

@@ -1913,7 +1913,7 @@ class Timeline(QWidget):
             if c["type"] == "compound":
                 comp = components.of_clip(c)
                 head = [("編輯元件" if comp else "編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
-                        ("在新的分頁開啟", "open_tab"), ("設為獨立（不再共用）", "unique")]
+                        ("在新的分頁開啟", "open_tab"), ("建立獨立副本", "clone"), ("設為獨立（不再共用）", "unique")]
                 if comp:
                     head.append(("轉回靜態片段" if project.is_static(c) else "轉回複合片段", "from_component"))
                 elif c.get("compound_id"):

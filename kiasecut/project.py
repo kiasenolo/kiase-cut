@@ -56,6 +56,14 @@ clip     {id, type: image | video | audio | text | compound, name,
                      project.compounds they show; clip.source_start_us selects the window}
           timeline_id                                       nested timeline clips (as in
                      DaVinci Resolve): they show another timeline of the project, live
+          tracks, matte: {on, show}                         group clips (type "group", 群組):
+                     clips of their own on tracks of their own (tracks[0] the bottom one), in
+                     the same canvas space as the level they are on, their times counted
+                     from the group's start (like a compound's, but not shared and not a
+                     canvas of its own: moving the group moves them, keeping their places).
+                     The group is drawn as one layer through its own transform, effects and
+                     mask; with matte on, its bottom track's clips cut the clips above them
+                     (their alpha), and show draws them too (else only their shape counts)
 compound {name, width, height, duration_us, tracks}   reusable content: any number of compound
          clips (anywhere, nested too) show the same one, so editing it changes all of them.
          Its children use compound time. optional: static - a static compound (靜態片段)
@@ -165,7 +173,7 @@ def _map_paths(data, fn):
     holders += [c["tracks"] for c in data.get("compounds", {}).values()]
     holders.append(data.get("tracks", []) if "timelines" not in data else [])
     for tracks in holders:
-        for t in tracks:
+        for t in all_tracks(tracks):
             for c in t["clips"]:
                 m = c.get("media")
                 if m and m.get("path"):
@@ -188,13 +196,28 @@ def refresh_duration(p):
         tl["duration_us"] = end_us(tl["tracks"])
 
 
+def is_group(c):
+    return c.get("type") == "group"
+
+
 def walk_clips(tracks):
-    """Yield every clip, descending into compound clips."""
+    """Yield every clip, descending into compound clips and groups."""
     for t in tracks:
         for c in t["clips"]:
             yield c
             if c.get("compound"):
                 yield from walk_clips(c["compound"]["tracks"])
+            elif is_group(c):
+                yield from walk_clips(c["tracks"])
+
+
+def all_tracks(tracks):
+    """The tracks and, inside groups, theirs (each group's after the track holding it)."""
+    for t in tracks:
+        yield t
+        for c in t["clips"]:
+            if is_group(c):
+                yield from all_tracks(c["tracks"])
 
 
 def sounds(track, tracks):
@@ -295,6 +318,8 @@ def _tracks_out(tracks):
         for c in t["clips"]:
             if ("compound_id" in c or "timeline_id" in c) and "compound" in c:
                 c = {k: v for k, v in c.items() if k != "compound"}
+            elif is_group(c):
+                c = dict(c, tracks=_tracks_out(c["tracks"]))
             clips.append(c)
         out.append(dict(t, clips=clips))
     return out
@@ -345,6 +370,8 @@ def link(p):
                     c["compound"] = comps[c["compound_id"]]
                 elif "timeline_id" in c:
                     c["compound"] = by_id[c["timeline_id"]]
+                elif is_group(c):
+                    visit(c["tracks"])
     for tl in tls or [{"tracks": p.get("tracks", [])}]:
         visit(tl["tracks"])
     for comp in comps.values():
@@ -359,10 +386,10 @@ def timeline(p, tl_id=None):
 def all_clips(p):
     """Every clip of every timeline, compound content included (each compound once)."""
     for tl in p.get("timelines") or [{"tracks": p["tracks"]}]:
-        for t in tl["tracks"]:
+        for t in all_tracks(tl["tracks"]):
             yield from t["clips"]
     for comp in p.get("compounds", {}).values():
-        for t in comp["tracks"]:
+        for t in all_tracks(comp["tracks"]):
             yield from t["clips"]
 
 
@@ -400,6 +427,9 @@ def normalize(p):
     def visit(tracks):
         for t in tracks:
             for c in t["clips"]:
+                if is_group(c):
+                    visit(c["tracks"])
+                    continue
                 if c.get("type") != "compound" or "compound_id" in c or "timeline_id" in c:
                     continue
                 comp = c.pop("compound")
@@ -462,7 +492,7 @@ def compound_uses(p):
     uses.update({t["id"]: [] for t in p.get("timelines", [])})
 
     def visit(tl, tracks, path):
-        for t in tracks:
+        for t in all_tracks(tracks):
             for c in t["clips"]:
                 if ref_of(c):
                     uses.setdefault(ref_of(c), []).append((tl, list(path), c))
@@ -483,7 +513,7 @@ def contains(p, outer_id, inner_id):
         if k in seen:
             continue
         seen.add(k)
-        for t in content(p, k)["tracks"]:
+        for t in all_tracks(content(p, k)["tracks"]):
             for c in t["clips"]:
                 if ref_of(c):
                     if ref_of(c) == inner_id:

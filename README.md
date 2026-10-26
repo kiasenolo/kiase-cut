@@ -139,6 +139,26 @@ track's right-click menu can also give its clips colours of their own: 將軌道
 顏色 (one undo step each).
 Dragging on the ruler always moves the playhead, also over clips scrolled up under it.
 
+Groups (群組, as in Lunacy): select picture clips and press Ctrl+G (or right-click > 建立群組):
+they go into one group clip on the topmost track they were on, with the tracks they were on,
+and keep their places on the canvas and in time. Unlike a compound a group is not shared and
+has no canvas of its own - its clips move with it, keeping where they are to each other. A
+group's ▸ / ▾ (or a double-click) opens it on the timeline: its tracks show as lanes under its
+track, where its clips are picked, dragged (along a lane, onto another lane of the group,
+never out of it) and trimmed like any clip; groups go inside groups too. While open the track
+is as tall as the most lanes any open group on it needs, so heights stay put while playing;
+folded it is its usual height (the open groups are saved with the view). A group never cuts
+its clips: it can be made longer, not shorter than them, and cutting it (Ctrl+B) cuts its
+clips too. On the preview a group is one box around its clips: drag it to move it, scale and
+turn it in the inspector (its own transform, keyframes too); double-click it to pick the clip
+under the mouse, which can then be edited on the canvas like any clip (while the group is not
+moved, scaled or turned). Effects, masks, blend modes and opacity on a group work on the group
+as a whole. 最下面的物件當遮罩 (in its inspector) makes the clips of its bottom track cut the
+ones above them by their alpha, a clipping mask; 顯示遮罩物件 also draws those bottom clips.
+Ctrl+Shift+G (解散群組) puts the clips back on the tracks around it with the group's position,
+scale and opacity folded in (a turned group, or one with transform keyframes, is refused).
+Projects with groups export through the preview renderer.
+
 Compound clips: double-click one (or right-click > 編輯複合片段) to edit its content;
 the breadcrumb above the timeline shows where you are, Esc / 返回上一層 goes back.
 Compounds are reusable: each one is stored once in the project and any number of compound

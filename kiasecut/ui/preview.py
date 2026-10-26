@@ -36,6 +36,12 @@ drags freely. Snapped lines show in amber. A 複合片段 mask is a frame like a
 feather) whose corner keeps the compound's proportions (Shift: free); the renderer draws the
 compound itself in it (matte_preview, see render.py).
 
+Groups (群組): a group is one box around its clips (GroupBox, through the group's transform):
+click it to select it and drag it to move it (its transform; scale and turn it in the
+inspector); double-click picks the clip under the mouse inside it (groupPicked). A clip of a
+group selected on the timeline is moved, scaled and turned on the canvas like any clip while
+its groups are not moved, scaled or turned.
+
 Align and space (the inspector's buttons, as Lunacy's): align_moves() lines the selected
 clips up by their left / centre / right / top / middle / bottom edges (one clip: on the
 canvas); spacing() and space_moves() put the same gap between neighbours (in the order of
@@ -160,6 +166,49 @@ class Box:
         return QPointF(self.cx, self.cy) + up * (self.h / 2 + ROT_PX * k)
 
 
+def group_xf(g, W, H, t):
+    """A group's transform at group time t: its canvas -> the level's (about the centre)."""
+    return QTransform().translate(-W / 2, -H / 2) * render.clip_world(g, t, W, H)
+
+
+def is_identity(xf):
+    return xf.isIdentity() or all(abs(a - b) < 1e-9 for a, b in zip(
+        (xf.m11(), xf.m12(), xf.m21(), xf.m22(), xf.dx(), xf.dy()), (1, 0, 0, 1, 0, 0)))
+
+
+class GroupBox(Box):
+    """A group on the canvas: the box around its clips' outlines (kids: their Boxes, in the
+    group's canvas) mapped through its transform; cx / cy stay its position, so dragging it
+    moves the group."""
+    group = True
+
+    def __init__(self, c, W, H, t, kids):
+        super().__init__(c, W, H, t)
+        self.kids = kids
+        self.gxf = group_xf(c, W, H, t)
+        pts = [self.gxf.map(q) for b in kids for q in b.corners()] or [QPointF(self.cx, self.cy)]
+        xs, ys = [q.x() for q in pts], [q.y() for q in pts]
+        self._box = (min(xs), max(xs), min(ys), max(ys))
+
+    def corners(self, dx=0.0, dy=0.0):
+        l, r, t, b = self._box
+        return [QPointF(l + dx, t + dy), QPointF(r + dx, t + dy), QPointF(r + dx, b + dy), QPointF(l + dx, b + dy)]
+
+    def extents(self):
+        return self._box
+
+    def kid_at(self, x, y):
+        """The topmost of its clips at canvas point (x, y), or None."""
+        inv, ok = self.gxf.inverted()
+        if not ok:
+            return None
+        q = inv.map(QPointF(x, y))
+        return next((b for b in self.kids if b.contains(q.x(), q.y())), None)
+
+    def contains(self, x, y):
+        return self.kid_at(x, y) is not None
+
+
 class MaskGeo:
     """A clip's mask (or one of its effects' masks: m) at one time: its frame on the canvas
     and handle points."""
@@ -278,6 +327,7 @@ class Preview(QWidget):
     paramsCommitted = Signal(str, str, dict)    # the same on release
     movesLive = Signal(dict)                    # {clip id: {x, y}} while several clips are dragged
     movesCommitted = Signal(dict)               # the same on release
+    groupPicked = Signal(object)                # a group's clip picked by double-clicking the group
     dupLive = Signal(dict)                      # {clip id: {x, y}}: copies of them dragged there (Alt)
     dupCommitted = Signal(dict)                 # the same on release: make the copies
     doubleClicked = Signal()
@@ -373,21 +423,50 @@ class Preview(QWidget):
         return self.W / max(1.0, self._rect().width())
 
     def visible_boxes(self):
-        """Boxes of clips showing now, topmost first."""
+        """Boxes of clips showing now, topmost first (a group as one GroupBox; a selected clip
+        of a group that is not moved, scaled or turned as a box of its own, first)."""
         if not self.view:
             return []
-        out = []
-        for tr in reversed(self.view["tracks"]):
-            if tr["kind"] == "audio" or tr.get("hidden"):
-                continue
-            for c in tr["clips"]:
-                if c["type"] == "filter" and not (self.mask_mode and c["id"] == self.selected_id):
-                    continue                    # a filter covers the whole picture: only its mask is edited here
-                if c["start_us"] <= self.t_us < c["start_us"] + c["duration_us"] and c.get("transform") is not None:
-                    b = Box(c, self.W, self.H, self.t_us - c["start_us"])
-                    b.locked = project.locked(tr)       # (shown and snapped to, never picked)
+        picked = []
+
+        def boxes(tracks, t_us, locked, plain, nested=False):
+            out = []
+            for tr in reversed(tracks):
+                if tr["kind"] == "audio" or tr.get("hidden"):
+                    continue
+                for c in tr["clips"]:
+                    if c["type"] == "filter" and not (self.mask_mode and c["id"] == self.selected_id):
+                        continue                # a filter covers the whole picture: only its mask is edited here
+                    if not (c["start_us"] <= t_us < c["start_us"] + c["duration_us"]) or c.get("transform") is None:
+                        continue
+                    t = t_us - c["start_us"]
+                    lock = locked or project.locked(tr)     # (shown and snapped to, never picked)
+                    if project.is_group(c):
+                        inner = plain and is_identity(group_xf(c, self.W, self.H, t))
+                        b = GroupBox(c, self.W, self.H, t, boxes(c["tracks"], t, lock, inner, True))
+                    else:
+                        b = Box(c, self.W, self.H, t)
+                        if nested and plain and c["id"] in self.selected_ids:
+                            b.locked = lock
+                            picked.append(b)
+                    b.locked = lock
                     out.append(b)
-        return out
+            return out
+        top = boxes(self.view["tracks"], self.t_us, False, True)
+        return picked + top
+
+    def group_kid(self, x, y):
+        """The clip under canvas point (x, y) inside the topmost group there (double-click)."""
+        for b in self.visible_boxes():
+            if getattr(b, "group", False) and not b.locked and b.contains(x, y):
+                kid = b.kid_at(x, y)
+                while getattr(kid, "group", False):     # into nested groups, as deep as it goes
+                    inv, _ = b.gxf.inverted()
+                    q = inv.map(QPointF(x, y))
+                    b, kid = kid, kid.kid_at(q.x(), q.y())
+                    x, y = q.x(), q.y()
+                return kid.clip if kid is not None else None
+        return None
 
     def selected_box(self):
         return next((b for b in self.visible_boxes() if b.clip["id"] == self.selected_id), None)
@@ -422,7 +501,7 @@ class Preview(QWidget):
     def masking(self, box):
         if not self.mask_mode or box is None or not self.mask_of(box.clip):
             return False
-        return self.mask_group != "mask" or box.clip["type"] in ("image", "video", "compound", "filter")
+        return self.mask_group != "mask" or box.clip["type"] in ("image", "video", "compound", "filter", "group")
 
     # -- painting ---------------------------------------------------------------------------------
     def paintEvent(self, _):
@@ -497,6 +576,11 @@ class Preview(QWidget):
         p.drawPolygon(QPolygonF(pts))
         p.setPen(QPen(QColor("#e6e6e6"), 1 * k))
         p.drawPolygon(QPolygonF(pts))
+        if getattr(box, "group", False):                # a group: its outline only (moved by dragging)
+            p.setPen(QPen(QColor("#c9a0ff"), 1 * k, Qt.DashLine))
+            for kid in box.kids:
+                p.drawPolygon(QPolygonF([box.gxf.map(q) for q in kid.corners()]))
+            return
         top = (pts[0] + pts[1]) / 2
         rh = box.rot_handle(k)
         p.setPen(QPen(QColor("#ffffff"), 1 * k))
@@ -748,7 +832,7 @@ class Preview(QWidget):
             if hit is not None:
                 self.drag = {"kind": hit, "box": box, "geo": g, "m0": m, "moved": False}
                 return
-        elif box is not None and not self.mask_mode and not self.multi():
+        elif box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False):
             if self._near(box.rot_handle(k), m, k):
                 self.drag = {"kind": "rotate", "box": box, "m0": m, "moved": False}
                 return
@@ -1157,6 +1241,14 @@ class Preview(QWidget):
         boxes = [b for b in self.visible_boxes() if not b.locked]
         hit = next((b for b in boxes if b.clip["id"] == self.selected_id and b.contains(x, y)), None) \
             or next((b for b in boxes if b.contains(x, y)), None)
+        if hit is not None and getattr(hit, "group", False):       # into the group: the clip under the mouse
+            kid = self.group_kid(x, y)
+            if kid is not None:
+                self.drag = None
+                self.selected_id, self.selected_ids = kid["id"], {kid["id"]}
+                self.groupPicked.emit(kid)
+                self.update()
+            return
         if hit is not None and hit.clip["type"] == "text" and not curves.is_animated(hit.clip["text"].get("content")):
             self.drag = None
             self.edit_text(hit)

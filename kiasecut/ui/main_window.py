@@ -346,6 +346,7 @@ class MainWindow(QMainWindow):
 
         self.preview = Preview()
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
+        self.preview.groupPicked.connect(self.pick_in_group)
         self.preview.paramsCommitted.connect(self.on_preview_params)
         self.preview.paramsLive.connect(self.live_params)
         self.preview.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
@@ -388,6 +389,8 @@ class MainWindow(QMainWindow):
         ins.liveCancelled.connect(self.rebuild)
         ins.speedChosen.connect(lambda ids, v: self.apply_each("速度", edit.set_speed, ids, v))
         ins.freezeChosen.connect(self.on_freeze)
+        ins.groupMatteChosen.connect(lambda ids, on, show: self.apply_each(
+            "群組遮罩", edit.set_group_matte, ids, on, show))
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
         ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)
@@ -723,6 +726,9 @@ class MainWindow(QMainWindow):
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
         add(m, "新增文字", "Ctrl+T", self.do_text)
+        m.addSeparator()
+        add(m, "建立群組", "Ctrl+G", lambda: self.make_group())
+        add(m, "解散群組", "Ctrl+Shift+G", lambda: self.ungroup())
         m.addSeparator()
         add(m, "字體對應…", None, lambda: self.check_fonts(auto=False))
         m = self.menuBar().addMenu("濾鏡")
@@ -1617,7 +1623,8 @@ class MainWindow(QMainWindow):
             return
         t = self.playhead_us()
         sel = self.timeline.selected_clips()
-        targets = [k for k in (sel or [k for tr in self.container()["tracks"] for k in tr["clips"]])
+        targets = [k for k in (sel and [self.placed(k) for k in sel] or [k for tr in self.container()["tracks"]
+                                                                       for k in tr["clips"]])
                    if k["start_us"] < t < k["start_us"] + k["duration_us"]]
         if not targets:
             self.statusBar().showMessage("播放頭下沒有片段", 3000)
@@ -1762,8 +1769,20 @@ class MainWindow(QMainWindow):
                         merge=("text", tuple(ids), tuple(sorted(fields))))
 
     def clip_time(self, cid):
-        """Playhead time relative to the start of clip cid."""
-        return self.playhead_us() - edit.find(self.container(), cid)[1]["start_us"]
+        """Playhead time relative to the start of clip cid (a group's clip: counted from where
+        it is on the timeline)."""
+        return self.playhead_us() - edit.abs_start(self.container(), cid)
+
+    def placed(self, c):
+        """Clip c as the panels see it: a group's clip with its start on the timeline (a
+        shallow copy; its parameters are its own)."""
+        if c is None:
+            return None
+        try:
+            s = edit.abs_start(self.container(), c["id"])
+        except edit.EditError:
+            return c
+        return c if s == c["start_us"] else dict(c, start_us=s)
 
     def on_param_edited(self, ids, group, key, value):
         """A value typed in the inspector: set on every selected clip (each at its own
@@ -1804,7 +1823,7 @@ class MainWindow(QMainWindow):
         self.apply("關鍵幀", add_all)
 
     def seek_clip_time(self, t):
-        c = self.timeline.selected
+        c = self.placed(self.timeline.selected)
         if c is not None:
             self.seek(round((c["start_us"] + t) / US * self.fps))
 
@@ -1830,7 +1849,7 @@ class MainWindow(QMainWindow):
         self.player.worker.set_view(view, self.cache_dir())
 
     def show_selection_props(self):
-        clips, t = self.timeline.selected_clips_primary_first(), self.playhead_us()
+        clips, t = [self.placed(c) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
         self.inspector.show_clips(clips, t, self.fps)
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
@@ -1845,7 +1864,7 @@ class MainWindow(QMainWindow):
         """The side tabs a selection has use for (屬性 always): 效果 for pictures, texts and
         filters, 遮罩 for what takes a mask, 節拍 for one clip with sound, 字幕 for texts,
         關鍵幀曲線 for any clip. A tab that goes away leaves the panel on another one."""
-        maskable = ("image", "video", "compound", "filter")
+        maskable = ("image", "video", "compound", "filter", "group")
         show = {"fx": bool(clips) and all(c["type"] in edit.VISUAL for c in clips),
                 "mask": bool(clips) and all(c["type"] in maskable for c in clips),
                 "beat": len(clips) == 1 and edit.has_sound(clips[0]),
@@ -1896,7 +1915,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("沒有更多關鍵幀", 2000)
             return
         k = min(cands) if direction > 0 else max(cands)
-        self.seek(round((c["start_us"] + k) / US * self.fps))
+        self.seek(round((self.placed(c)["start_us"] + k) / US * self.fps))
 
     def on_mask_kind(self, ids, kind):
         self.apply_each_timed("遮罩" if kind else "移除遮罩", edit.set_mask, ids, kind)
@@ -1929,6 +1948,42 @@ class MainWindow(QMainWindow):
                     edit.set_param(level, cid, "transform", key, v, times[cid])
 
         self.apply("移動位置", set_all)
+
+    def pick_in_group(self, c):
+        """A clip inside a group picked on the canvas: its groups open on the timeline, it is selected."""
+        level = self.container()
+        try:
+            t, _ = edit.find(level, c["id"])
+            g = edit.group_of(level, t)
+            while g is not None:
+                self.timeline.open_groups.add(g["id"])
+                g = edit.group_of(level, edit.find(level, g["id"])[0])
+        except edit.EditError:
+            return
+        self.timeline._layout()
+        self.timeline.select(c)
+
+    def make_group(self, ids=None):
+        """建立群組 (Ctrl+G): the selected picture clips into a new group, opened."""
+        ids = ids if ids else sorted(self.timeline.selected_ids)
+        if not self.proj or not ids:
+            self.statusBar().showMessage("先選取要放進群組的片段", 3000)
+            return
+        g = self.apply_root("建立群組", lambda root: edit.make_group(root, self.container(root), ids),
+                            select=lambda g: g["id"])
+        if g:
+            self.timeline.open_groups.add(g["id"])
+            self.timeline._layout()
+            self.timeline.update()
+
+    def ungroup(self, gid=None):
+        """解散群組 (Ctrl+Shift+G): the selected group's clips back onto the level's tracks."""
+        sel = self.timeline.selected
+        gid = gid or (sel["id"] if sel and project.is_group(sel) else None)
+        if not self.proj or not gid:
+            self.statusBar().showMessage("先選取一個群組", 3000)
+            return
+        self._select_new(self.apply_root("解散群組", lambda root: edit.ungroup(root, self.container(root), gid)))
 
     def on_freeze(self, ids, on, t):
         """凍結幀 switched, or its frame chosen (t: clip time, None: keep the one it has)."""
@@ -2038,8 +2093,16 @@ class MainWindow(QMainWindow):
                             lambda root: edit.make_compound(root, self.container(root), ids, at, static),
                             select=lambda c: c["id"])
             return
+        if action == "group":
+            sel = self.timeline.selected_ids
+            self.make_group(sorted(sel) if cid in sel else [cid])
+            return
         _, c = edit.find(self.container(), cid)
-        if action == "enter":
+        if action == "fold":
+            self.timeline.toggle_group(c)
+        elif action == "ungroup":
+            self.ungroup(cid)
+        elif action == "enter":
             self.enter_compound(cid)
         elif action == "open_tab":
             self.open_in_tab(project.ref_of(c))
@@ -2327,7 +2390,7 @@ class MainWindow(QMainWindow):
     def refresh_inspector(self):
         sel = self.timeline.selected
         self.show_selection_props()
-        self.curves.set_clip(sel, self.playhead_us() - sel["start_us"] if sel else 0, self.fps)
+        self.curves.set_clip(sel, self.clip_time(sel["id"]) if sel else 0, self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
         sp = self.preview.spacing() if self.proj else None
@@ -2426,7 +2489,7 @@ class MainWindow(QMainWindow):
                 for i, (g, vals) in enumerate(parts):
                     holder = group_holder(c, g, create=True)
                     if g == "transform":
-                        vals = edit.with_linked_scale(holder, vals, self.playhead_us() - c["start_us"])
+                        vals = edit.with_linked_scale(holder, vals, self.clip_time(cid))
                         parts[i] = (g, vals)
                     holder.update(vals)
         self.player.worker.set_view(view, self.cache_dir())
@@ -2467,7 +2530,7 @@ class MainWindow(QMainWindow):
             if c["id"] in ids and (group != "asset" or c.get("asset")):
                 holder = group_holder(c, group, create=True)
                 if group == "transform":
-                    holder.update(edit.with_linked_scale(holder, {key: value}, self.playhead_us() - c["start_us"]))
+                    holder.update(edit.with_linked_scale(holder, {key: value}, self.clip_time(c["id"])))
                 else:
                     holder[key] = value
         self.player.worker.set_view(view, self.cache_dir())
@@ -2513,7 +2576,7 @@ class MainWindow(QMainWindow):
         sel = self.timeline.selected
         if sel is not None:
             self.show_selection_props()
-            self.curves.set_time(sel, self.playhead_us() - sel["start_us"])
+            self.curves.set_time(sel, self.clip_time(sel["id"]))
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
 

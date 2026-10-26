@@ -268,6 +268,7 @@ class Inspector(QWidget):
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
     speedChosen = Signal(list, float)               # clip ids, speed
+    groupMatteChosen = Signal(list, object, object)  # group ids, 遮罩 on (or None), show it (or None)
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
 
@@ -382,6 +383,8 @@ class Inspector(QWidget):
                 blend.activated.connect(lambda i: self._emit_now(self.paramEdited, "clip", "blend", blend.itemData(i)))
                 self.widgets["blend"] = blend
                 form.addRow("混合模式", self._with_key(blend, "clip", "blend"))
+        if c["type"] == "group":
+            self._build_group(form, c)
         if c.get("timed", c["type"] in edit.TIMED and not project.is_static(c)):
             self._build_time(form)
         if "volume" in c:
@@ -429,6 +432,20 @@ class Inspector(QWidget):
         self.widgets["gap"] = gap
         lay.addWidget(gap, 1)
         form.addRow("間距", row)
+
+    def _build_group(self, form, c):
+        """群組: its bottom track's clips as a mask for the rest."""
+        form.addRow(section("群組"))
+        on = QCheckBox("最下面的物件當遮罩")
+        on.setToolTip("群組最下面那條軌道的片段裁切它上面的所有片段（照它們的不透明度）")
+        on.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, bool(v), None))
+        self.widgets["group_matte"] = on
+        form.addRow("", on)
+        show = QCheckBox("顯示遮罩物件")
+        show.setToolTip("遮罩物件本身也畫出來（關掉時只用它的形狀）")
+        show.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, None, bool(v)))
+        self.widgets["group_show"] = show
+        form.addRow("", show)
 
     def _build_time(self, form):
         """速度 and 凍結幀 (videos, sounds, compound clips)."""
@@ -550,7 +567,7 @@ class Inspector(QWidget):
         box.blockSignals(False)
 
     def _build_mask(self, form, c):
-        if c["type"] not in ("image", "video", "compound", "filter"):
+        if c["type"] not in ("image", "video", "compound", "filter", "group"):
             note = QLabel("只有圖片、影片、複合片段和濾鏡片段可以加遮罩")
             note.setStyleSheet("color: #9a9aa0;")
             form.addRow(note)
@@ -864,7 +881,7 @@ class Inspector(QWidget):
             return
         w = self.widgets
         ts = [t_us - k["start_us"] for k in clips]
-        names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段",
+        names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段", "group": "群組",
                  "filter": "濾鏡片段"}
         kinds = sorted({"靜態片段" if project.is_static(k) else names.get(k["type"], k["type"]) for k in clips})
         same = lambda vals: len(set(vals)) == 1
@@ -930,6 +947,14 @@ class Inspector(QWidget):
             self._show_asset(clips, ts, easings)
         if "speed" in w:
             self._show_time(clips, ts)
+        if "group_matte" in w:
+            for key, field in (("group_matte", "on"), ("group_show", "show")):
+                vals = {bool((k.get("matte") or {}).get(field)) for k in clips}
+                w[key].blockSignals(True)
+                w[key].setTristate(len(vals) > 1)
+                w[key].setCheckState(Qt.PartiallyChecked if len(vals) > 1 else Qt.Checked if vals.pop() else Qt.Unchecked)
+                w[key].blockSignals(False)
+            w["group_show"].setEnabled(any((k.get("matte") or {}).get("on") for k in clips))
         if "mask_on" in w:
             on = {bool(project.active_mask(k)) for k in clips}
             w["mask_on"].blockSignals(True)
@@ -1064,7 +1089,7 @@ def common(clips):
         out["text"] = first["text"]
     if all(k.get("transform") is not None for k in clips):
         out["transform"] = first["transform"]
-    if all(k["type"] in ("image", "video", "compound", "filter") for k in clips):
+    if all(k["type"] in ("image", "video", "compound", "filter", "group") for k in clips):
         out["type"] = out["type"] if out["type"] != "mixed" else "video"     # can take masks
         kinds = {kind_tag(k.get("mask")) for k in clips}
         if len(kinds) == 1 and None not in kinds:

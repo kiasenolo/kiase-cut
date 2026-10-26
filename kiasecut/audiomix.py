@@ -57,6 +57,8 @@ def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rat
                 continue
             if c["type"] in ("audio", "video") and c.get("media"):
                 out.append(Source(c, s, (lo, hi), g, rate))
+            elif project.is_group(c):                                    # a group's clips: in its time
+                out += sources(c["tracks"], s, (lo, hi), g, rate=rate)
             elif c["type"] == "compound" and not project.is_static(c):     # a static one is a picture
                 inner = rate * project.speed(c)
                 out += sources(c["compound"]["tracks"], s - c.get("source_start_us", 0) / inner, (lo, hi), g,

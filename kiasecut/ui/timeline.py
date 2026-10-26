@@ -39,6 +39,13 @@ the keyframes are points on the line that can be dragged up / down (value) and s
 (time). The line's height is
 in dB: the top is +20 dB (1000 %), 0 dB (100 %) two thirds of the way up.
 
+Groups (群組) show as a clip with a ▸ / ▾ at its left: click it (or double-click the group) to
+open or fold it. An open group's tracks lie under its track's row as lanes, its clips on them
+at their times; the track grows by the most lanes any open group on it needs (nested groups
+add theirs), whether the playhead is on that group or not, so heights do not jump while
+playing. A lane's clips are picked, dragged (along their lane or onto another lane of the
+same group, never out of it) and trimmed like any clip.
+
 編輯區域 (set_matte_region): while a clip's compound mask is edited that way, the mask's
 compound shows as a ghost over the clip, placed where its time runs along the clip; dragging
 it sideways picks which part of the compound cuts the clip (matteOffsetLive while dragging,
@@ -65,7 +72,7 @@ US = 1_000_000
 MEDIA_MIME = "application/x-kiasecut-media"
 FX_MIME = "application/x-kiasecut-fx"                # a filter dragged from the VFX tab: its ref
 COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
-          "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e", "static": "#3f7378"}                              # DaVinci Resolve
+          "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e", "static": "#3f7378", "group": "#7a5c96"}                              # DaVinci Resolve
 ROW_BG = QColor("#1f1f21")
 
 
@@ -177,6 +184,7 @@ class Timeline(QWidget):
         self.drop_clip = None                      # clip a filter from the VFX tab would go onto
         self.drop_replace = False                  # drop_clip would get the dragged media as its source (Alt)
         self.matte_region = None                   # 編輯區域: {clip, t_off, duration, name} or None
+        self.open_groups = set()                   # ids of the groups shown open (their lanes)
         self.drop_many = None                      # (count, across) while several media items hover
         self.tops = []                             # y of each row (on screen)
         self.vzoom = 1.0                           # track height factor
@@ -227,21 +235,26 @@ class Timeline(QWidget):
         self._primary = cid
         self.selected_ids = {cid} if cid else set()
 
+    def level_clips(self):
+        """Every clip of the open level, those inside groups included."""
+        return [c for t in project.all_tracks(self.rows) for c in t["clips"]]
+
     def selected_clips(self):
-        return [c for t in self.rows for c in t["clips"] if c["id"] in self.selected_ids]
+        return [c for c in self.level_clips() if c["id"] in self.selected_ids]
 
     def selected_clips_primary_first(self):
         return sorted(self.selected_clips(), key=lambda c: c["id"] != self._primary)
 
     def locked_ids(self):
         """Clips on locked tracks: they can never be selected."""
-        return {c["id"] for t in self.rows if project.locked(t) for c in t["clips"]}
+        return {c["id"] for t in self.rows if project.locked(t) for c in project.walk_clips([t])
+                if c["id"] in {k["id"] for k in self.level_clips()}}
 
     def set_selection(self, ids, primary=None):
         ids = set(ids) - self.locked_ids()
         if primary not in ids:
             primary = next((c["id"] for c in self.selected_clips() if c["id"] in ids), None) \
-                or next((c["id"] for t in self.rows for c in t["clips"] if c["id"] in ids), None)
+                or next((c["id"] for c in self.level_clips() if c["id"] in ids), None)
         self._primary = primary
         self.selected_ids = ids if primary else set()
         self.clipSelected.emit(self.selected)
@@ -253,11 +266,7 @@ class Timeline(QWidget):
 
     @property
     def selected(self):
-        for t in self.rows:
-            for c in t["clips"]:
-                if c["id"] == self.selected_id:
-                    return c
-        return None
+        return next((c for c in self.level_clips() if c["id"] == self.selected_id), None)
 
     def select(self, clip):
         if clip and clip["id"] in self.locked_ids():
@@ -269,7 +278,8 @@ class Timeline(QWidget):
     def view_state(self):
         """Where the view is (scroll, zoom, track heights, header width), to save with the project."""
         return {"scroll_s": round(self.scroll_s, 4), "px_per_s": round(self.px_per_s, 4),
-                "scroll_y": self.scroll_y, "heights": dict(self.heights), "header_w": self.header_w}
+                "scroll_y": self.scroll_y, "heights": dict(self.heights), "header_w": self.header_w,
+                "open_groups": sorted(self.open_groups)}
 
     def max_zoom(self):
         """Px per second at the closest zoom: 40 px per frame, at least 2000."""
@@ -285,6 +295,8 @@ class Timeline(QWidget):
             self.heights = {k: min(MAX_H, max(MIN_H, int(h))) for k, h in v["heights"].items()
                             if isinstance(h, (int, float))}
         self.scroll_y = int(v.get("scroll_y", self.scroll_y))
+        if isinstance(v.get("open_groups"), list):
+            self.open_groups = {str(g) for g in v["open_groups"]}
         if isinstance(v.get("header_w"), (int, float)):
             self.header_w = int(min(HEADER_MAX, max(HEADER_MIN, v["header_w"])))
         self._layout()
@@ -310,10 +322,115 @@ class Timeline(QWidget):
     def _sec(self, x):
         return (x - self.header_w) / self.px_per_s + self.scroll_s
 
-    def row_h(self, i):
+    def base_h(self, i):
+        """A row's own height (its clips' bars), without the lanes of open groups."""
         t = self.rows[i]
         h = self.heights.get(t["id"])
         return h or round((AUDIO_H if t["kind"] == "audio" else TRACK_H) * self.vzoom)
+
+    def row_h(self, i):
+        return self.base_h(i) + self.extra_lanes(self.rows[i]) * self.lane_h()
+
+    # -- groups: open ones show their tracks as lanes under their track ------------------------
+    def lane_h(self):
+        return max(MIN_H, round(TRACK_H * 0.85 * self.vzoom))
+
+    def is_open(self, c):
+        return project.is_group(c) and c["id"] in self.open_groups
+
+    def extra_lanes(self, track):
+        """Lanes a track needs under it: the most any of its open groups takes."""
+        return max((self.group_lanes(c) for c in track["clips"] if self.is_open(c)), default=0)
+
+    def group_lanes(self, g):
+        return sum(1 + self.extra_lanes(ct) for ct in g["tracks"])
+
+    def lanes(self, i):
+        """[{group, track, y, h, abs0}] of row i's open groups (nested ones too): each group's
+        tracks, top one first, each followed by the lanes of the open groups on it; abs0 is
+        where the group's time 0 is on the timeline."""
+        out, lh = [], self.lane_h()
+
+        def walk(g, y, abs0):
+            for ct in reversed(g["tracks"]):
+                out.append({"group": g, "track": ct, "y": y, "h": lh, "abs0": abs0})
+                y += lh
+                sub = 0
+                for k in ct["clips"]:
+                    if self.is_open(k):
+                        walk(k, y, abs0 + k["start_us"])
+                        sub = max(sub, self.group_lanes(k))
+                y += sub * lh
+        for c in self.rows[i]["clips"]:
+            if self.is_open(c):
+                walk(c, self.tops[i] + self.base_h(i), c["start_us"])
+        return out
+
+    def _lane_hit(self, pos):
+        """(lane, clip, zone) under pos in the lanes of open groups, or (lane / None, None, None)."""
+        row = self._row_at(pos.y())
+        if row is None or pos.y() < self.tops[row] + self.base_h(row) or project.locked(self.rows[row]):
+            return None, None, None
+        sec = self._sec(pos.x()) * US
+        for ln in self.lanes(row):
+            g = ln["group"]
+            if not (ln["y"] <= pos.y() < ln["y"] + ln["h"]) or not (ln["abs0"] <= sec <= ln["abs0"] + g["duration_us"]):
+                continue
+            for c in ln["track"]["clips"]:
+                x0 = self._x((ln["abs0"] + c["start_us"]) / US)
+                x1 = self._x((ln["abs0"] + c["start_us"] + c["duration_us"]) / US)
+                if x0 - EDGE_PX / 2 <= pos.x() <= x1 + EDGE_PX / 2:
+                    if x1 - x0 > 3 * EDGE_PX and pos.x() <= x0 + EDGE_PX:
+                        return ln, c, "start"
+                    if x1 - x0 > 3 * EDGE_PX and pos.x() >= x1 - EDGE_PX:
+                        return ln, c, "end"
+                    if x0 <= pos.x() <= x1:
+                        return ln, c, "body"
+            return ln, None, None
+        return None, None, None
+
+    def _fold_hit(self, pos):
+        """The group whose ▸ / ▾ is under pos, or None."""
+        row = self._row_at(pos.y())
+        if row is None:
+            return None
+        spots = [(c, self.tops[row], c["start_us"]) for c in self.rows[row]["clips"] if project.is_group(c)]
+        spots += [(c, ln["y"], ln["abs0"] + c["start_us"]) for ln in self.lanes(row) for c in ln["track"]["clips"]
+                  if project.is_group(c)]
+        for c, y, s in spots:
+            x = max(self._x(s / US), self.header_w)
+            if QRectF(x + 2, y + 3, 16, 16).contains(pos):
+                return c
+        return None
+
+    def toggle_group(self, g):
+        """Open or fold a group (not an edit: kept with the view)."""
+        self.open_groups ^= {g["id"]}
+        self._layout()
+        self._waves.clear()
+        self.update()
+
+    def _draw_lanes(self, p, i, dim):
+        w = self.width()
+        for ln in self.lanes(i):
+            g = ln["group"]
+            x0 = max(self._x(ln["abs0"] / US), self.header_w)
+            x1 = min(self._x((ln["abs0"] + g["duration_us"]) / US), w)
+            if x1 <= x0:
+                continue
+            p.fillRect(QRectF(x0, ln["y"], x1 - x0, ln["h"] - 1), QColor(0, 0, 0, 70))
+            p.fillRect(QRectF(x0, ln["y"], 2, ln["h"] - 1), QColor(COLORS["group"]))
+            for c in ln["track"]["clips"]:
+                d = self.drag
+                if d and d.get("mode", "").startswith("lane_") and d.get("moved") and d["clip"] is c:
+                    continue                             # (drawn where it is being dragged)
+                self._draw_clip(p, c, ln["y"], ln["abs0"] + c["start_us"], c["duration_us"],
+                                track=ln["track"], h=ln["h"], dim=dim)
+        d = self.drag
+        if d and d.get("mode", "").startswith("lane_") and d.get("moved") and d.get("row") == i:
+            ln = d["lane_to"]
+            self._draw_clip(p, d["clip"], ln["y"], ln["abs0"] + d["start"], d["end"] - d["start"], ghost=True,
+                            track=ln["track"], h=ln["h"])
 
     def _layout(self):
         """Row positions for the current heights and vertical scroll; updates the scroll bar."""
@@ -394,6 +511,8 @@ class Timeline(QWidget):
         if row is None:
             return None, None, None
         if project.locked(self.rows[row]):                  # its clips cannot be grabbed
+            return row, None, None
+        if pos.y() >= self.tops[row] + self.base_h(row):    # (the lanes of open groups)
             return row, None, None
         for c in self.rows[row]["clips"]:
             x0 = self._x(c["start_us"] / US)
@@ -582,7 +701,8 @@ class Timeline(QWidget):
             copying = bool(self.drag and self.drag.get("dup"))      # (Alt: the clips stay, copies move)
             for c in tr["clips"]:
                 if copying or (c is not dragged and c["id"] not in group):
-                    self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr, h=h, dim=dim)
+                    self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr, h=self.base_h(i), dim=dim)
+            self._draw_lanes(p, i, dim)
             if project.locked(tr):                          # locked: hatched over, nothing to grab
                 p.save()
                 p.setClipRect(QRectF(self.header_w, RULER_H, w - self.header_w, self.height() - RULER_H))
@@ -596,10 +716,10 @@ class Timeline(QWidget):
                     if c["id"] in group and 0 <= i + dr < len(self.rows):
                         j = i + dr
                         self._draw_clip(p, c, self.tops[j], c["start_us"] + self.drag["shift"], c["duration_us"],
-                                        ghost=True, track=self.rows[j], h=self.row_h(j))
+                                        ghost=True, track=self.rows[j], h=self.base_h(j))
         if dragged:
             d = self.drag
-            h = self.row_h(d["row"])
+            h = self.base_h(d["row"])
             if d.get("new") == "top":                   # landing on a new top track
                 p.fillRect(QRectF(self.header_w, RULER_H, w - self.header_w, 3), QColor("#e6e6e6"))
                 y = RULER_H - h + 2
@@ -798,6 +918,8 @@ class Timeline(QWidget):
                 label = ("⧉ " if c.get("timeline_id") else "◧ " if kind == "static" else "▣ ") + label
             elif c["type"] == "filter":
                 label = "✦ " + label
+            elif project.is_group(c):                    # its ▸ / ▾ (click to open or fold it)
+                label = ("▾ " if self.is_open(c) else "▸ ") + label + f"  ({sum(len(t['clips']) for t in c['tracks'])})"
             elif c.get("effects"):
                 label += "  ✦" + (str(len(c["effects"])) if len(c["effects"]) > 1 else "")
             lr = r.adjusted(4, 0, -2, 0)
@@ -1046,8 +1168,24 @@ class Timeline(QWidget):
         if kc is not None and not e.modifiers():
             self.drag = {"clip": kc, "mode": "key", "t0": kt, "t": kt, "x0": pos.x(), "moved": False}
             return
-        row, c, zone = self._hit(pos)
+        fold = self._fold_hit(pos)
+        if fold is not None and not e.modifiers():             # a group's ▸ / ▾: open or fold it
+            self.toggle_group(fold)
+            return
         adding = bool(e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
+        ln, lc, lzone = self._lane_hit(pos)
+        if lc is not None:                                     # a clip on an open group's lane
+            if adding:
+                ids = set(self.selected_ids) ^ {lc["id"]}
+                self.set_selection(ids, lc["id"] if lc["id"] in ids else None)
+                return
+            self.select(lc)
+            row = self._row_at(pos.y())
+            self.drag = {"clip": lc, "mode": "lane_" + lzone, "x0": pos.x(), "row": row, "lane0": ln,
+                         "lane_to": ln, "start": lc["start_us"], "end": lc["start_us"] + lc["duration_us"],
+                         "moved": False}
+            return
+        row, c, zone = self._hit(pos)
         if c is None:
             if pos.y() < RULER_H or row is None and pos.y() < self.rows_end:
                 self.drag = {"clip": None, "mode": "seek", "moved": False}
@@ -1105,6 +1243,29 @@ class Timeline(QWidget):
                 return
             _, c, zone = self._hit(pos) if self.proj else (None, None, None)
             self.setCursor(Qt.SizeHorCursor if zone in ("start", "end") else Qt.ArrowCursor)
+            return
+        if d["mode"].startswith("lane_"):                       # a clip of an open group
+            if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX:
+                return
+            d["moved"] = True
+            c, ln0 = d["clip"], d["lane0"]
+            g, abs0 = ln0["group"], ln0["abs0"]
+            dt = (pos.x() - d["x0"]) / self.px_per_s * US
+            s0, e0 = c["start_us"], c["start_us"] + c["duration_us"]
+            if d["mode"] == "lane_body":
+                start = self._snap_span(abs0 + s0 + dt, e0 - s0, c) - abs0
+                d["start"] = min(max(0.0, start), g["duration_us"] - (e0 - s0))
+                d["end"] = d["start"] + (e0 - s0)
+                for ln in self.lanes(d["row"]):          # another lane of the same group, same kind
+                    if ln["group"] is g and ln["y"] <= pos.y() < ln["y"] + ln["h"] and \
+                            ln["track"]["kind"] == ln0["track"]["kind"]:
+                        d["lane_to"] = ln
+            elif d["mode"] == "lane_start":
+                d["start"] = min(max(0.0, self._snap(abs0 + s0 + dt, c) - abs0), e0 - US / self.fps)
+            else:
+                d["end"] = max(min(g["duration_us"], self._snap(abs0 + e0 + dt, c) - abs0), s0 + US / self.fps)
+            self.clipDragging.emit(c["id"], int(round(abs0 + d["start"])), int(round(d["end"] - d["start"])))
+            self.update()
             return
         if d["mode"] == "matte":
             if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX:
@@ -1278,6 +1439,16 @@ class Timeline(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
+        if d and d["mode"].startswith("lane_"):
+            c = d["clip"]
+            if d["moved"] and d["mode"] == "lane_body":
+                self.moveRequested.emit(c["id"], int(round(d["start"])), d["lane_to"]["track"]["id"])
+            elif d["moved"] and d["mode"] == "lane_start":
+                self.trimRequested.emit(c["id"], "start", int(round(d["start"])))
+            elif d["moved"]:
+                self.trimRequested.emit(c["id"], "end", int(round(d["end"])))
+            self.update()
+            return
         if d and d["mode"] == "matte":
             if d["moved"]:
                 self.matte_region = dict(self.matte_region, t_off=d["t_off"])
@@ -1480,6 +1651,8 @@ class Timeline(QWidget):
         row, c, _ = self._hit(QPointF(pos))
         if row is None:
             return
+        if c is None:                                    # (a clip on an open group's lane)
+            c = self._lane_hit(QPointF(pos))[1]
         menu = QMenu(self)
         if pos.x() < self.header_w:
             tr = self.rows[row]
@@ -1512,6 +1685,10 @@ class Timeline(QWidget):
             if c["type"] == "compound":
                 items = [("編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
                          ("在新的分頁開啟", "open_tab"), ("設為獨立（不再共用）", "unique"), None] + items
+            if project.is_group(c):
+                items = [("摺疊群組" if self.is_open(c) else "展開群組", "fold"), ("解散群組", "ungroup"), None] + items
+            if all(k["type"] != "audio" for k in self.selected_clips()):
+                items += [None, ("建立群組", "group")]
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立靜態片段", "make_static"), ("建立複合片段", "make_compound")]
             else:
@@ -1546,8 +1723,16 @@ class Timeline(QWidget):
                 return
             if not any(r.contains(e.position()) for _, r in self.header_buttons(row)):
                 self.trackAction.emit("rename", self.rows[row]["id"])
+        elif c is not None and project.is_group(c):
+            self.toggle_group(c)
         elif c is not None and c["type"] == "compound":
             self.clipAction.emit("enter", c["id"])
+        else:
+            _ln, lc, _z = self._lane_hit(e.position())
+            if lc is not None and project.is_group(lc):
+                self.toggle_group(lc)
+            elif lc is not None and lc["type"] == "compound":
+                self.clipAction.emit("enter", lc["id"])
 
     def wheelEvent(self, e):
         if not self.proj:

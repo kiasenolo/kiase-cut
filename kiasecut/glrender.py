@@ -403,6 +403,26 @@ class GLRenderer(render.Renderer):
         fmt = QImage.Format_RGBA8888_Premultiplied if alpha else QImage.Format_RGBA8888
         return QImage(data, width, height, width * 4, fmt).copy()
 
+    def gl_content(self, tgt, base, comp, W, H, fps, t_us, ppu):
+        """A compound's or a group's tracks (as render.draw_content: a group's matte)."""
+        matte = (comp.get("matte") or {}) if comp.get("group") else {}
+        tracks = [tr for tr in comp["tracks"] if tr["kind"] != "audio"]
+        if not matte.get("on") or len(tracks) < 2:
+            self.gl_tracks(tgt, base, comp["tracks"], W, H, fps, t_us, ppu)
+            return
+        gl = self.gl
+        cut, above, kept, empty = (gl.layer(tgt.w, tgt.h) for _ in range(4))
+        try:
+            self.gl_tracks(cut, base, tracks[:1], W, H, fps, t_us, ppu)
+            self.gl_tracks(above, base, tracks[1:], W, H, fps, t_us, ppu)
+            gl.mix_cover(kept, empty.tex, above.tex, cut.tex)        # kept where the bottom one is
+            if matte.get("show"):
+                gl.draw_layer(tgt, cut)
+            gl.draw_layer(tgt, kept)
+        finally:
+            for lay in (cut, above, kept, empty):
+                gl.release(lay)
+
     def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu):
         f = round(t_us * fps / US)
         for tr in tracks:
@@ -474,8 +494,8 @@ class GLRenderer(render.Renderer):
                 if pic is None:
                     return
                 tex, straight = gl.frame_texture(pic)
-        elif kind == "compound":
-            comp = c["compound"]
+        elif kind in ("compound", "group"):
+            comp = c["compound"] if kind == "compound" else render.group_content(c, W, H)
             cw, ch = comp["width"], comp["height"]
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
@@ -499,7 +519,7 @@ class GLRenderer(render.Renderer):
                 inner = QTransform()
                 inner.scale(k, k)
                 inner.translate(-(vis.left() + bw / 2) / fit, -(vis.top() + bh / 2) / fit)
-                self.gl_tracks(held, inner, comp["tracks"], cw, ch, fps, project.source_time(c, t), k)
+                self.gl_content(held, inner, comp, cw, ch, fps, t if kind == "group" else project.source_time(c, t), k)
                 tex = held.tex
                 rect = QRectF(vis.left(), vis.top(), held.w / k * fit, held.h / k * fit)
         else:

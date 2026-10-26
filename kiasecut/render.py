@@ -10,6 +10,9 @@ follows the same rules as build.py:
   * masks live in material space (they move with the clip), drawn as clip paths;
   * a clip whose effects go to the background (project.backdrop_of) runs them on what is
     under it, inside its shape, then draws itself on top unless its body is hidden;
+  * a group (群組) is drawn like a compound the size of its level: its tracks go to a layer
+    at group time (draw_content: with its matte on, the bottom track's clips cut the ones
+    above), which goes through the group's transform, effects and mask;
   * compound clips render their tracks into a layer first, at time - start + source start;
     a static compound (靜態片段) always at time 0 (its first frame), drawn once and reused
     like a picture;
@@ -250,6 +253,37 @@ class Renderer:
         p.end()
         return img
 
+    def draw_content(self, p, comp, W, H, fps, t_us, px_per_unit):
+        """A compound's or a group's tracks; a group with its matte on: its bottom track's clips
+        cut the clips above them (by their alpha), and are drawn too with show."""
+        matte = (comp.get("matte") or {}) if comp.get("group") else {}
+        tracks = [tr for tr in comp["tracks"] if tr["kind"] != "audio"]
+        if not matte.get("on") or len(tracks) < 2 or not isinstance(p.device(), QImage):
+            self.draw_tracks(p, comp["tracks"], W, H, fps, t_us, px_per_unit)
+            return
+        dev = p.device()
+
+        def layer(trs):
+            im = QImage(dev.width(), dev.height(), QImage.Format_ARGB32_Premultiplied)
+            im.fill(Qt.transparent)
+            lp = QPainter(im)
+            lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+            lp.setTransform(p.worldTransform())
+            self.draw_tracks(lp, trs, W, H, fps, t_us, px_per_unit)
+            lp.end()
+            return im
+        cut, above = layer(tracks[:1]), layer(tracks[1:])
+        lp = QPainter(above)
+        lp.setCompositionMode(QPainter.CompositionMode_DestinationIn)      # kept where the bottom one is
+        lp.drawImage(0, 0, cut)
+        lp.end()
+        p.save()
+        p.resetTransform()
+        if matte.get("show"):
+            p.drawImage(0, 0, cut)
+        p.drawImage(0, 0, above)
+        p.restore()
+
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first."""
         f = round(t_us * fps / US)
@@ -314,8 +348,8 @@ class Renderer:
                     return
             draw = lambda q=p: q.drawImage(rect, pic)
             disp = (bw, bh)
-        elif kind == "compound":
-            comp = c["compound"]
+        elif kind in ("compound", "group"):
+            comp = c["compound"] if kind == "compound" else group_content(c, W, H)
             cw, ch = comp["width"], comp["height"]
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
@@ -346,7 +380,7 @@ class Renderer:
                 lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
                 lp.scale(k, k)
                 lp.translate(-ux, -uy)
-                self.draw_tracks(lp, comp["tracks"], cw, ch, fps, project.source_time(c, t), k)
+                self.draw_content(lp, comp, cw, ch, fps, t if kind == "group" else project.source_time(c, t), k)
                 lp.end()
                 q.drawImage(QRectF(vis.left(), vis.top(), layer.width() / k * fit, layer.height() / k * fit), layer)
             draw = draw or draw_live
@@ -596,6 +630,12 @@ def array_to_image(arr):
     h, w = arr.shape[:2]
     im = QImage(np.ascontiguousarray(arr).data, w, h, w * 4, QImage.Format_RGBA8888_Premultiplied).copy()
     return im.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+
+
+def group_content(g, W, H):
+    """A group as compound-like content: its tracks on a canvas the size of its level."""
+    return {"width": W, "height": H, "tracks": g["tracks"], "group": True, "matte": g.get("matte"),
+            "duration_us": g["duration_us"]}
 
 
 def clip_world(c, t, W, H):

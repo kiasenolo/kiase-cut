@@ -23,6 +23,7 @@ DOC_PATH = os.path.join(PKG, "FORMAT.md")
 TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
 MAX_PASSES = 8
+BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu")
 RESERVED = {"source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "src",
             "original", "effect", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
@@ -305,6 +306,9 @@ class Engine:
         if prog is None:
             if d.error:
                 raise FilterError(d.error)
+            if len(d.code) > BIG:
+                with self.ctx:
+                    precompile(shader_source(d))
             try:
                 prog = self.ctx.program(vertex_shader=VERTEX, fragment_shader=shader_source(d))
             except Exception as exc:
@@ -375,6 +379,58 @@ class Engine:
             self.ctx.release()
         except Exception:
             pass
+
+
+def precompile(source):
+    """Compile and link VERTEX + source on this thread's current context through ctypes, which
+    lets go of Python's lock while the driver works. moderngl keeps the lock, and the first
+    compile of a big filter can take the driver half a minute: every thread, the window too,
+    would stand still. The driver remembers what it compiled, so moderngl's own compile of the
+    same source right after is quick. Does nothing when the functions cannot be found."""
+    import ctypes
+    try:
+        import glcontext
+        gl = None
+        for backend in (glcontext.default_backend, lambda: glcontext.get_backend_by_name("egl")):
+            try:
+                gl = backend()(mode="detect", glversion=330)
+                break
+            except Exception:
+                continue
+        if gl is None:
+            return
+        uint, c_int = ctypes.c_uint, ctypes.c_int
+
+        def fn(name, res, *args):
+            addr = gl.load(name)
+            if not addr:
+                raise OSError(name)
+            return ctypes.CFUNCTYPE(res, *args)(addr)
+        create_shader = fn("glCreateShader", uint, uint)
+        shader_source = fn("glShaderSource", None, uint, c_int, ctypes.POINTER(ctypes.c_char_p), ctypes.c_void_p)
+        compile_shader = fn("glCompileShader", None, uint)
+        create_program = fn("glCreateProgram", uint)
+        attach = fn("glAttachShader", None, uint, uint)
+        link = fn("glLinkProgram", None, uint)
+        get_programiv = fn("glGetProgramiv", None, uint, uint, ctypes.POINTER(c_int))
+        delete_shader = fn("glDeleteShader", None, uint)
+        delete_program = fn("glDeleteProgram", None, uint)
+    except Exception:
+        return
+    prog = create_program()
+    shaders = []
+    for kind, text in ((0x8B31, VERTEX), (0x8B30, source)):          # GL_VERTEX_SHADER, GL_FRAGMENT_SHADER
+        sh = create_shader(kind)                                      # (stripped, as moderngl does: the same text)
+        shader_source(sh, 1, (ctypes.c_char_p * 1)(text.strip().encode("utf-8")), None)
+        compile_shader(sh)
+        attach(prog, sh)
+        shaders.append(sh)
+    link(prog)
+    ok = c_int(0)
+    get_programiv(prog, 0x8B82, ctypes.byref(ok))                   # GL_LINK_STATUS: waits for the driver
+    for sh in shaders:
+        delete_shader(sh)
+    delete_program(prog)
 
 
 def missing():

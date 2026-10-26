@@ -135,6 +135,22 @@ def available():
     return None
 
 
+class Guard:
+    """Says when the system's free memory has fallen too low to go on: below 5% of it
+    (at least 512 MB, at most 1 GB), or below half of what was free when the guard was
+    made, if that was already less (so a system that starts low is not stopped at once)."""
+    def __init__(self):
+        a = available()
+        self.floor = None if a is None else min(max(a[1] * 0.05, 512 * 2 ** 20), 2 ** 30, a[0] / 2)
+
+    def low(self):
+        """(bytes free, bytes in all) when free memory is under the floor, else None."""
+        if self.floor is None:
+            return None
+        a = available()
+        return a if a is not None and a[0] < self.floor else None
+
+
 def gb(n):
     """n bytes as a short text: 512 MB, 3.4 GB."""
     return f"{n / 2 ** 30:.1f} GB" if n >= 2 ** 30 else f"{n / 2 ** 20:.0f} MB"

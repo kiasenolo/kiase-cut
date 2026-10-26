@@ -303,14 +303,17 @@ class ExportDialog(QDialog):
 class ExportProgress(QDialog):
     """The export's progress: what is being made, the stage, frames done, time spent and
     left, the speed, the memory the app holds and the system has left, and 取消匯出.
-    cancel_requested is called (once) when the user stops it; the window stays until
-    finish(), so a second export cannot start while the first is still winding down."""
+    cancel_requested(reason) is called (once) when the export is to stop: reason None when
+    the user stopped it, else why it was stopped for them (the system's memory running out,
+    seen by guard, a sysmem.Guard, on every tick). The window stays until finish(), so a
+    second export cannot start while the first is still winding down."""
     def __init__(self, parent, out, what, frames, cancel_requested):
         super().__init__(parent)
         self.setWindowTitle("匯出中")
         self.setWindowModality(Qt.WindowModal)
         self.frames, self.cancel_requested = frames, cancel_requested
         self.t0, self.p, self.cancelling, self.peak, self.ended = time.monotonic(), 0.0, False, 0, False
+        self.guard = sysmem.Guard()
         lay = QVBoxLayout(self)
         name = QLabel(os.path.basename(out) or out)
         name.setStyleSheet("font-weight: bold;")
@@ -339,12 +342,12 @@ class ExportProgress(QDialog):
         row = QHBoxLayout()
         row.addStretch(1)
         self.cancel_btn = QPushButton("取消匯出")
-        self.cancel_btn.clicked.connect(self.cancel)
+        self.cancel_btn.clicked.connect(lambda: self.cancel())
         row.addWidget(self.cancel_btn)
         lay.addLayout(row)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._tick)
-        self.timer.start(500)
+        self.timer.start(250)                  # (often: memory can run out fast)
         self._tick()
         self.resize(420, 0)
 
@@ -361,7 +364,15 @@ class ExportProgress(QDialog):
         s = int(s)
         return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60:02d}:{s % 60:02d}"
 
+    @staticmethod
+    def low_memory_reason(free, total):
+        return (f"系統可用記憶體只剩 {sysmem.gb(free)}（共 {sysmem.gb(total)}），再繼續可能讓整個系統當掉，"
+                "所以自動取消了匯出。\n\n請降低解析度或幀率、關掉其他程式，或改用較小的畫質後再試。")
+
     def _tick(self):
+        low = None if self.cancelling else self.guard.low()
+        if low:
+            self.cancel(self.low_memory_reason(*low))
         spent = time.monotonic() - self.t0
         self.time_lbl.setText(self._clock(spent))
         done = int(self.p * self.frames)
@@ -378,14 +389,16 @@ class ExportProgress(QDialog):
             self.sys_lbl.setText(f"{sysmem.gb(free)} / {sysmem.gb(total)}" + ("　⚠ 快用完了" if free < total * 0.1 else ""))
             self.sys_lbl.setStyleSheet(WARN if free < total * 0.1 else "")
 
-    def cancel(self):
+    def cancel(self, reason=None):
         if self.cancelling:
             return
         self.cancelling = True
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.setText("取消中…")
-        self.stage.setText("正在停止匯出…")
-        self.cancel_requested()
+        self.stage.setText("記憶體快用完了，正在停止匯出…" if reason else "正在停止匯出…")
+        if reason:
+            self.stage.setStyleSheet(WARN)
+        self.cancel_requested(reason)
 
     def reject(self):                  # Esc and the window's close button stop the export too
         self.cancel()

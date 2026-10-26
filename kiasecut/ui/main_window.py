@@ -3419,9 +3419,11 @@ class MainWindow(QMainWindow):
             desc.append(QUALITY[dlg.quality.currentIndex()][0])
         desc.append("KiaseCut 渲染器" if own else "MLT")
         cancel = threading.Event()
-        running = {"engine": None}                # the MLT engine process now exporting, killed on 取消
-
-        def stop():
+        running = {"engine": None, "why": None}   # the MLT engine process now exporting, killed on 取消;
+                                                  # why it was stopped for the user (memory), None: by them
+        def stop(reason=None):
+            if reason and not cancel.is_set():
+                running["why"] = reason
             cancel.set()
             eng = running["engine"]
             if eng is not None:
@@ -3434,8 +3436,17 @@ class MainWindow(QMainWindow):
             self.taskCall.emit(prog.set_stage, text)
 
         def check():
-            if cancel.is_set():
+            if cancelled():
                 raise RuntimeError("已取消")
+
+        def cancelled():
+            """Asked between frames: also stops at once when the system's memory runs low (the
+            window looks too, but only every 250 ms, and an MLT export is stopped from there)."""
+            low = None if cancel.is_set() else prog.guard.low()
+            if low:
+                stop(prog.low_memory_reason(*low))
+                self.taskCall.emit(prog.cancel, running["why"])        # (the window shows it)
+            return cancel.is_set()
 
         def work(progress):
             os.makedirs(cache, exist_ok=True)
@@ -3443,12 +3454,12 @@ class MainWindow(QMainWindow):
             if own:
                 # filters, blend modes, the other formats, transparency: our own renderer
                 return renderexport.export(snapshot, out, (fmt["width"], fmt["height"]), fps, first, last, opts,
-                                           progress, cache, cancel.is_set, spec, stage)
+                                           progress, cache, cancelled, spec, stage)
             r = mlt_export(progress)
             if spec.get("stems"):
                 stage("分軌音檔")
                 r = dict(r, stems=renderexport.stems(snapshot, out, fps, first, last, spec["stems"], cache,
-                                                     cancel.is_set))
+                                                     cancelled))
             return r
 
         def mlt_export(progress):
@@ -3486,7 +3497,12 @@ class MainWindow(QMainWindow):
                     os.remove(out)
                 except OSError:
                     pass
-            self.statusBar().showMessage(f"已取消匯出（{prog.frames_lbl.text()} 幀）", 6000)
+            if running["why"]:
+                peak = f"，KiaseCut 記憶體最高 {sysmem.gb(prog.peak)}" if prog.peak else ""
+                QMessageBox.warning(self, "已自動取消匯出",
+                                    f"{running['why']}\n\n已完成 {prog.frames_lbl.text()} 幀{peak}。")
+            else:
+                self.statusBar().showMessage(f"已取消匯出（{prog.frames_lbl.text()} 幀）", 6000)
 
         def done(r):
             prog.finish()

@@ -87,18 +87,48 @@ class DialogTests(unittest.TestCase):
 
     def test_progress_waits_for_the_export(self):
         stopped = []
-        prog = ExportProgress(None, "/tmp/x.mp4", "MP4", 100, lambda: stopped.append(1))
+        prog = ExportProgress(None, "/tmp/x.mp4", "MP4", 100, stopped.append)
         prog.show()
         prog.set_progress(0.25)
         prog._tick()
         self.assertEqual(prog.frames_lbl.text(), "25 / 100")
         prog.close()                                       # the window's X: stop, but stay open
         prog.cancel()
-        self.assertEqual(stopped, [1])
+        self.assertEqual(stopped, [None])                  # by the user: no reason
         self.assertTrue(prog.isVisible())
         self.assertFalse(prog.cancel_btn.isEnabled())
         prog.finish()
         self.assertFalse(prog.isVisible())
+
+    def test_stops_itself_when_memory_runs_low(self):
+        stopped = []
+        prog = ExportProgress(None, "/tmp/x.mp4", "MP4", 100, stopped.append)
+        prog.guard.low = lambda: (300 * 2 ** 20, 16 * 2 ** 30)
+        prog._tick()
+        self.assertEqual(len(stopped), 1)
+        self.assertIn("300 MB", stopped[0])
+        self.assertIn("記憶體", prog.stage.text())
+        prog._tick()                                       # once only
+        self.assertEqual(len(stopped), 1)
+        prog.finish()
+
+    def test_guard_floor(self):
+        real = sysmem.available
+        try:
+            sysmem.available = lambda: (8 * 2 ** 30, 16 * 2 ** 30)
+            g = sysmem.Guard()
+            self.assertAlmostEqual(g.floor, 16 * 2 ** 30 * 0.05)         # 5%: 819 MB
+            self.assertIsNone(g.low())
+            sysmem.available = lambda: (700 * 2 ** 20, 16 * 2 ** 30)
+            self.assertIsNotNone(g.low())
+            sysmem.available = lambda: (600 * 2 ** 20, 4 * 2 ** 30)       # already low at the start:
+            g = sysmem.Guard()                                            # half of what was free
+            self.assertEqual(g.floor, 300 * 2 ** 20)
+            self.assertIsNone(g.low())
+            sysmem.available = lambda: None
+            self.assertIsNone(sysmem.Guard().low())
+        finally:
+            sysmem.available = real
 
     def test_memory_numbers(self):
         if sys.platform.startswith("linux") or sys.platform == "win32":

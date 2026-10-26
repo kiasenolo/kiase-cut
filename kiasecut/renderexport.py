@@ -68,8 +68,11 @@ def _sound(mix, view, path, fps, first, last, cancelled, only=None, on_progress=
         wf.setframerate(audiomix.RATE)
         for i, f in enumerate(range(first, last + 1)):
             wf.writeframes(mix.mix(f, fps))
-            if on_progress and i % 50 == 0:
-                on_progress((i + 1) / total)
+            if i % 50 == 0:
+                if cancelled():
+                    raise RuntimeError("已取消")
+                if on_progress:
+                    on_progress((i + 1) / total)
 
 
 def _safe(name):
@@ -140,12 +143,14 @@ def stems(proj, out, fps, first, last, ext, cache_dir=None, cancelled=lambda: Fa
 
 # -- the export -------------------------------------------------------------------------------------
 def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=None, cancelled=lambda: False,
-           spec=None):
+           spec=None, on_stage=None):
     """Render frames first..last (inclusive, at `fps`) of the project to the file out.
     size: (width, height). opts: crf, preset (as the export dialog gives them).
     spec: the advanced settings {format: a formats.py key, alpha: a transparent background,
     audio: the mixed sound in the file, stems: None or the extension of a file per track,
-    multitrack: each track's sound as one more sound stream}; None: MP4 / H.264 with sound."""
+    multitrack: each track's sound as one more sound stream}; None: MP4 / H.264 with sound.
+    on_stage(text): told what the export is doing now (the progress window shows it).
+    cancelled(): asked between frames; True stops the export with RuntimeError("已取消")."""
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("找不到 ffmpeg")
@@ -156,6 +161,7 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
     os.makedirs(cache, exist_ok=True)
     t0 = time.time()
     progress = on_progress or (lambda p: None)
+    stage = on_stage or (lambda s: None)
 
     mix = audiomix.Mixer(cache)
     wav, stem_wavs, temps = None, [], []
@@ -163,19 +169,25 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
         if fmt.audio and (spec["audio"] or not fmt.has_video):
             wav = os.path.join(cache, "export-sound.wav")
             temps.append(wav)
+            stage("混音")
             _sound(mix, view, wav, fps, first, last, cancelled, on_progress=None if fmt.has_video else progress)
         multitrack = bool(spec.get("multitrack")) and fmt.multitrack
         if spec.get("stems") or multitrack:
+            stage("各軌道的聲音")
             stem_wavs = _stem_wavs(mix, view, cache, fps, first, last, cancelled)
             temps += [w for _, w in stem_wavs]
         if fmt.has_video:
             sounds = ([("混音", wav)] if wav else []) + (stem_wavs if multitrack else [])
+            stage("繪製與編碼畫面")
             errors = _pictures(view, out, fmt, bool(spec.get("alpha")) and fmt.can_alpha, size, fps, first, last,
                                opts, sounds, progress, cancelled)
             encoder = formats.encoder_name(fmt, size)
         else:
+            stage("編碼聲音")
             _run([ffmpeg, "-y", "-v", "error", "-i", wav, *formats.audio_args(fmt.audio), out])
             errors, encoder = [], formats.encoder_name(fmt, size)
+        if spec.get("stems"):
+            stage("分軌音檔")
         files = _encode_stems(stem_wavs, out, spec["stems"]) if spec.get("stems") else []
     finally:
         _remove(temps)

@@ -13,6 +13,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
@@ -25,7 +26,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QH
                                QWidget)
 
 from .. import (assets, build, components, curves, edit, fonts, fx, gpu, layouts, library, project, recovery, render,
-               renderexport, thumbnail, userlib, waveform, workspace)
+               renderexport, sysmem, thumbnail, userlib, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -36,7 +37,7 @@ from .docks import Panels
 from .curve_editor import CurveEditor
 from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
-from .export_dialog import ExportDialog
+from .export_dialog import QUALITY, ExportDialog, ExportProgress
 from .inspector import Inspector
 from .library import LibraryPanel, dropped_paths
 from .layers import LayerPanel
@@ -3403,60 +3404,112 @@ class MainWindow(QMainWindow):
         spec = dlg.spec()
         self.settings().setValue("export_spec", json.dumps(spec))
         fps = fmt["fps"]
-        first = round(t0 / US * fps)                    # frames of the export's own rate
-        last = max(first, round(t1 / US * fps) - 1)
+        first, last = dlg.frames()                      # frames of the export's own rate
         if not out:
             return
         self.player.worker.set_playing(False)
-        prog = QProgressDialog("匯出中…", None, 0, 1000, self)
-        prog.setWindowModality(Qt.WindowModal)
-        prog.setMinimumDuration(0)
         snapshot = json.loads(json.dumps(self.proj))
         cache = self.cache_dir()
+        f = dlg.format()
+        own = renderexport.needs_renderer(snapshot) or not renderexport.uses_mlt(spec)
+        desc = [f.label]
+        if f.has_video:
+            desc += [f"{fmt['width']}×{fmt['height']}", f"{fps:g} fps"]
+        if f.quality:
+            desc.append(QUALITY[dlg.quality.currentIndex()][0])
+        desc.append("KiaseCut 渲染器" if own else "MLT")
+        cancel = threading.Event()
+        running = {"engine": None}                # the MLT engine process now exporting, killed on 取消
+
+        def stop():
+            cancel.set()
+            eng = running["engine"]
+            if eng is not None:
+                eng.proc.kill()                   # MLT has no way to stop between frames: end its process
+
+        prog = ExportProgress(self, out, " · ".join(desc), last - first + 1 if f.has_video else 0, stop)
+        prog.show()
+
+        def stage(text):
+            self.taskCall.emit(prog.set_stage, text)
+
+        def check():
+            if cancel.is_set():
+                raise RuntimeError("已取消")
 
         def work(progress):
             os.makedirs(cache, exist_ok=True)
             os.makedirs(os.path.dirname(out), exist_ok=True)
-            if renderexport.needs_renderer(snapshot) or not renderexport.uses_mlt(spec):
+            if own:
                 # filters, blend modes, the other formats, transparency: our own renderer
                 return renderexport.export(snapshot, out, (fmt["width"], fmt["height"]), fps, first, last, opts,
-                                           progress, cache, spec=spec)
+                                           progress, cache, cancel.is_set, spec, stage)
             r = mlt_export(progress)
             if spec.get("stems"):
-                r = dict(r, stems=renderexport.stems(snapshot, out, fps, first, last, spec["stems"], cache))
+                stage("分軌音檔")
+                r = dict(r, stems=renderexport.stems(snapshot, out, fps, first, last, spec["stems"], cache,
+                                                     cancel.is_set))
             return r
 
         def mlt_export(progress):
+            stage("建立 MLT 文件")
             xml = build.build(snapshot, cache, os.path.join(cache, "export.mlt"),   # originals, no proxies
                               size=(fmt["width"], fmt["height"]), fps=fps)
             enc = gpu.mlt_video_opts(opts, (fmt["width"], fmt["height"]))
             for attempt in ([enc] if enc else []) + [None]:          # NVENC first; x264 if it fails
+                check()
+                stage("編碼（NVENC / GPU）" if attempt else "編碼（x264 / CPU）")
                 eng = EngineClient(16, 16)        # its own process; the preview stays usable
+                running["engine"] = eng
                 try:
+                    check()                       # (取消 while the engine was starting)
                     r = eng.export(xml, out, progress, threads=os.cpu_count() or 4,
                                    **{"in": first, "out": last}, **dict(opts, **(attempt or {})))
                 except RuntimeError:
+                    check()                       # a killed engine is a 取消, not a reason to try x264
                     if attempt is None:
                         raise
                     continue
                 finally:
+                    running["engine"] = None
                     eng.close()
                 if attempt is None or (os.path.exists(out) and os.path.getsize(out) > 1024):
                     return dict(r, encoder="NVENC (GPU)" if attempt else "x264 (CPU)")
 
+        def failed(m):
+            prog.finish()
+            if not cancel.is_set():
+                QMessageBox.critical(self, "匯出失敗", m)
+                return
+            if f.kind != "sequence" and os.path.isfile(out):          # the half-written file is no use
+                try:
+                    os.remove(out)
+                except OSError:
+                    pass
+            self.statusBar().showMessage(f"已取消匯出（{prog.frames_lbl.text()} 幀）", 6000)
+
         def done(r):
-            prog.close()
+            prog.finish()
             extra = ("\n\n" + "\n".join(r["errors"])) if r.get("errors") else ""
             enc = f"，{r['encoder']}" if r.get("encoder") else ""
             what = (f"{fmt['width']}×{fmt['height']}，{fps:g} fps{enc}" if dlg.format().has_video
                     else enc.lstrip("，"))
             stems = (f"\n分軌音檔 {len(r['stems'])} 個：{renderexport.stems_dir(out)}" if r.get("stems")
                      else "\n沒有可分軌的聲音" if spec.get("stems") else "")
-            QMessageBox.information(self, "匯出完成", f"{r.get('done', out)}\n{what}{stems}\n"
-                                    f"耗時 {r['elapsed']:.0f} 秒{extra}")
+            made = r.get("done", out)
+            size = (sum(e.stat().st_size for e in os.scandir(made) if e.is_file()) if os.path.isdir(made)
+                    else os.path.getsize(made) if os.path.isfile(made) else None)
+            n = last - first + 1
+            facts = [f"耗時 {r['elapsed']:.0f} 秒"]
+            if f.has_video and r["elapsed"] > 0:
+                facts.append(f"平均 {n / r['elapsed']:.1f} 幀/秒（{n:,} 幀）")
+            if size is not None:
+                facts.append(f"檔案 {sysmem.gb(size)}")
+            if prog.peak:
+                facts.append(f"記憶體最高 {sysmem.gb(prog.peak)}")
+            QMessageBox.information(self, "匯出完成", f"{made}\n{what}{stems}\n" + "，".join(facts) + extra)
 
-        self.run_task(work, done, lambda m: (prog.close(), QMessageBox.critical(self, "匯出失敗", m)),
-                      lambda p: prog.setValue(int(p * 1000)))
+        self.run_task(work, done, failed, prog.set_progress)
 
     # -- settings ---------------------------------------------------------------------------------
     def export_still(self):

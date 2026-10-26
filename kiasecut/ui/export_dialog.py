@@ -5,15 +5,18 @@ The project is not tied to a frame rate or a pixel size: times are microseconds 
 positions are fractions of the canvas, so an export can use any frame rate and any size
 with the project's shape. Size is a multiple of the project's own resolution.
 Formats are formats.py's; the advanced options are renderexport.export's spec.
+ExportProgress is the window shown while the export runs: what is being made, how far it
+is, how long is left, the memory it holds, and a button that stops it.
 """
 import os
+import time
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-                               QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QToolButton,
-                               QVBoxLayout, QWidget)
+                               QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton, QRadioButton,
+                               QToolButton, QVBoxLayout, QWidget)
 
-from .. import formats
+from .. import formats, sysmem
 from .inspector import SpinBox
 from .timeline import US, timecode
 
@@ -22,6 +25,8 @@ QUALITY = (("高畫質", {"crf": 16, "preset": "medium"}),
            ("小檔案", {"crf": 26, "preset": "fast"}))
 FPS_CHOICES = (10, 25, 30, 40, 60, 100)
 SCALE_CHOICES = (0.25, 0.5, 1, 2, 4)
+BIG_PIXELS = 7680 * 4320          # past 8K the dialog warns: every frame takes a lot of memory
+GREY, WARN = "color: #9a9aa0;", "color: #e0a040;"
 
 
 def even(v):
@@ -94,6 +99,9 @@ class ExportDialog(QDialog):
         for name, _ in QUALITY:
             self.quality.addItem(name)
         form.addRow("畫質", self.quality)
+        self.info_lbl = QLabel()
+        self.info_lbl.setWordWrap(True)
+        form.addRow("內容", self.info_lbl)
         self.form = form
         lay.addLayout(form)
 
@@ -137,6 +145,7 @@ class ExportDialog(QDialog):
             w.toggled.connect(self._update)
         self.stem_fmt.currentIndexChanged.connect(self._update)
         self.path.textChanged.connect(self._update)
+        self.whole.toggled.connect(self._update)
         self._format_changed()
         self.more.setChecked(bool(spec.get("alpha") or spec.get("stems") or spec.get("multitrack")
                                   or not spec.get("audio", True)))
@@ -193,6 +202,31 @@ class ExportDialog(QDialog):
             notes.append(f"分軌音檔放在「{name} - 分軌」資料夾（只含有聲音、沒被靜音的軌道）。")
         self.adv_note.setText("\n".join(notes))
         self.adv_note.setVisible(bool(notes))
+        self._update_info(f, w, h)
+
+    def frames(self):
+        """(first, last): the frames, at the export's own rate, the export will make."""
+        _path, t0, t1, fmt, _opts = self.result_options()
+        first = round(t0 / US * fmt["fps"])
+        return first, max(first, round(t1 / US * fmt["fps"]) - 1)
+
+    def _update_info(self, f, w, h):
+        """How many frames, how long, and how much one frame takes; a warning when it is a lot."""
+        first, last = self.frames()
+        n, fps = last - first + 1, self.out_fps()
+        text = f"長度 {timecode(n / fps * US, fps)}"
+        warn = False
+        if f.has_video:
+            text = f"{n:,} 幀，" + text + f"，每幀未壓縮 {sysmem.gb(w * h * 4)}"
+            if w * h > max(BIG_PIXELS, 4 * self.W * self.H):
+                text += f"\n⚠ {w}×{h} 非常大：匯出會用掉很多記憶體與時間，請確認解析度沒有調錯。"
+                warn = True
+            mem = sysmem.available()
+            if mem and w * h * 4 * 8 > mem[0]:          # (a frame passes through a few buffers on the way)
+                text += f"\n⚠ 系統只剩 {sysmem.gb(mem[0])} 可用記憶體，這個解析度可能會用完。"
+                warn = True
+        self.info_lbl.setText(text)
+        self.info_lbl.setStyleSheet(WARN if warn else GREY)
 
     def format(self):
         return formats.get(self.format_box.currentData())
@@ -264,3 +298,107 @@ class ExportDialog(QDialog):
         fmt = {"width": w, "height": h, "fps": self.out_fps()}
         return (os.path.abspath(path) if path else "", a / self.fps * US, (b + 1) / self.fps * US, fmt,
                 dict(QUALITY[self.quality.currentIndex()][1]))
+
+
+class ExportProgress(QDialog):
+    """The export's progress: what is being made, the stage, frames done, time spent and
+    left, the speed, the memory the app holds and the system has left, and 取消匯出.
+    cancel_requested is called (once) when the user stops it; the window stays until
+    finish(), so a second export cannot start while the first is still winding down."""
+    def __init__(self, parent, out, what, frames, cancel_requested):
+        super().__init__(parent)
+        self.setWindowTitle("匯出中")
+        self.setWindowModality(Qt.WindowModal)
+        self.frames, self.cancel_requested = frames, cancel_requested
+        self.t0, self.p, self.cancelling, self.peak, self.ended = time.monotonic(), 0.0, False, 0, False
+        lay = QVBoxLayout(self)
+        name = QLabel(os.path.basename(out) or out)
+        name.setStyleSheet("font-weight: bold;")
+        name.setToolTip(out)
+        lay.addWidget(name)
+        sub = QLabel(what)
+        sub.setStyleSheet(GREY)
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+        self.stage = QLabel("準備中…")
+        lay.addWidget(self.stage)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.bar.setFormat("%p%")
+        lay.addWidget(self.bar)
+        form = QFormLayout()
+        self.frames_lbl, self.time_lbl, self.left_lbl, self.speed_lbl, self.mem_lbl, self.sys_lbl = (
+            QLabel("–") for _ in range(6))
+        form.addRow("幀", self.frames_lbl)
+        form.addRow("經過時間", self.time_lbl)
+        form.addRow("預估剩餘", self.left_lbl)
+        form.addRow("速度", self.speed_lbl)
+        form.addRow("KiaseCut 記憶體", self.mem_lbl)
+        form.addRow("系統可用記憶體", self.sys_lbl)
+        lay.addLayout(form)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.cancel_btn = QPushButton("取消匯出")
+        self.cancel_btn.clicked.connect(self.cancel)
+        row.addWidget(self.cancel_btn)
+        lay.addLayout(row)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._tick)
+        self.timer.start(500)
+        self._tick()
+        self.resize(420, 0)
+
+    def set_progress(self, p):
+        self.p = max(self.p, min(1.0, p))
+        self.bar.setValue(int(self.p * 1000))
+
+    def set_stage(self, text):
+        if not self.cancelling:
+            self.stage.setText(text)
+
+    @staticmethod
+    def _clock(s):
+        s = int(s)
+        return f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60:02d}:{s % 60:02d}"
+
+    def _tick(self):
+        spent = time.monotonic() - self.t0
+        self.time_lbl.setText(self._clock(spent))
+        done = int(self.p * self.frames)
+        self.frames_lbl.setText(f"{done:,} / {self.frames:,}" if self.frames else "–")
+        if 0.01 <= self.p < 1 and spent > 2:
+            self.left_lbl.setText("約 " + self._clock(spent * (1 - self.p) / self.p))
+            self.speed_lbl.setText(f"{done / spent:.1f} 幀/秒" if self.frames else "–")
+        used, avail = sysmem.used(), sysmem.available()
+        if used is not None:
+            self.peak = max(self.peak, used)
+            self.mem_lbl.setText(f"{sysmem.gb(used)}（最高 {sysmem.gb(self.peak)}）")
+        if avail is not None:
+            free, total = avail
+            self.sys_lbl.setText(f"{sysmem.gb(free)} / {sysmem.gb(total)}" + ("　⚠ 快用完了" if free < total * 0.1 else ""))
+            self.sys_lbl.setStyleSheet(WARN if free < total * 0.1 else "")
+
+    def cancel(self):
+        if self.cancelling:
+            return
+        self.cancelling = True
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.setText("取消中…")
+        self.stage.setText("正在停止匯出…")
+        self.cancel_requested()
+
+    def reject(self):                  # Esc and the window's close button stop the export too
+        self.cancel()
+
+    def closeEvent(self, e):
+        if self.ended:
+            e.accept()
+            return
+        self.cancel()
+        e.ignore()
+
+    def finish(self):
+        """The export ended (done, failed or stopped): close for real."""
+        self.ended = True
+        self.timer.stop()
+        self.done(QDialog.Accepted)

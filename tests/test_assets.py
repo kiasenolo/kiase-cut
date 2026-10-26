@@ -74,10 +74,23 @@ class AssetTests(unittest.TestCase):
         p = changed(assets.make(assets.get("shape.star"), "#fff", "", 1920, 1080),
                     points=999, w=-5, color="nope", radius=3)
         self.assertEqual((p["points"], p["w"], p["color"]), (100, 1, [1.0, 1.0, 1.0, 1.0]))
-        self.assertNotIn("radius", p)                     # stars have no corners
+        self.assertEqual(p["radius"], 3)                  # stars' corners are rounded
+        heart = changed(assets.make(assets.get("shape.heart"), "#fff", "", 1920, 1080), radius=3)
+        self.assertNotIn("radius", heart)                 # hearts have no corners
         self.assertEqual(assets.at(p, 0)["color"], "#ffffff")
         self.assertEqual(assets.to_rgba("#ff000080")[3], 128 / 255)
         self.assertEqual(assets.hex_of([1, 0, 0, 0.5]), "#ff000080")
+
+    def test_star_round_corners(self):
+        """A star's corners rounded by radius px: its tips pulled in, its middle still filled."""
+        star = changed(assets.make(assets.get("shape.star"), "#ffffff", "", 1080, 1080), w=200, h=200)
+        sharp, round_ = assets.store(self.dir, star), assets.store(self.dir, changed(star, radius=10))
+        self.assertEqual(pixel(sharp, 100, 12, 200).alpha(), 255)          # the top tip
+        self.assertEqual(pixel(round_, 100, 12, 200).alpha(), 0)
+        self.assertEqual(pixel(round_, 100, 110, 200).alpha(), 255)
+        self.assertIn(" A10 10 ", assets.outline_d(assets.at(changed(star, radius=10), 0), 200, 200))
+        huge = assets.outline_d(assets.at(changed(star, radius=100000), 0), 200, 200)
+        self.assertNotIn("nan", huge)                                     # (no more than the sides allow)
 
     def test_fill_and_outline(self):
         """Fill and outline together, the outline inside / on / outside the edge, none at 0 px."""

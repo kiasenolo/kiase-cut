@@ -16,7 +16,8 @@ stroke px wide - 0 draws none) that can be on together. stroke_align puts the ou
 the shape's edge, on it or outside it; join shapes its corners (miter, round, bevel). An
 ellipse can be an arc (arc_start °, clockwise from 3 o'clock; arc_sweep % of the full turn)
 with a hole (ratio: the inner radius, % of the outer), as in Lunacy; a parallelogram leans
-by skew °. An outline outside or on the edge reaches past the w x h frame (overflow()): the
+by skew °; a rectangle's and a star's corners are rounded by radius px (a star's inner ones
+curve inwards). An outline outside or on the edge reaches past the w x h frame (overflow()): the
 SVG is drawn that much larger, around the same centre. Older projects had outline (filled or
 outline only): normalize() turns it into fill / stroke_on.
 
@@ -85,7 +86,7 @@ FIELDS = {                                 # what each family has besides w, h a
     "rect": ("radius",) + STROKE,
     "ellipse": ("arc_start", "arc_sweep", "ratio") + STROKE,
     "polygon": ("sides",) + STROKE,
-    "star": ("points", "inner") + STROKE,
+    "star": ("points", "inner", "radius") + STROKE,
     "heart": STROKE,
     "arrow": STROKE,
     "parallelogram": ("skew",) + STROKE,
@@ -394,6 +395,37 @@ def _poly(q):
     return "M" + " L".join(f"{_num(x)} {_num(y)}" for x, y in q) + " Z"
 
 
+def _rounded_d(q, r):
+    """A closed polygon's path with every corner rounded by an arc of radius r (smaller where
+    the sides are too short for it: at most half of each side is used)."""
+    if r <= 0:
+        return _poly(q)
+    n, out = len(q), []
+    for i, (px, py) in enumerate(q):
+        (ax, ay), (bx, by) = q[i - 1], q[(i + 1) % n]
+        ux, uy, vx, vy = ax - px, ay - py, bx - px, by - py
+        la, lb = math.hypot(ux, uy), math.hypot(vx, vy)
+        if la < 1e-9 or lb < 1e-9:
+            continue
+        ux, uy, vx, vy = ux / la, uy / la, vx / lb, vy / lb
+        half = math.acos(max(-1.0, min(1.0, ux * vx + uy * vy))) / 2      # half the corner's angle
+        if half < 1e-6 or half > math.pi / 2 - 1e-6:                      # (no corner to round)
+            out.append((px, py, px, py, 0.0, 0))
+            continue
+        t = min(r / math.tan(half), la / 2, lb / 2)                      # from the corner to the arc's ends
+        cross = (px - ax) * (by - py) - (py - ay) * (bx - px)             # (y down: > 0 turns clockwise)
+        out.append((px + ux * t, py + uy * t, px + vx * t, py + vy * t, t * math.tan(half), 1 if cross > 0 else 0))
+    if not out:
+        return _poly(q)
+    d = f"M{_num(out[0][0])} {_num(out[0][1])}"
+    for i, (x0, y0, x1, y1, rr, sweep) in enumerate(out):
+        if i:
+            d += f" L{_num(x0)} {_num(y0)}"
+        if rr > 0:
+            d += f" A{_num(rr)} {_num(rr)} 0 0 {sweep} {_num(x1)} {_num(y1)}"
+    return d + " Z"
+
+
 def _rect_d(w, h, r):
     r = min(r, w / 2, h / 2)
     if r <= 0:
@@ -447,9 +479,10 @@ def outline_d(p, w, h):
         return _rect_d(w, h, p.get("radius", 0))
     if fam == "ellipse":
         return _ellipse_d(w, h, p.get("arc_start", 0), p.get("arc_sweep", 100), p.get("ratio", 0))
-    if fam in ("polygon", "star"):
-        unit = _star_points(p["points"], p["inner"] / 100) if fam == "star" else _star_points(p["sides"], None)
-        return _poly(_fit(unit, 0, 0, w, h))
+    if fam == "star":
+        return _rounded_d(_fit(_star_points(p["points"], p["inner"] / 100), 0, 0, w, h), p.get("radius", 0))
+    if fam == "polygon":
+        return _poly(_fit(_star_points(p["sides"], None), 0, 0, w, h))
     if fam == "arrow":
         return _poly([(x * w, y * h) for x, y in _ARROW])
     if fam == "parallelogram":

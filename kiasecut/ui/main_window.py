@@ -415,7 +415,7 @@ class MainWindow(QMainWindow):
         cv.keyJump.connect(self.jump_key)
         self.effects = EffectsPanel()
         ef = self.effects
-        ef.addRequested.connect(lambda cid, ref: self.apply("新增效果", edit.add_effect, cid, ref, select=lambda c: c["id"]))
+        ef.addRequested.connect(lambda cid, ref: self.apply("新增效果", edit.add_effect, cid, ref))
         ef.browseRequested.connect(self.browse_effect)
         ef.removeRequested.connect(lambda cid, eid: self.apply("移除效果", edit.remove_effect, cid, eid))
         ef.enabledChosen.connect(lambda cid, eid, on: self.apply(

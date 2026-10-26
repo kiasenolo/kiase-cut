@@ -647,6 +647,7 @@ class Preview(QWidget):
         if not self.view:
             return []
         picked = []
+        fps = self.view["fps"]
 
         def boxes(tracks, t_us, locked, plain, nested=False):
             out = []
@@ -656,7 +657,7 @@ class Preview(QWidget):
                 for c in tr["clips"]:
                     if c["type"] == "filter" and not (self.mask_mode and c["id"] == self.selected_id):
                         continue                # a filter covers the whole picture: only its mask is edited here
-                    if not (c["start_us"] <= t_us < c["start_us"] + c["duration_us"]) or c.get("transform") is None:
+                    if not render.on_frame(c, t_us, fps) or c.get("transform") is None:
                         continue
                     t = t_us - c["start_us"]
                     lock = locked or project.locked(tr)     # (shown and snapped to, never picked)

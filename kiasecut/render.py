@@ -339,12 +339,11 @@ class Renderer:
 
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first."""
-        f = round(t_us * fps / US)
         for tr in tracks:
             if tr["kind"] == "audio" or not project.visible(tr):
                 continue
             for c in tr["clips"]:
-                if round(c["start_us"] * fps / US) <= f < round((c["start_us"] + c["duration_us"]) * fps / US):
+                if on_frame(c, t_us, fps):
                     try:
                         if c["type"] == "filter":
                             self.draw_filter_clip(p, c, W, H, fps, t_us)
@@ -739,6 +738,13 @@ def mask_path(mask, t, disp):
         everything.addRect(QRectF(-BIG, -BIG, 2 * BIG, 2 * BIG))
         path = everything.subtracted(path)
     return path
+
+
+def on_frame(c, t_us, fps):
+    """Whether clip c shows at time t_us: both rounded to frames, so a clip that starts where
+    the playhead is (start_us rounded to whole us) shows on that frame and not on its end one."""
+    f = round(t_us * fps / US)
+    return round(c["start_us"] * fps / US) <= f < round((c["start_us"] + c["duration_us"]) * fps / US)
 
 
 def frame_count(view):

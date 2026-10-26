@@ -468,12 +468,11 @@ class GLRenderer(render.Renderer):
                     gl.release(lay)
 
     def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu):
-        f = round(t_us * fps / US)
         for tr in tracks:
             if tr["kind"] == "audio" or not project.visible(tr):
                 continue
             for c in tr["clips"]:
-                if round(c["start_us"] * fps / US) <= f < round((c["start_us"] + c["duration_us"]) * fps / US):
+                if render.on_frame(c, t_us, fps):
                     try:
                         if c["type"] == "filter":
                             self.gl_filter_clip(tgt, base, c, W, H, fps, t_us)

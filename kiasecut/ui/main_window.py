@@ -50,7 +50,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
-from . import icons
+from . import icons, wheel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .timeline import MEDIA_MIME, US, Timeline, timecode
@@ -4767,6 +4767,7 @@ def run(argv):
         # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
     app = QApplication(argv)
+    app.setStyle(wheel.Style(app.style().name()))   # lists scroll by pixels (touchpads)
     app.setStyleSheet(STYLE)
     win = MainWindow()
     win.show()

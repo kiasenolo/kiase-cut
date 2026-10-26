@@ -80,6 +80,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineE
                                QWidget)
 
 from .. import curves, edit, fonts, project, render, textlayout
+from . import wheel
 
 US = 1_000_000
 SNAP_PX = 7
@@ -494,23 +495,18 @@ class Preview(QWidget):
         if not self.interactive:
             return
         e.accept()
-        touchpad = e.phase() != Qt.NoScrollPhase and not e.pixelDelta().isNull()
-        if touchpad and not e.modifiers() & Qt.ControlModifier:     # two-finger scroll: moves the view
+        if wheel.touchpad(e) and not e.modifiers() & Qt.ControlModifier:   # two-finger scroll: moves the view
             self.pan += QPointF(e.pixelDelta())
             self._view_changed()
             return
-        if touchpad:
-            d = e.pixelDelta().y() or e.pixelDelta().x()
-            self.zoom_to(self.zoom * 2 ** (d / 300), e.position())
-            return
-        d = e.angleDelta().y() or e.angleDelta().x()
-        if d:
-            self.zoom_to(self.zoom * ZOOM_STEP ** (d / 120), e.position())
+        n = wheel.notch(e)
+        if n:
+            self.zoom_to(self.zoom * ZOOM_STEP ** n, e.position())
 
     def event(self, e):
-        if (self.interactive and e.type() == QEvent.NativeGesture
-                and e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture):   # a touchpad's pinch
-            self.zoom_to(self.zoom * (1 + e.value()), e.position())
+        f = wheel.pinch(e) if self.interactive else None
+        if f is not None:                                # a touchpad's pinch
+            self.zoom_to(self.zoom * f, e.position())
             return True
         return super().event(e)
 

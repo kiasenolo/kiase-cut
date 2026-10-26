@@ -15,7 +15,8 @@ the project's frame rate, which only the export uses); the ruler marks each of t
 they are far enough apart, and the zoom reaches 40 px per frame.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
-zooms time around the mouse, the middle button drags the view. Ctrl+middle-drag zooms around
+zooms time around the mouse (a touchpad's two-finger scroll moves both ways at once, its
+pinch zooms time; see wheel.py), the middle button drags the view. Ctrl+middle-drag zooms around
 where the drag started, as in the curve editor: sideways the time, up and down the track
 height (right / up: in). Alt+wheel or the toolbar slider changes the track height; dragging the line under a track header resizes that track
 alone. Ctrl+D clears the selection. Dragging a picture clip above the top row, or a sound clip
@@ -78,6 +79,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath,
 from PySide6.QtWidgets import QApplication, QMenu, QScrollBar, QWidget
 
 from .. import components, curves, edit, project, waveform
+from . import wheel
 from .params import param_menu
 
 US = 1_000_000
@@ -2009,18 +2011,33 @@ class Timeline(QWidget):
     def wheelEvent(self, e):
         if not self.proj:
             return
-        dy, dx = e.angleDelta().y(), e.angleDelta().x()
-        d = dy or dx                                     # Alt / Shift may turn the wheel sideways
+        n = wheel.notch(e)                               # Alt / Shift may turn the wheel sideways
         mods = e.modifiers()
         if mods & Qt.AltModifier:                        # track height
-            self.set_vzoom(self.vzoom * (1.15 if d > 0 else 1 / 1.15))
+            if n:
+                self.set_vzoom(self.vzoom * 1.15 ** n)
         elif mods & Qt.ControlModifier:                  # zoom time around the mouse
-            anchor = self._sec(e.position().x())
-            self.px_per_s = min(self.max_zoom(), max(1.0, self.px_per_s * (1.25 if d > 0 else 0.8)))
-            self.scroll_s = max(0.0, anchor - (e.position().x() - self.header_w) / self.px_per_s)
-        elif mods & Qt.ShiftModifier or (dx and not dy):  # left / right (also touchpad sideways)
-            self.scroll_s = max(0.0, self.scroll_s - d / 120 * 80 / self.px_per_s)
-        else:                                            # up / down
-            self.vbar.setValue(self.scroll_y - round(d / 120 * 40))
-            return
+            self.zoom_time(1.25 ** n, e.position().x())
+        else:                                            # a notch: 80 px sideways, 40 px up / down
+            shift = mods & Qt.ShiftModifier
+            dx, dy = wheel.pixels(e, 80, 80 if shift else 40)
+            if shift:                                    # left / right
+                dx, dy = dy if abs(dy) >= abs(dx) else dx, 0.0
+            self.scroll_s = max(0.0, self.scroll_s - dx / self.px_per_s)
+            self.vbar.setValue(self.scroll_y - round(dy))   # (a touchpad moves both ways at once)
         self.update()
+
+    def zoom_time(self, f, x):
+        """Zoom time by f around x."""
+        anchor = self._sec(x)
+        self.px_per_s = min(self.max_zoom(), max(1.0, self.px_per_s * f))
+        self.scroll_s = max(0.0, anchor - (x - self.header_w) / self.px_per_s)
+
+    def event(self, e):
+        f = wheel.pinch(e)
+        if f is not None:                                # a touchpad's pinch zooms time
+            if self.proj:
+                self.zoom_time(f, e.position().x())
+                self.update()
+            return True
+        return super().event(e)

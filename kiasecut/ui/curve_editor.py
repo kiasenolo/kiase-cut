@@ -10,7 +10,7 @@ the whole selection (time snaps to frames; hold Shift to keep to one axis). The 
 handles shape the ease of a selected keyframe. Double-click adds a keyframe to the nearest
 curve, Delete removes the selection, Ctrl+D clears it. The wheel moves the view up and
 down, Shift+wheel left and right, Ctrl+wheel zooms time around the mouse, Alt+wheel zooms
-values, the middle button drags the view and Ctrl+middle-drag zooms it around where the drag
+values (a touchpad's two-finger scroll moves both ways at once, its pinch zooms time), the middle button drags the view and Ctrl+middle-drag zooms it around where the drag
 started (as in Blender's graph editor: sideways zooms time, up and down values; right / up:
 in); "全部顯示" fits everything again. A click on the time ruler (or empty space) moves the
 playhead.
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, curves, edit, fx
+from . import wheel
 from .inspector import PARAMS, SpinBox
 
 US = 1_000_000
@@ -535,34 +536,45 @@ class CurveCanvas(QWidget):
         self.keysCommitted.emit(self._changes([ci]))
 
     def wheelEvent(self, e):
-        d = e.angleDelta().y() or e.angleDelta().x()
-        if not d:
-            return
         pos = e.position()
-        f = 0.8 if d > 0 else 1.25
         mods = e.modifiers()
-        sideways = e.angleDelta().x() and not e.angleDelta().y() and not mods & Qt.AltModifier
-        if mods & Qt.AltModifier:                            # zoom values around the mouse
-            a = self.p_of(pos.y())
-            lo, hi = self.vrange
-            self.vrange = (a - (a - lo) * f, a + (hi - a) * f)
-        elif mods & Qt.ShiftModifier or sideways:            # left / right
-            dt = (self.t1 - self.t0) * 0.1 * (-1 if d > 0 else 1)
+        if mods & (Qt.AltModifier | Qt.ControlModifier):
+            f = 0.8 ** wheel.notch(e)
+            if mods & Qt.AltModifier:                        # zoom values around the mouse
+                a = self.p_of(pos.y())
+                lo, hi = self.vrange
+                self.vrange = (a - (a - lo) * f, a + (hi - a) * f)
+            else:                                            # Ctrl: zoom time around the mouse
+                self.zoom_time(f, pos.x())
+        else:                                                # a notch: a tenth of the view
+            pw, ph = max(1, self.width() - self.L - self.R), max(1, self.height() - self.T - self.B)
+            shift = mods & Qt.ShiftModifier
+            dx, dy = wheel.pixels(e, pw / 10, (pw if shift else ph) / 10)
+            if shift:                                        # left / right
+                dx, dy = dy if abs(dy) >= abs(dx) else dx, 0.0
+            dt = -dx / pw * (self.t1 - self.t0)              # (a touchpad moves both ways at once)
             self.t0, self.t1 = self.t0 + dt, self.t1 + dt
-        elif not mods & Qt.ControlModifier:                  # up / down
             lo, hi = self.vrange
-            dv = (hi - lo) * 0.1 * (1 if d > 0 else -1)
+            dv = dy / ph * (hi - lo)
             self.vrange = (lo + dv, hi + dv)
-        else:                                                # Ctrl: zoom time around the mouse
-            a = self.t_of(pos.x())
-            span = min(max((self.t1 - self.t0) * f, 4 * US / self.fps), max(self.duration, US) * 20)
-            k = (a - self.t0) / max(self.t1 - self.t0, 1)
-            self.t0, self.t1 = a - span * k, a - span * k + span
         self._paths = None
         self.update()
         e.accept()
 
+    def zoom_time(self, f, x):
+        """Zoom time by f (below 1: in) around x."""
+        a = self.t_of(x)
+        span = min(max((self.t1 - self.t0) * f, 4 * US / self.fps), max(self.duration, US) * 20)
+        k = (a - self.t0) / max(self.t1 - self.t0, 1)
+        self.t0, self.t1 = a - span * k, a - span * k + span
+
     def event(self, e):
+        f = wheel.pinch(e)
+        if f is not None:                                    # a touchpad's pinch zooms time
+            self.zoom_time(1 / f, e.position().x())
+            self._paths = None
+            self.update()
+            return True
         # claim Delete and Ctrl+A before the window's clip shortcuts see them
         if e.type() == QEvent.ShortcutOverride:
             if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.sel:

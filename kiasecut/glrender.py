@@ -421,7 +421,8 @@ class GLRenderer(render.Renderer):
                 gl.mix_cover(kept, empty.tex, above.tex, cut.tex)
             if matte.get("show"):
                 gl.draw_layer(tgt, cut)
-            gl.draw_layer(tgt, kept)
+            if matte.get("body", True):                              # (顯示主體)
+                gl.draw_layer(tgt, kept)
         finally:
             for lay in (cut, above, kept, empty):
                 gl.release(lay)

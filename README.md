@@ -241,8 +241,9 @@ under the mouse, which can then be edited on the canvas like any clip (while the
 moved, scaled or turned). Effects, masks, blend modes and opacity on a group work on the group
 as a whole. 最下面的物件當遮罩 (in its inspector, or the group's right-click menu on the timeline
 and in the layer list) makes the clips of its bottom track cut the ones above them by their
-alpha, a clipping mask; once it is on, 顯示遮罩物件 also draws those bottom clips and 反轉遮罩
-turns it around - the clips above are kept where the bottom ones are not, so their shape is
+alpha, a clipping mask; once it is on, 顯示遮罩物件 also draws those bottom clips, 顯示主體 (on
+at first) draws the clips being cut - off, only the mask object shows, handy while placing
+it - and 反轉遮罩 turns it around - the clips above are kept where the bottom ones are not, so their shape is
 cut out (in the inspector and the same right-click menus; the layer list marks it 反轉遮罩).
 Ctrl+Shift+G (解散群組) puts the clips back on the tracks around it with the group's position,
 scale and opacity folded in (a turned group, or one with transform keyframes, is refused).

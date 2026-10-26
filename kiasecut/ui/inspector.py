@@ -268,7 +268,7 @@ class Inspector(QWidget):
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
     speedChosen = Signal(list, float)               # clip ids, speed
-    groupMatteChosen = Signal(list, object, object, object)  # group ids, 遮罩 on, show it, invert it (each or None)
+    groupMatteChosen = Signal(list, dict)           # group ids, {on / show / invert / body: bool} that changed
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
 
@@ -438,20 +438,19 @@ class Inspector(QWidget):
         form.addRow(section("群組"))
         on = QCheckBox("最下面的物件當遮罩")
         on.setToolTip("群組最下面那條軌道的片段裁切它上面的所有片段（照它們的不透明度）")
-        on.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, bool(v), None, None))
+        on.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, {"on": bool(v)}))
         self.widgets["group_matte"] = on
         form.addRow("", on)
-        # (these two show once the mask is on)
-        show = QCheckBox("顯示遮罩物件")
-        show.setToolTip("遮罩物件本身也畫出來（關掉時只用它的形狀）")
-        show.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, None, bool(v), None))
-        self.widgets["group_show"] = show
-        form.addRow("", show)
-        invert = QCheckBox("反轉遮罩")
-        invert.setToolTip("反過來：留下遮罩物件以外的部分，遮罩物件的形狀變成挖空")
-        invert.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, None, None, bool(v)))
-        self.widgets["group_invert"] = invert
-        form.addRow("", invert)
+        # (these show once the mask is on)
+        for key, field, text, tip in (
+                ("group_show", "show", "顯示遮罩物件", "遮罩物件本身也畫出來（關掉時只用它的形狀）"),
+                ("group_body", "body", "顯示主體", "畫出被遮罩裁切的片段（關掉時只看得到遮罩物件，方便調整遮罩）"),
+                ("group_invert", "invert", "反轉遮罩", "反過來：留下遮罩物件以外的部分，遮罩物件的形狀變成挖空")):
+            box = QCheckBox(text)
+            box.setToolTip(tip)
+            box.clicked.connect(lambda v, f=field: self._emit_now(self.groupMatteChosen, {f: bool(v)}))
+            self.widgets[key] = box
+            form.addRow("", box)
         self._group_form = form
 
     def _build_time(self, form):
@@ -955,14 +954,15 @@ class Inspector(QWidget):
         if "speed" in w:
             self._show_time(clips, ts)
         if "group_matte" in w:
-            for key, field in (("group_matte", "on"), ("group_show", "show"), ("group_invert", "invert")):
-                vals = {bool((k.get("matte") or {}).get(field)) for k in clips}
+            for key, field, default in (("group_matte", "on", False), ("group_show", "show", False),
+                                        ("group_body", "body", True), ("group_invert", "invert", False)):
+                vals = {bool((k.get("matte") or {}).get(field, default)) for k in clips}
                 w[key].blockSignals(True)
                 w[key].setTristate(len(vals) > 1)
                 w[key].setCheckState(Qt.PartiallyChecked if len(vals) > 1 else Qt.Checked if vals.pop() else Qt.Unchecked)
                 w[key].blockSignals(False)
             on = any((k.get("matte") or {}).get("on") for k in clips)
-            for key in ("group_show", "group_invert"):
+            for key in ("group_show", "group_body", "group_invert"):
                 self._group_form.setRowVisible(w[key], on)
         if "mask_on" in w:
             on = {bool(project.active_mask(k)) for k in clips}

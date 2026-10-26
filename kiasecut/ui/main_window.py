@@ -398,8 +398,8 @@ class MainWindow(QMainWindow):
         ins.liveCancelled.connect(self.rebuild)
         ins.speedChosen.connect(lambda ids, v: self.apply_each("速度", edit.set_speed, ids, v))
         ins.freezeChosen.connect(self.on_freeze)
-        ins.groupMatteChosen.connect(lambda ids, on, show, invert: self.apply_each(
-            "群組遮罩", edit.set_group_matte, ids, on, show, invert))
+        ins.groupMatteChosen.connect(lambda ids, fields: self.apply_each(
+            "群組遮罩", lambda lvl, cid: edit.set_group_matte(lvl, cid, **fields), ids))
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
         ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)

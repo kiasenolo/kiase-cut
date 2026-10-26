@@ -236,15 +236,18 @@ class GroupInspectorTests(unittest.TestCase):
         ins.resize(400, 900)
         ins.show()
         got = []
-        ins.groupMatteChosen.connect(lambda ids, on, show, invert: got.append((on, show, invert)))
+        ins.groupMatteChosen.connect(lambda ids, fields: got.append(fields))
         ins.show_clips([g], 0, 30)
         shown = lambda key: ins._group_form.isRowVisible(ins.widgets[key])
         self.assertTrue(shown("group_matte"))
         self.assertFalse(shown("group_invert"))                              # the mask is off: not offered
         self.assertFalse(shown("group_show"))
+        self.assertFalse(shown("group_body"))
         edit.set_group_matte(p, g["id"], on=True)
         ins.show_clips([g], 0, 30)
         self.assertTrue(shown("group_invert"))
         self.assertFalse(ins.widgets["group_invert"].isChecked())
+        self.assertTrue(ins.widgets["group_body"].isChecked())               # 顯示主體: on unless set off
         ins.widgets["group_invert"].click()
-        self.assertEqual(got, [(None, None, True)])
+        ins.widgets["group_body"].click()
+        self.assertEqual(got, [{"invert": True}, {"body": False}])

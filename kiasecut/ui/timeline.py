@@ -77,6 +77,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath,
 from PySide6.QtWidgets import QApplication, QMenu, QScrollBar, QWidget
 
 from .. import components, curves, edit, project, waveform
+from .params import param_menu
 
 US = 1_000_000
 MEDIA_MIME = "application/x-kiasecut-media"
@@ -167,6 +168,8 @@ class Timeline(QWidget):
     intoGroupRequested = Signal(list, str, str, int)  # clip ids, group id, its track id, start (level time)
     groupDropped = Signal(list, list, str, str, int)  # media idents, file paths, group id, its track id, start
     clipAction = Signal(str, str)                    # action, clip id
+    paramBind = Signal(str, str, list)               # inside a component: parameter id ("": new), prop, clip ids
+    paramUnbind = Signal(list)                       # inside a component: [(clip id, prop)] let go
     mediaDropped = Signal(str, str, int)             # library item id, track id or "", start us
     mediaManyDropped = Signal(list, str, int, bool)  # library item ids, track id or "", start us, across (Alt)
     compoundDropped = Signal(str, str, int)          # compound id, track id or "", start us
@@ -232,6 +235,11 @@ class Timeline(QWidget):
         self.update()
 
     # -- data -----------------------------------------------------------------------------------
+    def _bound(self):
+        """{clip id: [(param, prop)]} the open component's parameters set (none outside one)."""
+        comp = (self.proj or {}).get("open_component")
+        return components.bound(comp) if comp is not None else {}
+
     def set_project(self, proj, keep_view=False):
         self.proj = proj
         self.fps = self.edit_fps or proj["fps"]
@@ -1044,6 +1052,8 @@ class Timeline(QWidget):
                 label = ("▾ " if self.is_open(c) else "▸ ") + label + f"  ({sum(len(t['clips']) for t in c['tracks'])})"
             elif c.get("effects"):
                 label += "  ✦" + (str(len(c["effects"])) if len(c["effects"]) > 1 else "")
+            if c["id"] in self._bound():                 # a parameter of the open component sets it
+                label += "  " + components.ICON
             lr = r.adjusted(4, 0, -2, 0)
             if audio and r.height() > 20:
                 lr.setHeight(16)
@@ -1882,8 +1892,8 @@ class Timeline(QWidget):
                 head = [("編輯元件" if comp else "編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
                         ("在新的分頁開啟", "open_tab"), ("設為獨立（不再共用）", "unique")]
                 if comp:
-                    head.append(("轉回靜態片段", "from_component"))
-                elif project.is_static(c) and c.get("compound_id"):
+                    head.append(("轉回靜態片段" if project.is_static(c) else "轉回複合片段", "from_component"))
+                elif c.get("compound_id"):
                     head.append(("轉為元件", "to_component"))
                 if c.get("compound_id"):                     # (not a nested timeline)
                     head.append(("存到 Library…", "save_library"))
@@ -1898,10 +1908,10 @@ class Timeline(QWidget):
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立群組", "group")]
             if all(k["type"] != "audio" for k in self.selected_clips()):
-                items += [None, ("建立靜態片段", "make_static"), ("建立元件", "make_component"),
-                          ("建立複合片段", "make_compound")]
+                items += [None, ("建立靜態片段", "make_static"), ("建立靜態元件", "make_static_component"),
+                          ("建立複合片段", "make_compound"), ("建立元件", "make_component")]
             else:
-                items += [None, ("建立複合片段", "make_compound")]
+                items += [None, ("建立複合片段", "make_compound"), ("建立元件", "make_component")]
             if c["type"] == "video":
                 items = [("分離音訊", "detach_audio"), None] + items
             for it in items:
@@ -1910,6 +1920,10 @@ class Timeline(QWidget):
                 else:
                     menu.addAction(it[0], lambda a=it[1]: self.clipAction.emit(a, c["id"]))
             sel = self.selected_clips()
+            comp = self.proj.get("open_component")
+            if comp is not None and all(k["type"] != "audio" for k in sel):     # 設為參數 (元件)
+                menu.addSeparator()
+                param_menu(menu, comp, sel, self.paramBind.emit, self.paramUnbind.emit)
             if all(k["type"] != "audio" for k in sel):           # 移入群組: one of the level's groups
                 skip = {k["id"] for g in sel for k in [g] + list(project.walk_clips(g.get("tracks") or []))}
                 groups = [(gid, name) for gid, name in edit.group_ids(self.proj) if gid not in skip]
@@ -1922,7 +1936,7 @@ class Timeline(QWidget):
             if row is not None and self.rows[row]["kind"] != "audio":
                 tid = self.rows[row]["id"]
                 menu.addAction("新增空白靜態片段（在播放頭）", lambda: self.clipAction.emit("new_static", tid))
-                menu.addAction("新增空白元件（在播放頭）", lambda: self.clipAction.emit("new_component", tid))
+                menu.addAction("新增空白靜態元件（在播放頭）", lambda: self.clipAction.emit("new_component", tid))
         menu.exec(global_pos)
 
     def mouseDoubleClickEvent(self, e):

@@ -6,15 +6,15 @@ Resolve; the clip shows that timeline live), double-click to open it.
 Each compound is listed once with how many clips show it; under it, where it is used.
 Static compounds (◧ 靜態片段) are pictures built in the editor: their clips show one moment
 of the content and can be any length; components (❖ 元件) are static compounds with
-parameters, which each clip showing one sets for itself (componentRequested turns a static
-compound into one and back).
+parameters - live ones and static ones (靜態元件) - which each clip showing one sets for
+itself (componentRequested turns a compound into one and back).
 Drag a compound onto the timeline to place another clip showing it (every clip shows the
 same content, so editing one edits all). Click a use to select it on its timeline,
 double-click a use to open it there. Double-click a compound that no clip shows (or pick
 進入編輯 on any compound) to edit it by itself (entryRequested). Right-click to rename or
 delete a compound (with the clips that show it), a timeline, or one use, and anywhere in
 the list to add a timeline, a compound or a static compound (createRequested: "timeline" /
-"compound" / "static" / "component"; a new compound starts empty and opens by itself).
+"compound" / "static" / "component" / "static_component"; a new compound starts empty and opens by itself).
 """
 from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QLabel, QMenu, QTreeWidget, QTreeWidgetItem,
@@ -105,11 +105,11 @@ class CompoundPanel(QWidget):
             label = ("⧉ " if is_tl else components.ICON + " " if comp_ else "◧ " if static else "▣ ") + \
                 (comp.get("name") or "複合片段")
             it = QTreeWidgetItem([label + (f"  ×{len(uses)}" if uses or not is_tl else ""), "",
-                                  "元件" if comp_ else "靜態" if static else f"{(comp.get('duration_us') or 0) / US:.2f}s"])
+                                  "靜態" if static else f"{(comp.get('duration_us') or 0) / US:.2f}s"])
             it.setData(0, Qt.UserRole, ("def", kid))
             it.setToolTip(0, "時間線：拖進另一條時間線使用（巢狀）；按兩下打開" if is_tl
-                          else "元件：像靜態片段一樣使用，每個片段可以在屬性裡設定自己的參數（文字、顏色、圖片、顯示）；"
-                               "按兩下進入編輯" if comp_
+                          else "元件：每個使用它的片段可以在屬性裡設定自己的參數（文字、顏色、圖片、顯示）；"
+                               "按兩下進入編輯" + ("（靜態：像圖片一樣使用）" if static else "") if comp_
                           else "靜態片段：像圖片一樣使用，長度隨意；按兩下進入編輯它的畫面（只會顯示第一幀）" if static
                           else "拖到時間軸上使用；按兩下進入編輯")
             it.setFlags(it.flags() | Qt.ItemIsDragEnabled)
@@ -171,8 +171,9 @@ class CompoundPanel(QWidget):
         for text, kind, tip in (("新增時間線", "timeline", "一條新的空白時間線"),
                                 ("新增複合片段", "compound", "空白的複合片段，建立後直接進入編輯；拖到時間軸上使用"),
                                 ("新增靜態複合片段", "static", "空白的靜態片段（像圖片，只顯示第一幀），建立後直接進入編輯"),
-                                ("新增元件", "component", "空白的元件：帶參數的靜態片段，每個使用它的片段可以設定自己的文字、"
-                                                        "顏色、圖片和顯示開關")):
+                                ("新增元件", "component", "空白的元件：帶參數的複合片段，每個使用它的片段可以設定自己的文字、"
+                                                        "顏色、圖片和顯示開關"),
+                                ("新增靜態元件", "static_component", "空白的靜態元件：帶參數的靜態片段（像圖片）")):
             a = menu.addAction(text, lambda k=kind: self.createRequested.emit(k))
             a.setToolTip(tip)
         menu.setToolTipsVisible(True)
@@ -193,8 +194,9 @@ class CompoundPanel(QWidget):
                 menu.addAction("存到 Library…", lambda: self.libraryRequested.emit(kid))
                 comp = self.comps.get(kid) or {}
                 if components.is_component(comp):
-                    menu.addAction("轉回靜態片段", lambda: self.componentRequested.emit(kid, False))
-                elif comp.get("static"):
+                    menu.addAction("轉回靜態片段" if comp.get("static") else "轉回複合片段",
+                                   lambda: self.componentRequested.emit(kid, False))
+                else:
                     menu.addAction("轉為元件", lambda: self.componentRequested.emit(kid, True))
             if kid.startswith("tl"):
                 a = menu.addAction("刪除時間線", lambda: self.deleteRequested.emit(kid))

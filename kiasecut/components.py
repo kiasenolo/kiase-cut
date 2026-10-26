@@ -1,17 +1,20 @@
-"""Components (元件): static compounds with parameters.
+"""Components (元件): compounds with parameters.
 
-A component is a static compound (靜態片段, project.is_static) that is also marked
-component: true and has params: [param]. Every clip that shows it (an instance) draws its
-picture with its own values for those parameters, kept in clip["params"] {param id: value};
-a parameter it leaves out shows what the component itself has. Instance values animate like
-any other parameter (curves.py): colours blend between keyframes, words, pictures and
-switches hold until the next one - an animated instance is drawn afresh for each frame.
+A component is a compound marked component: true, with params: [param] - a live one (元件,
+edited on its timeline) or a static one (靜態元件, project.is_static: edited as layers).
+Every clip that shows it (an instance) draws it with its own values for those parameters,
+kept in clip["params"] {param id: value}; a parameter it leaves out shows what the component
+itself has. Instance values animate like any other parameter (curves.py), in the instance's
+time: colours blend between keyframes, words, pictures and switches hold until the next one
+- an animated static instance is drawn afresh for each frame. A value holds for the whole
+content: it replaces the layer's own (keyframed or not).
 
 param {id, name, kind: text | color | image | visible, binds: [[clip id, prop]]}
-      binds: the layers (clips of the component's content, inside its groups too) it sets
-      and what of them (PROPS); one parameter can set several layers (a 主色 for three
-      shapes). Its default is what its first layer has at the picture's moment. A layer that
-      was deleted leaves its binding behind, unused.
+      binds: the clips of the component's content (inside its groups too) it sets and what
+      of them (PROPS); one parameter can set several clips (a 主色 for three shapes). Its
+      default is what its first clip has at that clip's start (a static one: at the
+      picture's moment). A clip that was deleted leaves its binding behind, unused. Visibility
+      only touches the picture (a hidden clip still sounds, as on a hidden track).
 
 Values: text a str, color [r, g, b, a] (0 - 1), image a picture file's path, visible a bool.
 """
@@ -34,7 +37,7 @@ FALLBACK = {"text": "", "color": [1.0, 1.0, 1.0, 1.0], "image": "", "visible": T
 
 
 def is_component(comp):
-    return bool(comp) and bool(comp.get("static")) and bool(comp.get("component"))
+    return bool(comp) and bool(comp.get("component"))
 
 
 def of_clip(c):
@@ -79,15 +82,14 @@ def layer_index(comp):
 
 
 def layer_value(track, c, prop):
-    """What layer c has for prop at the picture's moment (time 0 of the component)."""
-    t = max(0, -c["start_us"])
+    """What clip c has for prop at its start (a static component's layers: the picture's moment)."""
     if prop == "content":
         return c["text"].get("content", "")
     if prop == "text_color":
-        col = curves.value(c["text"].get("color", [1.0, 1.0, 1.0]), t)
+        col = curves.value(c["text"].get("color", [1.0, 1.0, 1.0]), 0)
         return [float(v) for v in col[:3]] + [1.0]
     if prop in ("color", "color2", "stroke_color"):
-        return assets.clean(prop, curves.value(c["asset"].get(prop), t))
+        return assets.clean(prop, curves.value(c["asset"].get(prop), 0))
     if prop == "source":
         return (c.get("media") or {}).get("path", "")
     return not track.get("hidden")
@@ -140,10 +142,11 @@ def content(c, t):
 
 
 def _subst(tracks, over):
-    """tracks with the values put in (the very list when nothing changed)."""
+    """tracks with the values put in (the very list when nothing changed). A clip shown on a
+    hidden track goes onto a shown copy of it, the others staying hidden."""
     out, changed = [], False
     for tr in tracks:
-        clips, hidden, moved = [], tr.get("hidden"), False
+        clips, shown, moved = [], [], False
         for c in tr["clips"]:
             k = c
             if project.is_group(c):
@@ -155,15 +158,20 @@ def _subst(tracks, over):
                     if not v:
                         k = None
                         break
-                    hidden = False
+                    if tr.get("hidden"):
+                        shown.append(c["id"])
                 else:
                     k = _put(k, prop, v)
             if k is not c:
                 moved = True
             if k is not None:
                 clips.append(k)
-        if moved or hidden != tr.get("hidden"):
-            tr = dict(tr, clips=clips, hidden=bool(hidden))
+        if shown:
+            out.append(dict(tr, clips=[k for k in clips if k["id"] not in shown]))
+            tr = dict(tr, id=tr["id"] + ":shown", clips=[k for k in clips if k["id"] in shown], hidden=False)
+            changed = True
+        elif moved:
+            tr = dict(tr, clips=clips)
             changed = True
         out.append(tr)
     return out if changed else tracks

@@ -303,19 +303,24 @@ layer, centred where they were let go. A
 layer that does not cover the picture's moment shows dimmed (only that moment is drawn). The
 preview, the inspector and every edit work on the selected layers as on clips.
 
-Components (元件, ❖): static clips with parameters. Make one with right-click selected picture
-clips > 建立元件, a free spot on a picture track > 新增空白元件, the 複合片段 list > 新增元件, or
-turn a static clip into one (轉為元件: its clip's right-click menu, the compound list, or the
-button above its layers; 轉回靜態片段 goes back). It is edited as layers, with its parameters
-listed under them (參數): right-click layers > 設為參數 makes a parameter of a text's words
+Components (元件, ❖): compounds with parameters - live ones (元件, edited on their timeline)
+and static ones (靜態元件, edited as layers). Make one with right-click selected clips >
+建立元件 / 建立靜態元件, a free spot on a picture track > 新增空白靜態元件, the 複合片段 list >
+新增元件 / 新增靜態元件, or turn any compound or static clip into one (轉為元件: its clip's
+right-click menu, the compound list, or the button above a static clip's layers; 轉回複合片段 /
+轉回靜態片段 goes back). Its parameters are listed beside its timeline, or under a static one's
+layers (參數): right-click clips (layers) > 設為參數 makes a parameter of a text's words
 (文字內容) or colour, a shape's fill, outline or gradient colour, a picture (圖片) or whether
-the layer shows (顯示) - or hands it to a parameter already there, so one parameter (a 主色,
-say) can set several layers; 解除參數 lets it go, and layers a parameter sets are marked ❖.
-Click a parameter to select its layers, double-click it to set its default (what its layers
+the clip shows (顯示) - or hands it to a parameter already there, so one parameter (a 主色,
+say) can set several clips; 解除參數 lets it go, and clips a parameter sets are marked ❖.
+Click a parameter to select its clips, double-click it to set its default (what its clips
 have), right-click to rename, restack or delete it. Every clip that shows the component
-then has 元件參數 in the inspector: its own value of each parameter, with ◆ keyframes like
-any value (colours blend, words, pictures and switches hold until the next key) and ↺ to go
-back to the component's own; one left alone follows the component as it changes.
+then has 元件參數 in the inspector: its own value of each parameter, with ◆ keyframes in the
+clip's time like any value (colours blend, words, pictures and switches hold until the next
+key) and ↺ to go back to the component's own; one left alone follows the component as it
+changes. A value holds for the whole content, in place of the clip's own (keyframes
+included); hiding a clip only hides its picture. A project whose component clips set values
+of their own is exported by KiaseCut's own renderer.
 
 Media library (left): import files (Ctrl+Shift+I), organise them in folders by dragging,
 and drag media onto the timeline (or double-click to add at the playhead). Importing a

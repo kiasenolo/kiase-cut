@@ -2051,11 +2051,16 @@ def freeze_at(tracks, t_us):
     return tracks
 
 
+def kind_name(static, component=False):
+    """複合片段, 靜態片段, 元件 or 靜態元件."""
+    return ("靜態" if static else "") + "元件" if component else "靜態片段" if static else "複合片段"
+
+
 def new_name(comps, static, component=False):
-    """"元件 n", "靜態片段 n" or "複合片段 n": the next number of that kind."""
+    """"複合片段 n", "靜態片段 n", "元件 n" or "靜態元件 n": the next number of that kind."""
     kind = (component, bool(static))
     n = sum(1 for k in comps.values() if (components.is_component(k), bool(k.get("static"))) == kind) + 1
-    return f"{'元件' if component else '靜態片段' if static else '複合片段'} {n}"
+    return f"{kind_name(static, component)} {n}"
 
 
 def make_compound(root, container, clip_ids, at_us=None, static=False, component=False):
@@ -2064,7 +2069,8 @@ def make_compound(root, container, clip_ids, at_us=None, static=False, component
     one above it when that has no room). The tracks they were on come along, in order.
     static makes a static compound (靜態片段), which shows only its first frame, like a
     picture: the content is re-timed (freeze_at) so the moment at at_us (the playhead, kept
-    inside the span) is that frame. component (with static) makes it a component (元件)."""
+    inside the span) is that frame. component makes it a component (元件; with static a
+    靜態元件)."""
     picked = [find(container, cid) for cid in dict.fromkeys(clip_ids)]
     if not picked:
         raise EditError("先在時間軸上選取片段")
@@ -2089,8 +2095,8 @@ def make_compound(root, container, clip_ids, at_us=None, static=False, component
         t = span // 2 if at_us is None else at_us - s0
         freeze_at(inner, min(max(t, 0), max(0, span - 1)))
         comp["static"] = True
-        if component:
-            comp.update(component=True, params=[])
+    if component:
+        comp.update(component=True, params=[])
     kid = project.new_compound_id(root)
     comps[kid] = comp
     clip = {"id": new_clip_id(), "type": "compound", "name": comp["name"], "start_us": int(s0),
@@ -2118,7 +2124,6 @@ def add_compound(root, static=False, size=None, component=False):
     size (width, height) or the project's; no clip shows it yet (it can be opened by
     itself). Returns its id."""
     comps = root.setdefault("compounds", {})
-    static = static or component
     w, h = size or (root.get("width", 1920), root.get("height", 1080))
     kid = project.new_compound_id(root)
     comps[kid] = {"name": new_name(comps, static, component), "width": w, "height": h,
@@ -2190,18 +2195,18 @@ def _component(root, kid):
 
 
 def make_component(root, kid):
-    """Make static compound kid a component (元件): its layers can be given parameters, which
-    every clip showing it sets for itself."""
+    """Make compound kid a component (元件; a static one a 靜態元件): its clips can be given
+    parameters, which every clip showing it sets for itself."""
     comp = (root.get("compounds") or {}).get(kid)
-    if not comp or not comp.get("static"):
-        raise EditError("只有靜態片段可以轉成元件")
+    if not comp:
+        raise EditError("只有複合片段可以轉成元件（時間線不行）")
     comp["component"] = True
     comp.setdefault("params", [])
 
 
 def unmake_component(root, kid):
-    """A component back to a static compound: its parameters go, and what the clips showing
-    it had set for them."""
+    """A component back to a plain compound (or static compound): its parameters go, and what
+    the clips showing it had set for them."""
     comp = _component(root, kid)
     comp.pop("component", None)
     comp.pop("params", None)
@@ -2288,7 +2293,7 @@ def delete_param(root, kid, pid):
 
 
 def set_param_default(root, kid, pid, value):
-    """A parameter's default: every layer it sets gets value (at the picture's moment)."""
+    """A parameter's default: every clip it sets gets value (at its start, where keyframed)."""
     comp = _component(root, kid)
     p = components.param(comp, pid)
     if p is None:
@@ -2299,7 +2304,7 @@ def set_param_default(root, kid, pid, value):
         if cid not in index:
             continue
         t, c = index[cid]
-        at = max(0, -c["start_us"])
+        at = 0
         if prop == "content":
             c["text"]["content"] = value
         elif prop == "text_color":
@@ -2312,6 +2317,9 @@ def set_param_default(root, kid, pid, value):
                 raise EditError("讀不到這張圖片")
             replace_media(comp, cid, {"kind": "image", "path": value, "width": size[0], "height": size[1]})
         elif prop == "visible":
+            if len(t["clips"]) > 1:
+                raise EditError(f"「{c.get('name') or c['type']}」的軌道上還有別的片段：顯示開關的預設值是"
+                                "整條軌道的隱藏，先把它放到自己的軌道上")
             if value:
                 t.pop("hidden", None)
             else:

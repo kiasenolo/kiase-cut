@@ -1002,7 +1002,8 @@ class Inspector(QWidget):
         ts = [t_us - k["start_us"] for k in clips]
         names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段", "group": "群組",
                  "filter": "濾鏡片段"}
-        kinds = sorted({"元件" if components.of_clip(k) else "靜態片段" if project.is_static(k) else
+        kinds = sorted({("靜態元件" if project.is_static(k) else "元件") if components.of_clip(k) else
+                        "靜態片段" if project.is_static(k) else
                         names.get(k["type"], k["type"]) for k in clips})
         same = lambda vals: len(set(vals)) == 1
         if "類型" in w:

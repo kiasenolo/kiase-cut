@@ -21,13 +21,11 @@ tab dropped on a layer goes onto it (between layers or below them: a filter laye
 With Alt held, media dropped on a picture layer replace its source (替換素材); dropped on one of
 several selected layers, every selected picture layer gets them (批量替換), one undo step.
 
-A component (元件, components.py) is edited the same way, with its parameters listed under
-the layers (參數): right-click layers > 設為參數 makes a new parameter of one of their
-properties (文字內容, 文字顏色, a shape's colours, 圖片, 顯示), or hands it to a parameter that is
-there (one parameter can set several layers), 解除參數 lets it go; a layer a parameter sets is
-marked ❖. Click a parameter to select its layers, double-click it to set its default (what
-every layer it sets gets), right-click to rename, restack or delete it. A plain static
-compound has 轉為元件 at the top.
+A static component (靜態元件, components.py) is edited the same way, with its parameters listed
+under the layers (params.ParamList): right-click layers > 設為參數 makes a new parameter of one
+of their properties (文字內容, 文字顏色, a shape's colours, 圖片, 顯示), or hands it to a
+parameter that is there (one parameter can set several layers), 解除參數 lets it go; a layer a
+parameter sets is marked ❖. A plain static compound has 轉為元件 at the top.
 """
 from PySide6.QtCore import QItemSelectionModel, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
@@ -35,6 +33,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLa
                                QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, components, edit, project
+from .params import ParamList, bound_tip, clip_name, param_menu
 from .timeline import FX_MIME, MEDIA_MIME
 
 ROLE = Qt.UserRole
@@ -220,28 +219,6 @@ class LayerList(QListWidget):
         self.menuRequested.emit(e.globalPos())
 
 
-def layer_name(c):
-    """What a layer is called in the list."""
-    name = c.get("name") or ""
-    if c["type"] == "text" and not c.get("named"):
-        name = (c["text"].get("content") or "").replace("\n", " ")[:30]
-    if c.get("asset"):
-        name = name or assets.name_of(c["asset"])
-    return name or c["type"]
-
-
-def value_text(p, v):
-    """A parameter's value, short."""
-    if p["kind"] == "text":
-        v = (v or "").replace("\n", " ")
-        return f"「{v[:14]}{'…' if len(v) > 14 else ''}」"
-    if p["kind"] == "color":
-        return assets.hex_of(v)
-    if p["kind"] == "image":
-        return v.replace("\\", "/").rsplit("/", 1)[-1] if v else "（沒有）"
-    return "顯示" if v else "隱藏"
-
-
 class LayerRow(QWidget):
     def __init__(self, c, track, shown, depth=0, thumb=None, opened=None, mask=None, params=()):
         """opened: for a group, whether it is open in the list (None: not a group); mask: when it
@@ -263,7 +240,7 @@ class LayerRow(QWidget):
         tag = QLabel("◧" if kind == "static" else KINDS.get(c["type"], "·"))
         tag.setFixedWidth(16)
         tag.setAlignment(Qt.AlignCenter)
-        self.name = QLabel(layer_name(c))
+        self.name = QLabel(clip_name(c))
         dim = track.get("hidden") or not shown
         self.name.setStyleSheet("color: #6a6a70;" if dim else "")
         if not shown:
@@ -304,7 +281,7 @@ class LayerRow(QWidget):
             lay.addWidget(QLabel("✦"))
         if params:
             m = QLabel(components.ICON)
-            m.setToolTip("元件參數：" + "、".join(f"{p['name']}（{components.prop_label(c, prop)}）" for p, prop in params))
+            m.setToolTip(bound_tip(c, params))
             m.setStyleSheet("color: #8fa8ff;")
             lay.addWidget(m)
         lay.addStretch(1)
@@ -384,84 +361,13 @@ class LayerPanel(QWidget):
         button("刪除", "刪除選取的圖層", "delete")
         bar.addStretch(1)
         lay.addLayout(bar)
-        self.params_box = QWidget()                 # a component's parameters
-        pl = QVBoxLayout(self.params_box)
-        pl.setContentsMargins(0, 4, 0, 0)
-        head = QHBoxLayout()
-        title = QLabel("參數")
-        title.setObjectName("title")
-        head.addWidget(title)
-        hint = QLabel("在圖層上按右鍵 > 設為參數；按兩下參數設定預設值")
-        hint.setStyleSheet("color: #8a8a90;")
-        head.addWidget(hint, 1)
-        pl.addLayout(head)
-        self.params = QListWidget()
-        self.params.setMaximumHeight(140)
-        self.params.itemClicked.connect(self._param_clicked)
-        self.params.itemDoubleClicked.connect(lambda it: self.paramAction.emit("default", it.data(ROLE)))
-        self.params.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.params.customContextMenuRequested.connect(self._param_list_menu)
-        pl.addWidget(self.params)
+        self.params_box = ParamList()               # a component's parameters
+        self.params_box.list.setMaximumHeight(140)
+        self.params_box.selectionPicked.connect(self.selectionPicked)
+        self.params_box.paramUnbind.connect(self.paramUnbind)
+        self.params_box.paramAction.connect(self.paramAction)
+        self.params = self.params_box.list
         lay.addWidget(self.params_box)
-
-    def _param_clicked(self, it):
-        """A parameter clicked: its layers are selected."""
-        level = self._shown[0] if self._shown else None
-        p = components.param(level, it.data(ROLE))
-        if p is None:
-            return
-        index = components.layer_index(level)
-        ids = list(dict.fromkeys(cid for cid, _prop in p.get("binds") or [] if cid in index))
-        if ids:
-            self.selectionPicked.emit(set(ids), ids[0])
-
-    def _param_list_menu(self, pos):
-        it = self.params.itemAt(pos)
-        if it is None:
-            return
-        pid = it.data(ROLE)
-        menu = QMenu(self)
-        for text, action in (("設定預設值…", "default"), ("重新命名…", "rename"), (None, None),
-                             ("上移", "up"), ("下移", "down"), (None, None), ("刪除參數", "delete")):
-            if text is None:
-                menu.addSeparator()
-            else:
-                menu.addAction(text, lambda a=action: self.paramAction.emit(a, pid))
-        level = self._shown[0] if self._shown else None
-        p = components.param(level, pid)
-        index = components.layer_index(level) if p else {}
-        binds = [(cid, prop) for cid, prop in (p or {}).get("binds") or [] if cid in index]
-        if binds:
-            un = menu.addMenu("解除圖層")
-            for cid, prop in binds:
-                c = index[cid][1]
-                un.addAction(f"{layer_name(c)}：{components.prop_label(c, prop)}",
-                             lambda b=(cid, prop): self.paramUnbind.emit([b]))
-        menu.exec(self.params.viewport().mapToGlobal(pos))
-
-    def _param_menu(self, menu, level, clips):
-        """設為參數 / 解除參數 of the selected layers (a component's)."""
-        props = [pr for pr in components.props_of(clips[0]) if all(pr in components.props_of(c) for c in clips)]
-        ids = [c["id"] for c in clips]
-        sub = menu.addMenu("設為參數")
-        sub.setEnabled(bool(props))
-        for prop in props:
-            label = components.prop_label(clips[0], prop)
-            sub.addAction(f"新參數：{label}", lambda pr=prop: self.paramBind.emit("", pr, ids))
-            for p in components.params(level):
-                if p["kind"] == components.PROPS[prop][0]:
-                    sub.addAction(f"　交給「{p['name']}」：{label}",
-                                  lambda pid=p["id"], pr=prop: self.paramBind.emit(pid, pr, ids))
-        bound = components.bound(level)
-        mine = [(c, p, prop) for c in clips for p, prop in bound.get(c["id"], ())]
-        if mine:
-            un = menu.addMenu("解除參數")
-            for c, p, prop in mine:
-                un.addAction(f"「{p['name']}」：{components.prop_label(c, prop)}" +
-                             (f"（{layer_name(c)}）" if len(clips) > 1 else ""),
-                             lambda b=(c["id"], prop): self.paramUnbind.emit([b]))
-            if len(mine) > 1:
-                un.addAction("全部解除", lambda: self.paramUnbind.emit([(c["id"], prop) for c, _p, prop in mine]))
 
     def _menu(self, where):
         """Right-click on the selected layers: what the buttons do, and rename / hide / lock."""
@@ -488,7 +394,8 @@ class LayerPanel(QWidget):
                     sub.addAction(name, lambda g=gid: self.actionRequested.emit("into:" + g))
         if level is not None and components.is_component(level):
             menu.addSeparator()
-            self._param_menu(menu, level, [edit.find(level, it.data(ROLE))[1] for it in items])
+            param_menu(menu, level, [edit.find(level, it.data(ROLE))[1] for it in items],
+                       self.paramBind.emit, self.paramUnbind.emit)
             menu.addSeparator()
         mattes = [it.data(MATTE) for it in items if it.data(MATTE) is not None]
         if mattes:                                         # groups: their bottom object cuts the rest
@@ -516,7 +423,7 @@ class LayerPanel(QWidget):
         self.params_box.setVisible(comp)
         bound = components.bound(level) if comp else {}
         if comp:
-            self._fill_params(level)
+            self.params_box.set_component(level)
         self._filling = True
         bar = self.list.verticalScrollBar().value()
         self.list.clear()
@@ -557,27 +464,6 @@ class LayerPanel(QWidget):
         add(level, 0, "", 0, False)
         self.list.verticalScrollBar().setValue(bar)
         self._filling = False
-
-    def _fill_params(self, level):
-        cur = self.params.currentItem()
-        keep = cur.data(ROLE) if cur is not None else None
-        self.params.clear()
-        index = components.layer_index(level)
-        for p in components.params(level):
-            n = sum(1 for cid, _prop in p.get("binds") or [] if cid in index)
-            it = QListWidgetItem(f"{components.ICON} {p['name']}　{components.KINDS[p['kind']]} · "
-                                 f"{n} 個圖層 · 預設 {value_text(p, components.default(level, p, index))}")
-            it.setData(ROLE, p["id"])
-            if not n:
-                it.setForeground(QColor("#6a6a70"))
-                it.setToolTip("沒有圖層用這個參數：在圖層上按右鍵 > 設為參數 > 交給它")
-            self.params.addItem(it)
-            if p["id"] == keep:
-                self.params.setCurrentItem(it)
-        if not self.params.count():
-            it = QListWidgetItem("還沒有參數：在圖層上按右鍵 > 設為參數")
-            it.setFlags(Qt.NoItemFlags)
-            self.params.addItem(it)
 
     def toggle_group(self, gid):
         """Open or close a group in the list."""

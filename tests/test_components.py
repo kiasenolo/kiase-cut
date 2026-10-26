@@ -1,5 +1,5 @@
-"""Components (元件): static compounds whose layers' words, colours, pictures and visibility
-are parameters each clip showing it sets for itself, keyframes included."""
+"""Components (元件): compounds - live or static - whose clips' words, colours, pictures and
+visibility are parameters each clip showing one sets for itself, keyframes included."""
 import json
 import os
 import shutil
@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from kiasecut import assets, components, curves, edit, glrender, project, render  # noqa: E402
+from kiasecut import assets, components, curves, edit, glrender, project, render, renderexport  # noqa: E402
 from test_edit import S, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -43,7 +43,7 @@ class ComponentTests(unittest.TestCase):
 
     def test_made_as_a_component(self):
         self.assertTrue(components.is_component(self.comp))
-        self.assertTrue(self.comp["name"].startswith("元件"))
+        self.assertTrue(self.comp["name"].startswith("靜態元件"))
         self.assertTrue(project.is_static(edit.find(self.p, self.cid)[1]))
 
     def test_instance_colour_and_default(self):
@@ -146,6 +146,73 @@ class ComponentTests(unittest.TestCase):
         self.assertTrue(components.is_component(self.comp))
 
 
+class LiveComponentTests(unittest.TestCase):
+    """A live component (not static): played like any compound, its clips set at any time."""
+
+    def setUp(self):
+        p = proj()
+        p["tracks"][0]["clips"] = p["tracks"][0]["clips"][:1]
+        a = assets.make(assets.get("shape.rect"), "#ff0000", "#000000", 1920, 1080)
+        a.update(w=1920, h=1080)
+        edit.replace_media(p, "c1", assets.item(a, "/nowhere.svg"), a)
+        clip = edit.make_compound(p, p, ["c1"], component=True)
+        self.p, self.cid, self.kid = p, clip["id"], clip["compound_id"]
+        self.comp = p["compounds"][self.kid]
+
+    def colour(self, frame=0):
+        view = dict(self.p, tracks=self.p["tracks"])
+        return render.Renderer().render(view, frame, 192, 108).pixelColor(96, 54).name()
+
+    def test_live_instance(self):
+        self.assertTrue(components.is_component(self.comp))
+        self.assertFalse(self.comp.get("static"))
+        self.assertTrue(self.comp["name"].startswith("元件"))
+        self.assertFalse(project.is_static(edit.find(self.p, self.cid)[1]))
+        pr = edit.add_param(self.p, self.kid, "color", "主色", [("c1", "color")])
+        self.assertFalse(renderexport.needs_renderer(self.p))
+        edit.set_param(self.p, self.cid, "params", pr["id"], BLUE)
+        self.assertEqual(self.colour(), "#0000ff")
+        self.assertTrue(renderexport.needs_renderer(self.p))     # (MLT would show the component's own)
+
+    def test_shown_on_a_hidden_track(self):
+        c2 = dict(edit.find(self.comp, "c1")[1], id="c9", start_us=S)
+        tr = self.comp["tracks"][0]
+        tr["clips"].append(c2)
+        tr["hidden"] = True
+        pv = edit.add_param(self.p, self.kid, "visible", "顯示", [("c1", "visible")])
+        with self.assertRaises(edit.EditError):                 # (the default would hide c9 too)
+            edit.set_param_default(self.p, self.kid, pv["id"], True)
+        edit.set_param(self.p, self.cid, "params", pv["id"], True)
+        got = components.content(edit.find(self.p, self.cid)[1], 0)["tracks"]
+        self.assertEqual([([c["id"] for c in t["clips"]], bool(t.get("hidden"))) for t in got[:2]],
+                         [(["c9"], True), (["c1"], False)])
+
+    def test_any_compound_converts(self):
+        edit.unmake_component(self.p, self.kid)
+        self.assertFalse(components.is_component(self.comp))
+        edit.make_component(self.p, self.kid)
+        self.assertTrue(components.is_component(self.comp))
+        with self.assertRaises(edit.EditError):
+            edit.make_component(self.p, "tl1")                   # (a timeline is not one)
+
+    def test_timeline_menu(self):
+        from PySide6.QtWidgets import QMenu
+        from kiasecut.ui.timeline import Timeline
+        tl = Timeline()
+        view = {"width": 1920, "height": 1080, "fps": 60.0, "duration_us": 2 * S, "tracks": self.comp["tracks"],
+                "compounds": self.p["compounds"], "open_component": self.comp}
+        tl.set_project(view)
+        edit.add_param(self.p, self.kid, "color", "主色", [("c1", "color")])
+        self.assertIn("c1", tl._bound())
+        got = []
+        tl.paramBind.connect(lambda *a: got.append(a))
+        from kiasecut.ui.params import param_menu
+        menu = QMenu()
+        param_menu(menu, self.comp, [self.comp["tracks"][0]["clips"][0]], tl.paramBind.emit, tl.paramUnbind.emit)
+        next(a for a in menu.actions()[0].menu().actions() if a.text() == "新參數：外框顏色").trigger()
+        self.assertEqual(got, [("", "stroke_color", ["c1"])])
+
+
 class ComponentUiTests(unittest.TestCase):
     """The layer panel's 參數 and 設為參數, the inspector's 元件參數."""
 
@@ -168,7 +235,8 @@ class ComponentUiTests(unittest.TestCase):
         panel.paramBind.connect(lambda pid, prop, ids: got.append((pid, prop, ids)))
         panel.paramUnbind.connect(got.append)
         menu = QMenu()
-        panel._param_menu(menu, self.comp, [self.comp["tracks"][0]["clips"][0]])
+        from kiasecut.ui.params import param_menu
+        param_menu(menu, self.comp, [self.comp["tracks"][0]["clips"][0]], panel.paramBind.emit, panel.paramUnbind.emit)
         sub = {a.text(): a for a in menu.actions()}
         bind = {a.text(): a for a in sub["設為參數"].menu().actions()}
         self.assertIn("新參數：填充顏色", bind)
@@ -187,7 +255,7 @@ class ComponentUiTests(unittest.TestCase):
         ins.paramEdited.connect(lambda ids, g, k, v: got.append((ids, g, k, v)))
         c = edit.find(self.p, self.cid)[1]
         ins.show_clips([c], 0, 60)
-        self.assertEqual(ins.widgets["類型"].text(), "元件")
+        self.assertEqual(ins.widgets["類型"].text(), "靜態元件")
         self.assertEqual(ins.widgets[("params", self.pr["id"])].text(), "#ff0000")
         self.assertFalse(ins.widgets[("reset", self.pr["id"])].isEnabled())
         ins._queue("params", self.pr["id"], BLUE)

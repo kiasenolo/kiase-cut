@@ -93,7 +93,7 @@ class OpenByItselfTests(unittest.TestCase):
 
 
 class PanelMenuTests(unittest.TestCase):
-    def test_menu_offers_the_four(self):
+    def test_menu_offers_them_all(self):
         panel = CompoundPanel()
         panel.set_project(proj())
         got = []
@@ -101,10 +101,10 @@ class PanelMenuTests(unittest.TestCase):
         menu = QMenu()
         panel._create_actions(menu)
         acts = [a for a in menu.actions() if not a.isSeparator()]
-        self.assertEqual([a.text() for a in acts], ["新增時間線", "新增複合片段", "新增靜態複合片段", "新增元件"])
+        self.assertEqual([a.text() for a in acts], ["新增時間線", "新增複合片段", "新增靜態複合片段", "新增元件", "新增靜態元件"])
         for a in acts:
             a.trigger()
-        self.assertEqual(got, ["timeline", "compound", "static", "component"])
+        self.assertEqual(got, ["timeline", "compound", "static", "component", "static_component"])
 
 
 if __name__ == "__main__":

@@ -239,8 +239,9 @@ select it, then drag anywhere inside the box (its clips or the space between the
 turn it in the inspector (its own transform, keyframes too); double-click it to pick the clip
 under the mouse, which can then be edited on the canvas like any clip (while the group is not
 moved, scaled or turned). Effects, masks, blend modes and opacity on a group work on the group
-as a whole. 最下面的物件當遮罩 (in its inspector) makes the clips of its bottom track cut the
-ones above them by their alpha, a clipping mask; 顯示遮罩物件 also draws those bottom clips.
+as a whole. 最下面的物件當遮罩 (in its inspector, or the group's right-click menu on the timeline
+and in the layer list) makes the clips of its bottom track cut the ones above them by their
+alpha, a clipping mask; 顯示遮罩物件 also draws those bottom clips.
 Ctrl+Shift+G (解散群組) puts the clips back on the tracks around it with the group's position,
 scale and opacity folded in (a turned group, or one with transform keyframes, is refused).
 Projects with groups export through the preview renderer.
@@ -273,7 +274,10 @@ edit its content (the playhead opens at its first frame, the only one it shows);
 changes with it, as with compounds.
 A static compound is edited as a picture, not on a timeline: while one is open a layer list
 takes the timeline's place, as in Photoshop - every picture clip is a layer, the top one
-first. Click (Ctrl / Shift for several) to select, drag layers to restack them (one per
+first, with a small picture of it on a checkerboard. A group's ▸ opens it in the list: its
+layers show indented under it and are selected, hidden, locked and restacked (dragged, 上移 /
+下移) inside it like any other; when its bottom object is its mask, that layer is marked 遮罩.
+Click (Ctrl / Shift for several) to select, drag layers to restack them (one per
 track), the dot hides a layer and the padlock locks it, double-click a name to rename it;
 文字 and 形狀 ▾ add a layer at the top (shapes in the 內建素材 tab's colours), 上移 / 下移
 restack the selection, 群組 groups it, 複製 copies it right above itself, 刪除 removes it;
@@ -281,7 +285,8 @@ right-clicking the selection offers the same, plus 重新命名 and hiding / loc
 media onto the list - from the media library, the Library tab, 內建素材, the 複合片段 list or the
 file manager - and they become layers where they are dropped (between the two nearest layers;
 one undo step). An effect from the VFX tab dropped on a layer goes onto it; dropped between
-layers it becomes a filter layer there. A
+layers it becomes a filter layer there. Media dropped on the preview instead become the top
+layer, centred where they were let go. A
 layer that does not cover the picture's moment shows dimmed (only that moment is drawn). The
 preview, the inspector and every edit work on the selected layers as on clips.
 

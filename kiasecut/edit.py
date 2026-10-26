@@ -1609,11 +1609,15 @@ def layers(level):
     return out
 
 
-def set_layer_order(level, ids_top_first):
+def set_layer_order(level, ids_top_first, parent=None):
     """Put a level's picture clips in this order, top first, one per track (as layers are):
-    each keeps its own track's switches (hidden, locked, colour); sound tracks stay below."""
+    each keeps its own track's switches (hidden, locked, colour); sound tracks stay below.
+    parent: a group's id - its clips are restacked instead (inside it)."""
+    holder = find(level, parent)[1] if parent else level
+    if parent and not project.is_group(holder):
+        raise EditError("只有群組裡面有圖層")
     ids = list(dict.fromkeys(ids_top_first))
-    clips = {c["id"]: (t, c) for t in level["tracks"] if t["kind"] != "audio" for c in t["clips"]}
+    clips = {c["id"]: (t, c) for t in holder["tracks"] if t["kind"] != "audio" for c in t["clips"]}
     if set(ids) != set(clips):
         raise EditError("圖層的順序要包含每一個圖層")
     tracks, used = [], set()
@@ -1622,11 +1626,34 @@ def set_layer_order(level, ids_top_first):
         kind = "text" if c["type"] == "text" else "video"
         keep = {k: v for k, v in t.items() if k in ("hidden", "locked", "color", "name")} if id(t) not in used else {}
         used.add(id(t))
-        tid = t["id"] if not any(x["id"] == t["id"] for x in tracks) else new_track_id({"tracks": tracks + level["tracks"]})
+        if not any(x["id"] == t["id"] for x in tracks):
+            tid = t["id"]
+        elif parent:                                            # (a group's tracks: ids of their own kind)
+            tid = "g" + uuid.uuid4().hex[:8]
+        else:
+            tid = new_track_id({"tracks": tracks + level["tracks"]})
         tracks.append(dict(keep, id=tid, kind=kind, name=keep.get("name") or c.get("name") or kind, clips=[c]))
-    audio = [t for t in level["tracks"] if t["kind"] == "audio"]
-    level["tracks"][:] = tracks + audio
+    audio = [t for t in holder["tracks"] if t["kind"] == "audio"]
+    holder["tracks"][:] = tracks + audio
     return tracks
+
+
+def layer_parent(level, clip_id):
+    """The id of the group a layer is directly inside, or None (the level itself)."""
+    def walk(tracks, gid):
+        for t in tracks:
+            for c in t["clips"]:
+                if c["id"] == clip_id:
+                    return gid
+                if project.is_group(c):
+                    found = walk(c["tracks"], c["id"])
+                    if found is not False:
+                        return found
+        return False
+    found = walk(level["tracks"], None)
+    if found is False:
+        raise EditError(f"clip {clip_id} not found")
+    return found
 
 
 def set_track_gain(proj, track_id, gain):

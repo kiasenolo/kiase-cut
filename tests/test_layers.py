@@ -100,3 +100,120 @@ class LayerDropTests(unittest.TestCase):
         h.redo()
         self.assertEqual(len(edit.layers(p)), 4)
         self.assertEqual(edit.layers(p)[2]["media"]["path"], "n.png")    # (redone in its place)
+
+
+class GroupLayerTests(unittest.TestCase):
+    """Groups in the layer list: opened in place, restacked inside, their mask marked."""
+
+    def setUp(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication
+        QApplication.instance() or QApplication([])
+        self.p = proj()
+        self.p["tracks"][1]["clips"].append(clip("c4", 0, S))
+        self.p["tracks"].insert(2, {"id": "t5", "kind": "video", "name": "v5", "clips": [clip("c5", 0, S)]})
+        self.g = edit.make_group(self.p, self.p, ["c4", "c5"])
+
+    def test_restack_inside_a_group(self):
+        self.assertEqual(edit.layer_parent(self.p, "c5"), self.g["id"])
+        self.assertIsNone(edit.layer_parent(self.p, self.g["id"]))
+        self.assertEqual([c["id"] for c in edit.layers(self.g)], ["c5", "c4"])
+        outer = [t["id"] for t in self.p["tracks"]]
+        edit.set_layer_order(self.p, ["c4", "c5"], self.g["id"])
+        self.assertEqual([c["id"] for c in edit.layers(self.g)], ["c4", "c5"])
+        self.assertEqual([t["id"] for t in self.p["tracks"]], outer)               # the level is left alone
+        with self.assertRaises(edit.EditError):
+            edit.set_layer_order(self.p, ["c4"], self.g["id"])
+
+    def test_list_opens_groups(self):
+        from kiasecut.ui.layers import PARENT, LayerPanel, LayerRow
+        from PySide6.QtWidgets import QLabel
+        panel = LayerPanel()
+        panel.set_layers(self.p, set(), None)
+        rows = lambda: [panel.list.item(i).data(0x0100) for i in range(panel.list.count())]
+        self.assertNotIn("c5", rows())
+        panel.toggle_group(self.g["id"])                                          # ▸
+        self.assertEqual(rows()[rows().index(self.g["id"]) + 1:][:2], ["c5", "c4"])
+        self.assertEqual(panel.list.orders()[self.g["id"]], ["c5", "c4"])
+        self.assertEqual(panel.list.item(rows().index("c5")).data(PARENT), self.g["id"])
+        self.assertEqual(panel.list.orders()[""], [c["id"] for c in edit.layers(self.p)])
+        edit.set_group_matte(self.p, self.g["id"], on=True)                       # the bottom one is the mask
+        panel.set_layers(self.p, set(), None)
+        marks = lambda cid: [w.text() for w in panel.list.itemWidget(panel.list.item(rows().index(cid)))
+                             .findChildren(QLabel)]
+        self.assertIn("遮罩", marks("c4"))
+        self.assertNotIn("遮罩", marks("c5"))
+        self.assertIsInstance(panel.list.itemWidget(panel.list.item(0)), LayerRow)
+
+    def test_menu_toggles_group_matte(self):
+        from types import SimpleNamespace
+        from kiasecut.ui.main_window import MainWindow
+        h = edit.History(self.p)
+        win = SimpleNamespace(container=lambda *_: self.p,
+                              apply=lambda label, fn: h.do(label, fn))
+        MainWindow.toggle_group_matte(win, [self.g["id"], "c1"])
+        self.assertTrue(self.g["matte"]["on"])
+        MainWindow.toggle_group_matte(win, [self.g["id"]])
+        self.assertFalse(edit.find(self.p, self.g["id"])[1]["matte"]["on"])
+
+    def test_thumbnail(self):
+        from types import SimpleNamespace
+        from kiasecut import assets
+        from kiasecut.ui.main_window import MainWindow
+        p = proj()
+        params = dict(assets.make(assets.get("shape.circle"), "#ff0000", "", 1920, 1080), w=1080, h=1080)
+        c = {"id": "a1", "type": "image", "name": "圓形", "start_us": 0, "duration_us": S, "source_start_us": 0,
+             "asset": params, "media": {"path": "nothere.svg", "width": 1080, "height": 1080},
+             "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
+        win = SimpleNamespace(proj=p, devicePixelRatioF=lambda: 1.0, _thumb_video=lambda *a: None)
+        level = {"width": 1920, "height": 1080, "tracks": []}
+        pix = MainWindow.layer_thumb(win, c, level)
+        img = pix.toImage()
+        self.assertEqual((img.width(), img.height()), (46, 26))
+        self.assertEqual(img.pixelColor(23, 13).name(), "#ff0000")                # the shape, in the middle
+        self.assertNotEqual(img.pixelColor(2, 2).name(), "#ff0000")               # the checkerboard around it
+        self.assertIs(MainWindow.layer_thumb(win, c, level), pix)                 # kept
+
+
+class PreviewDropTests(unittest.TestCase):
+    def test_drop_on_the_picture(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from types import SimpleNamespace
+        from PySide6.QtCore import QMimeData, QPointF, Qt
+        from PySide6.QtGui import QDropEvent
+        from PySide6.QtWidgets import QApplication
+        from kiasecut import library
+        from kiasecut.ui.main_window import MainWindow
+        from kiasecut.ui.preview import Preview
+        from kiasecut.ui.timeline import MEDIA_MIME
+        QApplication.instance() or QApplication([])
+        p = proj()
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.set_scene(p, 0, None)
+        got = []
+        pv.mediaDropped.connect(lambda ids, paths, x, y: got.append((ids, x, y)))
+        md = QMimeData()
+        md.setData(MEDIA_MIME, b"m9")
+        r = pv._rect()
+        at = QPointF(r.x() + r.width() * 0.75, r.y() + r.height() * 0.25)       # right, up
+        pv.dropEvent(QDropEvent(at, Qt.CopyAction, md, Qt.LeftButton, Qt.NoModifier))
+        self.assertEqual(got, [])                                                 # only while a static compound is open
+        pv.accept_media = True
+        pv.dropEvent(QDropEvent(at, Qt.CopyAction, md, Qt.LeftButton, Qt.NoModifier))
+        self.assertEqual(got[0][0], ["m9"])
+        self.assertAlmostEqual(got[0][1], 0.5, places=2)
+        self.assertAlmostEqual(got[0][2], 0.5, places=2)
+        h = edit.History(p)
+        it = {"id": "m9", "name": "n.png", "path": "n.png", "kind": "image", "width": 10, "height": 10, "folder": None}
+        win = SimpleNamespace(proj=p, layer_drop_at=None, container=lambda *_: p, editing_static=lambda: True)
+
+        def place_media(ident, track_id, start):
+            h.do("加入素材", lambda q: library.place_item(q, it, track_id or None, start))
+            MainWindow._place_dropped_layers(win)
+        win.place_media = place_media
+        MainWindow.layer_drop(win, ["m9"], [], 0, (got[0][1], got[0][2]))
+        top = edit.layers(p)[0]
+        self.assertEqual(top["media"]["path"], "n.png")                           # the top layer,
+        self.assertEqual((top["transform"]["x"], top["transform"]["y"]), (got[0][1], got[0][2]))  # centred there
+        self.assertEqual(len(h.undo_stack), 1)

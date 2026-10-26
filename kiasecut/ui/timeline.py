@@ -1686,7 +1686,9 @@ class Timeline(QWidget):
                 items = [("編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),
                          ("在新的分頁開啟", "open_tab"), ("設為獨立（不再共用）", "unique"), None] + items
             if project.is_group(c):
-                items = [("摺疊群組" if self.is_open(c) else "展開群組", "fold"), ("解散群組", "ungroup"), None] + items
+                masked = bool((c.get("matte") or {}).get("on"))
+                items = [("摺疊群組" if self.is_open(c) else "展開群組", "fold"), ("解散群組", "ungroup"),
+                         ("✓ 最下面的物件當遮罩" if masked else "最下面的物件當遮罩", "group_matte"), None] + items
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立群組", "group")]
             if all(k["type"] != "audio" for k in self.selected_clips()):

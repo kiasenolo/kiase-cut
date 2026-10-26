@@ -17,15 +17,15 @@ import time
 
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QImage, QKeySequence
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
                                QMenu, QPushButton, QScrollArea, QSlider, QSplitter, QStackedWidget, QTabBar, QTabWidget,
                                QVBoxLayout,
                                QWidget)
 
-from .. import (assets, build, curves, edit, fonts, fx, gpu, library, project, recovery, renderexport, thumbnail, userlib,
-               waveform, workspace)
+from .. import (assets, build, curves, edit, fonts, fx, gpu, library, project, recovery, render, renderexport, thumbnail,
+               userlib, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -275,7 +275,7 @@ class MainWindow(QMainWindow):
         self.font_check = None          # 字體對應 waiting for the font list (auto or not), or None
         self.font_dlg = None            # the 字體對應 window while it is open
         self.closing = False
-        self.layer_drop_at = None       # media dropped on the layer list: (layers above, layers before, when)
+        self.layer_drop_at = None       # media dropped on the layer list: (layers above, layers before, when, where)
         self.autosave_dir = None        # recovery: the autosave folder once this program's session began
         self._autosaved = None          # the project as last autosaved (not written again unchanged)
         self.sync_busy = False
@@ -363,6 +363,7 @@ class MainWindow(QMainWindow):
         self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
         self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
+        self.preview.mediaDropped.connect(lambda ids, paths, x, y: self.layer_drop(ids, paths, 0, (x, y)))
 
         self.inspector = Inspector()
         ins = self.inspector
@@ -651,7 +652,8 @@ class MainWindow(QMainWindow):
         self.layers = LayerPanel()
         lp = self.layers
         lp.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
-        lp.orderChanged.connect(lambda ids: self.apply("圖層順序", edit.set_layer_order, ids))
+        lp.orderChanged.connect(self.restack_layers)
+        lp.thumb = self.layer_thumb
         lp.flagToggled.connect(lambda tid, flag, on: self.apply(
             {"hidden": "隱藏", "locked": "鎖定"}[flag] + "圖層" if on else "取消" + {"hidden": "隱藏", "locked": "鎖定"}[flag],
             edit.set_track_flag, tid, flag, on))
@@ -2065,39 +2067,97 @@ class MainWindow(QMainWindow):
         self.lower_stack.setCurrentIndex(1 if static else 0)
         for k in ("split",):
             self.buttons[k].setVisible(not static)
+        self.preview.accept_media = static              # media dragged onto the picture
         if static:
             self.layers.set_layers(self.container(), self.timeline.selected_ids, self.timeline.selected_id)
+
+    def restack_layers(self, orders):
+        """{group id or "": its layers' ids, top first}: restacked in one edit (those that changed)."""
+        def fn(level):
+            for parent, ids in orders.items():
+                holder = edit.find(level, parent)[1] if parent else level
+                if [c["id"] for c in edit.layers(holder)] != ids:
+                    edit.set_layer_order(level, ids, parent or None)
+        self.apply("圖層順序", fn)
+
+    def layer_thumb(self, c, level):
+        """A layer's small picture: the clip alone at the picture's moment (its own start when it
+        is not there), on a checkerboard; kept until the clip (or what it shows) changes."""
+        cache = self.__dict__.setdefault("_layer_thumbs", {})
+        comps = self.proj.get("compounds", {})
+        key = json.dumps([c, level["width"], level["height"], fonts.map_key()],   # (a compound clip holds
+                         sort_keys=True, default=str)                             # what it shows)
+        pix = cache.get(key)
+        if pix is not None:
+            return pix
+        from .layers import THUMB_H
+        dpr = self.devicePixelRatioF()
+        bw, bh = round(THUMB_H * 16 / 9), THUMB_H
+        k = min(bw / level["width"], bh / level["height"])
+        w, h = max(2, round(level["width"] * k * dpr)), max(2, round(level["height"] * k * dpr))
+        at = 0 if c["start_us"] <= 0 < c["start_us"] + c["duration_us"] else c["start_us"]
+        view = {"width": level["width"], "height": level["height"], "fps": self.proj["fps"],
+                "duration_us": at + 1, "tracks": [{"id": "_", "kind": "video", "clips": [c]}],
+                "compounds": comps}
+        try:
+            img = render.Renderer(self._thumb_video).render(view, at / US * self.proj["fps"], w, h, alpha=True)
+        except Exception:
+            return None
+        out = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+        p = QPainter(out)
+        cell = max(2, round(4 * dpr))
+        for y in range(0, h, cell):
+            for x in range(0, w, cell):
+                p.fillRect(x, y, cell, cell, QColor("#3a3a40" if (x // cell + y // cell) % 2 else "#2a2a2f"))
+        p.drawImage(0, 0, img)
+        p.end()
+        pix = QPixmap.fromImage(out)
+        pix.setDevicePixelRatio(dpr)
+        if len(cache) > 300:
+            cache.clear()
+        cache[key] = pix
+        return pix
 
     def layer_action(self, action):
         """The layer panel's buttons."""
         level = self.container()
-        ids = [c["id"] for c in edit.layers(level) if c["id"] in self.timeline.selected_ids]
+        ids = [c["id"] for t in project.all_tracks(level["tracks"]) for c in t["clips"]   # (inside groups too)
+               if c["id"] in self.timeline.selected_ids]
         if action == "text":
             self.do_text()
         elif action == "delete":
             self.do_delete()
         elif action == "group":
             self.make_group(ids)
+        elif action == "group_matte":
+            self.toggle_group_matte(ids)
         elif action == "copy" and ids:                       # copies right above, at the same moment
             self._select_new(self.apply_root("複製圖層", lambda root: edit.duplicate_moved(
                 root, self.container(root), ids, moves={})))
         elif action in ("up", "down") and ids:
-            order = [c["id"] for c in edit.layers(level)]
+            orders = {}                                       # each layer moves inside its own group
             step = -1 if action == "up" else 1
-            for cid in (ids if step < 0 else reversed(ids)):
-                i = order.index(cid)
-                j = i + step
-                if 0 <= j < len(order) and order[j] not in ids:
-                    order[i], order[j] = order[j], order[i]
-            self.apply("圖層順序", edit.set_layer_order, order)
+            for cid in ids:
+                parent = edit.layer_parent(level, cid) or ""
+                if parent not in orders:
+                    holder = edit.find(level, parent)[1] if parent else level
+                    orders[parent] = [c["id"] for c in edit.layers(holder)]
+            for order in orders.values():
+                for cid in [k for k in (order if step < 0 else reversed(order)) if k in ids]:
+                    i = order.index(cid)
+                    j = i + step
+                    if 0 <= j < len(order) and order[j] not in ids:
+                        order[i], order[j] = order[j], order[i]
+            self.restack_layers(orders)
 
-    def layer_drop(self, idents, paths, above):
-        """Media dropped on the layer list: new layers, `above` layers from the top. They are
-        placed as on the timeline (at the picture's moment, 0) and moved there when they come
+    def layer_drop(self, idents, paths, above, at=None):
+        """Media dropped on the layer list (or the preview): new layers, `above` layers from the
+        top, centred at transform position at (x, y) when given. They are placed as on the
+        timeline (at the picture's moment, 0) and moved there when they come
         (_place_dropped_layers; files are imported first)."""
         if not self.proj:
             return
-        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic())
+        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), at)
         if paths:
             self.drop_files(paths, self.library.current_folder(), ("", 0, False))
             return
@@ -2119,7 +2179,7 @@ class MainWindow(QMainWindow):
         pend = self.layer_drop_at
         if not pend or not self.editing_static():
             return
-        above, before, when = pend
+        above, before, when, at = pend
         if time.monotonic() - when > 120:                # (an import that never came)
             self.layer_drop_at = None
             return
@@ -2133,6 +2193,10 @@ class MainWindow(QMainWindow):
         i = min(above, len(old))
         if order != old[:i] + new + old[i:]:             # (part of the same undo step)
             edit.set_layer_order(level, old[:i] + new + old[i:])
+        for cid in new if at else ():                    # dropped on the preview: centred there
+            tf = edit.find(level, cid)[1].get("transform")
+            if tf is not None and not curves.is_animated(tf.get("x")) and not curves.is_animated(tf.get("y")):
+                tf["x"], tf["y"] = at
 
     def layer_fx_drop(self, ref, cid, above):
         """An effect dropped on the layer list: onto the layer it landed on, or a filter layer
@@ -2140,9 +2204,18 @@ class MainWindow(QMainWindow):
         if cid:
             self.on_filter_dropped(ref, cid, "", 0)
             return
-        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic())
+        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), None)
         self.add_filter_clip(ref, "", 0)
         self.layer_drop_at = None
+
+    def toggle_group_matte(self, ids):
+        """最下面的物件當遮罩 from a menu: on for the groups when any is off, else off."""
+        groups = [c for c in (edit.find(self.container(), k)[1] for k in ids) if project.is_group(c)]
+        if not groups:
+            return
+        on = not all((g.get("matte") or {}).get("on") for g in groups)
+        self.apply("群組遮罩" if on else "取消群組遮罩",
+                   lambda lvl: [edit.set_group_matte(lvl, g["id"], on=on) for g in groups])
 
     def make_group(self, ids=None):
         """建立群組 (Ctrl+G): the selected picture clips into a new group, opened."""
@@ -2283,6 +2356,8 @@ class MainWindow(QMainWindow):
             self.timeline.toggle_group(c)
         elif action == "ungroup":
             self.ungroup(cid)
+        elif action == "group_matte":
+            self.toggle_group_matte([cid])
         elif action == "enter":
             self.enter_compound(cid)
         elif action == "open_tab":

@@ -58,6 +58,10 @@ Every drag shows live (paramsLive) and becomes one edit on release (paramsCommit
 the project's units: transform x / y in half-canvas units (y up), scale, clockwise degrees;
 mask cx / cy in half-material units (y up), w / h as fractions of the material, feather.
 A fullscreen window shows the same frames.
+
+While a static compound is open (accept_media), media can be dragged onto the canvas from the
+media library, the Library tab, 內建素材, the compound list or the file manager: mediaDropped
+reports them and where they were let go (they become the top layer, centred there).
 """
 import json
 import math
@@ -351,6 +355,7 @@ class Preview(QWidget):
     doubleClicked = Signal()
     textEdited = Signal(str, str)               # text clip id, its words: typed in on the canvas
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
+    mediaDropped = Signal(list, list, float, float)  # idents, file paths, transform x / y of the drop point
 
     def __init__(self, parent=None, interactive=True):
         super().__init__(parent)
@@ -373,6 +378,9 @@ class Preview(QWidget):
         self.pan = QPointF(0, 0)                # view offset, screen px
         self.setMinimumSize(320, 180)
         self.setMouseTracking(True)
+        self.accept_media = False               # media may be dropped on it (a static compound is open)
+        self.drop_at = None                     # canvas point a drag from elsewhere is over
+        self.setAcceptDrops(interactive)
 
     # -- state ------------------------------------------------------------------------------------
     def show_image(self, img):
@@ -430,6 +438,48 @@ class Preview(QWidget):
             self.pan += e.position() - QPointF(r.x() + cx / self.W * r.width(), r.y() + cy / self.H * r.height())
         self._report_size()
         self.update()
+        e.accept()
+
+    # -- drops ------------------------------------------------------------------------------------
+    def _takes(self, md):
+        from .timeline import MEDIA_MIME
+        return self.accept_media and self.view is not None and (md.hasFormat(MEDIA_MIME) or md.hasUrls())
+
+    def dragEnterEvent(self, e):
+        if self._takes(e.mimeData()):
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        if not self._takes(e.mimeData()):
+            e.ignore()
+            return
+        self.drop_at = QPointF(*self._to_canvas(e.position()))
+        e.setDropAction(Qt.CopyAction)
+        e.accept()
+        self.update()
+
+    def dragLeaveEvent(self, e):
+        self.drop_at = None
+        self.update()
+
+    def dropEvent(self, e):
+        from .timeline import MEDIA_MIME
+        self.drop_at = None
+        self.update()
+        md = e.mimeData()
+        if not self._takes(md):
+            return
+        x, y = self._to_canvas(e.position())
+        tx, ty = round((x - self.W / 2) / (self.W / 2), 5), round((self.H / 2 - y) / (self.H / 2), 5)
+        if md.hasFormat(MEDIA_MIME):
+            ids = [i for i in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",") if i]
+            self.mediaDropped.emit(ids, [], tx, ty)
+        else:
+            self.mediaDropped.emit([], [u.toLocalFile() for u in md.urls() if u.isLocalFile()], tx, ty)
+        e.setDropAction(Qt.CopyAction)
         e.accept()
 
     def _to_canvas(self, pos):
@@ -559,6 +609,12 @@ class Preview(QWidget):
             p.setPen(QPen(QColor("#ffffff"), 1.5 * k))
             for b in self.drag["hits"]:
                 p.drawPolygon(QPolygonF(b.corners()))
+        if self.drop_at is not None:                     # where dropped media will be centred
+            d = self.drop_at
+            p.setPen(QPen(QColor("#4aa3ff"), 1.5 * k))
+            p.drawLine(d - QPointF(14 * k, 0), d + QPointF(14 * k, 0))
+            p.drawLine(d - QPointF(0, 14 * k), d + QPointF(0, 14 * k))
+            p.drawEllipse(d, 6 * k, 6 * k)
         if self.mask_guides:
             p.setPen(QPen(QColor("#ffb020"), 1.5 * k, Qt.DashLine))
             for a, b in self.mask_guides:

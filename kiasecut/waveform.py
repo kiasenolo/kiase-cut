@@ -65,12 +65,12 @@ class Peaks:
             return np.load(cached), start
         r = subprocess.run([find_ffmpeg(), "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(RATE),
                             "-f", "s16le", "-"], capture_output=True, timeout=600)
-        pcm = np.frombuffer(r.stdout, np.int16).astype(np.float32) / 32768.0
+        pcm = np.frombuffer(r.stdout, np.int16)          # (bins found on the samples: no float copy of it all)
         n = round(RATE * BIN_S)
         pcm = pcm[: len(pcm) // n * n].reshape(-1, n)
-        peaks = np.stack([pcm.max(axis=1), pcm.min(axis=1)], axis=1) if len(pcm) else np.zeros((0, 2), np.float32)
-        np.save(cached, peaks.astype(np.float32))
-        return peaks.astype(np.float32), start
+        peaks = np.stack([pcm.max(axis=1), pcm.min(axis=1)], axis=1).astype(np.float32) / 32768.0
+        np.save(cached, peaks)
+        return peaks, start
 
 
 def columns(peaks, start_s, t0_s, t1_s, n):

@@ -60,10 +60,11 @@ left to the playhead.
 """
 import copy
 import math
+from collections import OrderedDict
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QApplication, QMenu, QScrollBar, QWidget
 
 from .. import curves, edit, project, waveform
@@ -74,6 +75,8 @@ FX_MIME = "application/x-kiasecut-fx"                # a filter dragged from the
 COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
           "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e", "static": "#3f7378", "group": "#7a5c96"}                              # DaVinci Resolve
 ROW_BG = QColor("#1f1f21")
+WAVE_TILE = 256                                      # waveforms are drawn in pixmaps this wide,
+WAVE_BYTES = 64 << 20                                # kept up to about this much memory
 
 
 # a clip is filled with its colour at this alpha and outlined in the colour itself, so even a
@@ -195,16 +198,17 @@ class Timeline(QWidget):
         self.vbar.valueChanged.connect(self._on_vscroll)
         self.rows_end = RULER_H
         self.peaks = None                          # waveform.Peaks
-        self._waves = {}                           # waveform polygons for the current view
+        self._waves = OrderedDict()                # waveform tiles, least recently drawn first
+        self._wave_bytes = 0
         self.peaksReady.connect(self._on_peaks)
 
     def set_peaks(self, peaks):
         self.peaks = peaks
         self._waves.clear()
+        self._wave_bytes = 0
         self.update()
 
     def _on_peaks(self, _path):
-        self._waves.clear()
         self.update()
 
     # -- data -----------------------------------------------------------------------------------
@@ -215,7 +219,6 @@ class Timeline(QWidget):
         audio = [t for t in proj["tracks"] if t["kind"] == "audio"]
         self.rows = list(reversed(visual)) + audio
         self._layout()
-        self._waves.clear()
         self.drag = None
         if not keep_view:
             self.selected_id = None
@@ -300,7 +303,6 @@ class Timeline(QWidget):
         if isinstance(v.get("header_w"), (int, float)):
             self.header_w = int(min(HEADER_MAX, max(HEADER_MIN, v["header_w"])))
         self._layout()
-        self._waves.clear()
         self.update()
 
     def _on_header_edge(self, pos):
@@ -407,7 +409,6 @@ class Timeline(QWidget):
         """Open or fold a group (not an edit: kept with the view)."""
         self.open_groups ^= {g["id"]}
         self._layout()
-        self._waves.clear()
         self.update()
 
     def _draw_lanes(self, p, i, dim):
@@ -455,7 +456,6 @@ class Timeline(QWidget):
     def _on_vscroll(self, v):
         self.scroll_y = v
         self._layout()
-        self._waves.clear()
         self.update()
 
     def set_vzoom(self, z):
@@ -465,7 +465,6 @@ class Timeline(QWidget):
         self.heights = {tid: min(MAX_H, max(MIN_H, round(h * k))) for tid, h in self.heights.items()}
         self.vzoom = z
         self._layout()
-        self._waves.clear()
         self.vzoomChanged.emit(z)
         self.update()
 
@@ -828,29 +827,47 @@ class Timeline(QWidget):
                 p.drawLine(QPointF(cx - 6, cy + 5), QPointF(cx + 6, cy - 5))
         p.restore()
 
-    def _wave(self, c, start, x0, x1, top, height):
-        """Waveform polygon of an audio / video clip between screen x0..x1, or None."""
+    def _wave(self, c, x, wx0, wx1, height):
+        """Waveform of an audio / video clip starting at screen x, between screen wx0..wx1, as
+        (x, pixmap) tiles of a white shape on transparent; [] when there is none (yet). Tiles are
+        measured from the clip's start, so scrolling or moving the clip draws the same pixmaps."""
         if self.peaks is None or not c.get("media") or c["type"] not in ("audio", "video"):
-            return None
-        key = (c["id"], start, c["duration_us"], c.get("source_start_us", 0), c.get("speed"), str(c.get("freeze")),
-               round(x0), round(x1), top, height, self.px_per_s, self.scroll_s)
-        if key in self._waves:
-            return self._waves[key]
+            return []
+        if project.frozen(c) is not None:                   # (a frozen clip is silent)
+            return []
         res = self.peaks.get(c["media"]["path"])
         if res is None or not len(res[0]):
-            return None
+            return []
+        dpr = self.devicePixelRatioF()
+        base = (c["media"]["path"], c["duration_us"], c.get("source_start_us", 0), str(c.get("speed")),
+                str(c.get("volume", 1.0)), c.get("fade_in_us", 0), c.get("fade_out_us", 0), height, self.px_per_s, dpr)
+        tiles = []
+        for i in range(max(0, int((wx0 - x) // WAVE_TILE)), int((wx1 - x) // WAVE_TILE) + 1):
+            key = base + (i,)
+            pix = self._waves.get(key)
+            if pix is None:
+                pix = self._waves[key] = self._wave_tile(c, res, i, height, dpr)
+                self._wave_bytes += pix.width() * pix.height() * 4
+                while self._wave_bytes > WAVE_BYTES and len(self._waves) > 1:
+                    old = self._waves.popitem(last=False)[1]
+                    self._wave_bytes -= old.width() * old.height() * 4
+            else:
+                self._waves.move_to_end(key)
+            tiles.append((x + i * WAVE_TILE, pix))
+        return tiles
+
+    def _wave_tile(self, c, res, i, height, dpr):
+        """Tile i (WAVE_TILE px from the clip's start on) of a clip's waveform, height px tall
+        (in device pixels: dpr times as many)."""
         peaks, lead = res
-        n = max(1, int(x1 - x0))
-        t0 = self._sec(x0) - start / US                     # seconds into the clip
-        t1 = self._sec(x0 + n) - start / US
-        if project.frozen(c) is not None:                   # (a frozen clip is silent)
-            return None
+        n, height = round(WAVE_TILE * dpr), round(height * dpr)
+        t0, t1 = i * WAVE_TILE / self.px_per_s, (i + 1) * WAVE_TILE / self.px_per_s     # seconds into the clip
         src, k = c.get("source_start_us", 0) / US, project.speed(c)
         hi, lo = waveform.columns(peaks, lead, src + t0 * k, src + t1 * k, n)   # highest / lowest sample per px
         # the clip's volume and fades, sampled every few columns
         vol, fi, fo, dur = c.get("volume", 1.0), c.get("fade_in_us", 0), c.get("fade_out_us", 0), c["duration_us"]
         if curves.is_animated(vol) or fi or fo:
-            ts = np.linspace(t0, t1, max(2, n // 4)) * US
+            ts = np.linspace(t0, t1, n // 4) * US
             g = np.array([curves.value(vol, t) for t in ts], np.float32)
             if fi:
                 g *= np.clip(ts / fi, 0, 1)
@@ -862,15 +879,16 @@ class Timeline(QWidget):
         # quieter parts stay visible; the line stays at least a hair thick
         shape = lambda a: np.sign(a) * np.clip(np.abs(a * gain), 0, 1) ** 0.7
         hi, lo = np.maximum(shape(hi), 0.02), np.minimum(shape(lo), -0.02)
-        mid, half = top + height / 2, height / 2
-        xs = x0 + np.arange(n) + 0.5
-        upper = [QPointF(x, mid - a * half) for x, a in zip(xs, hi)]
-        lower = [QPointF(x, mid - a * half) for x, a in zip(xs[::-1], lo[::-1])]
-        poly = QPolygonF(upper + lower)
-        if len(self._waves) > 400:
-            self._waves.clear()
-        self._waves[key] = poly
-        return poly
+        half = height / 2
+        top, bottom = (half - hi * half)[None, :], (half - lo * half)[None, :]
+        rows = np.arange(height, dtype=np.float32)[:, None]
+        # how much of each pixel the shape covers (smooth top and bottom edges), as premultiplied white
+        a = (np.clip(np.minimum(rows + 1, bottom) - np.maximum(rows, top), 0, 1) * 255 + 0.5).astype(np.uint32)
+        argb = np.ascontiguousarray(a * 0x01010101)
+        img = QImage(argb.data, n, height, n * 4, QImage.Format_ARGB32_Premultiplied)
+        pix = QPixmap.fromImage(img.copy())                # (copied: the array goes away)
+        pix.setDevicePixelRatio(dpr)
+        return pix
 
     def _draw_clip(self, p, c, y, start, dur, ghost=False, track=None, h=TRACK_H, dim=False):
         w = self.width()
@@ -907,13 +925,14 @@ class Timeline(QWidget):
             wt, wh = (r.top() + 15, r.height() - 17) if audio else (r.bottom() - 10, 9)
             if not audio and r.height() > 40:            # tall video rows: a bigger strip
                 wt, wh = r.top() + r.height() / 2, r.height() / 2 - 1
-            poly = self._wave(c, start, wx0, wx1, wt, wh) if wh >= 4 and (audio or r.height() >= 24) else None
-            if poly is not None:
+            wt, wh = round(wt), round(wh)
+            tiles = self._wave(c, x0, wx0, wx1, wh) if wh >= 4 and (audio or r.height() >= 24) else []
+            if tiles:
                 p.save()
                 p.setClipRect(r)
-                p.setPen(Qt.NoPen)
-                p.setBrush(QColor(255, 255, 255, 90 if dim else 235 if audio else 200))
-                p.drawPolygon(poly)
+                p.setOpacity((90 if dim else 235 if audio else 200) / 255)
+                for tx, pix in tiles:
+                    p.drawPixmap(QPointF(tx, wt), pix)
                 p.restore()
         if r.width() > 24:
             p.setPen(QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
@@ -1341,20 +1360,17 @@ class Timeline(QWidget):
         if d["mode"] == "pan":
             self.scroll_s = max(0.0, d["s"] - (pos.x() - d["pos"].x()) / self.px_per_s)
             self.vbar.setValue(round(d["y"] - (pos.y() - d["pos"].y())))
-            self._waves.clear()
             self.update()
             return
         if d["mode"] == "header":
             d["moved"] = True
             self.header_w = int(min(HEADER_MAX, max(HEADER_MIN, d["w0"] + pos.x() - d["x0"])))
-            self._waves.clear()
             self.update()
             return
         if d["mode"] == "resize":
             h = min(MAX_H, max(MIN_H, round(d["h0"] + pos.y() - d["y0"])))
             self.heights[self.rows[d["row"]]["id"]] = h
             self._layout()
-            self._waves.clear()
             self.update()
             return
         if d["mode"] == "seek":
@@ -1740,7 +1756,6 @@ class Timeline(QWidget):
             if edge is not None:                       # double-click the edge: default height
                 self.heights.pop(self.rows[edge]["id"], None)
                 self._layout()
-                self._waves.clear()
                 self.update()
                 return
             if not any(r.contains(e.position()) for _, r in self.header_buttons(row)):
@@ -1773,5 +1788,4 @@ class Timeline(QWidget):
         else:                                            # up / down
             self.vbar.setValue(self.scroll_y - round(d / 120 * 40))
             return
-        self._waves.clear()
         self.update()

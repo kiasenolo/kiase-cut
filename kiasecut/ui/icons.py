@@ -103,6 +103,13 @@ def _draw(p, name):
         p.rotate(-45)
         p.drawRoundedRect(QRectF(-9, -3.2, 10, 6.4), 3.2, 3.2)
         p.drawRoundedRect(QRectF(-1, -3.2, 10, 6.4), 3.2, 3.2)
+    elif name.startswith("text_"):                        # text alignment: lines of a paragraph
+        how = name[5:]
+        for i, (y, w) in enumerate(((6, 16), (10, 11), (14, 16), (18, 9))):
+            if how == "justify":
+                w = 9 if i == 3 else 16
+            x = {"left": 4, "justify": 4, "right": 20 - w}.get(how, 12 - w / 2)
+            p.drawRect(QRectF(x, y - 1, w, 2))
     elif name == "timeline":
         for y, x0, x1 in ((6, 4, 14), (11, 8, 20), (16, 4, 17)):
             p.drawRoundedRect(QRectF(x0, y - 1.6, x1 - x0, 3.2), 1, 1)

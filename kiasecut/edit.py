@@ -393,7 +393,8 @@ def new_track_id(proj):
     return f"t{n}"
 
 
-TEXT_FIELDS = ("content", "font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg")
+TEXT_FIELDS = ("content", "font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align")
+TEXT_ALIGNS = ("left", "center", "right", "justify")      # 對齊 (justify: 齊頭尾)
 TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity")
 
 
@@ -433,7 +434,7 @@ def set_texts(proj, contents):
         set_text(proj, cid, content=content)
 
 
-STYLE_TEXT_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg")
+STYLE_TEXT_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align")
 
 
 def apply_text_style(proj, clip_id, style):
@@ -460,7 +461,7 @@ def set_transform(proj, clip_id, key, value, t=None):
 
 
 # -- keyframes ------------------------------------------------------------------------------------
-TEXT_ANIM_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
+TEXT_ANIM_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align")
 GROUP_FIELDS = {
     "transform": TRANSFORM_FIELDS,
     "text": TEXT_ANIM_FIELDS,
@@ -470,7 +471,8 @@ GROUP_FIELDS = {
 # how a picture mixes with what is under it (render.BLEND_OPS draws them)
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "color_dodge", "color_burn",
                "hard_light", "soft_light", "difference", "exclusion", "add")
-DISCRETE_DEFAULTS = {"font_path": project.DEFAULT_FONT, "kind": "rectangle", "invert": False, "blend": "normal"}
+DISCRETE_DEFAULTS = {"font_path": project.DEFAULT_FONT, "kind": "rectangle", "invert": False, "blend": "normal",
+                     "align": "center"}
 KEY_TOL_US = 1_000_000 // 120      # half a 60 fps frame
 EASINGS = {                        # CSS-style cubic-bezier control x positions
     "linear": (0.0, 1.0),
@@ -557,6 +559,8 @@ def _coerce(value):
 def _check_choice(c, group, key, value):
     if key == "kind" and value not in MASK_KINDS:
         raise EditError(f"unknown mask {value}")
+    if key == "align" and group == "text" and value not in TEXT_ALIGNS:
+        raise EditError(f"unknown text alignment {value}")
     if key == "blend" and group == "clip":
         if c["type"] not in VISUAL or c["type"] == "filter":
             raise EditError("blend modes go on pictures, videos, texts and compound clips")

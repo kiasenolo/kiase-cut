@@ -29,7 +29,7 @@ from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
 from . import assets, curves, fonts, fx, masks, project, svgimage, textlayout
 
 US = 1_000_000
-TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
+TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align")
 BIG = 1e5
 # clip blend modes (edit.BLEND_MODES) as the painter's composition modes
 BLEND_OPS = {"normal": QPainter.CompositionMode_SourceOver, "multiply": QPainter.CompositionMode_Multiply,

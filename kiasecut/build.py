@@ -27,7 +27,7 @@ from PIL import Image
 from . import assets, curves, fonts, masks, project, svgimage, textlayout
 
 US = 1_000_000
-TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg", "font_path")
+TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align")
 
 
 def _hash(*parts):

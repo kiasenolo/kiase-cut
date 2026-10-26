@@ -5,7 +5,9 @@ Calibrated frame by frame against a Jianying export:
   * letter spacing adds letter_spacing * em between characters (not after the last)
   * line pitch is exactly em * (1 + line_spacing) for fonts with ascent + descent = 1 em
   * the box grows to fit glyphs above the ascent (first line) / below the descent (last)
-  * lines are centred; the box centre is the clip position; italic shears about the centre
+  * lines are centred (or, by spec["align"], left / right aligned or justified: every line
+    but the last spread to the widest one, as CSS does); the box centre is the clip
+    position; italic shears about the centre
 """
 import math
 import os
@@ -124,11 +126,16 @@ def render(spec, scale, canvas_h=1080):
     H += H % 2
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     dr = ImageDraw.Draw(im)
+    align = spec.get("align") or "center"
     for li, (glyphs, lw) in enumerate(lines):
-        ox = (W - lw) / 2
+        left = (W - box_w) / 2
+        ox = {"left": left, "justify": left, "right": left + box_w - lw}.get(align, (W - lw) / 2)
+        spread = 0.0
+        if align == "justify" and li < len(lines) - 1 and len(glyphs) > 1:
+            spread = (box_w - lw) / (len(glyphs) - 1)          # between every two characters
         top = (H - box_h) / 2 + ext_top + li * step
-        for gx, ch, f, rgba in glyphs:
-            dr.text((ox + gx, top + asc), ch, font=f, fill=rgba, anchor="ls")
+        for gi, (gx, ch, f, rgba) in enumerate(glyphs):
+            dr.text((ox + gx + gi * spread, top + asc), ch, font=f, fill=rgba, anchor="ls")
     if shear:
         im = im.transform(im.size, Image.AFFINE, (1, shear, -shear * H / 2, 0, 1, 0),
                           resample=Image.BICUBIC)

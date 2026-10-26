@@ -76,6 +76,7 @@ def hard_limits(group, key):
 MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"),
               ("複合片段", "compound"))
 MATTE_NAMES = (("Alpha（不透明度）", "alpha"), ("明度", "luma"))
+ALIGN_NAMES = (("靠左", "left"), ("置中", "center"), ("靠右", "right"), ("齊頭尾（左右對齊）", "justify"))
 EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
 BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "screen"), ("疊加", "overlay"),
                ("變暗", "darken"), ("變亮", "lighten"), ("顏色減淡", "color_dodge"), ("顏色加深", "color_burn"),
@@ -320,6 +321,22 @@ class Inspector(QWidget):
             self.widgets["font"] = font
             self._fill_fonts()
             form.addRow("字體", self._with_key(font, "text", "font_path"))
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(2)
+            for name, k in ALIGN_NAMES:
+                b = QPushButton()
+                b.setObjectName("tool")
+                b.setIcon(icons.icon("text_" + k, 18))
+                b.setCheckable(True)
+                b.setToolTip(name)
+                b.clicked.connect(lambda _=False, k=k: self._emit_now(self.paramEdited, "text", "align", k))
+                self.widgets[("align", k)] = b
+                lay.addWidget(b)
+            lay.addStretch(1)
+            lay.addWidget(self._key_button("text", "align"))
+            form.addRow("對齊", row)
             row = QWidget()
             lay = QHBoxLayout(row)
             lay.setContentsMargins(0, 0, 0, 0)
@@ -710,6 +727,13 @@ class Inspector(QWidget):
                      for k, t in zip(clips, ts)}
             self._show_font(fonts.pop() if len(fonts) == 1 else "--")
             self._key_state(w[("key", "text", "font_path")], [k["text"].get("font_path") for k in clips], clips, ts)
+            aligns = {curves.value(k["text"].get("align", "center"), t) for k, t in zip(clips, ts)}
+            for _n, a in ALIGN_NAMES:
+                b = w[("align", a)]
+                b.blockSignals(True)
+                b.setChecked(aligns == {a})
+                b.blockSignals(False)
+            self._key_state(w[("key", "text", "align")], [k["text"].get("align", "center") for k in clips], clips, ts)
             if w["content"].toPlainText() != text and not w["content"].hasFocus():
                 w["content"].blockSignals(True)
                 w["content"].setPlainText(text)

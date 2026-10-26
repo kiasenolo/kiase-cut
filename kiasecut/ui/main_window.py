@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",
                     ("text", "letter_spacing"): "字距", ("text", "line_spacing"): "行距",
-                    ("text", "italic_deg"): "斜體", ("text", "font_path"): "字體", ("clip", "blend"): "混合模式",
+                    ("text", "italic_deg"): "斜體", ("text", "font_path"): "字體", ("text", "align"): "對齊", ("clip", "blend"): "混合模式",
                     ("mask", "kind"): "遮罩形狀", ("mask", "invert"): "反轉遮罩"}
 
     def __init__(self):

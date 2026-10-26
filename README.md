@@ -283,7 +283,11 @@ dragging with Alt held goes past it, up to a hard limit where one makes sense (o
 Position X / Y (and a mask's centre and size) sit side by side on one row. The
 previous / next keyframe buttons (◀ ▶) are in the curve editor.
 
-Choices keyframe too: the font, the blend mode, a mask's shape and invert, and a filter's
+Text alignment (對齊, beside the font): 靠左, 置中 (the default), 靠右 and 齊頭尾 (justified:
+every line but the last is spread to the widest one, between every two characters, so CJK
+lines without spaces fill out too). It is saved with text styles and keyframes like the font.
+
+Choices keyframe too: the font, the text alignment, the blend mode, a mask's shape and invert, and a filter's
 on / off parameters and range shape have ◆ buttons like the numbers. Their keyframes hold
 (a step, no blending or curve) until the next keyframe; picking another value at the
 playhead edits or adds the keyframe there.

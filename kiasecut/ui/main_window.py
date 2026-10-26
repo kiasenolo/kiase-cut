@@ -321,6 +321,8 @@ class MainWindow(QMainWindow):
         self.preview.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
         self.preview.movesCommitted.connect(self.on_preview_moves)
         self.preview.movesLive.connect(self.live_moves)
+        self.preview.dupLive.connect(self.live_dup)
+        self.preview.dupCommitted.connect(self.on_preview_dup)
         self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
         self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
@@ -352,6 +354,8 @@ class MainWindow(QMainWindow):
         ins.keyJump.connect(self.jump_key)
         ins.liveEdited.connect(self.on_live_edit)
         ins.liveCancelled.connect(self.rebuild)
+        ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
+        ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)
         scroll = QScrollArea()
         scroll.setWidget(self.inspector)
@@ -480,6 +484,8 @@ class MainWindow(QMainWindow):
         tl.trimRequested.connect(
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
         tl.groupMoveRequested.connect(lambda ids, dt, dr: self.apply("移動", edit.move_many, ids, dt, dr))
+        tl.dupMoveRequested.connect(lambda ids, dt, dr: self._select_new(self.apply_root(
+            "複製並移動", lambda root: edit.duplicate_moved(root, self.container(root), ids, dt, dr))))
         tl.marksChanged.connect(self.marks_changed)
         tl.clipDragging.connect(lambda cid, start, dur: self.inspector.show_live_time(cid, start, dur, self.fps))
         tl.volumeEdited.connect(self.on_volume_line)
@@ -1799,6 +1805,22 @@ class MainWindow(QMainWindow):
 
         self.apply("移動位置", set_all)
 
+    def align_or_space(self, label, moves):
+        """The align / spacing buttons: the selected clips go to moves (one edit)."""
+        moves = {cid: v for cid, v in moves.items() if any(
+            abs(curves.value(edit.find(self.container(), cid)[1]["transform"].get(k, 0.0), self.clip_time(cid)) - x) > 1e-6
+            for k, x in v.items())}
+        if moves:
+            times = {cid: self.clip_time(cid) for cid in moves}
+            self.apply(label, lambda level: [edit.set_param(level, cid, "transform", k, x, times[cid])
+                                            for cid, vals in moves.items() for k, x in vals.items()])
+
+    def on_preview_dup(self, moves):
+        """Alt+drag on the canvas: copies of the clips, put where they were dragged (one edit)."""
+        new = self.apply_root("複製並移動", lambda root: edit.duplicate_moved(
+            root, self.container(root), list(moves), moves=moves, t_of=self.clip_time))
+        self._select_new(new)
+
     def pick_live(self, initial, title, holders):
         """A colour for tracks or clips (holders), shown on the timeline while it is picked;
         what they had comes back before the edit is made (or when it is cancelled)."""
@@ -2170,6 +2192,8 @@ class MainWindow(QMainWindow):
         self.curves.set_clip(sel, self.playhead_us() - sel["start_us"] if sel else 0, self.fps)
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
+        sp = self.preview.spacing() if self.proj else None
+        self.inspector.show_spacing(sp[1] if sp else None)
         self._matte_preview_changed()
         self._update_buttons()
 
@@ -2249,6 +2273,19 @@ class MainWindow(QMainWindow):
         self.player.worker.set_view(view, self.cache_dir())
         for cid, vals in moves.items():
             self.inspector.show_live(cid, "transform", vals)
+
+    def live_dup(self, moves):
+        """While copies are Alt-dragged on the canvas: the clips stay, their copies are drawn
+        moved, on top of everything (not an edit yet)."""
+        view = self.snapshot()
+        copies = []
+        for c in project.walk_clips(view["tracks"]):
+            if c["id"] in moves:
+                dup = dict(c, id=c["id"] + "~copy", transform=dict(c.get("transform") or {}, **moves[c["id"]]))
+                copies.append(dup)
+        audio_at = next((i for i, t in enumerate(view["tracks"]) if t["kind"] == "audio"), len(view["tracks"]))
+        view["tracks"].insert(audio_at, {"id": "~copies", "kind": "video", "name": "", "clips": copies})
+        self.player.worker.set_view(view, self.cache_dir())
 
     def on_live_edit(self, ids, group, key, value):
         """A value being typed or scrubbed in the inspector: the preview shows it at once

@@ -110,6 +110,26 @@ def _draw(p, name):
                 w = 9 if i == 3 else 16
             x = {"left": 4, "justify": 4, "right": 20 - w}.get(how, 12 - w / 2)
             p.drawRect(QRectF(x, y - 1, w, 2))
+    elif name.startswith("align_"):                       # Lunacy's align buttons: a line, two bars
+        how = name[6:]
+        if how in ("left", "hcenter", "right"):
+            x = {"left": 4, "hcenter": 12, "right": 20}[how]
+            p.drawRect(QRectF(x - 1, 3, 2, 18))
+            for y, w in ((6, 13), (14, 8)):
+                x0 = {"left": 6, "hcenter": 12 - w / 2, "right": 18 - w}[how]
+                p.drawRect(QRectF(x0, y, w, 4))
+        else:
+            y = {"top": 4, "vcenter": 12, "bottom": 20}[how]
+            p.drawRect(QRectF(3, y - 1, 18, 2))
+            for x, h in ((6, 13), (14, 8)):
+                y0 = {"top": 6, "vcenter": 12 - h / 2, "bottom": 18 - h}[how]
+                p.drawRect(QRectF(x, y0, 4, h))
+    elif name == "spacing":                                # bars with even gaps between them
+        for x in (3, 10.5, 18):
+            p.drawRect(QRectF(x, 6, 3, 12))
+        p.setPen(QPen(pen.color(), 1.4))
+        for x in (7.5, 15):
+            p.drawLine(QPointF(x - 1.2, 12), QPointF(x + 1.2, 12))
     elif name == "timeline":
         for y, x0, x1 in ((6, 4, 14), (11, 8, 20), (16, 4, 17)):
             p.drawRoundedRect(QRectF(x0, y - 1.6, x1 - x0, 3.2), 1, 1)

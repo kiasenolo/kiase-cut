@@ -18,7 +18,8 @@ The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ct
 zooms time around the mouse, the middle button drags the view. Alt+wheel or the toolbar
 slider changes the track height; dragging the line under a track header resizes that track
 alone. Ctrl+D clears the selection. Dragging a picture clip above the top row, or a sound clip
-below the bottom row, puts it on a new track. Media dropped on a clip with Alt held replaces
+below the bottom row, puts it on a new track. Holding Alt while dragging clips leaves them
+where they are and drops copies there instead (dupMoveRequested). Media dropped on a clip with Alt held replaces
 that clip's source (the clip lights up while it would).
 
 Time selection (as in FL Studio): drag with the right button anywhere on the timeline to
@@ -124,6 +125,7 @@ class Timeline(QWidget):
     seekRequested = Signal(int)                      # frame
     clipSelected = Signal(object)                    # clip dict or None (the primary selection)
     groupMoveRequested = Signal(list, int, int)      # clip ids, shift us, rows down (negative: up)
+    dupMoveRequested = Signal(list, int, int)        # the same with Alt held: copies go there, the clips stay
     keyMoveRequested = Signal(str, int, int)         # clip id, keyframe clip time from, to (us)
     marksChanged = Signal()                          # the time selection (mark_in / mark_out) changed
     volumeEdited = Signal(str, object)               # clip id, new volume (number or {"keys": ...})
@@ -569,8 +571,9 @@ class Timeline(QWidget):
             for flag, r in btns:
                 self._draw_button(p, flag, r, bool(tr.get(flag)))
             dim = (project.sounds(tr, tracks) <= 0) if tr["kind"] == "audio" else not project.visible(tr)
+            copying = bool(self.drag and self.drag.get("dup"))      # (Alt: the clips stay, copies move)
             for c in tr["clips"]:
-                if c is not dragged and c["id"] not in group:
+                if copying or (c is not dragged and c["id"] not in group):
                     self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr, h=h, dim=dim)
             if project.locked(tr):                          # locked: hatched over, nothing to grab
                 p.save()
@@ -1147,6 +1150,8 @@ class Timeline(QWidget):
                 d["remove"] = min(hit, key=hit.get) in d["base"]
             self.set_selection(d["base"] - hit.keys() if d["remove"] else d["base"] | hit.keys())
             return
+        if d["mode"] in ("group", "body"):
+            d["dup"] = bool(e.modifiers() & Qt.AltModifier)        # Alt: copies are dragged, the clips stay
         if d["mode"] == "group":
             if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX and self._row_at(pos.y()) == d["row0"]:
                 return
@@ -1239,7 +1244,9 @@ class Timeline(QWidget):
             self.update()
             return
         if d["mode"] == "group":
-            if d["moved"] and (d["shift"] or d["drow"]):
+            if d["moved"] and d.get("dup"):
+                self.dupMoveRequested.emit(sorted(d["ids"]), int(round(d["shift"])), d["drow"])
+            elif d["moved"] and (d["shift"] or d["drow"]):
                 self.groupMoveRequested.emit(sorted(d["ids"]), int(round(d["shift"])), d["drow"])
             elif not d["moved"] and not d["adding"]:
                 self.select(d["clip"])                  # a plain click picks one of the group
@@ -1249,7 +1256,10 @@ class Timeline(QWidget):
         if not d["moved"]:                              # clicking a clip only selects it (as in
             self.update()                               # Jianying): the playhead stays put
             return
-        if d["mode"] == "body" and d.get("new"):
+        if d["mode"] == "body" and d.get("dup"):
+            self.dupMoveRequested.emit([c["id"]], int(round(d["start"] - c["start_us"])),
+                                       0 if d.get("new") else d["row"] - d["row0"])
+        elif d["mode"] == "body" and d.get("new"):
             self.newTrackRequested.emit(c["id"], int(round(d["start"])), d["new"] == "top")
         elif d["mode"] == "body":
             self.moveRequested.emit(c["id"], int(round(d["start"])), self.rows[d["row"]]["id"])

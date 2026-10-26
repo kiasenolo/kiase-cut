@@ -17,6 +17,10 @@ mask: on / off, shape, invert and its values), each with its own keyframe contro
 its brightness cuts, and 預覽複合片段: the compound shown over the clip (only while it is on),
 at the 不透明度 typed beside it.
 
+Pictures, texts and compound clips get Lunacy's align buttons at the top (left, centre,
+right, top, middle, bottom: several clips line up with each other, one with the canvas) and,
+with two or more, 平均間距 and the gap between them (typing one sets it; it may be negative).
+
 With several clips selected the form shows what they have in common: a value they share
 is shown, one that differs shows "--", and typing a value sets it on all of them.
 """
@@ -260,6 +264,8 @@ class Inspector(QWidget):
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
+    alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
+    spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
 
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
@@ -303,6 +309,8 @@ class Inspector(QWidget):
         if self.part == "mask":
             self._build_mask(form, c)
             return
+        if c.get("transform") is not None and c["type"] != "filter":
+            self._build_align(form)
         for key in ("類型", "開始", "長度"):
             self.widgets[key] = QLabel()
             form.addRow(key, self.widgets[key])
@@ -370,6 +378,58 @@ class Inspector(QWidget):
             form.addRow(section("聲音"))
             form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
         self._key_section(form)
+
+    ALIGN_TIPS = (("left", "靠左對齊"), ("hcenter", "水平置中"), ("right", "靠右對齊"),
+                  ("top", "靠上對齊"), ("vcenter", "垂直置中"), ("bottom", "靠下對齊"))
+
+    def _build_align(self, form):
+        """Align buttons; with several clips also 平均間距 and the gap."""
+        many = len(self.clip_ids) > 1
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(1)
+        for k, tip in self.ALIGN_TIPS:
+            b = QPushButton()
+            b.setObjectName("tool")
+            b.setIcon(icons.icon("align_" + k, 18))
+            b.setToolTip(tip + ("（對齊選取範圍）" if many else "（對齊畫布）"))
+            b.clicked.connect(lambda _=False, k=k: self.alignRequested.emit(k))
+            lay.addWidget(b)
+            if k == "right":
+                lay.addSpacing(8)
+        lay.addStretch(1)
+        form.addRow(row)
+        if not many:
+            return
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        even = QPushButton(" 平均間距")
+        even.setIcon(icons.icon("spacing", 16))
+        even.setToolTip("讓相鄰片段之間的間距一樣（取目前間距的平均）")
+        even.clicked.connect(lambda: self.spacingRequested.emit(None))
+        lay.addWidget(even)
+        gap = SpinBox()
+        gap.set_limits(-500, 500)
+        gap.setDecimals(0)
+        gap.setSuffix(" px")
+        gap.setToolTip("相鄰片段之間的間距（畫布像素）；不一樣時顯示 --，輸入一個數字就全部改成它，可以是負數（重疊）")
+        gap.edited.connect(lambda v: self.spacingRequested.emit(float(v)))
+        self.widgets["gap"] = gap
+        lay.addWidget(gap, 1)
+        form.addRow("間距", row)
+
+    def show_spacing(self, gaps):
+        """The gaps between the selected clips (None: fewer than two show)."""
+        s = self.widgets.get("gap")
+        if s is None or s.hasFocus():
+            return
+        s.setEnabled(bool(gaps))
+        if gaps and max(gaps) - min(gaps) < 0.5:
+            s.show_value(round(sum(gaps) / len(gaps)))
+        else:
+            s.show_mixed()
 
     BROWSE = "__browse__"
 

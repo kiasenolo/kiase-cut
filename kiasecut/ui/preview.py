@@ -13,8 +13,10 @@ put; 間距 shows it), so a row, a column or a grid is spaced evenly.
 
 Transform: drag the clip to move it (it snaps to the canvas centre lines and edges, to
 other visible clips' centres and edges and to equal spacing - centred between its
-neighbours, or as far from one as two other clips are apart, shown in pink; Alt moves
-freely), drag a corner or edge square to
+neighbours, or as far from one as two other clips are apart, shown in pink; Ctrl moves
+freely); with Alt held the selection stays and copies of it are dragged instead (dupLive
+while dragging, dupCommitted on release: {original clip id: {x, y}}), as in Lunacy. Drag a
+corner or edge square to
 scale it with the opposite corner / edge staying put (Alt: about its centre; the moving edges
 snap to the same lines while the clip is upright or turned by a right angle, Ctrl scales
 freely), drag the round
@@ -33,6 +35,12 @@ clip's centre and edges (and to a square, to full size, to feather 0 / 1) while 
 drags freely. Snapped lines show in amber. A 複合片段 mask is a frame like a rectangle (no
 feather) whose corner keeps the compound's proportions (Shift: free); the renderer draws the
 compound itself in it (matte_preview, see render.py).
+
+Align and space (the inspector's buttons, as Lunacy's): align_moves() lines the selected
+clips up by their left / centre / right / top / middle / bottom edges (one clip: on the
+canvas); spacing() and space_moves() put the same gap between neighbours (in the order of
+their centres along the direction they spread in most), a typed gap or their average one;
+a negative gap makes them overlap. Both give {clip id: {x / y}} for movesCommitted.
 
 Ctrl+wheel zooms the view around the mouse (to reach handles of clips larger than the
 canvas), the middle button drags it; zooming back to about 100% fits it again.
@@ -270,6 +278,8 @@ class Preview(QWidget):
     paramsCommitted = Signal(str, str, dict)    # the same on release
     movesLive = Signal(dict)                    # {clip id: {x, y}} while several clips are dragged
     movesCommitted = Signal(dict)               # the same on release
+    dupLive = Signal(dict)                      # {clip id: {x, y}}: copies of them dragged there (Alt)
+    dupCommitted = Signal(dict)                 # the same on release: make the copies
     doubleClicked = Signal()
     textEdited = Signal(str, str)               # text clip id, its words: typed in on the canvas
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
@@ -608,6 +618,67 @@ class Preview(QWidget):
             pos += hi - lo + gap
         return out
 
+    # -- align and space (the inspector's buttons) ------------------------------------------------
+    ALIGNS = ("left", "hcenter", "right", "top", "vcenter", "bottom")
+
+    def _picked_boxes(self):
+        return [b for b in self.visible_boxes() if b.clip["id"] in self.selected_ids and not b.locked]
+
+    def align_moves(self, how):
+        """{clip id: {x} or {y}} lining the selected clips up by how (ALIGNS): to the box around
+        them all, or one clip to the canvas."""
+        boxes = self._picked_boxes()
+        if not boxes:
+            return {}
+        l, r, t, b = self._union(boxes) if len(boxes) > 1 else (0, self.W, 0, self.H)
+        out = {}
+        for bx in boxes:
+            e = bx.extents()
+            if how in ("left", "hcenter", "right"):
+                d = {"left": l - e[0], "right": r - e[1], "hcenter": (l + r) / 2 - (e[0] + e[1]) / 2}[how]
+                out[bx.clip["id"]] = {"x": round((bx.cx + d - self.W / 2) / (self.W / 2), 5)}
+            else:
+                d = {"top": t - e[2], "bottom": b - e[3], "vcenter": (t + b) / 2 - (e[2] + e[3]) / 2}[how]
+                out[bx.clip["id"]] = {"y": round((self.H / 2 - (bx.cy + d)) / (self.H / 2), 5)}
+        return out
+
+    def spacing(self):
+        """(axis, [gaps]) between the selected clips in the order of their centres along the
+        axis they spread in most ("x" or "y"; gaps may be negative), or None for fewer than two."""
+        boxes = self._picked_boxes()
+        if len(boxes) < 2:
+            return None
+        ex = [b.extents() for b in boxes]
+        cx = [(e[0] + e[1]) / 2 for e in ex]
+        cy = [(e[2] + e[3]) / 2 for e in ex]
+        axis = "x" if max(cx) - min(cx) >= max(cy) - min(cy) else "y"
+        lo, hi = (0, 1) if axis == "x" else (2, 3)
+        order = sorted(ex, key=lambda e: (e[lo] + e[hi]) / 2)
+        return axis, [n[lo] - p[hi] for p, n in zip(order, order[1:])]
+
+    def space_moves(self, gap=None):
+        """{clip id: {x} or {y}} with the same gap between every two neighbours (spacing()):
+        gap canvas px, or (None) their average gap; the first one stays where it is."""
+        sp = self.spacing()
+        if sp is None:
+            return {}
+        axis, gaps = sp
+        if gap is None:
+            gap = sum(gaps) / len(gaps)
+        lo, hi = (0, 1) if axis == "x" else (2, 3)
+        boxes = sorted(self._picked_boxes(), key=lambda b: (b.extents()[lo] + b.extents()[hi]) / 2)
+        pos, out = None, {}
+        for b in boxes:
+            e = b.extents()
+            pos = e[lo] if pos is None else pos
+            d = pos - e[lo]
+            if axis == "x":
+                out[b.clip["id"]] = {"x": round((b.cx + d - self.W / 2) / (self.W / 2), 5)}
+            else:
+                out[b.clip["id"]] = {"y": round((self.H / 2 - (b.cy + d)) / (self.H / 2), 5)}
+            pos += e[hi] - e[lo] + gap
+        return out
+
     @staticmethod
     def _union(boxes):
         """(left, right, top, bottom) around all the boxes."""
@@ -836,14 +907,15 @@ class Preview(QWidget):
         if kind == "move" and "geo" not in d:
             dx, dy = m.x() - d["x0"], m.y() - d["y0"]
             boxes = d.get("boxes") or [box]
-            if e.modifiers() & Qt.AltModifier:                 # Alt: move freely
+            d["dup"] = bool(e.modifiers() & Qt.AltModifier)    # Alt: copies move, the clips stay
+            if e.modifiers() & Qt.ControlModifier:             # Ctrl: move freely
                 self.guides = []
             else:
                 dx, dy, self.guides = self._snap(self._union(boxes), dx, dy, [o.extents() for o in d["others"]],
                                                  SNAP_PX * self._k())
             at = {b.clip["id"]: {"x": round((b.cx + dx - self.W / 2) / (self.W / 2), 5),
                                  "y": round((self.H / 2 - (b.cy + dy)) / (self.H / 2), 5)} for b in boxes}
-            return ("moves", at) if len(boxes) > 1 else ("transform", at[box.clip["id"]])
+            return ("moves", at) if len(boxes) > 1 or d["dup"] else ("transform", at[box.clip["id"]])
         if kind == "gap":
             along = m.x() - d["m0"].x() if d["axis"] == "x" else m.y() - d["m0"].y()
             return "moves", self._spread(d["boxes"], d["axis"], max(0.0, round(d["gap0"] + along)))
@@ -1000,7 +1072,9 @@ class Preview(QWidget):
         if group == "mask":
             group = self.mask_group
         self.live = (group, vals)
-        if group == "moves":
+        if group == "moves" and d.get("dup"):
+            self.dupLive.emit(vals)
+        elif group == "moves":
             self.movesLive.emit(vals)
         else:
             self.paramsLive.emit(d["box"].clip["id"], group, vals)
@@ -1065,7 +1139,9 @@ class Preview(QWidget):
             if d["moved"] or not d["adding"]:             # (a plain click on nothing selects nothing)
                 self._select(ids, primary)
         elif d and d["moved"] and live:
-            if live[0] == "moves":
+            if live[0] == "moves" and d.get("dup"):
+                self.dupCommitted.emit(live[1])
+            elif live[0] == "moves":
                 self.movesCommitted.emit(live[1])
             else:
                 self.paramsCommitted.emit(d["box"].clip["id"], *live)

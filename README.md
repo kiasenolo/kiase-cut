@@ -204,10 +204,20 @@ effects and keyframes. Pictures, videos and compounds replace pictures, videos a
 compound clips; sounds replace sounds. A clip longer than a new video or sound is
 shortened to it.
 
+Align and space (the buttons at the top of 屬性, as Lunacy's six): left, centre, right, top,
+middle, bottom - several selected clips line up with the box around them, one clip with the
+canvas. With two or more selected, 平均間距 makes the gaps between neighbours (in the order
+they stand along the way they spread most) the same, their average; the 間距 field shows
+the gap when they are all equal ("--" when not) and typing a number sets every gap to it,
+negative ones included (the clips then overlap by that much). Each is one undo step.
+
 Preview: click a clip on the canvas to select it and drag it to move it; it snaps to the
 canvas centre lines and edges, to other clips' centres and edges and to equal spacing
 between clips: centred between its neighbours, or as far from a neighbour as two other
-clips are apart, shown with pink gap marks (hold Alt to move freely). Shift / Ctrl+click
+clips are apart, shown with pink gap marks (hold Ctrl to move freely). Hold Alt while
+dragging to copy instead, as in Lunacy: the clips stay and copies of them go where they are
+dropped, each on the row above its original (one undo step); Alt+drag on the timeline does the
+same in time (copies later or on other rows). Shift / Ctrl+click
 adds clips to the selection (or takes them out), and dragging from an empty spot draws a
 box that selects every clip it touches; several selected clips move together. When they
 stand in a row, a column or a grid, hovering them shows pink bars in the gaps (upright

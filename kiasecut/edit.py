@@ -360,6 +360,38 @@ def duplicate_clips(root, level, clip_ids):
                        max(i["clip"]["start_us"] + i["clip"]["duration_us"] for i in payload["items"]))
 
 
+def duplicate_moved(root, level, clip_ids, d_us=0, d_rows=0, moves=None, t_of=None):
+    """Alt+drag: copies of the clips, the originals staying where they are. On the timeline
+    the copies go d_us later and d_rows rows down (negative: up) - onto that row when it is
+    of their kind and free there, else wherever paste_clips finds room. On the preview
+    (d_us 0) each copy goes just above its original (the free row above, else a new one) and
+    gets moves[original id] ({x, y}) at clip time t_of(original id). Returns the new clips."""
+    payload = copy_clips(level, clip_ids)
+    pictures, sound = display_groups(level)
+    for item in payload["items"]:
+        c = item["clip"]
+        src = track_by_id(level, item["track"])
+        group = sound if src["kind"] == "audio" else pictures
+        i = next(j for j, x in enumerate(group) if x is src)
+        s, e = c["start_us"] + d_us, end(c) + d_us
+        if d_us == 0 and not d_rows:                     # in place: on top of the original
+            above = group[i - 1] if i > 0 and src["kind"] != "audio" else None
+            if above is None or above["kind"] != src["kind"] or free_range(above, s, e) is None:
+                above = add_track(level, src["kind"], near_id=src["id"])
+                pictures, sound = display_groups(level)
+            item["track"] = above["id"]
+        elif 0 <= i + int(d_rows) < len(group):
+            dst = group[i + int(d_rows)]
+            if dst["kind"] == src["kind"]:
+                item["track"] = dst["id"]
+    new = paste_clips(root, level, payload, max(0, payload["anchor_us"] + int(d_us)))
+    for item, c in zip(payload["items"], new):
+        old = item["clip"]["id"]
+        for key, v in ((moves or {}).get(old) or {}).items():
+            set_param(level, c["id"], "transform", key, v, t_of(old) if t_of else None)
+    return new
+
+
 def add_text(proj, at_us, content="輸入文字", duration_us=3_000_000):
     """New text clip at at_us on the topmost text track with room, else a new track."""
     clip = {

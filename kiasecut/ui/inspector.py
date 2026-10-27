@@ -1095,7 +1095,7 @@ class Inspector(QWidget):
         if c is None:
             return
         w = self.widgets
-        ts = list(times) if times else [t_us - k["start_us"] for k in clips]
+        ts = list(times) if times else [edit.time_in(t_us, k["start_us"], self.fps) for k in clips]
         names = {"image": "圖片", "video": "影片", "audio": "音訊", "text": "文字", "compound": "複合片段", "group": "群組",
                  "filter": "濾鏡片段"}
         kinds = sorted({("靜態元件" if project.is_static(k) else "元件") if components.of_clip(k) else

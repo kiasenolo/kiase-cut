@@ -800,6 +800,14 @@ BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "
 DISCRETE_DEFAULTS = {"font_path": project.DEFAULT_FONT, "kind": "rectangle", "invert": False, "blend": "normal",
                      "align": "center", "valign": "top"}
 KEY_TOL_US = 1_000_000 // 120      # half a 60 fps frame
+
+
+def time_in(t_us, start_us, fps):
+    """Timeline time t_us in a clip starting at start_us. A clip starts on the frame nearest its
+    start (build.fr), whose time may be up to half a frame before it: there it is 0, so a
+    playhead on a clip's first frame is on the clip."""
+    t = t_us - start_us
+    return 0 if -US / fps / 2 < t < 0 else t
 EASINGS = {                        # CSS-style cubic-bezier control x positions
     "linear": (0.0, 1.0),
     "ease_in": (0.42, 1.0),

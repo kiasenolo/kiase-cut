@@ -152,6 +152,12 @@ class EditTests(unittest.TestCase):
         self.assertEqual(c1["transform"]["y"], 0.4)          # back to a plain value
         self.assertEqual(edit.key_times(c1), [])
 
+    def test_playhead_on_a_clips_first_frame_is_its_start(self):
+        start = round(32 * S / 30)                          # 1 066 667: frame 32 is 1 066 666.67
+        self.assertEqual(edit.time_in(32 * S / 30, start, 30), 0)
+        self.assertLess(edit.time_in(31 * S / 30, start, 30), 0)     # the frame before is not on it
+        self.assertAlmostEqual(edit.time_in(33 * S / 30, start, 30), S / 30, delta=1)
+
     def test_easing_presets(self):
         p = proj()
         c1 = edit.find(p, "c1")[1]

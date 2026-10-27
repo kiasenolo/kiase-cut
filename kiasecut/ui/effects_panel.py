@@ -552,7 +552,7 @@ class EffectsPanel(QWidget):
             self.maskEditChanged.emit()
         if c is None:
             return
-        ts = [t_us - k["start_us"] for k in pics]
+        ts = [edit.time_in(t_us, k["start_us"], fps) for k in pics]
         w = self.widgets
         for i, e in enumerate(c.get("effects") or []):
             es = [k["effects"][i] for k in pics]

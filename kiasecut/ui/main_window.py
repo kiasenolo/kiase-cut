@@ -2151,7 +2151,7 @@ class MainWindow(QMainWindow):
         """Playhead time relative to the start of clip cid (a group's clip: counted from where
         it is on the timeline). starts: edit.abs_starts of the open level, when at hand."""
         s = starts.get(cid) if starts is not None else None
-        return self.playhead_us() - (s if s is not None else edit.abs_start(self.container(), cid))
+        return edit.time_in(self.playhead_us(), s if s is not None else edit.abs_start(self.container(), cid), self.fps)
 
     def clip_times(self, ids):
         """{clip id: clip_time} for several clips (one pass over the level)."""

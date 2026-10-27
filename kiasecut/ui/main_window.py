@@ -628,9 +628,10 @@ class MainWindow(QMainWindow):
         self.edit_fps_box.setSpecialValueText("跟專案")
         self.edit_fps_box.setSuffix(" 格/秒")
         self.edit_fps_box.setKeyboardTracking(False)
-        self.edit_fps_box.setToolTip("時間線每秒幾格：播放頭、關鍵幀、分割、步進（←/→）的最小單位。\n"
+        self.edit_fps_box.setToolTip("時間線每秒幾格（時基 BPM：每拍幾格，BPM 改了也維持）：播放頭、關鍵幀、分割、"
+                                     "步進（←/→）的最小單位。\n"
                                      "只影響剪輯，不影響輸出：匯出照專案（或匯出設定）的幀率。")
-        self.edit_fps_box.valueChanged.connect(lambda v: self.set_edit_fps(v or None))
+        self.edit_fps_box.valueChanged.connect(self.on_edit_fps_box)
         tools.addWidget(self.edit_fps_box)
         tools.addSpacing(10)
         tools.addWidget(QLabel("時基"))
@@ -1502,9 +1503,6 @@ class MainWindow(QMainWindow):
         self.tl_views = {}
         self.fps = edit_rate(proj)
         self.timeline.edit_fps = self.fps if self.fps != proj["fps"] else None
-        self.edit_fps_box.blockSignals(True)
-        self.edit_fps_box.setValue(round(self.fps) if self.fps != proj["fps"] else 0)
-        self.edit_fps_box.blockSignals(False)
         view = proj.get("view") if isinstance(proj.get("view"), dict) else {}
         self.set_timebase(timebase_of(view.get("timebase")), edited=False)
         self.timeline.mark_in = self.timeline.mark_out = None
@@ -3569,10 +3567,36 @@ class MainWindow(QMainWindow):
         clock = timecode(us, self.fps) + "　" if self.timebase["kind"] == "bpm" else ""
         self.dur_lbl.setText(clock + "長度 " + timecode(self.length / self.fps * US, self.fps))
 
+    def per_beat(self):
+        """精度 on a BPM timebase: the editor's frames per beat."""
+        return self.fps * 60 / self.timebase["bpm"]
+
+    def show_edit_fps(self):
+        """精度 as the timebase counts it: frames a second, or on a BPM one frames a beat
+        (0: 跟專案, the project's frame rate)."""
+        box, bpm = self.edit_fps_box, self.timebase["kind"] == "bpm"
+        box.blockSignals(True)
+        box.setSuffix(" 格/拍" if bpm else " 格/秒")
+        box.setRange(0, int(1000 * 60 / self.timebase["bpm"]) if bpm else 1000)
+        own = self.proj is not None and self.fps != self.proj["fps"]
+        box.setValue(round(self.per_beat() if bpm else self.fps) if own else 0)
+        box.blockSignals(False)
+
+    def on_edit_fps_box(self, v):
+        if self.timebase["kind"] == "bpm":
+            self.set_edit_fps(v * self.timebase["bpm"] / 60 if v else None)
+        else:
+            self.set_edit_fps(v or None)
+
     def set_timebase(self, tb, edited=True):
         """時基: how the ruler and the time readout count (timeline.timebase_of). Only shown,
-        not an edit; saved with the view."""
-        self.timebase = tb
+        not an edit; saved with the view. On a BPM one 精度 counts frames a beat, and a new
+        BPM keeps their number (the frames a second follow it)."""
+        old, self.timebase = self.timebase, tb
+        if (edited and self.proj is not None and self.fps != self.proj["fps"] and old["kind"] == tb["kind"] == "bpm"
+                and old["bpm"] != tb["bpm"]):
+            self.set_edit_fps(min(1000, max(1, round(self.fps * 60 / old["bpm"])) * tb["bpm"] / 60))
+        self.show_edit_fps()
         self.timeline.timebase = tb if tb["kind"] == "bpm" else None
         self.timeline.update()
         self.timebase_btn.setText(button_text(tb))

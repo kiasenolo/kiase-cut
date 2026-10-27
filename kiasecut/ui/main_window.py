@@ -271,8 +271,11 @@ def many(clips):
 
 def group_holder(c, group, create=False):
     """The dict of clip c that holds the parameters of `group` ("transform", "mask", "clip", ...,
-    or "fx:<effect id>" / "fxmask:<effect id>" / "fxmix:<effect id>" for a filter's own)."""
-    if group.startswith(("fx:", "fxmask:", "fxmix:")):
+    or "fx:<effect id>" / "fxmask:<effect id>" / "fxmix:<effect id>" for a filter's own,
+    "place:<param id>" for where a component's picture sits)."""
+    if group.startswith("place:") and not create:
+        return (c.get("places") or {}).get(group[6:]) or {}
+    if group.startswith(("fx:", "fxmask:", "fxmix:", "place:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:
@@ -751,12 +754,15 @@ class MainWindow(QMainWindow):
                 self.preview.set_mask_mode(True, "mask")
             elif pn.is_active("effects") and ef.mask_edit:
                 self.preview.set_mask_mode(True, "fxmask:" + ef.mask_edit)
+            elif pn.is_active("inspector") and ins.place_edit:
+                self.preview.set_mask_mode(True, "place:" + ins.place_edit)
             else:
                 self.preview.set_mask_mode(False)
             self._matte_preview_changed()
             self._update_matte_region()
         self.panels.activeChanged.connect(lambda _k: mask_mode())
         ef.maskEditChanged.connect(mask_mode)
+        ins.placeEditChanged.connect(mask_mode)
         self.layout_key = None          # the layout the panels are in (layouts.py key)
 
         self.player = Player(self)
@@ -2470,6 +2476,8 @@ class MainWindow(QMainWindow):
         t = self.clip_time(cid)
         if group == "mask" or group.startswith("fxmask:"):
             label = "遮罩"
+        elif group.startswith("place:"):
+            label = "圖片位置"
         elif group == "multi":                          # a built-in asset or a 文字框 resized: size and place
             label = "調整大小"
         else:

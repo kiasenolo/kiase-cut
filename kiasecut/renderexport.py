@@ -42,7 +42,7 @@ def needs_renderer(proj):
     reaching out of its frame, or a component's clip with values of its own (MLT would show
     the component's)."""
     return any(c["type"] == "filter" or c.get("effects") or project.is_static(c) or _blend_or_mask_keys(c)
-               or (c.get("params") and components.of_clip(c) is not None)
+               or ((c.get("params") or c.get("places")) and components.of_clip(c) is not None)
                or project.speed(c) != 1.0 or project.frozen(c) is not None or project.is_group(c)
                or assets.animated(c.get("asset")) or (c.get("asset") and assets.overflow(assets.at(c["asset"], 0)))
                for c in project.all_clips(proj))

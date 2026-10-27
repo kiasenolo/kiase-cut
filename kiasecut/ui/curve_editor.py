@@ -31,9 +31,9 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
-from .. import assets, curves, edit, fx
+from .. import assets, components, curves, edit, fx
 from . import wheel
-from .inspector import PARAMS, SpinBox
+from .inspector import PARAMS, PLACE_ROWS, SpinBox
 from .wrapdrag import WrapDrag
 
 US = 1_000_000
@@ -70,10 +70,16 @@ def param_rows(c):
                 out.append(("fx:" + e["id"], p.name, f"{name}·{p.label}", 1, p.default))
         if e.get("mask"):
             out += [("fxmask:" + e["id"], r[0], f"{name}·遮罩{r[1]}", r[6], r[7]) for r in PARAMS["mask"]]
+    for p in components.params(components.of_clip(c)):  # where a component's pictures sit (元件參數)
+        if p["kind"] == "image":
+            out += [("place:" + p["id"], r[0], f"{p['name']}·{'位置' if r[0] in ('cx', 'cy') else '大小'} {r[1]}",
+                     r[6], r[7]) for r in PLACE_ROWS]
     return out
 
 
 def holder(c, group):
+    if group.startswith("place:"):
+        return (c.get("places") or {}).get(group[6:]) or {}
     if group.startswith(("fx:", "fxmask:", "fxmix:")):
         try:
             return edit.holder(c, group)

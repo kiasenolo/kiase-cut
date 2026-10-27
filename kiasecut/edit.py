@@ -203,7 +203,8 @@ def source_length(c):
 def _params(c):
     """Every animatable parameter dict in a clip, for shifting keyframes."""
     out = []
-    for group in (c.get("transform"), c.get("mask"), c.get("text"), c.get("asset"), c.get("params")):
+    for group in (c.get("transform"), c.get("mask"), c.get("text"), c.get("asset"), c.get("params"),
+                  *(c.get("places") or {}).values()):
         if group:
             out += [v for v in group.values() if curves.is_animated(v)]
     for key in ("volume", "blend"):
@@ -837,6 +838,9 @@ def _valid_key(c, group, key):
         return bool(c.get("asset")) and key in assets.fields_of(c["asset"].get("family"))
     if group == "params":                        # a component instance's own values (元件參數)
         return components.param(components.of_clip(c), key) is not None
+    if group.startswith("place:"):               # where an image parameter's picture sits in its layer
+        p = components.param(components.of_clip(c), group[6:])
+        return p is not None and p["kind"] == "image" and key in components.PLACE
     return key in GROUP_FIELDS.get(group, ())
 
 
@@ -886,6 +890,10 @@ def _holder(c, group):
         if components.of_clip(c) is None:
             raise EditError("不是元件")
         return c.setdefault("params", {})
+    if group.startswith("place:"):
+        if components.of_clip(c) is None:
+            raise EditError("不是元件")
+        return c.setdefault("places", {}).setdefault(group[6:], {})
     return c.setdefault("transform", {})
 
 
@@ -963,6 +971,10 @@ def set_param(proj, clip_id, group, key, value, t=None):
     (clip time) updated, or a new key there - as Jianying does when you change a value.
     Transform scales follow X / Y linking (with_linked_scale)."""
     _, c = find(proj, clip_id)
+    if group.startswith("place:"):
+        if not _valid_key(c, group, key):
+            raise EditError("元件沒有這個圖片參數")
+        value = max(0.01, float(value)) if key in ("w", "h") else float(value)
     h = _holder(c, group)
     if group == "transform" and key in ("scale", "scale_y"):
         if "scale_y" not in h and not linked(h):
@@ -1091,8 +1103,8 @@ def easing_at(p, t):
 def key_times(c):
     """Sorted clip-time positions of every keyframe in a clip."""
     times = set()
-    for group in ("transform", "mask", "text", "asset", "params"):
-        for v in (c.get(group) or {}).values():
+    for group in [c.get(g) for g in ("transform", "mask", "text", "asset", "params")] + list((c.get("places") or {}).values()):
+        for v in (group or {}).values():
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
     for key in ("volume", "blend"):
@@ -2813,10 +2825,13 @@ def delete_param(root, kid, pid):
     comp = _component(root, kid)
     comp["params"] = [p for p in comp["params"] if p["id"] != pid]
     for _tl, _path, c in project.compound_uses(root).get(kid) or []:
-        own = c.get("params") or {}
+        own, places = c.get("params") or {}, c.get("places") or {}
         own.pop(pid, None)
+        places.pop(pid, None)
         if not own:
             c.pop("params", None)
+        if not places:
+            c.pop("places", None)
 
 
 def set_param_default(root, kid, pid, value):
@@ -2858,10 +2873,14 @@ def reset_params(proj, clip_id, pids=None):
     component's own again."""
     _, c = find(proj, clip_id)
     own = c.get("params") or {}
-    for pid in list(own) if pids is None else pids:
+    places = c.get("places") or {}
+    for pid in list(own) + list(places) if pids is None else pids:
         own.pop(pid, None)
+        places.pop(pid, None)                    # (its picture's place goes with it)
     if not own:
         c.pop("params", None)
+    if not places:
+        c.pop("places", None)
     return c
 
 

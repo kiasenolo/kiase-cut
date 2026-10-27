@@ -17,6 +17,11 @@ param {id, name, kind: text | color | image | visible, binds: [[clip id, prop]]}
       only touches the picture (a hidden clip still sounds, as on a hidden track).
 
 Values: text a str, color [r, g, b, a] (0 - 1), image a picture file's path, visible a bool.
+
+An image parameter's picture can also be placed in its layer's frame, per instance:
+clip["places"] {param id: {cx, cy, w, h}} - its centre in half-frame units (y up) and its size
+as fractions of the frame, as a mask's are (each animates like any value; absent: the whole
+frame). It reaches the layer as layer["place"] (the renderers draw the picture there).
 """
 import os
 
@@ -34,6 +39,7 @@ PROPS = {                         # prop: (kind, label)
     "visible": ("visible", "顯示"),
 }
 FALLBACK = {"text": "", "color": [1.0, 1.0, 1.0, 1.0], "image": "", "visible": True}
+PLACE = {"cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0}     # an image parameter's placement (the whole frame)
 
 
 def is_component(comp):
@@ -111,6 +117,14 @@ def value(c, p, t):
     return default(c["compound"], p) if own is None else curves.value(own, t)
 
 
+def place_of(c, pid, t=None):
+    """Instance c's placement of image parameter pid: its stored dict with what it leaves out
+    filled in (kind "place", for the preview's box) - at clip time t: numbers."""
+    own = (c.get("places") or {}).get(pid) or {}
+    out = dict(PLACE, **own, kind="place")
+    return out if t is None else {k: (curves.value(v, t) if k in PLACE else v) for k, v in out.items()}
+
+
 def bound(comp):
     """{clip id: [(param, prop)]}: what sets each layer."""
     out = {}
@@ -126,8 +140,9 @@ def content(c, t):
     with values of its own a copy of the component with them put into its layers (only what
     they change is copied; the renderers key their stills on the content)."""
     comp = c.get("compound")
-    own = c.get("params")
-    if not own or not is_component(comp):
+    own = c.get("params") or {}
+    places = c.get("places") or {}
+    if not (own or places) or not is_component(comp):
         return comp
     over = {}
     for p in params(comp):
@@ -135,6 +150,12 @@ def content(c, t):
             v = curves.value(own[p["id"]], t)
             for cid, prop in p.get("binds") or []:
                 over.setdefault(cid, []).append((prop, v))
+        if p["kind"] == "image" and places.get(p["id"]):
+            pl = {k: float(curves.value(places[p["id"]].get(k, d), t)) for k, d in PLACE.items()}
+            if pl != PLACE:
+                for cid, prop in p.get("binds") or []:
+                    if prop == "source":
+                        over.setdefault(cid, []).append(("place", pl))
     if not over:
         return comp
     tracks = _subst(comp["tracks"], over)
@@ -193,6 +214,8 @@ def _put(c, prop, v):
         out = {k: x for k, x in c.items() if k != "asset"}
         out["media"] = {"path": v, "width": size[0], "height": size[1]}
         return out
+    if prop == "place":
+        return dict(c, place=v) if c["type"] == "image" else c
     return c
 
 

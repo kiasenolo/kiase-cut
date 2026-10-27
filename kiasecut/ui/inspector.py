@@ -70,6 +70,8 @@ PARAMS = {
              ("feather", "羽化", 0.0, 1.0, 0.01, 2, 1, 0.0)),
     "clip": (("volume", "音量 %", 0.0, 1000.0, 1.0, 0, 100, 1.0),),
 }
+PLACE_ROWS = (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0), ("cy", "中心 Y", -5.0, 5.0, 0.01, 3, 1, 0.0),
+              ("w", "寬", 0.01, 10.0, 0.01, 3, 1, 1.0), ("h", "高", 0.01, 10.0, 0.01, 3, 1, 1.0))   # (components.PLACE)
 # hard limits (Blender's), in stored units: typing, or dragging with Alt, reaches them; plain
 # dragging stays in PARAMS' min / max (the soft limits). None: no limit that way; not listed:
 # none at all.
@@ -301,6 +303,7 @@ class Inspector(QWidget):
     maskMatteChosen = Signal(list, str)             # clip ids, "alpha" / "luma"
     mattePreviewChosen = Signal(bool)               # 預覽複合片段 or its opacity changed
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
+    placeEditChanged = Signal()                     # 編輯位置 of a component's picture switched: self.place_edit
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
@@ -332,6 +335,7 @@ class Inspector(QWidget):
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
         self.clip_ids = []
+        self.place_edit = None            # image parameter whose picture the preview places (編輯位置)
         self.fps = 60.0                   # the editor's frames per second (凍結幀 counts in them)
         self.playhead_t = 0               # the playhead in the primary clip's time
         self.shape = None                 # what the form was built for
@@ -1022,6 +1026,15 @@ class Inspector(QWidget):
             self.widgets[("reset", pid)] = reset
             row.layout().addWidget(reset)
             form.addRow(p["name"], row)
+            if kind == "image":                          # where the picture sits in its layer
+                self._rows(form, "place:" + pid, PLACE_ROWS, (("cx", "cy", "　位置"), ("w", "h", "　大小")))
+                place = QPushButton("編輯位置")
+                place.setCheckable(True)
+                place.setChecked(self.place_edit == pid)
+                place.setToolTip("在預覽畫面上拖曳這張圖片：中間移動、方塊調大小（Shift：不保持比例）")
+                place.toggled.connect(lambda on, pid=pid: self.set_place_edit(pid if on else None))
+                self.widgets[("place_edit", pid)] = place
+                form.addRow("", place)
 
     def _show_params(self, clips, ts, easings):
         """The parameters' values at the playhead (each clip at its own time), their ◆ and
@@ -1065,10 +1078,33 @@ class Inspector(QWidget):
                 wid.setCheckState(Qt.PartiallyChecked if v is None else Qt.Checked if v else Qt.Unchecked)
                 wid.blockSignals(False)
             own = any(q is not None for q in ps)
+            if kind == "image":
+                g = "place:" + p["id"]
+                for r in PLACE_ROWS:
+                    stored = [((k.get("places") or {}).get(p["id"]) or {}).get(r[0]) for k in clips]
+                    vals = {round(curves.value(q if q is not None else r[7], t), r[5]) for q, t in zip(stored, ts)}
+                    self._set((g, r[0]), vals.pop() if len(vals) == 1 else None)
+                    self._key_state(self.widgets[("key", g, r[0])], stored, clips, ts)
+                    for q, t in zip(stored, ts):
+                        if edit.key_at(q, t) is not None:
+                            easings.add(edit.easing_at(q, t))
+                own = own or any((k.get("places") or {}).get(p["id"]) for k in clips)
             reset = self.widgets[("reset", p["id"])]
             reset.setEnabled(own)
             reset.setStyleSheet("color: #6fb3ff;" if own else "")
             self._key_state(self.widgets[("key", "params", p["id"])], ps, clips, ts)
+
+    def set_place_edit(self, pid):
+        """Place the picture of image parameter pid on the preview (None: not)."""
+        if pid == self.place_edit:
+            return
+        self.place_edit = pid
+        for key, b in self.widgets.items():
+            if isinstance(key, tuple) and key[0] == "place_edit":
+                b.blockSignals(True)
+                b.setChecked(key[1] == pid)
+                b.blockSignals(False)
+        self.placeEditChanged.emit()
 
     def _pick_param_color(self, p):
         cur = self.widgets[("params", p["id"])].text()
@@ -1132,6 +1168,9 @@ class Inspector(QWidget):
             self.shape = shape
             self.streams = streams
             self._build(c)
+        if self.place_edit and not (c is not None and components.of_clip(c) is not None and
+                                    (components.param(components.of_clip(c), self.place_edit) or {}).get("kind") == "image"):
+            self.set_place_edit(None)                    # (that picture is not in the selection now)
         if c is None:
             return
         w = self.widgets
@@ -1304,9 +1343,11 @@ class Inspector(QWidget):
 
     def show_live(self, clip_id, group, values):
         """The numbers of a drag on the canvas, while it goes on (not an edit yet)."""
-        if self.clip_ids != [clip_id] or group not in self.groups:
+        if self.clip_ids != [clip_id] or group not in self.groups and not group.startswith("place:"):
             return
-        if group == "asset":                             # (dragging an asset's size)
+        if group.startswith("place:"):
+            rows = {r[0]: r for r in PLACE_ROWS}
+        elif group == "asset":                             # (dragging an asset's size)
             rows = {f: (f, None, None, None, None, i[5], 1) for f, i in assets.FIELD_INFO.items() if i[1] == "number"}
         else:
             rows = {r[0]: r for r in PARAMS.get(group, ())}

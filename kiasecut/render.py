@@ -471,12 +471,14 @@ class Renderer:
                     shape = self.asset(assets.cover(q), tw, th)
                     cover = lambda qq=p: qq.drawImage(rect, shape)
             elif kind == "image":
-                pic = self.image(m["path"], tw, th)
+                pl = c.get("place") or {}
+                pic = self.image(m["path"], tw * pl.get("w", 1.0), th * pl.get("h", 1.0))
             else:
                 pic = self.video_frame(m["path"], project.source_time(c, t),
                                        max(1, round(tw)), max(1, round(th))) if self.video_frame else None
                 if pic is None:
                     return
+            rect = placed(rect, c.get("place"), bw, bh)
             draw = lambda q=p: q.drawImage(rect, pic)
             disp = (bw, bh)
         elif kind in ("compound", "group"):
@@ -755,6 +757,16 @@ def matte_coverage(mask, t, disp, wt, W, H, img):
     if v("invert", False):
         m = 1 - m
     return m.astype(np.float32)
+
+
+def placed(rect, place, bw, bh):
+    """rect (a picture in its bw x bh frame, centred on 0) where a component's image parameter
+    puts it (components.PLACE: centre in half-frame units, y up; size as fractions)."""
+    if not place:
+        return rect
+    w, h = place.get("w", 1.0), place.get("h", 1.0)
+    cx, cy = place.get("cx", 0.0) * bw / 2, -place.get("cy", 0.0) * bh / 2
+    return QRectF(rect.left() * w + cx, rect.top() * h + cy, rect.width() * w, rect.height() * h)
 
 
 def matte_time(comp, t, fps):

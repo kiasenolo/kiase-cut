@@ -111,6 +111,42 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(self.comp["tracks"][1]["clips"][0]["text"]["content"], "原本")
         self.assertEqual(self.colour(x=10).name(), "#00ff00")              # (beside the words)
 
+    def test_picture_placed_in_its_frame(self):
+        pi = edit.add_param(self.p, self.kid, "image", "圖", [("c1", "source")])
+        png = os.path.join(self.dir, "g.png")
+        im = QImage(160, 90, QImage.Format_ARGB32)                          # 16:9, as the frame
+        im.fill(QColor("#00ff00"))
+        im.save(png)
+        edit.set_param(self.p, self.cid, "params", pi["id"], png)
+        g = "place:" + pi["id"]
+        edit.set_param(self.p, self.cid, g, "w", 0.5)                       # half as big,
+        edit.set_param(self.p, self.cid, g, "h", 0.5)
+        edit.set_param(self.p, self.cid, g, "cx", 0.5)                      # its centre a quarter right
+        c = edit.find(self.p, self.cid)[1]
+        self.assertEqual(components.content(c, 0)["tracks"][0]["clips"][0]["place"],
+                         {"cx": 0.5, "cy": 0.0, "w": 0.5, "h": 0.5})
+        rs = [render.Renderer()]
+        try:
+            rs.append(glrender.GLRenderer())
+        except Exception:
+            pass
+        for r in rs:                                                         # (192 px wide: it covers 96 - 192)
+            name = type(r).__name__
+            self.assertEqual(self.colour(x=60, renderer=r).name(), "#000000", name)
+            self.assertEqual(self.colour(x=144, renderer=r).name(), "#00ff00", name)
+        self.assertTrue(renderexport.needs_renderer(self.p))
+        edit.toggle_key(self.p, self.cid, g, "cx", 0)                        # it moves: keyframes
+        edit.set_param(self.p, self.cid, g, "cx", -0.5, S)
+        self.assertIn(S, edit.key_times(c))
+        self.assertEqual(self.colour(round(self.p["fps"]), x=48).name(), "#00ff00")
+        edit.reset_params(self.p, self.cid, [pi["id"]])                      # ↺: the picture and its place
+        self.assertNotIn("places", c)
+        edit.set_param(self.p, self.cid, g, "w", 0.5)
+        edit.delete_param(self.p, self.kid, pi["id"])
+        self.assertNotIn("places", c)
+        with self.assertRaises(edit.EditError):
+            edit.set_param(self.p, self.cid, g, "w", 0.5)                    # (no such parameter now)
+
     def test_saved_paths_and_round_trip(self):
         pi = edit.add_param(self.p, self.kid, "image", "圖", [("c1", "source")])
         png = os.path.join(self.dir, "media", "g.png")
@@ -247,6 +283,69 @@ class ComponentUiTests(unittest.TestCase):
         panel.set_layers(self.comp, set(), None)
         self.assertTrue(panel.params_box.isHidden())
         self.assertFalse(panel.to_component.isHidden())
+
+    def placed_picture(self):
+        """An image parameter on c1 with a 16:9 green picture, placed half size, a quarter right."""
+        pi = edit.add_param(self.p, self.kid, "image", "圖", [("c1", "source")])
+        png = os.path.join(tempfile.mkdtemp(), "g.png")
+        self.addCleanup(shutil.rmtree, os.path.dirname(png), True)
+        im = QImage(160, 90, QImage.Format_ARGB32)
+        im.fill(QColor("#00ff00"))
+        im.save(png)
+        edit.set_param(self.p, self.cid, "params", pi["id"], png)
+        for k, v in (("w", 0.5), ("h", 0.5), ("cx", 0.5)):
+            edit.set_param(self.p, self.cid, "place:" + pi["id"], k, v)
+        return pi
+
+    def test_picture_placed_on_the_preview(self):
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        from kiasecut.ui.preview import LayerFrame, MaskGeo, Preview
+        pi = self.placed_picture()
+        g = "place:" + pi["id"]
+        pv = Preview()
+        pv.resize(960, 540)                                                  # the canvas at half size
+        pv.set_scene(self.p, 0, self.cid)
+        pv.set_mask_mode(True, g)
+        frame = LayerFrame(pv.selected_box(), pi["id"])
+        geo = MaskGeo(frame, pv.mask_of(edit.find(self.p, self.cid)[1]))
+        self.assertAlmostEqual(geo.centre().x(), 1440, places=3)             # (canvas px)
+        self.assertEqual([n for n, _ in geo.handles(1.0)], ["w", "h", "wh"])  # (no turning)
+        self.assertFalse(pv.grab().isNull())                                 # (its outline and handles drawn)
+        got = []
+        pv.paramsCommitted.connect(lambda *a: got.append(a))
+        a, b = QPoint(720, 270), QPoint(620, 270)
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, a)
+        QTest.mouseMove(pv, QPoint(670, 270))
+        QTest.mouseMove(pv, b)
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, b)
+        self.assertEqual(len(got), 1)
+        cid, group, vals = got[0]
+        self.assertEqual((cid, group), (self.cid, g))
+        self.assertAlmostEqual(vals["cx"], 0.5 - 200 / 960, places=3)
+        for k, v in vals.items():
+            edit.set_param(self.p, cid, group, k, v)                          # (a valid edit)
+
+    def test_inspector_places_the_picture(self):
+        from kiasecut.ui.inspector import Inspector
+        pi = self.placed_picture()
+        g = "place:" + pi["id"]
+        ins = Inspector()
+        got, places = [], []
+        ins.paramEdited.connect(lambda ids, gr, k, v: got.append((gr, k, v)))
+        ins.placeEditChanged.connect(lambda: places.append(ins.place_edit))
+        c = edit.find(self.p, self.cid)[1]
+        ins.show_clips([c], 0, 60)
+        self.assertEqual(ins.widgets[(g, "cx")].value(), 0.5)
+        self.assertEqual(ins.widgets[(g, "w")].value(), 0.5)
+        self.assertTrue(ins.widgets[("reset", pi["id"])].isEnabled())
+        ins.widgets[(g, "cy")].edited.emit(0.25)
+        ins._flush()
+        self.assertEqual(got, [(g, "cy", 0.25)])
+        ins.widgets[("place_edit", pi["id"])].click()
+        self.assertEqual(places, [pi["id"]])
+        ins.show_clips([], 0, 60)                                            # nothing selected: off
+        self.assertEqual(places, [pi["id"], None])
 
     def test_inspector(self):
         from kiasecut.ui.inspector import Inspector

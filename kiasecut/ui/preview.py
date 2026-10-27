@@ -41,7 +41,11 @@ round handle to rotate it and the arrow below it for the feather. The mask snaps
 clip's centre and edges (and to a square, to full size, to feather 0 / 1) while it is dragged; Alt
 drags freely. Snapped lines show in amber. A 複合片段 mask is a frame like a rectangle (no
 feather) whose corner keeps the compound's proportions (Shift: free); the renderer draws the
-compound itself in it (matte_preview, see render.py).
+compound itself in it (matte_preview, see render.py). 影片 masks are the same.
+
+編輯位置 of a component's image parameter (the 屬性 tab: `mask_group` "place:<param id>") edits
+where that picture sits in its layer the same way, through the layer's frame inside the
+component (LayerFrame): drag it to move it, its squares to size it (no turning, no feather).
 
 Groups (群組): a group is one box around its clips (GroupBox, through the group's transform):
 click one of its clips to select it, then drag it by anything inside its box - its clips or
@@ -90,7 +94,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTran
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
-from .. import curves, edit, fonts, project, render, textlayout
+from .. import components, curves, edit, fonts, project, render, textlayout
 from . import appevents, wheel
 from .wrapdrag import WrapDrag
 
@@ -222,6 +226,62 @@ class Box:
         return QPointF(self.cx, self.cy) + up * (self.h / 2 + ROT_PX * k)
 
 
+class LayerFrame:
+    """The frame of the layer a component instance's image parameter sets (the first it is
+    bound to), on the canvas: a stand-in for the instance's Box that MaskGeo edits the
+    picture's placement (components.PLACE) in. Its time is the instance's (the placement's
+    keyframes are the instance's); None when that layer is not shown now."""
+
+    def __new__(cls, box, pid):
+        c = box.clip
+        comp = components.of_clip(c)
+        p = components.param(comp, pid) if comp else None
+        cid = next((k for k, prop in (p or {}).get("binds") or [] if prop == "source"), None)
+        if cid is None:
+            return None
+        content = components.content(c, box.t)
+        cw, ch = content["width"], content["height"]
+        inner = 0 if project.is_static(c) else project.source_time(c, box.t)
+        to_inst = QTransform().translate(-cw / 2, -ch / 2) * QTransform.fromScale(box.bw / cw, box.bh / ch)
+
+        def find(tracks, t, xf):
+            for tr in tracks:
+                for k in tr["clips"]:
+                    lt = t - k["start_us"]
+                    if not 0 <= lt < k["duration_us"]:
+                        continue
+                    if k["id"] == cid:
+                        return Box(k, cw, ch, lt), xf
+                    if project.is_group(k):
+                        hit = find(k["tracks"], lt, group_xf(k, cw, ch, lt) * xf)
+                        if hit:
+                            return hit
+            return None
+        hit = find(content["tracks"], inner, QTransform())
+        if hit is None:
+            return None
+        self = super().__new__(cls)
+        layer, gxf = hit
+        self.inst, self.pid, self.clip, self.t = box, pid, c, box.t
+        self.W, self.H = box.W, box.H
+        self.bw, self.bh = layer.bw, layer.bh
+        self._xf = layer.xf() * gxf * to_inst * box.xf()
+        self.s = math.hypot(self._xf.m11(), self._xf.m12()) or 1e-6      # (canvas px per frame px)
+        self.sy = math.hypot(self._xf.m21(), self._xf.m22()) or 1e-6
+        o = self._xf.map(QPointF(0, 0))
+        self.cx, self.cy = o.x(), o.y()
+        return self
+
+    def xf(self):
+        return self._xf
+
+    def corners(self):
+        return [self._xf.map(QPointF(x * self.bw / 2, y * self.bh / 2)) for x, y in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+
+    def moved(self, c):
+        return LayerFrame(self.inst.moved(c), self.pid)
+
+
 def group_xf(g, W, H, t):
     """A group's transform at group time t: its canvas -> the level's (about the centre)."""
     return QTransform().translate(-W / 2, -H / 2) * render.clip_world(g, t, W, H)
@@ -329,11 +389,13 @@ class MaskGeo:
     def handles(self, k):
         """[(name, canvas point)]; k = canvas px per screen px."""
         out = []
-        if self.kind in ("rectangle", "circle", "compound", "image", "video"):
+        if self.kind in ("rectangle", "circle", "compound", "image", "video", "place"):
             out += [("w", self.xf.map(QPointF(self.hw, 0))), ("h", self.xf.map(QPointF(0, -self.hh))),
                     ("wh", self.xf.map(QPointF(self.hw, -self.hh)))]
         elif self.kind == "mirror":
             out.append(("h", self.xf.map(QPointF(0, -self.hh))))
+        if self.kind == "place":                    # (a component's picture is moved and sized, not turned)
+            return out
         u, hh = self.down()
         c = self.centre()
         out.append(("rot", c - u * (hh + ROT_PX * k)))
@@ -458,11 +520,20 @@ class Preview(QWidget):
         self.update()
 
     def mask_of(self, clip):
-        """The mask that mask mode edits on clip, or None."""
+        """The mask that mask mode edits on clip (編輯位置: a component picture's placement), or None."""
+        if self.mask_group.startswith("place:"):
+            p = components.param(components.of_clip(clip), self.mask_group[6:]) if components.of_clip(clip) else None
+            return components.place_of(clip, p["id"]) if p and p["kind"] == "image" else None
         try:
             return edit.holder(clip, self.mask_group)
         except (edit.EditError, KeyError):
             return None
+
+    def mask_box(self, box):
+        """What mask mode edits in: the clip's box, or for 編輯位置 its layer's frame (or None)."""
+        if box is not None and self.mask_mode and self.mask_group.startswith("place:"):
+            return LayerFrame(box, self.mask_group[6:])
+        return box
 
     def _report_size(self):
         self.renderWidth.emit(round(self._rect().width() * self.devicePixelRatioF()))
@@ -749,7 +820,7 @@ class Preview(QWidget):
         group, vals = self.live
         c = json.loads(json.dumps(box.clip))
         for g, v in (vals.items() if group == "multi" else [(group, vals)]):
-            holder = c if g == "clip" else edit.holder(c, g) if g.startswith("fxmask:") else c.setdefault(g, {})
+            holder = c if g == "clip" else edit.holder(c, g) if g.startswith(("fxmask:", "place:")) else c.setdefault(g, {})
             holder.update(edit.with_linked_scale(holder, v, box.t) if g == "transform" else v)
         return box.moved(c)
 
@@ -781,11 +852,12 @@ class Preview(QWidget):
         p.scale(r.width() / self.W, r.height() / self.H)
         k = self._k()
         box = self._live_box()
+        mbox = self.mask_box(box)
         if self.multi():
             self._paint_group(p, k)
         elif box is not None:
-            if self.masking(box):
-                self._paint_mask(p, box, k)
+            if mbox is not None and self.masking(mbox):
+                self._paint_mask(p, mbox, k)
             elif self.mask_mode:                         # no mask: just where the clip is
                 p.setBrush(Qt.NoBrush)
                 p.setPen(QPen(QColor(255, 255, 255, 120), 1 * k, Qt.DashLine))
@@ -1102,7 +1174,8 @@ class Preview(QWidget):
         p.save()
         clip = QPainterPath()
         clip.addPolygon(QPolygonF(box.corners()))
-        p.setClipPath(clip)                    # the mask only matters inside the clip
+        if g.kind != "place":                  # the mask only matters inside the clip (a picture may go past its frame)
+            p.setClipPath(clip)
         p.setPen(QPen(QColor("#111114"), 3.5 * k))
         p.drawPath(path)
         p.setPen(QPen(edge, 2 * k, Qt.SolidLine if on else Qt.DashLine))
@@ -1154,13 +1227,14 @@ class Preview(QWidget):
             return
         k = self._k()
         box = self.selected_box()
-        if box is not None and self.masking(box):
-            g = MaskGeo(box, self.mask_of(box.clip))
+        mbox = self.mask_box(box)
+        if mbox is not None and self.masking(mbox):
+            g = MaskGeo(mbox, self.mask_of(box.clip))
             hit = next((n for n, pt in g.handles(k) if self._near(pt, m, k)), None)
             if hit is None and (g.contains(m) or self._near(g.centre(), m, k)):
                 hit = "move"
             if hit is not None:
-                self.drag = {"kind": hit, "box": box, "geo": g, "m0": m, "moved": False}
+                self.drag = {"kind": hit, "box": mbox, "geo": g, "m0": m, "moved": False}
                 return
         elif box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False):
             if self._near(box.rot_handle(k), m, k):
@@ -1371,7 +1445,7 @@ class Preview(QWidget):
             out["w"] = round(max(0.01, 2 * abs(q.x()) / g.dw), 4)
         if "h" in kind:
             out["h"] = round(max(0.01, 2 * abs(q.y()) / g.dh), 4)
-        if kind == "wh" and g.kind in ("compound", "image", "video") and not free:   # a picture keeps its proportions (Shift: free)
+        if kind == "wh" and g.kind in ("compound", "image", "video", "place") and not free:   # a picture keeps its proportions (Shift: free)
             vx, vy = g.mw * g.dw, g.mh * g.dh                       # the corner, from the centre
             f = max(0.01 / max(g.mw, g.mh, 1e-6), (abs(q.x()) * vx + abs(q.y()) * vy) * 2 / max(vx * vx + vy * vy, 1e-9))
             out = {"w": round(g.mw * f, 4), "h": round(g.mh * f, 4)}
@@ -1576,8 +1650,9 @@ class Preview(QWidget):
         box = self.selected_box()
         cur = Qt.ArrowCursor
         hover = None
-        if box is not None and self.masking(box):
-            g = MaskGeo(box, self.mask_of(box.clip))
+        mbox = self.mask_box(box)
+        if mbox is not None and self.masking(mbox):
+            g = MaskGeo(mbox, self.mask_of(box.clip))
             if any(self._near(pt, m, k) for _, pt in g.handles(k)):
                 cur = Qt.PointingHandCursor
             elif g.contains(m):

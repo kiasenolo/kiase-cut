@@ -540,13 +540,16 @@ class GLRenderer(render.Renderer):
                 if backdrop:                             # where it is, not its colours' alpha
                     shape = gl.picture(self.asset(assets.cover(q), tw, th), mipmap=True)
             elif kind == "image":
-                tex, straight = gl.picture(self.image(m["path"], tw, th), mipmap=True)
+                pl = c.get("place") or {}
+                tex, straight = gl.picture(self.image(m["path"], tw * pl.get("w", 1.0), th * pl.get("h", 1.0)),
+                                           mipmap=True)
             else:
                 pic = self.video_frame(m["path"], project.source_time(c, t),
                                        max(1, round(tw)), max(1, round(th))) if self.video_frame else None
                 if pic is None:
                     return
                 tex, straight = gl.frame_texture(pic)
+            rect = render.placed(rect, c.get("place"), bw, bh)
         elif kind in ("compound", "group"):
             comp = components.content(c, t) if kind == "compound" else render.group_content(c, W, H)
             cw, ch = comp["width"], comp["height"]

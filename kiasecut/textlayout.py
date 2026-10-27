@@ -8,13 +8,18 @@ Calibrated frame by frame against a Jianying export:
   * lines are centred (or, by spec["align"], left / right aligned or justified: every line
     but the last spread to the widest one, as CSS does); the box centre is the clip
     position; italic shears about the centre
+  * a 文字框 (box_w / box_h, in px of a 1080-high canvas at scale 1; 0 or none: as wide /
+    as high as the text, the default) is like Lunacy's fixed-size text: lines wrap at its
+    width (a Latin word goes down whole, CJK breaks anywhere) and the text sits at its top,
+    middle or bottom (spec["valign"]); text that does not fit runs over it. Its centre is
+    the clip position
 """
 import math
 import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-from . import fonts
+from . import curves, fonts
 
 PX_PER_FONT_UNIT = 11.13
 FALLBACK_FONTS = [
@@ -76,40 +81,72 @@ def _style_at(spec, i):
     return {}
 
 
-def render(spec, scale, canvas_h=1080):
-    """Render text spec at `scale` (1 = clip scale 1). Returns an RGBA image whose centre
-    is the text box centre."""
+def boxed(tx):
+    """Whether text spec tx has a fixed frame (文字框): a width it wraps in or a height it
+    sits in (box_w / box_h above 0, either can have keyframes)."""
+    return any(curves.max_abs(tx.get(k) or 0.0) > 0 for k in ("box_w", "box_h"))
+
+
+def _wordish(ch):
+    """A letter or digit of a word that wraps whole (not CJK, which breaks anywhere)."""
+    return ch.isalnum() and ord(ch) < 0x2E80
+
+
+def _layout(spec, scale, canvas_h):
     text = spec["content"]
     unit = PX_PER_FONT_UNIT * canvas_h / 1080 * scale
     base_em = spec.get("size", 5.0) * unit
     ls = spec.get("letter_spacing", 0.0)
     lsp = spec.get("line_spacing", 0.0)
-    italic = spec.get("italic_deg", 0.0)
     path = spec.get("font_path")
+    px = canvas_h / 1080 * scale
+    fix_w = max(0.0, spec.get("box_w") or 0.0) * px
+    fix_h = max(0.0, spec.get("box_h") or 0.0) * px
+    limit = fix_w + 0.01 * base_em                # (a width measured from the text fits it again)
 
-    lines, cur, x = [], [], 0.0
+    def rebase(glyphs):
+        x0 = glyphs[0][0] if glyphs else 0.0
+        return [(g[0] - x0,) + g[1:] for g in glyphs]
+
+    def width(glyphs):
+        return glyphs[-1][0] + glyphs[-1][4] if glyphs else 0.0
+
+    lines, cur = [], []
     for i, ch in enumerate(text):
         if ch == "\n":
-            lines.append((cur, x))
-            cur, x = [], 0.0
+            lines.append(cur)
+            cur = []
             continue
         st = _style_at(spec, i)
         em = st.get("size", spec.get("size", 5.0)) * unit
         f = with_fallback(font(st.get("font_path") or path, em), ch, em)
         col = st.get("color") or spec.get("color") or [1, 1, 1]
         rgba = tuple(int(round(v * 255)) for v in col[:3]) + (255,)
-        if cur:
-            x += ls * base_em
-        cur.append((x, ch, f, rgba))
         # unhinted advance: small sizes round each glyph and drift across a long line
-        x += font(f.path, 1000).getlength(ch) / 1000 * em
-    lines.append((cur, x))
+        adv = font(f.path, 1000).getlength(ch) / 1000 * em
+        x = width(cur) + ls * base_em if cur else 0.0
+        if fix_w and cur and x + adv > limit:      # 文字框: wrap
+            if ch.isspace():
+                lines.append(cur)
+                cur = []
+                continue
+            sp = next((j for j in range(len(cur) - 1, -1, -1) if cur[j][1].isspace()), None)
+            if _wordish(ch) and sp is not None and sp > 0 and all(_wordish(g[1]) for g in cur[sp + 1:]):
+                lines.append(cur[:sp])             # a word goes down whole
+                cur = rebase(cur[sp + 1:])
+            else:
+                lines.append(cur)
+                cur = []
+            x = width(cur) + ls * base_em if cur else 0.0
+        cur.append((x, ch, f, rgba, adv))
+    lines.append(cur)
+    lines = [(g, width(g)) for g in lines]
 
     # PIL rounds metrics up to whole pixels; use exact ratios
     asc, desc = (m / 1000 * base_em for m in font(path, 1000).getmetrics())
     line_h = asc + desc
     step = line_h + lsp * base_em
-    box_w = max(w for _, w in lines)
+    content_w = max(w for _, w in lines)
 
     def ink(glyphs, top):
         vals = [(-g[2].getbbox(g[1], anchor="ls")[1]) if top else g[2].getbbox(g[1], anchor="ls")[3]
@@ -118,25 +155,44 @@ def render(spec, scale, canvas_h=1080):
 
     ext_top = max(0.0, ink(lines[0][0], True) - asc)
     ext_bot = max(0.0, ink(lines[-1][0], False) - desc)
-    box_h = ext_top + line_h + step * (len(lines) - 1) + ext_bot
-    shear = math.tan(math.radians(italic))
+    content_h = ext_top + line_h + step * (len(lines) - 1) + ext_bot
+    fw, fh = fix_w or content_w, fix_h or content_h
+    # where the text's top is, from the frame's centre (垂直對齊)
+    ct = {"middle": -content_h / 2, "bottom": fh / 2 - content_h}.get(spec.get("valign"), -fh / 2)
+    return dict(lines=lines, base_em=base_em, asc=asc, step=step, ext_top=ext_top, fw=fw, fh=fh, ct=ct,
+                half_w=max(fw / 2, content_w - fw / 2), half_h=max(fh / 2, -ct, ct + content_h))
+
+
+def frame_size(spec, canvas_h=1080, scale=1.0):
+    """(w, h) of the text's frame in px: its 文字框 where fixed, else what the text takes up
+    (without render's margin for overhangs and slant)."""
+    lay = _layout(spec, scale, canvas_h)
+    return lay["fw"], lay["fh"]
+
+
+def render(spec, scale, canvas_h=1080):
+    """Render text spec at `scale` (1 = clip scale 1). Returns an RGBA image whose centre
+    is the text box centre (the 文字框's, when it has one)."""
+    lay = _layout(spec, scale, canvas_h)
+    lines, base_em, fw = lay["lines"], lay["base_em"], lay["fw"]
+    shear = math.tan(math.radians(spec.get("italic_deg", 0.0)))
     pad = int(base_em * (0.3 + abs(shear))) + 4
-    W = int(math.ceil(box_w)) + 2 * pad
-    H = int(math.ceil(box_h)) + 2 * pad
+    W = int(math.ceil(2 * lay["half_w"])) + 2 * pad
+    H = int(math.ceil(2 * lay["half_h"])) + 2 * pad
     W += W % 2
     H += H % 2
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     dr = ImageDraw.Draw(im)
     align = spec.get("align") or "center"
     for li, (glyphs, lw) in enumerate(lines):
-        left = (W - box_w) / 2
-        ox = {"left": left, "justify": left, "right": left + box_w - lw}.get(align, (W - lw) / 2)
+        left = (W - fw) / 2
+        ox = {"left": left, "justify": left, "right": left + fw - lw}.get(align, (W - lw) / 2)
         spread = 0.0
         if align == "justify" and li < len(lines) - 1 and len(glyphs) > 1:
-            spread = (box_w - lw) / (len(glyphs) - 1)          # between every two characters
-        top = (H - box_h) / 2 + ext_top + li * step
-        for gi, (gx, ch, f, rgba) in enumerate(glyphs):
-            dr.text((ox + gx + gi * spread, top + asc), ch, font=f, fill=rgba, anchor="ls")
+            spread = (fw - lw) / (len(glyphs) - 1)          # between every two characters
+        top = H / 2 + lay["ct"] + lay["ext_top"] + li * lay["step"]
+        for gi, (gx, ch, f, rgba, _adv) in enumerate(glyphs):
+            dr.text((ox + gx + gi * spread, top + lay["asc"]), ch, font=f, fill=rgba, anchor="ls")
     if shear:
         im = im.transform(im.size, Image.AFFINE, (1, shear, -shear * H / 2, 0, 1, 0),
                           resample=Image.BICUBIC)

@@ -28,7 +28,10 @@ it) - and it snaps to the clip's centre, corners and edge middles (Shift: freely
 scale linked a corner or an edge keeps their ratio; unlinked, a corner sets both freely (Shift
 keeps the ratio) and an edge only its own axis. A built-in asset (assets.py) is resized instead:
 its 寬 / 高 change and its scale stays (an edge changes one side, a corner both, Shift keeps
-their ratio); that drag reports group "multi": {"asset": {w, h}, "transform": {x, y}}.
+their ratio); that drag reports group "multi": {"asset": {w, h}, "transform": {x, y}}. So is a
+text with a 文字框 (textlayout.py; not one as big as its words, which scales): an edge sets its
+own side's box_w / box_h, a corner both (a box of 自動高度 gets a fixed height), "multi":
+{"text": {box_w, box_h}, "transform": {x, y}}.
 
 Mask mode (`mask_mode`, while the 遮罩 tab is open, or 編輯遮罩 of an effect's 範圍 in the
 效果 tab: `mask_group` "mask" or "fxmask:<effect id>") edits only that mask: the clip itself
@@ -104,11 +107,15 @@ _text_sizes = {}
 
 
 def text_size(spec, canvas_h):
-    """Text box (w, h) in canvas px at scale 1."""
+    """Text box (w, h) in canvas px at scale 1: its 文字框 when it has one (textlayout.boxed),
+    else the image drawn for it."""
     key = json.dumps([spec, canvas_h, fonts.map_key()], sort_keys=True, default=str)
     if key not in _text_sizes:
-        im = textlayout.render(spec, 1.0, canvas_h)
-        _text_sizes[key] = (im.width, im.height)
+        if textlayout.boxed(spec):
+            _text_sizes[key] = textlayout.frame_size(spec, canvas_h)
+        else:
+            im = textlayout.render(spec, 1.0, canvas_h)
+            _text_sizes[key] = (im.width, im.height)
     return _text_sizes[key]
 
 
@@ -1386,7 +1393,8 @@ class Preview(QWidget):
         ky = (py - ay) / (hy - ay) if sy and hy != ay else 1.0
         tf = box.clip.get("transform") or {}
         asset = box.clip.get("asset")
-        tied = bool((edit.linked(tf) and not asset) or (sx and sy and mods & Qt.ShiftModifier))
+        framed = box.clip["type"] == "text" and textlayout.boxed(box.clip["text"])     # (its 文字框 is resized)
+        tied = bool((edit.linked(tf) and not (asset or framed)) or (sx and sy and mods & Qt.ShiftModifier))
         if tied:
             if sx and sy:                                      # along the diagonal
                 vx, vy = hx - ax, hy - ay
@@ -1397,11 +1405,16 @@ class Preview(QWidget):
         if not mods & Qt.ControlModifier:                      # Ctrl: scale freely
             kx, ky, self.guides = self._snap_scale(box, d.get("others", []), (bool(sx) or tied, bool(sy) or tied),
                                                    (ax, ay), (kx, ky), tied)
-        if asset:                                              # its own size changes, not the scale
+        if asset or framed:                                    # its own size changes, not the scale
             w0, h0 = box.bw, box.bh
             nw, nh = max(1.0, w0 * kx), max(1.0, h0 * ky)
             kx, ky = nw / w0, nh / h0
-            vals = {"asset": {"w": round(nw, 1), "h": round(nh, 1)}, "transform": {}}
+            if asset:
+                vals = {"asset": {"w": round(nw, 1), "h": round(nh, 1)}, "transform": {}}
+            else:                                              # (an edge fixes its own side: 自動高度 -> 固定大小)
+                k = 1080 / box.H
+                vals = {"text": {f: round(n * k, 1) for f, n, on in (("box_w", nw, sx), ("box_h", nh, sy)) if on},
+                        "transform": {}}
             out = vals["transform"]
         else:
             scale = lambda s, k: math.copysign(max(0.01, abs(s * k)), s or 1.0)
@@ -1412,12 +1425,12 @@ class Preview(QWidget):
             dx, dy = ax - ax * kx, ay - ay * ky                    # the anchor's move, cancelled
             c, s = math.cos(box.rot), math.sin(box.rot)
             cx, cy = box.cx + dx * c - dy * s, box.cy + dx * s + dy * c
-            pdx, pdy = (box.pdx, box.pdy) if asset else project.pivot_shift(
+            pdx, pdy = (box.pdx, box.pdy) if asset or framed else project.pivot_shift(
                 tf, box.t, box.W, box.H, scale=out["scale"], scale_y=out["scale_y"])
             out.update(x=box.x_at(cx, pdx), y=box.y_at(cy, pdy))
-        if asset and not out:
+        if (asset or framed) and not out:
             del vals["transform"]
-        return ("multi" if asset else "transform"), vals
+        return ("multi" if asset or framed else "transform"), vals
 
     def _grabs_pivot(self, box, m, k, mods):
         """Whether a press at m takes the pivot's ring: once it is off the centre, else with

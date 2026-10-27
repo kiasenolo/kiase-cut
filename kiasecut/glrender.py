@@ -513,7 +513,8 @@ class GLRenderer(render.Renderer):
         if kind == "text":
             tx = c["text"]
             size = tx.get("size", 5.0)
-            animated = any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size")
+            animated = any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size") or (
+                textlayout.boxed(tx) and curves.is_animated(size))      # (a 文字框 does not grow with the words)
             if animated:
                 spec, k_size = curves.static(tx, t, TEXT_FIELDS), 1.0
             else:

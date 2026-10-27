@@ -115,6 +115,17 @@ def _draw(p, name):
                 w = 9 if i == 3 else 16
             x = {"left": 4, "justify": 4, "right": 20 - w}.get(how, 12 - w / 2)
             p.drawRect(QRectF(x, y - 1, w, 2))
+    elif name.startswith("valign_"):                      # vertical text alignment: arrows to a line (Lunacy's)
+        how = name[7:]
+        y = {"top": 4, "middle": 12, "bottom": 20}[how]
+        p.drawRect(QRectF(5, y - 1, 14, 2))
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(pen.color(), 1.6))
+        ends = {"top": ((20, 7),), "middle": ((3, 9), (21, 15)), "bottom": ((4, 17),)}[how]
+        for y0, y1 in ends:                               # a stem from y0, its head at y1
+            d = 1 if y1 > y0 else -1
+            p.drawLine(QPointF(12, y0), QPointF(12, y1))
+            p.drawPolyline(QPolygonF([QPointF(9, y1 - 3 * d), QPointF(12, y1), QPointF(15, y1 - 3 * d)]))
     elif name.startswith("align_"):                       # Lunacy's align buttons: a line, two bars
         how = name[6:]
         if how in ("left", "hcenter", "right"):

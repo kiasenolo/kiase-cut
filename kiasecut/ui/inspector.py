@@ -9,7 +9,10 @@ Edits are reported after a short pause so typing or spinning produces one rebuil
 Scale has an X and a Y value with a link button between them: linked (the default), changing
 one changes the other in proportion and keyframes go on both. Built-in assets (assets.py)
 add a 素材參數 section: size in canvas pixels, colours and the shape's own settings, each
-with its ◆ like any other value. A component's clip (元件, components.py) adds 元件參數: the
+with its ◆ like any other value. A text's 對齊 row has Lunacy's two sets: left / centre / right /
+justified, then top / middle / bottom (in a 文字框 of a fixed height); 文字框 picks Lunacy's
+自動寬度 / 自動高度 / 固定大小 (edit.set_text_box) and 框大小 types its width and height (0:
+automatic). A component's clip (元件, components.py) adds 元件參數: the
 component's parameters - words, colours, pictures, switches - as this clip's own values, each
 with ◆ and ↺ (back to what the component itself has).
 
@@ -48,7 +51,9 @@ PARAMS = {
     "text": (("size", "字號", 0.0, 200.0, 0.1, 2, 1, 5.0),
              ("letter_spacing", "字距", -0.5, 5.0, 0.01, 2, 1, 0.0),
              ("line_spacing", "行距", -0.5, 5.0, 0.01, 2, 1, 0.0),
-             ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0, 1, 0.0)),
+             ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0, 1, 0.0),
+             ("box_w", "寬", 0.0, 4000.0, 1.0, 1, 1, 0.0),             # 文字框 (0: 自動)
+             ("box_h", "高", 0.0, 4000.0, 1.0, 1, 1, 0.0)),
     "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("scale", "縮放 X", 0.0, 50.0, 0.01, 3, 1, 1.0),
@@ -69,6 +74,7 @@ PARAMS = {
 # dragging stays in PARAMS' min / max (the soft limits). None: no limit that way; not listed:
 # none at all.
 HARD = {("text", "size"): (0.0, None), ("text", "italic_deg"): (-89.0, 89.0),
+        ("text", "box_w"): (0.0, None), ("text", "box_h"): (0.0, None),
         ("transform", "scale"): (0.0, None), ("transform", "scale_y"): (0.0, None),
         ("transform", "opacity"): (0.0, 1.0),
         ("mask", "w"): (0.0, None), ("mask", "h"): (0.0, None), ("mask", "feather"): (0.0, None),
@@ -87,6 +93,12 @@ MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形"
               ("複合片段", "compound"), ("圖片", "image"))
 MATTE_NAMES = (("Alpha（不透明度）", "alpha"), ("明度", "luma"))
 ALIGN_NAMES = (("靠左", "left"), ("置中", "center"), ("靠右", "right"), ("齊頭尾（左右對齊）", "justify"))
+VALIGN_NAMES = (("靠上（文字框固定高度時）", "top"), ("垂直置中（文字框固定高度時）", "middle"),
+                ("靠下（文字框固定高度時）", "bottom"))
+BOX_NAMES = (("自動寬度", "auto", "文字框跟著文字長大，不換行"),
+             ("自動高度", "auto_h", "固定寬度，文字超過就換行，高度跟著文字"),
+             ("固定大小", "fixed", "固定寬高：文字在框裡換行，靠上／置中／靠下"))
+BOX_KEYS = ("box_w", "box_h")
 EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
 BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "screen"), ("疊加", "overlay"),
                ("變暗", "darken"), ("變亮", "lighten"), ("顏色減淡", "color_dodge"), ("顏色加深", "color_burn"),
@@ -368,9 +380,45 @@ class Inspector(QWidget):
                 b.clicked.connect(lambda _=False, k=k: self._emit_now(self.paramEdited, "text", "align", k))
                 self.widgets[("align", k)] = b
                 lay.addWidget(b)
-            lay.addStretch(1)
             lay.addWidget(self._key_button("text", "align"))
+            lay.addStretch(1)
+            for name, k in VALIGN_NAMES:
+                b = QPushButton()
+                b.setObjectName("tool")
+                b.setIcon(icons.icon("valign_" + k, 18))
+                b.setCheckable(True)
+                b.setToolTip(name)
+                b.clicked.connect(lambda _=False, k=k: self._emit_now(self.paramEdited, "text", "valign", k))
+                self.widgets[("valign", k)] = b
+                lay.addWidget(b)
+            lay.addWidget(self._key_button("text", "valign"))
             form.addRow("對齊", row)
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(2)
+            for name, k, tip in BOX_NAMES:
+                b = QPushButton(name)
+                b.setCheckable(True)
+                b.setToolTip(tip)
+                b.clicked.connect(lambda _=False, k=k: self._emit_now(self.paramEdited, "text", "box_mode", k))
+                self.widgets[("box_mode", k)] = b
+                lay.addWidget(b, 1)
+            form.addRow("文字框", row)
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(3)
+            for r in PARAMS["text"]:
+                if r[0] in BOX_KEYS:
+                    tag = QLabel(r[1])
+                    tag.setStyleSheet("color: #8e8e94;")
+                    lay.addWidget(tag)
+                    spin = self._spin(("text", r[0]), *r[2:7])
+                    spin.setToolTip("文字框的" + r[1] + "（1080 高畫面的 px，縮放 1）；0＝自動")
+                    lay.addWidget(spin, 1)
+                    lay.addWidget(self._key_button("text", r[0]))
+            form.addRow("框大小 px", row)
             row = QWidget()
             lay = QHBoxLayout(row)
             lay.setContentsMargins(0, 0, 0, 0)
@@ -381,7 +429,8 @@ class Inspector(QWidget):
             lay.addWidget(self._key_button("text", "color"))
             form.addRow("顏色", row)
             for r in PARAMS["text"]:
-                form.addRow(r[1], self._param_row("text", *r))
+                if r[0] not in BOX_KEYS:
+                    form.addRow(r[1], self._param_row("text", *r))
         if c.get("transform") is not None:
             if c["type"] == "filter":                     # a filter has no place of its own: only how strongly it works
                 form.addRow(section("濾鏡"))
@@ -1064,6 +1113,14 @@ class Inspector(QWidget):
                 b.setChecked(aligns == {a})
                 b.blockSignals(False)
             self._key_state(w[("key", "text", "align")], [k["text"].get("align", "center") for k in clips], clips, ts)
+            valigns = {curves.value(k["text"].get("valign", "top"), t) for k, t in zip(clips, ts)}
+            modes = {edit.text_box_mode(k["text"]) for k in clips}
+            for name, a in [(n, ("valign", v)) for n, v in VALIGN_NAMES] + [(n, ("box_mode", v)) for n, v, _t in BOX_NAMES]:
+                b = w[a]
+                b.blockSignals(True)
+                b.setChecked((valigns if a[0] == "valign" else modes) == {a[1]})
+                b.blockSignals(False)
+            self._key_state(w[("key", "text", "valign")], [k["text"].get("valign", "top") for k in clips], clips, ts)
             if w["content"].toPlainText() != text and not w["content"].hasFocus():
                 w["content"].blockSignals(True)
                 w["content"].setPlainText(text)

@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, fx, project
+from . import assets, components, curves, fx, project, textlayout
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -660,8 +660,11 @@ def new_track_id(proj):
     return f"t{n}"
 
 
-TEXT_FIELDS = ("content", "font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align")
+TEXT_FIELDS = ("content", "font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align",
+               "valign", "box_w", "box_h")
 TEXT_ALIGNS = ("left", "center", "right", "justify")      # 對齊 (justify: 齊頭尾)
+TEXT_VALIGNS = ("top", "middle", "bottom")               # 垂直對齊 in a 文字框
+TEXT_BOX_MODES = ("auto", "auto_h", "fixed")             # 自動寬度 / 自動高度 / 固定大小 (Lunacy's)
 TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity", "pivot_x", "pivot_y")   # (pivot: 中心點)
 
 
@@ -728,7 +731,7 @@ def replace_fonts(proj, mapping):
     return n
 
 
-STYLE_TEXT_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align")
+STYLE_TEXT_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align", "valign")
 
 
 def apply_text_style(proj, clip_id, style):
@@ -747,6 +750,33 @@ def apply_text_style(proj, clip_id, style):
     return c
 
 
+def text_box_mode(tx):
+    """A text's 文字框 (TEXT_BOX_MODES): as big as its words, a fixed width it wraps in (the
+    height follows), or a fixed width and height."""
+    if curves.max_abs(tx.get("box_h") or 0.0) > 0:
+        return "fixed"
+    return "auto_h" if curves.max_abs(tx.get("box_w") or 0.0) > 0 else "auto"
+
+
+def set_text_box(proj, clip_id, mode, t=None):
+    """Switch a text's 文字框 (TEXT_BOX_MODES): a side that becomes fixed starts as big as the
+    text is at clip time t (so nothing moves), a side that becomes automatic loses its size
+    and its keyframes."""
+    _, c = find(proj, clip_id)
+    if c["type"] != "text":
+        raise EditError("not a text clip")
+    if mode not in TEXT_BOX_MODES:
+        raise EditError(f"unknown text box {mode}")
+    tx = c["text"]
+    w, h = textlayout.frame_size(curves.static(tx, t or 0, TEXT_ANIM_FIELDS))
+    for key, size, on in (("box_w", w, mode != "auto"), ("box_h", h, mode == "fixed")):
+        if not on:
+            tx.pop(key, None)
+        elif not curves.max_abs(tx.get(key) or 0.0) > 0:
+            tx[key] = math.ceil(size * 10) / 10
+    return c
+
+
 def set_transform(proj, clip_id, key, value, t=None):
     """Set a transform value; keyframed ones are edited at clip time t (see set_param)."""
     if key not in TRANSFORM_FIELDS:
@@ -755,7 +785,8 @@ def set_transform(proj, clip_id, key, value, t=None):
 
 
 # -- keyframes ------------------------------------------------------------------------------------
-TEXT_ANIM_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align")
+TEXT_ANIM_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align",
+                    "valign", "box_w", "box_h")
 GROUP_FIELDS = {
     "transform": TRANSFORM_FIELDS,
     "text": TEXT_ANIM_FIELDS,
@@ -767,7 +798,7 @@ GROUP_FIELDS = {
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "color_dodge", "color_burn",
                "hard_light", "soft_light", "difference", "exclusion", "add", "pass_through")
 DISCRETE_DEFAULTS = {"font_path": project.DEFAULT_FONT, "kind": "rectangle", "invert": False, "blend": "normal",
-                     "align": "center"}
+                     "align": "center", "valign": "top"}
 KEY_TOL_US = 1_000_000 // 120      # half a 60 fps frame
 EASINGS = {                        # CSS-style cubic-bezier control x positions
     "linear": (0.0, 1.0),
@@ -880,6 +911,8 @@ def _check_choice(c, group, key, value):
         raise EditError(f"unknown mask {value}")
     if key == "align" and group == "text" and value not in TEXT_ALIGNS:
         raise EditError(f"unknown text alignment {value}")
+    if key == "valign" and group == "text" and value not in TEXT_VALIGNS:
+        raise EditError(f"unknown vertical alignment {value}")
     if key == "blend" and group == "clip":
         if c["type"] not in VISUAL or c["type"] == "filter":
             raise EditError("blend modes go on pictures, videos, texts and compound clips")
@@ -932,6 +965,10 @@ def set_param(proj, clip_id, group, key, value, t=None):
     if group == "transform" and key == "scale_link":
         h[key] = bool(value)
         return c
+    if group == "text" and key == "box_mode":
+        return set_text_box(proj, clip_id, value, t)
+    if group == "text" and key in ("box_w", "box_h"):
+        value = max(0.0, float(value))
     if group == "asset":
         if not _valid_key(c, group, key):
             raise EditError(f"unknown asset field {key}")

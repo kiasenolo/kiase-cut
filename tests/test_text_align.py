@@ -1,4 +1,6 @@
-"""Text alignment (對齊): left, centre, right and justified (齊頭尾) lines; a keyframeable choice."""
+"""Text alignment (對齊): left, centre, right and justified (齊頭尾) lines; a keyframeable choice.
+The 文字框 (Lunacy's text frame): auto width (the default), auto height (wraps), fixed size with
+top / middle / bottom; switching keeps the text where it is; the preview's handles resize it."""
 import os
 import sys
 import unittest
@@ -52,6 +54,97 @@ class TextAlignTests(unittest.TestCase):
         from kiasecut import curves
         self.assertEqual(curves.value(c["text"]["align"], S // 4), "right")        # held
         self.assertEqual(curves.value(c["text"]["align"], S * 3 // 4), "justify")
+
+
+LONG = "The quick brown fox jumps over 敏捷的棕色狐狸跳過懶狗"
+
+
+def lines_of(spec):
+    return ["".join(g[1] for g in glyphs) for glyphs, _w in textlayout._layout(spec, 1.0, 1080)["lines"]]
+
+
+class TextBoxTests(unittest.TestCase):
+    def test_wraps_in_its_width(self):
+        spec = {"content": LONG, "size": 5.0, "box_w": 300}
+        lines = lines_of(spec)
+        self.assertGreater(len(lines), 2)
+        for ln in lines:
+            self.assertNotIn(ln.strip(), ("Th", "qui", "bro"))           # Latin words go down whole
+        self.assertEqual(" ".join(lines).replace("  ", " ").count("quick"), 1)
+        lay = textlayout._layout(spec, 1.0, 1080)
+        self.assertTrue(all(w <= 300.5 or len(g) == 1 for g, w in lay["lines"]))
+        self.assertEqual(lines_of({"content": LONG, "size": 5.0}), [LONG])  # no box: one line
+        self.assertEqual(textlayout.frame_size(spec)[0], 300)
+        # the same layout at another scale / canvas: px of a 1080-high canvas at scale 1
+        self.assertEqual(["".join(g[1] for g in gs) for gs, _ in textlayout._layout(spec, 2.0, 720)["lines"]], lines)
+
+    def test_vertical_alignment(self):
+        spec = {"content": "AB", "size": 5.0, "box_w": 400, "box_h": 600}
+        tops = {}
+        for v in ("top", "middle", "bottom"):
+            im = textlayout.render(dict(spec, valign=v), 1.0)
+            self.assertGreaterEqual(im.height, 600)
+            box = im.getchannel("A").getbbox()
+            tops[v] = (box[1] - im.height / 2, box[3] - im.height / 2)   # from the frame's centre
+        self.assertLess(tops["top"][0], -250)                            # near the frame's top
+        self.assertLess(abs(tops["middle"][0] + tops["middle"][1]), 12)  # about its centre
+        self.assertGreater(tops["bottom"][1], 250)
+        same = {k: textlayout.render(dict(spec, box_h=0, valign=k), 1.0).tobytes() for k in ("top", "bottom")}
+        self.assertEqual(same["top"], same["bottom"])                    # auto height: nothing to align in
+
+    def test_modes_keep_the_text_in_place(self):
+        p = proj()
+        c = edit.add_text(p, 0, "hello\nworld", S)
+        self.assertEqual(edit.text_box_mode(c["text"]), "auto")
+        before = textlayout.frame_size(c["text"])
+        edit.set_param(p, c["id"], "text", "box_mode", "fixed", 0)
+        self.assertEqual(edit.text_box_mode(c["text"]), "fixed")
+        w, h = textlayout.frame_size(c["text"])
+        self.assertAlmostEqual(w, before[0], delta=0.2)
+        self.assertAlmostEqual(h, before[1], delta=0.2)
+        self.assertEqual(lines_of(c["text"]), ["hello", "world"])        # nothing wrapped
+        edit.set_param(p, c["id"], "text", "box_mode", "auto_h", 0)
+        self.assertNotIn("box_h", c["text"])
+        self.assertIn("box_w", c["text"])
+        edit.set_param(p, c["id"], "text", "box_mode", "auto", 0)
+        self.assertNotIn("box_w", c["text"])
+        edit.set_param(p, c["id"], "text", "valign", "bottom")
+        with self.assertRaises(edit.EditError):
+            edit.set_param(p, c["id"], "text", "valign", "center")
+        with self.assertRaises(edit.EditError):
+            edit.set_param(p, c["id"], "text", "box_mode", "huge")
+        edit.set_param(p, c["id"], "text", "box_w", -5)
+        self.assertEqual(c["text"]["box_w"], 0.0)
+
+    def test_preview_resizes_the_frame(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.preview import Box, Preview
+        QApplication.instance() or QApplication([])
+        p = proj()
+        c = edit.add_text(p, 0, LONG, S)
+        before = Box(c, 1920, 1080, 0)
+        pv = Preview()
+        handle = next(pt for sx, sy, pt in before.handles() if (sx, sy) == (1, 0))
+        group, out = pv._scale_values(before, {"side": (1, 0), "m0": handle}, QPointF(handle.x() + 50, handle.y()),
+                                      Qt.KeyboardModifier.NoModifier)
+        self.assertEqual(group, "transform")                             # as big as its words: it scales
+        edit.set_param(p, c["id"], "text", "box_mode", "auto_h", 0)
+        box = Box(c, 1920, 1080, 0)
+        w0 = c["text"]["box_w"]
+        self.assertAlmostEqual(box.bw, w0, delta=0.5)
+        handle = next(pt for sx, sy, pt in box.handles() if (sx, sy) == (1, 0))
+        group, out = pv._scale_values(box, {"side": (1, 0), "m0": handle}, QPointF(handle.x() - 400, handle.y()),
+                                      Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(group, "multi")
+        self.assertEqual(set(out["text"]), {"box_w"})                    # an edge: its own side
+        self.assertAlmostEqual(out["text"]["box_w"], w0 - 400, delta=0.5)
+        self.assertLess(out["transform"]["x"], 0)                        # the left edge stays
+        handle = next(pt for sx, sy, pt in box.handles() if (sx, sy) == (1, 1))
+        group, out = pv._scale_values(box, {"side": (1, 1), "m0": handle}, QPointF(handle.x() - 400, handle.y() + 30),
+                                      Qt.KeyboardModifier.ControlModifier)
+        self.assertEqual(set(out["text"]), {"box_w", "box_h"})           # a corner: fixed size
 
 
 if __name__ == "__main__":

@@ -29,7 +29,8 @@ from PIL import Image
 from . import assets, curves, fonts, masks, project, svgimage, textlayout
 
 US = 1_000_000
-TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align")
+TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
+                      "box_w", "box_h")
 
 
 def _hash(*parts):
@@ -409,8 +410,10 @@ class Builder:
             tf = c.get("transform", {})
             rs = max(curves.max_abs(tf.get("scale", 1.0)), curves.max_abs(tf.get("scale_y", 1.0)), 1.0)
             tx = c["text"]
-            if any(curves.is_animated(tx.get(k)) for k in TEXT_LAYOUT_FIELDS):
-                # colour / spacing / italic keyframes change the drawing: a frame sequence
+            if any(curves.is_animated(tx.get(k)) for k in TEXT_LAYOUT_FIELDS) or (
+                    textlayout.boxed(tx) and curves.is_animated(tx.get("size"))):
+                # colour / spacing / italic keyframes change the drawing: a frame sequence (and
+                # so does the size of words wrapping in a 文字框, which does not grow with them)
                 res, iw, ih = self.text_sequence(tx, rs, f0, f1, s_us)
                 self.xml.append(f'<producer id="{pid}">' + self.props({
                     "mlt_service": "avformat", "resource": res, "kdenlive:clipname": c.get("name", "text")})

@@ -293,7 +293,8 @@ class MainWindow(QMainWindow):
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
                     ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",
                     ("text", "letter_spacing"): "字距", ("text", "line_spacing"): "行距",
-                    ("text", "italic_deg"): "斜體", ("text", "font_path"): "字體", ("text", "align"): "對齊", ("clip", "blend"): "混合模式",
+                    ("text", "italic_deg"): "斜體", ("text", "font_path"): "字體", ("text", "align"): "對齊", ("text", "valign"): "垂直對齊",
+                    ("text", "box_mode"): "文字框", ("text", "box_w"): "文字框", ("text", "box_h"): "文字框", ("clip", "blend"): "混合模式",
                     ("mask", "kind"): "遮罩形狀", ("mask", "invert"): "反轉遮罩"}
 
     def __init__(self):
@@ -2460,7 +2461,7 @@ class MainWindow(QMainWindow):
         t = self.clip_time(cid)
         if group == "mask" or group.startswith("fxmask:"):
             label = "遮罩"
-        elif group == "multi":                          # a built-in asset resized: size and place
+        elif group == "multi":                          # a built-in asset or a 文字框 resized: size and place
             label = "調整大小"
         else:
             label = "旋轉" if "rotation" in values else "縮放" if "scale" in values else \

@@ -38,7 +38,8 @@ clip     {id, type: image | video | audio | text | compound, name,
                 no feather. kind "image" cuts the same way with a picture file: image (its
                 path), img_w / img_h (its size, for its proportions)
           text: {content, font_path, size, color, letter_spacing, line_spacing,
-                 italic_deg, styles}                        text clips
+                 italic_deg, styles, align, valign, box_w, box_h}   text clips;
+                box_w / box_h: the 文字框 (textlayout.py; absent or 0: as big as the words)
           volume, fade_in_us, fade_out_us                   clips with sound
           backdrop: {on, hide}                              visual clips with effects, optional:
                      套用至背景 - the effects work on what is under the clip, inside its

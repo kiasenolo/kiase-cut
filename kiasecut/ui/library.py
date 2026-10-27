@@ -1,8 +1,14 @@
-"""Media library panel: folders and media, drag into folders or onto the timeline."""
+"""Media library panel: folders and media, drag into folders or onto the timeline.
+
+Pictures' thumbnails are made on a thread of their own (Thumbs): decoding a few dozen camera
+photos took the window a second when a project opened; they show as each one is ready."""
+import queue
+import threading
+
 from PySide6.QtCore import QEvent, QMimeData, QObject, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QImageReader, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QPushButton, QStyle,
-                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
+                               QTreeWidget, QTreeWidgetItem, QTreeWidgetItemIterator, QVBoxLayout, QWidget)
 
 from .. import svgimage
 from . import inplace
@@ -14,12 +20,66 @@ KIND_NAMES = {"image": "圖片", "video": "影片", "audio": "音訊", "filter":
               "compound": "複合片段"}
 
 
-def svg_pixmap(path, w):
-    """A thumbnail of an SVG (an empty pixmap when it cannot be read)."""
-    try:
-        return QPixmap.fromImage(svgimage.raster(path, w))
-    except ValueError:
-        return QPixmap()
+THUMB = (80, 48)
+
+
+def thumb_image(path):
+    """A picture file's thumbnail, at most THUMB (a null image when it cannot be read). Any
+    thread may make one. A JPEG is decoded at a fraction of its size, about twice as quick as
+    the whole of it."""
+    tw, th = THUMB
+    if svgimage.is_svg(path):
+        try:
+            im = svgimage.raster(path, 2 * tw)
+        except ValueError:
+            return QImage()
+    else:
+        r = QImageReader(path)
+        s = r.size()
+        if s.isValid() and s.width() > 2 * tw and s.height() > 2 * th:       # (twice: for the smooth scaling)
+            k = max(2 * tw / s.width(), 2 * th / s.height())
+            r.setScaledSize(QSize(max(1, round(s.width() * k)), max(1, round(s.height() * k))))
+        im = r.read()
+    return im if im.isNull() else im.scaled(tw, th, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+
+class Thumbs(QObject):
+    """Pictures' thumbnails, made on a thread: get(path) is None until it is ready(path)."""
+    ready = Signal(str)
+    _made = Signal(str, QImage)             # from the thread
+
+    def __init__(self):
+        super().__init__()
+        self.cache = {}                     # path -> QIcon (an empty one: it cannot be read)
+        self.asked = set()
+        self.todo = queue.Queue()
+        self.thread = None
+        self._made.connect(self._keep)
+
+    def get(self, path):
+        if path in self.cache:
+            return self.cache[path]
+        if path not in self.asked:
+            self.asked.add(path)
+            self.todo.put(path)
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._run, name="library thumbnails", daemon=True)
+                self.thread.start()
+        return None
+
+    def _run(self):
+        while True:
+            path = self.todo.get()
+            try:
+                img = thumb_image(path)
+            except Exception:
+                img = QImage()
+            self._made.emit(path, img)
+
+    def _keep(self, path, img):
+        self.asked.discard(path)
+        self.cache[path] = QIcon(QPixmap.fromImage(img)) if not img.isNull() else QIcon(QPixmap())
+        self.ready.emit(path)
 
 
 def glyph_icon(text, color):
@@ -209,6 +269,8 @@ class LibraryPanel(QWidget):
         self.tree.itemDoubleClicked.connect(lambda it, _c: self._double(it))
         lay.addWidget(self.tree, 1)
         self.icons = {}
+        self.thumbs = Thumbs()
+        self.thumbs.ready.connect(self._thumb_ready)
 
     def set_origin(self, text, tip=""):
         self.head.setText(text)
@@ -236,12 +298,17 @@ class LibraryPanel(QWidget):
         if it["kind"] == "compound":
             return self.icons.setdefault("#compound", glyph_icon("⧉", "#4a6a9a"))
         if it["kind"] == "image":
-            if it["path"] not in self.icons:
-                pm = svg_pixmap(it["path"], 160) if svgimage.is_svg(it["path"]) else QPixmap(it["path"])
-                self.icons[it["path"]] = QIcon(pm.scaled(80, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                                               if not pm.isNull() else QPixmap())
-            return self.icons[it["path"]]
+            return self.thumbs.get(it["path"]) or self.style().standardIcon(QStyle.SP_FileIcon)
         return self.style().standardIcon(QStyle.SP_MediaVolume if it["kind"] == "audio" else QStyle.SP_MediaPlay)
+
+    def _thumb_ready(self, path):
+        icon = self.thumbs.get(path)
+        it = QTreeWidgetItemIterator(self.tree)
+        while it.value():
+            node = it.value()
+            if node.toolTip(0) == path and not node.data(0, ROLE_ID).startswith("f"):
+                node.setIcon(0, icon)
+            it += 1
 
     def set_library(self, lib):
         expanded = {self.tree.topLevelItem(i).data(0, ROLE_ID) for i in range(self.tree.topLevelItemCount())

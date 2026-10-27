@@ -1904,7 +1904,8 @@ class MainWindow(QMainWindow):
             return
         t = self.playhead_us()
         sel = self.timeline.selected_clips()
-        targets = [k for k in (sel and [self.placed(k) for k in sel] or [k for tr in self.container()["tracks"]
+        starts = edit.abs_starts(self.container())
+        targets = [k for k in (sel and [self.placed(k, starts) for k in sel] or [k for tr in self.container()["tracks"]
                                                                        for k in tr["clips"]])
                    if k["start_us"] < t < k["start_us"] + k["duration_us"]]
         if not targets:
@@ -2145,21 +2146,26 @@ class MainWindow(QMainWindow):
         self.apply_each("修改文字", lambda lvl, cid: edit.set_text(lvl, cid, **fields), ids,
                         merge=("text", tuple(ids), tuple(sorted(fields))))
 
-    def clip_time(self, cid):
+    def clip_time(self, cid, starts=None):
         """Playhead time relative to the start of clip cid (a group's clip: counted from where
-        it is on the timeline)."""
-        return self.playhead_us() - edit.abs_start(self.container(), cid)
+        it is on the timeline). starts: edit.abs_starts of the open level, when at hand."""
+        s = starts.get(cid) if starts is not None else None
+        return self.playhead_us() - (s if s is not None else edit.abs_start(self.container(), cid))
 
-    def placed(self, c):
+    def clip_times(self, ids):
+        """{clip id: clip_time} for several clips (one pass over the level)."""
+        starts = edit.abs_starts(self.container())
+        return {cid: self.clip_time(cid, starts) for cid in ids}
+
+    def placed(self, c, starts=None):
         """Clip c as the panels see it: a group's clip with its start on the timeline (a
         shallow copy; its parameters are its own)."""
         if c is None:
             return None
-        try:
-            s = edit.abs_start(self.container(), c["id"])
-        except edit.EditError:
-            return c
-        return c if s == c["start_us"] else dict(c, start_us=s)
+        if starts is None:
+            starts = edit.abs_starts(self.container())
+        s = starts.get(c["id"])
+        return c if s is None or s == c["start_us"] else dict(c, start_us=s)
 
     def on_param_edited(self, ids, group, key, value):
         """A value typed in the inspector: set on every selected clip (each at its own
@@ -2249,19 +2255,22 @@ class MainWindow(QMainWindow):
         from its start as the playhead is from the start of the main selected clip (or, when
         the playhead is not over that one, the first selected clip it is over), when that
         falls inside it."""
+        if not ids:
+            return {}
         level = self.container()
+        starts = edit.abs_starts(level)
+        durs = {c["id"]: c["duration_us"] for t in project.all_tracks(level["tracks"]) for c in t["clips"]}
         ref = None
         for c in self.timeline.selected_clips_primary_first():
-            own = self.clip_time(c["id"])
+            own = self.clip_time(c["id"], starts)
             if 0 <= own <= c["duration_us"]:
                 ref = own
                 break
         out = {}
         for cid in ids:
-            own = self.clip_time(cid)
-            try:
-                dur = edit.find(level, cid)[1]["duration_us"]
-            except edit.EditError:
+            own = self.clip_time(cid, starts)
+            dur = durs.get(cid)
+            if dur is None:
                 out[cid] = own
                 continue
             out[cid] = ref if not 0 <= own <= dur and ref is not None and 0 <= ref <= dur else own
@@ -2301,18 +2310,10 @@ class MainWindow(QMainWindow):
 
     def _batch_clips(self, cid):
         """(clip cid, [the other selected clips]) of the open level, for 批量."""
-        level = self.container()
-        try:
-            c = edit.find(level, cid)[1]
-        except edit.EditError:
+        clips = {k["id"]: k for t in project.all_tracks(self.container()["tracks"]) for k in t["clips"]}
+        if cid not in clips:
             return None, []
-        others = []
-        for oid in sorted(self.timeline.selected_ids - {cid}):
-            try:
-                others.append(edit.find(level, oid)[1])
-            except edit.EditError:
-                pass
-        return c, others
+        return clips[cid], [clips[oid] for oid in sorted(self.timeline.selected_ids - {cid}) if oid in clips]
 
     def _alike(self, c, others, g, k):
         """[(other clip, its group, its curve)] of others with keyframes on the parameter g / k
@@ -2362,7 +2363,8 @@ class MainWindow(QMainWindow):
         return len(others), len(linked), links
 
     def show_selection_props(self):
-        clips, t = [self.placed(c) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
+        starts = edit.abs_starts(self.container()) if self.proj else {}
+        clips, t = [self.placed(c, starts) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
         times = self.key_times([c["id"] for c in clips])
         self.inspector.show_clips(clips, t, self.fps, [times[c["id"]] for c in clips])
         self.effects.show_clips(clips, t, self.fps)
@@ -2473,7 +2475,7 @@ class MainWindow(QMainWindow):
 
     def on_preview_moves(self, moves):
         """Several clips dragged together on the canvas ({clip id: {x, y}}): one edit."""
-        times = {cid: self.clip_time(cid) for cid in moves}
+        times = self.clip_times(moves)
 
         def set_all(level):
             for cid, vals in moves.items():
@@ -2888,11 +2890,14 @@ class MainWindow(QMainWindow):
 
     def align_or_space(self, label, moves):
         """The align / spacing buttons: the selected clips go to moves (one edit)."""
+        if not moves:
+            return
+        times = self.clip_times(moves)
+        clips = {c["id"]: c for t in project.all_tracks(self.container()["tracks"]) for c in t["clips"]}
         moves = {cid: v for cid, v in moves.items() if any(
-            abs(curves.value(edit.find(self.container(), cid)[1]["transform"].get(k, 0.0), self.clip_time(cid)) - x) > 1e-6
+            abs(curves.value(clips[cid]["transform"].get(k, 0.0), times[cid]) - x) > 1e-6
             for k, x in v.items())}
         if moves:
-            times = {cid: self.clip_time(cid) for cid in moves}
             self.apply(label, lambda level: [edit.set_param(level, cid, "transform", k, x, times[cid])
                                             for cid, vals in moves.items() for k, x in vals.items()])
 
@@ -4510,7 +4515,7 @@ class MainWindow(QMainWindow):
         targets = self.fx_targets(ids, group)
         if not targets:
             return
-        times = {cid: self.clip_time(cid) for cid, _g in targets}
+        times = self.clip_times([cid for cid, _g in targets])
 
         def each(level):
             for cid, g in targets:

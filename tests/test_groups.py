@@ -53,6 +53,21 @@ class GroupTests(unittest.TestCase):
         self.assertFalse(any(project.is_group(c) for c in project.walk_clips(p["tracks"])))
         self.assertEqual((edit.abs_start(p, "c2"), edit.abs_start(p, "c4")), (5 * S, S))
 
+    def test_starts_in_one_pass(self):
+        p = scene()
+        g = edit.make_group(p, p, ["c1", "c4"])
+        outer = edit.make_group(p, p, [g["id"]])                           # (a group in a group)
+        edit.move(p, outer["id"], 10 * S)
+        starts = edit.abs_starts(p)
+        self.assertEqual(starts, {k: edit.abs_start(p, k) for k in starts})
+        self.assertEqual((starts["c1"], starts["c4"], starts["c2"]), (10 * S, 11 * S, 5 * S))
+        self.assertEqual([c["id"] for _, c in edit.find_all(p, ["c4", "c2", "c1"])], ["c4", "c2", "c1"])
+        self.assertIs(edit.find_all(p, ["c4"])[0][0], edit.find(p, "c4")[0])
+        with self.assertRaises(edit.EditError):
+            edit.find_all(p, ["c1", "nope"])
+        with self.assertRaises(edit.EditError):
+            edit.abs_start(p, "nope")
+
     def test_trim_past_the_group_grows_it(self):
         p = scene()
         g = edit.make_group(p, p, ["c1", "c4"])                          # 0-4, alone on t1

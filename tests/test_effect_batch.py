@@ -40,6 +40,7 @@ class EffectBatchTests(unittest.TestCase):
     def host(self):
         p = self.p
         h = types.SimpleNamespace(container=lambda: p, clip_time=lambda cid: 0,
+                                  clip_times=lambda ids: {cid: 0 for cid in ids},
                                   apply=lambda name, fn, *a, merge=None: (self.names.append(name), fn(p, *a)))
         for name in ("add_effects_to", "fx_targets", "fx_each", "on_fx_param_edited", "effect_dropped",
                      "effects_dropped", "on_backdrop_chosen"):

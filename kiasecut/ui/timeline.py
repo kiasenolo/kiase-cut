@@ -403,8 +403,8 @@ class Timeline(QWidget):
 
     def locked_ids(self):
         """Clips on locked tracks: they can never be selected."""
-        return {c["id"] for t in self.rows if project.locked(t) for c in project.walk_clips([t])
-                if c["id"] in {k["id"] for k in self.level_clips()}}
+        here = {k["id"] for k in self.level_clips()}
+        return {c["id"] for t in self.rows if project.locked(t) for c in project.walk_clips([t]) if c["id"] in here}
 
     def set_selection(self, ids, primary=None):
         ids = set(ids) - self.locked_ids()
@@ -2214,7 +2214,8 @@ class Timeline(QWidget):
                 param_menu(menu, comp, sel, self.paramBind.emit, self.paramUnbind.emit)
             if all(k["type"] != "audio" for k in sel):           # 移入群組: one of the level's groups
                 skip = {k["id"] for g in sel for k in [g] + list(project.walk_clips(g.get("tracks") or []))}
-                starts = [edit.abs_start(self.proj, k["id"]) for k in sel or [c]]
+                every = edit.abs_starts(self.proj)
+                starts = [every[k["id"]] for k in sel or [c]]
                 span = (min(starts), max(s + k["duration_us"] for s, k in zip(starts, sel or [c])))
                 group_menu(menu, self.proj, skip, lambda g: self.clipAction.emit("into:" + g, c["id"]),
                            span, lambda us: time_text(us, self.fps, self.timebase))

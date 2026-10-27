@@ -103,6 +103,19 @@ def find(proj, clip_id):
     raise EditError(f"clip {clip_id} not found")
 
 
+def find_all(proj, clip_ids):
+    """[find of each clip id], in one pass over the level."""
+    want, got = set(clip_ids), {}
+    for t in project.all_tracks(proj["tracks"]):
+        for c in t["clips"]:
+            if c["id"] in want:
+                got.setdefault(c["id"], (t, c))
+    for cid in clip_ids:
+        if cid not in got:
+            raise EditError(f"clip {cid} not found")
+    return [got[cid] for cid in clip_ids]
+
+
 def track_by_id(proj, track_id):
     for t in project.all_tracks(proj["tracks"]):
         if t["id"] == track_id:
@@ -119,15 +132,27 @@ def group_of(proj, track):
     return None
 
 
+def _level_starts(tracks, off=0):
+    """(clip, its start in the level's time) for every clip of the tracks, groups' included."""
+    for t in tracks:
+        for c in t["clips"]:
+            yield c, off + c["start_us"]
+            if project.is_group(c):
+                yield from _level_starts(c["tracks"], off + c["start_us"])
+
+
 def abs_start(proj, clip_id):
     """A clip's start in the level's time (a group's clips count from the group's start)."""
-    t, c = find(proj, clip_id)
-    s = c["start_us"]
-    g = group_of(proj, t)
-    while g is not None:
-        s += g["start_us"]
-        g = group_of(proj, find(proj, g["id"])[0])
-    return s
+    for c, s in _level_starts(proj["tracks"]):
+        if c["id"] == clip_id:
+            return s
+    raise EditError(f"clip {clip_id} not found")
+
+
+def abs_starts(proj):
+    """{clip id: abs_start} for every clip of the level, in one pass (for a selection of many:
+    abs_start of each would walk the level once per clip)."""
+    return {c["id"]: s for c, s in _level_starts(proj["tracks"])}
 
 
 def new_clip_id(_proj=None):
@@ -410,7 +435,7 @@ def move_many(proj, clip_ids, d_us, d_rows=0):
     (changing nothing) when a clip would land on one that is not moving or outside the tracks;
     never moves anything before 0."""
     ids = set(clip_ids)
-    moving = [find(proj, cid) for cid in clip_ids]
+    moving = find_all(proj, clip_ids)
     if not moving:
         return []
     d_us = int(max(d_us, -min(c["start_us"] for _, c in moving)))
@@ -434,9 +459,8 @@ def move_many(proj, clip_ids, d_us, d_rows=0):
         if dst is not src:
             src["clips"].remove(c)
             dst["clips"].append(c)
-    for _, src, dst in plan:
-        _sort(src)
-        _sort(dst)
+    for t in {id(t): t for _, src, dst in plan for t in (src, dst)}.values():
+        _sort(t)
     return [c for _, c in moving]
 
 
@@ -1244,11 +1268,10 @@ def level_beats(proj):
     """Every beat grid line (us, the level's time) of the level's sound clips with BPM
     alignment on, a group's included, sorted."""
     out = set()
-    for t in project.all_tracks(proj["tracks"]):
-        for c in t["clips"]:
-            if (c.get("beat") or {}).get("on"):
-                off = abs_start(proj, c["id"]) - c["start_us"]
-                out |= {round(x + off) for x in beat_times(c)}
+    for c, s in _level_starts(proj["tracks"]):
+        if (c.get("beat") or {}).get("on"):
+            off = s - c["start_us"]
+            out |= {round(x + off) for x in beat_times(c)}
     return sorted(out)
 
 
@@ -1594,7 +1617,8 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
     into = [g] + _groups_around(level, gt)
     for x in into:
         _flat_group(x)                                             # (refused before anything changes)
-    starts = {c["id"]: abs_start(level, c["id"]) for _, c in picked}
+    every = abs_starts(level)
+    starts = {c["id"]: every[c["id"]] for _, c in picked}
     shift = 0 if start_us is None else int(start_us) - min(starts.values())
     lo = min(starts.values()) + shift
     hi = max(starts[c["id"]] + c["duration_us"] for _, c in picked) + shift

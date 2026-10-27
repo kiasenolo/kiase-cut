@@ -281,6 +281,28 @@ class GroupRenderTests(unittest.TestCase):
         self.assertEqual(ins.widgets["blend"].findData("pass_through"), -1)
 
 
+class RenameTests(unittest.TestCase):
+    def test_rename_the_selection(self):
+        """重新命名 with several clips selected: all of them get the one name."""
+        from types import SimpleNamespace
+        from kiasecut.ui import inplace, main_window
+        p = scene()
+        tl = SimpleNamespace(selected_ids={"c1", "c2"}, clip_label=lambda c: c["name"])
+        win = SimpleNamespace(timeline=tl, container=lambda root=None: p, clip_anchor=lambda cid: None,
+                              apply_each=lambda label, fn, ids, *a: [fn(p, k, *a) for k in ids])
+        ask, inplace.ask_name = inplace.ask_name, lambda *a: ("片頭", True)
+        try:
+            main_window.MainWindow.on_clip_action(win, "rename", "c1")
+            self.assertEqual([edit.find(p, k)[1]["name"] for k in ("c1", "c2", "c4")], ["片頭", "片頭", "c4"])
+            main_window.MainWindow.on_clip_action(win, "rename", "c4")       # (not in the selection: only it)
+            self.assertEqual([edit.find(p, k)[1]["name"] for k in ("c1", "c4")], ["片頭", "片頭"])
+            inplace.ask_name = lambda *a: ("x", False)                        # (cancelled: nothing)
+            main_window.MainWindow.on_clip_action(win, "rename", "c2")
+            self.assertEqual(edit.find(p, "c2")[1]["name"], "片頭")
+        finally:
+            inplace.ask_name = ask
+
+
 class GroupPreviewTests(unittest.TestCase):
     def test_selected_group_is_dragged_from_its_empty_space(self):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

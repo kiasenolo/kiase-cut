@@ -2155,7 +2155,8 @@ class Timeline(QWidget):
             if c["id"] not in self.selected_ids:
                 self.select(c)
             items = [("複製", "copy"), ("剪下", "cut"), ("貼上到播放頭", "paste"), ("建立副本", "duplicate"), None,
-                     ("重新命名…", "rename"), ("顏色…", "color"), ("預設顏色", "nocolor"), None,
+                     ("重新命名…" if len(self.selected_ids) < 2 else f"全部重新命名（{len(self.selected_ids)} 個）…", "rename"),
+                     ("顏色…", "color"), ("預設顏色", "nocolor"), None,
                      ("在播放頭分割", "split"), ("頭尾對齊拍子", "snap_beats"), ("打亂順序", "shuffle"),
                      ("刪除", "delete")]
             if c["type"] == "compound":

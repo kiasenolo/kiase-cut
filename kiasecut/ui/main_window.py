@@ -2986,10 +2986,12 @@ class MainWindow(QMainWindow):
             self.open_in_tab(project.ref_of(c))
         elif action == "save_library":
             self.save_compound_to_library(c.get("compound_id"))
-        elif action == "rename":
+        elif action == "rename":                             # a multi-selection: all get the one name
+            sel = self.timeline.selected_ids
+            ids = sorted(sel) if cid in sel else [cid]
             name, ok = inplace.ask_name(self, self.timeline.clip_label(c), self.clip_anchor(cid))
             if ok:
-                self.apply("重新命名片段", edit.rename_clip, cid, name)
+                self.apply_each("重新命名片段", edit.rename_clip, ids, name)
         elif action in ("color", "nocolor"):
             sel = self.timeline.selected_ids                  # a multi-selection is coloured together
             ids = sorted(sel) if cid in sel else [cid]

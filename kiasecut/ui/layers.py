@@ -396,8 +396,9 @@ class LayerPanel(QWidget):
         """Right-click on the selected layers: what the buttons do, and rename / hide / lock."""
         items = self.list.selectedItems()
         menu = Menu(self)
-        if len(items) == 1:
-            menu.addAction("重新命名", lambda it=items[0]: self._rename(it))
+        if items:                                          # (several: all get the one name)
+            menu.addAction("重新命名" if len(items) == 1 else f"全部重新命名（{len(items)} 個）",
+                           lambda it=items[0]: self._rename(it))
         for text, action in (("上移", "up"), ("下移", "down"), ("建立群組", "group"), ("複製", "copy"),
                              ("刪除", "delete")):
             menu.addAction(text, lambda a=action: self.actionRequested.emit(a))

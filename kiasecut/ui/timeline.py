@@ -1325,7 +1325,7 @@ class Timeline(QWidget):
 
     # -- 編輯區域 (a compound mask's part) ------------------------------------------------------
     def set_matte_region(self, region):
-        """{clip: id, t_off: us, duration: the compound's us, name} to show, or None."""
+        """{clip: id, t_off: us, duration: the compound's (video's) us, name, icon} to show, or None."""
         if region != self.matte_region:
             self.matte_region = region
             self.update()
@@ -1358,7 +1358,8 @@ class Timeline(QWidget):
         p.drawRect(r)
         p.setPen(QColor("#f0e0ff"))
         name = self.matte_region.get("name") or "複合片段"
-        p.drawText(r.adjusted(6, 0, -6, 0), Qt.AlignLeft | Qt.AlignBottom, f"⧉ {name}（編輯區域：左右拖曳）")
+        icon = self.matte_region.get("icon") or "⧉"
+        p.drawText(r.adjusted(6, 0, -6, 0), Qt.AlignLeft | Qt.AlignBottom, f"{icon} {name}（編輯區域：左右拖曳）")
         p.restore()
 
     # -- volume line ----------------------------------------------------------------------------

@@ -90,7 +90,7 @@ def hard_limits(group, key):
 
 
 MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"),
-              ("複合片段", "compound"), ("圖片", "image"))
+              ("複合片段", "compound"), ("圖片", "image"), ("影片", "video"))
 MATTE_NAMES = (("Alpha（不透明度）", "alpha"), ("明度", "luma"))
 ALIGN_NAMES = (("靠左", "left"), ("置中", "center"), ("靠右", "right"), ("齊頭尾（左右對齊）", "justify"))
 VALIGN_NAMES = (("靠上（文字框固定高度時）", "top"), ("垂直置中（文字框固定高度時）", "middle"),
@@ -296,6 +296,7 @@ class Inspector(QWidget):
     maskEnabledChosen = Signal(list, bool)          # clip ids, on
     maskCompoundChosen = Signal(list, str)          # clip ids, compound id (a compound mask's)
     maskImageChosen = Signal(list, str)             # clip ids, picture file (an image mask's; "" : browse)
+    maskVideoChosen = Signal(list, str)             # clip ids, video file (a video mask's; "" : browse)
     matteRegionChosen = Signal(bool)                # 編輯區域: a compound mask's part, on the timeline
     maskMatteChosen = Signal(list, str)             # clip ids, "alpha" / "luma"
     mattePreviewChosen = Signal(bool)               # 預覽複合片段 or its opacity changed
@@ -325,6 +326,7 @@ class Inspector(QWidget):
         self.fonts = []                   # [{path, name}] installed fonts (fonts.py), for the picker
         self.compounds = []               # [(id, name)] compounds a compound mask can use here
         self.images = []                  # [(path, name)] pictures an image mask can use
+        self.videos = []                  # [(path, name)] videos a video mask can use
         self.picture_of = lambda md: None  # the picture a drag carries (dropped on an image picker)
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
@@ -649,6 +651,12 @@ class Inspector(QWidget):
             self.images = list(items)
             self.shape = None
 
+    def set_videos(self, items):
+        """The videos a video mask can play: [(path, name)] (the media library's)."""
+        if list(items) != self.videos:
+            self.videos = list(items)
+            self.shape = None
+
     def set_compounds(self, items):
         """The compounds a compound mask can cut with here: [(id, name)]."""
         if list(items) != self.compounds:
@@ -689,8 +697,9 @@ class Inspector(QWidget):
         kind.activated.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
         self.widgets["mask_kind"] = kind
         row.addWidget(kind, 1)
-        picture = kind_tag(c.get("mask")) in ("compound", "image")
+        picture = kind_tag(c.get("mask")) in edit.PICTURE_MASKS
         compound = kind_tag(c.get("mask")) == "compound"
+        video = kind_tag(c.get("mask")) == "video"
         if c.get("mask") and not picture:                 # (a picture mask cannot change by keyframes)
             row.addWidget(self._key_button("mask", "kind"))
         if c.get("mask"):
@@ -722,6 +731,23 @@ class Inspector(QWidget):
                 region.toggled.connect(self._matte_region_toggled)
                 self.widgets["matte_region"] = region
                 form.addRow("", region)
+        elif video:
+            pick = ComboBox()
+            pick.setPlaceholderText("選擇影片…")
+            for path, name in self.videos:
+                pick.addItem(name, path)
+            pick.addItem("瀏覽影片檔…", "")
+            pick.activated.connect(lambda i: self._emit_now(self.maskVideoChosen, pick.itemData(i)))
+            pick.setToolTip("用這個影片的畫面裁切，跟著片段播放（專案素材裡的影片，或瀏覽一個影片檔）")
+            self.widgets["mask_video"] = pick
+            form.addRow("影片", pick)
+            if c["mask"].get("video"):
+                region = QCheckBox("編輯區域")
+                region.setToolTip("在時間線上，這個片段上面會出現影片的幽靈：左右拖曳它，決定用影片的哪一段來裁切")
+                region.setChecked(self.matte_region)
+                region.toggled.connect(self._matte_region_toggled)
+                self.widgets["matte_region"] = region
+                form.addRow("", region)
         elif picture:
             pick = ComboBox()
             pick.setPlaceholderText("選擇圖片…")
@@ -734,7 +760,7 @@ class Inspector(QWidget):
             self.widgets["mask_image"] = pick
             form.addRow("圖片", pick)
         if picture:
-            what = "複合片段" if compound else "圖片"
+            what = "複合片段" if compound else "影片" if video else "圖片"
             matte = ComboBox()
             for name, k in MATTE_NAMES:
                 matte.addItem(name, k)
@@ -1093,6 +1119,7 @@ class Inspector(QWidget):
                                          bool(c.get("timed", c["type"] in edit.TIMED and not project.is_static(c))),
                                          tuple(streams), kind_tag(c.get("mask")), "volume" in c,
                                          (c.get("asset") or {}).get("family"), (c.get("mask") or {}).get("compound_id"),
+                                         bool((c.get("mask") or {}).get("video")),
                                          tuple((p["id"], p["kind"], p["name"]) for p in
                                                components.params(components.of_clip(c))))
         ids = [k["id"] for k in clips]
@@ -1223,7 +1250,8 @@ class Inspector(QWidget):
             self._set_combo(w["mask_kind"], kinds.pop() if len(kinds) == 1 else "--")
             if ("key", "mask", "kind") in w:
                 self._key_state(w[("key", "mask", "kind")], [k["mask"].get("kind") for k in clips], clips, ts)
-        for key, field in (("mask_compound", "compound_id"), ("mask_image", "image"), ("mask_matte", "matte")):
+        for key, field in (("mask_compound", "compound_id"), ("mask_image", "image"), ("mask_video", "video"),
+                           ("mask_matte", "matte")):
             if key in w:
                 vals = {(k.get("mask") or {}).get(field, "alpha" if field == "matte" else None) for k in clips}
                 self._set_combo(w[key], vals.pop() if len(vals) == 1 else "--")

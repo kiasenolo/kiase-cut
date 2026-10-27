@@ -432,6 +432,7 @@ class MainWindow(QMainWindow):
             "遮罩類型", lambda lvl, cid: edit.set_mask_compound(lvl, cid, matte=matte), ids))
         mp.mattePreviewChosen.connect(lambda _on: self._matte_preview_changed(force=True))
         mp.maskImageChosen.connect(self.on_mask_image)
+        mp.maskVideoChosen.connect(self.on_mask_video)
         mp.matteRegionChosen.connect(lambda _on: self._update_matte_region())
         mp.keyJump.connect(self.jump_key)
         mask_scroll = QScrollArea()
@@ -2379,6 +2380,7 @@ class MainWindow(QMainWindow):
         if self.proj is not None:
             self.mask_panel.set_compounds(self.mask_compounds())
             self.mask_panel.set_images(self.mask_images())
+            self.mask_panel.set_videos(self.mask_videos())
             self.inspector.set_images(self.mask_images())          # (a component's picture parameters)
         self.mask_panel.show_clips(clips, t, self.fps)
         self.beats.show_clips(clips)
@@ -3481,27 +3483,56 @@ class MainWindow(QMainWindow):
         sel = self.timeline.selected if self.proj else None
         m = (sel or {}).get("mask") or {}
         has = (m.get("compound_id") in self.proj.get("compounds", {}) if m.get("kind") == "compound"
-               else bool(m.get("image")) if m.get("kind") == "image" else False)
+               else bool(m.get(m.get("kind"))) if m.get("kind") in ("image", "video") else False)
         if not (self.preview.mask_mode and self.preview.mask_group == "mask" and has and self.mask_panel.matte_preview):
             return None
         return {"clip": sel["id"], "opacity": self.mask_panel.matte_opacity}
 
     def _update_matte_region(self):
-        """編輯區域: the ghost of the selected clip's (live) compound mask on the timeline, while
-        the 遮罩 tab edits it with 編輯區域 on."""
+        """編輯區域: the ghost of the selected clip's (live) compound mask, or its video mask's
+        video, on the timeline, while the 遮罩 tab edits it with 編輯區域 on."""
         sel = self.timeline.selected if self.proj else None
         m = (sel or {}).get("mask") or {}
         comp = self.proj.get("compounds", {}).get(m.get("compound_id")) if self.proj else None
-        on = (self.mask_panel.matte_region and self.preview.mask_mode and self.preview.mask_group == "mask"
-              and m.get("kind") == "compound" and comp is not None and not comp.get("static"))
+        if m.get("kind") == "video" and m.get("video"):
+            src = {"duration_us": m.get("vid_dur") or 0, "name": os.path.basename(m["video"]), "icon": "▶"}
+        else:
+            src = comp if m.get("kind") == "compound" and comp is not None and not comp.get("static") else None
+        on = self.mask_panel.matte_region and self.preview.mask_mode and self.preview.mask_group == "mask" and src
         self.timeline.set_matte_region({"clip": sel["id"], "t_off": int(m.get("t_off", 0)),
-                                        "duration": comp.get("duration_us") or 0, "name": comp.get("name")}
+                                        "duration": src.get("duration_us") or 0, "name": src.get("name"),
+                                        "icon": src.get("icon")}
                                        if on else None)
 
     def mask_images(self):
         """[(path, name)] of the media library's pictures (what an image mask can cut with)."""
         return [(it["path"], it.get("name") or os.path.basename(it["path"]))
                 for it in library.lib(self.proj)["items"] if it.get("kind") == "image" and it.get("path")]
+
+    def mask_videos(self):
+        """[(path, name)] of the media library's videos (what a video mask can play)."""
+        return [(it["path"], it.get("name") or os.path.basename(it["path"]))
+                for it in library.lib(self.proj)["items"] if it.get("kind") == "video" and it.get("path")]
+
+    def on_mask_video(self, ids, path):
+        """A video mask's video: one of the library's, or ("") a file picked now."""
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "遮罩影片", self.root or "",
+                                                  "影片 (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.gif)")
+            if not path:
+                self.refresh_inspector()
+                return
+            path = path.replace("\\", "/")
+        try:
+            info = library.probe(path)
+        except Exception:
+            info = {}
+        if info.get("kind") != "video":
+            self.statusBar().showMessage("讀不到這個影片", 4000)
+            self.refresh_inspector()
+            return
+        self.apply_each("遮罩影片", lambda lvl, cid: edit.set_mask_video(
+            lvl, cid, path, info["width"], info["height"], info.get("duration_us")), ids)
 
     def on_mask_image(self, ids, path):
         """An image mask's picture: one of the library's, or ("") a file picked now."""

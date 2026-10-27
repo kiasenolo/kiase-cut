@@ -20,7 +20,8 @@ follows the same rules as build.py:
     its own parameter values put in, at clip time;
   * a compound mask (kind "compound") cuts with a compound's picture (view["compounds"]):
     its alpha or luma, at clip time + its t_off (a static one: its still); an image mask
-    (kind "image") the same way with a picture file. view["matte_preview"] =
+    (kind "image") the same way with a picture file, a video mask (kind "video") with a video's
+    frame at clip time + its t_off. view["matte_preview"] =
     {clip, opacity} (the editor, while the mask is edited) draws that picture over the clip.
 QPainter on QImage is usable from any thread, so the player renders off the UI thread.
 glrender.py draws the same frames on the GPU (and is used when it can be); this one is the
@@ -223,6 +224,10 @@ class Renderer:
         if kind == "image":
             path, w, h = mask.get("image"), mask.get("img_w"), mask.get("img_h")
             return {"image": path, "width": w, "height": h} if path and w and h else None
+        if kind == "video":
+            path, w, h = mask.get("video"), mask.get("vid_w"), mask.get("vid_h")
+            return ({"video": path, "width": w, "height": h, "duration_us": mask.get("vid_dur") or 0}
+                    if path and w and h else None)
         if kind != "compound":
             return None
         kid = mask.get("compound_id")
@@ -231,7 +236,7 @@ class Renderer:
     def clip_mask(self, c, t):
         """The mask that cuts clip c now (None: none, off, or a picture mask without its picture)."""
         m = project.active_mask(c)
-        if m and curves.value(m.get("kind"), t) in ("compound", "image") and self.matte_compound(m, t) is None:
+        if m and curves.value(m.get("kind"), t) in ("compound", "image", "video") and self.matte_compound(m, t) is None:
             return None
         return m
 
@@ -242,9 +247,18 @@ class Renderer:
 
     def matte_image(self, mask, comp, t, k, fps):
         """A mask's compound drawn at k px per compound unit: a static one's still, else its
-        frame at clip time t + t_off (held at its first / last frame); an image mask's picture."""
+        frame at clip time t + t_off (held at its first / last frame); an image mask's picture;
+        a video mask's frame at clip time t + t_off (a white one while it cannot be had)."""
         if comp.get("image"):
             return self.image(comp["image"], comp["width"] * k, comp["height"] * k)
+        if comp.get("video"):
+            w, h = max(1, round(comp["width"] * k)), max(1, round(comp["height"] * k))
+            pic = self.video_frame(comp["video"], matte_time(comp, t + mask.get("t_off", 0), fps), w, h) \
+                if self.video_frame else None
+            if pic is None:
+                pic = QImage(1, 1, QImage.Format_ARGB32_Premultiplied)
+                pic.fill(QColor("white"))
+            return pic
         kid = mask.get("compound_id")
         self._matting.add(kid)
         try:

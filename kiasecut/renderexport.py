@@ -32,7 +32,7 @@ def _blend_or_mask_keys(c):
     if curves.is_animated(c.get("blend")) or c.get("blend", "normal") != "normal":
         return True
     m = c.get("mask") or {}
-    return curves.is_animated(m.get("kind")) or curves.is_animated(m.get("invert")) or m.get("kind") in ("compound", "image")
+    return curves.is_animated(m.get("kind")) or curves.is_animated(m.get("invert")) or m.get("kind") in ("compound", "image", "video")
 
 
 def needs_renderer(proj):

@@ -1144,7 +1144,10 @@ def _aspect(c):
 
 
 MATTES = ("alpha", "luma")          # what of a compound mask's picture lets the clip through
-PICTURE_MASKS = ("compound", "image")   # masks that cut with a picture: a compound's, or an image file
+PICTURE_MASKS = ("compound", "image", "video")   # masks that cut with a picture: a compound's, an image file's,
+PICTURE_FIELDS = {"compound": ("compound_id", "t_off"),        # or a video's (playing)
+                  "image": ("image", "img_w", "img_h"),
+                  "video": ("video", "vid_w", "vid_h", "vid_dur", "t_off")}
 
 
 def _new_mask(old, kind, aspect):
@@ -1154,7 +1157,7 @@ def _new_mask(old, kind, aspect):
              "invert": old.get("invert", False), "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
              "w": old.get("w", 1.0), "h": old.get("h", 1.0), "rotation": old.get("rotation", 0.0),
              "feather": old.get("feather", 0.0)}
-        for k in (("compound_id", "t_off") if kind == "compound" else ("image", "img_w", "img_h")):
+        for k in PICTURE_FIELDS[kind]:
             if old.get(k) is not None:
                 m[k] = old[k]
         if kind == "compound":
@@ -1432,13 +1435,28 @@ def set_mask_image(proj, clip_id, path, width, height):
     return c
 
 
-def set_mask_offset(proj, clip_id, t_off):
-    """編輯區域: which part of a (live) compound mask's compound plays - its time at the clip's
-    start (us; the compound plays on from there with the clip)."""
+def set_mask_video(proj, clip_id, path, width, height, duration_us):
+    """A video mask's video: the file at path (width x height px, duration_us long); the mask
+    takes its proportions, fitted into the clip, and plays it from its start (t_off)."""
     _, c = find(proj, clip_id)
     m = c.get("mask")
-    if not m or m.get("kind") != "compound":
-        raise EditError("這個片段的遮罩不是複合片段")
+    if not m or m.get("kind") != "video":
+        raise EditError("這個片段的遮罩不是影片")
+    if not path or not width or not height:
+        raise EditError("找不到這個影片")
+    a, b = _aspect(c), width / height
+    m.update(video=path, vid_w=int(width), vid_h=int(height), vid_dur=int(duration_us or 0))
+    m["w"], m["h"] = (1.0, round(a / b, 4)) if b > a else (round(b / a, 4), 1.0)
+    return c
+
+
+def set_mask_offset(proj, clip_id, t_off):
+    """編輯區域: which part of a (live) compound mask's compound, or a video mask's video, plays -
+    its time at the clip's start (us; it plays on from there with the clip)."""
+    _, c = find(proj, clip_id)
+    m = c.get("mask")
+    if not m or m.get("kind") not in ("compound", "video"):
+        raise EditError("這個片段的遮罩不是複合片段或影片")
     t_off = int(round(t_off))
     if t_off:
         m["t_off"] = t_off

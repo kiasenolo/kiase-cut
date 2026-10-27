@@ -17,6 +17,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 from xml.sax.saxutils import escape
@@ -74,15 +75,19 @@ def audio_streams(p):
     if p not in _streams:
         try:
             r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-print_format", "json",
-                                "-show_entries", "stream=index,channels:stream_tags=title,language,handler_name", p],
+                                "-show_entries", "stream=index,channels:stream_tags=title,name,language,handler_name",
+                                p],
                                capture_output=True, text=True, timeout=30)
             out = []
             for s in json.loads(r.stdout or "{}").get("streams", []):
                 tags = {k.lower(): v for k, v in (s.get("tags") or {}).items()}
-                title = tags.get("title") or tags.get("handler_name") or ""
-                if title.strip().lower() in ("soundhandler", "sound media handler", "core media audio"):
-                    title = ""                                   # (container defaults, not names)
-                out.append({"index": int(s["index"]), "title": title.strip(), "channels": int(s.get("channels") or 0),
+                handler = tags.get("handler_name") or ""
+                if "handler" in handler.lower() or handler.strip().lower() == "core media audio":
+                    handler = ""                                 # (a program's default, the same on every stream)
+                title = (tags.get("title") or tags.get("name") or handler).strip()
+                if re.fullmatch(r"(track|audio)\s*\d*", title, re.I):
+                    title = ""                                   # (OBS names them Track1...: no more than 音軌 1)
+                out.append({"index": int(s["index"]), "title": title, "channels": int(s.get("channels") or 0),
                             "lang": "" if tags.get("language") in (None, "und") else tags["language"]})
             _streams[p] = out
         except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):

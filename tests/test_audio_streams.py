@@ -74,6 +74,27 @@ class StreamMediaTests(unittest.TestCase):
         self.assertGreater(loud[0], 1000)                                   # the sine
         self.assertEqual(loud[1], 0)                                        # the silent one
 
+    def test_a_failed_decode_is_tried_again(self):
+        mix = audiomix.Mixer(self.dir)
+        c = dict(self.clip(0), media={"path": os.path.join(self.dir, "two.mkv"), "duration_us": 2 * S})
+        p = project.link(dict(project.new(), tracks=[{"id": "a", "kind": "audio", "name": "a", "clips": [c]}]))
+        mix._decode = lambda s: (_ for _ in ()).throw(RuntimeError("slow drive"))
+        mix.set_view(p)
+        mix.thread.join()
+        self.assertEqual(len(mix.sources[0].pcm), 0)                        # silent for now
+        self.assertEqual(mix.decoded, {})                                   # (not remembered as silence)
+        del mix._decode
+        mix.set_view(p)
+        mix.thread.join()
+        self.assertGreater(len(mix.sources[0].pcm), 0)
+
+    def test_obs_names_are_left_out(self):
+        path = os.path.join(self.dir, "obs.mkv")
+        subprocess.run([FFMPEG, "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "1",
+                        "-metadata:s:a:0", "name=Track1", "-metadata:s:a:0", "handler_name=OBS Audio Handler",
+                        "-c:a", "pcm_s16le", path], check=True)
+        self.assertEqual(build.stream_label(build.audio_streams(path), 0), "音軌 1：2 聲道")
+
     def test_waveform_per_stream(self):
         peaks = waveform.Peaks(self.dir)
         self.assertGreater(peaks._decode(self.path, 0)[0].max(), 0.1)

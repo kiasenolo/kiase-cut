@@ -103,8 +103,10 @@ class Mixer:
                     continue
             try:
                 pcm, offset = self._decode(s)
-            except Exception:
-                pcm, offset = np.zeros((0, CHANNELS), np.int16), 0
+            except Exception:                           # silent for now; the next set_view tries again
+                with self.lock:
+                    s.pcm, s.offset = np.zeros((0, CHANNELS), np.int16), 0
+                continue
             with self.lock:
                 self.decoded[s.key()] = (pcm, offset)
                 for o in self.sources:
@@ -124,8 +126,11 @@ class Mixer:
         start = max(src_us / US, lead)
         r = subprocess.run([find_ffmpeg(), "-v", "error", "-ss", f"{start:.6f}", "-t", f"{dur_us / US + 0.1:.6f}",
                             "-i", path, "-map", f"0:a:{stream}", "-vn", "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "-"],
-                           capture_output=True, timeout=120)
-        pcm = np.frombuffer(r.stdout, np.int16).reshape(-1, CHANNELS).copy()
+                           capture_output=True, timeout=120 + dur_us / US / 5)   # (an hour off a USB drive)
+        if r.returncode != 0 and not r.stdout:
+            raise RuntimeError(r.stderr.decode(errors="replace")[-300:])
+        pcm = np.frombuffer(r.stdout, np.int16)
+        pcm = pcm[: len(pcm) // CHANNELS * CHANNELS].reshape(-1, CHANNELS).copy()
         os.makedirs(self.dir, exist_ok=True)            # (the project's cache may have been cleared)
         np.save(cached, pcm)
         return pcm, offset

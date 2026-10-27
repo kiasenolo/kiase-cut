@@ -18,7 +18,7 @@ import time
 
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QImage, QKeySequence, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
                                QMenu, QPushButton, QScrollArea, QSlider, QStackedWidget, QTabBar,
@@ -4792,6 +4792,12 @@ def run(argv):
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
     app = QApplication(argv)
     app.setStyle(wheel.Style(app.style().name()))   # lists scroll by pixels (touchpads)
+    # the logo (Icon.svg beside the package; Icon.free is its Lunacy source) on every window;
+    # Wayland desktops take the icon from kiasecut.desktop instead, found by this name
+    app.setDesktopFileName("kiasecut")
+    logo = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Icon.svg")
+    if os.path.exists(logo):
+        app.setWindowIcon(QIcon(logo))
     app.setStyleSheet(STYLE)
     win = MainWindow()
     win.show()

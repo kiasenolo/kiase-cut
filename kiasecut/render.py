@@ -553,13 +553,16 @@ class Renderer:
     def run_effects(self, effects, img, t, duration, fps, wt, disp, unit):
         """Apply a chain of effects to img (QImage ARGB32 premultiplied, unit of its px per canvas
         px) at clip time t; each effect's own mask (clip-local, through world transform wt)
-        limits where it shows."""
+        limits where it shows, its 混合程度 how much."""
         todo = [e for e in effects if not e.get("disabled") and e.get("filter") != project.TIME_FILTER]
         eng = self.engine() if todo else None
         if eng is None:
             return img
         arr = image_to_array(img)
         for e in todo:
+            amount = fx.mix_at(e, t)
+            if amount <= 0:
+                continue
             d = fx.get(e["filter"])
             vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
             try:
@@ -569,9 +572,10 @@ class Renderer:
                 self.errors.append(f"濾鏡「{d.name}」：{exc}")
                 continue
             mk = e.get("mask")
-            if mk:
+            if mk or amount < 1:
                 h, w = arr.shape[:2]
-                m = coverage(mk, t, disp, wt, w, h, curves.value(mk.get("feather", 0.0), t))[..., None]
+                m = coverage(mk, t, disp, wt, w, h, curves.value(mk.get("feather", 0.0), t))[..., None] * amount \
+                    if mk else amount
                 out = (arr * (1 - m) + out * m).round().astype(np.uint8)
             arr = np.ascontiguousarray(out)
         return array_to_image(arr)

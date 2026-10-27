@@ -247,9 +247,9 @@ def edit_rate(proj):
 
 def same_group(c, other, group):
     """The group of clip other that matches group of clip c: itself, or for a filter's
-    parameters (fx:<effect id>) the same filter at the same place among other's filters of
-    that kind; None when other has none."""
-    if not group.startswith(("fx:", "fxmask:")):
+    parameters (fx:<effect id>, fxmask:, fxmix:) the same filter at the same place among other's
+    filters of that kind; None when other has none."""
+    if not group.startswith(("fx:", "fxmask:", "fxmix:")):
         return group
     kind, eid = group.split(":", 1)
     mine = c.get("effects") or []
@@ -268,8 +268,8 @@ def many(clips):
 
 def group_holder(c, group, create=False):
     """The dict of clip c that holds the parameters of `group` ("transform", "mask", "clip", ...,
-    or "fx:<effect id>" / "fxmask:<effect id>" for a filter's own)."""
-    if group.startswith(("fx:", "fxmask:")):
+    or "fx:<effect id>" / "fxmask:<effect id>" / "fxmix:<effect id>" for a filter's own)."""
+    if group.startswith(("fx:", "fxmask:", "fxmix:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:
@@ -4314,7 +4314,7 @@ class MainWindow(QMainWindow):
             self.apply(label + many(ids), lambda lvl: [edit.put_effect(lvl, cid, w) for cid in ids for w in whats])
 
     def fx_targets(self, ids, group):
-        """[(clip id, its group)] for an effect's group (fx:<id> / fxmask:<id>) of clip ids[0] in
+        """[(clip id, its group)] for an effect's group (fx:<id> / fxmask:<id> / fxmix:<id>) of clip ids[0] in
         each of clips ids: the same filter at the same place (same_group), where it has it."""
         level = self.container()
         try:

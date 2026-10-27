@@ -683,6 +683,9 @@ class GLRenderer(render.Renderer):
         inv, _ = world.inverted()
         cur = lay
         for e in effects:
+            amount = fx.mix_at(e, t)
+            if amount <= 0:
+                continue
             d = fx.get(e["filter"])
             vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
             try:
@@ -693,7 +696,7 @@ class GLRenderer(render.Renderer):
                 self.errors.append(f"濾鏡「{d.name}」：{exc}")
                 continue
             nxt = gl.layer(cur.w, cur.h)
-            gl.mix(nxt, cur.tex, out, 1.0, e.get("mask"), t, disp, inv)       # the effect's own mask limits it
+            gl.mix(nxt, cur.tex, out, amount, e.get("mask"), t, disp, inv)    # its own mask and 混合程度 limit it
             if cur is not lay:
                 gl.release(cur)
             cur = nxt

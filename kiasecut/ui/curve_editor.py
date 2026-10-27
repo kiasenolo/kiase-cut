@@ -61,6 +61,7 @@ def param_rows(c):
     for e in c.get("effects") or []:                    # the numbers of the clip's filters and their masks
         d = fx.get(e["filter"])
         name = d.name if len(c["effects"]) == 1 else f"{d.name} #{c['effects'].index(e) + 1}"
+        out.append(("fxmix:" + e["id"], "mix", f"{name}·混合程度 %", 100, 1.0))
         for p in d.params:
             if p.type in ("float", "int"):
                 out.append(("fx:" + e["id"], p.name, f"{name}·{p.label}", 1, p.default))
@@ -70,7 +71,7 @@ def param_rows(c):
 
 
 def holder(c, group):
-    if group.startswith(("fx:", "fxmask:")):
+    if group.startswith(("fx:", "fxmask:", "fxmix:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:

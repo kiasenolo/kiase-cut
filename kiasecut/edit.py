@@ -185,7 +185,8 @@ def _params(c):
         if curves.is_animated(c.get(key)):
             out.append(c[key])
     for e in c.get("effects") or []:
-        out += [v for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) if curves.is_animated(v)]
+        out += [v for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) + [e.get("mix")]
+                if curves.is_animated(v)]
     return out
 
 
@@ -699,10 +700,13 @@ def _effect(c, effect_id):
 
 
 def _valid_key(c, group, key):
-    """Whether `key` is a parameter of `group` (groups "fx:<effect id>" and
-    "fxmask:<effect id>" are an effect's own parameters and mask)."""
+    """Whether `key` is a parameter of `group` (groups "fx:<effect id>",
+    "fxmask:<effect id>" and "fxmix:<effect id>" are an effect's own parameters, its mask and
+    its 混合程度)."""
     if group.startswith("fx:"):
         return key in _effect(c, group[3:])["params"]
+    if group.startswith("fxmix:"):
+        return key == "mix" and bool(_effect(c, group[6:]))
     if group.startswith("fxmask:"):
         return key in GROUP_FIELDS["mask"]
     if group == "asset":
@@ -738,6 +742,8 @@ def _holder(c, group):
         if not e.get("mask"):
             raise EditError("effect has no mask")
         return e["mask"]
+    if group.startswith("fxmix:"):              # (the effect itself: its "mix")
+        return _effect(c, group[6:])
     if group == "clip":
         return c
     if group == "mask":
@@ -902,7 +908,7 @@ def _toggle_one(c, h, group, key, t):
         default = DISCRETE_DEFAULTS[key]
     else:
         default = {"scale": 1.0, "opacity": 1.0, "volume": 1.0, "w": 1.0, "h": 1.0, "size": 5.0,
-                   "color": [1.0, 1.0, 1.0]}.get(key, 0.0)
+                   "color": [1.0, 1.0, 1.0], "mix": 1.0}.get(key, 0.0)
     p = h.get(key, default)
     i = key_at(p, t)
     if i is not None:
@@ -963,7 +969,7 @@ def key_times(c):
         if curves.is_animated(c.get(key)):
             times |= {k[0] for k in c[key]["keys"]}
     for e in c.get("effects") or []:
-        for v in list(e["params"].values()) + list((e.get("mask") or {}).values()):
+        for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) + [e.get("mix")]:
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
     return sorted(times)

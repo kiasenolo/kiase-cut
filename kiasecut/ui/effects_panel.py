@@ -4,7 +4,8 @@ the same filters in the same order the form is the main clip's and every change 
 them (a value they do not share shows as --); when not, only 新增效果 is offered, and it (or a
 filter dropped in the panel) replaces all their effects with the new one.
 
-Each effect has its switch, name, order buttons, its parameters (every value can be
+Each effect has its switch, name, order buttons, its 混合程度 (how much of its result shows over
+the picture it was given, 0 - 100 %), its parameters (every value can be
 keyframed with ◆, like the clip's own; on / off, menus and shapes hold until their next keyframe)
 and an optional mask that limits where it works. Its ⠿ grip drags it: to another place in the
 list, or onto a clip (timeline, layers) to copy it there with its settings, or onto an empty spot
@@ -303,6 +304,7 @@ class EffectsPanel(QWidget):
             where = QPushButton("在檔案總管中顯示濾鏡檔")
             where.clicked.connect(lambda _=False, ref=e["filter"]: self.revealFilter.emit(ref))
             lay.addWidget(where)
+        lay.addLayout(self._number_row("fxmix:" + e["id"], "mix", "混合程度 %", 0.0, 100.0, 1.0, 0, 100))
         group = "fx:" + e["id"]
         for p in d.params:
             lay.addLayout(self._param_row(group, p))
@@ -355,7 +357,8 @@ class EffectsPanel(QWidget):
         if group.startswith("fx:"):                  # a filter's own numbers: typing goes past its range
             s.set_limits(lo, hi)
         else:
-            g = "mask" if group.startswith("fxmask:") else group
+            g = group.split(":", 1)[0] if group.startswith(("fxmask:", "fxmix:")) else group
+            g = "mask" if g == "fxmask" else g
             s.set_limits(lo, hi, *[None if v is None else v * factor for v in hard_limits(g, key)])
         s.setSingleStep(step)
         s.setDecimals(dec)
@@ -556,6 +559,18 @@ class EffectsPanel(QWidget):
         for i, e in enumerate(c.get("effects") or []):
             es = [k["effects"][i] for k in pics]
             d = fx.get(e["filter"])
+            xgroup = "fxmix:" + e["id"]
+            stored = [x.get("mix", 1.0) for x in es]
+            s = w.get((xgroup, "mix"))
+            v = alike([curves.value(m, t) for m, t in zip(stored, ts)])
+            if s is None or s.hasFocus() and ((xgroup, "mix") in self.pending or s.mixed and v is MIXED):
+                pass                                # (being typed)
+            elif v is MIXED:
+                s.show_mixed()
+            else:
+                s.show_value(round(float(v) * 100))
+            if ("key", xgroup, "mix") in w:
+                Inspector._key_state(w[("key", xgroup, "mix")], stored, pics, ts)
             group = "fx:" + e["id"]
             for p in d.params:
                 stored = [x["params"].get(p.name, p.default) for x in es]

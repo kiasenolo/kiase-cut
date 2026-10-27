@@ -69,7 +69,7 @@ HARD = {("text", "size"): (0.0, None), ("text", "italic_deg"): (-89.0, 89.0),
         ("transform", "scale"): (0.0, None), ("transform", "scale_y"): (0.0, None),
         ("transform", "opacity"): (0.0, 1.0),
         ("mask", "w"): (0.0, None), ("mask", "h"): (0.0, None), ("mask", "feather"): (0.0, None),
-        ("clip", "volume"): (0.0, None)}
+        ("clip", "volume"): (0.0, None), ("fxmix", "mix"): (0.0, 1.0)}
 
 
 def hard_limits(group, key):

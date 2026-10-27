@@ -199,8 +199,14 @@ def default_params(d):
 
 
 def new_effect(ref, effect_id):
-    """A new effect entry for a clip: {id, filter, enabled, params}."""
+    """A new effect entry for a clip: {id, filter, enabled, params}; an optional "mix" (0 - 1,
+    may be keyframed: 混合程度) blends the result with the picture it was given, 1 when absent."""
     return {"id": effect_id, "filter": ref, "enabled": True, "params": default_params(get(ref))}
+
+
+def mix_at(e, t):
+    """How much of effect e's result shows at clip time t (0 - 1: its 混合程度)."""
+    return min(1.0, max(0.0, float(curves.value(e.get("mix", 1.0), t))))
 
 
 def label(ref):

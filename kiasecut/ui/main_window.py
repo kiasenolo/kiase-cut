@@ -1838,8 +1838,9 @@ class MainWindow(QMainWindow):
             self.path_ids = []
         sel, ids = self.timeline.selected_id, set(self.timeline.selected_ids)
         self.timeline.set_project(self.view(), keep_view=True)
-        alive = {c["id"] for t in self.timeline.rows for c in t["clips"]} - self.timeline.locked_ids()
-        if sel and sel not in alive and sel in {c["id"] for t in self.timeline.rows for c in t["clips"]}:
+        there = {c["id"] for c in self.timeline.level_clips()}          # (those inside groups too)
+        alive = there - self.timeline.locked_ids()
+        if sel and sel not in alive and sel in there:
             sel = next(iter(sorted(ids & alive)), None)  # (a track just locked lets go of its clips)
         self.timeline.selected_id = sel
         if sel:                                          # keep a multiple selection too

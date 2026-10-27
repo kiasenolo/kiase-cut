@@ -588,7 +588,7 @@ def new_track_id(proj):
 
 TEXT_FIELDS = ("content", "font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align")
 TEXT_ALIGNS = ("left", "center", "right", "justify")      # 對齊 (justify: 齊頭尾)
-TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity")
+TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity", "pivot_x", "pivot_y")   # (pivot: 中心點)
 
 
 def set_text(proj, clip_id, **fields):
@@ -1385,9 +1385,9 @@ def ungroup(root, level, group_id):
     if any(curves.is_animated(v) for v in tf.values()) or abs(curves.value(tf.get("rotation", 0.0), 0)) > 1e-9 \
             or tf.get("flip_h") or tf.get("flip_v"):
         raise EditError("群組有旋轉或關鍵幀動畫：先把它們歸零再解散")
-    gx, gy = float(tf.get("x", 0.0)), float(tf.get("y", 0.0))
     gs = float(tf.get("scale", 1.0))
     gsy = float(tf.get("scale_y", gs))
+    gx, gy = _placed(tf, gs, gsy)
     go = float(tf.get("opacity", 1.0))
     outer = group_of(level, t)
     holder = outer["tracks"] if outer is not None else level["tracks"]
@@ -1401,8 +1401,9 @@ def ungroup(root, level, group_id):
             ktf = k.get("transform")
             if ktf is not None:
                 ax, ay = moves[id(k)]                            # (中心點跟隨最下層物件: folded in)
-                ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: gx + gs * (v + ax))
-                ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: gy + gsy * (v + ay))
+                kpx, kpy = _pivot(ktf)                           # (its own 中心點 scales with it)
+                ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: gx + gs * (v + ax) + (gs - 1) * kpx)
+                ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: gy + gsy * (v + ay) + (gsy - 1) * kpy)
                 sx = ktf.get("scale", 1.0)
                 if "scale_y" in ktf or abs(gs - gsy) > 1e-9:
                     ktf["scale_y"] = _map_value(ktf.get("scale_y", sx), lambda v: v * gsy)
@@ -1444,14 +1445,26 @@ def _flat_group(g):
     """(x, y, scale x, scale y) of a group that is not turned, flipped or animated in place
     or size (its clips' canvas place folds in and out of it exactly), else EditError."""
     tf = g.get("transform") or {}
-    if any(curves.is_animated(tf.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation")) \
+    if any(curves.is_animated(tf.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation", "pivot_x", "pivot_y")) \
             or abs(curves.value(tf.get("rotation", 0.0), 0)) > 1e-9 or tf.get("flip_h") or tf.get("flip_v"):
         raise EditError(f"「{g.get('name') or '群組'}」有旋轉或關鍵幀動畫：片段沒辦法不移動地放進去")
     gs = float(tf.get("scale", 1.0))
     gsy = float(tf.get("scale_y", gs))
     if abs(gs) < 1e-9 or abs(gsy) < 1e-9:
         raise EditError("群組的縮放是 0")
-    return float(tf.get("x", 0.0)), float(tf.get("y", 0.0)), gs, gsy
+    return _placed(tf, gs, gsy) + (gs, gsy)
+
+
+def _pivot(tf):
+    """A transform's pivot (中心點) at its start, half-canvas units."""
+    return curves.value(tf.get("pivot_x", 0.0), 0), curves.value(tf.get("pivot_y", 0.0), 0)
+
+
+def _placed(tf, gs, gsy):
+    """(x, y) where an unturned, unanimated transform scaled gs x gsy puts its centre: x / y
+    moved by scaling about its pivot (project.pivot_shift, which turning would add to)."""
+    px, py = _pivot(tf)
+    return float(tf.get("x", 0.0)) + (1 - gs) * px, float(tf.get("y", 0.0)) + (1 - gsy) * py
 
 
 def _groups_around(level, track):
@@ -1485,11 +1498,13 @@ def _refit(c, out_of, into):
     ax = [a for _, a in out_of]
     tax = [a for _, a in reversed(into)]
 
+    piv = _pivot(ktf)                                             # (its 中心點 scales with it)
+
     def axis(v, i):
         for f, a in zip(fx, ax):
-            v = f[i] + f[2 + i] * (v + a[i])
+            v = f[i] + f[2 + i] * (v + a[i]) + (f[2 + i] - 1) * piv[i]
         for f, a in zip(tx, tax):
-            v = (v - f[i]) / f[2 + i] - a[i]
+            v = (v - f[i]) / f[2 + i] - a[i] + (1 / f[2 + i] - 1) * piv[i]
         return v
 
     def size(v, i):

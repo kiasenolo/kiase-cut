@@ -2,7 +2,8 @@
 
 Mapping (each verified against a Jianying export with melt 7.43):
   transform / opacity -> qtblend effect on the timeline entry: rect "x y w h opacity",
-                         rotation in clockwise degrees about the clip centre
+                         rotation in clockwise degrees about the clip centre (a pivot,
+                         中心點, moves the rect: project.centre_px)
   mask                -> shape effect after qtblend, RGBA matte, alpha_operation=minimum;
                          mattes are baked in screen space from the mask + transform params
   text                -> PNG rendered by textlayout (Jianying's exact layout), padded to a
@@ -273,8 +274,8 @@ class Builder:
             k = curves.value(size, t) / size_ref if size_ref else 1.0   # animated font size
             w = bw * curves.value(sc, t) * k
             h = bh * curves.value(scy, t) * k
-            px = W / 2 + curves.value(x, t) * W / 2 - w / 2
-            py = H / 2 - curves.value(y, t) * H / 2 - h / 2
+            cx, cy = project.centre_px(tf, t, W, H)            # (中心點: turned about its pivot)
+            px, py = cx - w / 2, cy - h / 2
             o = min(1.0, max(0.0, curves.value(op, t)))
             return px, py, w, h, o
 
@@ -282,7 +283,8 @@ class Builder:
         if project.active_mask(c) and self.mask_mode == "native":
             out += self.native_mask(c["mask"], disp or (W, H), f0, f1, clip_start_us, off)
         out += self.filt("qtblend", {
-            "rect": self.anim([x, y, sc, scy, op, size], f0, f1, rect, (0.02, 0.02, 0.02, 0.02, 0.0005),
+            "rect": self.anim([x, y, sc, scy, op, size, rot, tf.get("pivot_x", 0.0), tf.get("pivot_y", 0.0)],
+                              f0, f1, rect, (0.02, 0.02, 0.02, 0.02, 0.0005),
                               clip_start_us, off),
             "rotation": self.anim([rot], f0, f1, lambda t: (curves.value(rot, t),), 0.005,
                                   clip_start_us, off),

@@ -21,7 +21,11 @@ clip     {id, type: image | video | audio | text | compound, name,
           transform: {x, y, scale, rotation, opacity}       visual clips, Jianying units:
                      x, y in half-canvas units (y up), clockwise degrees; scale is the
                      X scale, optional scale_y the Y one (absent: same as X), optional
-                     scale_link (default true): X and Y change together, keeping their ratio
+                     scale_link (default true): X and Y change together, keeping their ratio;
+                     optional pivot_x, pivot_y (中心點, animated like the rest): the point it
+                     turns and scales about, in its own frame (half-canvas units from its
+                     centre, y up, unscaled: it moves, turns and scales with it). x / y still
+                     place its centre while it is not turned or scaled (pivot_shift)
           asset: {key, family, w, h, color, ...}            built-in assets (assets.py): an
                      image clip drawn from these parameters, at its own size (picture_size)
           mask: {kind, invert, cx, cy, w, h, rotation, feather, enabled} or None;
@@ -92,6 +96,7 @@ code can walk into it). On disk, and in undo snapshots, only compound_id is kept
 leaves the links out and link() puts them back.
 """
 import json
+import math
 import os
 
 from kiasecut import curves
@@ -253,6 +258,33 @@ def anchored(g, track, t_us):
         return 0.0, 0.0
     ids = [id(t) for t in g["tracks"]]
     return (a[1], a[2]) if ids.index(id(track)) > ids.index(id(a[0])) else (0.0, 0.0)
+
+
+def pivot_shift(tf, t, W, H, scale=None, scale_y=None, rotation=None):
+    """中心點: (dx, dy) canvas px (y down) that turning and scaling about the pivot instead of
+    the centre moves a W x H canvas clip's centre by, at clip time t (scale, scale_y, rotation:
+    other values than tf's, for a drag); (0, 0) without a pivot. The renderers draw a clip at
+    centre_px, which adds this to where x / y put it."""
+    px, py = curves.value(tf.get("pivot_x", 0.0), t), curves.value(tf.get("pivot_y", 0.0), t)
+    if not px and not py:
+        return 0.0, 0.0
+    sx = curves.value(tf.get("scale", 1.0), t) if scale is None else scale
+    sy = (curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t) if scale is None else scale) \
+        if scale_y is None else scale_y
+    deg = curves.value(tf.get("rotation", 0.0), t) if rotation is None else rotation
+    lx, ly = px * W / 2, -py * H / 2                    # the pivot in the clip's frame (y down)
+    qx = lx * sx * (-1 if tf.get("flip_h") else 1)
+    qy = ly * sy * (-1 if tf.get("flip_v") else 1)
+    b = math.radians(deg)                               # (clockwise on a y-down canvas)
+    return lx - (qx * math.cos(b) - qy * math.sin(b)), ly - (qx * math.sin(b) + qy * math.cos(b))
+
+
+def centre_px(tf, t, W, H):
+    """Where a clip's centre is drawn on a W x H canvas at clip time t (canvas px, y down):
+    x / y, moved by turning and scaling about its pivot (pivot_shift)."""
+    dx, dy = pivot_shift(tf, t, W, H)
+    return (W / 2 + curves.value(tf.get("x", 0.0), t) * W / 2 + dx,
+            H / 2 - curves.value(tf.get("y", 0.0), t) * H / 2 + dy)
 
 
 def walk_clips(tracks):

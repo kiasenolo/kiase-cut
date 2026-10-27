@@ -290,6 +290,7 @@ class MainWindow(QMainWindow):
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
                     ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
+                    ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
                     ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",
                     ("text", "letter_spacing"): "字距", ("text", "line_spacing"): "行距",
                     ("text", "italic_deg"): "斜體", ("text", "font_path"): "字體", ("text", "align"): "對齊", ("clip", "blend"): "混合模式",
@@ -2432,7 +2433,8 @@ class MainWindow(QMainWindow):
         elif group == "multi":                          # a built-in asset resized: size and place
             label = "調整大小"
         else:
-            label = "旋轉" if "rotation" in values else "縮放" if "scale" in values else "移動位置"
+            label = "旋轉" if "rotation" in values else "縮放" if "scale" in values else \
+                "中心點" if "pivot_x" in values else "移動位置"
 
         def set_all(level):
             for g, vals in (values.items() if group == "multi" else [(group, values)]):

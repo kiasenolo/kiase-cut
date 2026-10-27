@@ -6,7 +6,7 @@ follows the same rules as build.py:
   * a clip covers frames round(start * fps) .. round(end * fps) - 1;
   * keyframe time is frame time minus the clip start;
   * position in half-canvas units (y up), clockwise rotation, uniform scale about the
-    clip centre; pictures are fitted into the canvas, texts are textlayout images;
+    clip centre - or its pivot (中心點, project.centre_px); pictures are fitted into the canvas, texts are textlayout images;
   * masks live in material space (they move with the clip), drawn as clip paths;
   * a clip whose effects go to the background (project.backdrop_of) runs them on what is
     under it, inside its shape (a built-in asset's: where it is, not its colours' alpha nor
@@ -482,7 +482,7 @@ class Renderer:
         p.save()
         p.setOpacity(p.opacity() * opacity)
         p.setCompositionMode(BLEND_OPS.get(curves.value(c.get("blend", "normal"), t), QPainter.CompositionMode_SourceOver))
-        p.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
+        p.translate(*project.centre_px(tf, t, W, H))       # (中心點: about its pivot)
         p.rotate(v("rotation", 0.0))                       # clockwise on a y-down canvas
         p.scale(sx * (-1 if tf.get("flip_h") else 1), sy * (-1 if tf.get("flip_v") else 1))
         mask = self.clip_mask(c, t)
@@ -621,7 +621,7 @@ class Renderer:
         dev = p.device()
         w, h = dev.width(), dev.height()
         p.save()
-        p.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
+        p.translate(*project.centre_px(tf, t, W, H))
         p.rotate(v("rotation", 0.0))
         p.scale(v("scale", 1.0), curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t))
         wt = p.worldTransform()
@@ -722,7 +722,7 @@ def clip_world(c, t, W, H):
     """Clip space (centre origin, y down) -> canvas, as draw_clip places a clip at clip time t."""
     tf = c.get("transform") or {}
     v = lambda k, d: curves.value(tf.get(k, d), t)
-    return QTransform().translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2).rotate(v("rotation", 0.0)) \
+    return QTransform().translate(*project.centre_px(tf, t, W, H)).rotate(v("rotation", 0.0)) \
         .scale(v("scale", 1.0) * (-1 if tf.get("flip_h") else 1),
                curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t) * (-1 if tf.get("flip_v") else 1))
 

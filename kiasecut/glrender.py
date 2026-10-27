@@ -500,7 +500,7 @@ class GLRenderer(render.Renderer):
         sx = v("scale", 1.0)
         sy = curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t)
         local = QTransform()
-        local.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
+        local.translate(*project.centre_px(tf, t, W, H))   # (中心點: about its pivot)
         local.rotate(v("rotation", 0.0))
         local.scale(sx * (-1 if tf.get("flip_h") else 1), sy * (-1 if tf.get("flip_v") else 1))
         world = local * base
@@ -719,7 +719,7 @@ class GLRenderer(render.Renderer):
         if strength <= 0 or not effects:
             return
         local = QTransform()
-        local.translate(W / 2 + v("x", 0.0) * W / 2, H / 2 - v("y", 0.0) * H / 2)
+        local.translate(*project.centre_px(tf, t, W, H))   # (中心點: about its pivot)
         local.rotate(v("rotation", 0.0))
         local.scale(v("scale", 1.0), curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t))
         wt = local * base

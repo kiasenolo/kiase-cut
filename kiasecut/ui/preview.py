@@ -20,7 +20,11 @@ corner or edge square to
 scale it with the opposite corner / edge staying put (Alt: about its centre; the moving edges
 snap to the same lines while the clip is upright or turned by a right angle, Ctrl scales
 freely), drag the round
-handle above it to rotate (Shift: 15° steps; it also settles on 0 / 90 / 180 / 270). With X / Y
+handle above it to rotate (Shift: 15° steps; it also settles on 0 / 90 / 180 / 270). It turns
+and scales about its pivot (中心點, the ring with a cross, at its centre unless moved; with Alt a
+scale drag keeps the pivot in place): drag the ring to move the pivot (Ctrl+drag while it is at
+the centre, where a plain drag moves the clip) - the clip stays where it is (x / y make up for
+it) - and it snaps to the clip's centre, corners and edge middles (Shift: freely). With X / Y
 scale linked a corner or an edge keeps their ratio; unlinked, a corner sets both freely (Shift
 keeps the ratio) and an edge only its own axis. A built-in asset (assets.py) is resized instead:
 its 寬 / 高 change and its scale stays (an edge changes one side, a corner both, Shift keeps
@@ -93,6 +97,7 @@ HANDLE_PX = 9                 # handle size on screen
 ROT_PX = 34                   # rotation handle distance from the outline
 PICK_PX = 9
 ANGLE_SNAP = 3.0              # degrees within which rotation settles on a right angle
+PIVOT_PICK = 0.7              # the pivot's ring is picked closer than a handle (it sits on the clip)
 ZOOM_STEP = 1.25              # one wheel notch (as Blender's)
 ZOOM_MIN, ZOOM_MAX = 0.05, 64.0   # view zoom, 1 = the canvas fits the widget
 _text_sizes = {}
@@ -135,19 +140,30 @@ class Box:
         self.t = t
         self.W, self.H = W, H
         self.ox, self.oy = shift                # (canvas px: 中心點跟隨最下層物件 moves its clips)
-        self.cx = W / 2 + v("x", 0.0) * W / 2 + self.ox
-        self.cy = H / 2 - v("y", 0.0) * H / 2 + self.oy
+        self.pdx, self.pdy = project.pivot_shift(tf, t, W, H)     # (中心點: turned about its pivot)
+        self.pivot = (v("pivot_x", 0.0), v("pivot_y", 0.0))
+        self.cx = W / 2 + v("x", 0.0) * W / 2 + self.ox + self.pdx
+        self.cy = H / 2 - v("y", 0.0) * H / 2 + self.oy + self.pdy
         self.w, self.h = self.bw * abs(self.s), self.bh * abs(self.sy)
         self.deg = v("rotation", 0.0)
         self.rot = math.radians(self.deg)
         self.flip = (-1 if tf.get("flip_h") else 1, -1 if tf.get("flip_v") else 1)
 
-    def x_at(self, cx):
-        """The x value that puts its centre at canvas px cx."""
-        return round((cx - self.ox - self.W / 2) / (self.W / 2), 5)
+    def x_at(self, cx, pdx=None):
+        """The x value that puts its centre at canvas px cx (pdx: its pivot's shift then,
+        when not this box's, project.pivot_shift)."""
+        return round((cx - self.ox - (self.pdx if pdx is None else pdx) - self.W / 2) / (self.W / 2), 5)
 
-    def y_at(self, cy):
-        return round((self.H / 2 - (cy - self.oy)) / (self.H / 2), 5)
+    def y_at(self, cy, pdy=None):
+        return round((self.H / 2 - (cy - self.oy - (self.pdy if pdy is None else pdy))) / (self.H / 2), 5)
+
+    def pivot_local(self):
+        """Its pivot (中心點) in its own frame (centre origin, unscaled, y down, canvas px)."""
+        return QPointF(self.pivot[0] * self.W / 2, -self.pivot[1] * self.H / 2)
+
+    def pivot_pt(self):
+        """Canvas point of its pivot: what it turns and scales about."""
+        return self.xf().map(self.pivot_local())
 
     def xf(self, dx=0.0, dy=0.0):
         """Clip-local (centre origin, unscaled, y down) -> canvas, as the renderer draws."""
@@ -857,6 +873,13 @@ class Preview(QWidget):
         for _sx, _sy, pt in box.handles():
             self._handle(p, pt, k)
         self._handle(p, rh, k, round_=True, color="#e6e6e6")
+        pv, r = box.pivot_pt(), 5 * k                          # 中心點: a ring with a cross
+        for w, col in ((3 * k, "#111114"), (1.25 * k, "#ffffff")):
+            p.setPen(QPen(QColor(col), w))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(pv, r, r)
+            p.drawLine(pv - QPointF(2 * r, 0), pv + QPointF(2 * r, 0))
+            p.drawLine(pv - QPointF(0, 2 * r), pv + QPointF(0, 2 * r))
         if self.drag and self.drag["kind"] == "rotate":
             p.setPen(QColor("#ffffff"))
             f = p.font()
@@ -1136,6 +1159,9 @@ class Preview(QWidget):
             if self._near(box.rot_handle(k), m, k):
                 self.drag = {"kind": "rotate", "box": box, "m0": m, "moved": False}
                 return
+            if self._grabs_pivot(box, m, k, e.modifiers()):
+                self.drag = {"kind": "pivot", "box": box, "m0": m, "moved": False}
+                return
             side = next(((sx, sy) for sx, sy, pt in box.handles() if self._near(pt, m, k)), None)
             if side is not None:
                 self.drag = {"kind": "scale", "box": box, "m0": m, "moved": False, "side": side,
@@ -1305,7 +1331,10 @@ class Preview(QWidget):
         c = QPointF(box.cx, box.cy)
         if kind == "scale":
             return self._scale_values(box, d, m, e.modifiers())
+        if kind == "pivot":
+            return "transform", self._pivot_values(box, m, e.modifiers())
         if kind == "rotate":
+            c = box.pivot_pt()                                 # (中心點: it turns about its pivot)
             a0 = math.degrees(math.atan2(d["m0"].y() - c.y(), d["m0"].x() - c.x()))
             a1 = math.degrees(math.atan2(m.y() - c.y(), m.x() - c.x()))
             return "transform", {"rotation": round(snap_angle(box.deg + a1 - a0, free), 2)}
@@ -1383,10 +1412,38 @@ class Preview(QWidget):
             dx, dy = ax - ax * kx, ay - ay * ky                    # the anchor's move, cancelled
             c, s = math.cos(box.rot), math.sin(box.rot)
             cx, cy = box.cx + dx * c - dy * s, box.cy + dx * s + dy * c
-            out.update(x=box.x_at(cx), y=box.y_at(cy))
+            pdx, pdy = (box.pdx, box.pdy) if asset else project.pivot_shift(
+                tf, box.t, box.W, box.H, scale=out["scale"], scale_y=out["scale_y"])
+            out.update(x=box.x_at(cx, pdx), y=box.y_at(cy, pdy))
         if asset and not out:
             del vals["transform"]
         return ("multi" if asset else "transform"), vals
+
+    def _grabs_pivot(self, box, m, k, mods):
+        """Whether a press at m takes the pivot's ring: once it is off the centre, else with
+        Ctrl (a plain press at the centre moves the clip)."""
+        return self._near(box.pivot_pt(), m, k * PIVOT_PICK) and (
+            any(abs(v) > 1e-9 for v in box.pivot) or bool(mods & Qt.ControlModifier))
+
+    def _pivot_values(self, box, m, mods):
+        """pivot_x / pivot_y of a drag of the pivot (中心點) to canvas point m, and x / y so
+        that the clip stays where it is. It snaps to the clip's centre, corners and edge
+        middles (Shift: freely)."""
+        inv, ok = box.xf().inverted()
+        if not ok:
+            return {}
+        q = inv.map(m)
+        if not mods & Qt.ShiftModifier:
+            tol = SNAP_PX * self._k()
+            spots = [QPointF(sx * box.bw / 2, sy * box.bh / 2) for sx in (-1, 0, 1) for sy in (-1, 0, 1)]
+            dist = lambda s: math.hypot(box.xf().map(s).x() - m.x(), box.xf().map(s).y() - m.y())
+            near = min(spots, key=dist)
+            if dist(near) <= tol:
+                q = near
+        px, py = round(q.x() / (box.W / 2), 5), round(-q.y() / (box.H / 2), 5)
+        tf = dict(box.clip.get("transform") or {}, pivot_x=px, pivot_y=py)
+        pdx, pdy = project.pivot_shift(tf, box.t, box.W, box.H)
+        return {"pivot_x": px, "pivot_y": py, "x": box.x_at(box.cx, pdx), "y": box.y_at(box.cy, pdy)}
 
     def _snap_scale(self, box, others, driven, anchor, ks, tied):
         """Snap the factors ks = (kx, ky) of a scale drag so that a moving edge lands on the
@@ -1525,6 +1582,8 @@ class Preview(QWidget):
         elif box is not None and not self.mask_mode:
             if self._near(box.rot_handle(k), m, k):
                 cur = Qt.PointingHandCursor
+            elif not getattr(box, "group", False) and self._grabs_pivot(box, m, k, e.modifiers()):
+                cur = Qt.CrossCursor
             elif (side := next(((sx, sy) for sx, sy, pt in box.handles() if self._near(pt, m, k)), None)):
                 sx, sy = side
                 cur = (Qt.SizeHorCursor if not sy else Qt.SizeVerCursor if not sx else

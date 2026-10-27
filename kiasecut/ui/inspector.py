@@ -54,6 +54,8 @@ PARAMS = {
                   ("scale", "縮放 X", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("scale_y", "縮放 Y", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
+                  ("pivot_x", "中心點 X", -10.0, 10.0, 0.01, 3, 1, 0.0),       # 中心點: turns / scales about it
+                  ("pivot_y", "中心點 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0)),
     "mask": (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0),
              ("cy", "中心 Y", -5.0, 5.0, 0.01, 3, 1, 0.0),
@@ -391,7 +393,8 @@ class Inspector(QWidget):
                 if components.of_clip(c) is not None:
                     self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
-                self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"), ("scale", "scale_y", "縮放")))
+                self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"), ("scale", "scale_y", "縮放"),
+                                                                    ("pivot_x", "pivot_y", "中心點")))
                 blend = ComboBox()
                 blend.setPlaceholderText("--")
                 for name, k in ((PASS_THROUGH,) if c["type"] == "group" else ()) + BLEND_NAMES:

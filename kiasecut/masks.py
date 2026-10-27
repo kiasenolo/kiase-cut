@@ -10,7 +10,7 @@ import math
 
 import numpy as np
 
-from . import curves
+from . import curves, project
 
 KINDS = ("line", "mirror", "circle", "rectangle")
 
@@ -42,8 +42,8 @@ class Rasterizer:
     def matte(self, mask, transform, disp_w, disp_h, t):
         """uint8 matte at t (us from clip start). transform: x, y, scale, rotation params."""
         W, H = self.W, self.H
-        px = curves.value(transform.get("x", 0.0), t) * W / 2
-        py = curves.value(transform.get("y", 0.0), t) * H / 2
+        cx, cy = project.centre_px(transform, t, W, H)      # (中心點: about its pivot)
+        px, py = cx - W / 2, H / 2 - cy
         a = math.radians(curves.value(transform.get("rotation", 0.0), t))
         sx = curves.value(transform.get("scale", 1.0), t) or 1e-6
         sy = curves.value(transform.get("scale_y", transform.get("scale", 1.0)), t) or 1e-6
@@ -68,7 +68,8 @@ class Rasterizer:
     @staticmethod
     def animated(mask, transform):
         return any(curves.is_animated(mask.get(k)) for k in ("cx", "cy", "w", "h", "rotation", "feather")) \
-            or any(curves.is_animated(transform.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation"))
+            or any(curves.is_animated(transform.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation",
+                                                                   "pivot_x", "pivot_y"))
 
 
 # -- native masks: the same shapes as bezier splines for MLT's rotoscoping filter ----------

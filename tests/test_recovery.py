@@ -99,7 +99,7 @@ class OfferTests(unittest.TestCase):
             json.dump({"pid": 1, "project": path, "autosave": save}, fh)
         opened = []
         win = SimpleNamespace(autosave_dir=where, path=None, dirty=False, proj=None,
-                              open_loaded=lambda p, f: opened.append((p["duration_us"], f)),
+                              open_loaded=lambda p, f: opened.append((p["duration_us"], f)) or True,   # (opened)
                               _update_title=lambda: None, statusBar=lambda: mock.Mock())
         win._session = lambda **kw: main_window.MainWindow._session(win, **kw)
 

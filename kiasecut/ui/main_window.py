@@ -435,6 +435,8 @@ class MainWindow(QMainWindow):
         ins.audioStreamChosen.connect(lambda ids, n: self.apply_each("音軌", edit.set_audio_stream, ids, n))
         ins.groupMatteChosen.connect(lambda ids, fields: self.apply_each(
             "群組遮罩", lambda lvl, cid: edit.set_group_matte(lvl, cid, **fields), ids))
+        ins.groupAnchorChosen.connect(lambda ids, on: self.apply_each(
+            "中心點跟隨最下層物件", lambda lvl, cid: edit.set_group_anchor(lvl, cid, on), ids))
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
         ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)
@@ -2788,6 +2790,15 @@ class MainWindow(QMainWindow):
         self.apply(name if on else "取消" + name,
                    lambda lvl: [edit.set_group_matte(lvl, g["id"], **{field: on}) for g in groups])
 
+    def toggle_group_anchor(self, ids):
+        """中心點跟隨最下層物件 from a menu: on for the groups when any is off, else off."""
+        groups = [c for c in (edit.find(self.container(), k)[1] for k in ids) if project.is_group(c)]
+        if not groups:
+            return
+        on = not all(g.get("anchor") for g in groups)
+        self.apply("中心點跟隨最下層物件" if on else "取消中心點跟隨最下層物件",
+                   lambda lvl: [edit.set_group_anchor(lvl, g["id"], on) for g in groups])
+
     def make_group(self, ids=None):
         """建立群組 (Ctrl+G): the selected picture clips into a new group, opened."""
         ids = ids if ids else sorted(self.timeline.selected_ids)
@@ -2978,6 +2989,8 @@ class MainWindow(QMainWindow):
             self.ungroup(cid)
         elif action == "group_matte":
             self.toggle_group_matte([cid])
+        elif action == "group_anchor":
+            self.toggle_group_anchor([cid])
         elif action == "group_invert":
             self.toggle_group_matte([cid], "invert")
         elif action == "enter":

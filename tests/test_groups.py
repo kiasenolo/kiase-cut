@@ -18,6 +18,31 @@ def scene():
 
 
 class GroupTests(unittest.TestCase):
+    def test_anchor_keeps_places(self):
+        p = scene()
+        edit.find(p, "c1")[1]["transform"].update(x=0.5, y=0.2)        # the bottom object
+        edit.find(p, "c4")[1]["transform"].update(x=0.1)
+        g = edit.make_group(p, p, ["c1", "c4"])
+        edit.set_group_anchor(p, g["id"], True)
+        c4 = edit.find(p, "c4")[1]
+        self.assertEqual((round(c4["transform"]["x"], 6), round(c4["transform"]["y"], 6)), (-0.4, -0.2))
+        self.assertEqual(edit.find(p, "c1")[1]["transform"]["x"], 0.5)   # (the bottom one stays as it is)
+        edit.set_param(p, "c1", "transform", "x", 0.7)                  # it carries c4 along
+        ct = edit.find(p, "c4")[0]
+        self.assertEqual(tuple(round(v, 6) for v in project.anchored(g, ct, S)), (0.7, 0.2))
+        edit.ungroup(p, p, g["id"])                                       # folded back in
+        self.assertEqual(round(c4["transform"]["x"], 6), 0.3)
+        self.assertEqual(round(c4["transform"]["y"], 6), 0.0)
+        g = edit.make_group(p, p, ["c1", "c4"])
+        edit.set_group_anchor(p, g["id"], True)
+        edit.set_group_anchor(p, g["id"], False)                          # and off again: the same place
+        self.assertEqual(round(c4["transform"]["x"], 6), 0.3)
+        edit.set_group_anchor(p, g["id"], True)
+        edit.find(p, "c2")[1]["transform"].update(x=0.9)
+        edit.move_into_group(p, p, ["c2"], g["id"])                       # in: from the bottom one's centre
+        c2t, c2 = edit.find(p, "c2")
+        self.assertAlmostEqual(c2["transform"]["x"] + project.anchored(g, c2t, c2["start_us"])[0], 0.9)
+
     def test_ungroup_many(self):
         p = scene()
         g1 = edit.make_group(p, p, ["c1", "c4"])
@@ -182,6 +207,26 @@ class GroupRenderTests(unittest.TestCase):
             img = r.render(self.view({"on": True, "show": False}, gx=1.0), 0, 64, 36)   # the group moved right
             self.assertEqual(rgb(img, 12, 18), (0, 0, 0), name)
             self.assertEqual(rgb(img, 40, 18), (255, 0, 0), name)
+
+    def test_anchor_follows_the_bottom_object(self):
+        """中心點跟隨最下層物件: the clips above count their x / y from the bottom one's centre."""
+        from test_compound_mask import rgb
+        for r in self.renderers():
+            name = type(r).__name__
+            for matte in (None, {"on": True, "show": True}):
+                v = self.view(matte)
+                g = v["tracks"][0]["clips"][0]
+                bottom, top = g["tracks"][0]["clips"][0], g["tracks"][1]["clips"][0]
+                bottom["transform"].update(x=0.5, scale=0.3)       # (opaque on its left: under the red)
+                top["transform"].update(scale=0.1)
+                if matte is None:                                  # (with the mask, cut off there)
+                    img = r.render(v, 0, 64, 36)
+                    self.assertEqual(rgb(img, 32, 18), (255, 0, 0), name)          # off: the canvas centre
+                g["anchor"] = True
+                img = r.render(v, 0, 64, 36)
+                self.assertEqual(r.errors, [], name)
+                self.assertEqual(rgb(img, 46, 18), (255, 0, 0), (name, matte))     # on: by the bottom one's centre
+                self.assertNotEqual(rgb(img, 32, 18), (255, 0, 0), (name, matte))
 
     def test_mask_object_grouped(self):
         """The mask object can be a group: grouping its clips (on two tracks) leaves the bottom

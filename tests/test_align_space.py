@@ -70,6 +70,17 @@ class AlignTests(unittest.TestCase):
             apply(p, pv.align_moves("hcenter"))
             self.assertAlmostEqual(ext(p, "k0")[0], 700 - 96, 1)
 
+    def test_in_an_anchored_group(self):
+        p, pv = scene((300, 200), (700, 500))
+        g = edit.make_group(p, p, ["k0", "k1"])
+        edit.set_group_anchor(p, g["id"], True)                  # (k1 counts from k0's centre)
+        pv.set_scene(p, 0, "k1", {"k1"})
+        apply(p, pv.align_moves("left"))
+        pv.set_scene(p, 0, "k1", {"k1"})
+        k1 = pv._kid_boxes()["k1"][0]
+        self.assertAlmostEqual(k1.extents()[0], 300 - 96, 1)     # where it shows: on k0's left edge
+        self.assertAlmostEqual(k1.extents()[2], 500 - 54, 1)
+
     def test_one_clip_to_the_canvas(self):
         p, pv = scene((300, 200))
         apply(p, pv.align_moves("right"))

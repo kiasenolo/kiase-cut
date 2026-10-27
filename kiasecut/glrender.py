@@ -412,8 +412,13 @@ class GLRenderer(render.Renderer):
         (穿透): what tgt has is under them, not a clear layer."""
         matte = (comp.get("matte") or {}) if comp.get("group") else {}
         tracks = project.matte_tracks(comp["tracks"])
+        a = project.anchor_of(comp, t_us) if comp.get("group") else None
+        moved = QTransform.fromTranslate(a[1] * W / 2, -a[2] * H / 2) * base if a else base   # (中心點跟隨最下層物件)
         if not matte.get("on") or len(tracks) < 2:
-            self.gl_tracks(tgt, base, comp["tracks"], W, H, fps, t_us, ppu)
+            i = next(i for i, t in enumerate(comp["tracks"]) if t is a[0]) + 1 if a else len(comp["tracks"])
+            self.gl_tracks(tgt, base, comp["tracks"][:i], W, H, fps, t_us, ppu)
+            if a:
+                self.gl_tracks(tgt, moved, comp["tracks"][i:], W, H, fps, t_us, ppu)
             return
         gl = self.gl
         cut, under, above, kept = (gl.layer(tgt.w, tgt.h) for _ in range(4))
@@ -429,7 +434,7 @@ class GLRenderer(render.Renderer):
                 # (the shown mask object), so their blend modes mix with it, and kept where the
                 # mask object is (inverted: where it is not)
                 gl.ctx.copy_framebuffer(above.tex, under.fbo)
-                self.gl_tracks(above, base, tracks[1:], W, H, fps, t_us, ppu)
+                self.gl_tracks(above, moved, tracks[1:], W, H, fps, t_us, ppu)
                 gl.mix_cover(kept, under.tex, above.tex, cut.tex, flip=matte.get("invert"))
                 out = kept
             if through:

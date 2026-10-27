@@ -1391,6 +1391,7 @@ def ungroup(root, level, group_id):
     go = float(tf.get("opacity", 1.0))
     outer = group_of(level, t)
     holder = outer["tracks"] if outer is not None else level["tracks"]
+    moves = {id(k): project.anchored(g, ct, k["start_us"]) for ct in g["tracks"] for k in ct["clips"]}
     t["clips"].remove(g)
     at = holder.index(t)
     out = []
@@ -1399,8 +1400,9 @@ def ungroup(root, level, group_id):
             k["start_us"] += g["start_us"]
             ktf = k.get("transform")
             if ktf is not None:
-                ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: gx + gs * v)
-                ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: gy + gsy * v)
+                ax, ay = moves[id(k)]                            # (中心點跟隨最下層物件: folded in)
+                ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: gx + gs * (v + ax))
+                ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: gy + gsy * (v + ay))
                 sx = ktf.get("scale", 1.0)
                 if "scale_y" in ktf or abs(gs - gsy) > 1e-9:
                     ktf["scale_y"] = _map_value(ktf.get("scale_y", sx), lambda v: v * gsy)
@@ -1424,8 +1426,6 @@ def ungroup(root, level, group_id):
     return out
 
 
-def _flat_group(g):
-    """(x, y, scale x, scale y) of a group that is not turned, flipped or animated in place
 def ungroup_many(root, level, group_ids):
     """Several groups taken apart at once (outer ones first: a group in one comes out with
     its clips, then is taken apart too); returns the clips that came out."""
@@ -1440,6 +1440,8 @@ def ungroup_many(root, level, group_ids):
     return out
 
 
+def _flat_group(g):
+    """(x, y, scale x, scale y) of a group that is not turned, flipped or animated in place
     or size (its clips' canvas place folds in and out of it exactly), else EditError."""
     tf = g.get("transform") or {}
     if any(curves.is_animated(tf.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation")) \
@@ -1461,20 +1463,33 @@ def _groups_around(level, track):
     return out
 
 
+def _space(level, track, t_us):
+    """[(group (x, y, scale x, scale y), its anchored() move)] of the groups track is inside,
+    innermost first: how a clip on it at level time t_us is placed on the level's canvas."""
+    out, g = [], group_of(level, track)
+    while g is not None:
+        out.append((_flat_group(g), project.anchored(g, track, t_us - abs_start(level, g["id"]))))
+        track = find(level, g["id"])[0]
+        g = group_of(level, track)
+    return out
+
+
 def _refit(c, out_of, into):
-    """Clip c's place and size from the space inside the groups out_of (innermost first) to
-    the space inside into (innermost first), the same on the canvas."""
+    """Clip c's place and size from the space inside the groups out_of to the space inside
+    into (both _space lists, innermost first), the same on the canvas."""
     ktf = c.get("transform")
     if ktf is None:
         return
-    fx = [_flat_group(g) for g in out_of]
-    tx = [_flat_group(g) for g in reversed(into)]                 # outermost first
+    fx = [f for f, _ in out_of]
+    tx = [f for f, _ in reversed(into)]                           # outermost first
+    ax = [a for _, a in out_of]
+    tax = [a for _, a in reversed(into)]
 
     def axis(v, i):
-        for f in fx:
-            v = f[i] + f[2 + i] * v
-        for f in tx:
-            v = (v - f[i]) / f[2 + i]
+        for f, a in zip(fx, ax):
+            v = f[i] + f[2 + i] * (v + a[i])
+        for f, a in zip(tx, tax):
+            v = (v - f[i]) / f[2 + i] - a[i]
         return v
 
     def size(v, i):
@@ -1542,8 +1557,8 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
         if g["start_us"] + (hi - g0) > room[1]:
             raise EditError("群組後面沒有空間放這些片段")
         g["duration_us"] = hi - g0
+    spaces = {id(c): _space(level, t, starts[c["id"]]) for t, c in picked}
     for t, c in picked:
-        _refit(c, _groups_around(level, t), into)
         t["clips"].remove(c)
     out = []
     for t, c in sorted(picked, key=lambda tc: starts[tc[1]["id"]]):
@@ -1558,6 +1573,7 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
             g["tracks"].append(dst)
         dst["clips"].append(c)
         _sort(dst)
+        _refit(c, spaces[id(c)], _space(level, dst, starts[c["id"]] + shift))
         out.append(c)
     project.link(root)
     return out
@@ -1602,6 +1618,27 @@ def set_group_matte(proj, clip_id, on=None, show=None, invert=None, body=None):
         m["invert"] = bool(invert)
     if body is not None:
         m["body"] = bool(body)
+    return g
+
+
+def set_group_anchor(proj, clip_id, on):
+    """中心點跟隨最下層物件 (project.anchor_of): the clips above a group's bottom object count
+    their x / y from its centre. They stay where they are: each one's x / y loses (or, turned
+    off, gets back) the bottom object's centre at its own start."""
+    _, g = find(proj, clip_id)
+    if not project.is_group(g):
+        raise EditError("這不是群組")
+    if bool(g.get("anchor")) == bool(on):
+        return g
+    g["anchor"] = True                                   # (anchored() reads the moves with it on)
+    moves = [(k, project.anchored(g, t, k["start_us"])) for t in g["tracks"] for k in t["clips"]]
+    sign = -1 if on else 1
+    for k, (ax, ay) in moves:
+        ktf = k.get("transform")
+        if ktf is not None and (ax or ay):
+            ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: v + sign * ax)
+            ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: v + sign * ay)
+    g["anchor"] = bool(on)
     return g
 
 

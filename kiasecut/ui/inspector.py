@@ -279,6 +279,7 @@ class Inspector(QWidget):
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
     speedChosen = Signal(list, float)               # clip ids, speed
     groupMatteChosen = Signal(list, dict)           # group ids, {on / show / invert / body: bool} that changed
+    groupAnchorChosen = Signal(list, bool)          # group ids, 中心點跟隨最下層物件 on
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
     paramReset = Signal(list, list)                 # clip ids, component parameter ids: back to the component's
@@ -461,8 +462,13 @@ class Inspector(QWidget):
         form.addRow("間距", row)
 
     def _build_group(self, form, c):
-        """群組: its bottom track's clips as a mask for the rest."""
+        """群組: its bottom track's clips as a mask for the rest, or the centre the rest count from."""
         form.addRow(section("群組"))
+        anchor = QCheckBox("中心點跟隨最下層物件")
+        anchor.setToolTip("上面的物件的位置從最下層物件的中心算起（0, 0 就是它的中心）：移動最下層物件，上面的物件跟著走")
+        anchor.clicked.connect(lambda v: self._emit_now(self.groupAnchorChosen, bool(v)))
+        self.widgets["group_anchor"] = anchor
+        form.addRow("", anchor)
         on = QCheckBox("最下面的物件當遮罩")
         on.setToolTip("群組最下面那條軌道的片段裁切它上面的所有片段（照它們的不透明度）")
         on.clicked.connect(lambda v: self._emit_now(self.groupMatteChosen, {"on": bool(v)}))
@@ -1102,6 +1108,12 @@ class Inspector(QWidget):
         if "audio_stream" in w:
             now = {build.audio_stream(k) for k in clips}
             self._set_combo(w["audio_stream"], now.pop() if len(now) == 1 else "--")
+        if "group_anchor" in w:
+            vals = {bool(k.get("anchor")) for k in clips}
+            w["group_anchor"].blockSignals(True)
+            w["group_anchor"].setTristate(len(vals) > 1)
+            w["group_anchor"].setCheckState(Qt.PartiallyChecked if len(vals) > 1 else Qt.Checked if vals.pop() else Qt.Unchecked)
+            w["group_anchor"].blockSignals(False)
         if "group_matte" in w:
             for key, field, default in (("group_matte", "on", False), ("group_show", "show", False),
                                         ("group_body", "body", True), ("group_invert", "invert", False)):

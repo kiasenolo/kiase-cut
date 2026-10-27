@@ -68,7 +68,9 @@ clip     {id, type: image | video | audio | text | compound, name,
                      canvas of its own: moving the group moves them, keeping their places).
                      The group is drawn as one layer through its own transform, effects and
                      mask; with matte on, its bottom track's clips (matte_tracks) cut the clips above them
-                     (their alpha), and show draws them too (else only their shape counts)
+                     (their alpha), and show draws them too (else only their shape counts);
+                     anchor (中心點跟隨最下層物件): the clips above the bottom track's are placed
+                     from the bottom object's centre (anchor_of), so it carries them along
 compound {name, width, height, duration_us, tracks}   reusable content: any number of compound
          clips (anywhere, nested too) show the same one, so editing it changes all of them.
          Its children use compound time. optional: static - a static compound (靜態片段)
@@ -91,6 +93,8 @@ leaves the links out and link() puts them back.
 """
 import json
 import os
+
+from kiasecut import curves
 
 FORMAT = "kiasecut"
 OLD_FORMATS = ("tesetoa",)        # the program's earlier name: those projects still open
@@ -224,6 +228,31 @@ def matte_tracks(tracks):
     first is the mask object's (a track left empty under it, as grouping the mask object's
     clips leaves one, does not count)."""
     return [t for t in tracks if t["kind"] != "audio" and t["clips"]]
+
+
+def anchor_of(g, t_us):
+    """中心點跟隨最下層物件: (bottom track, x, y) of group g at group time t_us - its bottom
+    object's centre (the bottom track's clip then, else the nearest one), which the clips on
+    the tracks above it count their x / y from - or None (off, or nothing above it)."""
+    if not g.get("anchor"):
+        return None
+    tracks = matte_tracks(g["tracks"])
+    if len(tracks) < 2:
+        return None
+    c = min(tracks[0]["clips"], key=lambda k: max(k["start_us"] - t_us, t_us - (k["start_us"] + k["duration_us"]), 0))
+    tf = c.get("transform") or {}
+    t = stepped(c, min(max(t_us - c["start_us"], 0), c["duration_us"]))
+    return tracks[0], curves.value(tf.get("x", 0.0), t), curves.value(tf.get("y", 0.0), t)
+
+
+def anchored(g, track, t_us):
+    """(x, y) a clip on group g's track `track` is moved by at group time t_us (anchor_of:
+    on a track above the bottom object's), else (0, 0)."""
+    a = anchor_of(g, t_us)
+    if a is None or not any(t is a[0] for t in g["tracks"]) or not any(t is track for t in g["tracks"]):
+        return 0.0, 0.0
+    ids = [id(t) for t in g["tracks"]]
+    return (a[1], a[2]) if ids.index(id(track)) > ids.index(id(a[0])) else (0.0, 0.0)
 
 
 def walk_clips(tracks):

@@ -262,12 +262,20 @@ class Renderer:
         (穿透): what p has is under them, not a clear layer."""
         matte = (comp.get("matte") or {}) if comp.get("group") else {}
         tracks = project.matte_tracks(comp["tracks"])
+        a = project.anchor_of(comp, t_us) if comp.get("group") else None
+        shift = (a[1] * W / 2, -a[2] * H / 2) if a else (0.0, 0.0)      # (中心點跟隨最下層物件)
         if not matte.get("on") or len(tracks) < 2 or not isinstance(p.device(), QImage):
-            self.draw_tracks(p, comp["tracks"], W, H, fps, t_us, px_per_unit)
+            i = next(i for i, t in enumerate(comp["tracks"]) if t is a[0]) + 1 if a else len(comp["tracks"])
+            self.draw_tracks(p, comp["tracks"][:i], W, H, fps, t_us, px_per_unit)
+            if a:
+                p.save()
+                p.translate(*shift)
+                self.draw_tracks(p, comp["tracks"][i:], W, H, fps, t_us, px_per_unit)
+                p.restore()
             return
         dev = p.device()
 
-        def layer(trs, under=None):
+        def layer(trs, under=None, moved=False):
             if under is None:
                 im = QImage(dev.width(), dev.height(), QImage.Format_ARGB32_Premultiplied)
                 im.fill(Qt.transparent)
@@ -276,6 +284,8 @@ class Renderer:
             lp = QPainter(im)
             lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
             lp.setTransform(p.worldTransform())
+            if moved:
+                lp.translate(*shift)
             self.draw_tracks(lp, trs, W, H, fps, t_us, px_per_unit)
             lp.end()
             return im
@@ -295,7 +305,7 @@ class Renderer:
             # as Photoshop's clipping masks: the clips above are drawn on what is under them (the
             # shown mask object), so their blend modes mix with it, and kept where the mask object
             # is (inverted: where it is not)
-            above = layer(tracks[1:], under)
+            above = layer(tracks[1:], under, moved=True)
             a = image_to_array(cut)[..., 3:4].astype(np.float32) / 255
             if matte.get("invert"):
                 a = 1 - a
@@ -705,7 +715,7 @@ def array_to_image(arr):
 def group_content(g, W, H):
     """A group as compound-like content: its tracks on a canvas the size of its level."""
     return {"width": W, "height": H, "tracks": g["tracks"], "group": True, "matte": g.get("matte"),
-            "duration_us": g["duration_us"]}
+            "anchor": g.get("anchor"), "duration_us": g["duration_us"]}
 
 
 def clip_world(c, t, W, H):

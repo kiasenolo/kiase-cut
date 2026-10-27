@@ -125,7 +125,7 @@ def base_size(c, W, H, t):
 class Box:
     """A clip's outline on the canvas at one time (canvas px, y down)."""
 
-    def __init__(self, c, W, H, t):
+    def __init__(self, c, W, H, t, shift=(0.0, 0.0)):
         tf = c.get("transform") or {}
         v = lambda k, d: curves.value(tf.get(k, d), t)
         self.bw, self.bh = base_size(c, W, H, t)
@@ -134,12 +134,20 @@ class Box:
         self.clip = c
         self.t = t
         self.W, self.H = W, H
-        self.cx = W / 2 + v("x", 0.0) * W / 2
-        self.cy = H / 2 - v("y", 0.0) * H / 2
+        self.ox, self.oy = shift                # (canvas px: 中心點跟隨最下層物件 moves its clips)
+        self.cx = W / 2 + v("x", 0.0) * W / 2 + self.ox
+        self.cy = H / 2 - v("y", 0.0) * H / 2 + self.oy
         self.w, self.h = self.bw * abs(self.s), self.bh * abs(self.sy)
         self.deg = v("rotation", 0.0)
         self.rot = math.radians(self.deg)
         self.flip = (-1 if tf.get("flip_h") else 1, -1 if tf.get("flip_v") else 1)
+
+    def x_at(self, cx):
+        """The x value that puts its centre at canvas px cx."""
+        return round((cx - self.ox - self.W / 2) / (self.W / 2), 5)
+
+    def y_at(self, cy):
+        return round((self.H / 2 - (cy - self.oy)) / (self.H / 2), 5)
 
     def xf(self, dx=0.0, dy=0.0):
         """Clip-local (centre origin, unscaled, y down) -> canvas, as the renderer draws."""
@@ -183,7 +191,7 @@ class Box:
 
     def moved(self, c):
         """This box for c: its clip with the values being dragged."""
-        return Box(c, self.W, self.H, self.t)
+        return Box(c, self.W, self.H, self.t, (self.ox, self.oy))
 
     def rot_handle(self, k):
         """Canvas point of the rotation handle (above the top edge; k = canvas px per screen px)."""
@@ -207,17 +215,17 @@ class GroupBox(Box):
     moves the group."""
     group = True
 
-    def __init__(self, c, W, H, t, kids):
-        super().__init__(c, W, H, t)
+    def __init__(self, c, W, H, t, kids, shift=(0.0, 0.0)):
+        super().__init__(c, W, H, t, shift)
         self.kids = kids
-        self.gxf = group_xf(c, W, H, t)
+        self.gxf = group_xf(c, W, H, t) * QTransform.fromTranslate(*shift)
         pts = [self.gxf.map(q) for b in kids for q in b.corners()] or [QPointF(self.cx, self.cy)]
         xs, ys = [q.x() for q in pts], [q.y() for q in pts]
         self._box = (min(xs), max(xs), min(ys), max(ys))
 
     def moved(self, c):
         """(Its clips stay where they are in it: only the group's own transform changes.)"""
-        return GroupBox(c, self.W, self.H, self.t, self.kids)
+        return GroupBox(c, self.W, self.H, self.t, self.kids, (self.ox, self.oy))
 
     def corners(self, dx=0.0, dy=0.0):
         l, r, t, b = self._box
@@ -651,11 +659,13 @@ class Preview(QWidget):
         picked = []
         fps = self.view["fps"]
 
-        def boxes(tracks, t_us, locked, plain, nested=False):
+        def boxes(tracks, t_us, locked, plain, nested=False, g=None):
             out = []
             for tr in reversed(tracks):
                 if tr["kind"] == "audio" or tr.get("hidden"):
                     continue
+                ax, ay = project.anchored(g, tr, t_us) if g is not None else (0.0, 0.0)
+                shift = (ax * self.W / 2, -ay * self.H / 2)
                 for c in tr["clips"]:
                     if c["type"] == "filter" and not (self.mask_mode and c["id"] == self.selected_id):
                         continue                # a filter covers the whole picture: only its mask is edited here
@@ -664,10 +674,10 @@ class Preview(QWidget):
                     t = t_us - c["start_us"]
                     lock = locked or project.locked(tr)     # (shown and snapped to, never picked)
                     if project.is_group(c):
-                        inner = plain and is_identity(group_xf(c, self.W, self.H, t))
-                        b = GroupBox(c, self.W, self.H, t, boxes(c["tracks"], t, lock, inner, True))
+                        inner = plain and is_identity(group_xf(c, self.W, self.H, t) * QTransform.fromTranslate(*shift))
+                        b = GroupBox(c, self.W, self.H, t, boxes(c["tracks"], t, lock, inner, True, c), shift)
                     else:
-                        b = Box(c, self.W, self.H, t)
+                        b = Box(c, self.W, self.H, t, shift)
                         if nested and plain and c["id"] in self.selected_ids:
                             b.locked = lock
                             picked.append(b)
@@ -955,9 +965,9 @@ class Preview(QWidget):
             pos = lo if pos is None else pos
             for b in members:
                 if axis == "x":
-                    out[b.clip["id"]] = {"x": round((b.cx + pos - lo - self.W / 2) / (self.W / 2), 5)}
+                    out[b.clip["id"]] = {"x": b.x_at(b.cx + pos - lo)}
                 else:
-                    out[b.clip["id"]] = {"y": round((self.H / 2 - (b.cy + pos - lo)) / (self.H / 2), 5)}
+                    out[b.clip["id"]] = {"y": b.y_at(b.cy + pos - lo)}
             pos += hi - lo + gap
         return out
 
@@ -1002,10 +1012,10 @@ class Preview(QWidget):
             e = bx.extents()
             if how in ("left", "hcenter", "right"):
                 d = {"left": l - e[0], "right": r - e[1], "hcenter": (l + r) / 2 - (e[0] + e[1]) / 2}[how]
-                out[bx.clip["id"]] = {"x": round((bx.cx + d - self.W / 2) / (self.W / 2), 5)}
+                out[bx.clip["id"]] = {"x": bx.x_at(bx.cx + d)}
             else:
                 d = {"top": t - e[2], "bottom": b - e[3], "vcenter": (t + b) / 2 - (e[2] + e[3]) / 2}[how]
-                out[bx.clip["id"]] = {"y": round((self.H / 2 - (bx.cy + d)) / (self.H / 2), 5)}
+                out[bx.clip["id"]] = {"y": bx.y_at(bx.cy + d)}
         return out
 
     def spacing(self):
@@ -1039,9 +1049,9 @@ class Preview(QWidget):
             pos = e[lo] if pos is None else pos
             d = pos - e[lo]
             if axis == "x":
-                out[b.clip["id"]] = {"x": round((b.cx + d - self.W / 2) / (self.W / 2), 5)}
+                out[b.clip["id"]] = {"x": b.x_at(b.cx + d)}
             else:
-                out[b.clip["id"]] = {"y": round((self.H / 2 - (b.cy + d)) / (self.H / 2), 5)}
+                out[b.clip["id"]] = {"y": b.y_at(b.cy + d)}
             pos += e[hi] - e[lo] + gap
         return out
 
@@ -1287,8 +1297,7 @@ class Preview(QWidget):
             else:
                 dx, dy, self.guides = self._snap(self._union(boxes), dx, dy, [o.extents() for o in d["others"]],
                                                  SNAP_PX * self._k())
-            at = {b.clip["id"]: {"x": round((b.cx + dx - self.W / 2) / (self.W / 2), 5),
-                                 "y": round((self.H / 2 - (b.cy + dy)) / (self.H / 2), 5)} for b in boxes}
+            at = {b.clip["id"]: {"x": b.x_at(b.cx + dx), "y": b.y_at(b.cy + dy)} for b in boxes}
             return ("moves", at) if len(boxes) > 1 or d["dup"] else ("transform", at[box.clip["id"]])
         if kind == "gap":
             along = m.x() - d["m0"].x() if d["axis"] == "x" else m.y() - d["m0"].y()
@@ -1374,7 +1383,7 @@ class Preview(QWidget):
             dx, dy = ax - ax * kx, ay - ay * ky                    # the anchor's move, cancelled
             c, s = math.cos(box.rot), math.sin(box.rot)
             cx, cy = box.cx + dx * c - dy * s, box.cy + dx * s + dy * c
-            out.update(x=round((cx - self.W / 2) / (self.W / 2), 5), y=round((self.H / 2 - cy) / (self.H / 2), 5))
+            out.update(x=box.x_at(cx), y=box.y_at(cy))
         if asset and not out:
             del vals["transform"]
         return ("multi" if asset else "transform"), vals

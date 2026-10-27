@@ -2173,7 +2173,8 @@ class Timeline(QWidget):
             if project.is_group(c):
                 m = c.get("matte") or {}
                 head = [("摺疊群組" if self.is_open(c) else "展開群組", "fold"), ("解散群組", "ungroup"),
-                        ("✓ 最下面的物件當遮罩" if m.get("on") else "最下面的物件當遮罩", "group_matte")]
+                        ("✓ 最下面的物件當遮罩" if m.get("on") else "最下面的物件當遮罩", "group_matte"),
+                        ("✓ 中心點跟隨最下層物件" if c.get("anchor") else "中心點跟隨最下層物件", "group_anchor")]
                 if m.get("on"):
                     head.append(("✓ 反轉遮罩" if m.get("invert") else "反轉遮罩", "group_invert"))
                 items = head + [None] + items

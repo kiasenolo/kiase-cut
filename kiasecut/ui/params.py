@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
 
 from .. import assets, components
 from .library import PictureDrop
+from . import inplace
 from .menukeys import Menu
 
 ROLE = Qt.UserRole
@@ -142,6 +143,7 @@ class ParamList(QWidget):
         it = self.list.currentItem()
         if it is None or not it.isSelected() or components.param(self.comp, it.data(ROLE)) is None:
             return False
+        inplace.item_hint(self.list, it)
         self.paramAction.emit("rename", it.data(ROLE))
         return True
 
@@ -157,7 +159,7 @@ class ParamList(QWidget):
             if text is None:
                 menu.addSeparator()
             else:
-                menu.addAction(text, lambda a=action: self.paramAction.emit(a, pid))
+                menu.addAction(text, lambda a=action: (inplace.item_hint(self.list, it), self.paramAction.emit(a, pid)))
         index = components.layer_index(self.comp)
         binds = [(cid, prop) for cid, prop in p.get("binds") or [] if cid in index]
         if binds:

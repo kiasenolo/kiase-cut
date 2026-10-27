@@ -80,7 +80,7 @@ import math
 from collections import OrderedDict
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QApplication, QScrollBar, QWidget
 
@@ -629,6 +629,33 @@ class Timeline(QWidget):
         for i, top in enumerate(self.tops):
             if top <= y < top + self.row_h(i):
                 return i
+        return None
+
+    def track_name_rect(self, tid):
+        """Where a track's name is written in its header (QRect), or None when it is not shown."""
+        for i, tr in enumerate(self.rows):
+            if tr["id"] == tid and i < len(self.tops):
+                btns = self.header_buttons(i)
+                name_w = (btns[0][1].left() if btns else self.header_w) - 40
+                r = QRect(34, round(self.tops[i]), max(40, int(name_w)), min(self.row_h(i) - 1, 26))
+                return r if r.bottom() > RULER_H and r.top() < self.height() else None
+        return None
+
+    def clip_rect(self, cid):
+        """The part in view of a clip's bar, its label's line (QRect), or None when it is not in view."""
+        for i, tr in enumerate(self.rows):
+            if i >= len(self.tops):
+                break
+            spots = [(c, self.tops[i], 0, self.base_h(i)) for c in tr["clips"]]
+            spots += [(c, ln["y"], ln["abs0"], ln["h"]) for ln in self.lanes(i) for c in ln["track"]["clips"]]
+            for c, y, abs0, h in spots:
+                if c["id"] != cid:
+                    continue
+                x0 = max(self._x((abs0 + c["start_us"]) / US), self.header_w)
+                x1 = min(self._x((abs0 + c["start_us"] + c["duration_us"]) / US), self.width())
+                if x1 <= x0 or y + h <= RULER_H or y >= self.height():
+                    return None
+                return QRect(round(x0), round(y) + 3, round(x1 - x0), min(round(h) - 8, 22))
         return None
 
     def header_buttons(self, i):

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QLabel, QTreeWidget, QTreeWidg
 
 from .. import components, project
 from .library import MIME
+from . import inplace
 from .menukeys import Menu
 
 US = 1_000_000
@@ -167,6 +168,7 @@ class CompoundPanel(QWidget):
         d = it.data(0, Qt.UserRole) if it is not None and it.isSelected() else None
         if not d or d[0] == "use":
             return False
+        inplace.item_hint(self.tree, it)
         self.renameRequested.emit(d[1])
         return True
 
@@ -174,7 +176,7 @@ class CompoundPanel(QWidget):
         it = self.tree.itemAt(pos)
         menu = Menu(self)
         if it is not None:
-            self._item_actions(menu, it.data(0, Qt.UserRole))
+            self._item_actions(menu, it.data(0, Qt.UserRole), it)
             menu.addSeparator()
         self._create_actions(menu)
         menu.exec(self.tree.viewport().mapToGlobal(pos))
@@ -190,7 +192,7 @@ class CompoundPanel(QWidget):
             a.setToolTip(tip)
         menu.setToolTipsVisible(True)
 
-    def _item_actions(self, menu, d):
+    def _item_actions(self, menu, d, it=None):
         if d[0] == "use":
             menu.addAction("選取", lambda: self.showRequested.emit(d[3], list(d[2]), d[1]))
             menu.addAction("進入編輯", lambda: self.openRequested.emit(d[3], list(d[2]) + [d[1]]))
@@ -201,7 +203,7 @@ class CompoundPanel(QWidget):
             if not kid.startswith("tl"):
                 menu.addAction("進入編輯", lambda: self.entryRequested.emit(kid))
             menu.addAction("在新的分頁開啟", lambda: self.tabRequested.emit(kid))
-            menu.addAction("重新命名…", lambda: self.renameRequested.emit(kid))
+            menu.addAction("重新命名…", lambda: (inplace.item_hint(self.tree, it), self.renameRequested.emit(kid)))
             menu.addAction("建立副本", lambda: self.cloneRequested.emit(kid))
             if not kid.startswith("tl"):
                 menu.addAction("存到 Library…", lambda: self.libraryRequested.emit(kid))

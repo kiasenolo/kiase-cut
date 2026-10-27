@@ -871,7 +871,7 @@ class Inspector(QWidget):
         ids = list(self.clip_ids)
         col = pick_color(self, qcolor(cur), assets.FIELD_INFO[f][0],
                          live=lambda c: self.liveEdited.emit(ids, "asset", f, rgba(c)),
-                         cancel=self.liveCancelled.emit)
+                         cancel=self.liveCancelled.emit, anchor=self.widgets[("asset", f)])
         if col is not None:
             self._queue("asset", f, rgba(col))
             self._flush()
@@ -968,7 +968,7 @@ class Inspector(QWidget):
         ids, pid = list(self.clip_ids), p["id"]
         col = pick_color(self, qcolor(cur), p["name"],
                          live=lambda c: self.liveEdited.emit(ids, "params", pid, rgba(c)),
-                         cancel=self.liveCancelled.emit)
+                         cancel=self.liveCancelled.emit, anchor=self.widgets[("params", p["id"])])
         if col is not None:
             self._queue("params", pid, rgba(col))
             self._flush()
@@ -1193,7 +1193,7 @@ class Inspector(QWidget):
         ids = list(self.clip_ids)
         col = pick_color(self, cur, "文字顏色", alpha=False,
                          live=lambda c: self.liveEdited.emit(ids, "text", "color", rgba(c)[:3]),
-                         cancel=self.liveCancelled.emit)
+                         cancel=self.liveCancelled.emit, anchor=self.widgets["color"])
         if col is not None:
             self._queue("text*", "color", [col.redF(), col.greenF(), col.blueF()])
             self._flush()

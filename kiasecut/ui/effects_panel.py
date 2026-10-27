@@ -661,7 +661,7 @@ class EffectsPanel(QWidget):
         ids = list(self.ids) if self.clip_id else []
         col = pick_color(self, qcolor(btn.text() if btn.text() != "--" else "#ffffff"), "顏色",
                          live=lambda c: ids and self.liveEdited.emit(ids, group, key, rgba(c)),
-                         cancel=self.liveCancelled.emit)
+                         cancel=self.liveCancelled.emit, anchor=btn)
         if col is not None:
             self._queue(group, key, rgba(col))
             self._flush()

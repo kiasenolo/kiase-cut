@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QPushButt
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from .. import svgimage
+from . import inplace
 from .menukeys import Menu
 
 MIME = "application/x-kiasecut-media"
@@ -297,6 +298,7 @@ class LibraryPanel(QWidget):
         it = self.tree.currentItem()
         if it is None or not it.isSelected():
             return False
+        inplace.item_hint(self.tree, it)
         self.renameRequested.emit(it.data(0, ROLE_ID))
         return True
 
@@ -307,7 +309,7 @@ class LibraryPanel(QWidget):
             ident = node.data(0, ROLE_ID)
             if not ident.startswith("f"):
                 menu.addAction("加到播放頭位置", lambda: self.addRequested.emit(ident))
-            menu.addAction("重新命名…", lambda: self.renameRequested.emit(ident))
+            menu.addAction("重新命名…", lambda: (inplace.item_hint(self.tree, node), self.renameRequested.emit(ident)))
             menu.addAction("刪除（移到資源回收筒）", lambda: self.deleteRequested.emit(ident))
             menu.addAction("在檔案總管中顯示", lambda: self.revealRequested.emit(ident))
             menu.addSeparator()

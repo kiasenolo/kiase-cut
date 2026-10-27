@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QSettings, QSize, QStandardPaths, Qt,
+from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QRect, QSettings, QSize, QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
@@ -50,7 +50,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
-from . import icons, wheel
+from . import icons, inplace, wheel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .timeline import MEDIA_MIME, US, Timeline, timecode
@@ -1088,7 +1088,8 @@ class MainWindow(QMainWindow):
             return
         tl = project.timeline(self.proj, tid)
         if action == "rename":
-            name, ok = QInputDialog.getText(self, "時間線名稱", "名稱", text=tl["name"])
+            i = next((k for k in range(self.tl_tabs.count()) if self.tl_tabs.tabData(k) == tid), -1)
+            name, ok = inplace.ask_name(self, tl["name"], (self.tl_tabs, self.tl_tabs.tabRect(i)) if i >= 0 else None)
             if ok:
                 self.apply_root("重新命名時間線", edit.rename_timeline, tid, name)
         elif action == "duplicate":
@@ -2478,7 +2479,7 @@ class MainWindow(QMainWindow):
         if p is None:
             return
         if action == "rename":
-            name, ok = QInputDialog.getText(self, "重新命名參數", "參數名稱：", text=p["name"])
+            name, ok = inplace.ask_name(self, p["name"])
             if ok:
                 self.apply_root("重新命名參數", edit.rename_param, kid, pid, name)
         elif action in ("up", "down"):
@@ -2824,9 +2825,22 @@ class MainWindow(QMainWindow):
             root, self.container(root), list(moves), moves=moves, t_of=self.clip_time))
         self._select_new(new)
 
-    def pick_live(self, initial, title, holders):
-        """A colour for tracks or clips (holders), shown on the timeline while it is picked;
-        what they had comes back before the edit is made (or when it is cancelled)."""
+    def track_anchor(self, tid, name=False):
+        """Where on the timeline a track's header (its name: name) is, for inplace."""
+        r = self.timeline.track_name_rect(tid)
+        if r is not None and not name:
+            r = QRect(0, r.top(), self.timeline.header_w, r.height())
+        return (self.timeline, r) if r is not None else None
+
+    def clip_anchor(self, cid):
+        """Where on the timeline a clip's label is, for inplace (None when it is out of view)."""
+        r = self.timeline.clip_rect(cid)
+        return (self.timeline, r) if r is not None else None
+
+    def pick_live(self, initial, title, holders, anchor=None):
+        """A colour for tracks or clips (holders), shown on the timeline while it is picked
+        (opening at anchor: inplace.anchor_of); what they had comes back before the edit is
+        made (or when it is cancelled)."""
         old = [(h, h.get("color")) for h in holders]
 
         def show(col):
@@ -2834,7 +2848,7 @@ class MainWindow(QMainWindow):
                 h["color"] = col.name()
             self.timeline.update()
 
-        col = pick_color(self, initial, title, alpha=False, live=show)
+        col = pick_color(self, initial, title, alpha=False, live=show, anchor=anchor)
         for h, was in old:
             if was is None:
                 h.pop("color", None)
@@ -2846,11 +2860,11 @@ class MainWindow(QMainWindow):
     def on_track_action(self, action, tid):
         t = edit.track_by_id(self.container(), tid)
         if action == "rename":
-            name, ok = QInputDialog.getText(self, "軌道名稱", "名稱", text=t.get("name") or t["kind"])
+            name, ok = inplace.ask_name(self, t.get("name") or t["kind"], self.track_anchor(tid, name=True))
             if ok:
                 self.apply("重新命名軌道", edit.rename_track, tid, name)
         elif action == "color":
-            col = self.pick_live(QColor(t.get("color") or "#888888"), "軌道顏色", [t])
+            col = self.pick_live(QColor(t.get("color") or "#888888"), "軌道顏色", [t], self.track_anchor(tid))
             if col is not None:
                 self.apply("軌道顏色", edit.set_track_color, tid, col.name())
         elif action == "nocolor":
@@ -2859,7 +2873,8 @@ class MainWindow(QMainWindow):
             self.apply("片段顏色", edit.set_track_clip_colors, tid, t.get("color"))
         elif action == "clips:pick":
             first = next((c.get("color") for c in t["clips"] if c.get("color")), None)
-            col = self.pick_live(QColor(first or t.get("color") or "#888888"), "所有片段的顏色", t["clips"])
+            col = self.pick_live(QColor(first or t.get("color") or "#888888"), "所有片段的顏色", t["clips"],
+                                 self.track_anchor(tid))
             if col is not None:
                 self.apply("片段顏色", edit.set_track_clip_colors, tid, col.name())
         elif action == "clips:none":
@@ -2953,7 +2968,7 @@ class MainWindow(QMainWindow):
         elif action == "save_library":
             self.save_compound_to_library(c.get("compound_id"))
         elif action == "rename":
-            name, ok = QInputDialog.getText(self, "片段名稱", "名稱", text=self.timeline.clip_label(c))
+            name, ok = inplace.ask_name(self, self.timeline.clip_label(c), self.clip_anchor(cid))
             if ok:
                 self.apply("重新命名片段", edit.rename_clip, cid, name)
         elif action in ("color", "nocolor"):
@@ -2964,7 +2979,7 @@ class MainWindow(QMainWindow):
             else:
                 level = self.container()
                 col = self.pick_live(QColor(c.get("color") or "#888888"), "片段顏色",
-                                     [edit.find(level, i)[1] for i in ids])
+                                     [edit.find(level, i)[1] for i in ids], self.clip_anchor(cid))
                 if col is not None:
                     self.apply_each("片段顏色", edit.set_clip_color, ids, col.name())
         elif action == "unique":
@@ -3092,7 +3107,7 @@ class MainWindow(QMainWindow):
 
     def rename_library(self, ident):
         target = library.folder(self.proj, ident) if ident.startswith("f") else library.item(self.proj, ident)
-        name, ok = QInputDialog.getText(self, "重新命名", "名稱（檔案會一起改名）", text=target["name"])
+        name, ok = inplace.ask_name(self, target["name"])
         if ok:
             _ok, pairs = self.library_do("重新命名", lambda: library.rename_on_disk(self.proj, self.root, ident, name))
             if pairs:
@@ -3182,7 +3197,7 @@ class MainWindow(QMainWindow):
             self.timeline_do("rename", kid)
             return
         comp = self.proj["compounds"][kid]
-        name, ok = QInputDialog.getText(self, "複合片段名稱", "名稱", text=comp.get("name") or "")
+        name, ok = inplace.ask_name(self, comp.get("name") or "")
         if ok:
             self.apply_root("重新命名複合片段", edit.rename_compound, kid, name)
 
@@ -4075,7 +4090,7 @@ class MainWindow(QMainWindow):
     def ul_rename(self, key, ident):
         proj = self.ulib.proj(key)
         target = library.folder(proj, ident) if ident.startswith("f") else library.item(proj, ident)
-        name, ok = QInputDialog.getText(self, "重新命名", "名稱（檔案會一起改名）", text=target["name"])
+        name, ok = inplace.ask_name(self, target["name"])
         if ok:
             _ok, pairs = self.ul_do(key, lambda: library.rename_on_disk(proj, self.ulib.mirror(key), ident, name), "重新命名")
             self.ul_paths_changed(pairs, "重新命名 Library 檔案")
@@ -4681,7 +4696,8 @@ class MainWindow(QMainWindow):
 
     def rename_layout(self, key):
         old = key.partition(":")[2]
-        name, ok = QInputDialog.getText(self, "重新命名佈局", "新名稱", text=old)
+        i = next((k for k in range(self.layout_tabs.count()) if self.layout_tabs.tabData(k) == key), -1)
+        name, ok = inplace.ask_name(self, old, (self.layout_tabs, self.layout_tabs.tabRect(i)) if i >= 0 else None)
         if not ok or name.strip() == old:
             return
         try:

@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QHBoxLay
                                QVBoxLayout)
 
 from .. import thumbnail, workspace
+from . import inplace
 from .menukeys import Menu
 
 CARD = QSize(240, 135)
@@ -298,7 +299,8 @@ class ProjectManager(QDialog):
         if self._refuse_open(path):
             return
         old = workspace.project_name(path) if kind == "project" else os.path.basename(path)
-        name, ok = QInputDialog.getText(self, "重新命名", "名稱", text=old)
+        inplace.item_hint(self.list, it)
+        name, ok = inplace.ask_name(self, old)
         if not ok or not name.strip() or name.strip() == old:
             return
         try:

@@ -96,7 +96,7 @@ class StillDialog(QDialog):
         self.note.setText("" if can else f"{self.fmt.currentText()} 不能存透明，空白的地方會填上背景顏色。")
 
     def _pick_bg(self):
-        col = pick_color(self, self.bg, "背景顏色", alpha=False)
+        col = pick_color(self, self.bg, "背景顏色", alpha=False, anchor=self.bg_btn)
         if col is not None:
             self.bg = col
             self._update()

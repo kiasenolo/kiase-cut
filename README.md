@@ -230,6 +230,13 @@ clip given its own colour keeps it; 預設顏色 on a clip makes it follow its t
 track's right-click menu can also give its clips colours of their own: 將軌道顏色套用到所有
 片段 (they keep it when the track's colour changes), 設定所有片段的顏色…, 所有片段改回預設
 顏色 (one undo step each).
+Renaming and colours happen where the thing is, not in a window in the middle of the screen:
+重新命名 / F2 puts a name field over the item's own name (a clip's label, a track header, a
+tab, a row of a panel's list), the old name selected; a colour opens a small picker right under
+the clip, the track header or the swatch button (above it when there is no room): colours, the
+last ones picked, a saturation / brightness square with a hue strip, alpha where it has one, and
+the hex (ff0000 or #ff0000). What is tried shows at once; Enter or a click elsewhere keeps it
+(that click does nothing else), Esc goes back.
 Dragging on the ruler always moves the playhead, also over clips scrolled up under it.
 
 Groups (群組, as in Lunacy): select picture clips and press Ctrl+G (or right-click > 建立群組):

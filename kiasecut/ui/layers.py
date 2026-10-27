@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLa
 from .. import assets, components, edit, project
 from .params import ParamList, bound_tip, clip_name, param_menu
 from .timeline import FX_MIME, MEDIA_MIME
+from . import inplace
 from .menukeys import Menu
 
 ROLE = Qt.UserRole
@@ -334,7 +335,7 @@ class LayerPanel(QWidget):
         self.list = LayerList()
         self.list.itemSelectionChanged.connect(self._selected)
         self.list.reordered.connect(self.orderChanged)
-        self.list.itemDoubleClicked.connect(lambda it: self.renameRequested.emit(it.data(ROLE)))
+        self.list.itemDoubleClicked.connect(self._rename)
         self.list.mediaDropped.connect(self.mediaDropped)
         self.list.movedInto.connect(self.movedInto)
         self.list.fxDropped.connect(self.fxDropped)
@@ -381,16 +382,22 @@ class LayerPanel(QWidget):
         items = self.list.selectedItems()
         if len(items) != 1:
             return False
-        self.renameRequested.emit(items[0].data(ROLE))
+        self._rename(items[0])
         return True
+
+    def _rename(self, it):
+        """Rename a layer, the name field over its name in the row."""
+        row = self.list.itemWidget(it)
+        if isinstance(row, LayerRow):
+            inplace.hint(row.name)
+        self.renameRequested.emit(it.data(ROLE))
 
     def _menu(self, where):
         """Right-click on the selected layers: what the buttons do, and rename / hide / lock."""
         items = self.list.selectedItems()
         menu = Menu(self)
         if len(items) == 1:
-            cid = items[0].data(ROLE)
-            menu.addAction("重新命名", lambda: self.renameRequested.emit(cid))
+            menu.addAction("重新命名", lambda it=items[0]: self._rename(it))
         for text, action in (("上移", "up"), ("下移", "down"), ("建立群組", "group"), ("複製", "copy"),
                              ("刪除", "delete")):
             menu.addAction(text, lambda a=action: self.actionRequested.emit(a))

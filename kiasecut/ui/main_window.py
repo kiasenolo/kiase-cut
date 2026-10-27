@@ -1353,9 +1353,13 @@ class MainWindow(QMainWindow):
         return True
 
     def open_loaded(self, proj, path):
-        self.path = path
-        self.set_project(proj)
+        """Whether it was opened (the user may back out when its media are missing)."""
+        was, self.path = self.path, path
+        if not self.set_project(proj):
+            self.path = was
+            return False
         self.remember(path)
+        return True
 
     def import_draft(self):
         if not self.maybe_save():
@@ -1383,7 +1387,8 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "無法建立專案", str(exc))
             return
-        self.open_loaded(proj, path)
+        if not self.open_loaded(proj, path):
+            return
         if warnings:
             QMessageBox.information(self, "匯入完成", "部分內容無法匯入：\n" + "\n".join(sorted(set(warnings))))
         # the draft's media stay where they are: the library's copy button brings them in
@@ -1404,7 +1409,8 @@ class MainWindow(QMainWindow):
             return False
         old_format = "info" not in proj
         workspace.opened(proj, fn)
-        self.open_loaded(proj, fn)
+        if not self.open_loaded(proj, fn):
+            return False
         if old_format and library.external_media(proj, self.root):
             self.collect_external(ask=True)
         return True
@@ -1459,10 +1465,13 @@ class MainWindow(QMainWindow):
         return True
 
     def set_project(self, proj):
-        self.root = workspace.root_of(self.path) if self.path else None
-        if self.root:                       # built-in assets are drawn again rather than looked for
-            assets.restore(project.all_clips(proj), workspace.media_dir(self.root))
-        self.relink(proj)
+        """Whether it was opened (False: the user chose not to, over its missing media)."""
+        root = workspace.root_of(self.path) if self.path else None
+        if root:                            # built-in assets are drawn again rather than looked for
+            assets.restore(project.all_clips(proj), workspace.media_dir(root))
+        if not self.relink(proj):
+            return False
+        self.root = root
         workspace.ensure_info(proj, self.path)
         if self.root:
             workspace.ensure_layout(self.root)
@@ -1506,6 +1515,7 @@ class MainWindow(QMainWindow):
         self.watch_media()
         self.request_sync(0)
         self.check_fonts(auto=True)
+        return True
 
     # -- project folder: info, time spent, backups -----------------------------------------------
     def show_project_info(self):
@@ -1594,10 +1604,13 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "無法回復", f"{save}\n{exc}")
             return False
         if path and os.path.exists(path):
-            self.open_loaded(proj, path)
+            if not self.open_loaded(proj, path):
+                return False
         else:                                            # its folder is gone: an unsaved project
-            self.path = None
-            self.set_project(proj)
+            was, self.path = self.path, None
+            if not self.set_project(proj):
+                self.path = was
+                return False
         self.dirty = True
         self._session(autosave=save)                     # (still unsaved: kept for another time)
         self._update_title()
@@ -1731,20 +1744,30 @@ class MainWindow(QMainWindow):
                       lambda p: prog.setValue(int(p * 1000)))
 
     def relink(self, proj):
-        """Offer to find missing media by file name under a folder the user picks."""
+        """Offer to find missing media by file name under a folder the user picks.
+        False when the user would rather not open the project after all."""
         clips = [c for c in project.all_clips(proj) if c.get("media")]
         items = library.lib(proj)["items"]
         refs = [c["media"] for c in clips] + items
         missing = sorted({x["path"] for x in refs if not os.path.exists(x["path"])})
         if not missing:
-            return
-        ans = QMessageBox.question(self, "找不到素材",
-                                   f"有 {len(missing)} 個素材檔案找不到，例如：\n{missing[0]}\n\n要選一個資料夾自動尋找嗎？")
-        if ans != QMessageBox.Yes:
-            return
+            return True
+        box = QMessageBox(QMessageBox.Question, "找不到素材",
+                          f"有 {len(missing)} 個素材檔案找不到，例如：\n{missing[0]}\n\n要選一個資料夾自動尋找嗎？",
+                          parent=self)
+        find = box.addButton("選資料夾尋找", QMessageBox.AcceptRole)
+        skip = box.addButton("直接開啟", QMessageBox.RejectRole)
+        back = box.addButton("那先不要開好了", QMessageBox.DestructiveRole)
+        box.setDefaultButton(find)
+        box.setEscapeButton(skip)
+        box.exec()
+        if box.clickedButton() is back:
+            return False
+        if box.clickedButton() is not find:
+            return True
         root = QFileDialog.getExistingDirectory(self, "選擇素材所在的資料夾")
         if not root:
-            return
+            return True
         found = {}
         for d, _, files in os.walk(root):
             for f in files:
@@ -1756,6 +1779,7 @@ class MainWindow(QMainWindow):
                 x["path"] = found[name]
                 fixed += 1
         self.statusBar().showMessage(f"已重新連結 {fixed} 個素材", 8000)
+        return True
 
     # -- editing ----------------------------------------------------------------------------------
     def apply(self, label, fn, *args, merge=None, select=None):

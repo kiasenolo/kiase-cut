@@ -261,7 +261,7 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(got, ["asset:shape.rect:#ff0000:#00ff00"])
 
     def test_inspector(self):
-        from kiasecut.ui.inspector import KEY_ON, Inspector
+        from kiasecut.ui.inspector import Inspector
         p = proj()
         params = assets.make(assets.get("shape.star"), "#ff0000", "", 1920, 1080)
         edit.replace_media(p, "c1", assets.item(params, "/a.svg"), params)
@@ -281,7 +281,7 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(keys, [("asset", "points")])
         edit.toggle_key(p, "c1", "asset", "points", 0)
         ins.show_clips([c], 0, 30)
-        self.assertEqual(ins.widgets[("key", "asset", "points")].text(), KEY_ON)
+        self.assertEqual(ins.widgets[("key", "asset", "points")].property("key"), "on")
         ins.show_clips([edit.find(p, "c2")[1]], 0, 30)     # a plain picture: no asset section
         self.assertNotIn(("asset", "w"), ins.widgets)
 

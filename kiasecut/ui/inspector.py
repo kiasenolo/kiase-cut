@@ -105,7 +105,19 @@ BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "s
                ("強光", "hard_light"), ("柔光", "soft_light"), ("差值", "difference"), ("排除", "exclusion"),
                ("相加", "add"))
 PASS_THROUGH = ("穿透", "pass_through")          # (groups only)
-KEY_ON, KEY_OFF = "◆", "◇"
+KEY_ON, KEY_ANIMATED = "#ffb020", "#c9933a"      # a keyframe here; animated, none here
+
+
+def key_button(clicked):
+    """A ◆ button (its state set by Inspector._key_state)."""
+    b = QPushButton()
+    b.setFixedWidth(26)
+    b.setIconSize(QSize(16, 16))
+    b.setIcon(icons.key_icon("off"))
+    b.setProperty("key", "off")
+    b.setToolTip("在播放頭新增／刪除關鍵幀")
+    b.clicked.connect(clicked)
+    return b
 
 
 class SpinBox(QDoubleSpinBox):
@@ -1054,10 +1066,7 @@ class Inspector(QWidget):
         self._emit_now(self.paramEdited, "params", pid, path)
 
     def _key_button(self, group, key):
-        b = QPushButton(KEY_OFF)
-        b.setFixedWidth(26)
-        b.setToolTip("在播放頭新增／刪除關鍵幀")
-        b.clicked.connect(lambda: self._emit_now(self.keyToggled, group, key))
+        b = key_button(lambda: self._emit_now(self.keyToggled, group, key))
         self.widgets[("key", group, key)] = b
         return b
 
@@ -1221,11 +1230,13 @@ class Inspector(QWidget):
 
     @staticmethod
     def _key_state(btn, ps, clips, ts):
-        """◆ when every clip has a keyframe at the playhead, ◈ when some do."""
+        """A filled ◆ when every clip has a keyframe at the playhead, half filled when some do
+        (amber), else one with ＋ (darker amber when the value is animated)."""
         on = [edit.key_at(p, t) is not None for p, t in zip(ps, ts)]
-        btn.setText(KEY_ON if all(on) else ("◈" if any(on) else KEY_OFF))
-        btn.setStyleSheet("color: #ffb020;" if any(on) else
-                          ("color: #c9933a;" if any(curves.is_animated(p) for p in ps) else ""))
+        state = "on" if all(on) else "some" if any(on) else "off"
+        color = KEY_ON if any(on) else KEY_ANIMATED if any(curves.is_animated(p) for p in ps) else icons.INK
+        btn.setIcon(icons.key_icon(state, color))
+        btn.setProperty("key", state)
         btn.setEnabled(any(0 <= t <= k["duration_us"] for k, t in zip(clips, ts)))
 
     @staticmethod

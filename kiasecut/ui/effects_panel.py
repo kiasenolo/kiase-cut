@@ -25,7 +25,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLa
 
 from .. import curves, edit, fx
 from .colorpick import pick_color, qcolor, rgba
-from .inspector import MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, kind_tag, section
+from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, key_button, kind_tag,
+                        section)
 from .vfx_panel import FX_MIME, effect_mime
 
 DEBOUNCE_MS = 350
@@ -370,10 +371,7 @@ class EffectsPanel(QWidget):
         return row
 
     def _key_button(self, group, key):
-        b = QPushButton("◇")
-        b.setFixedWidth(26)
-        b.setToolTip("在播放頭新增／刪除關鍵幀")
-        b.clicked.connect(lambda: self._now(self.keyToggled, group, key))
+        b = key_button(lambda: self._now(self.keyToggled, group, key))
         self.widgets[("key", group, key)] = b
         return b
 

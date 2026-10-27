@@ -172,3 +172,46 @@ def icon(name, size=24):
             ic.addPixmap(pm, mode, state)
     _cache[key] = ic
     return ic
+
+
+def _diamond(p, state):
+    """A keyframe on the 24 grid: an outline with ＋ (none here: click adds one), filled (one
+    here), or its left half filled (some of the selected clips have one)."""
+    ink = p.pen().color()
+    pts = [(12, 3), (21, 12), (12, 21), (3, 12)]
+    if state == "on":
+        p.setPen(Qt.NoPen)
+        _poly(p, pts)
+        return
+    if state == "some":
+        p.setPen(Qt.NoPen)
+        _poly(p, [(12, 3), (12, 21), (3, 12)])
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(ink, 1.8, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    _poly(p, [(12, 4), (20, 12), (12, 20), (4, 12)])
+    if state == "off":
+        p.drawLine(QPointF(12, 8.5), QPointF(12, 15.5))
+        p.drawLine(QPointF(8.5, 12), QPointF(15.5, 12))
+
+
+def key_icon(state, color=INK, size=16):
+    """The ◆ button of an animatable value: state "off" / "on" / "some" (_diamond), in color
+    (dim when the button is disabled)."""
+    key = ("key", state, color, size)
+    if key in _cache:
+        return _cache[key]
+    ic = QIcon()
+    for mode, ink in ((QIcon.Normal, color), (QIcon.Disabled, DIM)):
+        pm = QPixmap(size * 2, size * 2)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.scale(size * 2 / 24, size * 2 / 24)
+        p.setPen(QPen(QColor(ink), 1))
+        p.setBrush(QColor(ink))
+        _diamond(p, state)
+        p.end()
+        pm.setDevicePixelRatio(2)
+        ic.addPixmap(pm, mode)
+    _cache[key] = ic
+    return ic

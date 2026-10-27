@@ -967,13 +967,36 @@ class Preview(QWidget):
     def _picked_boxes(self):
         return [b for b in self.visible_boxes() if b.clip["id"] in self.selected_ids and not b.locked]
 
+    def _kid_boxes(self):
+        """{clip id: (its Box in its group's canvas, the GroupBox)} of the selected clips inside groups."""
+        out = {}
+
+        def walk(bs):
+            for b in bs:
+                if getattr(b, "group", False):
+                    for k in b.kids:
+                        if k.clip["id"] in self.selected_ids and not k.locked:
+                            out[k.clip["id"]] = (k, b)
+                    walk(b.kids)
+        walk(self.visible_boxes())
+        return out
+
     def align_moves(self, how):
         """{clip id: {x} or {y}} lining the selected clips up by how (ALIGNS): to the box around
-        them all, or one clip to the canvas."""
+        them all, or one clip to the canvas - one inside a group to the box around the group's
+        clips (all in the group's own canvas, so a moved or scaled group works too)."""
         boxes = self._picked_boxes()
+        kids = self._kid_boxes()
+        outer = {id(g): g for _, g in kids.values()}
+        if len(outer) == 1 and all(b.clip["id"] in kids for b in boxes):
+            boxes = [k for k, _ in kids.values()]
+            g = next(iter(outer.values()))
+            ref = boxes if len(boxes) > 1 else g.kids if len(g.kids) > 1 else None
+        else:
+            ref = boxes if len(boxes) > 1 else None
         if not boxes:
             return {}
-        l, r, t, b = self._union(boxes) if len(boxes) > 1 else (0, self.W, 0, self.H)
+        l, r, t, b = self._union(ref) if ref else (0, self.W, 0, self.H)
         out = {}
         for bx in boxes:
             e = bx.extents()

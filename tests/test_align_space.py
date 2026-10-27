@@ -54,6 +54,22 @@ class AlignTests(unittest.TestCase):
         mids = [(ext(p, f"k{i}")[0] + ext(p, f"k{i}")[1]) / 2 for i in range(3)]
         self.assertTrue(max(mids) - min(mids) < 0.5)
 
+    def test_one_clip_in_a_group_to_the_group(self):
+        p, pv = scene((300, 200), (700, 500), (1500, 900))
+        g = edit.make_group(p, p, ["k0", "k1"])
+        for moved in (False, True):
+            if moved:                                    # (a moved group: still its own clips' box)
+                edit.set_param(p, g["id"], "transform", "x", 0.3)
+            pv.set_scene(p, 0, "k0", {"k0"})
+            apply(p, pv.align_moves("right"))
+            self.assertAlmostEqual(ext(p, "k0")[1], 700 + 96, 1)
+            apply(p, pv.align_moves("top"))
+            self.assertAlmostEqual(ext(p, "k0")[2], 200 - 54, 1)
+            apply(p, pv.align_moves("left"))
+            self.assertAlmostEqual(ext(p, "k0")[0], 700 - 96, 1)    # (k1's left: k0 is right over it now)
+            apply(p, pv.align_moves("hcenter"))
+            self.assertAlmostEqual(ext(p, "k0")[0], 700 - 96, 1)
+
     def test_one_clip_to_the_canvas(self):
         p, pv = scene((300, 200))
         apply(p, pv.align_moves("right"))

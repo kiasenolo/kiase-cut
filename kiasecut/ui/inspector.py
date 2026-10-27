@@ -433,7 +433,7 @@ class Inspector(QWidget):
             b = QPushButton()
             b.setObjectName("tool")
             b.setIcon(icons.icon("align_" + k, 18))
-            b.setToolTip(tip + ("（對齊選取範圍）" if many else "（對齊畫布）"))
+            b.setToolTip(tip + ("（對齊選取範圍）" if many else "（對齊畫布；群組裡的片段對齊群組）"))
             b.clicked.connect(lambda _=False, k=k: self.alignRequested.emit(k))
             lay.addWidget(b)
             if k == "right":

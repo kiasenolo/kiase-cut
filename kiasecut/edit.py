@@ -1213,23 +1213,24 @@ def snap_to_beats(proj, clip_ids):
     def nearest(x):
         i = bisect.bisect_left(beats, x)
         return min(beats[max(0, i - 1):i + 1], key=lambda b: abs(b - x))
+    off = lambda c: abs_start(proj, c["id"]) - c["start_us"]     # (a group's clip: its group's start)
     plans = []
     for cid in clip_ids:
         _, c = find(proj, cid)
-        off = abs_start(proj, cid) - c["start_us"]
-        s, e = nearest(c["start_us"] + off), nearest(end(c) + off)
+        s, e = nearest(c["start_us"] + off(c)), nearest(end(c) + off(c))
         if e <= s:
             e = next((b for b in beats if b > s), None)
             if e is None:
                 continue
-        plans.append((c, s - off, e - off))
+        plans.append((c, s, e))
+    # (in the level's time: a group that grows to the left moves its clips' times in it)
     for _ in range(2):                                   # (a second pass: room made by later clips)
         for grow in (False, True):
             for c, s, e in plans:
-                if s != c["start_us"] and (s < c["start_us"]) == grow:
-                    trim_start(proj, c["id"], s)
-                if e != end(c) and (e > end(c)) == grow:
-                    trim_end(proj, c["id"], e)
+                if s != c["start_us"] + off(c) and (s < c["start_us"] + off(c)) == grow:
+                    trim_start(proj, c["id"], s - off(c))
+                if e != end(c) + off(c) and (e > end(c) + off(c)) == grow:
+                    trim_end(proj, c["id"], e - off(c))
     return [c for c, _, _ in plans]
 
 

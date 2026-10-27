@@ -95,6 +95,16 @@ class SpeedTests(unittest.TestCase):
         with self.assertRaises(edit.EditError):
             edit.snap_to_beats(p, ["a"])
 
+    def test_snap_to_beats_in_a_group(self):
+        p = proj()
+        edit.set_beat(p, "c3", on=True, bpm=60, offset_us=0)
+        p["tracks"][1]["clips"] += [clip("a", int(2.3 * S), int(1.3 * S)), clip("b", int(3.6 * S), int(0.8 * S))]
+        g = edit.make_group(p, p, ["a", "b"])                     # 2.3 - 4.4: both ends grow it
+        edit.snap_to_beats(p, ["a", "b"])
+        span = lambda k: (edit.abs_start(p, k), edit.abs_start(p, k) + edit.find(p, k)[1]["duration_us"])
+        self.assertEqual((span("a"), span("b")), ((2 * S, 4 * S), (4 * S, 5 * S)))
+        self.assertEqual((g["start_us"], g["duration_us"]), (2 * S, 3 * S))
+
     def test_sound_plays_faster(self):
         p = proj()
         c = edit.find(p, "c3")[1]

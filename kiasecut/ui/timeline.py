@@ -35,7 +35,8 @@ that clip's source (the clip lights up while it would).
 Time selection (as in FL Studio): drag with the right button anywhere on the timeline to
 select a span of time (it snaps like clips do); playback then starts at its beginning and
 loops inside it, and it is the range a marked export uses. Ctrl+Shift+D clears it. A right
-click without dragging opens the menu.
+drag that starts at either end of the selection moves only that end, the other staying where
+it is; one that starts elsewhere selects anew. A right click without dragging opens the menu.
 
 The selected clip shows its keyframes as diamonds along its bottom edge; drag one sideways
 to move every keyframe at that time (it snaps to frames, the playhead and other clips'
@@ -1462,11 +1463,32 @@ class Timeline(QWidget):
                 best = (dx, k)
         return (c, best[1]) if best else (None, None)
 
+    def _region_edge(self, x):
+        """Pressed at screen x near an end of the time selection (as in FL Studio): the time of
+        its other end, which stays while the drag moves this one; None elsewhere."""
+        if self.mark_in is None and self.mark_out is None:
+            return None
+        a = (self.mark_in or 0) / self.fps
+        b = ((self.mark_out + 1) if self.mark_out is not None else
+             self.proj["duration_us"] / US * self.fps) / self.fps
+        # (the end line is drawn at the last frame's start; either side of that frame grabs it)
+        ends = [(abs(x - self._x(a)), b)]
+        if self.mark_out is not None:
+            ends += [(abs(x - self._x(self.mark_out / self.fps)), a), (abs(x - self._x(b)), a)]
+        else:
+            ends.append((abs(x - self._x(b)), a))
+        dx, other = min(ends, key=lambda d: d[0])
+        return other * US if dx <= SNAP_PX else None
+
     def mousePressEvent(self, e):
         if self.proj and e.button() == Qt.RightButton and e.position().x() >= self.header_w:
             # right-drag selects time; a right click without moving opens the menu (on release)
-            self.drag = {"clip": None, "mode": "region", "moved": False, "pos": e.position(),
-                         "t0": self._snap(max(0.0, self._sec(e.position().x())) * US, None)}
+            t0 = self._region_edge(e.position().x())
+            if t0 is None:
+                t0 = self._snap(max(0.0, self._sec(e.position().x())) * US, None)
+            else:
+                self.setCursor(Qt.SizeHorCursor)
+            self.drag = {"clip": None, "mode": "region", "moved": False, "pos": e.position(), "t0": t0}
             return
         if self.proj and e.button() == Qt.MiddleButton:     # drag the view (Ctrl: zoom it)
             zoom = bool(e.modifiers() & Qt.ControlModifier)
@@ -1890,6 +1912,7 @@ class Timeline(QWidget):
             self.update()
             return
         if d and d["mode"] == "region":
+            self.setCursor(Qt.ArrowCursor)
             if not d["moved"]:
                 self._menu(e.position().toPoint(), e.globalPosition().toPoint())
             return

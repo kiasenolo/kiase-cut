@@ -12,7 +12,9 @@ curve, Delete removes the selection, Ctrl+D clears it. The wheel moves the view 
 down, Shift+wheel left and right, Ctrl+wheel zooms time around the mouse, Alt+wheel zooms
 values (a touchpad's two-finger scroll moves both ways at once, its pinch zooms time), the middle button drags the view and Ctrl+middle-drag zooms it around where the drag
 started (as in Blender's graph editor: sideways zooms time, up and down values; right / up:
-in); "全部顯示" fits everything again. A click on the time ruler (or empty space) moves the
+in); "全部顯示" fits everything again. Those drags and keyframe drags are endless (無邊界,
+wrapdrag.py): the pointer wraps at the plot's edges, and dragged keyframes keep the view
+following them. A click on the time ruler (or empty space) moves the
 playhead.
 
 The segment after each selected keyframe takes a typed CSS cubic-bezier or a preset. Edits
@@ -32,6 +34,7 @@ from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout,
 from .. import assets, curves, edit, fx
 from . import wheel
 from .inspector import PARAMS, SpinBox
+from .wrapdrag import WrapDrag
 
 US = 1_000_000
 PICK_PX = 8
@@ -105,6 +108,8 @@ class CurveCanvas(QWidget):
         self.ranges = []             # per curve (lo, hi) for normalising
         self._paths = None           # cached curve paths for the current view
         self.linked = {}             # {curve index: {key index: other clips with an alike key}} (批量)
+        self.wrap = WrapDrag(self, lambda: QRectF(self.L, self.T, self.width() - self.L - self.R,
+                                                  self.height() - self.T - self.B))
 
     # -- state ------------------------------------------------------------------------------------
     def set_curves(self, specs, duration, fps, t, keep_view=False):
@@ -413,9 +418,28 @@ class CurveCanvas(QWidget):
             return
         self.drag = {"kind": "band", "pos": pos, "moved": False, "base": set(self.sel) if adding else set()}
 
+    def _follow(self, p):
+        """Move the view so point p (a dragged keyframe) is inside the plot."""
+        w, h = max(1, self.width() - self.L - self.R), max(1, self.height() - self.T - self.B)
+        dx = min(0.0, p.x() - self.L) + max(0.0, p.x() - (self.L + w))
+        dy = min(0.0, p.y() - self.T) + max(0.0, p.y() - (self.T + h))
+        if dx:
+            k = dx / w * (self.t1 - self.t0)
+            self.t0, self.t1 = self.t0 + k, self.t1 + k
+        if dy:
+            lo, hi = self.vrange
+            k = dy / h * (hi - lo)
+            self.vrange = (lo - k, hi - k)
+        if dx or dy:
+            self._paths = None
+
     def mouseMoveEvent(self, e):
         d = self.drag
         pos = e.position()
+        if d is not None and d["kind"] in ("pan", "zoom", "keys"):
+            if not self.wrap.on:
+                self.wrap.start()
+            pos = self.wrap.pos(e)
         if d is None:
             kind, _, _ = self._hit(pos)
             self.setCursor(Qt.SizeAllCursor if kind else Qt.ArrowCursor)
@@ -473,6 +497,7 @@ class CurveCanvas(QWidget):
                 k[0] = int(round(o[0] + dt))
                 if not self.curves[ci]["color"]:
                     k[1] = self.vv(ci, self.pv(ci, o[1]) + dp)
+            self._follow(self.key_point(*d["ref"]))
             self._paths = None
             self.keysLive.emit(self._changes(d["orig"].keys()))
             self.update()
@@ -499,6 +524,7 @@ class CurveCanvas(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
+        self.wrap.stop()
         if d is None:
             return
         if d["kind"] == "band":

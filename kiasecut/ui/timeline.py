@@ -10,6 +10,11 @@ too close together at the zoom are neither drawn nor snapped to); a yellow line 
 where a drag has snapped. Dragging the playhead (on the ruler, or by its line anywhere
 on the tracks) snaps to the same places.
 
+Drags along time are endless (無邊界, wrapdrag.py): the pointer reaching the left or right edge
+of the tracks jumps to the other one and the drag goes on, the view scrolling to keep what is
+dragged (the playhead, clips, keyframes, a time selection) in sight; the middle-button view
+drags wrap up and down too.
+
 Times are counted in frames of `fps`, the editor's rate (時間線精度: it can be finer than
 the project's frame rate, which only the export uses); the ruler marks each of them once
 they are far enough apart, and the zoom reaches 40 px per frame.
@@ -82,6 +87,7 @@ from .. import components, curves, edit, project, waveform
 from . import wheel
 from .params import param_menu
 from .menukeys import Menu
+from .wrapdrag import WrapDrag
 
 US = 1_000_000
 MEDIA_MIME = "application/x-kiasecut-media"
@@ -121,6 +127,9 @@ def clip_kind(c):
     """What a clip is for its colour: its type, or "static" / "component" (元件)."""
     return "component" if components.of_clip(c) else "static" if project.is_static(c) else c["type"]
 RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140   # HEADER_W: the track headers' default width
+# drags along time: the pointer wraps (both ways for the view's own), the view follows the others
+WRAP_MODES = {"seek", "region", "body", "start", "end", "group", "key", "matte", "vol", "volkey",
+              "lane_body", "lane_start", "lane_end", "pan", "zoom"}
 HEADER_MIN, HEADER_MAX = 110, 520                          # how narrow / wide dragging makes them
 BTN = 18                                             # header button size
 MIN_H, MAX_H = 22, 240                               # track heights
@@ -223,6 +232,7 @@ class Timeline(QWidget):
         self.vbar = QScrollBar(Qt.Vertical, self)
         self.vbar.hide()
         self.vbar.valueChanged.connect(self._on_vscroll)
+        self.wrap = WrapDrag(self, self._wrap_area)
         self.rows_end = RULER_H
         self.peaks = None                          # waveform.Peaks
         self._waves = OrderedDict()                # waveform tiles, least recently drawn first
@@ -1395,12 +1405,48 @@ class Timeline(QWidget):
         self.drag = {"clip": c, "mode": zone, "x0": pos.x(), "row0": row, "row": row,
                      "start": c["start_us"], "end": c["start_us"] + c["duration_us"], "moved": False}
 
+    def _wrap_area(self):
+        """Where the pointer wraps in an endless drag: the tracks, scroll bar left out."""
+        right = self.width() - (self.vbar.width() if self.vbar.isVisible() else 0)
+        return QRectF(self.header_w, RULER_H, max(0, right - self.header_w), max(0, self.height() - RULER_H))
+
+    def _follow(self, sec):
+        """Scroll so time sec (where a drag is, which may be past the view's edges) is in view."""
+        right = self.width() - (self.vbar.width() if self.vbar.isVisible() else 0)
+        span = max(1.0, right - self.header_w) / self.px_per_s
+        if sec > self.scroll_s + span:
+            self.scroll_s = sec - span
+        elif sec < self.scroll_s:
+            self.scroll_s = max(0.0, sec)
+        else:
+            return
+        self.update()
+
     def mouseMoveEvent(self, e):
-        pos = e.position()
+        d = self.drag
+        if d is None or d["mode"] not in WRAP_MODES:
+            self._mouse_move(e, e.position())
+            return
+        if not self.wrap.on:
+            self.wrap.start("xy" if d["mode"] in ("pan", "zoom") else "x")
+            d["wrap_s"] = self.scroll_s
+        v = self.wrap.pos(e)
+        if d["mode"] in ("pan", "zoom"):
+            self._mouse_move(e, v)
+            return
+        # the drags count from where they began, on the view as it was then; what reads the
+        # place under the pointer gets it on the view as it is now
+        live = QPointF(v.x() - (self.scroll_s - d["wrap_s"]) * self.px_per_s, e.position().y())
+        self._mouse_move(e, live if d["mode"] in ("seek", "region") else QPointF(v.x(), live.y()), live)
+        if self.drag is d and (d.get("moved") or d["mode"] == "seek"):
+            self._follow(d["wrap_s"] + (v.x() - self.header_w) / self.px_per_s)
+
+    def _mouse_move(self, e, pos, live=None):
+        """A mouse move at pos (live: the same on the view as it is now, when they differ)."""
         d = self.drag
         if d is not None and d["mode"] in ("body", "group") and d["moved"] and not d.get("dup"):
             ids = d["ids"] if d["mode"] == "group" else [d["clip"]["id"]]
-            self.into_lane = self._into_lane(pos, ids)
+            self.into_lane = self._into_lane(pos if live is None else live, ids)
         if d is None:
             on = bool(self.proj) and self._on_playhead(pos) and not self._on_header_edge(pos)    # (the edge wins)
             if on != self.hover_playhead:
@@ -1636,6 +1682,7 @@ class Timeline(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
+        self.wrap.stop()
         into, self.into_lane = self.into_lane, None
         if d and d["mode"] in ("body", "group") and d["moved"] and not d.get("dup") and into is not None:
             if d["mode"] == "group":                    # (onto a group's lane: into it, at the same shift)

@@ -3,7 +3,8 @@
 時間 shows mm:ss.ff; BPM shows 小節.拍.格 - bars of `meter` beats (or beats alone), each beat
 split into `div` parts, bar 1 starting at the offset (the shown level's time; shown moved to
 the nearest frame, so the beats fall on frames). It is only a way of reading time: nothing
-snaps to it (a sound clip's 節拍 settings are what snap). Saved with the view, not an edit.
+snaps to it (a sound clip's 節拍 settings are what snap). Each timeline and each compound has
+its own (shown while it is open; one never set counts 時間). Saved with the view, not an edit.
 
 TimebasePopup opens under the toolbar button (inplace.Overlay: a click outside closes it);
 every change applies at once; Esc puts back what was there.

@@ -653,6 +653,8 @@ class MainWindow(QMainWindow):
         tools.addSpacing(10)
         tools.addWidget(QLabel("時基"))
         self.timebase = timebase_of(None)
+        self.timebases = {}                             # 時基 of each timeline / compound (level_key) that has one
+        self.tb_key = None                              # whose self.timebase is
         self.timebase_btn = QPushButton(button_text(self.timebase))
         self.timebase_btn.setToolTip("時間尺和播放時間怎麼數：時間（分:秒.格）或 BPM（小節.拍.格，含細分、拍號、偏移）。\n"
                                      "只是顯示，不會吸附。")
@@ -1072,8 +1074,9 @@ class MainWindow(QMainWindow):
             out["tabs"] = list(self.open_tls)
         if self.fps != self.proj["fps"]:
             out["edit_fps"] = self.fps
-        if self.timebase != timebase_of(None):
-            out["timebase"] = dict(self.timebase)
+        tbs = {k: dict(tb) for k, tb in self.timebases.items() if tb != timebase_of(None)}
+        if tbs:
+            out["timebases"] = tbs
         return out
 
     def open_view(self, v):
@@ -1140,6 +1143,17 @@ class MainWindow(QMainWindow):
         self.crumb.setText(" › ".join(names) if self.path_ids else "")
         self.compounds.set_project(self.proj, self.path_ids)
         self.back_btn.setVisible(bool(self.path_ids))
+        key = self.level_key()
+        if key != self.tb_key:                           # 時基 goes with the level shown
+            self.tb_key = key
+            self.set_timebase(self.timebases.get(key) or timebase_of(None), edited=False)
+
+    def level_key(self):
+        """The open level's id: the open compound's (or nested timeline's), else the open
+        timeline's - what its 時基 is kept under."""
+        if not self.proj:
+            return None
+        return self.open_kid() or self.proj["active_timeline"]
 
     # -- levels (main timeline / compound clips) ------------------------------------------------
     def container(self, root=None):
@@ -1521,7 +1535,12 @@ class MainWindow(QMainWindow):
         self.fps = edit_rate(proj)
         self.timeline.edit_fps = self.fps if self.fps != proj["fps"] else None
         view = proj.get("view") if isinstance(proj.get("view"), dict) else {}
-        self.set_timebase(timebase_of(view.get("timebase")), edited=False)
+        tbs = view.get("timebases") if isinstance(view.get("timebases"), dict) else {}
+        self.timebases = {k: timebase_of(v) for k, v in tbs.items()}
+        if "timebase" in view and not tbs:             # (saved before each level had its own)
+            self.timebases[proj["active_timeline"]] = timebase_of(view["timebase"])
+        self.tb_key = None
+        self.set_timebase(timebase_of(None), edited=False)      # (_update_crumb shows the level's)
         self.timeline.mark_in = self.timeline.mark_out = None
         self.player.worker.set_loop(None)
         self.timeline.set_peaks(waveform.Peaks(self.cache_dir(), on_ready=self.timeline.peaksReady.emit))
@@ -3641,10 +3660,13 @@ class MainWindow(QMainWindow):
             self.set_edit_fps(v or None)
 
     def set_timebase(self, tb, edited=True):
-        """時基: how the ruler and the time readout count (timeline.timebase_of). Only shown,
-        not an edit; saved with the view. On a BPM one 精度 counts frames a beat, and a new
-        BPM keeps their number (the frames a second follow it)."""
+        """時基: how the ruler and the time readout count (timeline.timebase_of), for the open
+        level (each timeline and compound has its own, level_key). Only shown, not an edit;
+        saved with the view. On a BPM one 精度 counts frames a beat, and a new BPM keeps their
+        number (the frames a second follow it)."""
         old, self.timebase = self.timebase, tb
+        if self.tb_key is not None:
+            self.timebases[self.tb_key] = tb
         if (edited and self.proj is not None and self.fps != self.proj["fps"] and old["kind"] == tb["kind"] == "bpm"
                 and old["bpm"] != tb["bpm"]):
             self.set_edit_fps(min(1000, max(1, round(self.fps * 60 / old["bpm"])) * tb["bpm"] / 60))

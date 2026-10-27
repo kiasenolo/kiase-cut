@@ -3,14 +3,17 @@
 The MLT export (build.py) cannot run GLSL filters, blend modes, keyframed mask shapes /
 inverts or static clips, so a project that uses any of them is rendered here:
 every frame is drawn by render.Renderer (filters run on the GPU), piped to ffmpeg together
-with the mixed sound (audiomix.Mixer, as in the preview). Runs on a worker thread.
+with the mixed sound (audiomix.Mixer, as in the preview). Runs on a worker thread; a thread
+of its own hands the drawn frames to ffmpeg, so the next frame is drawn meanwhile.
 
 Every export format but MP4 / H.264 comes here too (formats.py): HEVC, ProRes, transparent
 MOVs, WebM, GIF, picture sequences, sound alone; and the stems: each track's sound in a
 file of its own, or as one more sound stream of the video.
 """
 import os
+import queue
 import subprocess
+import threading
 import time
 import wave
 
@@ -288,21 +291,43 @@ def _pictures(view, out, fmt, alpha, size, fps, first, last, opts, sounds, progr
            "-r", f"{fps:g}", "-i", "-", *inputs, *maps, *formats.video_args(fmt, opts, (W, H), alpha), *audio,
            *container, target]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=NO_WINDOW)
+    frames = queue.Queue(maxsize=3)        # drawn, not yet written (None: no more)
+    broke = []                              # why writing stopped (ffmpeg ended)
+
+    def write():
+        while (img := frames.get()) is not None:
+            if broke:
+                continue                    # (taken off the queue, so drawing never waits on it)
+            try:
+                img = img.convertToFormat(QImage.Format_RGBA8888)       # (straight alpha for ffmpeg)
+                proc.stdin.write(img.constBits()[: W * H * 4])
+            except Exception as exc:
+                broke.append(exc)
+
+    writer = threading.Thread(target=write, name="export frames", daemon=True)
+    writer.start()
     try:
         for i, f in enumerate(range(first, last + 1)):
             if cancelled():
                 raise RuntimeError("已取消")
-            img = renderer.render(view, f, W, H, alpha=alpha)
-            img = img.convertToFormat(QImage.Format_RGBA8888)          # (straight alpha for ffmpeg)
-            proc.stdin.write(bytes(img.constBits())[: W * H * 4])
+            if broke:
+                break                       # (ffmpeg's own message is below)
+            frames.put(renderer.render(view, f, W, H, alpha=alpha))
             if i % 2 == 0:
                 progress((i + 1) / total)
-        proc.stdin.close()
+        frames.put(None)
+        writer.join()
+        if not broke:
+            proc.stdin.close()
         err = proc.stderr.read().decode(errors="replace")
-        if proc.wait() != 0:
-            raise RuntimeError(f"ffmpeg：{err.strip()[-400:]}")
+        if proc.wait() != 0 or broke:
+            raise RuntimeError(f"ffmpeg：{err.strip()[-400:] or broke[0]}")
     except Exception:
         proc.kill()
+        if writer.is_alive():
+            broke.append(None)              # (it lets go of what is left)
+            frames.put(None)
+            writer.join()
         raise
     finally:
         proc.stderr.close()

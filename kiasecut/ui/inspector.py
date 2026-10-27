@@ -98,8 +98,9 @@ class SpinBox(QDoubleSpinBox):
     """Number input that ignores the mouse wheel, so scrolling the panel never edits.
 
     Press and drag up / down to change the value (a step per 2 px; Shift for tenths, Ctrl
-    for tens of steps); the pointer wraps at the window's top and bottom, so a drag never runs
-    out of room (wrapdrag.py); a click without dragging starts typing. It can show "--" (values
+    for tens of steps); the pointer hides and wraps at the window's top and bottom, so a drag
+    never runs out of room, and comes back on the field (wrapdrag.py); a click without dragging
+    starts typing. It can show "--" (values
     that differ across a selection); `edited` fires for the user's changes, including
     typing the very number that was hidden behind "--".
 
@@ -136,7 +137,7 @@ class SpinBox(QDoubleSpinBox):
         if self.editing:                                 # typing: the field behaves normally
             return False
         if t == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
-            self._scrub = {"y": e.position().y(), "v": self.value(), "moved": False}
+            self._scrub = {"y": e.position().y(), "at": e.position(), "v": self.value(), "moved": False}
             self._wrap.start()
             return True
         if t == QEvent.MouseMove and self._scrub is not None:
@@ -156,8 +157,8 @@ class SpinBox(QDoubleSpinBox):
                 self.setValue(v)
             return True
         if t == QEvent.MouseButtonRelease and self._scrub is not None:
-            moved, self._scrub = self._scrub["moved"], None
-            self._wrap.stop()
+            moved, at, self._scrub = self._scrub["moved"], self._scrub["at"], None
+            self._wrap.stop(at)                          # (the pointer back on the field, as in Blender)
             if not moved:                                # a click: edit the number
                 self.editing = True
                 self.lineEdit().setFocus(Qt.MouseFocusReason)

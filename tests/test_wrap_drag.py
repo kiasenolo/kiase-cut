@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QMouseEvent  # noqa: E402
+from PySide6.QtGui import QGuiApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget  # noqa: E402
 
 from kiasecut.ui import wrapdrag  # noqa: E402
@@ -60,6 +61,13 @@ class Hand:
 
     def release(self):
         send(self.w, QEvent.MouseButtonRelease, self.g, self.button)
+        if Cursor.sent:
+            self.g = QPointF(Cursor.sent.pop())             # put back where the drag ended up
+
+
+def hidden():
+    c = QGuiApplication.overrideCursor()
+    return c is not None and c.shape() == Qt.BlankCursor
 
 
 class WrapTests(unittest.TestCase):
@@ -127,9 +135,13 @@ class WrapTests(unittest.TestCase):
         s.show_value(0)
         le = s.lineEdit()
         hand = Hand(le, le.mapToGlobal(QPointF(le.width() / 2, le.height() / 2)))
+        start = QPointF(hand.g)
         hand.move(0, -4, 100)                                   # 400 px up in a 120 px window
+        self.assertTrue(hidden())
         hand.release()
+        self.assertFalse(hidden())
         self.assertEqual(s.value(), 200)                        # (a step per 2 px)
+        self.assertEqual(hand.g, start)                         # the pointer back on the field
 
     def test_timeline_seek_and_view_follow(self):
         tl = Timeline()
@@ -147,6 +159,9 @@ class WrapTests(unittest.TestCase):
         self.assertGreater(tl.scroll_s, 10)                      # the view went along
         self.assertLess(tl._x(frames[-1] / tl.fps), tl.width() + 1)   # the playhead in sight
         self.assertFalse(tl.wrap.on)
+        self.assertFalse(hidden())
+        at = tl.mapFromGlobal(hand.g)                            # the pointer back at the playhead
+        self.assertAlmostEqual(tl._sec(at.x()), frames[-1] / tl.fps, delta=0.1)
 
     def test_timeline_pan_is_endless(self):
         tl = Timeline()
@@ -201,6 +216,28 @@ class WrapTests(unittest.TestCase):
         hand.move(0, 15, 100)                                  # 1500 px down in a 540 px preview
         hand.release()
         self.assertAlmostEqual(pv.pan.y(), 1500, places=6)
+
+    def test_shown_again_when_a_drag_is_dropped(self):
+        """A drag its widget dropped without stop(): the pointer shows at the next release."""
+        w = QWidget()
+        w.resize(300, 200)
+        wd = wrapdrag.WrapDrag(w)
+        wd.start()
+        g = w.mapToGlobal(QPointF(100, 100))
+        wd.pos(QMouseEvent(QEvent.MouseMove, QPointF(100, 100), g, Qt.NoButton, Qt.LeftButton, NONE))
+        self.assertTrue(hidden())
+        send(w, QEvent.MouseButtonRelease, g)
+        self.assertFalse(hidden())
+
+    def test_a_click_does_not_hide(self):
+        s = SpinBox()
+        s.show()
+        le = s.lineEdit()
+        g = le.mapToGlobal(QPointF(5, 5))
+        send(le, QEvent.MouseButtonPress, g)
+        self.assertFalse(hidden())
+        send(le, QEvent.MouseButtonRelease, g)
+        self.assertFalse(hidden())
 
 
 if __name__ == "__main__":

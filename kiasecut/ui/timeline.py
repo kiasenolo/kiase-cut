@@ -13,7 +13,8 @@ on the tracks) snaps to the same places.
 Drags along time are endless (無邊界, wrapdrag.py): the pointer reaching the left or right edge
 of the tracks jumps to the other one and the drag goes on, the view scrolling to keep what is
 dragged (the playhead, clips, keyframes, a time selection) in sight; the middle-button view
-drags wrap up and down too.
+drags wrap up and down too. The pointer hides while dragging and comes back where the drag
+ended up.
 
 Times are counted in frames of `fps`, the editor's rate (時間線精度: it can be finer than
 the project's frame rate, which only the export uses); the ruler marks each of them once
@@ -1437,6 +1438,7 @@ class Timeline(QWidget):
         # the drags count from where they began, on the view as it was then; what reads the
         # place under the pointer gets it on the view as it is now
         live = QPointF(v.x() - (self.scroll_s - d["wrap_s"]) * self.px_per_s, e.position().y())
+        d["live"] = live
         self._mouse_move(e, live if d["mode"] in ("seek", "region") else QPointF(v.x(), live.y()), live)
         if self.drag is d and (d.get("moved") or d["mode"] == "seek"):
             self._follow(d["wrap_s"] + (v.x() - self.header_w) / self.px_per_s)
@@ -1682,7 +1684,7 @@ class Timeline(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
-        self.wrap.stop()
+        self.wrap.stop(d and d.get("live"))            # (the pointer where the drag ended up)
         into, self.into_lane = self.into_lane, None
         if d and d["mode"] in ("body", "group") and d["moved"] and not d.get("dup") and into is not None:
             if d["mode"] == "group":                    # (onto a group's lane: into it, at the same shift)

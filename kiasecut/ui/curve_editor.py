@@ -14,7 +14,7 @@ values (a touchpad's two-finger scroll moves both ways at once, its pinch zooms 
 started (as in Blender's graph editor: sideways zooms time, up and down values; right / up:
 in); "全部顯示" fits everything again. Those drags and keyframe drags are endless (無邊界,
 wrapdrag.py): the pointer wraps at the plot's edges, and dragged keyframes keep the view
-following them. A click on the time ruler (or empty space) moves the
+following them; the pointer hides while dragging. A click on the time ruler (or empty space) moves the
 playhead.
 
 The segment after each selected keyframe takes a typed CSS cubic-bezier or a preset. Edits
@@ -525,7 +525,7 @@ class CurveCanvas(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
-        self.wrap.stop()
+        self.wrap.stop(self.key_point(*d["ref"]) if d and d["kind"] == "keys" else None)
         if d is None:
             return
         if d["kind"] == "band":

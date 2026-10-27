@@ -53,7 +53,8 @@ The view is moved about as in Blender's image editor: the wheel zooms around the
 zooms smoothly (right / up: in), a touchpad's two-finger scroll moves it and its pinch zooms.
 Every drag on the canvas is endless (無邊界, wrapdrag.py): the pointer reaching an edge of the
 preview jumps to the other one and the drag goes on; what is moved or sized (a clip, a mask, a
-selection box) keeps the view following it.
+selection box) keeps the view following it. The pointer hides while dragging and comes back
+where the drag ended up.
 With the mouse over the preview (and no text being typed): Home fits the canvas in the view,
 numpad . frames the selection, numpad 1 shows it 1:1, numpad 2 / 4 / 8 at 1:2 / 1:4 / 1:8 and
 Ctrl+numpad 2 / 4 / 8 at 2:1 / 4:1 / 8:1, numpad + / - zoom in / out, and Shift+B then a drag
@@ -1427,7 +1428,8 @@ class Preview(QWidget):
             self.zoom_to(want, d["pos"])
             return
         # the drag counts on the view as it was when it began (the view may follow it since)
-        x, y = self._to_canvas(pos + self.pan - d["wrap_pan"])
+        d["live"] = pos + self.pan - d["wrap_pan"]
+        x, y = self._to_canvas(d["live"])
         m = QPointF(x, y)
         if not d["moved"]:
             m0 = d["m0"] if "m0" in d else QPointF(d["x0"], d["y0"])
@@ -1435,7 +1437,8 @@ class Preview(QWidget):
                 return
         d["moved"] = True
         if d["kind"] in self.FOLLOW:
-            self._follow(pos + self.pan - d["wrap_pan"])
+            self._follow(d["live"])
+            d["live"] = pos + self.pan - d["wrap_pan"]
         if d["kind"] == "zoombox":
             d["rect"] = QRectF(d["m0"], m).normalized()
             self.update()
@@ -1503,7 +1506,7 @@ class Preview(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
-        self.wrap.stop()
+        self.wrap.stop(d and d.get("live"))            # (the pointer where the drag ended up)
         if d and d["kind"] in ("pan", "zoomdrag"):
             self.setCursor(Qt.CrossCursor if self.box_zoom else Qt.ArrowCursor)
             return

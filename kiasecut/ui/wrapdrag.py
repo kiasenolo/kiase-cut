@@ -10,8 +10,14 @@ Moves Qt had queued before a jump still come in at the old place after it: they 
 by which of the two places they are nearer. Where the pointer cannot be moved (on Wayland it
 needs the compositor's pointer-warp protocol, which Qt 6.10+ and KWin 6.5+ have) no jump
 arrives, and after a few moves the drag stops trying and simply ends at the edge as before.
+
+The pointer is hidden from the drag's first move to its end, as in Blender: what is dragged
+shows where the drag is. stop(back) then puts it at `back` (widget coordinates, held inside the
+area) when it has jumped, so it comes back where the drag ended up rather than wherever the
+jumps left it. A drag that ends without stop() (its widget dropped it) shows the pointer again
+at the next release or move without buttons.
 """
-from PySide6.QtCore import QPointF, QRectF, QSizeF
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSizeF, Qt
 from PySide6.QtGui import QCursor, QGuiApplication
 
 MARGIN = 3              # px inside the area's edge that count as reaching it
@@ -22,6 +28,42 @@ PATIENCE = 12           # moves to wait for a jump before taking the pointer as 
 def _far(a, b):
     d = a - b
     return d.x() * d.x() + d.y() * d.y()
+
+
+class _Hider(QObject):
+    """Hides the pointer (one override cursor) until show() or the end of the drag."""
+
+    def __init__(self):
+        super().__init__()
+        self.hidden = False
+
+    def hide(self):
+        if not self.hidden:
+            self.hidden = True
+            QGuiApplication.setOverrideCursor(Qt.BlankCursor)
+            QGuiApplication.instance().installEventFilter(self)
+
+    def show(self):
+        if self.hidden:
+            self.hidden = False
+            QGuiApplication.instance().removeEventFilter(self)
+            QGuiApplication.restoreOverrideCursor()
+
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if t == QEvent.MouseButtonRelease or t == QEvent.MouseMove and not e.buttons():
+            self.show()                                      # (a drag that ended without stop())
+        return False
+
+
+_hider = None
+
+
+def hider():
+    global _hider
+    if _hider is None:
+        _hider = _Hider()
+    return _hider
 
 
 class WrapDrag:
@@ -37,8 +79,16 @@ class WrapDrag:
         if axes is not None:
             self.axes = axes
 
-    def stop(self):
+    def stop(self, back=None):
+        """The drag ended; back: where to put the pointer (widget coordinates) if it has jumped."""
+        if self.wrapped and back is not None and not self.stuck:
+            r = self.bounds().adjusted(MARGIN + 1, MARGIN + 1, -MARGIN - 1, -MARGIN - 1)
+            g = self.widget.mapToGlobal(QPointF(back))
+            if r.width() > 0 and r.height() > 0:
+                g = QPointF(min(max(g.x(), r.left()), r.right()), min(max(g.y(), r.top()), r.bottom()))
+            QCursor.setPos(g.toPoint())
         self.on, self.pending = False, None
+        hider().show()
 
     @property
     def wrapped(self):
@@ -49,6 +99,7 @@ class WrapDrag:
         """Where the drag is (widget coordinates) for mouse event e."""
         if not self.on:
             return e.position()
+        hider().hide()
         g = QPointF(e.globalPosition())
         if self.pending is not None:
             to, was, before, n = self.pending

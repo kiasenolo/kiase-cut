@@ -2135,30 +2135,51 @@ def move_to_new_track(proj, clip_id, start_us, top):
     return c
 
 
-def detach_audio(proj, clip_id):
+def detach_audio(proj, clip_id, streams=None):
     """Split a video clip's sound onto an audio track (as Jianying's 分離音訊): the new audio
-    clip takes the volume and fades, the video clip is silenced."""
+    clip takes the volume and fades, the video clip is silenced. streams: the sound streams
+    to detach, an audio clip each on its own track (a recording with several); None: the one
+    the clip plays. Returns the first new clip."""
     _, c = find(proj, clip_id)
     if c["type"] != "video":
         raise EditError("only video clips have sound to detach")
     m = c["media"]
-    a = {"id": new_clip_id(proj), "type": "audio", "name": c.get("name") or "audio",
-         "start_us": c["start_us"], "duration_us": c["duration_us"],
-         "source_start_us": c.get("source_start_us", 0),
-         "media": {"path": m["path"], "duration_us": m.get("duration_us")},
-         "volume": copy.deepcopy(c.get("volume", 1.0))}
-    for k in ("fade_in_us", "fade_out_us"):
-        if c.get(k):
-            a[k] = c.pop(k)
+    fades = {k: c.pop(k) for k in ("fade_in_us", "fade_out_us") if c.get(k)}
+    out = []
+    for n in [c.get("audio_stream", 0)] if streams is None else streams:
+        a = {"id": new_clip_id(proj), "type": "audio", "name": c.get("name") or "audio",
+             "start_us": c["start_us"], "duration_us": c["duration_us"],
+             "source_start_us": c.get("source_start_us", 0),
+             "media": {"path": m["path"], "duration_us": m.get("duration_us")},
+             "volume": copy.deepcopy(c.get("volume", 1.0)), **copy.deepcopy(fades)}
+        if n:
+            a["audio_stream"] = int(n)
+        if c.get("speed"):
+            a["speed"] = c["speed"]
+        # the first audio track with room for it (free_range is None where it overlaps a clip)
+        dst = next((t for t in proj["tracks"] if t["kind"] == "audio"
+                    and free_range(t, a["start_us"], end(a)) is not None), None)
+        if dst is None:
+            dst = add_track(proj, "audio")
+        dst["clips"].append(a)
+        _sort(dst)
+        out.append(a)
     c["volume"] = 0.0
-    # the first audio track with room for it (free_range is None where it overlaps a clip)
-    dst = next((t for t in proj["tracks"] if t["kind"] == "audio"
-                and free_range(t, a["start_us"], end(a)) is not None), None)
-    if dst is None:
-        dst = add_track(proj, "audio")
-    dst["clips"].append(a)
-    _sort(dst)
-    return a
+    return out[0]
+
+
+def set_audio_stream(proj, clip_id, n):
+    """Which of its file's sound streams an audio or video clip plays (0: the first)."""
+    _, c = find(proj, clip_id)
+    if c["type"] not in ("audio", "video") or not c.get("media"):
+        raise EditError("only video and audio clips have sound streams")
+    n = int(n)
+    if n < 0:
+        raise EditError("no such sound stream")
+    if n:
+        c["audio_stream"] = n
+    else:
+        c.pop("audio_stream", None)
 
 
 # -- shared compounds -------------------------------------------------------------------------------

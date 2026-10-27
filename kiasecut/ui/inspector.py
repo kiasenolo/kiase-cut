@@ -33,7 +33,7 @@ import os
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
-from .. import assets, components, curves, edit, project
+from .. import assets, build, components, curves, edit, project
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
@@ -282,6 +282,7 @@ class Inspector(QWidget):
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
     paramReset = Signal(list, list)                 # clip ids, component parameter ids: back to the component's
+    audioStreamChosen = Signal(list, int)           # clip ids, which of the file's sound streams plays
 
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
@@ -305,6 +306,7 @@ class Inspector(QWidget):
         self.fps = 60.0                   # the editor's frames per second (凍結幀 counts in them)
         self.playhead_t = 0               # the playhead in the primary clip's time
         self.shape = None                 # what the form was built for
+        self.streams = []                 # the labels of the clips' file's sound streams (when several)
         self.widgets = {}
         self.pending = {}
         self.timer = QTimer(self, singleShot=True, interval=DEBOUNCE_MS)
@@ -405,6 +407,15 @@ class Inspector(QWidget):
             self._build_time(form)
         if "volume" in c:
             form.addRow(section("聲音"))
+            if self.streams:
+                box = ComboBox()
+                box.setPlaceholderText("--")
+                for n, label in enumerate(self.streams):
+                    box.addItem(label, n)
+                box.setToolTip("這個檔案有好幾條音軌（例如遊戲、麥克風、音樂各一條）：選要播哪一條")
+                box.activated.connect(lambda i: self._emit_now(self.audioStreamChosen, box.itemData(i)))
+                self.widgets["audio_stream"] = box
+                form.addRow("音軌", box)
             form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
         self._key_section(form)
 
@@ -1002,7 +1013,8 @@ class Inspector(QWidget):
         place in it; 批量 gives clips the playhead is not over the main clip's)."""
         c = common(clips)
         self.fps = fps or self.fps
-        shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")),
+        streams = sound_streams(clips)
+        shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")), tuple(streams),
                                          kind_tag(c.get("mask")), "volume" in c, (c.get("asset") or {}).get("family"),
                                          (c.get("mask") or {}).get("compound_id"),
                                          tuple((p["id"], p["kind"], p["name"]) for p in
@@ -1011,6 +1023,7 @@ class Inspector(QWidget):
             self._flush()
             self.clip_ids = [k["id"] for k in clips]
             self.shape = shape
+            self.streams = streams
             self._build(c)
         if c is None:
             return
@@ -1086,6 +1099,9 @@ class Inspector(QWidget):
             self._show_params(clips, ts, easings)
         if "speed" in w:
             self._show_time(clips, ts)
+        if "audio_stream" in w:
+            now = {build.audio_stream(k) for k in clips}
+            self._set_combo(w["audio_stream"], now.pop() if len(now) == 1 else "--")
         if "group_matte" in w:
             for key, field, default in (("group_matte", "on", False), ("group_show", "show", False),
                                         ("group_body", "body", True), ("group_invert", "invert", False)):
@@ -1217,6 +1233,16 @@ def kind_tag(mask):
     if not mask:
         return None
     return "keys" if curves.is_animated(mask.get("kind")) else mask.get("kind")
+
+
+def sound_streams(clips):
+    """Labels of the sound streams of the clips' media file, when they are all video / audio
+    clips of the same file and it has more than one; else []."""
+    if not clips or any(k["type"] not in ("audio", "video") or not k.get("media") for k in clips):
+        return []
+    paths = {k["media"]["path"] for k in clips}
+    streams = build.audio_streams(paths.pop()) if len(paths) == 1 else []
+    return [build.stream_label(streams, n) for n in range(len(streams))] if len(streams) > 1 else []
 
 
 def common(clips):

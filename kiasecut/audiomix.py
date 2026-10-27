@@ -15,7 +15,7 @@ import threading
 import numpy as np
 
 from . import curves, project
-from .build import find_ffmpeg, media_start
+from .build import audio_stream, find_ffmpeg, media_start
 
 RATE, CHANNELS = 48000, 2
 US = 1_000_000
@@ -32,9 +32,10 @@ class Source:
         self.offset = 0                       # samples of leading silence (encoder delay)
 
     def key(self):
-        """(file, first source us, source us decoded): the source range the clip plays."""
+        """(file, first source us, source us decoded, sound stream): the source range the clip plays."""
         c = self.clip
-        return (c["media"]["path"], c.get("source_start_us", 0), round(c["duration_us"] * project.speed(c)))
+        return (c["media"]["path"], c.get("source_start_us", 0), round(c["duration_us"] * project.speed(c)),
+                audio_stream(c))
 
 
 def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rate=1.0):
@@ -111,17 +112,18 @@ class Mixer:
                         o.pcm, o.offset = pcm, offset
 
     def _decode(self, s):
-        path, src_us, dur_us = s.key()
+        path, src_us, dur_us, stream = s.key()
         st = os.stat(path)
-        name = hashlib.sha1(repr((path, st.st_size, st.st_mtime, src_us, dur_us)).encode()).hexdigest()[:16]
+        name = hashlib.sha1(repr((path, st.st_size, st.st_mtime, src_us, dur_us)
+                                 + ((stream,) if stream else ())).encode()).hexdigest()[:16]
         cached = os.path.join(self.dir, name + ".npy")
-        lead = media_start(path)                        # the stream's first sample time
+        lead = media_start(path, stream)                # the stream's first sample time
         offset = max(0, round((lead - src_us / US) * RATE))
         if os.path.exists(cached):
             return np.load(cached), offset
         start = max(src_us / US, lead)
         r = subprocess.run([find_ffmpeg(), "-v", "error", "-ss", f"{start:.6f}", "-t", f"{dur_us / US + 0.1:.6f}",
-                            "-i", path, "-vn", "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "-"],
+                            "-i", path, "-map", f"0:a:{stream}", "-vn", "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "-"],
                            capture_output=True, timeout=120)
         pcm = np.frombuffer(r.stdout, np.int16).reshape(-1, CHANNELS).copy()
         os.makedirs(self.dir, exist_ok=True)            # (the project's cache may have been cleared)

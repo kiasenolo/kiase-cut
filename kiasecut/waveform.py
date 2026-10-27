@@ -2,7 +2,8 @@
 
 Each media file is decoded once (mono) into the highest and lowest sample of every BIN_S
 seconds (an N x 2 array, -1..1) and cached as .npy next to the other caches. Decoding runs on a background thread; `on_ready`
-is called (from that thread) when a file's peaks are available. Times are media times:
+is called (from that thread) when a file's peaks are available. A file with several sound
+streams has peaks for each (get's stream: 0 the first). Times are media times:
 the stream's start_time (an MP3's encoder delay) is applied, as the mixer does.
 """
 import hashlib
@@ -24,18 +25,19 @@ class Peaks:
         self.dir = os.path.join(cache_dir, "peaks")
         os.makedirs(self.dir, exist_ok=True)
         self.on_ready = on_ready
-        self.done = {}                    # path -> (peaks float32 N x 2: max, min; start seconds)
+        self.done = {}                    # (path, stream) -> (peaks float32 N x 2: max, min; start seconds)
         self.queue = []
         self.lock = threading.Lock()
         self.thread = None
 
-    def get(self, path):
+    def get(self, path, stream=0):
         """(peaks, start_s) if decoded, else None (and decoding is queued)."""
+        key = (path, stream)
         with self.lock:
-            if path in self.done:
-                return self.done[path]
-            if path not in self.queue:
-                self.queue.append(path)
+            if key in self.done:
+                return self.done[key]
+            if key not in self.queue:
+                self.queue.append(key)
             if self.thread is None or not self.thread.is_alive():
                 self.thread = threading.Thread(target=self._work, daemon=True)
                 self.thread.start()
@@ -46,24 +48,26 @@ class Peaks:
             with self.lock:
                 if not self.queue:
                     return
-                path = self.queue.pop(0)
+                key = self.queue.pop(0)
+            path = key[0]
             try:
-                res = self._decode(path)
+                res = self._decode(*key)
             except Exception:
                 res = (np.zeros((0, 2), np.float32), 0.0)
             with self.lock:
-                self.done[path] = res
+                self.done[key] = res
             if self.on_ready:
                 self.on_ready(path)
 
-    def _decode(self, path):
+    def _decode(self, path, stream=0):
         st = os.stat(path)
-        name = hashlib.sha1(repr((path, st.st_size, st.st_mtime, BIN_S, RATE, FORMAT)).encode()).hexdigest()[:16]
+        name = hashlib.sha1(repr((path, st.st_size, st.st_mtime, BIN_S, RATE, FORMAT)
+                                 + ((stream,) if stream else ())).encode()).hexdigest()[:16]
         cached = os.path.join(self.dir, name + ".npy")
-        start = media_start(path)
+        start = media_start(path, stream)
         if os.path.exists(cached):
             return np.load(cached), start
-        r = subprocess.run([find_ffmpeg(), "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(RATE),
+        r = subprocess.run([find_ffmpeg(), "-v", "error", "-i", path, "-map", f"0:a:{stream}", "-vn", "-ac", "1", "-ar", str(RATE),
                             "-f", "s16le", "-"], capture_output=True, timeout=600)
         pcm = np.frombuffer(r.stdout, np.int16)          # (bins found on the samples: no float copy of it all)
         n = round(RATE * BIN_S)

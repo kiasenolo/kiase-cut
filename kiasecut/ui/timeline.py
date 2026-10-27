@@ -86,7 +86,7 @@ from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QApplication, QScrollBar, QWidget
 
-from .. import components, curves, edit, project, waveform
+from .. import build, components, curves, edit, project, waveform
 from . import wheel
 from .params import param_menu
 from .menukeys import Menu
@@ -1098,11 +1098,12 @@ class Timeline(QWidget):
             return []
         if project.frozen(c) is not None:                   # (a frozen clip is silent)
             return []
-        res = self.peaks.get(c["media"]["path"])
+        stream = build.audio_stream(c)
+        res = self.peaks.get(c["media"]["path"], stream)
         if res is None or not len(res[0]):
             return []
         dpr = self.devicePixelRatioF()
-        base = (c["media"]["path"], c["duration_us"], c.get("source_start_us", 0), str(c.get("speed")),
+        base = (c["media"]["path"], stream, c["duration_us"], c.get("source_start_us", 0), str(c.get("speed")),
                 str(c.get("volume", 1.0)), c.get("fade_in_us", 0), c.get("fade_out_us", 0), height, self.px_per_s, dpr)
         tiles = []
         for i in range(max(0, int((wx0 - x) // WAVE_TILE)), int((wx1 - x) // WAVE_TILE) + 1):
@@ -2122,13 +2123,24 @@ class Timeline(QWidget):
                           ("建立複合片段", "make_compound"), ("建立元件", "make_component")]
             else:
                 items += [None, ("建立複合片段", "make_compound"), ("建立元件", "make_component")]
+            streams = build.audio_streams(c["media"]["path"]) if c["type"] in ("audio", "video") and c.get("media") else []
             if c["type"] == "video":
-                items = [("分離音訊", "detach_audio"), None] + items
+                head = [("分離音訊", "detach_audio")]
+                if len(streams) > 1:
+                    head.append((f"分離所有音軌（{len(streams)} 條）", "detach_all_audio"))
+                items = head + [None] + items
             for it in items:
                 if it is None:
                     menu.addSeparator()
                 else:
                     menu.addAction(it[0], lambda a=it[1]: self.clipAction.emit(a, c["id"]))
+            if len(streams) > 1:                              # 音軌: which of the file's sound streams plays
+                menu.addSeparator()
+                sub = menu.addMenu("音軌")
+                now = build.audio_stream(c)
+                for n in range(len(streams)):
+                    sub.addAction(("✓ " if n == now else "") + build.stream_label(streams, n),
+                                  lambda n=n: self.clipAction.emit(f"audio_stream:{n}", c["id"]))
             sel = self.selected_clips()
             comp = self.proj.get("open_component")
             if comp is not None and all(k["type"] != "audio" for k in sel):     # 設為參數 (元件)

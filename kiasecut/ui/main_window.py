@@ -432,6 +432,7 @@ class MainWindow(QMainWindow):
         ins.liveCancelled.connect(self.rebuild)
         ins.speedChosen.connect(lambda ids, v: self.apply_each("速度", edit.set_speed, ids, v))
         ins.freezeChosen.connect(self.on_freeze)
+        ins.audioStreamChosen.connect(lambda ids, n: self.apply_each("音軌", edit.set_audio_stream, ids, n))
         ins.groupMatteChosen.connect(lambda ids, fields: self.apply_each(
             "群組遮罩", lambda lvl, cid: edit.set_group_matte(lvl, cid, **fields), ids))
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
@@ -2934,6 +2935,10 @@ class MainWindow(QMainWindow):
             sel = [c["id"] for c in self.timeline.selected_clips() if c["type"] != "audio"]
             self.move_into_group(sel if cid in sel else [cid], action[5:])
             return
+        if action.startswith("audio_stream:"):              # 音軌 (the selection's sound clips, or the clip)
+            sel = [c["id"] for c in self.timeline.selected_clips() if c["type"] in ("audio", "video")]
+            self.apply_each("音軌", edit.set_audio_stream, sel if cid in sel else [cid], int(action[13:]))
+            return
         if action == "paste":
             self.do_paste()
             return
@@ -3002,6 +3007,9 @@ class MainWindow(QMainWindow):
                 root, self.container(root), ids)))
         elif action == "detach_audio":
             self.apply("分離音訊", edit.detach_audio, cid)
+        elif action == "detach_all_audio":
+            self.apply("分離所有音軌", edit.detach_audio, cid,
+                       list(range(len(build.audio_streams(c["media"]["path"])))))
         elif action == "split":
             self.do_split()
         elif action == "delete":

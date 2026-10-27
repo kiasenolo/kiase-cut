@@ -50,17 +50,60 @@ def find_ffmpeg():
 _starts = {}
 
 
-def media_start(p):
-    """First audio timestamp (an MP3's encoder delay). MLT honours it like Jianying does."""
-    if p not in _starts:
+def media_start(p, stream=0):
+    """First audio timestamp (an MP3's encoder delay) of the file's stream-th sound. MLT
+    honours it like Jianying does."""
+    key = (p, stream)
+    if key not in _starts:
         try:
-            r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+            r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", f"a:{stream}", "-show_entries",
                                 "stream=start_time", "-of", "csv=p=0", p],
                                capture_output=True, text=True, timeout=30)
-            _starts[p] = float(r.stdout.strip() or 0)
+            _starts[key] = float(r.stdout.strip() or 0)
         except (OSError, ValueError, subprocess.TimeoutExpired):
-            _starts[p] = 0.0
-    return _starts[p]
+            _starts[key] = 0.0
+    return _starts[key]
+
+
+_streams = {}
+
+
+def audio_streams(p):
+    """The sound streams of a media file (a recording with game, voice and music on tracks
+    of their own has several): [{index (in the whole file), title, lang, channels}], cached."""
+    if p not in _streams:
+        try:
+            r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-print_format", "json",
+                                "-show_entries", "stream=index,channels:stream_tags=title,language,handler_name", p],
+                               capture_output=True, text=True, timeout=30)
+            out = []
+            for s in json.loads(r.stdout or "{}").get("streams", []):
+                tags = {k.lower(): v for k, v in (s.get("tags") or {}).items()}
+                title = tags.get("title") or tags.get("handler_name") or ""
+                if title.strip().lower() in ("soundhandler", "sound media handler", "core media audio"):
+                    title = ""                                   # (container defaults, not names)
+                out.append({"index": int(s["index"]), "title": title.strip(), "channels": int(s.get("channels") or 0),
+                            "lang": "" if tags.get("language") in (None, "und") else tags["language"]})
+            _streams[p] = out
+        except (OSError, ValueError, KeyError, subprocess.TimeoutExpired):
+            _streams[p] = []
+    return _streams[p]
+
+
+def stream_label(streams, n):
+    """音軌 n+1, with its name, language and channels when it has them."""
+    s = streams[n]
+    extra = [x for x in (s["title"], s["lang"], f"{s['channels']} 聲道" if s["channels"] else "") if x]
+    return f"音軌 {n + 1}" + (f"：{'，'.join(extra)}" if extra else "")
+
+
+def audio_stream(c):
+    """Which of its file's sound streams a clip plays (0: the first); one the file does not
+    have (it was replaced) falls back to the first."""
+    n = c.get("audio_stream", 0)
+    if not n:
+        return 0
+    return n if n < len(audio_streams(c["media"]["path"])) else 0
 
 
 class Builder:
@@ -83,7 +126,7 @@ class Builder:
         self.xml = []
         self.n = 0
         self._raster = None
-        self._shared = {}       # (media path, kind, track) -> producer id
+        self._shared = {}       # (media path, kind, track, sound stream) -> producer id
 
     # -- helpers ------------------------------------------------------------------------------
     def fr(self, us):
@@ -327,10 +370,10 @@ class Builder:
             os.replace(out + ".tmp", out)
         return out.replace("\\", "/")
 
-    def media_producer(self, path, kind, track):
-        """One producer per media file per track; entries cut it with in/out. Opening a long
-        recording once per clip made loading take ~30 s."""
-        key = (path, kind, track)
+    def media_producer(self, path, kind, track, stream=0):
+        """One producer per media file per track (and sound stream); entries cut it with
+        in/out. Opening a long recording once per clip made loading take ~30 s."""
+        key = (path, kind, track, stream)
         if key not in self._shared:
             pid = self.new_id("m")
             props = {"mlt_service": "qimage" if kind == "image" else "avformat", "resource": path}
@@ -338,6 +381,8 @@ class Builder:
                 props.update(length=2147483647, ttl=1)
             if kind == "audio":
                 props["video_index"] = -1
+            if stream:                                       # (MLT counts all the file's streams)
+                props["audio_index"] = audio_streams(path)[stream]["index"]
             self.xml.append(f'<producer id="{pid}">' + self.props(props) + "</producer>")
             self._shared[key] = pid
         return self._shared[key]
@@ -389,7 +434,7 @@ class Builder:
         if t in ("video", "audio"):
             m = c["media"]
             src_in = self.fr(c["source_start_us"]) + head
-            pid = self.media_producer(m["path"], t, track)
+            pid = self.media_producer(m["path"], t, track, audio_stream(c))
             fx = self.audio(c, f0, f1, s_us, src_in)
             if t == "video":
                 fit = min(self.W / m["width"], self.H / m["height"])

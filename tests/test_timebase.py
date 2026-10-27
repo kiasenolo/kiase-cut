@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import project  # noqa: E402
 from kiasecut.ui.timebase import clip_zero  # noqa: E402
-from kiasecut.ui.timeline import Timeline, beat_code, time_text, timebase_of  # noqa: E402
+from kiasecut.ui.timeline import Timeline, beat_code, on_frames, time_text, timebase_of  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 S = 1_000_000
@@ -41,6 +41,14 @@ class Codes(unittest.TestCase):
     def test_time_kind_shows_seconds(self):
         self.assertEqual(time_text(61.5 * S, 30, timebase_of({"kind": "time", "bpm": 90})), "01:01.15")
         self.assertEqual(time_text(61.5 * S, 30, None), "01:01.15")
+
+    def test_beats_fall_on_frames(self):
+        t = tb(bpm=120, div=4, meter=4, offset_us=1.03 * S)    # 16 frames a second: 8 a beat
+        self.assertEqual(on_frames(t, 16)["offset_us"], 1 * S)
+        self.assertEqual(t["offset_us"], 1.03 * S)             # (what was typed stays)
+        codes = [time_text(f / 16 * S, 16, t) for f in range(16, 26)]
+        self.assertEqual(codes, ["1.1.1", "1.1.1", "1.1.2", "1.1.2", "1.1.3", "1.1.3", "1.1.4", "1.1.4",
+                                 "1.2.1", "1.2.1"])
 
     def test_bad_saved_values(self):
         self.assertEqual(timebase_of("x")["kind"], "time")

@@ -192,6 +192,14 @@ def timebase_of(v):
     return tb
 
 
+def on_frames(tb, fps):
+    """tb with its offset moved to the nearest frame of fps (the editor's): frames count from
+    time 0, so only then do the beats fall on frames (with a whole number of frames a beat,
+    精度 格/拍). The offset typed in stays as it was; this is what is shown."""
+    frame = US / fps
+    return dict(tb, offset_us=round(tb["offset_us"] / frame) * frame)
+
+
 def beat_parts(us, tb):
     """(bar, beat, part) of a time on a BPM timebase, each from 1 (bar None without a meter);
     a time just before a line counts as the part before it. Bars before offset_us are 0, -1, ..."""
@@ -210,8 +218,9 @@ def beat_code(us, tb):
 
 
 def time_text(us, fps, tb=None):
-    """A time as the timebase shows it: beat_code on a BPM one, else timecode."""
-    return beat_code(us, tb) if tb and tb.get("kind") == "bpm" else timecode(us, fps)
+    """A time as the timebase shows it: beat_code on a BPM one (its beats on frames of fps,
+    on_frames), else timecode."""
+    return beat_code(us, on_frames(tb, fps)) if tb and tb.get("kind") == "bpm" else timecode(us, fps)
 
 
 class Timeline(QWidget):
@@ -833,7 +842,7 @@ class Timeline(QWidget):
         """The ruler on a BPM timebase (時基): a line on every bar - every 2, 4, 8 ... bars when
         they crowd - shorter ones on beats and on the beat's parts when there is room, labelled
         小節.拍.格 as far as their spacing allows (only bars when far out)."""
-        tb = self.timebase
+        tb = on_frames(self.timebase, self.fps)          # (beats on the frames)
         div = tb["div"]
         part_s = 60 / tb["bpm"] / div
         bar = div * (tb["meter"] or 1)                   # parts in a bar (without a meter: a beat)

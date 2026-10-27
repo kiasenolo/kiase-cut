@@ -1,9 +1,9 @@
 """時基: how the timeline's ruler and the time readout count time.
 
 時間 shows mm:ss.ff; BPM shows 小節.拍.格 - bars of `meter` beats (or beats alone), each beat
-split into `div` parts, bar 1 starting at the offset (the shown level's time). It is only a
-way of reading time: nothing snaps to it (a sound clip's 節拍 settings are what snap). Saved
-with the view, not an edit.
+split into `div` parts, bar 1 starting at the offset (the shown level's time; shown moved to
+the nearest frame, so the beats fall on frames). It is only a way of reading time: nothing
+snaps to it (a sound clip's 節拍 settings are what snap). Saved with the view, not an edit.
 
 TimebasePopup opens under the toolbar button (inplace.Overlay: a click outside closes it);
 every change applies at once; Esc puts back what was there.
@@ -77,7 +77,7 @@ class TimebasePopup(inplace.Overlay):
         self.offset.setSingleStep(0.001)
         self.offset.setSuffix(" 秒")
         self.offset.show_value(self.tb["offset_us"] / US)
-        self.offset.setToolTip("第 1 小節第 1 拍在時間線上的時間")
+        self.offset.setToolTip("第 1 小節第 1 拍在時間線上的時間（顯示時對齊到最近的一格，拍子才會落在格上）")
         self.offset.edited.connect(lambda v: self._set(offset_us=round(v * US)))
         here = QPushButton("設為播放頭")
         here.setToolTip("第 1 小節第 1 拍從播放頭的位置開始")

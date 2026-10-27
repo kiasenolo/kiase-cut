@@ -91,7 +91,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineE
                                QWidget)
 
 from .. import curves, edit, fonts, project, render, textlayout
-from . import wheel
+from . import appevents, wheel
 from .wrapdrag import WrapDrag
 
 US = 1_000_000
@@ -435,7 +435,7 @@ class Preview(QWidget):
         self.drop_group = None                  # the group box a drop there would go into
         self.setAcceptDrops(interactive)
         if interactive:                          # its keys work while the mouse is over it (see _view_key)
-            QApplication.instance().installEventFilter(self)
+            appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress), self.eventFilter)
 
     # -- state ------------------------------------------------------------------------------------
     def show_image(self, img):

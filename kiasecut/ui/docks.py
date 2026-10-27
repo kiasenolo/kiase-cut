@@ -13,7 +13,7 @@ from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QApplication, QDockWidget, QHBoxLayout, QLabel, QMainWindow, QPushButton,
                                QStackedWidget, QTabWidget, QWidget)
 
-from . import icons
+from . import appevents, icons
 
 STATE_VERSION = 1
 LEFT = ("library", "assets", "userlib", "vfx", "compounds")
@@ -124,7 +124,7 @@ class Panels(QObject):
             d.closedByUser.connect(lambda _k: self._later())
             self.docks[key] = d
             win.addDockWidget(Qt.TopDockWidgetArea, d)
-        QApplication.instance().installEventFilter(self)
+        appevents.watch(self, (QEvent.MouseButtonPress,), self.eventFilter)
 
     def __getitem__(self, key):
         return self.docks[key]

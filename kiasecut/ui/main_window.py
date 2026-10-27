@@ -51,7 +51,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
-from . import icons, inplace, wheel
+from . import appevents, icons, inplace, wheel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .timebase import button_text, edit_timebase
@@ -927,7 +927,7 @@ class MainWindow(QMainWindow):
             a.setShortcutContext(Qt.WindowShortcut)
             a.triggered.connect(fn)
             self.addAction(a)
-        QApplication.instance().installEventFilter(self)
+        appevents.watch(self, (QEvent.ShortcutOverride,), self.eventFilter)
 
     def eventFilter(self, obj, e):
         # ↑ / ↓ (剪輯點) stay with a focused widget that steps with them: a number field, a

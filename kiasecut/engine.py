@@ -27,6 +27,18 @@ RATE, CHANNELS = 48000, 2
 ENCODER_KEYS = ("rc", "cq", "vb", "tune")      # more encoder settings passed through (NVENC's)
 
 
+def attach(name):
+    """The UI's shared memory, not tracked here: a tracked one is unlinked when the engine
+    quits, before the UI that made it unlinks it (FileNotFoundError there)."""
+    try:
+        return shared_memory.SharedMemory(name=name, track=False)        # (Python 3.13+)
+    except TypeError:
+        from multiprocessing import resource_tracker
+        mem = shared_memory.SharedMemory(name=name)
+        resource_tracker.unregister(mem._name, "shared_memory")
+        return mem
+
+
 class Engine:
     def __init__(self):
         self.m = Mlt()
@@ -58,7 +70,7 @@ class Engine:
         m.frame_get_image(fr, C.byref(buf), C.byref(fmt), C.byref(cw), C.byref(ch), 0)
         size = cw.value * ch.value * 4
         if shm not in self.shm:
-            self.shm[shm] = shared_memory.SharedMemory(name=shm)
+            self.shm[shm] = attach(shm)
         mem = self.shm[shm]
         C.memmove((C.c_char * size).from_buffer(mem.buf), buf, size)
         reply = {"pos": pos, "w": cw.value, "h": ch.value}
@@ -97,7 +109,7 @@ class Engine:
         m.frame_get_image(fr, C.byref(buf), C.byref(fmt), C.byref(cw), C.byref(ch), 0)
         size = cw.value * ch.value * 4
         if shm not in self.shm:
-            self.shm[shm] = shared_memory.SharedMemory(name=shm)
+            self.shm[shm] = attach(shm)
         if size > self.shm[shm].size:
             m.frame_close(fr)
             raise ValueError(f"{cw.value}×{ch.value} 的影片超過預覽能顯示的大小")

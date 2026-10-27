@@ -18,6 +18,16 @@ def scene():
 
 
 class GroupTests(unittest.TestCase):
+    def test_ungroup_many(self):
+        p = scene()
+        g1 = edit.make_group(p, p, ["c1", "c4"])
+        g2 = edit.make_group(p, p, ["c2"])
+        outer = edit.make_group(p, p, [g2["id"]])                          # (a group in a group)
+        out = edit.ungroup_many(p, p, [g2["id"], outer["id"], g1["id"]])   # (inner one listed first)
+        self.assertEqual(sorted(k["id"] for k in out), ["c1", "c2", "c4"])
+        self.assertFalse(any(project.is_group(c) for c in project.walk_clips(p["tracks"])))
+        self.assertEqual((edit.abs_start(p, "c2"), edit.abs_start(p, "c4")), (5 * S, S))
+
     def test_trim_past_the_group_grows_it(self):
         p = scene()
         g = edit.make_group(p, p, ["c1", "c4"])                          # 0-4, alone on t1

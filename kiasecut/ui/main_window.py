@@ -2802,13 +2802,16 @@ class MainWindow(QMainWindow):
             self.timeline.update()
 
     def ungroup(self, gid=None):
-        """解散群組 (Ctrl+Shift+G): the selected group's clips back onto the level's tracks."""
-        sel = self.timeline.selected
-        gid = gid or (sel["id"] if sel and project.is_group(sel) else None)
-        if not self.proj or not gid:
-            self.statusBar().showMessage("先選取一個群組", 3000)
+        """解散群組 (Ctrl+Shift+G): the selected groups' clips back onto the level's tracks (gid:
+        the group right-clicked - all the selected ones when it is one of them)."""
+        if gid is not None and gid not in self.timeline.selected_ids:
+            ids = [gid]
+        else:
+            ids = [c["id"] for c in self.timeline.selected_clips() if project.is_group(c)]
+        if not self.proj or not ids:
+            self.statusBar().showMessage("先選取群組", 3000)
             return
-        self._select_new(self.apply_root("解散群組", lambda root: edit.ungroup(root, self.container(root), gid)))
+        self._select_new(self.apply_root("解散群組", lambda root: edit.ungroup_many(root, self.container(root), ids)))
 
     def on_freeze(self, ids, on, t):
         """凍結幀 switched, or its frame chosen (t: clip time, None: keep the one it has)."""

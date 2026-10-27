@@ -1426,6 +1426,20 @@ def ungroup(root, level, group_id):
 
 def _flat_group(g):
     """(x, y, scale x, scale y) of a group that is not turned, flipped or animated in place
+def ungroup_many(root, level, group_ids):
+    """Several groups taken apart at once (outer ones first: a group in one comes out with
+    its clips, then is taken apart too); returns the clips that came out."""
+    def depth(gid):
+        n, t = 0, find(level, gid)[0]
+        while (g := group_of(level, t)) is not None:
+            n, t = n + 1, find(level, g["id"])[0]
+        return n
+    out = []
+    for gid in sorted(group_ids, key=depth):
+        out = [k for k in out if k["id"] != gid] + ungroup(root, level, gid)
+    return out
+
+
     or size (its clips' canvas place folds in and out of it exactly), else EditError."""
     tf = g.get("transform") or {}
     if any(curves.is_animated(tf.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation")) \

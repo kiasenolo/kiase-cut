@@ -833,6 +833,7 @@ class MainWindow(QMainWindow):
         add(m, "向右裁剪（刪掉播放頭之後）", "W", lambda: self.do_trim_to_playhead("end"))
         add(m, "頭尾對齊拍子", "Alt+Q", self.do_snap_beats)
         add(m, "打亂順序", "Alt+R", self.do_shuffle)
+        add(m, "反轉排序（上下顛倒）", None, self.do_reverse_rows)
         add(m, "刪除", ("Delete", "Backspace"), self.do_delete)
         add(m, "波紋刪除（後面的片段補上空隙）", ("Shift+Delete", "Shift+Backspace"), self.do_ripple_delete)
         add(m, "移到上面的軌道", "Ctrl+Up", lambda: self.do_move_rows(-1))
@@ -2044,6 +2045,14 @@ class MainWindow(QMainWindow):
             return
         self.apply("打亂順序", edit.shuffle_clips, ids)
 
+    def do_reverse_rows(self):
+        """反轉排序: the selected clips' tracks the other way up (edit.reverse_rows)."""
+        ids = [c["id"] for c in self.timeline.selected_clips()]
+        if not self.proj or not edit.can_reverse_rows(self.container(), ids):
+            self.statusBar().showMessage("先選取上下疊在一起（兩條以上軌道）的片段", 3000)
+            return
+        self.apply("反轉排序", edit.reverse_rows, ids)
+
     def _select_new(self, clips):
         if clips:
             self.timeline.set_selection({c["id"] for c in clips}, clips[-1]["id"])
@@ -2998,9 +3007,10 @@ class MainWindow(QMainWindow):
         if action == "paste":
             self.do_paste()
             return
-        if action in ("copy", "cut", "duplicate", "snap_beats", "shuffle"):
+        if action in ("copy", "cut", "duplicate", "snap_beats", "shuffle", "reverse_rows"):
             {"copy": self.do_copy, "cut": lambda: self.do_copy(cut=True), "duplicate": self.do_duplicate,
-             "snap_beats": self.do_snap_beats, "shuffle": self.do_shuffle}[action]()
+             "snap_beats": self.do_snap_beats, "shuffle": self.do_shuffle,
+             "reverse_rows": self.do_reverse_rows}[action]()
             return
         if action in ("new_static", "new_component"):         # (cid is the track's id here)
             at, comp = self.playhead_us(), action == "new_component"

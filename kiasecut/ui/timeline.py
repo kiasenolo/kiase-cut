@@ -2159,6 +2159,8 @@ class Timeline(QWidget):
                      ("顏色…", "color"), ("預設顏色", "nocolor"), None,
                      ("在播放頭分割", "split"), ("頭尾對齊拍子", "snap_beats"), ("打亂順序", "shuffle"),
                      ("刪除", "delete")]
+            if edit.can_reverse_rows(self.proj, list(self.selected_ids)):        # (one above another)
+                items.insert(items.index(("打亂順序", "shuffle")) + 1, ("反轉排序", "reverse_rows"))
             if c["type"] == "compound":
                 comp = components.of_clip(c)
                 head = [("編輯元件" if comp else "編輯靜態片段" if project.is_static(c) else "編輯複合片段", "enter"),

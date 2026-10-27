@@ -470,6 +470,56 @@ def shuffle_clips(proj, clip_ids, rng=random):
     return [find(proj, cid)[1] for cid in clip_ids]
 
 
+def stack_sets(proj, clip_ids):
+    """The tracks clips are on, by the set they move among (a level's or a group's pictures,
+    or its sound tracks), each set's tracks bottom first: [(tracks, clips by track)]."""
+    picked = [find(proj, cid) for cid in dict.fromkeys(clip_ids)]
+    ids = {c["id"] for _, c in picked}
+    out = {}
+    for t, _c in picked:
+        holder = group_of(proj, t)
+        key = (id(holder), t["kind"] == "audio")
+        if key not in out:
+            tracks = holder["tracks"] if holder is not None else proj["tracks"]
+            out[key] = [x for x in tracks if (x["kind"] == "audio") == key[1]
+                        and any(c["id"] in ids for c in x["clips"])]
+    return [(used, [[c for c in t["clips"] if c["id"] in ids] for t in used]) for used in out.values()]
+
+
+def can_reverse_rows(proj, clip_ids):
+    """Whether 反轉排序 has something to turn round: clips on two or more tracks of one set."""
+    return any(len(used) > 1 for used, _ in stack_sets(proj, clip_ids))
+
+
+def reverse_rows(proj, clip_ids):
+    """反轉排序: clips selected one above another the other way up - the clips of the top track
+    of those they are on go to the bottom one, the second to the second from the bottom and
+    so on (pictures and sound each among their own; in a group, among its tracks), each at
+    its own time. Refuses (changing nothing) when one would land on a clip that stays. Returns
+    the clips."""
+    plan = []                                            # (clip, from track, to track)
+    for used, moving in stack_sets(proj, clip_ids):
+        for i, (t, clips) in enumerate(zip(used, moving)):
+            plan += [(c, t, used[-1 - i]) for c in clips]
+    if not any(src is not dst for _, src, dst in plan):
+        raise EditError("選取的片段要在兩條以上的軌道上")
+    going = {c["id"] for c, src, dst in plan if src is not dst}
+    for c, src, dst in plan:
+        if src is not dst and any(o["id"] not in going and o["start_us"] < end(c) and end(o) > c["start_us"]
+                                  for o in dst["clips"]):
+            raise EditError(f"「{dst.get('name') or '軌道'}」上沒有位置")
+    for c, src, dst in plan:
+        if src is not dst:
+            src["clips"].remove(c)
+    for c, src, dst in plan:
+        if src is not dst:
+            dst["clips"].append(c)
+    for _, src, dst in plan:
+        _sort(src)
+        _sort(dst)
+    return [c for c, _, _ in plan]
+
+
 def copy_clips(level, clip_ids):
     """What paste_clips needs to make copies of these clips (any selection of one level)."""
     items = []

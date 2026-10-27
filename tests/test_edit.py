@@ -244,6 +244,26 @@ class CopyPasteTests(unittest.TestCase):
         self.assertEqual((got[0][1], got[-1][2]), (0, 5 * S))           # the same span
         self.assertEqual((got[1][1] - got[0][2], got[2][1] - got[1][2]), (0, S))   # the gaps kept
 
+    def test_reverse_rows_turns_the_stack_over(self):
+        p = proj()                                                   # t0: c1 0-2, c2 5-7; t1 empty
+        p["tracks"].insert(2, {"id": "t9", "kind": "video", "name": "v3", "clips": [clip("d", 0, S)]})
+        p["tracks"][1]["clips"].append(clip("b", 0, 2 * S))
+        self.assertFalse(edit.can_reverse_rows(p, ["c1", "c2"]))     # (one track: nothing to turn)
+        self.assertTrue(edit.can_reverse_rows(p, ["c1", "b", "d"]))
+        edit.reverse_rows(p, ["c1", "b", "d"])
+        on = lambda cid: edit.find(p, cid)[0]["id"]
+        self.assertEqual((on("d"), on("b"), on("c1"), on("c2")), ("t0", "t1", "t9", "t0"))   # middle stays
+        self.assertEqual((edit.find(p, "d")[1]["start_us"], edit.find(p, "c1")[1]["start_us"]), (0, 0))
+        self.assertEqual(edit.find(p, "c3")[0]["id"], "t2")         # sound stays among sound
+
+    def test_reverse_rows_refuses_without_room(self):
+        p = proj()
+        p["tracks"][1]["clips"].append(clip("b", 4 * S, 2 * S))     # c2 (5-7, stays) is in its way on t0
+        before = [[c["id"] for c in t["clips"]] for t in p["tracks"]]
+        with self.assertRaises(edit.EditError):
+            edit.reverse_rows(p, ["c1", "b"])
+        self.assertEqual([[c["id"] for c in t["clips"]] for t in p["tracks"]], before)
+
     def test_clone_compound_clip_and_entry(self):
         p = proj()
         edit.add_timeline(p)

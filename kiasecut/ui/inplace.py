@@ -14,6 +14,7 @@ colour (main window's handlers do not know which panel asked: the layer list and
 rename the same clip), else the `anchor` the caller passes, else the button under the pointer,
 else the pointer itself. An anchor is a widget (all of it) or (widget, QRect in its coordinates).
 """
+import shiboken6
 from PySide6.QtCore import QEvent, QEventLoop, QObject, QPoint, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QAbstractButton, QApplication, QFrame, QLineEdit, QListView, QTreeWidget, QWidget
@@ -88,7 +89,7 @@ class Overlay(QFrame):
         app.removeEventFilter(self)
         self.hide()
         self.deleteLater()
-        if before is not None and before.isVisible():
+        if before is not None and shiboken6.isValid(before) and before.isVisible():   # (it may be gone by now)
             before.setFocus(Qt.OtherFocusReason)
         return self.ok
 

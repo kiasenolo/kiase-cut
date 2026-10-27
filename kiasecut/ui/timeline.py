@@ -18,7 +18,9 @@ ended up.
 
 Times are counted in frames of `fps`, the editor's rate (時間線精度: it can be finer than
 the project's frame rate, which only the export uses); the ruler marks each of them once
-they are far enough apart, and the zoom reaches 40 px per frame.
+they are far enough apart, and the zoom reaches 40 px per frame. With a BPM timebase (時基,
+`timebase`) the ruler counts bars, beats and their parts instead of seconds; that is only a
+way of reading time: nothing snaps to it.
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
 zooms time around the mouse (a touchpad's two-finger scroll moves both ways at once, its
@@ -165,6 +167,53 @@ def timecode(us, fps):
     return f"{int(s // 60):02d}:{int(s % 60):02d}.{int(round((s % 1) * fps)) % n:0{max(2, len(str(n - 1)))}d}"
 
 
+# 時基: how times are shown - "time" (mm:ss.ff) or "bpm" (小節.拍.格: bars, beats and the beat's
+# div parts, counted from 1 at offset_us, meter beats a bar, 0: beats alone). Only shown: nothing
+# snaps to it (BPM alignment of a sound clip, edit.beat_grid, is what snaps).
+TIMEBASE_DEFAULT = {"kind": "time", "bpm": 120.0, "div": 4, "meter": 4, "offset_us": 0}
+TIMEBASE_DIVS = (1, 2, 3, 4, 6)
+
+
+def timebase_of(v):
+    """A whole timebase from a saved one (anything that is not one: the default)."""
+    tb = dict(TIMEBASE_DEFAULT)
+    if isinstance(v, dict):
+        try:
+            tb.update(kind="bpm" if v.get("kind") == "bpm" else "time",
+                      bpm=min(edit.BPM_MAX, max(edit.BPM_MIN, float(v.get("bpm", tb["bpm"])))),
+                      div=int(v.get("div", tb["div"])), meter=int(v.get("meter", tb["meter"])),
+                      offset_us=int(v.get("offset_us", 0)))
+        except (TypeError, ValueError):
+            return dict(TIMEBASE_DEFAULT)
+        if tb["div"] not in TIMEBASE_DIVS:
+            tb["div"] = TIMEBASE_DEFAULT["div"]
+        if tb["meter"] not in edit.METERS:
+            tb["meter"] = TIMEBASE_DEFAULT["meter"]
+    return tb
+
+
+def beat_parts(us, tb):
+    """(bar, beat, part) of a time on a BPM timebase, each from 1 (bar None without a meter);
+    a time just before a line counts as the part before it. Bars before offset_us are 0, -1, ..."""
+    n = math.floor((us - tb["offset_us"]) / (60 * US / tb["bpm"]) * tb["div"] + 1e-6)
+    beat, part = divmod(n, tb["div"])
+    if not tb["meter"]:
+        return None, beat + 1, part + 1
+    bar, beat = divmod(beat, tb["meter"])
+    return bar + 1, beat + 1, part + 1
+
+
+def beat_code(us, tb):
+    """小節.拍.格 of a time (拍.格 without a meter; no 格 when beats are not split)."""
+    bar, beat, part = beat_parts(us, tb)
+    return ".".join(str(x) for x in (bar, beat, part if tb["div"] > 1 else None) if x is not None)
+
+
+def time_text(us, fps, tb=None):
+    """A time as the timebase shows it: beat_code on a BPM one, else timecode."""
+    return beat_code(us, tb) if tb and tb.get("kind") == "bpm" else timecode(us, fps)
+
+
 class Timeline(QWidget):
     seekRequested = Signal(int)                      # frame
     clipSelected = Signal(object)                    # clip dict or None (the primary selection)
@@ -201,6 +250,7 @@ class Timeline(QWidget):
         self.proj = None
         self.fps = 60.0
         self.edit_fps = None                       # 時間線精度 (frames per second), None: the project's
+        self.timebase = None                       # 時基 of the ruler (timebase_of); None / "time": seconds
         self.pos = 0
         self.px_per_s = 40.0
         self.scroll_s = 0.0
@@ -779,6 +829,34 @@ class Timeline(QWidget):
         finally:
             p.end()                                  # never leave the painter open on an error
 
+    def _paint_beat_ruler(self, p, w):
+        """The ruler on a BPM timebase (時基): a line on every bar - every 2, 4, 8 ... bars when
+        they crowd - shorter ones on beats and on the beat's parts when there is room, labelled
+        小節.拍.格 as far as their spacing allows (only bars when far out)."""
+        tb = self.timebase
+        div = tb["div"]
+        part_s = 60 / tb["bpm"] / div
+        bar = div * (tb["meter"] or 1)                   # parts in a bar (without a meter: a beat)
+        steps = ([1] if div > 1 else []) + ([div] if bar > div else []) + [bar * 2 ** i for i in range(40)]
+        tick = next(s for s in steps if s * part_s * self.px_per_s >= 6)
+        label = next(s for s in steps if s * part_s * self.px_per_s >= 56)
+        zero = tb["offset_us"] / US
+        n = math.floor((self.scroll_s - zero) / part_s / tick) * tick
+        while True:
+            x = self._x(zero + n * part_s)
+            if x >= w:
+                break
+            if x >= self.header_w:
+                length, pen = (9, "#a8a8ae") if n % bar == 0 else (6, "#6a6a70") if n % div == 0 else (3, "#4a4a50")
+                p.setPen(QColor(pen))
+                p.drawLine(int(x), RULER_H - length, int(x), RULER_H)
+                if n % label == 0:
+                    code = beat_code(tb["offset_us"] + n * part_s * US + 1, tb).split(".")
+                    keep = 1 if label % bar == 0 else len(code) - 1 if label % div == 0 and div > 1 else len(code)
+                    p.setPen(QColor("#c8c8cc" if n % bar == 0 else "#8a8a90"))
+                    p.drawText(int(x) + 3, RULER_H - 9, ".".join(code[:keep]))
+            n += tick
+
     def _paint(self, p):
         p.fillRect(self.rect(), QColor("#161618"))
         if not self.proj:
@@ -802,14 +880,17 @@ class Timeline(QWidget):
         p.setPen(QColor("#8a8a90"))
         p.setFont(QFont("Segoe UI", 8))
         n = int(self.scroll_s / step)
-        while self._x(n * step) < w:
-            t = n * step
-            x = self._x(t)
-            if x >= self.header_w:
-                p.drawLine(int(x), RULER_H - 6, int(x), RULER_H)
-                label = timecode(t * US, self.fps)
-                p.drawText(int(x) + 3, RULER_H - 9, label if step < 1 else label[:5])
-            n += 1
+        if self.timebase and self.timebase.get("kind") == "bpm":
+            self._paint_beat_ruler(p, w)                 # (bars and beats instead of seconds)
+        else:
+            while self._x(n * step) < w:
+                t = n * step
+                x = self._x(t)
+                if x >= self.header_w:
+                    p.drawLine(int(x), RULER_H - 6, int(x), RULER_H)
+                    label = timecode(t * US, self.fps)
+                    p.drawText(int(x) + 3, RULER_H - 9, label if step < 1 else label[:5])
+                n += 1
         if self.mark_in is not None or self.mark_out is not None:
             a = self._x((self.mark_in or 0) / self.fps)
             b = self._x(((self.mark_out if self.mark_out is not None else

@@ -53,7 +53,8 @@ from .vfx_panel import VfxPanel, dropped_fx
 from . import icons, inplace, wheel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
-from .timeline import MEDIA_MIME, US, Timeline, timecode
+from .timebase import button_text, edit_timebase
+from .timeline import MEDIA_MIME, US, Timeline, time_text, timebase_of, timecode
 from .menukeys import Menu, keyed
 
 # DaVinci Resolve-like: charcoal panels on a near-black frame, flat controls, light grey
@@ -631,6 +632,14 @@ class MainWindow(QMainWindow):
                                      "只影響剪輯，不影響輸出：匯出照專案（或匯出設定）的幀率。")
         self.edit_fps_box.valueChanged.connect(lambda v: self.set_edit_fps(v or None))
         tools.addWidget(self.edit_fps_box)
+        tools.addSpacing(10)
+        tools.addWidget(QLabel("時基"))
+        self.timebase = timebase_of(None)
+        self.timebase_btn = QPushButton(button_text(self.timebase))
+        self.timebase_btn.setToolTip("時間尺和播放時間怎麼數：時間（分:秒.格）或 BPM（小節.拍.格，含細分、拍號、偏移）。\n"
+                                     "只是顯示，不會吸附。")
+        self.timebase_btn.clicked.connect(self.edit_timebase)
+        tools.addWidget(self.timebase_btn)
         tools.addStretch()
         self.snap_btn = tool("magnet", "自動吸附（N）：移動、裁切時對齊播放頭和其他片段的邊緣",
                              lambda: None, checkable=True)
@@ -1045,6 +1054,8 @@ class MainWindow(QMainWindow):
             out["tabs"] = list(self.open_tls)
         if self.fps != self.proj["fps"]:
             out["edit_fps"] = self.fps
+        if self.timebase != timebase_of(None):
+            out["timebase"] = dict(self.timebase)
         return out
 
     def open_view(self, v):
@@ -1494,6 +1505,8 @@ class MainWindow(QMainWindow):
         self.edit_fps_box.blockSignals(True)
         self.edit_fps_box.setValue(round(self.fps) if self.fps != proj["fps"] else 0)
         self.edit_fps_box.blockSignals(False)
+        view = proj.get("view") if isinstance(proj.get("view"), dict) else {}
+        self.set_timebase(timebase_of(view.get("timebase")), edited=False)
         self.timeline.mark_in = self.timeline.mark_out = None
         self.player.worker.set_loop(None)
         self.timeline.set_peaks(waveform.Peaks(self.cache_dir(), on_ready=self.timeline.peaksReady.emit))
@@ -3524,8 +3537,7 @@ class MainWindow(QMainWindow):
             self.fullscreen.canvas.show_image(img)
             self.fullscreen.set_position(pos, self.length, self.fps)
         self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True))
-        self.time_lbl.setText(timecode(pos / self.fps * US, self.fps))
-        self.dur_lbl.setText("長度 " + timecode(self.length / self.fps * US, self.fps))
+        self.show_time()
         sel = self.timeline.selected
         if sel is not None:
             self.show_selection_props()
@@ -3549,6 +3561,33 @@ class MainWindow(QMainWindow):
             self.seek(self.play_from)
         else:
             w.set_playing(False)
+
+    def show_time(self):
+        """The playhead's time as the timebase counts it (and, on a BPM one, in seconds too)."""
+        us = self.pos / self.fps * US
+        self.time_lbl.setText(time_text(us, self.fps, self.timebase))
+        clock = timecode(us, self.fps) + "　" if self.timebase["kind"] == "bpm" else ""
+        self.dur_lbl.setText(clock + "長度 " + timecode(self.length / self.fps * US, self.fps))
+
+    def set_timebase(self, tb, edited=True):
+        """時基: how the ruler and the time readout count (timeline.timebase_of). Only shown,
+        not an edit; saved with the view."""
+        self.timebase = tb
+        self.timeline.timebase = tb if tb["kind"] == "bpm" else None
+        self.timeline.update()
+        self.timebase_btn.setText(button_text(tb))
+        if self.proj is not None:
+            self.show_time()
+            if edited:
+                self.dirty = True
+                self._update_title()
+
+    def edit_timebase(self):
+        if self.proj is None:
+            return
+        c = self.placed(self.timeline.selected)            # (a group's clip: its start on the timeline)
+        edit_timebase(self.timebase_btn, self.timebase, self.playhead_us(),
+                      c if c is not None and c.get("beat") else None, self.set_timebase)
 
     def set_edit_fps(self, rate):
         """時間線精度: the editor's frames per second (rate None: the project's). The playhead,

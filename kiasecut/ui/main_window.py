@@ -1539,6 +1539,7 @@ class MainWindow(QMainWindow):
         self.path_ids = []
         self.open_tls = None
         self.tl_views = {}
+        self._thumb_renderer = None                    # (layer thumbnails: the last project's pictures go)
         self.fps = edit_rate(proj)
         self.timeline.edit_fps = self.fps if self.fps != proj["fps"] else None
         view = proj.get("view") if isinstance(proj.get("view"), dict) else {}
@@ -2645,10 +2646,14 @@ class MainWindow(QMainWindow):
         view = {"width": level["width"], "height": level["height"], "fps": self.proj["fps"],
                 "duration_us": at + 1, "tracks": [{"id": "_", "kind": "video", "clips": [c]}],
                 "compounds": comps}
+        if getattr(self, "_thumb_renderer", None) is None:     # (one for all: its pictures are decoded once)
+            self._thumb_renderer = render.Renderer(self._thumb_video)
         try:
-            img = render.Renderer(self._thumb_video).render(view, at / US * self.proj["fps"], w, h, alpha=True)
+            img = self._thumb_renderer.render(view, at / US * self.proj["fps"], w, h, alpha=True)
         except Exception:
             return None
+        finally:
+            self._thumb_renderer.errors.clear()
         out = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
         p = QPainter(out)
         cell = max(2, round(4 * dpr))

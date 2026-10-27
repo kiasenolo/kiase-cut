@@ -112,7 +112,7 @@ class Renderer:
     def __init__(self, video_frame=None, cache_limit=600):
         """video_frame(path, source_us, w, h) -> QImage or None, for video clips."""
         self.video_frame = video_frame
-        self.images = {}            # path -> [QImage halved per level] (a mipmap)
+        self.images = {}            # path -> Mips; (path or asset, size) -> QImage
         self.texts = {}             # (spec json, scale) -> QImage
         self.stills = {}            # (static compound content, scale) -> QImage
         self.cache_limit = cache_limit

@@ -91,6 +91,10 @@ class SpeedTests(unittest.TestCase):
         a, b = edit.find(p, "a")[1], edit.find(p, "b")[1]
         self.assertEqual((a["start_us"], edit.end(a)), (2 * S, 4 * S))
         self.assertEqual((b["start_us"], edit.end(b)), (4 * S, 5 * S))  # both ends on 4 s: the next beat
+        t1.append(clip("e", int(6.5 * S), int(0.3 * S)))          # past the sound's end (6 s): the grid goes on
+        edit.snap_to_beats(p, ["e"])
+        e = edit.find(p, "e")[1]
+        self.assertEqual((e["start_us"], edit.end(e)), (6 * S, 7 * S))
         edit.set_beat(p, "c3", on=False)
         with self.assertRaises(edit.EditError):
             edit.snap_to_beats(p, ["a"])

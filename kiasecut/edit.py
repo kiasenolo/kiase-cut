@@ -1225,13 +1225,14 @@ def clear_beat(proj, clip_id):
     return c
 
 
-def beat_times(c, lo=None, hi=None):
+def beat_times(c, lo=None, hi=None, beyond=False):
     """Timeline times (us) of the grid lines (beats and their subdivisions) of a clip with
-    BPM alignment on, inside the clip (and inside lo..hi when given)."""
-    return [t for t, _ in beat_grid(c, lo, hi)]
+    BPM alignment on, inside the clip (and inside lo..hi when given); with beyond, also the
+    line just before its start and the one just after its end."""
+    return [t for t, _ in beat_grid(c, lo, hi, beyond=beyond)]
 
 
-def beat_grid(c, lo=None, hi=None, bars=False):
+def beat_grid(c, lo=None, hi=None, bars=False, beyond=False):
     """[(time us, d)] of a clip's grid lines: d is the line's place in the beat as the
     denominator of a reduced fraction - 1 on the beat, 2 on the half, 3 / 4 / 6 on thirds,
     quarters, sixths (a grid of every 2 or 4 beats is all on beats); with bars, 0 on the
@@ -1246,6 +1247,8 @@ def beat_grid(c, lo=None, hi=None, bars=False):
     period = 60 * US / beat["bpm"] / div / k
     zero = c["start_us"] + (beat.get("offset_us", 0) - c.get("source_start_us", 0)) / k   # timeline time of beat 0
     a, b = c["start_us"], end(c)
+    if beyond:
+        a, b = a - period, b + period
     if lo is not None:
         a = max(a, lo)
     if hi is not None:
@@ -1266,12 +1269,13 @@ def beat_grid(c, lo=None, hi=None, bars=False):
 
 def level_beats(proj):
     """Every beat grid line (us, the level's time) of the level's sound clips with BPM
-    alignment on, a group's included, sorted."""
+    alignment on, a group's included, sorted - with the line just past each clip's ends, so
+    an edge after a sound's last beat can go on to the next one."""
     out = set()
     for c, s in _level_starts(proj["tracks"]):
         if (c.get("beat") or {}).get("on"):
             off = s - c["start_us"]
-            out |= {round(x + off) for x in beat_times(c)}
+            out |= {round(x + off) for x in beat_times(c, beyond=True)}
     return sorted(out)
 
 

@@ -5,7 +5,9 @@ program adds the version line, the uniforms and main(). The built-in filters in 
 use the same format as the user's (<Library>/filters/*.glsl).
 
 Engine().run(def, params, rgba, ...) filters a premultiplied RGBA8 picture (numpy, H x W x 4)
-and returns the result. OpenGL contexts belong to the thread that made them, so every thread
+and returns the result. An effect's colour parameter can read a picture instead (effect
+"sources" {param: a picture / video / compound placed on the clip as a mask is, with the same
+fields}): the shader then gets that colour per pixel (SAMPLED), the picture over the colour. OpenGL contexts belong to the thread that made them, so every thread
 that filters (the preview worker, the export) makes its own Engine.
 """
 import glob
@@ -260,8 +262,23 @@ vec4 original(vec2 uv) { return texture(original_, clamp(uv, 0.0, 1.0)); }
 vec4 unpremultiply(vec4 c) { return c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(0.0); }
 vec4 premultiply(vec4 c) { return vec4(c.rgb * c.a, c.a); }
 float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+%(sampled)s
 #line 1
 """
+# a colour parameter fed by a picture (an effect's "sources"): its value at this pixel is the
+# picture's colour there (placed by NAME_map_: this layer's uv -> the picture's), over its own
+# colour where the picture does not reach or is see-through; straight alpha, as a colour is
+SAMPLED = """uniform vec4 %(n)s_col_;
+uniform sampler2D %(n)s_tex_;
+uniform mat3 %(n)s_map_;
+vec4 %(n)s_at_() {
+    vec3 q = %(n)s_map_ * vec3(uv_, 1.0);
+    vec4 s = (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) ? vec4(0.0) : texture(%(n)s_tex_, q.xy);
+    vec4 c = %(n)s_col_;
+    float a = s.a + c.a * (1.0 - s.a);
+    return a > 0.0 ? vec4((s.rgb + c.rgb * c.a * (1.0 - s.a)) / a, a) : vec4(0.0);
+}
+#define %(n)s %(n)s_at_()"""
 EPILOGUE = "\nvoid main() { fragColor = effect(uv_); }\n"
 # v = 0 is the first row of the picture (its top), both for what is read and what is written
 VERTEX = """#version 330
@@ -273,9 +290,10 @@ GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "
               "menu": "int"}
 
 
-def shader_source(d):
-    decl = "\n".join(f"uniform {GLSL_TYPES[p.type]} {p.name};" for p in d.params)
-    return PRELUDE % {"params": decl} + d.code + EPILOGUE
+def shader_source(d, sampled=()):
+    """The fragment shader of filter d; sampled: its colour parameters that read a picture."""
+    decl = "\n".join(f"uniform {GLSL_TYPES[p.type]} {p.name};" for p in d.params if p.name not in sampled)
+    return PRELUDE % {"params": decl, "sampled": "\n".join(SAMPLED % {"n": n} for n in sampled)} + d.code + EPILOGUE
 
 
 def make_context():
@@ -306,17 +324,17 @@ class Engine:
         self.programs = {}
         self.targets = {}            # (w, h) -> [(texture, fbo)] x 3
 
-    def _program(self, d):
-        key = d.key()
+    def _program(self, d, sampled=()):
+        key = (d.key(), sampled)
         prog = self.programs.get(key)
         if prog is None:
             if d.error:
                 raise FilterError(d.error)
             if len(d.code) > BIG:
                 with self.ctx:
-                    precompile(shader_source(d))
+                    precompile(shader_source(d, sampled))
             try:
-                prog = self.ctx.program(vertex_shader=VERTEX, fragment_shader=shader_source(d))
+                prog = self.ctx.program(vertex_shader=VERTEX, fragment_shader=shader_source(d, sampled))
             except Exception as exc:
                 raise FilterError(f"{d.name}：{exc}") from exc
             vao = self.ctx.vertex_array(prog, [(self.quad, "2f", "pos")])
@@ -339,24 +357,39 @@ class Engine:
             self.targets[(w, h)] = t
         return t
 
-    def run(self, d, values, rgba, time=0.0, progress=0.0, frame=0, unit=1.0):
+    def run(self, d, values, rgba, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None):
         """Filter rgba (H x W x 4, uint8, premultiplied) with filter d. values: {param: value
-        for the shader}; unit: rgba's px per canvas px (see run_tex). Returns the same kind of array."""
+        for the shader}; unit: rgba's px per canvas px (see run_tex); sources {colour param:
+        (picture as such an array, map)} (see run_tex). Returns the same kind of array."""
         h, w = rgba.shape[:2]
         with self.ctx:                           # this engine's context, whatever else the thread uses
             (ta, _), _, _ = self._targets(w, h)
             ta.write(np.ascontiguousarray(rgba).tobytes())
-            out = self.run_tex(d, values, ta, w, h, time, progress, frame, unit)
-            data = out.read()
+            texs = {}
+            try:
+                for name, (pic, m) in (sources or {}).items():
+                    tex = self.ctx.texture((pic.shape[1], pic.shape[0]), 4, np.ascontiguousarray(pic).tobytes())
+                    tex.filter = (self.mgl.LINEAR, self.mgl.LINEAR)
+                    tex.repeat_x = tex.repeat_y = False
+                    texs[name] = (tex, m)
+                out = self.run_tex(d, values, ta, w, h, time, progress, frame, unit, texs)
+                data = out.read()
+            finally:
+                for tex, _m in texs.values():
+                    tex.release()
         return np.frombuffer(data, np.uint8).reshape(h, w, 4)
 
-    def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0, unit=1.0):
+    def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None):
         """Filter the w x h texture src (premultiplied RGBA) on the card; returns the texture
         holding the result, one of this engine's own (valid until its next run at that size).
         unit: texture px per canvas px. The filter is told the canvas size as its resolution, so
         its pixel lengths are canvas px whatever size the picture is drawn at (a small preview,
-        full screen, the export)."""
-        prog, vao = self._program(d)
+        full screen, the export). sources {colour param: (texture, map)}: those colours read a
+        picture (premultiplied), map the 3 x 3 matrix (9 numbers, by columns) from src's uv to
+        the picture's (both with v = 0 at the top)."""
+        sources = {n: v for n, v in (sources or {}).items()
+                   if any(p.name == n and p.type == "color" for p in d.params)}
+        prog, vao = self._program(d, tuple(sorted(sources)))
         targets = self._targets(w, h)
         unit = unit if unit > 1e-9 else 1.0
         for name, v in (("resolution", (w / unit, h / unit)), ("time", float(time)), ("progress", float(progress)),
@@ -370,6 +403,12 @@ class Engine:
             prog["source"].value = 0
         if "original_" in prog:
             prog["original_"].value = 1
+        for i, (name, (tex, m)) in enumerate(sorted(sources.items())):
+            tex.use(2 + i)
+            for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)),
+                         (name + "_col_", tuple(values.get(name, (1.0, 1.0, 1.0, 1.0))))):
+                if u in prog:
+                    prog[u].value = v
         self.ctx.disable(self.mgl.BLEND)
         read = src
         for i in range(d.passes):

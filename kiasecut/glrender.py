@@ -700,13 +700,23 @@ class GLRenderer(render.Renderer):
                 continue
             d = fx.get(e["filter"])
             vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
+            pics, sources = [], {}
+            for name, src in (e.get("sources") or {}).items():           # colours read from a picture
+                pic = self.gl_matte(src, t, disp, world, fps)
+                if pic is not None:
+                    pics.append(pic)
+                    sources[name] = (pic[0].tex, render.source_map(src, t, disp, world, cur.w, cur.h))
             try:
                 out = gl.fx.run_tex(d, vals, cur.tex, cur.w, cur.h, time=t / US,
                                     progress=min(1.0, max(0.0, t / max(1, duration))), frame=max(0, round(t * fps / US)),
-                                    unit=ppu)
+                                    unit=ppu, sources=sources)
             except fx.FilterError as exc:
                 self.errors.append(f"濾鏡「{d.name}」：{exc}")
                 continue
+            finally:
+                for pic, give_back in pics:
+                    if give_back:
+                        gl.release(pic)
             nxt = gl.layer(cur.w, cur.h)
             gl.mix(nxt, cur.tex, out, amount, e.get("mask"), t, disp, inv)    # its own mask and 混合程度 limit it
             if cur is not lay:

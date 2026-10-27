@@ -252,16 +252,17 @@ def same_group(c, other, group):
     """The group of clip other that matches group of clip c: itself, or for a filter's
     parameters (fx:<effect id>, fxmask:, fxmix:) the same filter at the same place among other's
     filters of that kind; None when other has none."""
-    if not group.startswith(("fx:", "fxmask:", "fxmix:")):
+    if not group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:")):
         return group
     kind, eid = group.split(":", 1)
+    eid, colon, name = eid.partition(":")                 # (fxsrc:<effect id>:<colour param>)
     mine = c.get("effects") or []
     e = next((e for e in mine if e["id"] == eid), None)
     if e is None:
         return None
     n = [x["id"] for x in mine if x["filter"] == e["filter"]].index(eid)
     theirs = [x for x in other.get("effects") or [] if x["filter"] == e["filter"]]
-    return f"{kind}:{theirs[n]['id']}" if n < len(theirs) else None
+    return f"{kind}:{theirs[n]['id']}{colon}{name}" if n < len(theirs) else None
 
 
 def many(clips):
@@ -275,7 +276,7 @@ def group_holder(c, group, create=False):
     "place:<param id>" for where a component's picture sits)."""
     if group.startswith("place:") and not create:
         return (c.get("places") or {}).get(group[6:]) or {}
-    if group.startswith(("fx:", "fxmask:", "fxmix:", "place:")):
+    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "place:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:
@@ -335,6 +336,7 @@ class MainWindow(QMainWindow):
         self.fps = 60.0
         self.pos = 0
         self.playing = False
+        self.matte_group = "mask"       # what 編輯區域 on the timeline sets: the mask's t_off, or "fxsrc:..."
         self.follow = True              # the timeline scrolls to the playhead after this seek
         self.tasks = []
         self.building = False            # kept for tools: previews no longer build anything
@@ -480,6 +482,11 @@ class MainWindow(QMainWindow):
             lambda lvl, cid, e: edit.set_effect_mask(lvl, cid, e, kind, self.clip_time(cid))))
         ef.maskInvertChosen.connect(lambda ids, eid, on: self.fx_each(
             "反轉效果範圍", ids, eid, lambda lvl, cid, e: edit.set_effect_mask_invert(lvl, cid, e, on, self.clip_time(cid))))
+        ef.sourceKindChosen.connect(lambda ids, eid, name, kind: self.fx_each(
+            "顏色來源" if kind else "移除顏色來源", ids, eid,
+            lambda lvl, cid, e: edit.set_effect_source(lvl, cid, e, name, kind)))
+        ef.sourceMediaChosen.connect(self.on_fx_source_media)
+        ef.sourceRegionChanged.connect(self._update_matte_region)
         ef.paramEdited.connect(self.on_fx_param_edited)
         ef.keyToggled.connect(self.on_key_toggled)
         ef.liveEdited.connect(self.on_fx_live_edit)
@@ -559,8 +566,8 @@ class MainWindow(QMainWindow):
         tl.trimRequested.connect(
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
         tl.groupMoveRequested.connect(lambda ids, dt, dr: self.apply("移動", edit.move_many, ids, dt, dr))
-        tl.matteOffsetLive.connect(lambda cid, off: self.on_live_edit([cid], "mask", "t_off", off))
-        tl.matteOffsetEdited.connect(lambda cid, off: self.apply("編輯區域", edit.set_mask_offset, cid, off))
+        tl.matteOffsetLive.connect(lambda cid, off: self.on_live_edit([cid], self.matte_group, "t_off", off))
+        tl.matteOffsetEdited.connect(self.on_matte_offset)
         tl.dupMoveRequested.connect(lambda ids, dt, dr: self._select_new(self.apply_root(
             "複製並移動", lambda root: edit.duplicate_moved(root, self.container(root), ids, dt, dr))))
         tl.marksChanged.connect(self.marks_changed)
@@ -754,6 +761,8 @@ class MainWindow(QMainWindow):
                 self.preview.set_mask_mode(True, "mask")
             elif pn.is_active("effects") and ef.mask_edit:
                 self.preview.set_mask_mode(True, "fxmask:" + ef.mask_edit)
+            elif pn.is_active("effects") and ef.source_edit:
+                self.preview.set_mask_mode(True, "fxsrc:{}:{}".format(*ef.source_edit))
             elif pn.is_active("inspector") and ins.place_edit:
                 self.preview.set_mask_mode(True, "place:" + ins.place_edit)
             else:
@@ -2382,6 +2391,8 @@ class MainWindow(QMainWindow):
         clips, t = [self.placed(c, starts) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
         times = self.key_times([c["id"] for c in clips])
         self.inspector.show_clips(clips, t, self.fps, [times[c["id"]] for c in clips])
+        if self.proj is not None:
+            self.effects.set_media(self.mask_images(), self.mask_videos(), self.mask_compounds())
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
             self.mask_panel.set_compounds(self.mask_compounds())
@@ -2478,6 +2489,8 @@ class MainWindow(QMainWindow):
             label = "遮罩"
         elif group.startswith("place:"):
             label = "圖片位置"
+        elif group.startswith("fxsrc:"):
+            label = "顏色來源位置"
         elif group == "multi":                          # a built-in asset or a 文字框 resized: size and place
             label = "調整大小"
         else:
@@ -3501,12 +3514,21 @@ class MainWindow(QMainWindow):
         video, on the timeline, while the 遮罩 tab edits it with 編輯區域 on."""
         sel = self.timeline.selected if self.proj else None
         m = (sel or {}).get("mask") or {}
+        self.matte_group = "mask"
+        ef = self.effects
+        if sel is not None and ef.source_region and self.panels.is_active("effects"):     # a colour source's
+            try:
+                m = edit.holder(sel, "fxsrc:{}:{}".format(*ef.source_region))
+                self.matte_group = "fxsrc:{}:{}".format(*ef.source_region)
+            except edit.EditError:
+                m = {}
         comp = self.proj.get("compounds", {}).get(m.get("compound_id")) if self.proj else None
         if m.get("kind") == "video" and m.get("video"):
             src = {"duration_us": m.get("vid_dur") or 0, "name": os.path.basename(m["video"]), "icon": "▶"}
         else:
             src = comp if m.get("kind") == "compound" and comp is not None and not comp.get("static") else None
-        on = self.mask_panel.matte_region and self.preview.mask_mode and self.preview.mask_group == "mask" and src
+        on = (self.mask_panel.matte_region and self.preview.mask_mode and self.preview.mask_group == "mask"
+              or self.matte_group != "mask") and src
         self.timeline.set_matte_region({"clip": sel["id"], "t_off": int(m.get("t_off", 0)),
                                         "duration": src.get("duration_us") or 0, "name": src.get("name"),
                                         "icon": src.get("icon")}
@@ -3516,6 +3538,47 @@ class MainWindow(QMainWindow):
         """[(path, name)] of the media library's pictures (what an image mask can cut with)."""
         return [(it["path"], it.get("name") or os.path.basename(it["path"]))
                 for it in library.lib(self.proj)["items"] if it.get("kind") == "image" and it.get("path")]
+
+    def on_matte_offset(self, cid, t_off):
+        """編輯區域 dragged on the timeline: a mask's part, or a colour source's."""
+        g = self.matte_group
+        if g == "mask":
+            self.apply("編輯區域", edit.set_mask_offset, cid, t_off)
+        else:
+            eid, _, name = g[6:].partition(":")
+            self.apply("編輯區域", edit.set_effect_source_offset, cid, eid, name, t_off)
+
+    def on_fx_source_media(self, ids, eid, name, value):
+        """What a colour source shows (of effect eid and the alike ones of the other clips ids): a
+        picture / video of the media library's, a compound, or ("") a file picked now."""
+        try:
+            kind = edit.holder(edit.find(self.container(), ids[0])[1], f"fxsrc:{eid}:{name}")["kind"]
+        except (edit.EditError, IndexError):
+            return
+        if kind == "compound":
+            comp = self.proj.get("compounds", {}).get(value)
+            self.fx_each("顏色來源", ids, eid, lambda lvl, cid, e: edit.set_effect_source_media(
+                lvl, cid, e, name, compound=(value, comp)))
+            return
+        if not value:
+            what = "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.svg)" if kind == "image" else \
+                "影片 (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.gif)"
+            value, _ = QFileDialog.getOpenFileName(self, "顏色來源", self.root or "", what)
+            if not value:
+                self.refresh_inspector()
+                return
+            value = value.replace("\\", "/")
+        try:
+            info = library.probe(value)
+        except Exception:
+            info = {}
+        if info.get("kind") != kind or not info.get("width"):
+            self.statusBar().showMessage("讀不到這個檔案", 4000)
+            self.refresh_inspector()
+            return
+        media = {"image": (value, info["width"], info["height"])} if kind == "image" else \
+            {"video": (value, info["width"], info["height"], info.get("duration_us"))}
+        self.fx_each("顏色來源", ids, eid, lambda lvl, cid, e: edit.set_effect_source_media(lvl, cid, e, name, **media))
 
     def mask_videos(self):
         """[(path, name)] of the media library's videos (what a video mask can play)."""

@@ -21,6 +21,7 @@ the shown clip's effect ids again, and what its buttons hold (the ids of the cli
 for) is put through _real on its way in.
 """
 import json
+import os
 
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDrag
@@ -34,6 +35,7 @@ from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_l
 from .vfx_panel import FX_MIME, effect_mime
 
 DEBOUNCE_MS = 350
+SOURCE_NAMES = (("顏色", None), ("圖片", "image"), ("影片", "video"), ("複合片段", "compound"))
 
 
 def step_for(p):
@@ -110,7 +112,11 @@ class EffectsPanel(QWidget):
     moveRequested = Signal(list, str, int)          # clip ids, effect id, -1 / +1
     maskKindChosen = Signal(list, str, object)      # clip ids, effect id, kind or None
     maskInvertChosen = Signal(list, str, bool)
-    maskEditChanged = Signal()                      # 編輯遮罩 switched: self.mask_edit
+    maskEditChanged = Signal()                      # 編輯遮罩 / 編輯位置 switched: self.mask_edit, self.source_edit
+    sourceKindChosen = Signal(list, str, str, object)   # clip ids, effect id, colour param, "image" / "video" /
+                                                        # "compound" or None (its own colour)
+    sourceMediaChosen = Signal(list, str, str, str)     # clip ids, effect id, colour param, file / compound id ("": browse)
+    sourceRegionChanged = Signal()                  # 編輯區域 of a colour source switched: self.source_region
     paramEdited = Signal(list, str, str, object)    # clip ids, group, key, value
     keyToggled = Signal(list, str, str)
     liveEdited = Signal(list, str, str, object)
@@ -132,6 +138,9 @@ class EffectsPanel(QWidget):
         self.ids = []                               # the picture clips of the selection
         self.boxes = []                             # the effects' boxes, in order
         self.mask_edit = None                       # effect id whose mask the preview edits (編輯遮罩)
+        self.source_edit = None                     # (effect id, colour param) whose source the preview places (編輯位置)
+        self.source_region = None                   # (effect id, colour param) whose 編輯區域 shows on the timeline
+        self.media = {"image": [], "video": [], "compound": []}    # [(path or compound id, name)] sources can show
         self.shape = None
         self.built = []                             # the effect ids the form was built with
         self.alias = {}                             # those -> the shown clip's effect ids
@@ -324,6 +333,9 @@ class EffectsPanel(QWidget):
         group = "fx:" + e["id"]
         for p in d.params:
             lay.addLayout(self._param_row(group, p))
+            kind = ((e.get("sources") or {}).get(p.name) or {}).get("kind")
+            if p.type == "color" and kind:
+                lay.addLayout(self._source_row(e["id"], p.name, kind))
         # where the effect works
         row = QHBoxLayout()
         row.addWidget(QLabel("範圍"))
@@ -418,6 +430,15 @@ class EffectsPanel(QWidget):
             self.widgets[(group, p.name)] = btn
             row.addWidget(btn, 1)
             row.addWidget(self._key_button(group, p.name))
+            if group.startswith("fx:"):                 # the colour from a picture, a video or a compound
+                src = ComboBox()
+                for name, k in SOURCE_NAMES:
+                    src.addItem(name, k)
+                src.setToolTip("顏色從哪裡來：固定的顏色，或圖片／影片／複合片段在每個位置的顏色"
+                               "（來源沒蓋到或透明的地方用左邊的顏色）")
+                src.activated.connect(lambda i, g=group, k=p.name, cb=src: self._source_kind(g[3:], k, cb.itemData(i)))
+                self.widgets[("source", group, p.name)] = src
+                row.addWidget(src)
         else:                                                   # vec2 / vec3
             n = 3 if p.type == "vec3" else 2
             for i in range(n):
@@ -448,19 +469,94 @@ class EffectsPanel(QWidget):
             return head + sep + step.get(eid, eid)
         self.widgets = {tuple(moved(x) if isinstance(x, str) else x for x in key) if isinstance(key, tuple) else key: w
                         for key, w in self.widgets.items()}
-        for key, b in self.widgets.items():
-            if isinstance(key, tuple) and key[0] == "mask_edit":
-                b.blockSignals(True)
-                b.setChecked(key[1] == self.mask_edit)
-                b.blockSignals(False)
+        self._check_edits()
 
     def _real(self, x):
         """An effect id, or a group of one ("fx:<id>", "fxmix:<id>", "fxmask:<id>"), as the
         shown clip's: the form may have been built for another clip alike it."""
         if not self.alias or x is None:
             return x
+        if x.startswith("fxsrc:"):                  # ("fxsrc:<effect id>:<colour param>")
+            eid, _, name = x[6:].partition(":")
+            return f"fxsrc:{self.alias.get(eid, eid)}:{name}"
         head, sep, eid = x.rpartition(":")
         return head + sep + self.alias.get(eid, eid)
+
+    def set_media(self, images, videos, compounds):
+        """What a colour source can show: the media library's pictures and videos, the compounds
+        ([(path or compound id, name)])."""
+        media = {"image": list(images), "video": list(videos), "compound": list(compounds)}
+        if media != self.media:
+            self.media = media
+            self.shape = None                       # (the pickers are built with the form)
+
+    def _source_row(self, eid, name, kind):
+        """A colour source: which picture / video / compound, 編輯位置 (one clip) and for a video or
+        a compound 編輯區域."""
+        row = QHBoxLayout()
+        lab = QLabel("　" + dict((k, n) for n, k in SOURCE_NAMES)[kind])
+        lab.setMinimumWidth(70)
+        row.addWidget(lab)
+        pick = ComboBox()
+        pick.setPlaceholderText({"image": "選擇圖片…", "video": "選擇影片…", "compound": "選擇複合片段…"}[kind])
+        for value, label in self.media[kind]:
+            pick.addItem(label, value)
+        if kind != "compound":
+            pick.addItem("瀏覽圖片檔…" if kind == "image" else "瀏覽影片檔…", "")
+        pick.activated.connect(lambda i, cb=pick: self._now(self.sourceMediaChosen, eid, name, cb.itemData(i)))
+        self.widgets[("source_media", "fx:" + eid, name)] = pick
+        row.addWidget(pick, 1)
+        if len(self.clips) == 1:                    # (the preview places one clip's)
+            ed = QPushButton("編輯位置")
+            ed.setCheckable(True)
+            ed.setChecked(self.source_edit == (eid, name))
+            ed.setToolTip("在預覽畫面上拖曳來源：中間移動、方塊調大小、圓點旋轉")
+            ed.toggled.connect(lambda v: self.set_source_edit(eid, name if v else None))
+            self.widgets[("source_edit", eid, name)] = ed
+            row.addWidget(ed)
+            if kind in ("video", "compound"):
+                reg = QPushButton("編輯區域")
+                reg.setCheckable(True)
+                reg.setChecked(self.source_region == (eid, name))
+                reg.setToolTip("在時間線上，這個片段上面會出現來源的幽靈：左右拖曳它，決定用來源的哪一段")
+                reg.toggled.connect(lambda v: self._source_region(eid, name, v))
+                self.widgets[("source_region", eid, name)] = reg
+                row.addWidget(reg)
+        return row
+
+    def _source_kind(self, eid, name, kind):
+        eid = self._real(eid)
+        if kind is not None and len(self.clips) == 1:   # a new source: straight to placing it on the preview
+            self.source_edit, self.mask_edit = (eid, name), None
+        elif kind is None and self.source_edit == (eid, name):
+            self.source_edit = None
+        self._now(self.sourceKindChosen, eid, name, kind)
+
+    def set_source_edit(self, eid, name):
+        """Place the colour source of effect eid's parameter name on the preview (name None: none)."""
+        want = None if name is None else (self._real(eid), name)
+        if want == self.source_edit:
+            return
+        self.source_edit = want
+        if want:
+            self.mask_edit = None
+        self._check_edits()
+        self.maskEditChanged.emit()
+
+    def _source_region(self, eid, name, on):
+        self.source_region = (self._real(eid), name) if on else None
+        self._check_edits()
+        self.sourceRegionChanged.emit()
+
+    def _check_edits(self):
+        """The 編輯遮罩 / 編輯位置 / 編輯區域 buttons as the panel's state has them."""
+        for key, b in self.widgets.items():
+            if isinstance(key, tuple) and key[0] in ("mask_edit", "source_edit", "source_region"):
+                on = (key[1] == self.mask_edit if key[0] == "mask_edit" else
+                      key[1:] == (self.source_edit if key[0] == "source_edit" else self.source_region))
+                b.blockSignals(True)
+                b.setChecked(on)
+                b.blockSignals(False)
 
     # -- showing values ---------------------------------------------------------------------------
     def _kind_chosen(self, eid, kind):
@@ -475,11 +571,9 @@ class EffectsPanel(QWidget):
         if eid == self.mask_edit:
             return
         self.mask_edit = eid
-        for key, b in self.widgets.items():
-            if key[0] == "mask_edit":
-                b.blockSignals(True)
-                b.setChecked(key[1] == eid)
-                b.blockSignals(False)
+        if eid:
+            self.source_edit = None
+        self._check_edits()
         self.maskEditChanged.emit()
 
     def show_live(self, clip_id, group, values):
@@ -587,7 +681,8 @@ class EffectsPanel(QWidget):
             shape = (len(clips) > 1, len(pics) > 1, len(pics) < len(clips),
                      tuple((fx.get(e["filter"]).key(), fx.get(e["filter"]).error) for e in c.get("effects") or []),
                      frozenset((k["type"] == "filter", bool(k.get("asset")),
-                                tuple((e["filter"], bool(e.get("disabled")), kind_tag(e.get("mask")))
+                                tuple((e["filter"], bool(e.get("disabled")), kind_tag(e.get("mask")),
+                                       tuple(sorted((n, s.get("kind")) for n, s in (e.get("sources") or {}).items())))
                                       for e in k.get("effects") or [])) for k in pics),
                      frozenset(json.dumps(k.get("backdrop"), sort_keys=True) for k in pics))
         ids = [k["id"] for k in pics]
@@ -602,6 +697,11 @@ class EffectsPanel(QWidget):
             if self.mask_edit and (len(pics) > 1 or not any(e["id"] == self.mask_edit and e.get("mask")
                                                             for e in (c.get("effects") or [] if c else []))):
                 self.mask_edit = None               # that effect or its mask is gone (or several clips)
+            for attr in ("source_edit", "source_region"):
+                se = getattr(self, attr)
+                if se and (len(pics) > 1 or not any(e["id"] == se[0] and se[1] in (e.get("sources") or {})
+                                                    for e in (c.get("effects") or [] if c else []))):
+                    setattr(self, attr, None)       # (that source is gone, or another clip)
         if shape != self.shape:
             self.shape = shape
             self._build(c, len(clips))
@@ -637,6 +737,21 @@ class EffectsPanel(QWidget):
                 kb = w.get(("key", group, p.name))
                 if kb is not None:
                     Inspector._key_state(kb, stored, pics, ts)
+                srcs = [(x.get("sources") or {}).get(p.name) or {} for x in es]
+                for key, field in ((("source", group, p.name), "kind"), (("source_media", group, p.name), None)):
+                    box = w.get(key)
+                    if box is None:
+                        continue
+                    vals = {sv.get(field) if field else sv.get({"image": "image", "video": "video"}.get(
+                        sv.get("kind"), "compound_id")) for sv in srcs}
+                    v = vals.pop() if len(vals) == 1 else MIXED
+                    i = -1 if v is MIXED else box.findData(v)
+                    if i < 0 and v not in (MIXED, None) and field is None:      # (a file not in the media library)
+                        box.insertItem(0, os.path.basename(str(v)), v)
+                        i = 0
+                    box.blockSignals(True)
+                    box.setCurrentIndex(i)
+                    box.blockSignals(False)
             mgroup = "fxmask:" + e["id"]
             if ("key", mgroup, "kind") not in w:
                 continue                            # (not every clip has a range)

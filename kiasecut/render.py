@@ -640,9 +640,16 @@ class Renderer:
                 continue
             d = fx.get(e["filter"])
             vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
+            h, w = arr.shape[:2]
+            sources = {}
+            for name, src in (e.get("sources") or {}).items():           # colours read from a picture
+                comp = self.matte_compound(src, t)
+                if comp is not None:
+                    pic = self.matte_image(src, comp, t, self.matte_k(src, t, disp, comp, wt), fps)
+                    sources[name] = (image_to_array(pic), source_map(src, t, disp, wt, w, h))
             try:
                 out = eng.run(d, vals, arr, time=t / US, progress=min(1.0, max(0.0, t / max(1, duration))),
-                              frame=max(0, round(t * fps / US)), unit=unit)
+                              frame=max(0, round(t * fps / US)), unit=unit, sources=sources)
             except fx.FilterError as exc:
                 self.errors.append(f"濾鏡「{d.name}」：{exc}")
                 continue
@@ -757,6 +764,19 @@ def matte_coverage(mask, t, disp, wt, W, H, img):
     if v("invert", False):
         m = 1 - m
     return m.astype(np.float32)
+
+
+def source_map(src, t, disp, world, w, h):
+    """The 3 x 3 matrix (9 numbers, by columns) from the uv of a w x h layer that world maps a
+    clip's frame onto, to the uv of an effect's colour source placed in that frame as a mask is
+    (cx / cy in half-material units, y up; w / h fractions of the material disp; rotation)."""
+    v = lambda k, d: curves.value(src.get(k, d), t)
+    sw, sh = max(v("w", 1.0) * disp[0], 1e-6), max(v("h", 1.0) * disp[1], 1e-6)
+    inv, _ = world.inverted()
+    local = QTransform().translate(v("cx", 0.0) * disp[0] / 2, -v("cy", 0.0) * disp[1] / 2).rotate(v("rotation", 0.0))
+    linv, _ = local.inverted()
+    m = QTransform.fromScale(w, h) * inv * linv * QTransform.fromScale(1 / sw, 1 / sh) * QTransform.fromTranslate(0.5, 0.5)
+    return (m.m11(), m.m12(), m.m13(), m.m21(), m.m22(), m.m23(), m.m31(), m.m32(), m.m33())
 
 
 def placed(rect, place, bw, bh):

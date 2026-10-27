@@ -205,6 +205,10 @@ def _map_paths(data, fn):
                 for e in c.get("effects") or []:              # filter files (the built-in ones are not paths)
                     if e.get("filter") and not e["filter"].startswith("builtin:"):
                         e["filter"] = fn(e["filter"])
+                    for src in (e.get("sources") or {}).values():      # its colours' pictures and videos
+                        for k in ("image", "video"):
+                            if src.get(k):
+                                src[k] = fn(src[k])
                 own = c.get("params") or {}                    # a component clip's own pictures
                 for p in (comps.get(c.get("compound_id")) or {}).get("params") or []:
                     v = own.get(p["id"])

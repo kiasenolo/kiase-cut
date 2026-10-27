@@ -212,6 +212,7 @@ def _params(c):
             out.append(c[key])
     for e in c.get("effects") or []:
         out += [v for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) + [e.get("mix")]
+                + [x for src in (e.get("sources") or {}).values() for x in src.values()]
                 if curves.is_animated(v)]
     return out
 
@@ -834,6 +835,8 @@ def _valid_key(c, group, key):
         return key == "mix" and bool(_effect(c, group[6:]))
     if group.startswith("fxmask:"):
         return key in GROUP_FIELDS["mask"]
+    if group.startswith("fxsrc:"):
+        return key in SOURCE_FIELDS and bool(_source(c, group))
     if group == "asset":
         return bool(c.get("asset")) and key in assets.fields_of(c["asset"].get("family"))
     if group == "params":                        # a component instance's own values (元件參數)
@@ -872,6 +875,8 @@ def _holder(c, group):
         return e["mask"]
     if group.startswith("fxmix:"):              # (the effect itself: its "mix")
         return _effect(c, group[6:])
+    if group.startswith("fxsrc:"):
+        return _source(c, group)
     if group == "clip":
         return c
     if group == "mask":
@@ -1111,7 +1116,8 @@ def key_times(c):
         if curves.is_animated(c.get(key)):
             times |= {k[0] for k in c[key]["keys"]}
     for e in c.get("effects") or []:
-        for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) + [e.get("mix")]:
+        for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) + [e.get("mix")] + \
+                [x for src in (e.get("sources") or {}).values() for x in src.values()]:
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
     return sorted(times)
@@ -1938,6 +1944,17 @@ def swap_filter(proj, clip_id, effect_id, what):
         params = copy.deepcopy(what.get("params") or {})
     e["filter"] = ref
     e["params"] = params
+    colours = {p.name for p in new if p.type == "color"}
+    if not isinstance(what, str) and not kept:
+        e["sources"] = copy.deepcopy(what.get("sources") or {})
+    elif kept:                                     # (renamed with its values: the sources go along)
+        names = dict(zip([p.name for p in before if p is not None], [p.name for p in new])) if before[0] else {}
+        e["sources"] = {names.get(k, k): v for k, v in (e.get("sources") or {}).items()}
+    else:
+        e.pop("sources", None)
+    e["sources"] = {k: v for k, v in (e.get("sources") or {}).items() if k in colours}
+    if not e["sources"]:
+        e.pop("sources", None)
     return kept
 
 
@@ -1995,6 +2012,88 @@ def set_effect_mask(proj, clip_id, effect_id, kind, t=None):
         return e
     e["mask"] = _new_mask(old, kind, 1.0)
     return e
+
+
+SOURCE_FIELDS = ("cx", "cy", "w", "h", "rotation")     # where an effect's colour source sits (as a mask)
+
+
+def _source(c, group):
+    """The colour source of group "fxsrc:<effect id>:<param>" of clip c."""
+    eid, _, name = group[6:].partition(":")
+    src = (_effect(c, eid).get("sources") or {}).get(name)
+    if src is None:
+        raise EditError("這個顏色沒有來源")
+    return src
+
+
+def set_effect_source(proj, clip_id, effect_id, param, kind):
+    """Feed colour parameter param of an effect from a picture ("image"), a video ("video") or
+    a compound ("compound"), chosen next (set_effect_source_media); None: its own colour again.
+    The source sits on the clip as a mask does (the whole clip until it is placed)."""
+    _, c = find(proj, clip_id)
+    e = _effect(c, effect_id)
+    if not any(p.name == param and p.type == "color" for p in fx.get(e["filter"]).params):
+        raise EditError("這個濾鏡沒有這個顏色參數")
+    sources = e.setdefault("sources", {})
+    if kind is None:
+        sources.pop(param, None)
+        if not sources:
+            e.pop("sources")
+        return e
+    if kind not in PICTURE_MASKS:
+        raise EditError(f"unknown source {kind}")
+    old = sources.get(param) or {}
+    src = {"kind": kind, **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 1.0), ("h", 1.0),
+                                                          ("rotation", 0.0))}}
+    for k in PICTURE_FIELDS[kind]:
+        if old.get("kind") == kind and old.get(k) is not None:
+            src[k] = old[k]
+    sources[param] = src
+    return e
+
+
+def set_effect_source_media(proj, clip_id, effect_id, param, image=None, video=None, compound=None):
+    """What a colour source shows: image (path, width, height), video (path, width, height,
+    duration_us) or compound (its id, its entry); it takes that picture's proportions, fitted
+    into the clip."""
+    _, c = find(proj, clip_id)
+    src = _source(c, f"fxsrc:{effect_id}:{param}")
+    kind = "image" if image else "video" if video else "compound"
+    if src["kind"] != kind:
+        raise EditError("來源的種類不對")
+    if image:
+        path, w, h = image
+        if not path or not w or not h:
+            raise EditError("找不到這張圖片")
+        src.update(image=path, img_w=int(w), img_h=int(h))
+    elif video:
+        path, w, h, dur = video
+        if not path or not w or not h:
+            raise EditError("找不到這個影片")
+        src.update(video=path, vid_w=int(w), vid_h=int(h), vid_dur=int(dur or 0))
+    else:
+        kid, comp = compound
+        if comp is None:
+            raise EditError("找不到這個複合片段")
+        src["compound_id"] = kid
+        w, h = comp["width"], comp["height"]
+    a, b = _aspect(c), w / h
+    src["w"], src["h"] = (1.0, round(a / b, 4)) if b > a else (round(b / a, 4), 1.0)
+    return src
+
+
+def set_effect_source_offset(proj, clip_id, effect_id, param, t_off):
+    """編輯區域 of a video's or a compound's colour source: its time at the clip's start (us)."""
+    _, c = find(proj, clip_id)
+    src = _source(c, f"fxsrc:{effect_id}:{param}")
+    if src["kind"] not in ("compound", "video"):
+        raise EditError("圖片沒有時間")
+    t_off = int(round(t_off))
+    if t_off:
+        src["t_off"] = t_off
+    else:
+        src.pop("t_off", None)
+    return src
 
 
 def set_effect_mask_invert(proj, clip_id, effect_id, invert, t=None):

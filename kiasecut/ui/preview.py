@@ -34,7 +34,8 @@ own side's box_w / box_h, a corner both (a box of 自動高度 gets a fixed heig
 {"text": {box_w, box_h}, "transform": {x, y}}.
 
 Mask mode (`mask_mode`, while the 遮罩 tab is open, or 編輯遮罩 of an effect's 範圍 in the
-效果 tab: `mask_group` "mask" or "fxmask:<effect id>") edits only that mask: the clip itself
+效果 tab: `mask_group` "mask" or "fxmask:<effect id>"; 編輯位置 of an effect's colour source:
+"fxsrc:<effect id>:<colour param>", placed like a picture mask) edits only that mask: the clip itself
 cannot be moved, scaled or turned there, and a click on another clip just selects it. The
 mask outline is drawn where it cuts the clip (dimmed while the mask is switched off). Drag inside it to move it, the squares on its edges / corner to size it, the
 round handle to rotate it and the arrow below it for the feather. The mask snaps to the
@@ -820,7 +821,7 @@ class Preview(QWidget):
         group, vals = self.live
         c = json.loads(json.dumps(box.clip))
         for g, v in (vals.items() if group == "multi" else [(group, vals)]):
-            holder = c if g == "clip" else edit.holder(c, g) if g.startswith(("fxmask:", "place:")) else c.setdefault(g, {})
+            holder = c if g == "clip" else edit.holder(c, g) if g.startswith(("fxmask:", "fxsrc:", "place:")) else c.setdefault(g, {})
             holder.update(edit.with_linked_scale(holder, v, box.t) if g == "transform" else v)
         return box.moved(c)
 

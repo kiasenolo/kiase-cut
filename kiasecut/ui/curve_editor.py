@@ -70,6 +70,10 @@ def param_rows(c):
                 out.append(("fx:" + e["id"], p.name, f"{name}·{p.label}", 1, p.default))
         if e.get("mask"):
             out += [("fxmask:" + e["id"], r[0], f"{name}·遮罩{r[1]}", r[6], r[7]) for r in PARAMS["mask"]]
+        for n in e.get("sources") or {}:               # where its colours' pictures sit
+            label = next((p.label for p in d.params if p.name == n), n)
+            out += [(f"fxsrc:{e['id']}:{n}", r[0], f"{name}·{label}來源{r[1]}", r[6], r[7]) for r in PARAMS["mask"]
+                    if r[0] in edit.SOURCE_FIELDS]
     for p in components.params(components.of_clip(c)):  # where a component's pictures sit (元件參數)
         if p["kind"] == "image":
             out += [("place:" + p["id"], r[0], f"{p['name']}·{'位置' if r[0] in ('cx', 'cy') else '大小'} {r[1]}",
@@ -80,7 +84,7 @@ def param_rows(c):
 def holder(c, group):
     if group.startswith("place:"):
         return (c.get("places") or {}).get(group[6:]) or {}
-    if group.startswith(("fx:", "fxmask:", "fxmix:")):
+    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:

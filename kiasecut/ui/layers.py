@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLa
 from .. import assets, components, edit, project
 from .params import ParamList, bound_tip, clip_name, param_menu
 from .timeline import FX_MIME, MEDIA_MIME
+from .menukeys import Menu
 
 ROLE = Qt.UserRole
 TRACK = Qt.UserRole + 1          # (track id, {"hidden", "locked"}) of a layer
@@ -375,14 +376,22 @@ class LayerPanel(QWidget):
         self.params = self.params_box.list
         outer.addWidget(self.params_box, 2)
 
+    def rename_current(self):
+        """F2: rename the one selected layer; False otherwise."""
+        items = self.list.selectedItems()
+        if len(items) != 1:
+            return False
+        self.renameRequested.emit(items[0].data(ROLE))
+        return True
+
     def _menu(self, where):
         """Right-click on the selected layers: what the buttons do, and rename / hide / lock."""
         items = self.list.selectedItems()
-        menu = QMenu(self)
+        menu = Menu(self)
         if len(items) == 1:
             cid = items[0].data(ROLE)
             menu.addAction("重新命名", lambda: self.renameRequested.emit(cid))
-        for text, action in (("上移", "up"), ("下移", "down"), ("群組", "group"), ("複製", "copy"),
+        for text, action in (("上移", "up"), ("下移", "down"), ("建立群組", "group"), ("複製", "copy"),
                              ("刪除", "delete")):
             menu.addAction(text, lambda a=action: self.actionRequested.emit(a))
         level = self._shown[0] if self._shown else None

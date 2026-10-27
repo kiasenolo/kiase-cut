@@ -1,10 +1,11 @@
 """Media library panel: folders and media, drag into folders or onto the timeline."""
 from PySide6.QtCore import QEvent, QMimeData, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QMenu, QPushButton, QStyle,
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QPushButton, QStyle,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from .. import svgimage
+from .menukeys import Menu
 
 MIME = "application/x-kiasecut-media"
 ROLE_ID = Qt.UserRole
@@ -291,9 +292,17 @@ class LibraryPanel(QWidget):
         if not ident.startswith("f"):
             self.addRequested.emit(ident)
 
+    def rename_current(self):
+        """F2: rename the current item; False when there is none."""
+        it = self.tree.currentItem()
+        if it is None or not it.isSelected():
+            return False
+        self.renameRequested.emit(it.data(0, ROLE_ID))
+        return True
+
     def _menu(self, pos):
         node = self.tree.itemAt(pos)
-        menu = QMenu(self)
+        menu = Menu(self)
         if node is not None:
             ident = node.data(0, ROLE_ID)
             if not ident.startswith("f"):

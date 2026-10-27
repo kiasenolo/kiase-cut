@@ -9,10 +9,11 @@ import threading
 
 from PySide6.QtCore import QMimeData, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QLabel, QLineEdit, QMenu, QTreeWidget, QTreeWidgetItem,
+from PySide6.QtWidgets import (QAbstractItemView, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 from .. import fx, fxthumbs
+from .menukeys import Menu
 
 FX_MIME = "application/x-kiasecut-fx"          # the filter's ref (a "builtin:…" name or a file path), utf-8,
                                                # or an effect dragged from a clip (effect_mime)
@@ -207,7 +208,7 @@ class VfxPanel(QWidget):
         ref = self._ref(self.tree.itemAt(pos))
         if not ref:
             return
-        menu = QMenu(self)
+        menu = Menu(self)
         menu.addAction("在播放頭新增濾鏡片段", lambda: self.addClipRequested.emit(ref))
         menu.addAction("套用到選取的片段", lambda: self.applyRequested.emit(ref))
         menu.addSeparator()

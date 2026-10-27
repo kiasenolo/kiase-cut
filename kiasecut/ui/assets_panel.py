@@ -8,11 +8,12 @@ from PySide6.QtCore import QByteArray, QMimeData, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-                               QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget)
+                               QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from .. import assets
 from .colorpick import hex_of, pick_color, qcolor
 from .timeline import MEDIA_MIME
+from .menukeys import Menu
 
 ROLE_KEY = Qt.UserRole + 1
 THUMB = (72, 40)
@@ -163,6 +164,6 @@ class AssetsPanel(QWidget):
         it = lst.itemAt(pos)
         if it is None:
             return
-        menu = QMenu(self)
+        menu = Menu(self)
         menu.addAction("在播放頭加入", lambda: self.addRequested.emit(self.ident(it.data(ROLE_KEY))))
         menu.exec(lst.viewport().mapToGlobal(pos))

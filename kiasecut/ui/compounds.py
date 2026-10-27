@@ -18,11 +18,12 @@ the list to add a timeline, a compound or a static compound (createRequested: "t
 "compound" / "static" / "component" / "static_component"; a new compound starts empty and opens by itself).
 """
 from PySide6.QtCore import QMimeData, Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QLabel, QMenu, QTreeWidget, QTreeWidgetItem,
+from PySide6.QtWidgets import (QAbstractItemView, QLabel, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 from .. import components, project
 from .library import MIME
+from .menukeys import Menu
 
 US = 1_000_000
 PREFIX = "cmp:"                # in the media drag format: "cmp:<compound id>"
@@ -160,9 +161,18 @@ class CompoundPanel(QWidget):
         else:                                            # no clip shows it: open it by itself
             self.entryRequested.emit(d[1])
 
+    def rename_current(self):
+        """F2: rename the current compound or timeline; False when there is none."""
+        it = self.tree.currentItem()
+        d = it.data(0, Qt.UserRole) if it is not None and it.isSelected() else None
+        if not d or d[0] == "use":
+            return False
+        self.renameRequested.emit(d[1])
+        return True
+
     def _menu(self, pos):
         it = self.tree.itemAt(pos)
-        menu = QMenu(self)
+        menu = Menu(self)
         if it is not None:
             self._item_actions(menu, it.data(0, Qt.UserRole))
             menu.addSeparator()

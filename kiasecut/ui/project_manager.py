@@ -19,12 +19,13 @@ import datetime
 import os
 
 from PySide6.QtCore import QFile, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-                               QListView, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPushButton, QSizePolicy,
+                               QListView, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSizePolicy,
                                QVBoxLayout)
 
 from .. import thumbnail, workspace
+from .menukeys import Menu
 
 CARD = QSize(240, 135)
 KIND = Qt.UserRole + 1          # "project", "folder" or "up" (the folder above)
@@ -146,6 +147,8 @@ class ProjectManager(QDialog):
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
         self.list.moveRequested.connect(self._move_into)
+        for key, fn in (("F2", self.rename), ("Delete", self.delete)):      # the current card
+            QShortcut(QKeySequence(key), self.list, lambda fn=fn: self._on_current(fn), context=Qt.WidgetShortcut)
         self.empty = QLabel("還沒有專案：按「新增專案…」開始")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setStyleSheet("color: #777;")
@@ -285,6 +288,11 @@ class ProjectManager(QDialog):
             QMessageBox.warning(self, "新增資料夾", str(exc))
         self.fill()
 
+    def _on_current(self, fn):
+        it = self.list.currentItem()
+        if it is not None and it.isSelected() and it.data(KIND) != "up":
+            fn(it)
+
     def rename(self, it):
         kind, path = it.data(KIND), it.data(Qt.UserRole)
         if self._refuse_open(path):
@@ -362,7 +370,7 @@ class ProjectManager(QDialog):
 
     def _menu(self, pos):
         it = self.list.itemAt(pos)
-        menu = QMenu(self)
+        menu = Menu(self)
         if it is None or it.data(KIND) == "up":
             menu.addAction("新增資料夾", self.make_folder)
             menu.addAction("新增專案…", lambda: self._done(("new", self.folder)))

@@ -76,11 +76,12 @@ from collections import OrderedDict
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import QApplication, QMenu, QScrollBar, QWidget
+from PySide6.QtWidgets import QApplication, QScrollBar, QWidget
 
 from .. import components, curves, edit, project, waveform
 from . import wheel
 from .params import param_menu
+from .menukeys import Menu
 
 US = 1_000_000
 MEDIA_MIME = "application/x-kiasecut-media"
@@ -1897,7 +1898,7 @@ class Timeline(QWidget):
             return
         if c is None:                                    # (a clip on an open group's lane)
             c = self._lane_hit(QPointF(pos))[1]
-        menu = QMenu(self)
+        menu = Menu(self)
         if pos.x() < self.header_w:
             tr = self.rows[row]
             tid = tr["id"]

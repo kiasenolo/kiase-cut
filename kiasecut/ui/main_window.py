@@ -21,7 +21,7 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
-                               QMenu, QPushButton, QScrollArea, QSlider, QStackedWidget, QTabBar,
+                               QPushButton, QScrollArea, QSlider, QStackedWidget, QTabBar,
                                QVBoxLayout,
                                QWidget)
 
@@ -54,6 +54,7 @@ from . import icons, wheel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .timeline import MEDIA_MIME, US, Timeline, timecode
+from .menukeys import Menu, keyed
 
 # DaVinci Resolve-like: charcoal panels on a near-black frame, flat controls, light grey
 # text; colour is left to clips, keyframes, the playhead and the meter
@@ -768,7 +769,7 @@ class MainWindow(QMainWindow):
             a.triggered.connect(fn)
             menu.addAction(a)
 
-        m = self.menuBar().addMenu("檔案")
+        m = keyed(self.menuBar().addMenu("檔案(&F)"))
         add(m, "專案管理器…", "Ctrl+Shift+O", self.show_project_manager)
         add(m, "新專案…", "Ctrl+N", self.new_project)
         add(m, "開啟專案…", "Ctrl+O", self.open_project)
@@ -789,7 +790,7 @@ class MainWindow(QMainWindow):
         add(m, "匯入素材…", "Ctrl+Shift+I", lambda: self.import_media(self.library.current_folder()))
         add(m, "匯出影片…", "Ctrl+E", self.export)
         add(m, "匯出目前畫面…", "Ctrl+Shift+E", self.export_still)
-        m = self.menuBar().addMenu("編輯")
+        m = keyed(self.menuBar().addMenu("編輯(&E)"))
         add(m, "復原", "Ctrl+Z", self.do_undo)
         add(m, "重做", "Ctrl+Y", self.do_redo)
         m.addSeparator()
@@ -810,6 +811,7 @@ class MainWindow(QMainWindow):
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
         add(m, "新增文字", "Ctrl+T", self.do_text)
+        add(m, "重新命名", "F2", self.do_rename)
         add(m, "清除空軌道", None, self.clear_empty_tracks)
         m.addSeparator()
         add(m, "建立群組", "Ctrl+G", lambda: self.make_group())
@@ -817,7 +819,7 @@ class MainWindow(QMainWindow):
         add(m, "建立複合片段", "Alt+G", self.do_make_compound)
         m.addSeparator()
         add(m, "字體對應…", None, lambda: self.check_fonts(auto=False))
-        m = self.menuBar().addMenu("濾鏡")
+        m = keyed(self.menuBar().addMenu("濾鏡(&T)"))
         self.filter_menu = m.addMenu("新增濾鏡片段（在播放頭）")
         self.filter_menu.aboutToShow.connect(lambda: self._fill_filter_menu(self.filter_menu, self.add_filter_clip))
         self.apply_menu = m.addMenu("套用到選取的片段")
@@ -826,7 +828,7 @@ class MainWindow(QMainWindow):
         add(m, "新增自訂濾鏡檔…", None, lambda: self.new_filter_file(None))
         add(m, "濾鏡寫法說明…", None, self.show_filter_doc)
         add(m, "檢查所有濾鏡", None, self.check_filters)
-        m = self.menuBar().addMenu("視窗")
+        m = keyed(self.menuBar().addMenu("視窗(&W)"))
         self.layout_menu = m.addMenu("佈局")
         self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
         add(m, "儲存目前佈局", None, self.save_layout)
@@ -860,7 +862,7 @@ class MainWindow(QMainWindow):
         row.addWidget(plus)
         self.layout_corner = corner                      # (PySide would delete it with this function's locals)
         self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)
-        m = self.menuBar().addMenu("播放")
+        m = keyed(self.menuBar().addMenu("播放(&P)"))
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
         add(m, "標記出點", "O", lambda: self.set_mark("out"))
         add(m, "清除標記", "Alt+X", lambda: self.set_mark(None))
@@ -1067,7 +1069,7 @@ class MainWindow(QMainWindow):
         i = self.tl_tabs.tabAt(pos)
         if i < 0:
             return
-        menu = QMenu(self)
+        menu = Menu(self)
         menu.addAction("重新命名…", lambda: self.timeline_action("rename", i))
         menu.addAction("建立副本", lambda: self.timeline_action("duplicate", i))
         a = menu.addAction("關閉時間線", lambda: self.close_timeline(self.tl_tabs.tabData(i)))
@@ -1883,6 +1885,24 @@ class MainWindow(QMainWindow):
             return
         self.timeline.selected_id = None
         self.apply("波紋刪除", edit.ripple_delete, ids)
+
+    def do_rename(self):
+        """F2: rename what has the keyboard focus (an item of a panel's list), else the selected
+        clip, else the one track picked by its header."""
+        w = QApplication.focusWidget()
+        while w is not None and not hasattr(w, "rename_current"):
+            w = w.parentWidget()
+        if w is not None and w.rename_current():
+            return
+        if not self.proj:
+            return
+        tl = self.timeline
+        if tl.selected is not None:
+            self.on_clip_action("rename", tl.selected["id"])
+        elif len(tl.selected_tracks) == 1:
+            self.on_track_action("rename", next(iter(tl.selected_tracks)))
+        else:
+            self.statusBar().showMessage("先選取要重新命名的片段或軌道", 3000)
 
     def do_make_compound(self):
         """Alt+G: the selected clips into a new compound clip."""
@@ -4732,7 +4752,7 @@ class MainWindow(QMainWindow):
 
     def _layout_tab_menu(self, pos):
         i = self.layout_tabs.tabAt(pos)
-        menu = QMenu(self)
+        menu = Menu(self)
         if i >= 0:
             self._layout_actions(menu, self.layout_tabs.tabData(i))
         else:

@@ -8,10 +8,11 @@ rename, restack, unbind a clip or delete it.
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from .. import assets, components
 from .library import PictureDrop
+from .menukeys import Menu
 
 ROLE = Qt.UserRole
 
@@ -136,13 +137,21 @@ class ParamList(QWidget):
         if ids:
             self.selectionPicked.emit(set(ids), ids[0])
 
+    def rename_current(self):
+        """F2: rename the current parameter; False when there is none."""
+        it = self.list.currentItem()
+        if it is None or not it.isSelected() or components.param(self.comp, it.data(ROLE)) is None:
+            return False
+        self.paramAction.emit("rename", it.data(ROLE))
+        return True
+
     def _menu(self, pos):
         it = self.list.itemAt(pos)
         p = components.param(self.comp, it.data(ROLE)) if it is not None else None
         if p is None:
             return
         pid = p["id"]
-        menu = QMenu(self)
+        menu = Menu(self)
         for text, action in (("設定預設值…", "default"), ("重新命名…", "rename"), (None, None),
                              ("上移", "up"), ("下移", "down"), (None, None), ("刪除參數", "delete")):
             if text is None:

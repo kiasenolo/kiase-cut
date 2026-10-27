@@ -280,6 +280,11 @@ def group_holder(c, group, create=False):
     return c.setdefault(group, {}) if create else (c.get(group) or {})
 
 
+def static_label(comp):
+    """轉為靜態複合片段, or 轉為靜態元件 for a component."""
+    return "轉為靜態元件" if components.is_component(comp) else "轉為靜態複合片段"
+
+
 class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
@@ -353,6 +358,7 @@ class MainWindow(QMainWindow):
         self.compounds.useDeleteRequested.connect(self.delete_use)
         self.compounds.createRequested.connect(self.create_from_panel)
         self.compounds.componentRequested.connect(self.component_kind)
+        self.compounds.staticRequested.connect(self.compound_to_static)
         self.compounds.entryRequested.connect(self.open_compound_entry)
         self.compounds.tabRequested.connect(self.open_in_tab)
         self.compounds.libraryRequested.connect(self.save_compound_to_library)
@@ -600,8 +606,15 @@ class MainWindow(QMainWindow):
         self.back_btn.clicked.connect(self.leave_compound)
         self.crumb = QLabel()
         self.crumb.setObjectName("crumb")
+        # 轉為靜態複合片段: shown while the open compound's content is steady (edit.steady)
+        self.static_btn = QPushButton("轉為靜態複合片段")
+        self.static_btn.setToolTip("裡面的東西全部從頭開始、長度一樣：變成靜態片段，像圖片一樣使用（只顯示第一幀，長度隨意），"
+                                   "用圖層編輯")
+        self.static_btn.clicked.connect(lambda: self.open_kid() and self.compound_to_static(self.open_kid()))
+        self.static_btn.setVisible(False)
         tools.addWidget(self.back_btn)
         tools.addWidget(self.crumb)
+        tools.addWidget(self.static_btn)
         self.buttons = {}
         for key, ic, tip in (("undo", "undo", "復原（Ctrl+Z）"), ("redo", "redo", "重做（Ctrl+Y）"),
                              (None, None, None),
@@ -2073,6 +2086,10 @@ class MainWindow(QMainWindow):
             return
         self.apply_root(label, edit.unmake_component, kid)
 
+    def compound_to_static(self, kid):
+        """轉為靜態複合片段 (or 靜態元件): a compound whose content all lasts its whole length."""
+        self.apply_root(static_label(self.proj["compounds"][kid]), edit.to_static, kid)
+
     def delete_use(self, tl_id, path, cid):
         self.timeline.selected_id = None
         self.apply_root("刪除片段", lambda root: edit.delete_use(root, tl_id, path, cid))
@@ -2553,6 +2570,9 @@ class MainWindow(QMainWindow):
         if live:
             self.tl_params.set_component(comp)
         self.lower_stack.setCurrentIndex(1 if static else 0)
+        self.static_btn.setVisible(bool(comp) and not static and edit.steady(comp))
+        if comp:
+            self.static_btn.setText(static_label(comp))
         for k in ("split",):
             self.buttons[k].setVisible(not static)
         self.preview.accept_media = static              # media dragged onto the picture
@@ -2978,6 +2998,9 @@ class MainWindow(QMainWindow):
             return
         if action in ("to_component", "from_component"):
             self.component_kind(edit.find(self.container(), cid)[1]["compound_id"], action == "to_component")
+            return
+        if action == "to_static":
+            self.compound_to_static(edit.find(self.container(), cid)[1]["compound_id"])
             return
         if action == "group":
             sel = self.timeline.selected_ids

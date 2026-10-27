@@ -107,5 +107,63 @@ class PanelMenuTests(unittest.TestCase):
         self.assertEqual(got, ["timeline", "compound", "static", "component", "static_component"])
 
 
+class ToStaticTests(unittest.TestCase):
+    """轉為靜態複合片段: a compound whose clips all start at 0 and are as long as each other."""
+    def steady_proj(self):
+        p = proj()
+        p["tracks"][1]["clips"].append(dict(edit.find(p, "c1")[1], id="c4"))    # 0-2 s, as c1
+        c = edit.make_compound(p, p, ["c1", "c4"])
+        return p, c["compound_id"]
+
+    def test_steady_one_turns_static(self):
+        p, kid = self.steady_proj()
+        self.assertTrue(edit.steady(p["compounds"][kid]))
+        edit.to_static(p, kid)
+        self.assertTrue(p["compounds"][kid]["static"])
+        c = next(c for _tl, _p, c in project.compound_uses(p)[kid])
+        self.assertTrue(project.is_static(c))
+        self.assertEqual(c["duration_us"], 2 * S)              # the clips showing it keep their length
+        with self.assertRaises(edit.EditError):                 # (already is)
+            edit.to_static(p, kid)
+
+    def test_not_when_lengths_differ_or_sound(self):
+        p = proj()
+        kid = edit.make_compound(p, p, ["c1", "c2"])["compound_id"]     # 0-2 s and 5-7 s
+        self.assertFalse(edit.steady(p["compounds"][kid]))
+        with self.assertRaises(edit.EditError):
+            edit.to_static(p, kid)
+        self.assertFalse(p["compounds"][kid].get("static"))
+        p = proj()
+        edit.find(p, "c3")[1].update(start_us=0, duration_us=2 * S)
+        kid = edit.make_compound(p, p, ["c1", "c3"])["compound_id"]     # same span, but sound
+        self.assertFalse(edit.steady(p["compounds"][kid]))
+
+    def test_group_clips_must_last_the_group(self):
+        p, kid = self.steady_proj()
+        comp = p["compounds"][kid]
+        edit.make_group(p, comp, [c["id"] for t in comp["tracks"] for c in t["clips"]])
+        self.assertTrue(edit.steady(comp))
+        g = next(c for t in comp["tracks"] for c in t["clips"] if project.is_group(c))
+        g["tracks"][0]["clips"][0]["duration_us"] = S
+        self.assertFalse(edit.steady(comp))
+
+    def test_panel_menu_offers_it_only_when_steady(self):
+        p, kid = self.steady_proj()
+        other = edit.make_compound(p, p, ["c2"])["compound_id"]
+        edit.find(p["compounds"][other], "c2")[1]["start_us"] = S         # starts late
+        panel = CompoundPanel()
+        panel.set_project(p)
+        got = []
+        panel.staticRequested.connect(got.append)
+        for k, want in ((kid, True), (other, False)):
+            menu = QMenu()
+            panel._item_actions(menu, ("def", k))
+            acts = {a.text(): a for a in menu.actions()}
+            self.assertEqual("轉為靜態複合片段" in acts, want)
+            if want:
+                acts["轉為靜態複合片段"].trigger()
+        self.assertEqual(got, [kid])
+
+
 if __name__ == "__main__":
     unittest.main()

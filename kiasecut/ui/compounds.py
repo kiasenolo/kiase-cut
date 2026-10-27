@@ -7,7 +7,8 @@ Each compound is listed once with how many clips show it; under it, where it is 
 Static compounds (◧ 靜態片段) are pictures built in the editor: their clips show one moment
 of the content and can be any length; components (❖ 元件) are static compounds with
 parameters - live ones and static ones (靜態元件) - which each clip showing one sets for
-itself (componentRequested turns a compound into one and back).
+itself (componentRequested turns a compound into one and back). A compound whose content all
+lasts its whole length (edit.steady) can be turned into a static one (staticRequested).
 Drag a compound onto the timeline to place another clip showing it (every clip shows the
 same content, so editing one edits all). Click a use to select it on its timeline,
 double-click a use to open it there. Double-click a compound that no clip shows (or pick
@@ -21,7 +22,7 @@ from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QLabel, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
-from .. import components, project
+from .. import components, edit, project
 from .library import MIME
 from . import inplace
 from .menukeys import Menu
@@ -60,6 +61,7 @@ class CompoundPanel(QWidget):
     useDeleteRequested = Signal(str, list, str)  # timeline id, parent path, clip id: delete that clip
     createRequested = Signal(str)                # "timeline", "compound", "static" or "component": a new empty one
     componentRequested = Signal(str, bool)       # compound id, on: make it a component (元件) / a static one again
+    staticRequested = Signal(str)                # compound id: 轉為靜態複合片段 (a steady one, edit.steady)
     entryRequested = Signal(str)                 # compound id: edit it by itself (no clip needed)
     tabRequested = Signal(str)                   # compound or timeline id: open it in a tab of its own
     libraryRequested = Signal(str)               # compound id: save it in the user's Library
@@ -213,6 +215,9 @@ class CompoundPanel(QWidget):
                                    lambda: self.componentRequested.emit(kid, False))
                 else:
                     menu.addAction("轉為元件", lambda: self.componentRequested.emit(kid, True))
+                if not comp.get("static") and edit.steady(comp):
+                    menu.addAction("轉為" + ("靜態元件" if components.is_component(comp) else "靜態複合片段"),
+                                   lambda: self.staticRequested.emit(kid))
             if kid.startswith("tl"):
                 a = menu.addAction("刪除時間線", lambda: self.deleteRequested.emit(kid))
                 a.setEnabled(self.tl_count > 1)

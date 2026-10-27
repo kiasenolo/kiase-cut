@@ -2167,6 +2167,8 @@ class Timeline(QWidget):
                     head.append(("轉回靜態片段" if project.is_static(c) else "轉回複合片段", "from_component"))
                 elif c.get("compound_id"):
                     head.append(("轉為元件", "to_component"))
+                if c.get("compound_id") and not project.is_static(c) and edit.steady(c["compound"]):
+                    head.append(("轉為靜態元件" if comp else "轉為靜態複合片段", "to_static"))
                 if c.get("compound_id"):                     # (not a nested timeline)
                     head.append(("存到 Library…", "save_library"))
                 items = head + [None] + items

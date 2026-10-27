@@ -2430,6 +2430,37 @@ def make_compound(root, container, clip_ids, at_us=None, static=False, component
     return clip
 
 
+def steady(comp):
+    """Whether everything in compound comp lasts its whole length: every clip starts at 0 and
+    all are as long as each other (a group's clips as long as the group), and none is sound -
+    so 轉為靜態片段 (to_static) loses nothing of its layout."""
+    def ok(tracks, length):
+        for t in tracks:
+            for c in t["clips"]:
+                if c["type"] == "audio" or c["start_us"] != 0:
+                    return False
+                if length is not None and abs(c["duration_us"] - length) > KEY_TOL_US:
+                    return False
+                length = c["duration_us"]
+                if project.is_group(c) and not ok(c["tracks"], c["duration_us"]):
+                    return False
+        return True
+    return ok(comp["tracks"], None)
+
+
+def to_static(root, kid):
+    """轉為靜態片段: compound kid (a steady one) becomes a static one, shown like a picture
+    (its first frame) by every clip showing it; a component becomes a 靜態元件."""
+    comp = (root.get("compounds") or {}).get(kid)
+    if not comp:
+        raise EditError("只有複合片段可以轉成靜態片段（時間線不行）")
+    if comp.get("static"):
+        raise EditError("已經是靜態片段")
+    if not steady(comp):
+        raise EditError("裡面的片段要全部從頭開始、長度一樣，而且沒有聲音")
+    comp["static"] = True
+
+
 def new_static(root, container, at_us, track_id=None):
     """An empty static clip at at_us (enter it to build its picture)."""
     return new_compound(root, container, at_us, track_id, static=True)

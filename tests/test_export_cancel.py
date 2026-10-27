@@ -12,6 +12,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import shiboken6  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import gpu, project, renderexport, sysmem  # noqa: E402
@@ -74,9 +75,15 @@ class CancelTests(unittest.TestCase):
 
 
 class DialogTests(unittest.TestCase):
+    def made(self, w):
+        """w, deleted when the test ends: a window without a parent still there when Python
+        quits (kept by a lambda of its own) crashed PySide 6.12's clean-up."""
+        self.addCleanup(shiboken6.delete, w)
+        return w
+
     def test_frames_and_warning(self):
-        dlg = ExportDialog(None, os.path.join(tempfile.gettempdir(), "x.mp4"), 30, 90, None, None, 1920, 1080,
-                           out_fps=30)
+        dlg = self.made(ExportDialog(None, os.path.join(tempfile.gettempdir(), "x.mp4"), 30, 90, None, None,
+                                     1920, 1080, out_fps=30))
         self.assertEqual(dlg.frames(), (0, 89))
         self.assertIn("90 幀", dlg.info_lbl.text())
         self.assertNotIn("⚠", dlg.info_lbl.text())
@@ -87,7 +94,7 @@ class DialogTests(unittest.TestCase):
 
     def test_progress_waits_for_the_export(self):
         stopped = []
-        prog = ExportProgress(None, "/tmp/x.mp4", "MP4", 100, stopped.append)
+        prog = self.made(ExportProgress(None, "/tmp/x.mp4", "MP4", 100, stopped.append))
         prog.show()
         prog.set_progress(0.25)
         prog._tick()
@@ -102,7 +109,7 @@ class DialogTests(unittest.TestCase):
 
     def test_stops_itself_when_memory_runs_low(self):
         stopped = []
-        prog = ExportProgress(None, "/tmp/x.mp4", "MP4", 100, stopped.append)
+        prog = self.made(ExportProgress(None, "/tmp/x.mp4", "MP4", 100, stopped.append))
         prog.guard.low = lambda: (300 * 2 ** 20, 16 * 2 ** 30)
         prog._tick()
         self.assertEqual(len(stopped), 1)

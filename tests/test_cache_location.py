@@ -11,6 +11,7 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import shiboken6  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialogButtonBox, QMessageBox  # noqa: E402
 
 from kiasecut import workspace  # noqa: E402
@@ -124,8 +125,10 @@ class Window(Base):
 
 class Dialog(unittest.TestCase):
     def dialog(self, mode, custom=""):
-        return SettingsDialog(None, "/tmp/lib", "/tmp/lib", "/tmp/p", 5, cache_mode=mode, cache_custom=custom,
-                              default_cache="/home/u/.cache/KiaseCut/projects")
+        dlg = SettingsDialog(None, "/tmp/lib", "/tmp/lib", "/tmp/p", 5, cache_mode=mode, cache_custom=custom,
+                             default_cache="/home/u/.cache/KiaseCut/projects")
+        self.addCleanup(shiboken6.delete, dlg)           # (left for Python's exit, it crashed PySide's clean-up)
+        return dlg
 
     def test_custom_needs_a_folder(self):
         dlg = self.dialog(workspace.CACHE_CUSTOM)

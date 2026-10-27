@@ -35,4 +35,20 @@ if [ -z "$KIASECUT_MLT" ] && ! ldconfig -p 2>/dev/null | grep -q "libmlt-7"; the
     echo "Warning: MLT 7 not found (sudo apt install libmlt7 / melt, or set KIASECUT_MLT)"
 fi
 
+# Wayland taskbars show the icon of the desktop entry named like the program (kiasecut),
+# not the window's own: (re)write it to point at this folder, which may have moved
+APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+ENTRY="[Desktop Entry]
+Type=Application
+Name=KiaseCut
+Comment=Video editor
+Exec=\"$PWD/start_kiasecut.sh\" %f
+Icon=$PWD/Icon.svg
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+StartupWMClass=kiasecut"
+if [ "$(cat "$APPS/kiasecut.desktop" 2>/dev/null)" != "$ENTRY" ]; then
+    mkdir -p "$APPS" && printf '%s\n' "$ENTRY" > "$APPS/kiasecut.desktop"
+fi
+
 exec .venv/bin/python -m kiasecut "$@"

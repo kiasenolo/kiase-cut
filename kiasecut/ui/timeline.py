@@ -167,6 +167,39 @@ def timecode(us, fps):
     return f"{int(s // 60):02d}:{int(s % 60):02d}.{int(round((s % 1) * fps)) % n:0{max(2, len(str(n - 1)))}d}"
 
 
+def group_menu(menu, level, skip, pick, span=None, when=None):
+    """移入群組 added to menu: the level's groups but those in skip, pick(group id) of the one
+    chosen. The groups at the time of span (lo, hi) come first (同時間); then 全部, a name
+    each - the groups sharing one in its own menu, by their start (when(us): how a time reads)."""
+    groups = []
+    for gid, name in edit.group_ids(level):
+        if gid not in skip:
+            s = edit.abs_start(level, gid)
+            groups.append((gid, name, s, s + edit.find(level, gid)[1]["duration_us"]))
+    if not groups:
+        return
+    sub = menu.addMenu("移入群組")
+
+    def add(m, g, text):
+        m.addAction(text + (f"　{when(g[2])}" if when else ""), lambda gid=g[0]: pick(gid))
+    here = sorted((g for g in groups if span and g[2] < span[1] and g[3] > span[0]), key=lambda g: g[2])
+    if here and len(here) < len(groups):
+        sub.addSection("同時間")
+        for g in here:
+            add(sub, g, g[1])
+        sub.addSection("全部")
+    names = {}
+    for g in groups:
+        names.setdefault(g[1], []).append(g)
+    for name, gs in names.items():
+        if len(gs) == 1:
+            add(sub, gs[0], name)
+        else:
+            m = sub.addMenu(f"{name}（{len(gs)}）")
+            for i, g in enumerate(sorted(gs, key=lambda g: g[2]), 1):
+                add(m, g, name if when else f"{name} #{i}")
+
+
 # 時基: how times are shown - "time" (mm:ss.ff) or "bpm" (小節.拍.格: bars, beats and the beat's
 # div parts, counted from 1 at offset_us, meter beats a bar, 0: beats alone). Only shown: nothing
 # snaps to it (BPM alignment of a sound clip, edit.beat_grid, is what snaps).
@@ -2148,11 +2181,10 @@ class Timeline(QWidget):
                 param_menu(menu, comp, sel, self.paramBind.emit, self.paramUnbind.emit)
             if all(k["type"] != "audio" for k in sel):           # 移入群組: one of the level's groups
                 skip = {k["id"] for g in sel for k in [g] + list(project.walk_clips(g.get("tracks") or []))}
-                groups = [(gid, name) for gid, name in edit.group_ids(self.proj) if gid not in skip]
-                if groups:
-                    sub = menu.addMenu("移入群組")
-                    for gid, name in groups:
-                        sub.addAction(name, lambda g=gid: self.clipAction.emit("into:" + g, c["id"]))
+                starts = [edit.abs_start(self.proj, k["id"]) for k in sel or [c]]
+                span = (min(starts), max(s + k["duration_us"] for s, k in zip(starts, sel or [c])))
+                group_menu(menu, self.proj, skip, lambda g: self.clipAction.emit("into:" + g, c["id"]),
+                           span, lambda us: time_text(us, self.fps, self.timebase))
         else:                                          # a free spot on a track
             menu.addAction("貼上到播放頭", lambda: self.clipAction.emit("paste", ""))
             if row is not None and self.rows[row]["kind"] != "audio":

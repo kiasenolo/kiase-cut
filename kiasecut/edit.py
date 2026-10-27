@@ -1538,8 +1538,18 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
 
 
 def group_ids(level):
-    """[(group id, name)] of every group in the level, nested ones too, in order."""
-    return [(c["id"], c.get("name") or "群組") for c in project.walk_clips(level["tracks"]) if project.is_group(c)]
+    """[(group id, name)] of every group in the level, nested ones too (not those inside its
+    compound clips: another level's), in order."""
+    out = []
+
+    def walk(tracks):
+        for t in tracks:
+            for c in t["clips"]:
+                if project.is_group(c):
+                    out.append((c["id"], c.get("name") or "群組"))
+                    walk(c["tracks"])
+    walk(level["tracks"])
+    return out
 
 
 def _map_value(v, fn):

@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLa
 
 from .. import assets, components, edit, project
 from .params import ParamList, bound_tip, clip_name, param_menu
-from .timeline import FX_MIME, MEDIA_MIME
+from .timeline import FX_MIME, MEDIA_MIME, group_menu
 from . import inplace
 from .menukeys import Menu
 
@@ -409,11 +409,7 @@ class LayerPanel(QWidget):
                 c = edit.find(level, cid)[1]
                 if project.is_group(c):
                     skip |= {k["id"] for k in project.walk_clips(c["tracks"])}
-            groups = [(gid, name) for gid, name in edit.group_ids(level) if gid not in skip]
-            if groups:
-                sub = menu.addMenu("移入群組")
-                for gid, name in groups:
-                    sub.addAction(name, lambda g=gid: self.actionRequested.emit("into:" + g))
+            group_menu(menu, level, skip, lambda g: self.actionRequested.emit("into:" + g), (0, 1))
         if level is not None and components.is_component(level):
             menu.addSeparator()
             param_menu(menu, level, [edit.find(level, it.data(ROLE))[1] for it in items],

@@ -144,6 +144,7 @@ class Task(QObject):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+PLAYING_PROPS_MS = 100         # while playing, the selection's panels show its values this often
 OPEN_PREFIX = "cmp:"            # path_ids[0] = OPEN_PREFIX + compound id: that compound opened by itself
 
 
@@ -763,6 +764,10 @@ class MainWindow(QMainWindow):
         w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))  # never modal
         w.stateChanged.connect(self.on_state)
         w.levels.connect(self.meter.bars.feed)
+        self.props_timer = QTimer(self)             # while playing: the selection's panels a few times a second
+        self.props_timer.setSingleShot(True)
+        self.props_timer.setInterval(PLAYING_PROPS_MS)
+        self.props_timer.timeout.connect(self._playing_props)
         # the library follows the Media folder: look again when something in it changes, when
         # this window comes back to the front, and after our own file operations
         self.watcher = QFileSystemWatcher(self)
@@ -3625,7 +3630,10 @@ class MainWindow(QMainWindow):
         self.show_time()
         sel = self.timeline.selected
         if sel is not None:
-            self.show_selection_props()
+            if not self.playing:
+                self.show_selection_props()
+            elif not self.props_timer.isActive():     # (every frame cost playing its frame rate)
+                self.props_timer.start()
             self.curves.set_time(sel, self.clip_time(sel["id"]))
         self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
@@ -3633,6 +3641,13 @@ class MainWindow(QMainWindow):
     def on_state(self, playing):
         self.playing = playing
         self.play_btn.setIcon(icons.icon("pause" if playing else "play"))
+        if not playing and self.props_timer.isActive():
+            self.props_timer.stop()
+            self._playing_props()                     # (where playing stopped)
+
+    def _playing_props(self):
+        if self.proj is not None and self.timeline.selected is not None:
+            self.show_selection_props()
 
     def toggle_play(self):
         """Space: play, or stop - where playback is, or (播放模式 回到開始處) back where it began."""

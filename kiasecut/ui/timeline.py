@@ -313,6 +313,7 @@ class Timeline(QWidget):
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
         self.hover_playhead = False                # the mouse is on the playhead line (it can be dragged)
+        self.paint_span = (-math.inf, math.inf)    # x range being painted (paintEvent)
         self.drop_clip = None                      # clip a filter from the VFX tab would go onto
         self.drop_replace = False                  # drop_clip would get the dragged media as its source (Alt)
         self.matte_region = None                   # 編輯區域: {clip, t_off, duration, name} or None
@@ -490,11 +491,15 @@ class Timeline(QWidget):
 
     def set_position(self, frame, follow=True):
         """Move the playhead; with follow, scroll so it stays in view (playback, keys)."""
-        self.pos = frame
+        was, self.pos = self.pos, frame
         x = self._x(frame / self.fps)
         if follow and (x > self.width() - 30 or x < self.header_w):
             self.scroll_s = max(0.0, frame / self.fps - (self.width() - self.header_w) * 0.2 / self.px_per_s)
-        self.update()
+            self.update()
+            return
+        for f in (was, frame):              # only the line moved: where it was and where it is
+            x = int(self._x(f / self.fps))
+            self.update(x - 4, 0, 9, self.height())
 
     # -- geometry -------------------------------------------------------------------------------
     def _x(self, sec):
@@ -870,12 +875,15 @@ class Timeline(QWidget):
         return sorted({e for e in edges if any(abs(e - t) < 1 for t in targets)})
 
     # -- painting -------------------------------------------------------------------------------
-    def paintEvent(self, _):
+    def paintEvent(self, e):
         p = QPainter(self)
+        r = e.rect()
+        self.paint_span = (r.left(), r.right() + 1)  # (clips and headers outside it are not drawn)
         try:
             self._paint(p)
         finally:
             p.end()                                  # never leave the painter open on an error
+            self.paint_span = (-math.inf, math.inf)
 
     def _paint_beat_ruler(self, p, w):
         """The ruler on a BPM timebase (時基): a line on every bar - every 2, 4, 8 ... bars when
@@ -962,40 +970,41 @@ class Timeline(QWidget):
                 continue
             y, h = self.tops[i], self.row_h(i)
             p.fillRect(0, y, w, h - 1, row_color(tr))       # the track colour: its row, and clip_color
-            picked = tr["id"] in self.selected_tracks
-            p.fillRect(0, y, self.header_w, h - 1, QColor("#3a3a42" if picked else "#242427"))   # as in Resolve
-            p.fillRect(self.header_w - 1, y, 1, h - 1, QColor("#0e0e10"))
-            if tr.get("color"):
-                p.fillRect(0, y, 3, h - 1, QColor(tr["color"]))
-            if picked:
-                p.setPen(QPen(QColor("#c9c9cd"), 1))
-                p.drawRect(QRectF(0.5, y + 0.5, self.header_w - 2, h - 2))
-            # V1 is the bottom picture track, A1 the first sound track (Resolve's numbering)
-            if tr["kind"] == "audio":
-                label = f"A{sum(1 for t in self.rows[:i] if t['kind'] == 'audio') + 1}"
-            else:
-                label = f"V{sum(1 for t in self.rows[i:] if t['kind'] != 'audio')}"
-            p.setPen(QColor("#8e8e94"))
-            f0 = p.font()
-            fb = QFont(f0)
-            fb.setBold(True)
-            p.setFont(fb)
-            p.drawText(QRectF(8, y, 26, min(h - 1, 26)), Qt.AlignVCenter, label)
-            p.setFont(f0)
-            btns = self.header_buttons(i)
-            name_w = (btns[0][1].left() if btns else self.header_w) - 40
-            p.setPen(QColor("#c8c8cc"))
-            name = p.fontMetrics().elidedText(tr.get("name") or tr["kind"], Qt.ElideRight, int(name_w))
-            gain = tr.get("gain", 1.0)
-            if abs(gain - 1.0) > 1e-6:
-                p.drawText(QRectF(34, y + 5, name_w, 16), Qt.AlignVCenter, name)
-                p.setPen(QColor("#8a8a90"))
-                db = "-∞" if gain <= 0 else f"{20 * math.log10(gain):+.1f}"
-                p.drawText(QRectF(34, y + 21, name_w, 16), Qt.AlignVCenter, f"{db} dB")
-            else:
-                p.drawText(QRectF(34, y, name_w, min(h - 1, 26)), Qt.AlignVCenter, name)
-            for flag, r in btns:
-                self._draw_button(p, flag, r, bool(tr.get(flag)))
+            if self.paint_span[0] < self.header_w:      # (a moving playhead repaints only near it)
+                picked = tr["id"] in self.selected_tracks
+                p.fillRect(0, y, self.header_w, h - 1, QColor("#3a3a42" if picked else "#242427"))   # as in Resolve
+                p.fillRect(self.header_w - 1, y, 1, h - 1, QColor("#0e0e10"))
+                if tr.get("color"):
+                    p.fillRect(0, y, 3, h - 1, QColor(tr["color"]))
+                if picked:
+                    p.setPen(QPen(QColor("#c9c9cd"), 1))
+                    p.drawRect(QRectF(0.5, y + 0.5, self.header_w - 2, h - 2))
+                # V1 is the bottom picture track, A1 the first sound track (Resolve's numbering)
+                if tr["kind"] == "audio":
+                    label = f"A{sum(1 for t in self.rows[:i] if t['kind'] == 'audio') + 1}"
+                else:
+                    label = f"V{sum(1 for t in self.rows[i:] if t['kind'] != 'audio')}"
+                p.setPen(QColor("#8e8e94"))
+                f0 = p.font()
+                fb = QFont(f0)
+                fb.setBold(True)
+                p.setFont(fb)
+                p.drawText(QRectF(8, y, 26, min(h - 1, 26)), Qt.AlignVCenter, label)
+                p.setFont(f0)
+                btns = self.header_buttons(i)
+                name_w = (btns[0][1].left() if btns else self.header_w) - 40
+                p.setPen(QColor("#c8c8cc"))
+                name = p.fontMetrics().elidedText(tr.get("name") or tr["kind"], Qt.ElideRight, int(name_w))
+                gain = tr.get("gain", 1.0)
+                if abs(gain - 1.0) > 1e-6:
+                    p.drawText(QRectF(34, y + 5, name_w, 16), Qt.AlignVCenter, name)
+                    p.setPen(QColor("#8a8a90"))
+                    db = "-∞" if gain <= 0 else f"{20 * math.log10(gain):+.1f}"
+                    p.drawText(QRectF(34, y + 21, name_w, 16), Qt.AlignVCenter, f"{db} dB")
+                else:
+                    p.drawText(QRectF(34, y, name_w, min(h - 1, 26)), Qt.AlignVCenter, name)
+                for flag, r in btns:
+                    self._draw_button(p, flag, r, bool(tr.get(flag)))
             dim = (project.sounds(tr, tracks) <= 0) if tr["kind"] == "audio" else not project.visible(tr)
             copying = bool(self.drag and self.drag.get("dup"))      # (Alt: the clips stay, copies move)
             for c in tr["clips"]:
@@ -1212,7 +1221,8 @@ class Timeline(QWidget):
     def _draw_clip(self, p, c, y, start, dur, ghost=False, track=None, h=TRACK_H, dim=False):
         w = self.width()
         x0, x1 = self._x(start / US), self._x((start + dur) / US)
-        if x1 < self.header_w or x0 > w:
+        lo, hi = self.paint_span
+        if x1 < max(self.header_w, lo - 12) or x0 > min(w, hi + 12):     # (12: its keyframes' diamonds)
             return
         r = QRectF(max(x0, self.header_w) + 0.5, y + 3, max(1.0, x1 - max(x0, self.header_w) - 1), h - 8)
         kind = clip_kind(c)

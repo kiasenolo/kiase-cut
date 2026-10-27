@@ -620,14 +620,19 @@ class Timeline(QWidget):
         row = self._row_at(pos.y())
         if row is None:
             return None
-        spots = [(c, self.tops[row], c["start_us"]) for c in self.rows[row]["clips"] if project.is_group(c)]
-        spots += [(c, ln["y"], ln["abs0"] + c["start_us"]) for ln in self.lanes(row) for c in ln["track"]["clips"]
-                  if project.is_group(c)]
-        for c, y, s in spots:
-            x = max(self._x(s / US), self.header_w)
-            if QRectF(x + 2, y + 3, 16, 16).contains(pos):
+        spots = [(c, self.tops[row], self.base_h(row), c["start_us"]) for c in self.rows[row]["clips"]
+                 if project.is_group(c)]
+        spots += [(c, ln["y"], ln["h"], ln["abs0"] + c["start_us"]) for ln in self.lanes(row)
+                  for c in ln["track"]["clips"] if project.is_group(c)]
+        for c, y, h, s in spots:
+            if self._fold_rect(self._x(s / US), y, h).adjusted(-2, -2, 2, 2).contains(pos):
                 return c
         return None
+
+    def _fold_rect(self, x, y, h):
+        """A group clip's ▸ / ▾ button (x: the clip's left edge on screen, y / h: its row's)."""
+        s = max(12, min(22, h - 12))
+        return QRectF(max(x, self.header_w) + 4, y + 3 + (h - 8 - s) / 2, s, s)
 
     def toggle_group(self, g):
         """Open or fold a group (not an edit: kept with the view)."""
@@ -1187,6 +1192,22 @@ class Timeline(QWidget):
         pix.setDevicePixelRatio(dpr)
         return pix
 
+    def _draw_fold(self, p, r, opened, dim, clip):
+        """A group's open / fold button: a box with a triangle (pointing down when open)."""
+        p.save()
+        p.setClipRect(clip)                                # (a narrow clip cuts it off)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setPen(QPen(QColor(255, 255, 255, 60 if dim else 110), 1))
+        p.setBrush(QColor(0, 0, 0, 90 if dim else 130))
+        p.drawRoundedRect(r.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
+        cx, cy, a = r.center().x(), r.center().y(), r.width() * 0.22
+        pts = ([QPointF(cx - a, cy - a * 0.6), QPointF(cx + a, cy - a * 0.6), QPointF(cx, cy + a * 0.8)] if opened
+               else [QPointF(cx - a * 0.6, cy - a), QPointF(cx + a * 0.8, cy), QPointF(cx - a * 0.6, cy + a)])
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
+        p.drawPolygon(QPolygonF(pts))
+        p.restore()
+
     def _draw_clip(self, p, c, y, start, dur, ghost=False, track=None, h=TRACK_H, dim=False):
         w = self.width()
         x0, x1 = self._x(start / US), self._x((start + dur) / US)
@@ -1239,13 +1260,17 @@ class Timeline(QWidget):
                          else "◧ " if kind == "static" else "▣ ") + label
             elif c["type"] == "filter":
                 label = "✦ " + label
-            elif project.is_group(c):                    # its ▸ / ▾ (click to open or fold it)
-                label = ("▾ " if self.is_open(c) else "▸ ") + label + f"  ({sum(len(t['clips']) for t in c['tracks'])})"
+            elif project.is_group(c):                    # after its ▸ / ▾ button (_fold_rect)
+                label += f"  ({sum(len(t['clips']) for t in c['tracks'])})"
             elif c.get("effects"):
                 label += "  ✦" + (str(len(c["effects"])) if len(c["effects"]) > 1 else "")
             if c["id"] in self._bound():                 # a parameter of the open component sets it
                 label += "  " + components.ICON
             lr = r.adjusted(4, 0, -2, 0)
+            if project.is_group(c):
+                fr = self._fold_rect(x0, y, h)
+                lr.setLeft(fr.right() + 5)
+                self._draw_fold(p, fr, self.is_open(c), dim, r)
             if audio and r.height() > 20:
                 lr.setHeight(16)
             elif c["type"] == "video" and r.height() >= 24:

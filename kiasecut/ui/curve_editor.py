@@ -437,7 +437,8 @@ class CurveCanvas(QWidget):
         d = self.drag
         pos = e.position()
         if d is not None and d["kind"] in ("pan", "zoom", "keys"):
-            if not self.wrap.on:
+            if not d.get("wrap"):                       # (this drag's first move)
+                d["wrap"] = True
                 self.wrap.start()
             pos = self.wrap.pos(e)
         if d is None:

@@ -1427,7 +1427,7 @@ class Timeline(QWidget):
         if d is None or d["mode"] not in WRAP_MODES:
             self._mouse_move(e, e.position())
             return
-        if not self.wrap.on:
+        if "wrap_s" not in d:                            # (this drag's first move)
             self.wrap.start("xy" if d["mode"] in ("pan", "zoom") else "x")
             d["wrap_s"] = self.scroll_s
         v = self.wrap.pos(e)

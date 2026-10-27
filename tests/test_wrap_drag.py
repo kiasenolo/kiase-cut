@@ -16,7 +16,9 @@ from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget  # noqa: E402
 from kiasecut.ui import wrapdrag  # noqa: E402
 from kiasecut.ui.curve_editor import CurveCanvas  # noqa: E402
 from kiasecut.ui.inspector import SpinBox  # noqa: E402
+from kiasecut.ui.preview import Preview  # noqa: E402
 from kiasecut.ui.timeline import RULER_H, Timeline  # noqa: E402
+from test_edit import proj as edit_proj  # noqa: E402
 from test_tracks import proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -174,6 +176,31 @@ class WrapTests(unittest.TestCase):
         self.assertAlmostEqual(got[-1][0][1][1][1], 100.0 + 2000 * per_px, delta=per_px * 2)
         p = cv.key_point(0, 1)
         self.assertTrue(cv.T - 1 <= p.y() <= cv.height() - cv.B + 1)
+
+    def test_preview_move_goes_on_and_view_follows(self):
+        pv = Preview()
+        pv.resize(960, 540)                                    # the 1920 x 1080 canvas at half size
+        pv.set_scene(edit_proj(), 500_000, "c1")
+        got = []
+        pv.movesCommitted.connect(lambda v: got.append(("moves", v)))
+        pv.paramsCommitted.connect(lambda cid, g, v: got.append((g, v)))
+        hand = Hand(pv, pv.mapToGlobal(QPointF(480, 270)))     # the clip's middle
+        hand.move(20, 0, 100)                                  # 2000 screen px right: 4000 canvas px
+        hand.release()
+        vals = got[-1][1]
+        x = vals["c1"]["x"] if got[-1][0] == "moves" else vals["x"]
+        self.assertAlmostEqual(x, 4000 / 960, delta=0.05)      # (x: half canvas widths from the middle)
+        self.assertLess(pv.pan.x(), -1500)                     # the view went along
+        self.assertFalse(pv.wrap.on)
+
+    def test_preview_pan_is_endless(self):
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.set_scene(edit_proj(), 500_000, "c1")
+        hand = Hand(pv, pv.mapToGlobal(QPointF(480, 270)), Qt.MiddleButton)
+        hand.move(0, 15, 100)                                  # 1500 px down in a 540 px preview
+        hand.release()
+        self.assertAlmostEqual(pv.pan.y(), 1500, places=6)
 
 
 if __name__ == "__main__":

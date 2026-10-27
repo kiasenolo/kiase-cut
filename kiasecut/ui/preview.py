@@ -51,6 +51,9 @@ a negative gap makes them overlap. Both give {clip id: {x / y}} for movesCommitt
 The view is moved about as in Blender's image editor: the wheel zooms around the mouse
 (Ctrl+wheel too), the middle button drags the view (Shift+middle too), Ctrl+middle-drag
 zooms smoothly (right / up: in), a touchpad's two-finger scroll moves it and its pinch zooms.
+Every drag on the canvas is endless (無邊界, wrapdrag.py): the pointer reaching an edge of the
+preview jumps to the other one and the drag goes on; what is moved or sized (a clip, a mask, a
+selection box) keeps the view following it.
 With the mouse over the preview (and no text being typed): Home fits the canvas in the view,
 numpad . frames the selection, numpad 1 shows it 1:1, numpad 2 / 4 / 8 at 1:2 / 1:4 / 1:8 and
 Ctrl+numpad 2 / 4 / 8 at 2:1 / 4:1 / 8:1, numpad + / - zoom in / out, and Shift+B then a drag
@@ -81,6 +84,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineE
 
 from .. import curves, edit, fonts, project, render, textlayout
 from . import wheel
+from .wrapdrag import WrapDrag
 
 US = 1_000_000
 SNAP_PX = 7
@@ -390,6 +394,7 @@ class Preview(QWidget):
         self.zoom = 1.0                         # view zoom (1 = canvas fits the widget)
         self.pan = QPointF(0, 0)                # view offset, screen px
         self.box_zoom = False                   # Shift+B: the next left drag is a box to zoom into
+        self.wrap = WrapDrag(self, lambda: QRectF(self.rect()))
         self.setMinimumSize(320, 180)
         self.setMouseTracking(True)
         self.accept_media = False               # media may be dropped on it (a static compound is open)
@@ -1392,27 +1397,45 @@ class Preview(QWidget):
             ky = hits[1][1]
         return kx, ky, [(h[2], h[3]) for h in hits if h]
 
+    FOLLOW = {"move", "scale", "marquee", "zoombox", "w", "h", "wh"}     # drags the view keeps in sight
+
+    def _follow(self, p):
+        """Pan so screen point p (where a drag is, on the view as it is now) is in the preview."""
+        r = QRectF(self.rect())
+        dx = min(0.0, p.x() - r.left()) + max(0.0, p.x() - r.right())
+        dy = min(0.0, p.y() - r.top()) + max(0.0, p.y() - r.bottom())
+        if dx or dy:
+            self.pan -= QPointF(dx, dy)
+            self._view_changed()
+
     def mouseMoveEvent(self, e):
         d = self.drag
         if d is None:
             self._hover(e)
             return
+        if "wrap_pan" not in d:                          # (this drag's first move)
+            self.wrap.start()
+            d["wrap_pan"] = QPointF(self.pan)
+        pos = self.wrap.pos(e)
         if d["kind"] == "pan":
-            self.pan = d["pan"] + e.position() - d["pos"]
+            self.pan = d["pan"] + pos - d["pos"]
             self._view_changed()
             return
         if d["kind"] == "zoomdrag":                      # right / up: in
-            v = e.position() - d["pos"]
+            v = pos - d["pos"]
             want = d["zoom"] * 2 ** ((v.x() - v.y()) / 200)
             self.zoom_to(want, d["pos"])
             return
-        x, y = self._to_canvas(e.position())
+        # the drag counts on the view as it was when it began (the view may follow it since)
+        x, y = self._to_canvas(pos + self.pan - d["wrap_pan"])
         m = QPointF(x, y)
         if not d["moved"]:
             m0 = d["m0"] if "m0" in d else QPointF(d["x0"], d["y0"])
             if math.hypot(m.x() - m0.x(), m.y() - m0.y()) < 3 * self._k():
                 return
         d["moved"] = True
+        if d["kind"] in self.FOLLOW:
+            self._follow(pos + self.pan - d["wrap_pan"])
         if d["kind"] == "zoombox":
             d["rect"] = QRectF(d["m0"], m).normalized()
             self.update()
@@ -1480,6 +1503,7 @@ class Preview(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
+        self.wrap.stop()
         if d and d["kind"] in ("pan", "zoomdrag"):
             self.setCursor(Qt.CrossCursor if self.box_zoom else Qt.ArrowCursor)
             return

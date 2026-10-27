@@ -165,6 +165,32 @@ class IntoGroupUiTests(unittest.TestCase):
         tl.dropEvent(QDropEvent(pos, Qt.CopyAction, md, Qt.LeftButton, Qt.NoModifier))
         self.assertEqual(got, [(["m9"], [], self.g["id"], ln["track"]["id"], int(1.5 * S))])
 
+    def test_timeline_lane_trim_past_the_group(self):
+        from PySide6.QtCore import QPoint, Qt
+        from PySide6.QtTest import QTest
+        from kiasecut.ui.timeline import Timeline
+        tl = Timeline()
+        tl.resize(900, 400)
+        tl.set_project(self.p)
+        tl.px_per_s, tl.scroll_s = 100.0, 0.0
+        tl.open_groups.add(self.g["id"])
+        tl._layout()
+        tl.show()
+        row = next(i for i, t in enumerate(tl.rows) if any(c is self.g for c in t["clips"]))
+        ln = next(ln for ln in tl.lanes(row) if any(c["id"] == "c4" for c in ln["track"]["clips"]))
+        y = round(ln["y"] + ln["h"] / 2)
+        at = QPoint(round(tl._x(4.0)) - 2, y)                                # c4's right edge (= the group's)
+        QTest.mouseMove(tl, at)
+        self.assertEqual(tl.cursor().shape(), Qt.SizeHorCursor)
+        got = []
+        tl.trimRequested.connect(lambda *a: got.append(a))
+        QTest.mousePress(tl, Qt.LeftButton, Qt.NoModifier, at)
+        QTest.mouseMove(tl, at + QPoint(100, 0))
+        QTest.mouseRelease(tl, Qt.LeftButton, Qt.NoModifier, at + QPoint(100, 0))
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0][:2], ("c4", "end"))
+        self.assertGreater(got[0][2], self.g["duration_us"])                  # past it: the group grows
+
     def test_preview_drop_on_group(self):
         from PySide6.QtCore import QMimeData, QPointF, Qt
         from PySide6.QtGui import QDropEvent

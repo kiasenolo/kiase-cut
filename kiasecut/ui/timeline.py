@@ -1647,6 +1647,8 @@ class Timeline(QWidget):
                 self.setCursor(Qt.SizeAllCursor if vh[0] == "volkey" else Qt.SizeVerCursor)
                 return
             _, c, zone = self._hit(pos) if self.proj else (None, None, None)
+            if self.proj and c is None:                     # (a clip of an open group)
+                zone = self._lane_hit(pos)[2]
             self.setCursor(Qt.SizeHorCursor if zone in ("start", "end") else Qt.ArrowCursor)
             return
         if d["mode"].startswith("lane_"):                       # a clip of an open group
@@ -1665,10 +1667,10 @@ class Timeline(QWidget):
                     if ln["group"] is g and ln["y"] <= pos.y() < ln["y"] + ln["h"] and \
                             ln["track"]["kind"] == ln0["track"]["kind"]:
                         d["lane_to"] = ln
-            elif d["mode"] == "lane_start":
-                d["start"] = min(max(0.0, self._snap(abs0 + s0 + dt, c) - abs0), e0 - US / self.fps)
+            elif d["mode"] == "lane_start":                     # (past the group's edges: it grows)
+                d["start"] = min(self._snap(abs0 + s0 + dt, c) - abs0, e0 - US / self.fps)
             else:
-                d["end"] = max(min(g["duration_us"], self._snap(abs0 + e0 + dt, c) - abs0), s0 + US / self.fps)
+                d["end"] = max(self._snap(abs0 + e0 + dt, c) - abs0, s0 + US / self.fps)
             self.clipDragging.emit(c["id"], int(round(abs0 + d["start"])), int(round(d["end"] - d["start"])))
             self.update()
             return

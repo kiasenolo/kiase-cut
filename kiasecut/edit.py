@@ -239,12 +239,21 @@ def move(proj, clip_id, start_us, track_id=None):
 def trim_start(proj, clip_id, new_start_us):
     """Move the clip's left edge, keeping its right edge and its content in place."""
     t, c = find(proj, clip_id)
+    g = group_of(proj, t)
+    if g is not None and new_start_us < 0 and free_range(t, c["start_us"], end(c), ignore=c)[0] == 0:
+        # past its group's start: the group grows to the left (as far as its own track lets it),
+        # its clips counting from its new start
+        if c["type"] in ("video", "audio", "compound") and not project.is_static(c):
+            new_start_us = max(new_start_us, c["start_us"] - c.get("source_start_us", 0) / project.speed(c))
+        if new_start_us < 0:
+            s0 = g["start_us"]
+            trim_start(proj, g["id"], s0 + new_start_us)
+            new_start_us += s0 - g["start_us"]
     e = end(c)
     rng = free_range(t, c["start_us"], e, ignore=c)
     lo = rng[0]
     if c["type"] in ("video", "audio", "compound") and not project.is_static(c):
         lo = max(lo, c["start_us"] - c.get("source_start_us", 0) / project.speed(c))    # not before the source
-    g = group_of(proj, t)
     if g is not None:
         lo = max(lo, 0)                                          # not out of its group
     hi = e - MIN_US
@@ -273,6 +282,8 @@ def trim_end(proj, clip_id, new_end_us):
         hi = min(hi, c["start_us"] + (src_len - c.get("source_start_us", 0)) / project.speed(c))
     g = group_of(proj, t)
     if g is not None:
+        if min(new_end_us, hi) > g["duration_us"]:               # past its group's end: the group grows
+            trim_end(proj, g["id"], g["start_us"] + min(new_end_us, hi))
         hi = min(hi, g["duration_us"])                           # not out of its group
     lo = c["start_us"] + MIN_US
     if project.is_group(c):                                      # a group never cuts its clips

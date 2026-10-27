@@ -18,6 +18,22 @@ def scene():
 
 
 class GroupTests(unittest.TestCase):
+    def test_trim_past_the_group_grows_it(self):
+        p = scene()
+        g = edit.make_group(p, p, ["c1", "c4"])                          # 0-4, alone on t1
+        edit.move(p, g["id"], 2 * S)                                     # 2-6
+        edit.trim_end(p, "c4", 6 * S)                                    # c4 1-4 -> 1-6 (group time)
+        self.assertEqual((g["start_us"], g["duration_us"]), (2 * S, 6 * S))
+        self.assertEqual(edit.find(p, "c4")[1]["duration_us"], 5 * S)
+        edit.trim_start(p, "c1", -S)                                     # one second before the group
+        self.assertEqual((g["start_us"], g["duration_us"]), (S, 7 * S))
+        self.assertEqual((edit.abs_start(p, "c1"), edit.abs_start(p, "c4")), (S, 3 * S))   # c4 stays put
+        self.assertEqual(edit.find(p, "c1")[1]["duration_us"], 3 * S)
+        p["tracks"][1]["clips"].insert(0, clip("c9", 0, S // 2))         # a neighbour stops the group
+        edit.trim_start(p, "c1", -S)
+        self.assertEqual(g["start_us"], S // 2)
+        self.assertEqual(edit.abs_start(p, "c1"), S // 2)
+
     def test_make_and_ungroup(self):
         p = scene()
         g = edit.make_group(p, p, ["c1", "c4"])
@@ -46,10 +62,11 @@ class GroupTests(unittest.TestCase):
         edit.move(p, "c4", 10 * S)                                          # past the group's end
         c4 = edit.find(p, "c4")[1]
         self.assertEqual(edit.end(c4), g["duration_us"])
-        edit.trim_end(p, "c4", 99 * S)
-        self.assertLessEqual(edit.end(c4), g["duration_us"])
+        edit.trim_end(p, "c4", 6 * S)                                       # (longer: the group grows with it)
+        self.assertEqual(edit.end(c4), g["duration_us"])
+        self.assertEqual(g["duration_us"], 6 * S)
         edit.trim_end(p, g["id"], S)                                        # a group never cuts its clips
-        self.assertEqual(g["duration_us"], 4 * S)
+        self.assertEqual(g["duration_us"], 6 * S)
         edit.trim_start(p, g["id"], -3 * S)                                 # longer to the left: clips stay
         self.assertEqual(edit.abs_start(p, "c1"), 0)
 

@@ -15,6 +15,10 @@ keeping its values when the parameters line up (edit.swap_filter): a filter whos
 swapped for its built-in version, say.
 The parameters come from the filter file's `// @param` lines (see filters/FORMAT.md), so
 the form of a user's filter is built the same way as a built-in one.
+
+Selecting other clips whose effects make the same form keeps the form: its widgets are keyed by
+the shown clip's effect ids again, and what its buttons hold (the ids of the clip it was built
+for) is put through _real on its way in.
 """
 import json
 
@@ -129,6 +133,8 @@ class EffectsPanel(QWidget):
         self.boxes = []                             # the effects' boxes, in order
         self.mask_edit = None                       # effect id whose mask the preview edits (編輯遮罩)
         self.shape = None
+        self.built = []                             # the effect ids the form was built with
+        self.alias = {}                             # those -> the shown clip's effect ids
         self.widgets = {}
         self.pending = {}
         self.timer = QTimer(self, singleShot=True, interval=DEBOUNCE_MS)
@@ -205,6 +211,9 @@ class EffectsPanel(QWidget):
         old.deleteLater()
         self.widgets = {}
         self.boxes = []
+        self.built = [e["id"] for e in (c.get("effects") or [])] if c else []
+        self.alias = {}
+        self.many_note = None
         lay = QVBoxLayout(self.body)
         lay.setContentsMargins(0, 0, 0, 0)
         self.add_btn.setEnabled(bool(self.ids))
@@ -220,8 +229,9 @@ class EffectsPanel(QWidget):
                                      f"會清掉這 {n} 個畫面片段原本的效果，只留新加的這一個。"))
             return
         if count > 1:
-            lay.addWidget(self._note(f"一起調整 {n} 個片段的效果" + ("（聲音片段除外）" if n < count else "")
-                                     + "；各片段不一樣的數值顯示為 --"))
+            self.many_note = self._note("")
+            self._many_text(count)
+            lay.addWidget(self.many_note)
         effects = c.get("effects") or []
         if effects and fx.missing():
             err = QLabel("⚠ " + fx.missing())
@@ -240,6 +250,11 @@ class EffectsPanel(QWidget):
             box = self._effect_box(c, e, i, len(effects))
             self.boxes.append(box)
             lay.addWidget(box)
+
+    def _many_text(self, count):
+        n = len(self.ids)
+        self.many_note.setText(f"一起調整 {n} 個片段的效果" + ("（聲音片段除外）" if n < count else "")
+                               + "；各片段不一樣的數值顯示為 --")
 
     def _backdrop_row(self):
         """套用至背景 and 隱藏本體 (a built-in asset's choice; any other clip hides itself)."""
@@ -417,14 +432,46 @@ class EffectsPanel(QWidget):
             row.addWidget(self._key_button(group, p.name))
         return row
 
+    def _retarget(self, c):
+        """The form kept for clip c (alike the one it was built for): its widgets keyed by c's
+        effect ids, the ids its buttons hold mapped to them."""
+        f = QApplication.focusWidget()
+        if f is not None and self.body.isAncestorOf(f):
+            f.clearFocus()                          # (a field typed in shows the new clips' value)
+        now = [e["id"] for e in (c.get("effects") or [])] if c else []
+        before = self.alias
+        self.alias = {b: n for b, n in zip(self.built, now) if b != n}
+        step = {before.get(b, b): self.alias.get(b, b) for b in self.built}    # shown before -> now
+
+        def moved(x):
+            head, sep, eid = x.rpartition(":")
+            return head + sep + step.get(eid, eid)
+        self.widgets = {tuple(moved(x) if isinstance(x, str) else x for x in key) if isinstance(key, tuple) else key: w
+                        for key, w in self.widgets.items()}
+        for key, b in self.widgets.items():
+            if isinstance(key, tuple) and key[0] == "mask_edit":
+                b.blockSignals(True)
+                b.setChecked(key[1] == self.mask_edit)
+                b.blockSignals(False)
+
+    def _real(self, x):
+        """An effect id, or a group of one ("fx:<id>", "fxmix:<id>", "fxmask:<id>"), as the
+        shown clip's: the form may have been built for another clip alike it."""
+        if not self.alias or x is None:
+            return x
+        head, sep, eid = x.rpartition(":")
+        return head + sep + self.alias.get(eid, eid)
+
     # -- showing values ---------------------------------------------------------------------------
     def _kind_chosen(self, eid, kind):
+        eid = self._real(eid)
         if kind is not None and len(self.clips) == 1:   # a new range: straight to dragging it on the preview
             self.mask_edit = eid
         self._now(self.maskKindChosen, eid, kind)
 
     def set_mask_edit(self, eid):
         """Edit the mask of effect eid on the preview (None: none)."""
+        eid = self._real(eid)
         if eid == self.mask_edit:
             return
         self.mask_edit = eid
@@ -446,6 +493,7 @@ class EffectsPanel(QWidget):
 
     def _drag_mime(self, eid):
         """A drag of effect eid of the clip shown (its settings as they are now)."""
+        eid = self._real(eid)
         self._flush()
         e = next((e for e in (self.clip or {}).get("effects") or [] if e["id"] == eid), None)
         return effect_mime(e, self.clip_id) if e is not None else None
@@ -531,24 +579,37 @@ class EffectsPanel(QWidget):
         pics = [k for k in clips if k["type"] in edit.VISUAL]
         chains = {tuple(e["filter"] for e in k.get("effects") or []) for k in pics}
         c = pics[0] if len(chains) == 1 else None               # alike (or one clip): a form
-        shape = (len(clips), tuple(k["id"] for k in pics))
-        if c is not None:
-            shape += (tuple((e["id"], fx.get(e["filter"]).key(), fx.get(e["filter"]).error) for e in c.get("effects") or []),
-                      tuple(tuple((e["filter"], bool(e.get("disabled")), kind_tag(e.get("mask")))
-                                  for e in k.get("effects") or []) for k in pics),
-                      tuple(json.dumps(k.get("backdrop"), sort_keys=True) for k in pics))
-        if shape != self.shape:
+        # what the form is built from - not which clips, nor how many when it is the same form
+        # (the switches show what the clips have, so which kinds of clip there are): it is kept
+        if c is None:                               # for alike ones
+            shape = (len(clips), len(pics))
+        else:
+            shape = (len(clips) > 1, len(pics) > 1, len(pics) < len(clips),
+                     tuple((fx.get(e["filter"]).key(), fx.get(e["filter"]).error) for e in c.get("effects") or []),
+                     frozenset((k["type"] == "filter", bool(k.get("asset")),
+                                tuple((e["filter"], bool(e.get("disabled")), kind_tag(e.get("mask")))
+                                      for e in k.get("effects") or [])) for k in pics),
+                     frozenset(json.dumps(k.get("backdrop"), sort_keys=True) for k in pics))
+        ids = [k["id"] for k in pics]
+        if shape != self.shape or ids != self.ids:
             self._flush()                           # (to the clips it was typed for)
-        self.ids = [k["id"] for k in pics]
+        moved = ids != self.ids or (c or {}).get("id") != self.clip_id
+        self.ids = ids
         self.clips = pics if c else []
         self.clip = c
-        if shape != self.shape:
-            self.shape = shape
+        if shape != self.shape or moved:
             self.clip_id = c["id"] if c else None
             if self.mask_edit and (len(pics) > 1 or not any(e["id"] == self.mask_edit and e.get("mask")
                                                             for e in (c.get("effects") or [] if c else []))):
                 self.mask_edit = None               # that effect or its mask is gone (or several clips)
+        if shape != self.shape:
+            self.shape = shape
             self._build(c, len(clips))
+            self.maskEditChanged.emit()
+        elif moved:
+            self._retarget(c)
+            if self.many_note is not None:
+                self._many_text(len(clips))
             self.maskEditChanged.emit()
         if c is None:
             return
@@ -641,12 +702,14 @@ class EffectsPanel(QWidget):
 
     # -- edits ------------------------------------------------------------------------------------
     def _queue(self, group, key, value):
+        group = self._real(group)
         self.pending[(group, key)] = value
         self.timer.start()
         if self.clip_id:
             self.liveEdited.emit(list(self.ids), group, key, value)
 
     def _queue_vec(self, group, key, index, value, n=2):
+        group = self._real(group)
         cur = self.pending.get((group, key))
         if cur is None:
             cur = [self.widgets[(group, key, i)].value() for i in range(n)]
@@ -655,6 +718,7 @@ class EffectsPanel(QWidget):
         self._queue(group, key, cur)
 
     def _pick_color(self, group, key):
+        group = self._real(group)
         btn = self.widgets[(group, key)]
         ids = list(self.ids) if self.clip_id else []
         col = pick_color(self, qcolor(btn.text() if btn.text() != "--" else "#ffffff"), "顏色",
@@ -666,6 +730,8 @@ class EffectsPanel(QWidget):
 
     def _now(self, signal, *args):
         """signal for the clips of the form (◆: for the main one; the others alike follow it)."""
+        if args and isinstance(args[0], str):
+            args = (self._real(args[0]),) + args[1:]    # (an effect id or a group)
         self._flush()
         if self.clip_id:
             signal.emit([self.clip_id] if signal is self.keyToggled else list(self.ids), *args)

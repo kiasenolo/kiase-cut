@@ -33,7 +33,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QValidator
 import os
 
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, build, components, curves, edit, project
@@ -1070,6 +1070,13 @@ class Inspector(QWidget):
         self.widgets[("key", group, key)] = b
         return b
 
+    def _let_go(self):
+        """The form is kept for other clips: a field being typed in lets go (as a new form's
+        would), so it shows their values rather than keeping the text typed for the last ones."""
+        f = QApplication.focusWidget()
+        if f is not None and self.body.isAncestorOf(f):
+            f.clearFocus()
+
     # -- refresh --------------------------------------------------------------------------------
     def show_clip(self, c, t_us, fps):
         self.show_clips([c] if c else [], t_us, fps)
@@ -1081,14 +1088,20 @@ class Inspector(QWidget):
         c = common(clips)
         self.fps = fps or self.fps
         streams = sound_streams(clips)
-        shape = None if c is None else (tuple(k["id"] for k in clips), c["type"], bool(c.get("text")), tuple(streams),
-                                         kind_tag(c.get("mask")), "volume" in c, (c.get("asset") or {}).get("family"),
-                                         (c.get("mask") or {}).get("compound_id"),
+        # what the form is built from (not which clips: the form is kept for alike ones)
+        shape = None if c is None else (len(clips) > 1, c["type"], bool(c.get("text")), c.get("transform") is not None,
+                                         bool(c.get("timed", c["type"] in edit.TIMED and not project.is_static(c))),
+                                         tuple(streams), kind_tag(c.get("mask")), "volume" in c,
+                                         (c.get("asset") or {}).get("family"), (c.get("mask") or {}).get("compound_id"),
                                          tuple((p["id"], p["kind"], p["name"]) for p in
                                                components.params(components.of_clip(c))))
+        ids = [k["id"] for k in clips]
+        if shape != self.shape or ids != self.clip_ids:
+            self._flush()                                # (to the clips it was typed for)
+            if shape == self.shape:
+                self._let_go()
+            self.clip_ids = ids
         if shape != self.shape:
-            self._flush()
-            self.clip_ids = [k["id"] for k in clips]
             self.shape = shape
             self.streams = streams
             self._build(c)

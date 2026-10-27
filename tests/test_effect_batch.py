@@ -170,3 +170,88 @@ class EffectBatchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+X_FACTOR = next(r[6] for r in __import__("kiasecut.ui.inspector", fromlist=["PARAMS"]).PARAMS["transform"]
+                if r[0] == "x")
+
+
+class FormReuseTests(unittest.TestCase):
+    """Selecting another clip whose form would be the same keeps the form (no rebuild): its
+    values, ids and effect ids become the new clip's."""
+
+    def setUp(self):
+        import copy
+        self.p = proj()
+        c4 = copy.deepcopy(edit.find(self.p, "c2")[1])
+        c4.update(id="c4", start_us=0)
+        self.p["tracks"][1]["clips"].append(c4)
+        for cid, r in (("c1", 10.0), ("c2", 20.0), ("c4", 30.0)):
+            edit.add_effect(self.p, cid, "builtin:blur")
+            edit.set_param(self.p, cid, "fx:" + effects(self.p, cid)[0]["id"], "radius", r)
+
+    def clip(self, cid):
+        return edit.find(self.p, cid)[1]
+
+    def test_effects_form_follows_the_clip(self):
+        panel = EffectsPanel()
+        got, keys = [], []
+        panel.paramEdited.connect(lambda *a: got.append(a))
+        panel.keyToggled.connect(lambda *a: keys.append(a))
+        panel.show_clips([self.clip("c1")], 0, 30)
+        body = panel.body
+        for cid, r in (("c2", 20.0), ("c4", 30.0), ("c1", 10.0)):           # (twice past the first: from a kept form)
+            panel.show_clips([self.clip(cid)], self.clip(cid)["start_us"], 30)
+            self.assertIs(panel.body, body)
+            g = "fx:" + effects(self.p, cid)[0]["id"]
+            spin = panel.widgets[(g, "radius")]
+            self.assertEqual(spin.value(), r)
+            spin.edited.emit(r + 1)                                          # typed in it
+            panel._flush()
+            self.assertEqual(got[-1], ([cid], g, "radius", r + 1))
+            panel.widgets[("key", g, "radius")].click()
+            self.assertEqual(keys[-1], ([cid], g, "radius"))
+        panel.show_clips([self.clip("c1"), self.clip("c2")], 0, 30)          # several: another form
+        self.assertIsNot(panel.body, body)
+        body = panel.body
+        panel.show_clips([self.clip(k) for k in ("c1", "c2", "c4")], 0, 30)  # one more: the same form
+        self.assertIs(panel.body, body)
+        self.assertIn("一起調整 3 個片段", panel.many_note.text())
+        spin = panel.widgets[("fx:" + effects(self.p, "c1")[0]["id"], "radius")]
+        self.assertTrue(spin.mixed)
+
+    def test_a_value_typed_goes_to_the_clip_it_was_typed_for(self):
+        panel = EffectsPanel()
+        got = []
+        panel.paramEdited.connect(lambda *a: got.append(a))
+        panel.show_clips([self.clip("c1")], 0, 30)
+        g1 = "fx:" + effects(self.p, "c1")[0]["id"]
+        panel.widgets[(g1, "radius")].edited.emit(15.0)
+        panel.show_clips([self.clip("c2")], 0, 30)                           # before it was sent
+        self.assertEqual(got, [(["c1"], g1, "radius", 15.0)])
+
+    def test_inspector_form_follows_the_clip(self):
+        from kiasecut.ui.inspector import Inspector
+        ins = Inspector()
+        got = []
+        ins.paramEdited.connect(lambda *a: got.append(a))
+        edit.set_transform(self.p, "c2", "x", 0.25)
+        ins.show_clips([self.clip("c1")], 0, 30)
+        body = ins.body
+        x = ins.widgets[("transform", "x")]
+        x.edited.emit(5.0)                                                   # typed for c1, not sent yet
+        ins.show_clips([self.clip("c2")], 0, 30)
+        self.assertIs(ins.body, body)
+        self.assertEqual(got[-1][:3], (["c1"], "transform", "x"))
+        self.assertAlmostEqual(x.value(), 0.25 * X_FACTOR, places=3)        # c2's value
+        keys = []
+        ins.keyToggled.connect(lambda *a: keys.append(a))
+        ins.show_clips([self.clip("c2")], self.clip("c2")["start_us"], 30)
+        x.edited.emit(1.0)
+        ins._flush()
+        self.assertEqual(got[-1], (["c2"], "transform", "x", 1.0 / X_FACTOR))
+        ins.widgets[("key", "transform", "x")].click()
+        self.assertEqual(keys, [(["c2"], "transform", "x")])
+        ins.show_clips([self.clip("c1"), self.clip("c2")], 0, 30)            # several: 平均間距 too
+        self.assertIsNot(ins.body, body)
+        self.assertIn("gap", ins.widgets)

@@ -95,6 +95,7 @@ class IntoGroupUiTests(unittest.TestCase):
         panel.opened.add(self.g["id"])
         panel.set_layers(self.p, set(), None)
         panel.show()
+        self.addCleanup(panel.close)                     # (a window left open keeps the focus from later tests)
         return panel
 
     def rows(self, panel):
@@ -176,6 +177,7 @@ class IntoGroupUiTests(unittest.TestCase):
         tl.open_groups.add(self.g["id"])
         tl._layout()
         tl.show()
+        self.addCleanup(tl.close)
         row = next(i for i, t in enumerate(tl.rows) if any(c is self.g for c in t["clips"]))
         ln = next(ln for ln in tl.lanes(row) if any(c["id"] == "c4" for c in ln["track"]["clips"]))
         y = round(ln["y"] + ln["h"] / 2)

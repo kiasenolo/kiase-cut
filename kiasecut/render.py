@@ -31,8 +31,8 @@ import math
 
 import numpy as np
 from PIL.ImageQt import ImageQt
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QTransform
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
 from . import assets, components, curves, fonts, fx, masks, project, svgimage, textlayout
 
@@ -48,6 +48,64 @@ BLEND_OPS = {"normal": QPainter.CompositionMode_SourceOver, "multiply": QPainter
              "hard_light": QPainter.CompositionMode_HardLight, "soft_light": QPainter.CompositionMode_SoftLight,
              "difference": QPainter.CompositionMode_Difference, "exclusion": QPainter.CompositionMode_Exclusion,
              "add": QPainter.CompositionMode_Plus}
+
+
+class Mips:
+    """A picture file's mip levels: its size halved n times (level n), while both sides are
+    over 64 px. Each is decoded when it is first needed: a JPEG straight at that level's size
+    (about twice as quick as the whole, which a small preview never needs), others halved from
+    the whole picture. A file that cannot be read is one magenta pixel."""
+
+    def __init__(self, path):
+        self.path = path
+        self.levels = {}            # n -> QImage (premultiplied)
+        r = QImageReader(path)
+        s = r.size()
+        self.turned = r.autoTransform() and bool(r.transformation() & QImageIOHandler.TransformationRotate90)
+        self.partial = r.supportsOption(QImageIOHandler.ScaledSize)
+        w, h = (s.height(), s.width()) if self.turned else (s.width(), s.height())
+        self.sizes = [(w, h)] if s.isValid() else [(1, 1)]
+        while self.sizes[-1][0] > 64 and self.sizes[-1][1] > 64:
+            self.sizes.append((max(1, self.sizes[-1][0] // 2), max(1, self.sizes[-1][1] // 2)))
+        if not s.isValid():
+            self.levels[0] = self._missing()
+
+    @staticmethod
+    def _missing():
+        im = QImage(1, 1, QImage.Format_ARGB32_Premultiplied)
+        im.fill(QColor(255, 0, 255))
+        return im
+
+    def at(self, w, h):
+        """The smallest level at least w x h (the whole picture when none is)."""
+        n = next((i for i in range(len(self.sizes) - 1, -1, -1)
+                  if self.sizes[i][0] >= w and self.sizes[i][1] >= h), 0)
+        im = self.levels.get(n)
+        if im is None:
+            im = self.levels[n] = self._make(n)
+        return im
+
+    def _make(self, n):
+        bigger = [m for m in self.levels if m < n]
+        if not bigger and n and self.partial:
+            r = QImageReader(self.path)
+            w, h = self.sizes[n]
+            r.setScaledSize(QSize(h, w) if self.turned else QSize(w, h))
+            im = r.read()
+            if not im.isNull():
+                return im.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+        if not bigger:
+            src = QImage(self.path)
+            if src.isNull():
+                self.levels[0] = self._missing()
+                return self.levels[0]
+            self.levels[0] = src.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+            bigger = [0]
+        m = max(bigger)
+        im = self.levels[m]
+        for w, h in self.sizes[m + 1:n + 1]:
+            im = im.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+        return im
 
 
 class Renderer:
@@ -106,22 +164,11 @@ class Renderer:
             return im
         levels = self.images.get(path)
         if levels is None:
-            src = QImage(path)
-            if src.isNull():
-                src = QImage(1, 1, QImage.Format_ARGB32_Premultiplied)
-                src.fill(QColor(255, 0, 255))
-            levels = [src.convertToFormat(QImage.Format_ARGB32_Premultiplied)]
-            while levels[-1].width() > 64 and levels[-1].height() > 64:
-                im = levels[-1]
-                levels.append(im.scaled(max(1, im.width() // 2), max(1, im.height() // 2),
-                                        Qt.IgnoreAspectRatio, Qt.SmoothTransformation))
+            levels = Mips(path)
             if len(self.images) >= 48:
                 self.images.pop(next(iter(self.images)))
             self.images[path] = levels
-        for im in reversed(levels):
-            if im.width() >= w and im.height() >= h:
-                return im
-        return levels[0]
+        return levels.at(w, h)
 
     def text(self, spec, scale, canvas_h):
         """textlayout image at `scale` px per layout px; its centre is the text box centre."""

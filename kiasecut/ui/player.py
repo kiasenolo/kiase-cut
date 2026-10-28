@@ -17,7 +17,8 @@ project's frame rate), so a fine timeline costs nothing more while playing.
 
 播放速度 (set_rate): playing goes at rate times the real speed (0.5: half as fast, 2: twice) -
 the clock runs that much faster or slower, pictures that cannot keep up are skipped as ever,
-and the sound is resampled to fit (its pitch follows, like a tape: speed_pcm).
+and the sound is made to fit: at its own pitch with 保持音高 (set_keep_pitch, stretch.py), else
+resampled, its pitch following like a tape (speed_pcm).
 """
 import os
 import threading
@@ -29,7 +30,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 
-from .. import glrender, gpu, render, videoreader
+from .. import glrender, gpu, render, stretch, videoreader
 from ..audiomix import CHANNELS, RATE, Mixer
 
 PREVIEW_W = 960            # until the preview reports its size
@@ -82,6 +83,8 @@ class Worker(QObject):
         self.rate = 1.0             # 播放速度
         self.new_rate = False       # it changed while playing: the clock and the sound start over
         self.rate_carry = 0.0       # (speed_pcm's leftover fraction of a sample)
+        self.keep_pitch = True      # 保持音高: the sound keeps its pitch at other speeds
+        self.stretcher = None       # (the stretch.Stretch doing it, from where the sound began)
 
     # called from the UI thread -----------------------------------------------------------
     def set_view(self, view, cache_dir):
@@ -125,6 +128,13 @@ class Worker(QObject):
         """Play at rate times the real speed (RATES), from now on."""
         with self.cv:
             self.rate = max(0.05, float(rate))
+            self.new_rate = True
+            self.cv.notify()
+
+    def set_keep_pitch(self, on):
+        """保持音高 at other speeds (else the pitch follows the speed, like a tape)."""
+        with self.cv:
+            self.keep_pitch = bool(on)
             self.new_rate = True
             self.cv.notify()
 
@@ -194,7 +204,7 @@ class Worker(QObject):
                         sink, out = self._start_sink(sink)
                         self.t0 = time.monotonic()
                         self.shown_n = self.audio_n = 0
-                        self.audio_f, self.peaks, self.rate_carry = None, {}, 0.0
+                        self.audio_f, self.peaks, self.rate_carry, self.stretcher = None, {}, 0.0, None
                     else:
                         sink = out = self._stop_sink(sink)
                     was_playing = playing
@@ -204,7 +214,7 @@ class Worker(QObject):
                     sink, out = self._start_sink(sink)
                     self.t0 = time.monotonic()
                     self.shown_n = self.audio_n = 0
-                    self.audio_f, self.peaks, self.rate_carry = None, {}, 0.0
+                    self.audio_f, self.peaks, self.rate_carry, self.stretcher = None, {}, 0.0, None
                 if want is not None:
                     self.pos = min(want, self.length - 1)
                 if self.view is None:
@@ -294,7 +304,12 @@ class Worker(QObject):
             if len(a):
                 peak = np.abs(a.astype(np.int32)).max(axis=0) / 32768.0
                 self.peaks[self.audio_n] = (float(peak[0]), float(peak[-1]))
-            pcm, self.rate_carry = speed_pcm(pcm, self.rate, self.rate_carry)
+            if self.keep_pitch and self.rate != 1.0:
+                if self.stretcher is None:
+                    self.stretcher = stretch.Stretch(self.rate, CHANNELS)
+                pcm, self.rate_carry = self.stretcher.feed(pcm, self.rate_carry)
+            else:
+                pcm, self.rate_carry = speed_pcm(pcm, self.rate, self.rate_carry)
             if out is not None:
                 view = memoryview(pcm)
                 while view:

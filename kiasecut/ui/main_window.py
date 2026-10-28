@@ -543,7 +543,7 @@ class MainWindow(QMainWindow):
         self.rate_box = QComboBox()                     # 播放速度
         for r in RATES:
             self.rate_box.addItem(f"{r:g}×", r)
-        self.rate_box.setToolTip("播放速度：預覽播放得比原本慢或快（聲音的音高跟著變，像錄音帶）。\n"
+        self.rate_box.setToolTip("播放速度：預覽播放得比原本慢或快（音高：旁邊的「保持音高」）。\n"
                                  "只影響預覽，不影響匯出。")
         self.rate_box.setFocusPolicy(Qt.NoFocus)        # (空白鍵 stays play / pause)
         try:
@@ -553,6 +553,13 @@ class MainWindow(QMainWindow):
         self.rate_box.setCurrentIndex(max(0, self.rate_box.findData(rate if rate in RATES else 1.0)))
         self.rate_box.currentIndexChanged.connect(lambda _i: self.set_play_rate(self.rate_box.currentData()))
         bar.addWidget(self.rate_box)
+        self.pitch_btn = QPushButton("保持音高")
+        self.pitch_btn.setCheckable(True)
+        self.pitch_btn.setFocusPolicy(Qt.NoFocus)
+        self.pitch_btn.setToolTip("不是 1× 時，聲音保持原本的音高（開）\n或音高跟著速度變，像錄音帶（關）")
+        self.pitch_btn.setChecked(str(self.settings().value("keep_pitch", "true")).lower() not in ("false", "0"))
+        self.pitch_btn.toggled.connect(self.set_keep_pitch)
+        bar.addWidget(self.pitch_btn)
         bar.addWidget(full_btn)
         head = QHBoxLayout()
         head.setContentsMargins(8, 3, 8, 3)
@@ -794,6 +801,7 @@ class MainWindow(QMainWindow):
 
         self.player = Player(self)
         self.player.worker.set_rate(self.rate_box.currentData())     # (the 播放速度 used last time)
+        self.player.worker.set_keep_pitch(self.pitch_btn.isChecked())
         w = self.player.worker
         w.frameReady.connect(self.on_frame)
         w.loaded.connect(self.on_loaded)
@@ -3794,6 +3802,11 @@ class MainWindow(QMainWindow):
         self.settings().setValue("play_rate", rate)
         if self.rate_box.currentData() != rate:
             self.rate_box.setCurrentIndex(max(0, self.rate_box.findData(rate)))
+
+    def set_keep_pitch(self, on):
+        """保持音高 at other 播放速度 (remembered for the next time)."""
+        self.player.worker.set_keep_pitch(on)
+        self.settings().setValue("keep_pitch", bool(on))
 
     def toggle_play(self):
         """Space: play, or stop - where playback is, or (播放模式 回到開始處) back where it began."""

@@ -14,7 +14,8 @@ justified, then top / middle / bottom (in a 文字框 of a fixed height); 文字
 自動寬度 / 自動高度 / 固定大小 (edit.set_text_box) and 框大小 types its width and height (0:
 automatic). A component's clip (元件, components.py) adds 元件參數: the
 component's parameters - words, colours, pictures, switches - as this clip's own values, each
-with ◆ and ↺ (back to what the component itself has).
+with ◆ and ↺ (back to what the component itself has). A compound clip with 套用至背景 clips or
+filter clips inside (project.backdrop_inside) gets 背景效果套用到片段下面 (效果穿透).
 
 One class serves two tabs: part="main" (type, text, picture, sound) and part="mask" (the
 mask: on / off, shape, invert and its values), each with its own keyframe controls. A
@@ -310,6 +311,7 @@ class Inspector(QWidget):
     speedChosen = Signal(list, float)               # clip ids, speed
     groupMatteChosen = Signal(list, dict)           # group ids, {on / show / invert / body: bool} that changed
     groupAnchorChosen = Signal(list, bool)          # group ids, 中心點跟隨最下層物件 on
+    throughChosen = Signal(list, bool)              # compound clip ids, 效果穿透 on
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
     paramReset = Signal(list, list)                 # clip ids, component parameter ids: back to the component's
@@ -334,6 +336,7 @@ class Inspector(QWidget):
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
+        self.through_row = False          # the form has 效果穿透 (shape says when)
         self.clip_ids = []
         self.place_edit = None            # image parameter whose picture the preview places (編輯位置)
         self.fps = 60.0                   # the editor's frames per second (凍結幀 counts in them)
@@ -474,6 +477,8 @@ class Inspector(QWidget):
                 form.addRow("混合模式", self._with_key(blend, "clip", "blend"))
         if c["type"] == "group":
             self._build_group(form, c)
+        if self.through_row:
+            self._build_through(form)
         if c.get("timed", c["type"] in edit.TIMED and not project.is_static(c)):
             self._build_time(form)
         if "volume" in c:
@@ -555,6 +560,16 @@ class Inspector(QWidget):
             self.widgets[key] = box
             form.addRow("", box)
         self._group_form = form
+
+    def _build_through(self, form):
+        """效果穿透 (compound clips with clips inside that work on what is under them)."""
+        form.addRow(section("複合片段"))
+        on = QCheckBox("背景效果套用到片段下面")
+        on.setToolTip("片段裡「套用至背景」的物件和濾鏡片段，也作用在這個複合片段下面的畫面"
+                      "（在片段的範圍內）；關掉時只作用在片段裡面的東西")
+        on.clicked.connect(lambda v: self._emit_now(self.throughChosen, bool(v)))
+        self.widgets["fx_through"] = on
+        form.addRow("", on)
 
     def _build_time(self, form):
         """速度 and 凍結幀 (videos, sounds, compound clips)."""
@@ -1158,6 +1173,10 @@ class Inspector(QWidget):
                                          bool((c.get("mask") or {}).get("video")),
                                          tuple((p["id"], p["kind"], p["name"]) for p in
                                                components.params(components.of_clip(c))))
+        # 效果穿透: compound clips with something inside that works on what is under it
+        through = bool(clips) and all(k["type"] == "compound" for k in clips) and any(
+            k.get("fx_through") or project.backdrop_inside(k.get("compound")) for k in clips)
+        shape = shape and shape + (through,)
         ids = [k["id"] for k in clips]
         if shape != self.shape or ids != self.clip_ids:
             self._flush()                                # (to the clips it was typed for)
@@ -1167,6 +1186,7 @@ class Inspector(QWidget):
         if shape != self.shape:
             self.shape = shape
             self.streams = streams
+            self.through_row = through
             self._build(c)
         if self.place_edit and not (c is not None and components.of_clip(c) is not None and
                                     (components.param(components.of_clip(c), self.place_edit) or {}).get("kind") == "image"):
@@ -1262,6 +1282,12 @@ class Inspector(QWidget):
             w["group_anchor"].setTristate(len(vals) > 1)
             w["group_anchor"].setCheckState(Qt.PartiallyChecked if len(vals) > 1 else Qt.Checked if vals.pop() else Qt.Unchecked)
             w["group_anchor"].blockSignals(False)
+        if "fx_through" in w:
+            vals = {bool(k.get("fx_through")) for k in clips}
+            w["fx_through"].blockSignals(True)
+            w["fx_through"].setTristate(len(vals) > 1)
+            w["fx_through"].setCheckState(Qt.PartiallyChecked if len(vals) > 1 else Qt.Checked if vals.pop() else Qt.Unchecked)
+            w["fx_through"].blockSignals(False)
         if "group_matte" in w:
             for key, field, default in (("group_matte", "on", False), ("group_show", "show", False),
                                         ("group_body", "body", True), ("group_invert", "invert", False)):

@@ -17,7 +17,11 @@ follows the same rules as build.py:
   * compound clips render their tracks into a layer first, at time - start + source start;
     a static compound (靜態片段) always at time 0 (its first frame), drawn once and reused
     like a picture; a component's instance (元件, components.py) draws the component with
-    its own parameter values put in, at clip time;
+    its own parameter values put in, at clip time; with 效果穿透 (project.passes_through)
+    the layer has what is under the clip beside it (self.outer, mapped into the layer), and
+    the 套用至背景 and filter clips drawn straight on it run their effects on that with the
+    layer over it (seen) - what they give is kept in the layer where they cover, so it shows
+    over what was under the clip wherever the compound is drawn (a static one live then);
   * a compound mask (kind "compound") cuts with a compound's picture (view["compounds"]):
     its alpha or luma, at clip time + its t_off (a static one: its still); an image mask
     (kind "image") the same way with a picture file, a video mask (kind "video") with a video's
@@ -123,6 +127,7 @@ class Renderer:
         self.compounds = {}         # the view's compounds (what compound masks cut with)
         self.matte_preview = None   # {clip, opacity}: show that clip's mask compound over it
         self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
+        self.outer = None           # (painter / layer, what is under it) of a 效果穿透 compound's layer
 
     # -- assets -----------------------------------------------------------------------------------
     def asset(self, p, w, h):
@@ -410,6 +415,17 @@ class Renderer:
         p.drawImage(0, 0, array_to_image(np.ascontiguousarray((b0 + (b1 - b0) * a).round().astype(np.uint8))))
         p.restore()
 
+    def seen(self, p, img):
+        """img (a copy of what p's device has) as 套用至背景 and filter clips see it: over what is
+        under the compound clip when p draws that 效果穿透 compound's layer (self.outer)."""
+        if not (self.outer and self.outer[0] is p):
+            return img
+        out = self.outer[1].copy()
+        q = QPainter(out)
+        q.drawImage(0, 0, img)
+        q.end()
+        return out
+
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first."""
         for tr in tracks:
@@ -491,7 +507,10 @@ class Renderer:
                     and not project.visual_effects(c) and isinstance(p.device(), QImage):
                 self.draw_through(p, c, comp, t, fps, opacity, (bw, bh), fit, k, W, H)
                 return
-            if comp.get("static"):
+            # 效果穿透: what is under it now, for its clips that work on what is under them
+            under = self.seen(p, p.device().copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)) \
+                if kind == "compound" and isinstance(p.device(), QImage) and project.passes_through(c) else None
+            if comp.get("static") and under is None:
                 pic = self.still(comp, k, fps)
                 draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
                 disp = (bw, bh)
@@ -517,7 +536,21 @@ class Renderer:
                 lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
                 lp.scale(k, k)
                 lp.translate(-ux, -uy)
-                self.draw_content(lp, comp, cw, ch, fps, t if kind == "group" else project.source_time(c, t), k)
+                outer = self.outer
+                if under is not None:                  # (q's device is the size of p's, through the same world)
+                    seen = QImage(layer.size(), QImage.Format_ARGB32_Premultiplied)
+                    seen.fill(Qt.transparent)
+                    up = QPainter(seen)
+                    up.setRenderHints(QPainter.SmoothPixmapTransform)
+                    up.setTransform(inv * QTransform.fromTranslate(-vis.left(), -vis.top()) * QTransform.fromScale(k / fit, k / fit))
+                    up.drawImage(0, 0, under)
+                    up.end()
+                    self.outer = (lp, seen)
+                try:
+                    self.draw_content(lp, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static")
+                                      else project.source_time(c, t), k)
+                finally:
+                    self.outer = outer
                 lp.end()
                 q.drawImage(QRectF(vis.left(), vis.top(), layer.width() / k * fit, layer.height() / k * fit), layer)
             draw = draw or draw_live
@@ -578,8 +611,8 @@ class Renderer:
         body(cp)
         cp.end()
         base = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)
-        out = self.run_effects(c["effects"], base, t, c["duration_us"], fps, clip_world(c, t, W, H) * p.worldTransform(),
-                               disp, unit)
+        out = self.run_effects(c["effects"], self.seen(p, base), t, c["duration_us"], fps,
+                               clip_world(c, t, W, H) * p.worldTransform(), disp, unit)
         a = image_to_array(cov)[..., 3:4].astype(np.float32) / 255
         b0, b1 = image_to_array(base).astype(np.float32), image_to_array(out).astype(np.float32)
         res = np.ascontiguousarray((b0 + (b1 - b0) * a).round().astype(np.uint8))
@@ -704,7 +737,7 @@ class Renderer:
         if base is None:
             return
         base = base.convertToFormat(QImage.Format_ARGB32_Premultiplied)
-        out = self.run_effects(c["effects"], base, t, c["duration_us"], fps, wt, (W, H), px_per_unit)
+        out = self.run_effects(c["effects"], self.seen(p, base), t, c["duration_us"], fps, wt, (W, H), px_per_unit)
         cov = np.full((h, w), strength, np.float32)
         mk = self.clip_mask(c, t)
         if mk:

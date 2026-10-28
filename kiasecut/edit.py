@@ -1831,6 +1831,18 @@ def set_backdrop(proj, clip_id, on=None, hide=None):
     return c
 
 
+def set_fx_through(proj, clip_id, on):
+    """效果穿透 of a compound clip (project.passes_through)."""
+    _, c = find(proj, clip_id)
+    if c["type"] != "compound":
+        raise EditError("只有複合片段可以讓效果穿透")
+    if on:
+        c["fx_through"] = True
+    else:
+        c.pop("fx_through", None)
+    return c
+
+
 def set_mask_invert(proj, clip_id, invert, t=None):
     _, c = find(proj, clip_id)
     if not c.get("mask"):

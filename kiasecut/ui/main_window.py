@@ -453,6 +453,8 @@ class MainWindow(QMainWindow):
             "群組遮罩", lambda lvl, cid: edit.set_group_matte(lvl, cid, **fields), ids))
         ins.groupAnchorChosen.connect(lambda ids, on: self.apply_each(
             "中心點跟隨最下層物件", lambda lvl, cid: edit.set_group_anchor(lvl, cid, on), ids))
+        ins.throughChosen.connect(lambda ids, on: self.apply_each(
+            "效果穿透", lambda lvl, cid: edit.set_fx_through(lvl, cid, on), ids))
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
         ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)

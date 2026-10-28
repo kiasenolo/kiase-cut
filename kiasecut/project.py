@@ -63,6 +63,9 @@ clip     {id, type: image | video | audio | text | compound, name,
                      source. Off keeps the numbers.
           compound_id                                       compound clips: which entry of
                      project.compounds they show; clip.source_start_us selects the window
+          fx_through                                        compound clips, optional: 效果穿透 -
+                     the 套用至背景 clips and filter clips inside also work on what is under
+                     the clip, inside its frame (passes_through())
           params: {param id: value}                         clips of a component (元件), optional:
                      their own values of its parameters (absent: the component's), animated
                      like any parameter}
@@ -368,6 +371,28 @@ def backdrop_of(c):
     if not b.get("on") or not visual_effects(c):
         return False, False
     return True, bool(b.get("hide")) or not c.get("asset")
+
+
+def backdrop_inside(comp):
+    """Whether compound content comp has clips that work on what is under them: 套用至背景
+    ones and filter clips, on its shown picture tracks, in its 穿透 groups (their clips draw
+    straight on it) and in compound clips that pass theirs through (passes_through)."""
+    for tr in (comp or {}).get("tracks") or ():
+        if tr["kind"] == "audio" or not visible(tr):
+            continue
+        for c in tr["clips"]:
+            if (visual_effects(c) if c["type"] == "filter" else backdrop_of(c)[0]) or passes_through(c):
+                return True
+            blend = c.get("blend")
+            if is_group(c) and (blend == "pass_through" or curves.is_animated(blend)) and backdrop_inside(c):
+                return True
+    return False
+
+
+def passes_through(c):
+    """效果穿透: whether compound clip c lets the clips inside that work on what is under them
+    (backdrop_inside) see what is under c as well - switched on, and it has some."""
+    return c.get("type") == "compound" and bool(c.get("fx_through")) and backdrop_inside(c.get("compound"))
 
 
 def visual_effects(c):

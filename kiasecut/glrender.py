@@ -472,6 +472,17 @@ class GLRenderer(render.Renderer):
                 if lay is not None:
                     gl.release(lay)
 
+    def gl_seen(self, tgt, snap):
+        """snap (a copy of tgt) as 套用至背景 and filter clips see it (as render.seen): over what
+        is under the compound clip when tgt is that 效果穿透 compound's layer - a new layer then
+        (the caller gives it back), else snap itself."""
+        if not (self.outer and self.outer[0] is tgt):
+            return snap
+        lay = self.gl.layer(tgt.w, tgt.h)
+        self.gl.ctx.copy_framebuffer(lay.tex, self.outer[1].fbo)
+        self.gl.draw_layer(lay, snap)
+        return lay
+
     def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu):
         for tr in tracks:
             if tr["kind"] == "audio" or not project.visible(tr):
@@ -562,7 +573,8 @@ class GLRenderer(render.Renderer):
                 to_clip = QTransform(fit, 0, 0, fit, -bw / 2, -bh / 2)
                 self.gl_through(tgt, c, comp, to_clip * world, t, fps, k, opacity, (bw, bh), world, inv)
                 return
-            if comp.get("static"):
+            through = kind == "compound" and project.passes_through(c)    # (效果穿透, as render.py)
+            if comp.get("static") and not through:
                 tex = self.gl_still(comp, k, fps).tex
                 rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             else:
@@ -580,7 +592,25 @@ class GLRenderer(render.Renderer):
                 inner = QTransform()
                 inner.scale(k, k)
                 inner.translate(-(vis.left() + bw / 2) / fit, -(vis.top() + bh / 2) / fit)
-                self.gl_content(held, inner, comp, cw, ch, fps, t if kind == "group" else project.source_time(c, t), k)
+                outer, under = self.outer, None
+                if through:                              # what is under it now, mapped into the layer
+                    snap = gl.layer(tgt.w, tgt.h)
+                    gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
+                    seen = self.gl_seen(tgt, snap)
+                    under = gl.layer(held.w, held.h)
+                    gl.draw(under, seen.tex, False, QRectF(0, 0, tgt.w, tgt.h),
+                            inv * QTransform.fromTranslate(-vis.left(), -vis.top()) * QTransform.fromScale(k / fit, k / fit))
+                    if seen is not snap:
+                        gl.release(seen)
+                    gl.release(snap)
+                    self.outer = (held, under)
+                try:
+                    self.gl_content(held, inner, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static")
+                                    else project.source_time(c, t), k)
+                finally:
+                    self.outer = outer
+                    if under is not None:
+                        gl.release(under)
                 tex = held.tex
                 rect = QRectF(vis.left(), vis.top(), held.w / k * fit, held.h / k * fit)
         else:
@@ -598,10 +628,13 @@ class GLRenderer(render.Renderer):
                 try:
                     gl.draw(cover, *(shape or (tex, straight)), rect, world, 1.0 if shape else opacity, mask, t, disp)
                     gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
-                    out = self.gl_effects(effects, snap, t, c["duration_us"], fps, world, disp, ppu)
+                    seen = self.gl_seen(tgt, snap)
+                    out = self.gl_effects(effects, seen, t, c["duration_us"], fps, world, disp, ppu)
                     gl.mix_cover(tgt, snap.tex, out.tex, cover.tex)
-                    if out is not snap:
+                    if out is not seen:
                         gl.release(out)
+                    if seen is not snap:
+                        gl.release(seen)
                 finally:
                     gl.release(cover)
                     gl.release(snap)
@@ -748,12 +781,15 @@ class GLRenderer(render.Renderer):
         matte = None
         try:
             gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
-            out = self.gl_effects(effects, snap, t, c["duration_us"], fps, wt, (W, H), ppu)
+            seen = self.gl_seen(tgt, snap)
+            out = self.gl_effects(effects, seen, t, c["duration_us"], fps, wt, (W, H), ppu)
             matte = self.gl_matte(mask, t, (W, H), wt, fps)
             gl.matte = matte and matte[0].tex
             gl.mix(tgt, snap.tex, out.tex, strength, mask, t, (W, H), inv)
-            if out is not snap:
+            if out is not seen:
                 gl.release(out)
+            if seen is not snap:
+                gl.release(seen)
         finally:
             gl.matte = None
             if matte and matte[1]:

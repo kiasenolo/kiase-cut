@@ -573,6 +573,9 @@ class MainWindow(QMainWindow):
         tl.dupMoveRequested.connect(lambda ids, dt, dr: self._select_new(self.apply_root(
             "複製並移動", lambda root: edit.duplicate_moved(root, self.container(root), ids, dt, dr))))
         tl.marksChanged.connect(self.marks_changed)
+        tl.markerAdd.connect(self.add_marker)
+        tl.markerMoved.connect(lambda mid, t: self.apply("移動標記", edit.move_marker, mid, t))
+        tl.markerAction.connect(self.on_marker_action)
         tl.clipDragging.connect(lambda cid, start, dur: self.inspector.show_live_time(cid, start, dur, self.fps))
         tl.volumeEdited.connect(self.on_volume_line)
         tl.keyMoveRequested.connect(lambda cid, a, b: self.apply("移動關鍵幀", edit.move_keys_at, cid, a, b))
@@ -922,6 +925,7 @@ class MainWindow(QMainWindow):
         add(m, "標記出點", "O", lambda: self.set_mark("out"))
         add(m, "清除標記", "Alt+X", lambda: self.set_mark(None))
         add(m, "取消選區", "Ctrl+Shift+D", lambda: self.set_mark(None))
+        add(m, "新增時間線標記", "M", lambda: self.add_marker())
         add(m, "自動吸附", "N", lambda: self.snap_btn.toggle())
         m.addSeparator()
         add(m, "上一個剪輯點", "Up", lambda: self.jump_edit(-1))
@@ -1197,6 +1201,7 @@ class MainWindow(QMainWindow):
                 "master_gain": self.proj.get("master_gain", 1.0),
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"], "compounds": self.proj.get("compounds", {}),
+                "markers": node.get("markers") or [],
                 "open_component": node if components.is_component(node) else None}
 
     def show_compound(self, tl_id, parent_path, cid):
@@ -3944,6 +3949,33 @@ class MainWindow(QMainWindow):
             a = tl.mark_in or 0
             b = tl.mark_out if tl.mark_out is not None else max(a, self.length - 1)
             self.player.worker.set_loop((a, b))
+
+    def add_marker(self, t_us=None):
+        """M: a 時間線標記 at the playhead (or at t_us)."""
+        if self.proj:
+            self.apply("新增標記", edit.add_marker, round(self.pos / self.fps * US) if t_us is None else t_us)
+
+    def on_marker_action(self, action, mid):
+        """The timeline's marker menu: rename, colour (a preset "color:#rrggbb", or picked),
+        delete ("" : all of them)."""
+        if action == "delete":
+            self.apply("刪除標記" if mid else "刪除所有標記", edit.delete_marker, mid or None)
+            return
+        m = next((m for m in edit.markers_of(self.view()) if m["id"] == mid), None)
+        if m is None:
+            return
+        anchor = self.timeline.marker_rect(mid)
+        anchor = (self.timeline, anchor) if anchor is not None else None
+        if action == "rename":
+            name, ok = inplace.ask_name(self, m["name"], anchor)
+            if ok:
+                self.apply("重新命名標記", edit.rename_marker, mid, name)
+        elif action.startswith("color:"):
+            self.apply("標記顏色", edit.set_marker_color, mid, action[len("color:"):])
+        elif action == "color":
+            col = self.pick_live(QColor(m.get("color") or "#4c8dff"), "標記顏色", [m], anchor)
+            if col is not None:
+                self.apply("標記顏色", edit.set_marker_color, mid, col.name())
 
     def set_mark(self, which):
         tl = self.timeline

@@ -184,6 +184,14 @@ select a span (it snaps like clips do); playback starts at it and loops
 inside it, and a marked export uses it. Ctrl+Shift+D (or Alt+X) clears it; a right click
 without dragging opens the menu. I / O still set its ends at the playhead.
 
+時間線標記 (markers): M (播放 > 新增時間線標記, or the ruler's right-click menu) puts a marker
+at the playhead - a flag on the ruler in its colour, with a faint line down the tracks. Hover
+it for its name and time, click it to go there, drag it to move it (it snaps like the
+playhead; clips snap to markers too), double-click it to rename it; its right-click menu
+renames it, picks its colour (presets or 自訂顏色…) or deletes it (or all of them). Each
+timeline and compound keeps its own markers, saved with the project, and every change is
+one undo step.
+
 Volume line: every sound clip shows a line at its volume (in dB: 0 dB two thirds up, +20 dB
 at the top), following its volume keyframes, which are points on it. Drag the line up or
 down to change the clip's volume. With keyframes only a level stretch moves - between two

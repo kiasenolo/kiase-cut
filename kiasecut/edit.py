@@ -3069,3 +3069,73 @@ def delete_timeline(proj, tl_id):
     proj["timelines"].remove(tl)
     if proj["active_timeline"] == tl_id:
         open_timeline(proj, proj["timelines"][max(0, i - 1)]["id"])
+
+
+# -- markers (時間線標記) ----------------------------------------------------------------------------
+# a marker: {"id", "t_us" (level time), "name", "color" (#rrggbb)}, kept by the level it is on: the
+# open timeline (the project's: its timeline entry), a compound's content, a nested timeline
+MARKER_COLORS = (("藍", "#4c8dff"), ("紅", "#e5484d"), ("橙", "#f76b15"), ("黃", "#f5d90a"),
+                 ("綠", "#30a46c"), ("青", "#12a5a5"), ("紫", "#8e4ec6"), ("粉", "#e93d82"), ("白", "#e6e6e6"))
+
+
+def _marker_owner(level):
+    return project.timeline(level) if level.get("timelines") else level
+
+
+def markers_of(level):
+    """A level's markers in time order (a timeline view of a compound: its "markers")."""
+    return sorted(_marker_owner(level).get("markers") or (), key=lambda m: m["t_us"])
+
+
+def _marker(level, mid):
+    m = next((m for m in _marker_owner(level).get("markers") or () if m["id"] == mid), None)
+    if m is None:
+        raise EditError("沒有這個標記")
+    return m
+
+
+def add_marker(level, t_us, name=None, color=None):
+    """A marker at level time t_us (named 標記 n, in the colour of the last one added)."""
+    ms = _marker_owner(level).setdefault("markers", [])
+    t_us = int(max(0, t_us))
+    if any(m["t_us"] == t_us for m in ms):
+        raise EditError("這裡已經有標記")
+    ids = {m["id"] for m in ms}
+    n = len(ms) + 1
+    while f"m{n}" in ids:
+        n += 1
+    m = {"id": f"m{n}", "t_us": t_us, "name": str(name).strip() if name else f"標記 {n}",
+         "color": color or (ms[-1]["color"] if ms else MARKER_COLORS[0][1])}
+    ms.append(m)
+    return m
+
+
+def move_marker(level, mid, t_us):
+    m = _marker(level, mid)
+    t_us = int(max(0, t_us))
+    if any(o["t_us"] == t_us and o is not m for o in _marker_owner(level)["markers"]):
+        raise EditError("那裡已經有標記")
+    m["t_us"] = t_us
+    return m
+
+
+def rename_marker(level, mid, name):
+    m = _marker(level, mid)
+    m["name"] = str(name).strip() or m["name"]
+    return m
+
+
+def set_marker_color(level, mid, color):
+    m = _marker(level, mid)
+    m["color"] = color
+    return m
+
+
+def delete_marker(level, mid):
+    """Remove a marker (None: every marker of the level)."""
+    owner = _marker_owner(level)
+    if mid is None:
+        owner.pop("markers", None)
+        return
+    m = _marker(level, mid)
+    owner["markers"].remove(m)

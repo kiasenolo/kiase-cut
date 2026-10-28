@@ -32,6 +32,12 @@ below the bottom row, puts it on a new track. Holding Alt while dragging clips l
 where they are and drops copies there instead (dupMoveRequested). Media dropped on a clip with Alt held replaces
 that clip's source (the clip lights up while it would).
 
+Markers (時間線標記, edit.markers_of): flags on the ruler in their own colour, with a faint line
+down the tracks; M (or the ruler's right-click menu) adds one at the playhead. Hovering one
+shows its name, a click goes to it, dragging moves it (snapping like the playhead), a
+double-click renames it, and its right-click menu renames it, sets its colour or deletes
+it (markerAction). Drags snap to markers too.
+
 Time selection (as in FL Studio): drag with the right button anywhere on the timeline to
 select a span of time (it snaps like clips do); playback then starts at its beginning and
 loops inside it, and it is the range a marked export uses. Ctrl+Shift+D clears it. A right
@@ -83,9 +89,9 @@ import math
 from collections import OrderedDict
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import QApplication, QScrollBar, QWidget
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PySide6.QtWidgets import QApplication, QScrollBar, QToolTip, QWidget
 
 from .. import build, components, curves, edit, project, waveform
 from . import wheel
@@ -133,7 +139,8 @@ def clip_kind(c):
 RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140   # HEADER_W: the track headers' default width
 # drags along time: the pointer wraps (both ways for the view's own), the view follows the others
 WRAP_MODES = {"seek", "region", "body", "start", "end", "group", "key", "matte", "vol", "volkey",
-              "lane_body", "lane_start", "lane_end", "pan", "zoom"}
+              "lane_body", "lane_start", "lane_end", "pan", "zoom", "marker"}
+MARKER_PX = 6                                        # half a marker flag's width (and its grab distance)
 HEADER_MIN, HEADER_MAX = 110, 520                          # how narrow / wide dragging makes them
 BTN = 18                                             # header button size
 REF_COLOR = "#e0a84a"                                # 參考 tracks: their badge and row lines
@@ -267,6 +274,9 @@ class Timeline(QWidget):
     matteOffsetEdited = Signal(str, int)             # the same on release
     keyMoveRequested = Signal(str, int, int)         # clip id, keyframe clip time from, to (us)
     marksChanged = Signal()                          # the time selection (mark_in / mark_out) changed
+    markerAdd = Signal(int)                          # level time us: a new marker there
+    markerMoved = Signal(str, int)                   # marker id, its new time us
+    markerAction = Signal(str, str)                  # "rename" | "delete" | "color" | "color:#rrggbb", marker id
     volumeEdited = Signal(str, object)               # clip id, new volume (number or {"keys": ...})
     moveRequested = Signal(str, int, str)            # clip id, start us, track id
     trimRequested = Signal(str, str, int)            # clip id, "start" | "end", time us
@@ -797,11 +807,32 @@ class Timeline(QWidget):
                     return row, c, "body"
         return row, None, None
 
+    def markers(self):
+        """The open level's markers, in time order."""
+        return edit.markers_of(self.proj) if self.proj else []
+
+    def _marker_at(self, pos):
+        """The marker whose flag on the ruler is at pos (the nearest), or None."""
+        if not self.proj or pos.y() >= RULER_H or pos.x() < self.header_w:
+            return None
+        near = [(abs(self._x(m["t_us"] / US) - pos.x()), m) for m in self.markers()]
+        near = [n for n in near if n[0] <= MARKER_PX + 1]
+        return min(near, key=lambda n: n[0])[1] if near else None
+
+    def marker_rect(self, mid):
+        """Where a marker's flag is (QRect, for inplace), or None when it is out of view."""
+        m = next((m for m in self.markers() if m["id"] == mid), None)
+        if m is None:
+            return None
+        x = self._x(m["t_us"] / US)
+        return QRect(int(x) - MARKER_PX, 0, 160, RULER_H) if self.header_w <= x <= self.width() else None
+
     def _snap_targets(self, exclude, playhead=True):
         """Times a drag snaps to: 0, the playhead (unless it is what moves), and every other
         clip's start, end, keyframes and beats (BPM alignment); exclude is a clip or a set of
         clip ids (a moving group)."""
         cands = [0, self.pos / self.fps * US] if playhead else [0]
+        cands += [m["t_us"] for m in self.markers() if not (self.drag and self.drag.get("marker") is m)]
         for tr in self.rows:
             for c in tr["clips"]:
                 if c is not exclude and not (isinstance(exclude, set) and c["id"] in exclude):
@@ -960,6 +991,7 @@ class Timeline(QWidget):
                 p.drawLine(int(a), 0, int(a), RULER_H)
             if self.mark_out is not None and b > self.header_w:
                 p.drawLine(int(b), 0, int(b), RULER_H)
+        self._paint_markers(p, w)
         # a clip being moved / trimmed is drawn at its new place (other drags have no ghost)
         dragged = self.drag["clip"] if self.drag and self.drag["moved"] and self.drag["mode"] in ("body", "start", "end")             else None
         group = self.drag["ids"] if self.drag and self.drag["moved"] and self.drag["mode"] == "group" else ()
@@ -1103,6 +1135,26 @@ class Timeline(QWidget):
             grab = self.hover_playhead or (self.drag and self.drag["mode"] == "seek")
             p.setPen(QPen(QColor("#ff6b6d" if grab else "#ff4d4f"), 3 if grab else 2))
             p.drawLine(int(x), 0, int(x), self.height())
+
+    def _paint_markers(self, p, w):
+        """Marker flags on the ruler (a dragged one where it is going), lines down the tracks."""
+        d = self.drag if self.drag and self.drag["mode"] == "marker" else None
+        for m in self.markers():
+            t = d["t"] if d and d["marker"] is m else m["t_us"]
+            x = self._x(t / US)
+            if not self.header_w <= x <= w:
+                continue
+            col = QColor(m.get("color") or edit.MARKER_COLORS[0][1])
+            line = QColor(col)
+            line.setAlpha(110)
+            p.setPen(QPen(line, 1, Qt.DashLine))
+            p.drawLine(QPointF(x, RULER_H), QPointF(x, self.height()))
+            flag = QPolygonF([QPointF(x - MARKER_PX, 2), QPointF(x + MARKER_PX, 2), QPointF(x + MARKER_PX, 12),
+                              QPointF(x, RULER_H - 4), QPointF(x - MARKER_PX, 12)])
+            p.setPen(QPen(QColor("#0e0e10"), 1))
+            p.setBrush(col)
+            p.drawPolygon(flag)
+            p.setBrush(Qt.NoBrush)
 
     @staticmethod
     def clip_label(c):
@@ -1528,6 +1580,11 @@ class Timeline(QWidget):
             return
         if not self.proj or e.button() != Qt.LeftButton:
             return
+        mk = self._marker_at(e.position())
+        if mk is not None and not e.modifiers():              # a marker: click to go there, drag to move it
+            self.drag = {"clip": None, "mode": "marker", "marker": mk, "t": mk["t_us"], "x0": e.position().x(),
+                         "moved": False}
+            return
         if self._on_header_edge(e.position()):                   # widen / narrow the track headers
             self.drag = {"clip": None, "mode": "header", "x0": e.position().x(), "w0": self.header_w, "moved": False}
             return
@@ -1675,6 +1732,9 @@ class Timeline(QWidget):
         if d is not None and d["mode"] in ("body", "group") and d["moved"] and not d.get("dup"):
             ids = d["ids"] if d["mode"] == "group" else [d["clip"]["id"]]
             self.into_lane = self._into_lane(pos if live is None else live, ids)
+        if d is None and self._marker_at(pos) is not None:
+            self.setCursor(Qt.PointingHandCursor)
+            return
         if d is None:
             on = bool(self.proj) and self._on_playhead(pos) and not self._on_header_edge(pos)    # (the edge wins)
             if on != self.hover_playhead:
@@ -1722,6 +1782,16 @@ class Timeline(QWidget):
             else:
                 d["end"] = max(self._snap(abs0 + e0 + dt, c) - abs0, s0 + US / self.fps)
             self.clipDragging.emit(c["id"], int(round(abs0 + d["start"])), int(round(d["end"] - d["start"])))
+            self.update()
+            return
+        if d["mode"] == "marker":
+            if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX:
+                return
+            d["moved"] = True
+            raw = max(0.0, self._sec(pos.x())) * US
+            t = self._snap(raw, None)
+            d["t"] = int(round(t if t != raw else round(raw / US * self.fps) / self.fps * US))   # (else on a frame)
+            self.setCursor(Qt.SizeHorCursor)
             self.update()
             return
         if d["mode"] == "matte":
@@ -1931,6 +2001,14 @@ class Timeline(QWidget):
                 self.trimRequested.emit(c["id"], "start", int(round(d["start"])))
             elif d["moved"]:
                 self.trimRequested.emit(c["id"], "end", int(round(d["end"])))
+            self.update()
+            return
+        if d and d["mode"] == "marker":
+            self.setCursor(Qt.ArrowCursor)
+            if d["moved"] and d["t"] != d["marker"]["t_us"]:
+                self.markerMoved.emit(d["marker"]["id"], d["t"])
+            elif not d["moved"]:
+                self.seekRequested.emit(round(d["marker"]["t_us"] / US * self.fps))
             self.update()
             return
         if d and d["mode"] == "matte":
@@ -2171,6 +2249,9 @@ class Timeline(QWidget):
     def _menu(self, pos, global_pos):
         if not self.proj:
             return
+        if pos.y() < RULER_H and pos.x() >= self.header_w:      # the ruler: markers
+            self._marker_menu(self._marker_at(QPointF(pos)), global_pos)
+            return
         row, c, _ = self._hit(QPointF(pos))
         if row is None:
             return
@@ -2280,8 +2361,36 @@ class Timeline(QWidget):
                 menu.addAction("新增空白靜態元件（在播放頭）", lambda: self.clipAction.emit("new_component", tid))
         menu.exec(global_pos)
 
+    def _marker_menu(self, mk, global_pos):
+        menu = Menu(self)
+        if mk is not None:
+            mid = mk["id"]
+            menu.addAction("重新命名標記…", lambda: self.markerAction.emit("rename", mid))
+            colors = menu.addMenu("標記顏色")
+            for name, hexc in edit.MARKER_COLORS:
+                pm = QPixmap(14, 14)
+                pm.fill(QColor(hexc))
+                a = colors.addAction(name, lambda h=hexc: self.markerAction.emit("color:" + h, mid))
+                a.setIcon(QIcon(pm))
+                a.setCheckable(True)
+                a.setChecked(mk.get("color") == hexc)
+            colors.addSeparator()
+            colors.addAction("自訂顏色…", lambda: self.markerAction.emit("color", mid))
+            menu.addAction("刪除標記", lambda: self.markerAction.emit("delete", mid))
+            menu.addSeparator()
+        t = round(self.pos / self.fps * US)
+        menu.addAction("在播放頭新增標記（M）", lambda: self.markerAdd.emit(t))
+        if self.markers():
+            menu.addAction("刪除所有標記", lambda: self.markerAction.emit("delete", ""))
+        menu.exec(global_pos)
+
     def mouseDoubleClickEvent(self, e):
         if not self.proj:
+            return
+        mk = self._marker_at(e.position())
+        if mk is not None:
+            self.drag = None
+            self.markerAction.emit("rename", mk["id"])
             return
         row, c, _ = self._hit(e.position())
         if row is None:
@@ -2332,6 +2441,14 @@ class Timeline(QWidget):
         self.scroll_s = max(0.0, anchor - (x - self.header_w) / self.px_per_s)
 
     def event(self, e):
+        if e.type() == QEvent.ToolTip:                   # a marker's name, where the mouse is on it
+            mk = self._marker_at(QPointF(e.pos()))
+            if mk is None:
+                QToolTip.hideText()
+                e.ignore()
+                return True
+            QToolTip.showText(e.globalPos(), f"{mk['name']}\n{time_text(mk['t_us'], self.fps, self.timebase)}", self)
+            return True
         f = wheel.pinch(e)
         if f is not None:                                # a touchpad's pinch zooms time
             if self.proj:

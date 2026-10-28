@@ -51,7 +51,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
-from . import appevents, icons, inplace, wheel
+from . import appevents, icons, inplace, middledrag, wheel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .timebase import button_text, edit_timebase
@@ -5116,6 +5116,7 @@ def run(argv):
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
     app = QApplication(argv)
     app.setStyle(wheel.Style(app.style().name()))   # lists scroll by pixels (touchpads)
+    middledrag.install()                            # 中鍵拖拽 on every scroll area
     # the logo (Icon.svg beside the package; Icon.free is its Lunacy source) on every window;
     # Wayland desktops take the icon from kiasecut.desktop instead, found by this name
     app.setDesktopFileName("kiasecut")

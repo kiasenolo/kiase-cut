@@ -206,6 +206,9 @@ Navigation (timeline and curve editor alike): the wheel moves up and down, Shift
 left and right, Ctrl+wheel zooms time around the mouse, the middle button drags the view and
 Ctrl+middle-drag zooms it around where the drag started, as in Blender: sideways the time,
 up and down the track height (the curve editor: the values); right / up zooms in.
+Everything else that scrolls - 屬性 and the other panels, lists, text boxes, dialogs - drags
+with the middle button too (中鍵拖拽): the content follows the pointer; a box with nothing to
+scroll hands the drag to the panel it sits in.
 
 Selection: Ctrl / Shift + click adds or removes clips; keep the button down and drag on to
 sweep over more: they all follow the first clip (selected when it was not, deselected when

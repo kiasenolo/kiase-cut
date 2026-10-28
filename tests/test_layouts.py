@@ -153,6 +153,25 @@ class PanelTests(unittest.TestCase):
         self.assertFalse(ins.isFloating())
         self.assertEqual({d.key for d in self.win.tabifiedDockWidgets(ins)}, set(SIDE[1:]))
 
+    def test_lone_panel_dragged_with_the_tabs_that_left_for_the_selection(self):
+        ins, lib = self.pn["inspector"], self.pn["library"]
+        for k in SIDE[1:]:                               # nothing selected: only 屬性 is left
+            self.pn.set_usable(k, False)
+        QTest.qWait(20)
+        self.assertIs(ins.titleBarWidget(), ins.title)   # looks like one on its own
+        QTest.mousePress(ins.title, Qt.LeftButton, Qt.NoModifier, QPoint(40, 8))
+        QTest.mouseMove(ins.title, QPoint(70, 28))
+        self.assertTrue(all(self.pn[k].parentWidget() is ins.parentWidget() for k in SIDE[1:]))
+        to = ins.mapFromGlobal(lib.mapToGlobal(QPoint(5, lib.height() // 2)))
+        QTest.mouseMove(ins, to)
+        QTest.mouseRelease(ins, Qt.LeftButton, Qt.NoModifier, to)
+        QTest.qWait(400)
+        self.assertLess(ins.x(), lib.x())
+        self.assertTrue(all(self.pn[k].isHidden() and self.pn[k].auto_hidden for k in SIDE[1:]))   # away again
+        for k in SIDE[1:]:
+            self.pn.set_usable(k, True)
+        self.assertEqual({d.key for d in self.win.tabifiedDockWidgets(ins)}, set(SIDE[1:]))   # back with it
+
 
 if __name__ == "__main__":
     unittest.main()

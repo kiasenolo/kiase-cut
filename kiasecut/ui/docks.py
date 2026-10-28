@@ -2,7 +2,9 @@
 put in tabs with others, split beside them or floated as a window of its own (dragged by
 its title bar, or by its tab while it is in tabs; a floating window with several panels
 can hold tabs too). Panels in tabs are one region: dragging the empty part of their tab bar
-moves them all together (GroupGrip), dragging a tab takes that one panel out.
+moves them all together (GroupGrip), dragging a tab takes that one panel out. Those that left
+the tabs for the selection go along (Panels.gather): a panel whose tab mates have all left
+looks like one on its own, and dragging it by its title bar still takes them with it.
 
 Panels arranges them (the built-in layouts, see layouts.py), keeps which side panel was
 used last (`active`: the one whose tab was switched to or that was clicked in; the main
@@ -129,6 +131,7 @@ class GroupGrip(QObject):
 
 class Dock(QDockWidget):
     closedByUser = Signal(str)
+    dragging = Signal(object)                 # dragged by its title bar: about to leave its place
 
     def __init__(self, key, widget, parent=None):
         super().__init__(TITLES[key], parent)
@@ -136,6 +139,7 @@ class Dock(QDockWidget):
         self.setObjectName("dock_" + key)
         self.user_closed = False             # closed on purpose: set_usable leaves it closed
         self.auto_hidden = False             # out of its tabs only because the selection cannot use it
+        self.press = None                     # where its title bar was pressed
         self.stack = QStackedWidget()
         self.stack.addWidget(widget)
         note = QLabel(NOTES.get(key, ""))
@@ -149,6 +153,20 @@ class Dock(QDockWidget):
         self.setTitleBarWidget(self.title)
         self.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable
                          | QDockWidget.DockWidgetFloatable)
+
+    def event(self, e):
+        t = e.type()
+        if t == QEvent.MouseButtonPress:
+            bar = self.titleBarWidget()
+            hit = e.button() == Qt.LeftButton and bar is not None and bar.geometry().contains(e.position().toPoint())
+            self.press = e.position().toPoint() if hit else None
+        elif t == QEvent.MouseMove and self.press is not None and e.buttons() & Qt.LeftButton:
+            if (e.position().toPoint() - self.press).manhattanLength() > QApplication.startDragDistance():
+                self.press = None
+                self.dragging.emit(self)          # (before Qt starts the drag, in the call below)
+        elif t == QEvent.MouseButtonRelease:
+            self.press = None
+        return super().event(e)
 
     def closeEvent(self, e):
         self.user_closed = True
@@ -180,6 +198,10 @@ class Panels(QObject):
         self.title_timer = QTimer(self, singleShot=True, interval=0)
         self.title_timer.timeout.connect(self.refresh_titles)
         self.grip = GroupGrip(self)
+        self.lent = []                        # panels back in their tabs only for a drag (gather)
+        self.settle_timer = QTimer(self, singleShot=True, interval=50)
+        self.settle_timer.timeout.connect(self.settle)
+        self.settle_waits = 0
         self.docks = {}
         for key in ORDER:
             d = Dock(key, widgets[key], win)
@@ -187,6 +209,7 @@ class Panels(QObject):
             d.dockLocationChanged.connect(lambda _a: self._later())
             d.topLevelChanged.connect(lambda _f: self._later())
             d.closedByUser.connect(lambda _k: self._later())
+            d.dragging.connect(self.gather)
             self.docks[key] = d
             win.addDockWidget(Qt.TopDockWidgetArea, d)
         appevents.watch(self, (QEvent.MouseButtonPress,), self.eventFilter)
@@ -253,6 +276,49 @@ class Panels(QObject):
         elif not on and not d.auto_hidden and d.isVisible() and self.tabbed(d):
             d.auto_hidden = True
             d.hide()
+
+    def gather(self, dock):
+        """dock is about to be dragged by its title bar: the panels of its tabs that left them
+        for the selection come back for the drag, so Qt takes them along; settle() sends them
+        away again once it is dropped."""
+        if dock.isFloating():
+            return
+        away = [d for d in self.docks.values() if d.auto_hidden and d is not dock]
+        if not away:
+            return
+        self.restoring = True                 # (no panel in use, no title bars changed for this)
+        try:
+            for d in away:
+                d.show()
+            self.win.layout().activate()      # (the tab bars as they are now)
+            mates = self.win.tabifiedDockWidgets(dock)
+            for d in away:
+                if d in mates:
+                    self.lent.append(d)
+                else:
+                    d.hide()
+            dock.raise_()                     # (the front one stays in front)
+        finally:
+            self.restoring = False
+        if self.lent:
+            self.settle_timer.start()
+
+    def settle(self):
+        """After a drag gather() lent panels for: those the selection still has no use for
+        leave their tabs again (wherever the tabs went)."""
+        if QApplication.mouseButtons() != Qt.NoButton and self.settle_waits < 100:   # (still dragging; 5 s at most)
+            self.settle_waits += 1
+            self.settle_timer.start()
+            return
+        self.settle_waits = 0
+        lent, self.lent = self.lent, []
+        for d in lent:
+            if d.stack.currentIndex() == 1 and not d.user_closed and not d.isHidden() and self.tabbed(d):
+                d.auto_hidden = True
+                d.hide()
+            else:
+                d.auto_hidden = False
+        self._later()
 
     def _later(self):
         if not self.restoring:

@@ -8,6 +8,13 @@
 // @param center vec2 0.5,0.5 0 1 "中心"
 // @param angle float 0 -180 180 "角度"
 
+// Source: the Vignette node group of Blender's Essentials asset library, rewritten by hand for
+// KiaseCut (exported first with tools/converters/compositor_to_hyprshade.py).
+// Blender: https://github.com/blender/blender
+//   datafiles/assets/nodes/compositing_nodes_essentials.blend (installed with Blender 5.2)
+// SPDX-FileCopyrightText: Blender Studio / Blender Foundation (original, CC0); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec3 srgb_to_lin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
 vec3 lin_to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
 

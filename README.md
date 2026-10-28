@@ -723,3 +723,27 @@ turns its `timeline.json` into plain MLT XML or a `.kdenlive` project with edita
 Shader / Filter): it turns a compositor node tree or node group into a one-pass GLSL screen
 shader (Hyprshade, OBS, ShaderGlass) or a KiaseCut filter whose group inputs become
 keyframeable parameters.
+
+## License
+
+KiaseCut is free software under the GNU General Public License, version 3 or (at your
+option) any later version: see `LICENSE`. This covers every version published so far, from
+the first commit on. It comes with no warranty.
+
+Taken from elsewhere:
+
+| In KiaseCut | From | License |
+|---|---|---|
+| `kiasecut/filters/blender_glare.glsl` | Blender's Glare compositor node (`node_composite_glare.cc`, `compositor_glare_*.glsl`) | GPL-2.0-or-later |
+| `kiasecut/filters/blender_lens_distortion.glsl` | Blender's Lens Distortion compositor node (`node_composite_lens_distortion.cc`, `compositor_*_lens_distortion.glsl`) | GPL-2.0-or-later |
+| `kiasecut/filters/blender_sensor_noise.glsl` | the Sensor Noise node group of Blender's Essentials assets (`compositing_nodes_essentials.blend`), by Blender Studio | CC0 (public domain) |
+| `kiasecut/filters/blender_vignette.glsl` | the Vignette node group of Blender's Essentials assets (`compositing_nodes_essentials.blend`), by Blender Studio | CC0 (public domain) |
+
+Each was exported with `compositor_to_hyprshade.py`, then rewritten by hand; its header names
+the Blender files. Blender: <https://www.blender.org>, source at
+<https://projects.blender.org/blender/blender>, © Blender Authors.
+
+Used, not included: PySide6 / Qt (LGPL-3.0), MLT (LGPL-2.1), FFmpeg (LGPL or GPL, by
+build), numpy (BSD), Pillow (MIT-CMU), moderngl (MIT). An executable from
+`build_exec.bat --bundle-mlt` also carries Kdenlive's MLT, Qt and FFmpeg: hand on their
+licenses with it (Kdenlive's `share/` holds them).

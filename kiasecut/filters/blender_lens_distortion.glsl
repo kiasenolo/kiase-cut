@@ -7,6 +7,16 @@
 // @param jitter bool false "抖動取樣"
 // @param fit bool false "填滿畫面"
 
+// Source: Blender's Lens Distortion compositor node, rewritten by hand for KiaseCut (exported
+// first with tools/converters/compositor_to_hyprshade.py).
+// Blender: https://github.com/blender/blender
+//   source/blender/nodes/composite/nodes/node_composite_lens_distortion.cc
+//   source/blender/compositor/shaders/compositor_radial_lens_distortion.glsl
+//   source/blender/compositor/shaders/compositor_horizontal_lens_distortion.glsl
+// SPDX-FileCopyrightText: Blender Authors (original); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+// (Blender's code is GPL-2.0-or-later.)
+
 vec3 srgb_to_lin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
 vec3 lin_to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
 float hash31(vec3 p) { p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }

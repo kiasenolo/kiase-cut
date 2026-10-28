@@ -20,6 +20,15 @@
 // @param diagonal bool true "斜向星芒"
 // @param sun_position vec2 0.5,0.5 0 1 "光源位置"
 
+// Source: Blender's Glare compositor node, rewritten by hand for KiaseCut (exported first with
+// tools/converters/compositor_to_hyprshade.py).
+// Blender: https://github.com/blender/blender
+//   source/blender/nodes/composite/nodes/node_composite_glare.cc
+//   source/blender/compositor/shaders/compositor_glare_*.glsl
+// SPDX-FileCopyrightText: Blender Authors (original); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+// (Blender's code is GPL-2.0-or-later.)
+
 // Pass 0 keeps the highlights (what glows, as Blender computes it); pass 1 spreads them by the
 // chosen type, each sample one read of pass 0, and adds them to the picture. 品質 中 / 低 spread
 // over every 2nd / 4th canvas pixel, as Blender's Medium / Low work on a picture 2 / 4 times smaller.

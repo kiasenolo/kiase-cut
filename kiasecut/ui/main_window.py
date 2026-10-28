@@ -2411,9 +2411,8 @@ class MainWindow(QMainWindow):
         filters, 遮罩 for what takes a mask, 節拍 for one clip with sound, 字幕 for texts,
         關鍵幀曲線 for any clip. One in tabs leaves them (they go on to another one), one on
         its own says it has nothing to show (docks.Panels.set_usable)."""
-        maskable = ("image", "video", "compound", "filter", "group")
         show = {"fx": bool(clips) and all(c["type"] in edit.VISUAL for c in clips),
-                "mask": bool(clips) and all(c["type"] in maskable for c in clips),
+                "mask": bool(clips) and all(c["type"] in edit.MASKABLE for c in clips),
                 "beat": len(clips) == 1 and edit.has_sound(clips[0]),
                 "subtitle": any(c["type"] == "text" for c in clips),
                 "curves": bool(clips)}

@@ -697,8 +697,8 @@ class Inspector(QWidget):
         box.blockSignals(False)
 
     def _build_mask(self, form, c):
-        if c["type"] not in ("image", "video", "compound", "filter", "group"):
-            note = QLabel("只有圖片、影片、複合片段和濾鏡片段可以加遮罩")
+        if c["type"] not in edit.MASKABLE:
+            note = QLabel("聲音片段不能加遮罩")
             note.setStyleSheet("color: #9a9aa0;")
             form.addRow(note)
             return
@@ -1448,7 +1448,7 @@ def common(clips):
         out["text"] = first["text"]
     if all(k.get("transform") is not None for k in clips):
         out["transform"] = first["transform"]
-    if all(k["type"] in ("image", "video", "compound", "filter", "group") for k in clips):
+    if all(k["type"] in edit.MASKABLE for k in clips):
         out["type"] = out["type"] if out["type"] != "mixed" else "video"     # can take masks
         kinds = {kind_tag(k.get("mask")) for k in clips}
         if len(kinds) == 1 and None not in kinds:

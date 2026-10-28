@@ -539,6 +539,7 @@ class GLRenderer(render.Renderer):
             bw, bh = pic.width() / rs * k_size, pic.height() / rs * k_size
             tex, straight = gl.picture(pic)
             rect = QRectF(-bw / 2, -bh / 2, bw, bh)
+            disp = self.text_disp(spec, H, (bw, bh), k_size)
         elif kind in ("image", "video"):
             m = c["media"]
             bw, bh = project.picture_size(c, W, H, t=t)
@@ -615,7 +616,7 @@ class GLRenderer(render.Renderer):
                 rect = QRectF(vis.left(), vis.top(), held.w / k * fit, held.h / k * fit)
         else:
             return
-        disp = (bw, bh)
+        disp = disp if kind == "text" else (bw, bh)
         mask = self.clip_mask(c, t)
         blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
         effects = project.visual_effects(c)

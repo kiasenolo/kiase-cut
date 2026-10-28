@@ -119,6 +119,7 @@ class Renderer:
         self.video_frame = video_frame
         self.images = {}            # path -> Mips; (path or asset, size) -> QImage
         self.texts = {}             # (spec json, scale) -> QImage
+        self.frames = {}            # (spec json, canvas height) -> a 文字框's (w, h)
         self.stills = {}            # (static compound content, scale) -> QImage
         self.cache_limit = cache_limit
         self.errors = []            # clips that could not be drawn, reported by the player
@@ -186,6 +187,17 @@ class Renderer:
                 QImage.Format_ARGB32_Premultiplied)
             self._remember(self.texts, key, im)
         return im
+
+    def text_disp(self, spec, canvas_h, pic_size, k_size):
+        """The size a text's mask and effect ranges are placed in at scale 1 (canvas px), as
+        the editor outlines it: its 文字框 when it has one, else pic_size (what is drawn)."""
+        if not textlayout.boxed(spec):
+            return pic_size
+        key = (json.dumps(spec, sort_keys=True, default=str), canvas_h, fonts.map_key())
+        if key not in self.frames:
+            self._remember(self.frames, key, textlayout.frame_size(spec, canvas_h))
+        fw, fh = self.frames[key]
+        return fw * k_size, fh * k_size
 
     STILL_MAX_PX = 4096
 
@@ -475,7 +487,7 @@ class Renderer:
             pic = self.text(spec, rs, H)
             bw, bh = pic.width() / rs * k_size, pic.height() / rs * k_size
             draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
-            disp = (bw, bh)
+            disp = self.text_disp(spec, H, (bw, bh), k_size)
         elif kind in ("image", "video"):
             m = c["media"]
             bw, bh = project.picture_size(c, W, H, t=t)

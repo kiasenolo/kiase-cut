@@ -134,6 +134,11 @@ class GpuMatchesCpu(unittest.TestCase):
                          "color": [1.0, 0.9, 0.2], "letter_spacing": 0.0, "line_spacing": 0.0, "italic_deg": 0},
                 "transform": tf(y=0.3, rotation=-8)}
         self.check("text", self.view([self.bg()], [text]), mean_max=2.5, far_max=0.02)
+        text["mask"] = {"kind": "circle", "invert": False, "cx": 0.2, "cy": 0.0, "w": 0.5, "h": 1.5,
+                        "rotation": 15.0, "feather": 0.2}
+        self.check("masked text", self.view([self.bg()], [text]), mean_max=2.5, far_max=0.02)
+        text["text"]["box_w"] = 40.0
+        self.check("masked boxed text", self.view([self.bg()], [text]), mean_max=2.5, far_max=0.02)
 
     def test_zero_scale_and_font_size(self):
         """縮放 0 and 字號 0 draw nothing, without an error, on both renderers."""

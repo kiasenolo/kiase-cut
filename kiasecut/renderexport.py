@@ -38,12 +38,14 @@ def _blend_or_mask_keys(c):
 def needs_renderer(proj):
     """Whether the project needs this export rather than MLT's: a clip has an effect, is a
     filter clip or a static clip, has a blend mode, a keyframed mask shape / invert or a
-    compound mask, a speed or a frozen frame, is a group, or is a built-in asset with keyframes or an outline
+    compound mask, a speed or a frozen frame, is a group, is a text with a mask (build.py fits a
+    text's picture in its own way), or is a built-in asset with keyframes or an outline
     reaching out of its frame, or a component's clip with values of its own (MLT would show
     the component's)."""
     return any(c["type"] == "filter" or c.get("effects") or project.is_static(c) or _blend_or_mask_keys(c)
                or ((c.get("params") or c.get("places")) and components.of_clip(c) is not None)
                or project.speed(c) != 1.0 or project.frozen(c) is not None or project.is_group(c)
+               or (c["type"] == "text" and project.active_mask(c))
                or assets.animated(c.get("asset")) or (c.get("asset") and assets.overflow(assets.at(c["asset"], 0)))
                for c in project.all_clips(proj))
 

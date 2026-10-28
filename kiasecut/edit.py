@@ -1150,6 +1150,7 @@ def move_keys_at(proj, clip_id, t_from, t_to):
 
 # -- masks ----------------------------------------------------------------------------------------
 MASK_KINDS = ("line", "mirror", "circle", "rectangle")
+MASKABLE = ("image", "video", "text", "compound", "filter", "group")    # clips that take a mask (not sounds)
 
 
 def _aspect(c):
@@ -1158,6 +1159,9 @@ def _aspect(c):
         return c["media"]["width"] / c["media"]["height"]
     if c.get("compound"):
         return c["compound"]["width"] / c["compound"]["height"]
+    if c.get("text"):
+        w, h = textlayout.frame_size(curves.static(c["text"], 0, TEXT_ANIM_FIELDS))
+        return w / h if w > 0 and h > 0 else 16 / 9
     return 16 / 9
 
 
@@ -1195,8 +1199,8 @@ def set_mask(proj, clip_id, kind, t=None):
     """Give a clip a mask of `kind` (keeping its position), or remove it with None. A shape
     with keyframes gets its keyframe at clip time t set (or added), as numbers do."""
     _, c = find(proj, clip_id)
-    if c["type"] not in ("image", "video", "compound", "filter", "group"):
-        raise EditError("masks go on pictures, videos, compound clips, groups and filters")
+    if c["type"] not in MASKABLE:
+        raise EditError("masks go on pictures, videos, texts, compound clips, groups and filters")
     if kind is None:
         c.pop("mask", None)
         return c

@@ -500,8 +500,9 @@ opacity, volume, text size / colour / letter and line spacing / italic, mask cen
 rotation / feather) has a ◆ button that adds or removes a keyframe at the playhead;
 changing a value that already has keyframes edits or adds the keyframe at the playhead, as
 in Jianying. ◀/▶ jump between keyframes, and the curve menu sets linear / ease-in /
-ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, videos and
-compound clips take line, mirror, circle, rectangle or compound masks (see the 遮罩 tab). The
+ease-out / ease-in-out from the keyframe at the playhead to the next. Pictures, videos, texts
+(placed in a 文字框's frame when it has one) and compound clips take line, mirror, circle,
+rectangle or compound masks (see the 遮罩 tab). The
 mouse wheel never changes a number field. Number fields work like Resolve's: press and
 drag up / down to change the value (Shift for fine steps, Ctrl for big ones), click to type
 one. Limits work like Blender's soft and hard limits: dragging stops at a field's usual

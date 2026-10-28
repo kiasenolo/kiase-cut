@@ -828,7 +828,7 @@ class Preview(QWidget):
     def masking(self, box):
         if not self.mask_mode or box is None or not self.mask_of(box.clip):
             return False
-        return self.mask_group != "mask" or box.clip["type"] in ("image", "video", "compound", "filter", "group")
+        return self.mask_group != "mask" or box.clip["type"] in edit.MASKABLE
 
     # -- painting ---------------------------------------------------------------------------------
     def paintEvent(self, _):

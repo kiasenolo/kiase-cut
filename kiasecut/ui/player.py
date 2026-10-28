@@ -14,6 +14,10 @@ the sound follows the device without restarting the program.
 Positions are frames of view["fps"], the editor's own rate (時間線精度, which can be finer
 than the project's). Playing shows a picture every step() of them, at view["play_fps"] (the
 project's frame rate), so a fine timeline costs nothing more while playing.
+
+播放速度 (set_rate): playing goes at rate times the real speed (0.5: half as fast, 2: twice) -
+the clock runs that much faster or slower, pictures that cannot keep up are skipped as ever,
+and the sound is resampled to fit (its pitch follows, like a tape: speed_pcm).
 """
 import os
 import threading
@@ -31,6 +35,23 @@ from ..audiomix import CHANNELS, RATE, Mixer
 PREVIEW_W = 960            # until the preview reports its size
 MIN_W = 160
 LEAD = 6                    # frames of sound kept queued ahead of the picture while playing
+RATES = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)     # 播放速度 choices
+
+
+def speed_pcm(pcm, rate, carry=0.0):
+    """Interleaved int16 sound played rate times as fast (fewer samples, or more), and the
+    fraction of a sample left over (carry: from the last piece, so pieces add up exactly)."""
+    a = np.frombuffer(pcm, np.int16).reshape(-1, CHANNELS)
+    if rate == 1.0 or not len(a):
+        return pcm, carry
+    want = len(a) / rate + carry
+    n = int(want)
+    if n <= 0:
+        return b"", want
+    at = (np.arange(n) + 0.5) * len(a) / n - 0.5
+    src = np.arange(len(a))
+    out = np.stack([np.interp(at, src, a[:, ch]) for ch in range(CHANNELS)], axis=1)
+    return np.round(out).astype(np.int16).tobytes(), want - n
 
 
 class Worker(QObject):
@@ -58,6 +79,9 @@ class Worker(QObject):
         self.audio_f = None         # next frame whose sound is to be queued
         self.peaks = {}             # sound frame number -> (left, right) level, shown with its picture
         self.new_output = False     # the sound outputs changed: open the default one again
+        self.rate = 1.0             # 播放速度
+        self.new_rate = False       # it changed while playing: the clock and the sound start over
+        self.rate_carry = 0.0       # (speed_pcm's leftover fraction of a sample)
 
     # called from the UI thread -----------------------------------------------------------
     def set_view(self, view, cache_dir):
@@ -95,6 +119,13 @@ class Worker(QObject):
                 self.pos = self.loop[0]                 # start at the selection
             elif self.playing and self.pos >= self.length - 1:
                 self.pos = 0
+            self.cv.notify()
+
+    def set_rate(self, rate):
+        """Play at rate times the real speed (RATES), from now on."""
+        with self.cv:
+            self.rate = max(0.05, float(rate))
+            self.new_rate = True
             self.cv.notify()
 
     def outputs_changed(self):
@@ -141,6 +172,7 @@ class Worker(QObject):
                 new, self.new_view = self.new_view, None
                 want, self.want = self.want, None
                 moved_output, self.new_output = self.new_output, False
+                new_rate, self.new_rate = self.new_rate, False
                 playing = self.playing
             try:
                 if new:
@@ -162,17 +194,17 @@ class Worker(QObject):
                         sink, out = self._start_sink(sink)
                         self.t0 = time.monotonic()
                         self.shown_n = self.audio_n = 0
-                        self.audio_f, self.peaks = None, {}
+                        self.audio_f, self.peaks, self.rate_carry = None, {}, 0.0
                     else:
                         sink = out = self._stop_sink(sink)
                     was_playing = playing
                     self.stateChanged.emit(playing)
-                elif playing and (want is not None or moved_output):
-                    # a jump while playing, or another sound device: sound and clock start over
+                elif playing and (want is not None or moved_output or new_rate):
+                    # a jump while playing, another sound device or speed: sound and clock start over
                     sink, out = self._start_sink(sink)
                     self.t0 = time.monotonic()
                     self.shown_n = self.audio_n = 0
-                    self.audio_f, self.peaks = None, {}
+                    self.audio_f, self.peaks, self.rate_carry = None, {}, 0.0
                 if want is not None:
                     self.pos = min(want, self.length - 1)
                 if self.view is None:
@@ -208,7 +240,7 @@ class Worker(QObject):
         fmt.setChannelCount(CHANNELS)
         fmt.setSampleFormat(QAudioFormat.Int16)
         sink = QAudioSink(device, fmt)
-        per_frame = RATE * CHANNELS * 2 / max(1.0, self._play_fps())
+        per_frame = RATE * CHANNELS * 2 / max(1.0, self._play_fps() * self.rate)     # (one picture's sound)
         sink.setBufferSize(max(RATE * CHANNELS * 2 // 8, int(per_frame * (LEAD + 3))))
         out = sink.start()
         return (sink, out) if out is not None else (None, None)
@@ -247,7 +279,8 @@ class Worker(QObject):
         return max(1, round(self.view["fps"] / self._play_fps()))
 
     def _interrupted(self):
-        return bool(self.new_view or self.want is not None or not self.playing or self.quit or self.new_output)
+        return bool(self.new_view or self.want is not None or not self.playing or self.quit or self.new_output
+                    or self.new_rate)
 
     def _feed(self, out, sink):
         """Queue the sound up to LEAD frames ahead of the picture. Playing begins with the
@@ -261,6 +294,7 @@ class Worker(QObject):
             if len(a):
                 peak = np.abs(a.astype(np.int32)).max(axis=0) / 32768.0
                 self.peaks[self.audio_n] = (float(peak[0]), float(peak[-1]))
+            pcm, self.rate_carry = speed_pcm(pcm, self.rate, self.rate_carry)
             if out is not None:
                 view = memoryview(pcm)
                 while view:
@@ -278,7 +312,7 @@ class Worker(QObject):
     def _play_one(self, out, sink):
         """One picture, on time: the sound is queued first and the pictures follow the clock
         that started with it (a picture that is late is skipped, not shown late)."""
-        fps, step = self.view["fps"], self.step()
+        fps, step = self.view["fps"] * self.rate, self.step()      # (frames per second of the clock)
         self._feed(out, sink)
         due = self.t0 + self.shown_n / fps
         while not self._interrupted():

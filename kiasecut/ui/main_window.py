@@ -43,7 +43,7 @@ from .inspector import Inspector
 from .library import LibraryPanel, dropped_paths
 from .layers import LayerPanel
 from .params import ParamList, clip_name
-from .player import Player
+from .player import RATES, Player
 from .project_dialogs import CompoundSizeDialog, NewProjectDialog, ProjectInfoDialog
 from .project_manager import ProjectManager
 from .settings_dialog import SettingsDialog
@@ -540,6 +540,19 @@ class MainWindow(QMainWindow):
                               ("end", "到結尾（End）", lambda: self.seek(self.length - 1))):
             bar.addWidget(tool(name, tip, fn))
         bar.addStretch()
+        self.rate_box = QComboBox()                     # 播放速度
+        for r in RATES:
+            self.rate_box.addItem(f"{r:g}×", r)
+        self.rate_box.setToolTip("播放速度：預覽播放得比原本慢或快（聲音的音高跟著變，像錄音帶）。\n"
+                                 "只影響預覽，不影響匯出。")
+        self.rate_box.setFocusPolicy(Qt.NoFocus)        # (空白鍵 stays play / pause)
+        try:
+            rate = float(self.settings().value("play_rate", 1.0))
+        except (TypeError, ValueError):
+            rate = 1.0
+        self.rate_box.setCurrentIndex(max(0, self.rate_box.findData(rate if rate in RATES else 1.0)))
+        self.rate_box.currentIndexChanged.connect(lambda _i: self.set_play_rate(self.rate_box.currentData()))
+        bar.addWidget(self.rate_box)
         bar.addWidget(full_btn)
         head = QHBoxLayout()
         head.setContentsMargins(8, 3, 8, 3)
@@ -780,6 +793,7 @@ class MainWindow(QMainWindow):
         self.layout_key = None          # the layout the panels are in (layouts.py key)
 
         self.player = Player(self)
+        self.player.worker.set_rate(self.rate_box.currentData())     # (the 播放速度 used last time)
         w = self.player.worker
         w.frameReady.connect(self.on_frame)
         w.loaded.connect(self.on_loaded)
@@ -3773,6 +3787,13 @@ class MainWindow(QMainWindow):
     def _playing_props(self):
         if self.proj is not None and self.timeline.selected is not None:
             self.show_selection_props()
+
+    def set_play_rate(self, rate):
+        """播放速度 of the preview (remembered for the next time)."""
+        self.player.worker.set_rate(rate)
+        self.settings().setValue("play_rate", rate)
+        if self.rate_box.currentData() != rate:
+            self.rate_box.setCurrentIndex(max(0, self.rate_box.findData(rate)))
 
     def toggle_play(self):
         """Space: play, or stop - where playback is, or (播放模式 回到開始處) back where it began."""

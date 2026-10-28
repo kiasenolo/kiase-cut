@@ -485,7 +485,7 @@ class MainWindow(QMainWindow):
         ef.maskInvertChosen.connect(lambda ids, eid, on: self.fx_each(
             "反轉效果範圍", ids, eid, lambda lvl, cid, e: edit.set_effect_mask_invert(lvl, cid, e, on, self.clip_time(cid))))
         ef.sourceKindChosen.connect(lambda ids, eid, name, kind: self.fx_each(
-            "顏色來源" if kind else "移除顏色來源", ids, eid,
+            "效果來源" if kind else "移除效果來源", ids, eid,
             lambda lvl, cid, e: edit.set_effect_source(lvl, cid, e, name, kind)))
         ef.sourceMediaChosen.connect(self.on_fx_source_media)
         ef.sourceRegionChanged.connect(self._update_matte_region)
@@ -2520,7 +2520,7 @@ class MainWindow(QMainWindow):
         elif group.startswith("place:"):
             label = "圖片位置"
         elif group.startswith("fxsrc:"):
-            label = "顏色來源位置"
+            label = "效果來源位置"
         elif group == "multi":                          # a built-in asset or a 文字框 resized: size and place
             label = "調整大小"
         else:
@@ -3594,13 +3594,13 @@ class MainWindow(QMainWindow):
             return
         if kind == "compound":
             comp = self.proj.get("compounds", {}).get(value)
-            self.fx_each("顏色來源", ids, eid, lambda lvl, cid, e: edit.set_effect_source_media(
+            self.fx_each("效果來源", ids, eid, lambda lvl, cid, e: edit.set_effect_source_media(
                 lvl, cid, e, name, compound=(value, comp)))
             return
         if not value:
             what = "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.svg)" if kind == "image" else \
                 "影片 (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.gif)"
-            value, _ = QFileDialog.getOpenFileName(self, "顏色來源", self.root or "", what)
+            value, _ = QFileDialog.getOpenFileName(self, "效果來源", self.root or "", what)
             if not value:
                 self.refresh_inspector()
                 return
@@ -3615,7 +3615,7 @@ class MainWindow(QMainWindow):
             return
         media = {"image": (value, info["width"], info["height"])} if kind == "image" else \
             {"video": (value, info["width"], info["height"], info.get("duration_us"))}
-        self.fx_each("顏色來源", ids, eid, lambda lvl, cid, e: edit.set_effect_source_media(lvl, cid, e, name, **media))
+        self.fx_each("效果來源", ids, eid, lambda lvl, cid, e: edit.set_effect_source_media(lvl, cid, e, name, **media))
 
     def mask_videos(self):
         """[(path, name)] of the media library's videos (what a video mask can play)."""

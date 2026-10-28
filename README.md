@@ -540,6 +540,13 @@ works (invert, pixelate, colour…). A built-in shape can still be drawn on top 
 glass) or hidden with 隱藏本體; a picture, video, text or compound clip with 套用至背景 always
 hides itself, leaving only its effect on the background.
 
+Effect values from a picture (in the 效果 tab): a colour parameter's menu takes a picture, a
+video or a compound instead of its colour, and a number (float) parameter has 使用遮罩 beside
+it - the number is then that number times the source's brightness at each pixel (white: the
+number, black: 0; where the source does not reach or is see-through, the number itself). The
+source sits on the clip as a mask does: 編輯位置 places it on the preview, 編輯區域 picks a video's
+or a compound's time.
+
 Blend modes (混合模式, under 畫面 for pictures, videos, texts and compound clips): normal,
 multiply, screen, overlay, darken, lighten, colour dodge / burn, hard / soft light,
 difference, exclusion and add, mixing the clip with what the tracks below show. The

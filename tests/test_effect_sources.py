@@ -1,6 +1,8 @@
 """Effect colour sources: a filter's colour parameter fed by a picture, a video or a compound
 (effect["sources"]), placed on the clip as a mask is - the colour at each pixel is the
-source's there, over the parameter's own colour where the source does not reach."""
+source's there, over the parameter's own colour where the source does not reach. A number
+parameter (使用遮罩) is its number times the source's brightness there, its own number where
+the source does not reach or is see-through."""
 import os
 import shutil
 import sys
@@ -26,6 +28,14 @@ vec4 effect(vec2 uv) { return premultiply(tint); }
 """
 
 
+LEVEL = """// @filter 灰階
+// @param amount float 1 0 1 "數值"
+vec4 effect(vec2 uv) { return vec4(vec3(amount), 1.0); }
+"""
+GREY = (128, 128, 128)
+BLACK = (0, 0, 0)
+
+
 class SourceRenderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -34,6 +44,9 @@ class SourceRenderTests(unittest.TestCase):
         cls.fill = os.path.join(cls.dir, "fill.glsl")
         with open(cls.fill, "w", encoding="utf-8") as fh:
             fh.write(FILL)
+        cls.level = os.path.join(cls.dir, "level.glsl")
+        with open(cls.level, "w", encoding="utf-8") as fh:
+            fh.write(LEVEL)
         cls.asked = []
 
         def frame(path, us, w, h):
@@ -53,6 +66,19 @@ class SourceRenderTests(unittest.TestCase):
         v["tracks"][0]["clips"][0]["effects"] = [{"id": "e1", "filter": self.fill, "params": {"tint": [0, 0, 1, 1]},
                                                   "sources": {"tint": source}}]
         return v
+
+    def number_view(self, amount, image):
+        v = self.s.view()
+        source = {"kind": "image", "image": image, "img_w": 160, "img_h": 90,
+                  "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
+        v["tracks"][0]["clips"][0]["effects"] = [{"id": "e1", "filter": self.level, "params": {"amount": amount},
+                                                  "sources": {"amount": source}}]
+        return v
+
+    def test_number_times_brightness(self):
+        self.halves(self.number_view(1.0, self.s.luma), WHITE, BLACK)          # white x 1, black x 1
+        self.halves(self.number_view(0.5, self.s.luma), GREY, BLACK)
+        self.halves(self.number_view(0.5, self.s.alpha), GREY, GREY)          # see-through: its own number
 
     def halves(self, view, left, right, frame=0):
         for r in self.renderers:
@@ -104,7 +130,14 @@ class SourceEditTests(unittest.TestCase):
         edit.set_effect_source(self.p, "c1", self.e["id"], "tint", None)
         self.assertNotIn("sources", self.e)
         with self.assertRaises(edit.EditError):
-            edit.set_effect_source(self.p, "c1", self.e["id"], "radius", "image")   # not a colour
+            edit.set_effect_source(self.p, "c1", self.e["id"], "nothing", "image")   # no such parameter
+
+    def test_numbers_take_one_too(self):
+        edit.set_effect_source(self.p, "c1", self.e["id"], "radius", "image")   # (a float: 使用遮罩)
+        self.assertEqual(self.e["sources"]["radius"]["kind"], "image")
+        for name in ("mode", "glow_only"):                                 # a menu, a switch: not numbers
+            with self.assertRaises(edit.EditError):
+                edit.set_effect_source(self.p, "c1", self.e["id"], name, "image")
 
     def test_paths_saved_relative_and_swap(self):
         edit.set_effect_source(self.p, "c1", self.e["id"], "tint", "image")
@@ -117,7 +150,7 @@ class SourceEditTests(unittest.TestCase):
                 self.assertIn('"image": "Media/m.png"', fh.read())
         finally:
             shutil.rmtree(folder, ignore_errors=True)
-        edit.swap_filter(self.p, "c1", self.e["id"], "builtin:blur")        # no colour there: it goes
+        edit.swap_filter(self.p, "c1", self.e["id"], "builtin:invert")      # no colour there: it goes
         self.assertNotIn("sources", self.e)
 
 
@@ -156,6 +189,23 @@ class SourceUiTests(unittest.TestCase):
         edit.set_effect_source(self.p, "c1", self.e["id"], "tint", "video")
         panel.show_clips([self.c1], 0, 30)
         self.assertIn(("source_region", self.e["id"], "tint"), panel.widgets)
+
+    def test_number_button(self):
+        from kiasecut.ui.effects_panel import EffectsPanel
+        panel = EffectsPanel()
+        kinds = []
+        panel.sourceKindChosen.connect(lambda *a: kinds.append(a))
+        panel.show_clips([self.c1], 0, 30)
+        key = ("source_btn", "fx:" + self.e["id"], "radius")
+        self.assertIn(key, panel.widgets)
+        self.assertNotIn(("source_btn", "fx:" + self.e["id"], "tint"), panel.widgets)      # (colours have their menu)
+        self.assertFalse(panel.widgets[key].isChecked())
+        edit.set_effect_source(self.p, "c1", self.e["id"], "radius", "image")
+        panel.show_clips([self.c1], 0, 30)
+        self.assertTrue(panel.widgets[key].isChecked())
+        self.assertIn(("source_media", "fx:" + self.e["id"], "radius"), panel.widgets)    # which picture
+        panel.widgets[key].click()                                           # again: stop reading it
+        self.assertEqual(kinds, [(["c1"], self.e["id"], "radius", None)])
 
     def test_preview_drag_places_it(self):
         from PySide6.QtCore import QPoint, Qt

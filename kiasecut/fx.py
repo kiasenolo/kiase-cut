@@ -7,7 +7,9 @@ use the same format as the user's (<Library>/filters/*.glsl).
 Engine().run(def, params, rgba, ...) filters a premultiplied RGBA8 picture (numpy, H x W x 4)
 and returns the result. An effect's colour parameter can read a picture instead (effect
 "sources" {param: a picture / video / compound placed on the clip as a mask is, with the same
-fields}): the shader then gets that colour per pixel (SAMPLED), the picture over the colour. OpenGL contexts belong to the thread that made them, so every thread
+fields}): the shader then gets that colour per pixel (SAMPLED), the picture over the colour;
+a number parameter (float, 使用遮罩) gets its number times the picture's brightness there
+(SAMPLED_NUMBER), the number itself where the picture does not reach or is see-through. OpenGL contexts belong to the thread that made them, so every thread
 that filters (the preview worker, the export) makes its own Engine.
 """
 import glob
@@ -279,6 +281,19 @@ vec4 %(n)s_at_() {
     return a > 0.0 ? vec4((s.rgb + c.rgb * c.a * (1.0 - s.a)) / a, a) : vec4(0.0);
 }
 #define %(n)s %(n)s_at_()"""
+# a number parameter fed by a picture (使用遮罩): its number times the picture's brightness at
+# this pixel (Rec. 709 weights, as a 明度 mask's), its own number where the picture does not reach
+# or is see-through (premultiplied: brightness on black, plus what the alpha leaves)
+SAMPLED_NUMBER = """uniform float %(n)s_val_;
+uniform sampler2D %(n)s_tex_;
+uniform mat3 %(n)s_map_;
+float %(n)s_at_() {
+    vec3 q = %(n)s_map_ * vec3(uv_, 1.0);
+    vec4 s = (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) ? vec4(0.0) : texture(%(n)s_tex_, q.xy);
+    return %(n)s_val_ * (dot(s.rgb, vec3(0.2126, 0.7152, 0.0722)) + 1.0 - s.a);
+}
+#define %(n)s %(n)s_at_()"""
+SOURCE_TYPES = ("color", "float")              # parameters that can read a picture
 EPILOGUE = "\nvoid main() { fragColor = effect(uv_); }\n"
 # v = 0 is the first row of the picture (its top), both for what is read and what is written
 VERTEX = """#version 330
@@ -291,9 +306,11 @@ GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "
 
 
 def shader_source(d, sampled=()):
-    """The fragment shader of filter d; sampled: its colour parameters that read a picture."""
+    """The fragment shader of filter d; sampled: its colour and number parameters that read a
+    picture."""
     decl = "\n".join(f"uniform {GLSL_TYPES[p.type]} {p.name};" for p in d.params if p.name not in sampled)
-    return PRELUDE % {"params": decl, "sampled": "\n".join(SAMPLED % {"n": n} for n in sampled)} + d.code + EPILOGUE
+    kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
+    return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + EPILOGUE
 
 
 def make_context():
@@ -384,11 +401,11 @@ class Engine:
         holding the result, one of this engine's own (valid until its next run at that size).
         unit: texture px per canvas px. The filter is told the canvas size as its resolution, so
         its pixel lengths are canvas px whatever size the picture is drawn at (a small preview,
-        full screen, the export). sources {colour param: (texture, map)}: those colours read a
+        full screen, the export). sources {colour or number param: (texture, map)}: those read a
         picture (premultiplied), map the 3 x 3 matrix (9 numbers, by columns) from src's uv to
         the picture's (both with v = 0 at the top)."""
-        sources = {n: v for n, v in (sources or {}).items()
-                   if any(p.name == n and p.type == "color" for p in d.params)}
+        types = {p.name: p.type for p in d.params}
+        sources = {n: v for n, v in (sources or {}).items() if types.get(n) in SOURCE_TYPES}
         prog, vao = self._program(d, tuple(sorted(sources)))
         targets = self._targets(w, h)
         unit = unit if unit > 1e-9 else 1.0
@@ -405,8 +422,9 @@ class Engine:
             prog["original_"].value = 1
         for i, (name, (tex, m)) in enumerate(sorted(sources.items())):
             tex.use(2 + i)
-            for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)),
-                         (name + "_col_", tuple(values.get(name, (1.0, 1.0, 1.0, 1.0))))):
+            own = ((name + "_col_", tuple(values.get(name, (1.0, 1.0, 1.0, 1.0)))) if types[name] == "color"
+                   else (name + "_val_", float(values.get(name, 0.0))))
+            for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)), own):
                 if u in prog:
                     prog[u].value = v
         self.ctx.disable(self.mgl.BLEND)

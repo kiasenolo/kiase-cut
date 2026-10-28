@@ -1960,7 +1960,7 @@ def swap_filter(proj, clip_id, effect_id, what):
         params = copy.deepcopy(what.get("params") or {})
     e["filter"] = ref
     e["params"] = params
-    colours = {p.name for p in new if p.type == "color"}
+    colours = {p.name for p in new if p.type in fx.SOURCE_TYPES}     # (those that can have a source)
     if not isinstance(what, str) and not kept:
         e["sources"] = copy.deepcopy(what.get("sources") or {})
     elif kept:                                     # (renamed with its values: the sources go along)
@@ -2045,11 +2045,12 @@ def _source(c, group):
 def set_effect_source(proj, clip_id, effect_id, param, kind):
     """Feed colour parameter param of an effect from a picture ("image"), a video ("video") or
     a compound ("compound"), chosen next (set_effect_source_media); None: its own colour again.
-    The source sits on the clip as a mask does (the whole clip until it is placed)."""
+    A number parameter (使用遮罩) takes its number times that picture's brightness. The source
+    sits on the clip as a mask does (the whole clip until it is placed)."""
     _, c = find(proj, clip_id)
     e = _effect(c, effect_id)
-    if not any(p.name == param and p.type == "color" for p in fx.get(e["filter"]).params):
-        raise EditError("這個濾鏡沒有這個顏色參數")
+    if not any(p.name == param and p.type in fx.SOURCE_TYPES for p in fx.get(e["filter"]).params):
+        raise EditError("這個濾鏡沒有這個顏色或數字參數")
     sources = e.setdefault("sources", {})
     if kind is None:
         sources.pop(param, None)

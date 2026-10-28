@@ -15,6 +15,9 @@ keeping its values when the parameters line up (edit.swap_filter): a filter whos
 swapped for its built-in version, say.
 The parameters come from the filter file's `// @param` lines (see filters/FORMAT.md), so
 the form of a user's filter is built the same way as a built-in one.
+A colour can come from a picture, a video or a compound instead (its source menu); a number
+(float) has 使用遮罩: it is then that number times the source's brightness at each pixel. Either
+source is placed on the clip as a mask is (編輯位置; 編輯區域 for a video's or a compound's time).
 
 Selecting other clips whose effects make the same form keeps the form: its widgets are keyed by
 the shown clip's effect ids again, and what its buttons hold (the ids of the clip it was built
@@ -334,7 +337,7 @@ class EffectsPanel(QWidget):
         for p in d.params:
             lay.addLayout(self._param_row(group, p))
             kind = ((e.get("sources") or {}).get(p.name) or {}).get("kind")
-            if p.type == "color" and kind:
+            if p.type in fx.SOURCE_TYPES and kind:
                 lay.addLayout(self._source_row(e["id"], p.name, kind))
         # where the effect works
         row = QHBoxLayout()
@@ -405,7 +408,16 @@ class EffectsPanel(QWidget):
     def _param_row(self, group, p):
         if p.type in ("float", "int"):
             dec = 0 if p.type == "int" else 2 if (p.hi - p.lo) <= 100 else 1
-            return self._number_row(group, p.name, p.label, p.lo, p.hi, step_for(p), dec, 1)
+            row = self._number_row(group, p.name, p.label, p.lo, p.hi, step_for(p), dec, 1)
+            if p.type == "float" and group.startswith("fx:"):     # 使用遮罩: the number times a picture's brightness
+                b = QPushButton("使用遮罩")
+                b.setCheckable(True)
+                b.setToolTip("用圖片／影片／複合片段的明度決定這個數字：每個位置是 數字 × 明度"
+                             "（白色是數字本身、黑色是 0；來源沒蓋到或透明的地方用數字本身）。再按一下取消")
+                b.clicked.connect(lambda _=False, g=group, k=p.name, b=b: self._number_source(g[3:], k, b))
+                self.widgets[("source_btn", group, p.name)] = b
+                row.addWidget(b)
+            return row
         row = QHBoxLayout()
         lab = QLabel(p.label)
         lab.setMinimumWidth(70)
@@ -491,8 +503,8 @@ class EffectsPanel(QWidget):
             self.shape = None                       # (the pickers are built with the form)
 
     def _source_row(self, eid, name, kind):
-        """A colour source: which picture / video / compound, 編輯位置 (one clip) and for a video or
-        a compound 編輯區域."""
+        """A colour's or a number's (使用遮罩) source: which picture / video / compound, 編輯位置
+        (one clip) and for a video or a compound 編輯區域."""
         row = QHBoxLayout()
         lab = QLabel("　" + dict((k, n) for n, k in SOURCE_NAMES)[kind])
         lab.setMinimumWidth(70)
@@ -523,6 +535,18 @@ class EffectsPanel(QWidget):
                 self.widgets[("source_region", eid, name)] = reg
                 row.addWidget(reg)
         return row
+
+    def _number_source(self, eid, name, button):
+        """使用遮罩 pressed: pick what the number reads (a menu), or stop reading it."""
+        e = next((x for x in (self.clips[0].get("effects") or []) if x["id"] == self._real(eid)), None) if self.clips else None
+        if e is not None and name in (e.get("sources") or {}):
+            self._source_kind(eid, name, None)
+            return
+        button.setChecked(False)                    # (until a kind is picked; the form is rebuilt then)
+        menu = QMenu(button)
+        for label, k in SOURCE_NAMES[1:]:
+            menu.addAction(f"用{label}的明度", lambda k=k: self._source_kind(eid, name, k))
+        menu.exec(button.mapToGlobal(QPoint(0, button.height())))
 
     def _source_kind(self, eid, name, kind):
         eid = self._real(eid)
@@ -738,6 +762,9 @@ class EffectsPanel(QWidget):
                 if kb is not None:
                     Inspector._key_state(kb, stored, pics, ts)
                 srcs = [(x.get("sources") or {}).get(p.name) or {} for x in es]
+                sb = w.get(("source_btn", group, p.name))
+                if sb is not None:
+                    sb.setChecked(all(sv.get("kind") for sv in srcs))
                 for key, field in ((("source", group, p.name), "kind"), (("source_media", group, p.name), None)):
                     box = w.get(key)
                     if box is None:

@@ -1,18 +1,21 @@
 """中鍵拖拽: the middle button drags anything that scrolls - the content follows the pointer, a
-box with nothing to scroll hands the drag to the area it sits in, and the timeline keeps its own."""
+box with nothing to scroll hands the drag to the area it sits in, and the timeline keeps its own.
+The drag is endless (無邊界): past the view's edge the pointer jumps to the other side and it goes on."""
 import os
 import sys
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QScrollArea, QVBoxLayout, QWidget  # noqa: E402
 
-from kiasecut.ui import middledrag  # noqa: E402
+from kiasecut.ui import middledrag, wrapdrag  # noqa: E402
 from kiasecut.ui.timeline import Timeline  # noqa: E402
+from test_wrap_drag import Cursor, Hand, hidden  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 NONE = Qt.KeyboardModifier.NoModifier
@@ -69,6 +72,22 @@ class MiddleDragTests(unittest.TestCase):
     def test_left_button_does_not_scroll(self):
         drag(self.label, QPoint(100, 600), QPoint(100, 480), Qt.LeftButton)
         self.assertEqual(self.bar.value(), 500)
+
+    def test_endless(self):
+        real, wrapdrag.QCursor = wrapdrag.QCursor, Cursor          # (the jumps are played, not made)
+        try:
+            self.bar.setValue(0)
+            hand = Hand(self.label, self.label.mapToGlobal(QPointF(100, 300)), Qt.MiddleButton)
+            hand.move(0, -20, 50)                                  # 1000 px up: past the view's top
+            self.assertTrue(hidden())
+            y = self.scroll.viewport().mapFromGlobal(hand.g).y()
+            self.assertTrue(0 <= y <= self.scroll.viewport().height(), y)     # (it jumped, staying in the view)
+            hand.release()
+        finally:
+            wrapdrag.QCursor = real
+        self.assertEqual(self.bar.value(), 1000)
+        self.assertFalse(hidden())
+        self.assertIsNone(QApplication.overrideCursor())
 
     def test_timeline_keeps_its_middle_button(self):
         self.assertIsNone(middledrag._area_at(Timeline()))

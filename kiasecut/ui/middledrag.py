@@ -6,12 +6,17 @@ dialogs - so none needs code of its own. The area dragged is the nearest one aro
 that can scroll at all: a text box or list with nothing to scroll hands it on to the panel it
 sits in. Widgets that drag their own view with the middle button (the timeline, the preview, the
 curve editor) are not in a scroll area and keep it. A press on a scroll bar is left to it.
+
+The drag is endless (無邊界, wrapdrag.py), as number fields and the timeline are: the pointer
+reaching an edge of the area's view jumps to the other side (the ways it scrolls) and the
+content keeps following; the pointer hides while dragging and comes back where the drag ended up.
 """
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QPlainTextEdit, QWidget
 
 from . import appevents
+from .wrapdrag import WrapDrag
 
 
 def _area_at(w):
@@ -39,8 +44,13 @@ class _Drag(QObject):
         area = _area_at(obj)
         if area is None:
             return False
-        self.area, self.at = area, e.globalPosition()
+        vp = area.viewport()
         h, v = area.horizontalScrollBar(), area.verticalScrollBar()
+        axes = ("x" if h.maximum() > h.minimum() else "") + ("y" if v.maximum() > v.minimum() else "")
+        self.wrap = WrapDrag(vp, lambda: vp.rect(), axes)
+        self.wrap.start()
+        self.area, self.at = area, vp.mapFromGlobal(e.globalPosition())
+        self.last = self.at
         self.start = (h.value(), v.value())
         # a plain text box scrolls by lines up and down, everything else by pixels
         self.unit = area.fontMetrics().lineSpacing() if isinstance(area, QPlainTextEdit) else 1
@@ -55,7 +65,8 @@ class _Drag(QObject):
             if not e.buttons() & Qt.MiddleButton:    # (the release went somewhere unseen)
                 self._end()
                 return False
-            d = e.globalPosition() - self.at
+            self.last = self.wrap.pos(e)             # (viewport coordinates, past its edges)
+            d = self.last - self.at
             h, v = self.area.horizontalScrollBar(), self.area.verticalScrollBar()
             h.setValue(self.start[0] - round(d.x()))
             v.setValue(self.start[1] - round(d.y() / self.unit))
@@ -74,6 +85,10 @@ class _Drag(QObject):
             pass
         self.area = None
         self.app.removeEventFilter(self)
+        try:
+            self.wrap.stop(None if _a else self.last)    # (the pointer back where the drag ended up)
+        except RuntimeError:                         # (its view is gone already)
+            self.wrap.stop(None)
         QGuiApplication.restoreOverrideCursor()
 
 

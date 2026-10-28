@@ -216,7 +216,8 @@ Ctrl+middle-drag zooms it around where the drag started, as in Blender: sideways
 up and down the track height (the curve editor: the values); right / up zooms in.
 Everything else that scrolls - 屬性 and the other panels, lists, text boxes, dialogs - drags
 with the middle button too (中鍵拖拽): the content follows the pointer; a box with nothing to
-scroll hands the drag to the panel it sits in.
+scroll hands the drag to the panel it sits in. Like number fields and the timeline it is
+endless (無邊界): at the edge of the view the pointer jumps to the other side and the drag goes on.
 
 Selection: Ctrl / Shift + click adds or removes clips; keep the button down and drag on to
 sweep over more: they all follow the first clip (selected when it was not, deselected when

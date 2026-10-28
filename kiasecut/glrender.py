@@ -485,7 +485,7 @@ class GLRenderer(render.Renderer):
 
     def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu):
         for tr in tracks:
-            if tr["kind"] == "audio" or not project.visible(tr):
+            if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
                 if render.on_frame(c, t_us, fps):

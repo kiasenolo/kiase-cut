@@ -11,10 +11,12 @@ project  {format, version, width, height, fps, duration_us, timelines: [timeline
          the texts name but that system does not have (fonts.py); not part of undo.
 timeline {id, name, tracks: [track]}
 track    {id, kind: video | text | audio, name, clips: [clip],
-          muted, solo, hidden, locked, gain}                optional: muted / solo tracks
+          muted, solo, hidden, locked, gain, reference}     optional: muted / solo tracks
                      make no sound (solo silences the others), hidden ones draw nothing,
                      locked ones cannot have their clips picked (locked()), gain
-                     multiplies the track's sound
+                     multiplies the track's sound; a reference (參考) track shows and sounds
+                     only while its level is edited, in the editor's preview - not in an
+                     export, nor where its timeline or compound is used (level_tracks())
 clip     {id, type: image | video | audio | text | compound, name,
           start_us, duration_us, source_start_us,
           media: {path, width, height, duration_us}         image / video / audio
@@ -318,11 +320,25 @@ def all_tracks(tracks):
                 yield from all_tracks(c["tracks"])
 
 
-def sounds(track, tracks):
-    """Gain of a track's sound (0 when muted, or when another track of its level is solo)."""
-    if track.get("muted"):
+def level_tracks(view):
+    """The tracks (their ids) whose 參考 (reference) setting does not leave them out: in the
+    editor's preview (view["editing"]) the open level's and its groups'; none in an export,
+    and never the tracks inside the compounds and timelines used on the level."""
+    return {id(t) for t in all_tracks(view["tracks"])} if view.get("editing") else frozenset()
+
+
+def present(track, level=()):
+    """Whether a track is part of the picture and the sound at all: a 參考 track only on the
+    level being edited (level: level_tracks())."""
+    return not track.get("reference") or id(track) in level
+
+
+def sounds(track, tracks, level=()):
+    """Gain of a track's sound (0 when muted, when another track of its level is solo, or a
+    參考 track out of level)."""
+    if track.get("muted") or not present(track, level):
         return 0.0
-    if any(t.get("solo") for t in tracks) and not track.get("solo"):
+    if any(t.get("solo") and present(t, level) for t in tracks) and not track.get("solo"):
         return 0.0
     return float(track.get("gain", 1.0))
 
@@ -419,8 +435,9 @@ def picture_size(c, W, H, k=1.0, t=0):
     return m["width"] * fit, m["height"] * fit
 
 
-def visible(track):
-    return not track.get("hidden")
+def visible(track, level=()):
+    """Whether a track's pictures draw: not hidden, nor a 參考 track out of level (present())."""
+    return not track.get("hidden") and present(track, level)
 
 
 def locked(track):

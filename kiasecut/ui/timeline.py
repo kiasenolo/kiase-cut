@@ -136,6 +136,7 @@ WRAP_MODES = {"seek", "region", "body", "start", "end", "group", "key", "matte",
               "lane_body", "lane_start", "lane_end", "pan", "zoom"}
 HEADER_MIN, HEADER_MAX = 110, 520                          # how narrow / wide dragging makes them
 BTN = 18                                             # header button size
+REF_COLOR = "#e0a84a"                                # 參考 tracks: their badge and row lines
 MIN_H, MAX_H = 22, 240                               # track heights
 EDGE_PX, SNAP_PX, DRAG_PX = 6, 8, 3
 PLAYHEAD_PX = 4                 # how near the playhead line the mouse grabs it
@@ -963,6 +964,7 @@ class Timeline(QWidget):
         dragged = self.drag["clip"] if self.drag and self.drag["moved"] and self.drag["mode"] in ("body", "start", "end")             else None
         group = self.drag["ids"] if self.drag and self.drag["moved"] and self.drag["mode"] == "group" else ()
         tracks = self.proj["tracks"]
+        level = {id(t) for t in project.all_tracks(tracks)}     # (參考 tracks are shown while edited)
         p.save()
         p.setClipRect(QRectF(0, RULER_H, w, self.height() - RULER_H))
         for i, tr in enumerate(self.rows):
@@ -993,6 +995,14 @@ class Timeline(QWidget):
                 p.setFont(f0)
                 btns = self.header_buttons(i)
                 name_w = (btns[0][1].left() if btns else self.header_w) - 40
+                if tr.get("reference"):                 # 參考: shown here, left out of exports
+                    name_w -= 34
+                    r = QRectF(34 + name_w + 4, y + (min(h - 1, 26) - 15) / 2, 28, 15)
+                    p.setPen(Qt.NoPen)
+                    p.setBrush(QColor(REF_COLOR))
+                    p.drawRoundedRect(r, 3, 3)
+                    p.setPen(QColor("#111114"))
+                    p.drawText(r, Qt.AlignCenter, "參考")
                 p.setPen(QColor("#c8c8cc"))
                 name = p.fontMetrics().elidedText(tr.get("name") or tr["kind"], Qt.ElideRight, int(name_w))
                 gain = tr.get("gain", 1.0)
@@ -1005,12 +1015,19 @@ class Timeline(QWidget):
                     p.drawText(QRectF(34, y, name_w, min(h - 1, 26)), Qt.AlignVCenter, name)
                 for flag, r in btns:
                     self._draw_button(p, flag, r, bool(tr.get(flag)))
-            dim = (project.sounds(tr, tracks) <= 0) if tr["kind"] == "audio" else not project.visible(tr)
+            dim = (project.sounds(tr, tracks, level) <= 0) if tr["kind"] == "audio" else not project.visible(tr, level)
             copying = bool(self.drag and self.drag.get("dup"))      # (Alt: the clips stay, copies move)
             for c in tr["clips"]:
                 if copying or (c is not dragged and c["id"] not in group):
                     self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr, h=self.base_h(i), dim=dim)
             self._draw_lanes(p, i, dim)
+            if tr.get("reference"):                         # 參考: dashed lines along its row
+                p.save()
+                p.setClipRect(QRectF(self.header_w, RULER_H, w - self.header_w, self.height() - RULER_H))
+                p.setPen(QPen(QColor(REF_COLOR), 1, Qt.DashLine))
+                p.drawLine(QPointF(self.header_w, y + 0.5), QPointF(w, y + 0.5))
+                p.drawLine(QPointF(self.header_w, y + h - 2.5), QPointF(w, y + h - 2.5))
+                p.restore()
             if project.locked(tr):                          # locked: hatched over, nothing to grab
                 p.save()
                 p.setClipRect(QRectF(self.header_w, RULER_H, w - self.header_w, self.height() - RULER_H))
@@ -2177,6 +2194,8 @@ class Timeline(QWidget):
                 items += [("設定所有片段的顏色…", "clips:pick"), ("所有片段改回預設顏色", "clips:none"), None]
             if tr["kind"] == "audio" or any(c["type"] in ("video", "compound") for c in tr["clips"]):
                 items += [("軌道音量…", "gain")]
+            items += [("取消參考軌道" if tr.get("reference") else "設為參考軌道（只在剪輯時看到 / 聽到）",
+                       "toggle:reference"), None]
             items += [("上移", "up"), ("下移", "down"), None,
                       ("新增影片軌道", "add:video"), ("新增文字軌道", "add:text"), ("新增音訊軌道", "add:audio"),
                       None, (f"刪除 {n} 條軌道" if n > 1 else "刪除軌道", "delete"), ("清除空軌道", "clear_empty")]

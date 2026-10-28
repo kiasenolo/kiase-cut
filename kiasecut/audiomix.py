@@ -38,16 +38,17 @@ class Source:
                 audio_stream(c))
 
 
-def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rate=1.0):
+def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rate=1.0, level=()):
     """Every clip that makes sound, compound clips included, with its timeline placement.
-    only: one of tracks, to hear that track alone (as it sounds in the mix: an export's stem).
+    only: one of tracks, to hear that track alone (as it sounds in the mix: an export's stem);
+    level: the tracks 參考 tracks sound on (project.level_tracks).
     Inside a compound clip with a speed, its content's time runs rate times the mix's: a clip
     at content time s sounds at offset_us + s / rate."""
     out = []
     for tr in tracks:
         if only is not None and tr is not only:
             continue
-        g = gain * project.sounds(tr, tracks)
+        g = gain * project.sounds(tr, tracks, level)
         if g <= 0:
             continue
         for c in tr["clips"]:
@@ -59,7 +60,7 @@ def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rat
             if c["type"] in ("audio", "video") and c.get("media"):
                 out.append(Source(c, s, (lo, hi), g, rate))
             elif project.is_group(c):                                    # a group's clips: in its time
-                out += sources(c["tracks"], s, (lo, hi), g, rate=rate)
+                out += sources(c["tracks"], s, (lo, hi), g, rate=rate, level=level)
             elif c["type"] == "compound" and not project.is_static(c):     # a static one is a picture
                 inner = rate * project.speed(c)
                 out += sources(c["compound"]["tracks"], s - c.get("source_start_us", 0) / inner, (lo, hi), g,
@@ -81,7 +82,7 @@ class Mixer:
     def set_view(self, view, only=None):
         """only: one of the view's tracks, to mix that track alone."""
         self.master = float(view.get("master_gain", 1.0))
-        srcs = sources(view["tracks"], only=only)
+        srcs = sources(view["tracks"], only=only, level=project.level_tracks(view))
         with self.lock:
             for s in srcs:
                 if s.key() in self.decoded:

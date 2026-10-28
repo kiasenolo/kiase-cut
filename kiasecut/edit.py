@@ -2308,7 +2308,8 @@ def clear_keys(proj, clip_id, group, key, value):
 
 
 # -- tracks -----------------------------------------------------------------------------------------
-TRACK_FLAGS = ("muted", "solo", "hidden", "locked")      # locked: its clips cannot be picked
+TRACK_FLAGS = ("muted", "solo", "hidden", "locked", "reference")      # locked: its clips cannot be
+                                                                     # picked; reference: 參考 (not output)
 
 
 def set_track_flag(proj, track_id, flag, on):

@@ -126,6 +126,7 @@ class Renderer:
         self._fx_error = None
         self.compounds = {}         # the view's compounds (what compound masks cut with)
         self.matte_preview = None   # {clip, opacity}: show that clip's mask compound over it
+        self.level = frozenset()    # ids of the tracks a 參考 track shows on (project.level_tracks)
         self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
         self.outer = None           # (painter / layer, what is under it) of a 效果穿透 compound's layer
 
@@ -220,6 +221,7 @@ class Renderer:
         """Take what a frame of view needs besides its tracks."""
         self.compounds = view.get("compounds") or {}
         self.matte_preview = view.get("matte_preview")
+        self.level = project.level_tracks(view)
 
     def matte_compound(self, mask, t=0):
         """What a picture mask cuts with: the compound of a compound mask, or for an image mask
@@ -429,7 +431,7 @@ class Renderer:
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first."""
         for tr in tracks:
-            if tr["kind"] == "audio" or not project.visible(tr):
+            if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
                 if on_frame(c, t_us, fps):

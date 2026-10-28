@@ -3000,6 +3000,12 @@ class MainWindow(QMainWindow):
             self.apply("片段顏色", edit.set_track_clip_colors, tid, None)
         elif action.startswith("toggle:"):
             flag = action.split(":", 1)[1]
+            if flag == "reference":                     # (the selected tracks together)
+                sel = self.timeline.selected_tracks
+                tids, on = sorted(sel) if tid in sel else [tid], not t.get(flag)
+                self.apply(("設為" if on else "取消") + "參考軌道" + (f"（{len(tids)} 條）" if len(tids) > 1 else ""),
+                           lambda lvl: [edit.set_track_flag(lvl, i, flag, on) for i in tids])
+                return
             label = {"muted": "靜音", "solo": "獨奏", "hidden": "隱藏", "locked": "鎖定"}[flag]
             self.apply(("取消" if t.get(flag) else "") + label + "軌道", edit.set_track_flag, tid, flag,
                        not t.get(flag))
@@ -3491,9 +3497,10 @@ class MainWindow(QMainWindow):
         """A private copy of the open level for the renderer thread, counted in the editor's
         frames (時間線精度) and played at the project's frame rate. Pickled rather than through
         JSON: it keeps what clips share shared (a compound's content, written out again for each of
-        its clips by JSON), so an edit or a drag tick of a big project takes 1 ms instead of 70."""
+        its clips by JSON), so an edit or a drag tick of a big project takes 1 ms instead of 70.
+        Its 參考 tracks show and sound (editing): an export's copy leaves them out."""
         v = pickle.loads(pickle.dumps(self.view(), pickle.HIGHEST_PROTOCOL))
-        v["play_fps"], v["fps"] = self.proj["fps"], self.fps
+        v["play_fps"], v["fps"], v["editing"] = self.proj["fps"], self.fps, True
         shown = self._matte_shown = self.matte_target()
         if shown:
             v["matte_preview"] = shown
@@ -3957,7 +3964,8 @@ class MainWindow(QMainWindow):
             return
         while self.path_ids:
             self.leave_compound()
-        total = round(self.proj["duration_us"] / US * self.fps)
+        out_tracks = [t for t in self.proj["tracks"] if project.present(t)]     # (參考 tracks are not exported)
+        total = max(round(project.end_us(out_tracks or self.proj["tracks"]) / US * self.fps), 1)
         default = (os.path.join(workspace.exports_dir(self.root), workspace.project_name(self.path) + ".mp4")
                    if self.root else os.path.join(os.path.expanduser("~"), "Videos", "KiaseCut.mp4"))
         if len(self.proj["timelines"]) > 1:              # one file per timeline

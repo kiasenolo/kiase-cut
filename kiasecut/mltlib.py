@@ -70,6 +70,10 @@ class Mlt:
         loc = locate()
         if loc["bin"]:
             os.add_dll_directory(loc["bin"])
+            if getattr(sys, "frozen", False):
+                # built (build_exec.bat), the launcher's DLL folder holds the built-in Python's
+                # DLLs: MLT loading its plugins must find Kdenlive's own first
+                C.windll.kernel32.SetDllDirectoryW(loc["bin"])
         self.lib = C.CDLL(loc["lib"])
         L = self.lib
 

@@ -5,3 +5,4 @@ __pycache__/
 *.tesetoa-cache/
 /out/
 .venv/
+/app-build-exec/

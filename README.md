@@ -116,6 +116,14 @@ python -m kiasecut draft_content.dec.json  # import a decrypted Jianying draft
 python -m kiasecut project.kiasecut.json   # open a saved project
 ```
 
+An executable without Python: `./build_exec.sh` (Linux) or `build_exec.bat` (Windows)
+builds `app-build-exec/kiasecut/` with PyInstaller (`packaging/kiasecut.spec`) — copy the
+whole folder, the program is `kiasecut` / `kiasecut.exe` in it. MLT and ffmpeg stay
+outside, found as above: MLT's plugins need the very Qt and FFmpeg they were built with, so
+the render engine is a program of its own (`engine/`) that has neither of the editor's.
+`build_exec.bat --bundle-mlt` copies Kdenlive's MLT, Qt and ffmpeg into the folder (`mlt/`),
+for machines without Kdenlive.
+
 Project manager (專案管理器, shown when it starts without a project, and from 檔案 >
 專案管理器… / Ctrl+Shift+O): every project - those in the projects folder (where 新專案
 puts them) and those on the recent list - as cards, newest first, with a search box. Each

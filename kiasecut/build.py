@@ -43,7 +43,9 @@ _ffmpeg = []
 def find_ffmpeg():
     """ffmpeg's path, or None. Searching PATH takes ~30 ms on Windows, so a find is kept."""
     if not _ffmpeg:
-        for c in ("ffmpeg", r"C:\Program Files\Kdenlive\bin\ffmpeg.exe", "/usr/bin/ffmpeg"):
+        over = os.environ.get("KIASECUT_MLT")       # (Kdenlive's copy built in: build_exec.bat --bundle-mlt)
+        for c in ("ffmpeg", *([os.path.join(over, "bin", "ffmpeg.exe")] if over else []),
+                  r"C:\Program Files\Kdenlive\bin\ffmpeg.exe", "/usr/bin/ffmpeg"):
             if shutil.which(c) or os.path.exists(c):
                 _ffmpeg.append(shutil.which(c) or c)
                 break

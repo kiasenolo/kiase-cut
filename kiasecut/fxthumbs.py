@@ -55,8 +55,11 @@ class Worker:
         env = dict(os.environ)
         pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env["PYTHONPATH"] = pkg_root + os.pathsep + env.get("PYTHONPATH", "")
+        # built for Windows (no console), this program has no stderr to pass on: printing a
+        # failure there (no OpenGL, say) raised, and the launcher showed it in a window
+        err = subprocess.DEVNULL if getattr(sys, "frozen", False) and sys.platform == "win32" else None
         self.proc = subprocess.Popen([sys.executable, "-m", "kiasecut.fxthumbs"], env=env,
-                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     def _read(self, n):

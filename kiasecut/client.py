@@ -14,9 +14,16 @@ class EngineClient:
         env = mltlib.env()
         pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env["PYTHONPATH"] = pkg_root + os.pathsep + env.get("PYTHONPATH", "")
-        self.proc = subprocess.Popen([sys.executable, "-m", "kiasecut.engine"], env=env,
+        if getattr(sys, "frozen", False):       # built: a program of its own (packaging/kiasecut.spec)
+            cmd = [os.path.join(os.path.dirname(sys.executable), "engine",
+                                "kiasecut-engine" + (".exe" if sys.platform == "win32" else ""))]
+            env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"     # (another built program, not this one again)
+        else:
+            cmd = [sys.executable, "-m", "kiasecut.engine"]
+        self.proc = subprocess.Popen(cmd, env=env,
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
-                                     encoding="utf-8", bufsize=1)
+                                     encoding="utf-8", bufsize=1,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         self.shm = shared_memory.SharedMemory(create=True, size=max_w * max_h * 4)
         hello = self._read()
         if not hello.get("ready"):

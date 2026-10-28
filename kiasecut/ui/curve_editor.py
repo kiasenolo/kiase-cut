@@ -20,8 +20,9 @@ playhead.
 The segment after each selected keyframe takes a typed CSS cubic-bezier or a preset. Edits
 show live in the preview while dragging and become one undo step on release.
 
-批量: with more clips selected, the keyframes of theirs alike the shown clip's (keybatch.py)
-are ringed and change with them while "一起修改" is ticked.
+批量: with more clips selected, the keyframes of theirs at the shown clip's times (keybatch.py,
+whatever their values) are ringed and change with them while "一起修改" is ticked: dragged
+by as much (each keeps its own value), a typed value set on them all.
 """
 import copy
 import math
@@ -672,6 +673,7 @@ class CurveEditor(QWidget):
         fit = QPushButton("全部顯示")
         fit.clicked.connect(lambda: self.canvas.fit())
         top.addWidget(self.norm)
+        self.typing = False                 # a value is being typed (set, not moved, on 批量's keys)
         self.batch = QCheckBox("一起修改")
         self.batch.setChecked(True)
         self.batch.setStyleSheet("QCheckBox { color: #5ad6ff; }")
@@ -854,9 +856,9 @@ class CurveEditor(QWidget):
         others, linked, links = self.links
         self.batch.setVisible(others > 0)
         self.batch.setEnabled(linked > 0)
-        self.batch.setText(f"一起修改另外 {linked} 個片段" if linked else "其他選取的片段沒有相近的關鍵幀")
-        self.batch.setToolTip("多選時，其他片段在同一參數、相差一幀內、數值相差 1% 內的關鍵幀（藍框）會跟著一起改："
-                              "移動、改數值、改曲線、刪除、新增")
+        self.batch.setText(f"一起修改另外 {linked} 個片段" if linked else "其他選取的片段沒有同時間的關鍵幀")
+        self.batch.setToolTip("多選時，其他片段在同一參數、相差一幀內的關鍵幀（藍框，數值不同也算）會跟著一起改："
+                              "移動、改曲線、刪除、新增；拖曳數值時各自加減一樣多，輸入數值時全部設成那個數值")
         on = linked > 0 and self.batch.isChecked()
         self.canvas.linked = {ci: links.get(r[:2], {}) for ci, r in enumerate(self.shown)} if on else {}
         self.canvas.update()
@@ -951,7 +953,11 @@ class CurveEditor(QWidget):
         self._typed(lambda c, k: k.__setitem__(0, t))
 
     def _value_typed(self, v):
-        self._typed(lambda c, k: None if c["color"] else k.__setitem__(1, v / c["factor"]))
+        self.typing = True                  # (批量: the other clips' keyframes are set to it too)
+        try:
+            self._typed(lambda c, k: None if c["color"] else k.__setitem__(1, v / c["factor"]))
+        finally:
+            self.typing = False
 
     def _set_bezier(self, spec):
         cv = self.canvas

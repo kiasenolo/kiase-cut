@@ -547,7 +547,10 @@ fits again; a click on the time ruler moves the playhead. The preview follows ev
 after each selected keyframe takes a CSS `cubic-bezier(x1, y1, x2, y2)` typed in (y may
 overshoot, for bounces) or a preset (linear, ease in / out / in-out, back). Time and value
 can be typed too: with several keyframes selected they show "--" where they differ, and a
-typed number goes to all of them.
+typed number goes to all of them. With more clips selected, 一起修改 (on by default) edits
+their keyframes on the same parameter at the shown clip's keyframe times (a frame apart at
+most, whatever their values; they are ringed) along with them: moved, re-eased, removed or
+added to as well, a dragged value moving each by as much and a typed one set on all.
 
 Speed and freeze frames (速度, in 屬性 for videos, sounds and compound clips, static ones
 excepted): 速度 plays the source faster or slower (2 × twice as fast, 0.5 × half as fast;

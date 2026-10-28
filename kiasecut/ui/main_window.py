@@ -2357,7 +2357,8 @@ class MainWindow(QMainWindow):
 
     def curve_batch(self, cid, changes):
         """批量: the curve editor's edit of clip cid done to the alike keyframes of the other
-        selected clips (keybatch.carry): [(clip id, group, key, keys, value if none are left)]."""
+        selected clips (keybatch.carry; a typed value is set on them):
+        [(clip id, group, key, keys, value if none are left)]."""
         if not self.curves.batch_on():
             return []
         c, others = self._batch_clips(cid)
@@ -2365,7 +2366,8 @@ class MainWindow(QMainWindow):
         for g, k, keys, _keep in (changes if c else ()):
             mine, theirs = self._alike(c, others, g, k)
             for o, og, p in theirs:
-                r = keybatch.carry(mine["keys"], keys, p["keys"], self.proj["fps"], o["duration_us"], edit.KEY_TOL_US)
+                r = keybatch.carry(mine["keys"], keys, p["keys"], self.proj["fps"], o["duration_us"], edit.KEY_TOL_US,
+                                   self.curves.typing)
                 if r is not None:
                     out.append((o["id"], og, k, r[0], r[1] if r[1] is not None else curves.value(p, 0)))
         return out

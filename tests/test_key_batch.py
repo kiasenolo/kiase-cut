@@ -1,6 +1,6 @@
-"""批量編輯關鍵幀: keyframes of other clips alike the edited curve's (a frame apart, values
-within 1%) are paired, and a move, a new value or ease, a removal or an added key is done
-to them too, each keeping its own small difference."""
+"""批量編輯關鍵幀: keyframes of other clips alike the edited curve's (a frame apart, whatever
+their values; the closer value first) are paired, and a move, a new value or ease, a removal
+or an added key is done to them too, each keeping its own difference (a typed value: set)."""
 import os
 import sys
 import unittest
@@ -33,13 +33,17 @@ class MatchTests(unittest.TestCase):
     def test_far_keys_do_not(self):
         a = [k(0, 0.0), k(S, 0.5)]
         self.assertEqual(keybatch.match(a, [k(0, 0.0), k(S + 2 * FRAME, 0.5)], FPS), {0: 0})   # two frames
-        self.assertEqual(keybatch.match(a, [k(0, 0.3), k(S, 0.6)], FPS), {})                    # 10%+ off
 
-    def test_colours_and_choices(self):
-        self.assertEqual(keybatch.match([k(0, [1.0, 0.5, 0.0])], [k(0, [0.995, 0.5, 0.0])], FPS), {0: 0})
-        self.assertEqual(keybatch.match([k(0, [1.0, 0.5, 0.0])], [k(0, [0.9, 0.5, 0.0])], FPS), {})
-        self.assertEqual(keybatch.match([k(0, "circle")], [k(0, "circle")], FPS), {0: 0})
-        self.assertEqual(keybatch.match([k(0, "circle")], [k(0, "line")], FPS), {})
+    def test_different_values_at_the_same_time_pair(self):
+        a = [k(0, 0.0), k(S, 0.5)]
+        self.assertEqual(keybatch.match(a, [k(0, 0.3), k(S, 6.0)], FPS), {0: 0, 1: 1})
+        self.assertEqual(keybatch.match([k(0, [1.0, 0.5, 0.0])], [k(0, [0.2, 0.9, 0.4])], FPS), {0: 0})
+        self.assertEqual(keybatch.match([k(0, "circle")], [k(0, "line")], FPS), {0: 0})
+
+    def test_the_closer_value_wins_a_tie(self):
+        other = [k(0, 9.0), k(20_000, 1.0)]                             # as near: 10 ms each way
+        self.assertEqual(keybatch.match([k(10_000, 1.0)], other, FPS), {0: 1})
+        self.assertEqual(keybatch.match([k(0, 1.0)], other, FPS), {0: 0})   # nearer in time first
 
     def test_each_key_pairs_once(self):
         self.assertEqual(keybatch.match([k(0, 1.0), k(FRAME, 1.0)], [k(0, 1.0)], FPS), {0: 0})
@@ -71,8 +75,8 @@ class CarryTests(unittest.TestCase):
         self.assertEqual([x[0] for x in keys], [0, 2 * S])
         keys, keep = self.carry(old, [], [k(0, 0.005), k(S, 0.5), k(2 * S, 1.0)])
         self.assertEqual((keys, keep), ([], 0.005))                   # (its own first value stays)
-        keys, _ = self.carry(old, [], [k(0, 0.2), k(S, 0.5), k(2 * S, 1.0)])
-        self.assertEqual(keys, [k(0, 0.2)])                            # not alike: kept
+        keys, _ = self.carry(old, [], [k(0, 0.2), k(S, 0.5), k(2 * S, 1.0), k(3 * S, 4.0)])
+        self.assertEqual(keys, [k(3 * S, 4.0)])                        # (at no time of the edited curve: kept)
 
     def test_added_key_follows_the_others_curve(self):
         old = [k(0, 0.0), k(2 * S, 1.0)]
@@ -81,8 +85,18 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(keys[1][0], S)
         self.assertAlmostEqual(keys[1][1], 0.5025 + 0.4, 3)
 
+    def test_different_values_move_by_as_much_or_take_a_typed_one(self):
+        old = [k(0, 0.0), k(S, 0.5)]
+        new = [k(0, 0.0), k(S, 0.8)]
+        other = [k(0, 2.0), k(S, 5.0)]
+        keys, _ = self.carry(old, new, other)
+        self.assertAlmostEqual(keys[1][1], 5.3)
+        self.assertEqual(keys[0], k(0, 2.0))                           # (left alone)
+        keys, _ = keybatch.carry(old, new, other, FPS, 5 * S, S // 120, absolute=True)
+        self.assertEqual([x[1] for x in keys], [2.0, 0.8])
+
     def test_nothing_alike_or_a_clash(self):
-        self.assertIsNone(self.carry([k(0, 0.0)], [k(FRAME, 0.0)], [k(0, 5.0)]))
+        self.assertIsNone(self.carry([k(0, 0.0)], [k(FRAME, 0.0)], [k(2 * FRAME, 5.0)]))
         old = [k(0, 0.0), k(S, 0.5)]
         other = [k(0, 0.0), k(S, 0.5), k(S + 2 * FRAME, 7.0)]            # moved onto a key of its own
         self.assertIsNone(self.carry(old, [k(0, 0.0), k(S + 2 * FRAME, 0.5)], other))
@@ -97,7 +111,7 @@ class EditorTests(unittest.TestCase):
         ed.set_clip(c, 0, FPS)
         ed.set_links(2, 0, {})
         self.assertFalse(ed.batch_on())
-        self.assertIn("沒有相近", ed.batch.text())
+        self.assertIn("沒有同時間", ed.batch.text())
         ed.set_links(2, 2, {("transform", "x"): {0: 2, 1: 1}})
         self.assertTrue(ed.batch_on())
         ci = [r[:2] for r in ed.shown].index(("transform", "x"))

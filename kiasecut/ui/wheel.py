@@ -10,7 +10,7 @@ view by its own pixels.
 import math
 
 from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import QAbstractItemView, QProxyStyle, QStyle
+from PySide6.QtWidgets import QAbstractItemView, QDockWidget, QMainWindow, QProxyStyle, QStyle
 
 TOUCHPAD_NOTCH_PX = 100   # how far two fingers move for one notch's zoom
 
@@ -53,9 +53,16 @@ def pinch(e):
 
 
 class Style(QProxyStyle):
-    """Lists and trees scroll by pixels, not whole rows, so a touchpad scrolls them smoothly."""
+    """Lists and trees scroll by pixels, not whole rows, so a touchpad scrolls them smoothly.
+    (And the main window's panels go to their place at once when dropped, not animated: Qt
+    finishes an animated drop only when the animation is deleted, later, and by then the
+    floating window of tabs it reparents them from may be gone - under Wayland a crash.)"""
 
     def styleHint(self, hint, option=None, widget=None, data=None):
         if hint == QStyle.SH_ItemView_ScrollMode:
             return QAbstractItemView.ScrollPerPixel.value
+        if hint == QStyle.SH_Widget_Animation_Duration and widget is not None and (
+                isinstance(widget, (QDockWidget, QMainWindow))
+                or widget.metaObject().className() == "QDockWidgetGroupWindow"):
+            return 0
         return super().styleHint(hint, option, widget, data)

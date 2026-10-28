@@ -5,6 +5,9 @@ can hold tabs too). Panels in tabs are one region: dragging the empty part of th
 moves them all together (GroupGrip), dragging a tab takes that one panel out. Those that left
 the tabs for the selection go along (Panels.gather): a panel whose tab mates have all left
 looks like one on its own, and dragging it by its title bar still takes them with it.
+Tabs floated together are a window of Qt's own (QDockWidgetGroupWindow) with no frame of its
+system's (as every floating panel under Wayland): their title bar is shown there as its frame,
+to drag the window by (onto the main window: back into it, all of them).
 
 Panels arranges them (the built-in layouts, see layouts.py), keeps which side panel was
 used last (`active`: the one whose tab was switched to or that was clicked in; the main
@@ -45,9 +48,10 @@ class DockTitle(QWidget):
         lab.setObjectName("title")
         lay.addWidget(lab)
         lay.addStretch()
+        self.buttons = {}
         for name, tip, fn in (("float", "浮動視窗 / 放回主視窗（也可以雙擊標題）", lambda: dock.setFloating(not dock.isFloating())),
                               ("close", "關閉（視窗選單可以再打開）", dock.close)):
-            b = QPushButton()
+            b = self.buttons[name] = QPushButton()
             b.setObjectName("tool")
             b.setIcon(icons.icon(name))
             b.setIconSize(QSize(12, 12))
@@ -59,7 +63,8 @@ class DockTitle(QWidget):
 
     def mouseDoubleClickEvent(self, e):
         d = self.parent()
-        d.setFloating(not d.isFloating())
+        if not d.in_floating_tabs():                  # (there: it would only take this one out)
+            d.setFloating(not d.isFloating())
 
     def sizeHint(self):
         return QSize(80, 20)
@@ -174,6 +179,11 @@ class Dock(QDockWidget):
         super().closeEvent(e)
         self.closedByUser.emit(self.key)
 
+    def in_floating_tabs(self):
+        """Whether it is in tabs floated together (a window of them)."""
+        p = self.parentWidget()
+        return p is not None and p.metaObject().className() == "QDockWidgetGroupWindow"
+
     def show_titlebar(self, on):
         want = self.title if on else self.blank
         if self.titleBarWidget() is not want:
@@ -193,7 +203,7 @@ class Panels(QObject):
         self.restoring = False
         self.active = "inspector"
         win.setDockOptions(QMainWindow.AllowNestedDocks | QMainWindow.AllowTabbedDocks
-                           | QMainWindow.AnimatedDocks | QMainWindow.GroupedDragging)
+                           | QMainWindow.GroupedDragging)       # (not animated: see wheel.Style)
         win.setTabPosition(Qt.AllDockWidgetAreas, QTabWidget.North)
         self.title_timer = QTimer(self, singleShot=True, interval=0)
         self.title_timer.timeout.connect(self.refresh_titles)
@@ -326,12 +336,16 @@ class Panels(QObject):
         self.changed.emit()
 
     def refresh_titles(self):
-        """Title bars only on panels that are not in tabs (the tabs carry the names there)."""
+        """Title bars only on panels that are not in tabs (the tabs carry the names there), and
+        on those in tabs floated together (the window's frame)."""
         if QApplication.mouseButtons() != Qt.NoButton:        # not in the middle of a drag
             self.title_timer.start(150)
             return
         for d in self.docks.values():
-            d.show_titlebar(not self.tabbed(d))
+            group = d.in_floating_tabs()
+            d.show_titlebar(group or not self.tabbed(d))
+            d.title.buttons["float"].setVisible(not group)
+            d.title.setToolTip("拖這裡移動整組（拖進主視窗：整組放回去）" if group else "")
         for bar in self.win.findChildren(QTabBar):          # (Qt makes them as panels go into tabs)
             if bar.metaObject().className() == "QMainWindowTabBar":
                 bar.installEventFilter(self.grip)          # (again on the same one: still once)

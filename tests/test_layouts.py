@@ -172,6 +172,31 @@ class PanelTests(unittest.TestCase):
             self.pn.set_usable(k, True)
         self.assertEqual({d.key for d in self.win.tabifiedDockWidgets(ins)}, set(SIDE[1:]))   # back with it
 
+    def test_tabs_floated_together_have_a_title_bar_to_bring_them_back(self):
+        ins, lib = self.pn["inspector"], self.pn["library"]
+        bar = next(b for b in self.win.findChildren(QTabBar) if b.metaObject().className() == "QMainWindowTabBar"
+                   and "屬性" in [b.tabText(i) for i in range(b.count())])
+        empty = QPoint(bar.width() - 3, bar.height() // 2)
+        QTest.mousePress(bar, Qt.LeftButton, Qt.NoModifier, empty)
+        QTest.mouseMove(bar, empty + QPoint(-30, 20))
+        out = ins.mapFromGlobal(self.win.mapToGlobal(QPoint(self.win.width() + 300, 300)))   # off the window
+        QTest.mouseMove(ins, out)
+        QTest.mouseRelease(ins, Qt.LeftButton, Qt.NoModifier, out)
+        QTest.qWait(50)
+        self.assertTrue(ins.in_floating_tabs() and ins.parentWidget().isWindow())
+        self.assertIs(ins.titleBarWidget(), ins.title)   # the window's frame
+        self.assertFalse(ins.title.buttons["float"].isVisible())
+        QTest.mousePress(ins.title, Qt.LeftButton, Qt.NoModifier, QPoint(40, 8))
+        QTest.mouseMove(ins.title, QPoint(80, 30))
+        to = ins.mapFromGlobal(lib.mapToGlobal(QPoint(5, lib.height() // 2)))
+        QTest.mouseMove(ins, to)
+        QTest.mouseRelease(ins, Qt.LeftButton, Qt.NoModifier, to)
+        QTest.qWait(400)
+        self.assertFalse(ins.in_floating_tabs())         # back in the main window, all of them
+        self.assertLess(ins.x(), lib.x())
+        self.assertEqual({d.key for d in self.win.tabifiedDockWidgets(ins)}, set(SIDE[1:]))
+        self.assertIs(ins.titleBarWidget(), ins.blank)
+
 
 if __name__ == "__main__":
     unittest.main()

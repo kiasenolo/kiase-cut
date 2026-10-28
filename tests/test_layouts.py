@@ -11,10 +11,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTabBar  # noqa: E402
 
 from kiasecut import layouts  # noqa: E402
-from kiasecut.ui.docks import ORDER, Panels  # noqa: E402
+from kiasecut.ui.docks import ORDER, SIDE, Panels  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -135,6 +135,23 @@ class PanelTests(unittest.TestCase):
         QTest.mouseClick(w, Qt.LeftButton, Qt.NoModifier, QPoint(5, 5))
         self.assertEqual(self.pn.active, "inspector")
         self.assertIn("mask", got)
+
+    def test_tabs_dragged_as_one_from_their_bar(self):
+        ins, lib = self.pn["inspector"], self.pn["library"]
+        bar = next(b for b in self.win.findChildren(QTabBar) if b.metaObject().className() == "QMainWindowTabBar"
+                   and "屬性" in [b.tabText(i) for i in range(b.count())])
+        empty = QPoint(bar.width() - 3, bar.height() // 2)
+        self.assertLess(bar.tabAt(empty), 0)
+        QTest.mousePress(bar, Qt.LeftButton, Qt.NoModifier, empty)
+        QTest.mouseMove(bar, empty + QPoint(-30, 20))
+        self.assertIs(self.pn["effects"].parentWidget(), ins.parentWidget())     # dragged together
+        to = ins.mapFromGlobal(lib.mapToGlobal(QPoint(5, lib.height() // 2)))  # left of the library
+        QTest.mouseMove(ins, to)
+        QTest.mouseRelease(ins, Qt.LeftButton, Qt.NoModifier, to)
+        QTest.qWait(400)                                 # (the docking animation)
+        self.assertLess(ins.x(), lib.x())
+        self.assertFalse(ins.isFloating())
+        self.assertEqual({d.key for d in self.win.tabifiedDockWidgets(ins)}, set(SIDE[1:]))
 
 
 if __name__ == "__main__":

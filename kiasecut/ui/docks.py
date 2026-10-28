@@ -1,7 +1,8 @@
 """The main window's panels as dock widgets: each can be dragged elsewhere in the window,
 put in tabs with others, split beside them or floated as a window of its own (dragged by
 its title bar, or by its tab while it is in tabs; a floating window with several panels
-can hold tabs too).
+can hold tabs too). Panels in tabs are one region: dragging the empty part of their tab bar
+moves them all together (GroupGrip), dragging a tab takes that one panel out.
 
 Panels arranges them (the built-in layouts, see layouts.py), keeps which side panel was
 used last (`active`: the one whose tab was switched to or that was clicked in; the main
@@ -9,9 +10,11 @@ window's mask mode follows it) and shows a side panel only while the selection h
 for it (set_usable): one in tabs leaves them, as a tab did before; one on its own stays and
 says it has nothing to show. A panel closed on purpose (its X, or the 視窗 menu) stays closed.
 """
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, Signal
+import shiboken6
+from PySide6.QtCore import QEvent, QObject, QPointF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (QApplication, QDockWidget, QHBoxLayout, QLabel, QMainWindow, QPushButton,
-                               QStackedWidget, QTabWidget, QWidget)
+                               QStackedWidget, QTabBar, QTabWidget, QWidget)
 
 from . import appevents, icons
 
@@ -63,6 +66,67 @@ class DockTitle(QWidget):
         return QSize(40, 20)
 
 
+class Blank(QWidget):
+    """The title bar while in tabs: a line, only there for GroupGrip to start the drag of the
+    tabs from (Qt drags a dock's tabs with it only from its title bar)."""
+
+    def sizeHint(self):
+        return QSize(0, 1)
+
+
+class GroupGrip(QObject):
+    """Dragging the empty part of a tab bar of the main window's panels drags all its panels as
+    one: the press there is handed to the front panel's title bar, so Qt drags its tabs with it
+    (QMainWindow.GroupedDragging)."""
+    TIP = "拖分頁：只拿出這一頁；拖分頁旁的空白：整組一起移動"
+
+    def __init__(self, panels):
+        super().__init__(panels)
+        self.panels = panels
+        self.press = None                     # (tab bar, where) of a press on an empty part
+
+    def eventFilter(self, bar, e):
+        t = e.type()
+        if t == QEvent.MouseButtonPress:
+            pos = e.position().toPoint()
+            if e.button() == Qt.LeftButton and bar.tabAt(pos) < 0:
+                self.press = (bar, pos)
+                return True
+        elif t == QEvent.MouseMove and self.press and self.press[0] is bar:
+            if (e.position().toPoint() - self.press[1]).manhattanLength() > QApplication.startDragDistance():
+                self.press = None
+                dock = self.front(bar)
+                if dock is not None:
+                    self.drag(dock, e)
+            return True
+        elif t == QEvent.MouseButtonRelease and self.press and self.press[0] is bar:
+            self.press = None
+            return True
+        return False
+
+    def front(self, bar):
+        """The panel of the tab bar's current tab."""
+        i = bar.currentIndex()
+        if i < 0:
+            return None
+        ptr = bar.tabData(i)                  # (Qt keeps each tab's dock widget there)
+        return next((d for d in self.panels.docks.values() if shiboken6.getCppPointer(d)[0] == ptr), None)
+
+    def drag(self, dock, e):
+        if not isinstance(dock.titleBarWidget(), Blank):
+            return
+        x = dock.width() / 2
+        here, there = QPointF(x, 0), QPointF(x + QApplication.startDragDistance() + 2, 0)
+        for kind, pos, buttons in ((QEvent.MouseButtonPress, here, Qt.LeftButton),
+                                   (QEvent.MouseMove, there, Qt.NoButton)):
+            QApplication.sendEvent(dock, QMouseEvent(kind, pos, e.globalPosition(), buttons, Qt.LeftButton,
+                                                     e.modifiers()))
+        # under Wayland the drag is over by now (a platform drag, done in the call above) and
+        # the mouse grab Qt takes after it would be left on the panel
+        if QGuiApplication.platformName().lower().startswith("wayland"):
+            dock.releaseMouse()
+
+
 class Dock(QDockWidget):
     closedByUser = Signal(str)
 
@@ -80,7 +144,7 @@ class Dock(QDockWidget):
         self.stack.addWidget(note)
         self.setWidget(self.stack)
         self.title = DockTitle(self)
-        self.blank = QWidget(self)            # no title bar while in tabs: the tab is its handle
+        self.blank = Blank(self)              # no title bar while in tabs: the tab is its handle
         self.blank.hide()
         self.setTitleBarWidget(self.title)
         self.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetMovable
@@ -115,6 +179,7 @@ class Panels(QObject):
         win.setTabPosition(Qt.AllDockWidgetAreas, QTabWidget.North)
         self.title_timer = QTimer(self, singleShot=True, interval=0)
         self.title_timer.timeout.connect(self.refresh_titles)
+        self.grip = GroupGrip(self)
         self.docks = {}
         for key in ORDER:
             d = Dock(key, widgets[key], win)
@@ -201,6 +266,10 @@ class Panels(QObject):
             return
         for d in self.docks.values():
             d.show_titlebar(not self.tabbed(d))
+        for bar in self.win.findChildren(QTabBar):          # (Qt makes them as panels go into tabs)
+            if bar.metaObject().className() == "QMainWindowTabBar":
+                bar.installEventFilter(self.grip)          # (again on the same one: still once)
+                bar.setToolTip(GroupGrip.TIP)
 
     # -- layouts -----------------------------------------------------------------------------------
     def closed(self):

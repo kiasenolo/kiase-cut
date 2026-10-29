@@ -47,6 +47,8 @@ def thumbnail(engine, ref, moment=None):
     if d.error:
         return None
     vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+    if moment is not None:                                               # (a "每格不同" switch is on, to show it move)
+        vals.update({p.name: True for p in d.params if p.type == "bool" and p.name == "animated"})
     pic = sample_picture()
     unit = pic.shape[0] / 1080                                           # (as on a 1080p canvas)
     if moment is None:

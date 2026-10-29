@@ -2904,6 +2904,10 @@ class MainWindow(QMainWindow):
         if cid:
             self.on_filter_dropped(payload, cid, "", 0)
             return
+        top = edit.layers(self.container())[:1]
+        if above == 0 and top and top[0]["type"] == "filter":      # on top of a filter layer already: stacked in it
+            self.on_filter_dropped(payload, top[0]["id"], "", 0)
+            return
         ref, effect, _src = dropped_fx(payload)
         self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), None)
         self.add_filter_clip(ref, "", 0, effect)

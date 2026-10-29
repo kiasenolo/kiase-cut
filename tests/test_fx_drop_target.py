@@ -92,6 +92,22 @@ class FxDropTargetTests(unittest.TestCase):
         self.assertEqual(applied, ["新增效果"])                                   # not nothing, not a filter clip
 
 
+class LayerStackTests(unittest.TestCase):
+    def test_second_effect_on_top_stacks_in_the_filter_layer(self):
+        p = proj()
+        first = edit.add_filter_clip(p, "builtin:blur", 0)
+        calls = []
+        host = types.SimpleNamespace(container=lambda *_: p, on_filter_dropped=lambda *a: calls.append(("stack",) + a),
+                                     add_filter_clip=lambda *a: calls.append(("new",) + a), layer_drop_at=None)
+        top = edit.layers(p)[0]
+        self.assertEqual(top["id"], first["id"])
+        MainWindow.layer_fx_drop(host, "builtin:invert", "", 0)
+        self.assertEqual(calls, [("stack", "builtin:invert", first["id"], "", 0)])
+        calls.clear()
+        MainWindow.layer_fx_drop(host, "builtin:invert", "", 2)               # (between layers lower down: a layer of its own)
+        self.assertEqual(calls[0][0], "new")
+
+
 class PivotUnitsTests(unittest.TestCase):
     def test_pivot_shown_in_object_widths(self):
         from kiasecut.ui.inspector import Inspector

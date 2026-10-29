@@ -6,6 +6,6 @@
 vec4 effect(vec2 uv) {
     vec4 c = src(uv);
     vec2 cell = floor(uv * resolution / size);
-    float n = rand(cell + vec2(float(frame) * 13.1, float(frame) * 7.7)) - 0.5;
+    float n = rand(cell + vec2(frame_phase().x * 13.1, frame_phase().x * 7.7) + frame_phase().y * vec2(0.37, 0.53)) - 0.5;
     return vec4(clamp(c.rgb + n * amount * c.a, 0.0, c.a), c.a);
 }

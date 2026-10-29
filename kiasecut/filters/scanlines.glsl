@@ -9,6 +9,6 @@ vec4 effect(vec2 uv) {
     vec4 c = src(uv);
     float y = uv.y * resolution.y / spacing - time * speed;
     float line = 0.5 + 0.5 * sin(y * 6.2831853);
-    float f = 1.0 - flicker * 0.25 * rand(vec2(float(frame), 3.7));
+    float f = 1.0 - flicker * 0.25 * rand(vec2(frame_phase().x, 3.7 + frame_phase().y * 0.37));
     return vec4(c.rgb * (1.0 - strength * line) * f, c.a);
 }

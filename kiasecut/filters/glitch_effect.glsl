@@ -28,7 +28,7 @@ vec4 effect(vec2 uv) {
         float st = clamp(steps, 2.0, 1024.0);
         y = floor(y * st) / st;
     }
-    vec3 q = vec3(0.0, y, seed + (animated ? float(frame) : 0.0));
+    vec3 q = vec3(animated ? frame_phase().y * 0.73 : 0.0, y, seed + (animated ? frame_phase().x : 0.0));
     vec3 n = vec3(white3(q), white3(q + vec3(17.1, 3.7, 9.3)), white3(q + vec3(5.3, 21.9, 1.3)));
     vec3 dx = (n + base_offset) * shake / resolution.x;        // each channel's shift, canvas px -> uv
 

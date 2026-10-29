@@ -9,7 +9,7 @@ vec4 effect(vec2 uv) {
     vec4 c = unpremultiply(src(uv));
     float l = dot(c.rgb, vec3(0.299, 0.587, 0.114)) * gain;
     l = l / (1.0 + l * 0.35);                               // bright parts roll off instead of clipping
-    l += (rand(uv * resolution + float(frame) * 1.31) - 0.5) * noise * 0.4;
+    l += (rand(uv * resolution + frame_phase().x * 1.31 + frame_phase().y * 0.37) - 0.5) * noise * 0.4;
     float fine = smoothstep(1.5, 3.0, 4.0 / resolution.y / fwidth(uv.y));   // no moire when drawn small
     l *= 1.0 - 0.15 * fine * (0.5 + 0.5 * sin(uv.y * resolution.y * 1.5708));
     vec3 rgb = clamp(l, 0.0, 1.2) * tint.rgb;

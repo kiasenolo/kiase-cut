@@ -277,6 +277,9 @@ vec4 original(vec2 uv) { return texture(original_, clamp(uv, 0.0, 1.0)); }
 vec4 unpremultiply(vec4 c) { return c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(0.0); }
 vec4 premultiply(vec4 c) { return vec4(c.rgb * c.a, c.a); }
 float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+// the frame as two small numbers (the frame itself is too big for a hash to stay fine: past ~20000 the float
+// loses its fraction and noise made from it stops changing): .x the frame within a block of 1024, .y the block
+vec2 frame_phase() { return vec2(float(frame & 1023), float(frame >> 10)); }
 %(sampled)s
 #line 1
 """

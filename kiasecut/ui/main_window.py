@@ -4628,6 +4628,8 @@ class MainWindow(QMainWindow):
         sel = self.timeline.selected_ids
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first()
                if c["type"] in edit.VISUAL] if cid in sel else [cid]
+        if cid not in ids:                                   # (a selected layer inside a group is not on the level's rows:
+            ids = [cid]                                      # dropping on it must not do nothing)
         self.apply("複製效果" if effect else "新增效果", lambda lvl: [edit.put_effect(lvl, k, effect or ref) for k in ids])
         self.panels.show("effects")
 

@@ -2159,6 +2159,8 @@ class Timeline(QWidget):
     def _fx_target(self, pos):
         """The clip a filter dropped at pos goes onto (pictures, texts, compounds, filter clips)."""
         _, c, _ = self._hit(pos)
+        if c is None:                                       # (or a clip on an open group's lane)
+            c = self._lane_hit(pos)[1]
         return c if c is not None and c["type"] in edit.VISUAL else None
 
     def leaveEvent(self, e):
@@ -2173,6 +2175,7 @@ class Timeline(QWidget):
         self.update()
 
     def dropEvent(self, e):
+        lit = self.drop_clip                               # (what the user saw lit: the last move may differ from the release)
         self.drop_at = self.drop_clip = self.drop_many = None
         self.drop_replace = False
         self.into_lane = None
@@ -2191,7 +2194,7 @@ class Timeline(QWidget):
             if self.proj:
                 ref = bytes(e.mimeData().data(FX_MIME)).decode("utf-8")
                 row = self._drop_row(pos.y())
-                c = self._fx_target(pos)
+                c = lit if lit is not None and e.mimeData().hasFormat(FX_MIME) else self._fx_target(pos)
                 tid = self.rows[row]["id"] if row is not None and self.rows[row]["kind"] != "audio" else ""
                 self.filterDropped.emit(ref, c["id"] if c else "", tid, int(max(0.0, self._sec(pos.x())) * US))
                 e.acceptProposedAction()

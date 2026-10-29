@@ -23,8 +23,7 @@ freely), drag the round
 handle above it to rotate (Shift: 15° steps; it also settles on 0 / 90 / 180 / 270). It turns
 and scales about its pivot (中心點, the ring with a cross, at its centre unless moved; with Alt a
 scale drag keeps the pivot in place): drag the ring to move the pivot (Ctrl+drag while it is at
-the centre, where a plain drag moves the clip) - the ring stays where it is and the clip moves the other way (x / y make up for
-it) - and it snaps to the clip's centre, corners and edge middles (Shift: freely). With X / Y
+the centre, where a plain drag moves the clip) - x / y stay (a turned or scaled clip swings round the new pivot, as with CSS transform-origin) - and it snaps to the clip's centre, corners and edge middles (Shift: freely). With X / Y
 scale linked a corner or an edge keeps their ratio; unlinked, a corner sets both freely (Shift
 keeps the ratio) and an edge only its own axis. A built-in asset (assets.py) is resized instead:
 its 寬 / 高 change and its scale stays (an edge changes one side, a corner both, Shift keeps
@@ -1515,8 +1514,8 @@ class Preview(QWidget):
 
     def _pivot_values(self, box, m, mods):
         """pivot_x / pivot_y of a drag of the pivot (中心點) to canvas point m, and x / y so
-        that the pivot stays where it is on the canvas (the clip moves the other way: the pivot
-        is only what it turns and scales about, x / y say where the pivot is). It snaps to the clip's centre, corners and edge
+        unchanged (like CSS transform-origin: x / y place the clip, the pivot only says what it
+        turns and scales about, so a turned or scaled clip swings round the new pivot). It snaps to the clip's centre, corners and edge
         middles (Shift: freely)."""
         inv, ok = box.xf().inverted()
         if not ok:
@@ -1530,10 +1529,7 @@ class Preview(QWidget):
             if dist(near) <= tol:
                 q = near
         px, py = round(q.x() / (box.W / 2), 5), round(-q.y() / (box.H / 2), 5)
-        tf = box.clip.get("transform") or {}
-        x0, y0 = curves.value(tf.get("x", 0.0), box.t), curves.value(tf.get("y", 0.0), box.t)
-        return {"pivot_x": px, "pivot_y": py,
-                "x": round(x0 + box.pivot[0] - px, 5), "y": round(y0 + box.pivot[1] - py, 5)}
+        return {"pivot_x": px, "pivot_y": py}
 
     def _snap_scale(self, box, others, driven, anchor, ks, tied):
         """Snap the factors ks = (kx, ky) of a scale drag so that a moving edge lands on the

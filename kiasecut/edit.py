@@ -635,8 +635,9 @@ def add_text(proj, at_us, content="輸入文字", duration_us=3_000_000):
         "id": new_clip_id(proj), "type": "text", "name": content[:20],
         "start_us": int(at_us), "duration_us": int(duration_us), "source_start_us": 0,
         "text": {"content": content, "font_path": project.DEFAULT_FONT, "size": 7.95,
-                 "color": [1.0, 1.0, 1.0], "letter_spacing": 0.0, "line_spacing": 0.02,
-                 "italic_deg": 0},
+                 "color": [1.0, 1.0, 1.0], "fill": True, "stroke_on": False,
+                 "stroke_color": [0.0, 0.0, 0.0], "stroke": 2.0, "stroke_align": "inside",
+                 "letter_spacing": 0.0, "line_spacing": 0.02, "italic_deg": 0},
         "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0},
     }
     for t in reversed(proj["tracks"]):
@@ -662,10 +663,11 @@ def new_track_id(proj):
     return f"t{n}"
 
 
-TEXT_FIELDS = ("content", "font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align",
-               "valign", "box_w", "box_h")
+TEXT_FIELDS = ("content", "font_path", "size", "color", "fill", "stroke_on", "stroke_color", "stroke",
+               "stroke_align", "letter_spacing", "line_spacing", "italic_deg", "align", "valign", "box_w", "box_h")
 TEXT_ALIGNS = ("left", "center", "right", "justify")      # 對齊 (justify: 齊頭尾)
 TEXT_VALIGNS = ("top", "middle", "bottom")               # 垂直對齊 in a 文字框
+TEXT_STROKE_ALIGNS = ("inside", "center", "outside")
 TEXT_BOX_MODES = ("auto", "auto_h", "fixed")             # 自動寬度 / 自動高度 / 固定大小 (Lunacy's)
 TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity", "pivot_x", "pivot_y")   # (pivot: 中心點)
 
@@ -733,7 +735,8 @@ def replace_fonts(proj, mapping):
     return n
 
 
-STYLE_TEXT_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align", "valign")
+STYLE_TEXT_FIELDS = ("font_path", "size", "color", "fill", "stroke_on", "stroke_color", "stroke",
+                     "stroke_align", "letter_spacing", "line_spacing", "italic_deg", "align", "valign")
 
 
 def apply_text_style(proj, clip_id, style):
@@ -787,8 +790,8 @@ def set_transform(proj, clip_id, key, value, t=None):
 
 
 # -- keyframes ------------------------------------------------------------------------------------
-TEXT_ANIM_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align",
-                    "valign", "box_w", "box_h")
+TEXT_ANIM_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
+                    "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign", "box_w", "box_h")
 GROUP_FIELDS = {
     "transform": TRANSFORM_FIELDS,
     "text": TEXT_ANIM_FIELDS,
@@ -800,7 +803,8 @@ GROUP_FIELDS = {
 BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "color_dodge", "color_burn",
                "hard_light", "soft_light", "difference", "exclusion", "add", "pass_through")
 DISCRETE_DEFAULTS = {"font_path": project.DEFAULT_FONT, "kind": "rectangle", "invert": False, "blend": "normal",
-                     "align": "center", "valign": "top"}
+                     "align": "center", "valign": "top", "fill": True, "stroke_on": False,
+                     "stroke_align": "inside"}
 KEY_TOL_US = 1_000_000 // 120      # half a 60 fps frame
 
 
@@ -934,6 +938,8 @@ def _check_choice(c, group, key, value):
         raise EditError(f"unknown text alignment {value}")
     if key == "valign" and group == "text" and value not in TEXT_VALIGNS:
         raise EditError(f"unknown vertical alignment {value}")
+    if key == "stroke_align" and group == "text" and value not in TEXT_STROKE_ALIGNS:
+        raise EditError(f"unknown text outline alignment {value}")
     if key == "blend" and group == "clip":
         if c["type"] not in VISUAL or c["type"] == "filter":
             raise EditError("blend modes go on pictures, videos, texts and compound clips")
@@ -1055,7 +1061,8 @@ def _toggle_one(c, h, group, key, t):
         default = DISCRETE_DEFAULTS[key]
     else:
         default = {"scale": 1.0, "opacity": 1.0, "volume": 1.0, "w": 1.0, "h": 1.0, "size": 5.0,
-                   "color": [1.0, 1.0, 1.0], "mix": 1.0}.get(key, 0.0)
+                   "color": [1.0, 1.0, 1.0], "stroke_color": [0.0, 0.0, 0.0],
+                   "stroke": 2.0, "mix": 1.0}.get(key, 0.0)
     p = h.get(key, default)
     i = key_at(p, t)
     if i is not None:

@@ -175,7 +175,8 @@ class UserLibrary:
 
 
 # -- text styles ------------------------------------------------------------------------------------
-STYLE_FIELDS = ("font_path", "size", "color", "letter_spacing", "line_spacing", "italic_deg", "align")
+STYLE_FIELDS = ("font_path", "size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
+                "letter_spacing", "line_spacing", "italic_deg", "align")
 
 
 def style_from_clip(clip):

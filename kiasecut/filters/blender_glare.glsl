@@ -2,6 +2,7 @@
 // @category Blender
 // @description Blender 合成器的 Glare：亮部的光暈、鬼影、光芒、霧光、星芒、光束（在線性光裡運算）
 // @passes 2
+// @precision float
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
 // @param quality menu 中 "高|中|低" "品質"
 // @param threshold float 0.7 0 1 "亮度門檻"
@@ -56,11 +57,10 @@ vec3 highlights(vec3 c) {
     return v > 0.0 ? c * ((b - thr) / v) : vec3(0.0);
 }
 
-// pass 0's highlights at p (stored as square roots: more precision for the dark end of 8 bits); none outside
+// pass 0's highlights at p (kept as 16-bit floats, linear); none outside
 vec3 H(vec2 p) {
     if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) return vec3(0.0);
-    vec3 e = src(p).rgb;
-    return e * e;
+    return src(p).rgb;
 }
 
 vec3 rgb2hsv(vec3 c) {
@@ -248,7 +248,7 @@ vec3 sun_beams(vec2 uv, vec2 R) {
 
 vec4 effect(vec2 uv) {
     if (pass_index == 0)
-        return vec4(sqrt(clamp(highlights(linear(src(uv)).rgb), 0.0, 1.0)), 1.0);
+        return vec4(max(highlights(linear(src(uv)).rgb), vec3(0.0)), 1.0);
 
     vec2 R = resolution;
     float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;

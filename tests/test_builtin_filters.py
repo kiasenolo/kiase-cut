@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -42,6 +43,19 @@ class BuiltinFilterTests(unittest.TestCase):
         names = {fx.get(ref).name for ref in fx.builtin_refs()}
         for n in ("Glare", "Lens Distortion", "Vignette", "Sensor Noise"):
             self.assertIn("[Blender] " + n, names)
+
+    def test_transform_filters_are_available(self):
+        names = {fx.get(ref).name for ref in fx.builtin_refs()}
+        self.assertTrue({"Transform", "Scale", "Translate"}.issubset(names))
+
+    def test_seed_uses_subsecond_timestamp(self):
+        ref = "builtin:light_leak"
+        with patch("kiasecut.fx.time.time_ns", side_effect=(1_234_567_890_123, 1_234_567_890_456)):
+            first = fx.new_effect(ref, "e1")["params"]["seed"]
+            second = fx.new_effect(ref, "e2")["params"]["seed"]
+        self.assertNotEqual(first, second)
+        self.assertGreaterEqual(first, 0)
+        self.assertLessEqual(first, 100)
 
 
 if __name__ == "__main__":

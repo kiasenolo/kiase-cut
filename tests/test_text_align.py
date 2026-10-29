@@ -4,12 +4,17 @@ top / middle / bottom; switching keeps the text where it is; the preview's handl
 import os
 import sys
 import unittest
+import numpy as np
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from kiasecut import edit, textlayout  # noqa: E402
 from test_edit import S, proj  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+APP = QApplication.instance() or QApplication([])
 
 
 def ink_span(im, row_lo, row_hi):
@@ -54,6 +59,66 @@ class TextAlignTests(unittest.TestCase):
         from kiasecut import curves
         self.assertEqual(curves.value(c["text"]["align"], S // 4), "right")        # held
         self.assertEqual(curves.value(c["text"]["align"], S * 3 // 4), "justify")
+
+    def test_fill_outline_and_keyframes(self):
+        p = proj()
+        c = edit.add_text(p, 0, "O")
+        spec = dict(c["text"], stroke_on=True, stroke_color=[1.0, 0.0, 0.0], stroke=5.0, fill=False)
+        outlined = textlayout.render(spec, 1.0)
+        filled = textlayout.render(dict(spec, fill=True), 1.0)
+        outline_alpha = np.frombuffer(outlined.getchannel("A").tobytes(), dtype=np.uint8)
+        fill_alpha = np.frombuffer(filled.getchannel("A").tobytes(), dtype=np.uint8)
+        self.assertGreater(int(outline_alpha.sum()), 0)
+        self.assertLess(int(outline_alpha.sum()), int(fill_alpha.sum()))
+        pixels = outlined.load()
+        self.assertTrue(any(pixels[x, y][0] > pixels[x, y][1] * 1.5
+                            for y in range(outlined.height) for x in range(outlined.width)
+                            if pixels[x, y][3]))
+
+        edit.toggle_key(p, c["id"], "text", "stroke_on", 0)
+        edit.set_param(p, c["id"], "text", "stroke_on", True, S // 2)
+        from kiasecut import curves
+        self.assertFalse(curves.value(c["text"]["stroke_on"], S // 4))
+        self.assertTrue(curves.value(c["text"]["stroke_on"], 3 * S // 4))
+
+        c["text"].pop("fill")
+        edit.toggle_key(p, c["id"], "text", "fill", 0)
+        self.assertTrue(curves.value(c["text"]["fill"], 0))
+
+    def test_outline_alignment_changes_its_bounds_and_is_keyframeable(self):
+        p = proj()
+        c = edit.add_text(p, 0, "O")
+        base = dict(c["text"], stroke_on=True, fill=False, stroke=5.0)
+        bounds = {}
+        for align in ("inside", "center", "outside"):
+            alpha = textlayout.render(dict(base, stroke_align=align), 1.0).getchannel("A")
+            bounds[align] = alpha.getbbox()
+        widths = {align: box[2] - box[0] for align, box in bounds.items()}
+        self.assertLess(widths["inside"], widths["center"])
+        self.assertLess(widths["center"], widths["outside"])
+        edit.set_param(p, c["id"], "text", "stroke_align", "outside")
+        edit.toggle_key(p, c["id"], "text", "stroke_align", 0)
+        edit.set_param(p, c["id"], "text", "stroke_align", "center", S // 2)
+        from kiasecut import curves
+        self.assertEqual(curves.value(c["text"]["stroke_align"], S // 4), "outside")
+        self.assertEqual(curves.value(c["text"]["stroke_align"], 3 * S // 4), "center")
+        with self.assertRaises(edit.EditError):
+            edit.set_param(p, c["id"], "text", "stroke_align", "invalid")
+
+    def test_inspector_exposes_fill_and_outline_controls(self):
+        from kiasecut.ui.inspector import Inspector
+        ins = Inspector()
+        c = edit.add_text(proj(), 0, "文字")
+        ins.show_clips([c], 0, 30)
+        got = []
+        ins.paramEdited.connect(lambda ids, group, key, value: got.append((group, key, value)))
+        ins.widgets["fill"].click()
+        ins.widgets["stroke_on"].click()
+        self.assertIn(("text", "fill", False), got)
+        self.assertIn(("text", "stroke_on", True), got)
+        self.assertIn("stroke_color", ins.widgets)
+        self.assertIn(("text", "stroke"), ins.widgets)
+        self.assertIn("stroke_align", ins.widgets)
 
 
 LONG = "The quick brown fox jumps over 敏捷的棕色狐狸跳過懶狗"

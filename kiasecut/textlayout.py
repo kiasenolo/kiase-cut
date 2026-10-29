@@ -17,7 +17,7 @@ Calibrated frame by frame against a Jianying export:
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from . import curves, fonts
 
@@ -176,14 +176,20 @@ def render(spec, scale, canvas_h=1080):
     lay = _layout(spec, scale, canvas_h)
     lines, base_em, fw = lay["lines"], lay["base_em"], lay["fw"]
     shear = math.tan(math.radians(spec.get("italic_deg", 0.0)))
-    pad = int(base_em * (0.3 + abs(shear))) + 4
+    stroke_width = max(0, int(round(spec.get("stroke", 2.0) * canvas_h / 1080 * scale))) \
+        if spec.get("stroke_on", False) else 0
+    stroke_align = spec.get("stroke_align", "inside")
+    pad = int(base_em * (0.3 + abs(shear))) + (stroke_width if stroke_align != "inside" else 0) + 4
     W = int(math.ceil(2 * lay["half_w"])) + 2 * pad
     H = int(math.ceil(2 * lay["half_h"])) + 2 * pad
     W += W % 2
     H += H % 2
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     dr = ImageDraw.Draw(im)
+    glyph_mask = Image.new("L", im.size, 0) if stroke_width else None
+    mask_draw = ImageDraw.Draw(glyph_mask) if glyph_mask else None
     align = spec.get("align") or "center"
+    fill_on = spec.get("fill", True)
     for li, (glyphs, lw) in enumerate(lines):
         left = (W - fw) / 2
         ox = {"left": left, "justify": left, "right": left + fw - lw}.get(align, (W - lw) / 2)
@@ -192,7 +198,28 @@ def render(spec, scale, canvas_h=1080):
             spread = (fw - lw) / (len(glyphs) - 1)          # between every two characters
         top = H / 2 + lay["ct"] + lay["ext_top"] + li * lay["step"]
         for gi, (gx, ch, f, rgba, _adv) in enumerate(glyphs):
-            dr.text((ox + gx + gi * spread, top + lay["asc"]), ch, font=f, fill=rgba, anchor="ls")
+            at = (ox + gx + gi * spread, top + lay["asc"])
+            dr.text(at, ch, font=f, fill=rgba if fill_on else (0, 0, 0, 0), anchor="ls")
+            if mask_draw:
+                mask_draw.text(at, ch, font=f, fill=255, anchor="ls")
+    if glyph_mask:
+        radius = stroke_width if stroke_align != "center" else (stroke_width + 1) // 2
+        size = radius * 2 + 1
+        expanded = glyph_mask.filter(ImageFilter.MaxFilter(size)) if radius else glyph_mask
+        contracted = glyph_mask.filter(ImageFilter.MinFilter(size)) if stroke_align != "outside" and radius else glyph_mask
+        if stroke_align == "inside":
+            outline = Image.frombytes("L", im.size, bytes(max(0, a - b) for a, b in
+                                    zip(glyph_mask.tobytes(), contracted.tobytes())))
+        elif stroke_align == "outside":
+            outline = Image.frombytes("L", im.size, bytes(max(0, a - b) for a, b in
+                                    zip(expanded.tobytes(), glyph_mask.tobytes())))
+        else:
+            outline = Image.frombytes("L", im.size, bytes(max(0, a - b) for a, b in
+                                    zip(expanded.tobytes(), contracted.tobytes())))
+        stroke_color = tuple(int(round(v * 255)) for v in (spec.get("stroke_color") or [0, 0, 0])[:3]) + (255,)
+        stroke_layer = Image.new("RGBA", im.size, stroke_color)
+        stroke_layer.putalpha(outline)
+        im = Image.alpha_composite(stroke_layer, im)
     if shear:
         im = im.transform(im.size, Image.AFFINE, (1, shear, -shear * H / 2, 0, 1, 0),
                           resample=Image.BICUBIC)

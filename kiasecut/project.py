@@ -41,8 +41,11 @@ clip     {id, type: image | video | audio | text | compound, name,
                 path), img_w / img_h (its size, for its proportions); kind "video" with a
                 video file playing: video (its path), vid_w / vid_h, vid_dur (us), t_off as a
                 compound's (its time at the clip's start)
-          text: {content, font_path, size, color, letter_spacing, line_spacing,
-                 italic_deg, styles, align, valign, box_w, box_h}   text clips;
+          text: {content, font_path, size, color, fill, stroke_on, stroke_color, stroke, stroke_align,
+                 letter_spacing, line_spacing, italic_deg, styles, align, valign, box_w, box_h}
+                                                                  text clips; fill defaults on,
+                 stroke_on defaults off, stroke is the outline width in 1080-high canvas px;
+                 stroke_align: inside | center | outside, defaults inside;
                 box_w / box_h: the 文字框 (textlayout.py; absent or 0: as big as the words)
           volume, fade_in_us, fade_out_us                   clips with sound
           backdrop: {on, hide}                              visual clips with effects, optional:

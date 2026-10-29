@@ -17,6 +17,7 @@ import hashlib
 import os
 import re
 import shlex
+import time
 
 import numpy as np
 
@@ -48,8 +49,9 @@ class Param:
 
 
 class FilterDef:
-    def __init__(self, ref, name, code, params=(), category="", description="", passes=1, error=None):
+    def __init__(self, ref, name, code, params=(), category="", description="", passes=1, error=None, precise=False):
         self.ref, self.name, self.code = ref, name, code
+        self.precise = precise                   # the passes before the last one keep 16-bit floats, not 8 bits
         self.params, self.category, self.description = list(params), category, description
         self.passes, self.error = passes, error
 
@@ -149,12 +151,16 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head[key] = rest
             elif key == "passes":
                 head["passes"] = max(1, min(MAX_PASSES, int(rest)))
+            elif key == "precision":
+                if rest.lower() not in ("float", "8bit"):
+                    raise ValueError("@precision 要寫 float 或 8bit")
+                head["precise"] = rest.lower() == "float"
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
     if "effect" not in text:
         error = error or "找不到 effect() 函式"
     return FilterDef(ref, head.get("filter") or fallback_name, text, params, head.get("category", ""),
-                     head.get("description", ""), head.get("passes", 1), error)
+                     head.get("description", ""), head.get("passes", 1), error, head.get("precise", False))
 
 
 _cache = {}
@@ -205,7 +211,14 @@ def default_params(d):
 def new_effect(ref, effect_id):
     """A new effect entry for a clip: {id, filter, enabled, params}; an optional "mix" (0 - 1,
     may be keyframed: 混合程度) blends the result with the picture it was given, 1 when absent."""
-    return {"id": effect_id, "filter": ref, "enabled": True, "params": default_params(get(ref))}
+    d = get(ref)
+    params = default_params(d)
+    for p in d.params:
+        if p.name == "seed" and p.type in ("float", "int") and p.hi > p.lo:
+            stamp = time.time_ns() / 1_000_000_000
+            seed = p.lo + (stamp % (p.hi - p.lo))
+            params[p.name] = round(seed) if p.type == "int" else seed
+    return {"id": effect_id, "filter": ref, "enabled": True, "params": params}
 
 
 def mix_at(e, t):
@@ -340,6 +353,7 @@ class Engine:
         self.quad = self.ctx.buffer(quad.tobytes())
         self.programs = {}
         self.targets = {}            # (w, h) -> [(texture, fbo)] x 3
+        self.mid_targets = {}        # (w, h) -> [(texture, fbo)] x 2, 16-bit floats (@precision float)
 
     def _program(self, d, sampled=()):
         key = (d.key(), sampled)
@@ -372,6 +386,21 @@ class Engine:
                 tex.repeat_x = tex.repeat_y = False
                 t.append((tex, self.ctx.framebuffer(color_attachments=[tex])))
             self.targets[(w, h)] = t
+        return t
+
+    def _mid_targets(self, w, h):
+        """Two 16-bit float targets for the passes between the first and the last of a @precision float filter."""
+        t = self.mid_targets.get((w, h))
+        if t is None:
+            if len(self.mid_targets) > 6:
+                self.mid_targets.clear()
+            t = []
+            for _ in range(2):
+                tex = self.ctx.texture((w, h), 4, dtype="f2")
+                tex.filter = (self.mgl.LINEAR, self.mgl.LINEAR)
+                tex.repeat_x = tex.repeat_y = False
+                t.append((tex, self.ctx.framebuffer(color_attachments=[tex])))
+            self.mid_targets[(w, h)] = t
         return t
 
     def run(self, d, values, rgba, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None):
@@ -432,7 +461,8 @@ class Engine:
         for i in range(d.passes):
             if "pass_index" in prog:
                 prog["pass_index"].value = i
-            dst_tex, dst_fbo = next(t for t in targets if t[0] is not read and t[0] is not src)
+            pool = self._mid_targets(w, h) if d.precise and i < d.passes - 1 else targets
+            dst_tex, dst_fbo = next(t for t in pool if t[0] is not read and t[0] is not src)
             dst_fbo.use()
             self.ctx.viewport = (0, 0, w, h)
             read.use(0)

@@ -12,7 +12,8 @@ add a 素材參數 section: size in canvas pixels, colours and the shape's own s
 with its ◆ like any other value. A text's 對齊 row has Lunacy's two sets: left / centre / right /
 justified, then top / middle / bottom (in a 文字框 of a fixed height); 文字框 picks Lunacy's
 自動寬度 / 自動高度 / 固定大小 (edit.set_text_box) and 框大小 types its width and height (0:
-automatic). A component's clip (元件, components.py) adds 元件參數: the
+automatic). Text also has a fill toggle and an independently coloured, sized, aligned outline. A component's clip
+(元件, components.py) adds 元件參數: the
 component's parameters - words, colours, pictures, switches - as this clip's own values, each
 with ◆ and ↺ (back to what the component itself has). A compound clip with 套用至背景 clips or
 filter clips inside (project.backdrop_inside) gets 背景效果套用到片段下面 (效果穿透).
@@ -53,6 +54,7 @@ PARAMS = {
              ("letter_spacing", "字距", -0.5, 5.0, 0.01, 2, 1, 0.0),
              ("line_spacing", "行距", -0.5, 5.0, 0.01, 2, 1, 0.0),
              ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0, 1, 0.0),
+             ("stroke", "邊框粗細 px", 0.0, 100.0, 0.1, 1, 1, 2.0),
              ("box_w", "寬", 0.0, 4000.0, 1.0, 1, 1, 0.0),             # 文字框 (0: 自動)
              ("box_h", "高", 0.0, 4000.0, 1.0, 1, 1, 0.0)),
     "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
@@ -77,6 +79,7 @@ PLACE_ROWS = (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0), ("cy", "中心 Y",
 # dragging stays in PARAMS' min / max (the soft limits). None: no limit that way; not listed:
 # none at all.
 HARD = {("text", "size"): (0.0, None), ("text", "italic_deg"): (-89.0, 89.0),
+        ("text", "stroke"): (0.0, None),
         ("text", "box_w"): (0.0, None), ("text", "box_h"): (0.0, None),
         ("transform", "scale"): (0.0, None), ("transform", "scale_y"): (0.0, None),
         ("transform", "opacity"): (0.0, 1.0),
@@ -101,6 +104,7 @@ VALIGN_NAMES = (("靠上（文字框固定高度時）", "top"), ("垂直置中�
 BOX_NAMES = (("自動寬度", "auto", "文字框跟著文字長大，不換行"),
              ("自動高度", "auto_h", "固定寬度，文字超過就換行，高度跟著文字"),
              ("固定大小", "fixed", "固定寬高：文字在框裡換行，靠上／置中／靠下"))
+STROKE_ALIGN_NAMES = (("內邊框", "inside"), ("中邊框", "center"), ("外邊框", "outside"))
 BOX_KEYS = ("box_w", "box_h")
 EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
 BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "screen"), ("疊加", "overlay"),
@@ -443,12 +447,38 @@ class Inspector(QWidget):
             row = QWidget()
             lay = QHBoxLayout(row)
             lay.setContentsMargins(0, 0, 0, 0)
+            fill = QCheckBox("啟用")
+            fill.clicked.connect(lambda on: self._emit_now(self.paramEdited, "text", "fill", bool(on)))
+            self.widgets["fill"] = fill
+            lay.addWidget(fill)
+            lay.addWidget(self._key_button("text", "fill"))
             color = QPushButton()
-            color.clicked.connect(self._pick_color)
+            color.clicked.connect(lambda: self._pick_color("color"))
             self.widgets["color"] = color
             lay.addWidget(color, 1)
             lay.addWidget(self._key_button("text", "color"))
-            form.addRow("顏色", row)
+            form.addRow("填充", row)
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            stroke_on = QCheckBox("啟用")
+            stroke_on.clicked.connect(lambda on: self._emit_now(self.paramEdited, "text", "stroke_on", bool(on)))
+            self.widgets["stroke_on"] = stroke_on
+            lay.addWidget(stroke_on)
+            lay.addWidget(self._key_button("text", "stroke_on"))
+            stroke_color = QPushButton()
+            stroke_color.clicked.connect(lambda: self._pick_color("stroke_color"))
+            self.widgets["stroke_color"] = stroke_color
+            lay.addWidget(stroke_color, 1)
+            lay.addWidget(self._key_button("text", "stroke_color"))
+            form.addRow("外框", row)
+            stroke_align = ComboBox()
+            for name, value in STROKE_ALIGN_NAMES:
+                stroke_align.addItem(name, value)
+            stroke_align.activated.connect(
+                lambda i: self._emit_now(self.paramEdited, "text", "stroke_align", stroke_align.itemData(i)))
+            self.widgets["stroke_align"] = stroke_align
+            form.addRow("外框位置", self._with_key(stroke_align, "text", "stroke_align"))
             for r in PARAMS["text"]:
                 if r[0] not in BOX_KEYS:
                     form.addRow(r[1], self._param_row("text", *r))
@@ -1233,18 +1263,25 @@ class Inspector(QWidget):
                 w["content"].blockSignals(True)
                 w["content"].setPlainText(text)
                 w["content"].blockSignals(False)
-            cols = []
-            for k, t in zip(clips, ts):
-                col = curves.value(k["text"].get("color", [1, 1, 1]), t)
-                cols.append(tuple(int(round(min(1, max(0, v)) * 255)) for v in col[:3]))
-            if same(cols):
-                r, g, b = cols[0]
-                w["color"].setText(f"#{r:02x}{g:02x}{b:02x}")
-                w["color"].setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
-            else:
-                w["color"].setText("--")
-                w["color"].setStyleSheet("")
-            self._key_state(w[("key", "text", "color")], [k["text"].get("color") for k in clips], clips, ts)
+            self._show_text_color("color",
+                                  [curves.value(k["text"].get("color", [1, 1, 1]), t) for k, t in zip(clips, ts)],
+                                  clips, ts)
+            for key, default in (("fill", True), ("stroke_on", False)):
+                values = [curves.value(k["text"].get(key, default), t) for k, t in zip(clips, ts)]
+                box = w[key]
+                box.blockSignals(True)
+                mixed = any(value != values[0] for value in values[1:])
+                box.setTristate(mixed)
+                box.setCheckState(Qt.PartiallyChecked if mixed else Qt.Checked if values[0] else Qt.Unchecked)
+                box.blockSignals(False)
+                self._key_state(w[("key", "text", key)], [k["text"].get(key, default) for k in clips], clips, ts)
+            self._show_text_color("stroke_color",
+                                  [curves.value(k["text"].get("stroke_color", [0, 0, 0]), t) for k, t in zip(clips, ts)],
+                                  clips, ts)
+            stroke_aligns = {curves.value(k["text"].get("stroke_align", "inside"), t) for k, t in zip(clips, ts)}
+            self._set_combo(w["stroke_align"], stroke_aligns.pop() if len(stroke_aligns) == 1 else "--")
+            self._key_state(w[("key", "text", "stroke_align")],
+                            [k["text"].get("stroke_align", "inside") for k in clips], clips, ts)
         easings = set()
         for group, rows in PARAMS.items():
             if group not in self.groups or (c if group == "clip" else c.get(group)) is None:
@@ -1395,14 +1432,28 @@ class Inspector(QWidget):
         if self.clip_ids:
             signal.emit(list(self.clip_ids), *args)
 
-    def _pick_color(self):
-        cur = QColor(self.widgets["color"].text()) if self.widgets["color"].text() != "--" else QColor("white")
+    def _show_text_color(self, key, values, clips, ts):
+        cols = [tuple(int(round(min(1, max(0, v)) * 255)) for v in col[:3]) for col in values]
+        button = self.widgets[key]
+        if all(col == cols[0] for col in cols[1:]):
+            r, g, b = cols[0]
+            button.setText(f"#{r:02x}{g:02x}{b:02x}")
+            button.setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
+        else:
+            button.setText("--")
+            button.setStyleSheet("")
+        self._key_state(self.widgets[("key", "text", key)],
+                        [c["text"].get(key) for c in clips], clips, ts)
+
+    def _pick_color(self, key="color"):
+        cur = QColor(self.widgets[key].text()) if self.widgets[key].text() != "--" else QColor("white")
         ids = list(self.clip_ids)
-        col = pick_color(self, cur, "文字顏色", alpha=False,
-                         live=lambda c: self.liveEdited.emit(ids, "text", "color", rgba(c)[:3]),
-                         cancel=self.liveCancelled.emit, anchor=self.widgets["color"])
+        label = "外框顏色" if key == "stroke_color" else "填充顏色"
+        col = pick_color(self, cur, label, alpha=False,
+                         live=lambda c: self.liveEdited.emit(ids, "text", key, rgba(c)[:3]),
+                         cancel=self.liveCancelled.emit, anchor=self.widgets[key])
         if col is not None:
-            self._queue("text*", "color", [col.redF(), col.greenF(), col.blueF()])
+            self._queue("text*", key, [col.redF(), col.greenF(), col.blueF()])
             self._flush()
 
     def _flush(self):

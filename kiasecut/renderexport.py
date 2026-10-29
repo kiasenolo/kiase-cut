@@ -19,7 +19,7 @@ import wave
 
 from PySide6.QtGui import QImage
 
-from . import assets, audiomix, components, curves, formats, glrender, gpu, project, render, videoreader
+from . import assets, audiomix, components, curves, formats, glrender, gpu, project, render, sysmem, videoreader
 from .build import find_ffmpeg
 
 US = 1_000_000
@@ -185,7 +185,7 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
             sounds = ([("混音", wav)] if wav else []) + (stem_wavs if multitrack else [])
             stage("繪製與編碼畫面")
             errors = _pictures(view, out, fmt, bool(spec.get("alpha")) and fmt.can_alpha, size, fps, first, last,
-                               opts, sounds, progress, cancelled)
+                               opts, sounds, progress, cancelled, os.path.join(cache, "export-profile.log"))
             encoder = formats.encoder_name(fmt, size)
         else:
             stage("編碼聲音")
@@ -251,7 +251,29 @@ def sequence_dir(out):
     return os.path.splitext(out)[0]
 
 
-def _pictures(view, out, fmt, alpha, size, fps, first, last, opts, sounds, progress, cancelled):
+def _profile(renderer, readers, log, i, spent, waited):
+    """One line of the export's profile log (every PROFILE_EVERY frames): how long drawing a
+    frame took lately, how long it waited for ffmpeg, the memory in use and what the renderer's
+    caches hold - to see what grows when an export slows down."""
+    gl = getattr(renderer, "gl", None)
+    parts = [f"frame {i}", f"draw {spent / PROFILE_EVERY * 1000:.0f} ms", f"wait {waited / PROFILE_EVERY * 1000:.0f} ms",
+             f"memory {sysmem.gb(sysmem.used() or 0)}", f"images {len(renderer.images)}", f"texts {len(renderer.texts)}"
+             f" ({renderer.text_bytes >> 20} MB)", f"stills {len(renderer.stills)}", f"streams {len(readers.streams)}"]
+    if gl is not None:
+        parts += [f"textures {len(gl.textures)} ({gl.tex_bytes >> 20} MB)",
+                  f"layers {sum(len(v) for v in gl.free.values())} ({gl.free_bytes >> 20} MB)",
+                  f"gl stills {len(renderer.gl_stills)}"]
+    try:
+        with open(log, "a", encoding="utf-8") as fh:
+            fh.write(", ".join(parts) + "\n")
+    except OSError:
+        pass
+
+
+PROFILE_EVERY = 250
+
+
+def _pictures(view, out, fmt, alpha, size, fps, first, last, opts, sounds, progress, cancelled, log=None):
     """Draw frames first..last and pipe them to ffmpeg with the sound streams sounds
     [(title, WAV path)], encoded as fmt; the clips the renderer could not draw."""
     W, H = size
@@ -308,13 +330,22 @@ def _pictures(view, out, fmt, alpha, size, fps, first, last, opts, sounds, progr
 
     writer = threading.Thread(target=write, name="export frames", daemon=True)
     writer.start()
+    spent = waited = 0.0
     try:
         for i, f in enumerate(range(first, last + 1)):
             if cancelled():
                 raise RuntimeError("已取消")
             if broke:
                 break                       # (ffmpeg's own message is below)
-            frames.put(renderer.render(view, f, W, H, alpha=alpha))
+            t0 = time.time()
+            img = renderer.render(view, f, W, H, alpha=alpha)
+            t1 = time.time()
+            frames.put(img)
+            spent += t1 - t0
+            waited += time.time() - t1
+            if log and (i + 1) % PROFILE_EVERY == 0:
+                _profile(renderer, readers, log, i + 1, spent, waited)
+                spent = waited = 0.0
             if i % 2 == 0:
                 progress((i + 1) / total)
         frames.put(None)

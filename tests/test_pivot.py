@@ -1,6 +1,6 @@
 """中心點 (transform pivot_x / pivot_y): a clip turns and scales about its pivot - in both
 renderers' placement (project.centre_px, render.clip_world), in groups folded in and out, and
-on the preview (the ring dragged keeps the clip where it is; a turn keeps the pivot put)."""
+on the preview (the ring dragged stays put and the clip moves the other way; a turn keeps the pivot put)."""
 import os
 import sys
 import unittest
@@ -101,9 +101,10 @@ class PreviewTests(unittest.TestCase):
         QTest.mouseRelease(pv, Qt.LeftButton, mods, b)
         return got
 
-    def test_dragging_the_ring_moves_the_pivot_not_the_clip(self):
+    def test_dragging_the_ring_keeps_the_ring_put_and_moves_the_clip(self):
         self.c["transform"]["rotation"] = 40.0
         before = render.clip_world(self.c, 0, W, H)
+        ring = before.map(QPointF(0, 0))                                      # (the pivot is at the centre)
         got = self.drag(QPoint(480, 270), QPoint(540, 250),
                         Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
         self.assertEqual(len(got), 1)
@@ -113,16 +114,15 @@ class PreviewTests(unittest.TestCase):
         for k, v in vals.items():
             edit.set_param(self.p, cid, group, k, v, 0)
         after = render.clip_world(self.c, 0, W, H)
-        for q in (QPointF(0, 0), QPointF(400, 300)):
-            self.assertTrue(near(before.map(q), after.map(q), 0.05))
         piv = QPointF(vals["pivot_x"] * W / 2, -vals["pivot_y"] * H / 2)
-        self.assertTrue(near(after.map(piv), QPointF(1080, 500), 2.0))      # where the ring was let go
+        self.assertTrue(near(after.map(piv), ring, 0.05))                     # the ring did not move
+        self.assertFalse(near(before.map(QPointF(0, 0)), after.map(QPointF(0, 0)), 5.0))   # the clip did
 
     def test_ring_snaps_to_a_corner(self):
         got = self.drag(QPoint(480, 270), QPoint(958, 538), Qt.KeyboardModifier.ControlModifier)   # (at the centre: Ctrl)
         vals = got[0][2]
         self.assertEqual((vals["pivot_x"], vals["pivot_y"]), (1.0, -1.0))
-        self.assertAlmostEqual(vals["x"], 0.0, 5)
+        self.assertAlmostEqual(vals["x"], -1.0, 5)       # (the ring stays: the clip moves the other way)
 
     def test_plain_drag_at_the_centre_moves_the_clip(self):
         got = self.drag(QPoint(480, 270), QPoint(530, 270))

@@ -1981,13 +1981,15 @@ def swap_filter(proj, clip_id, effect_id, what):
     return kept
 
 
-def remove_effect(proj, clip_id, effect_id):
+def remove_effect(proj, clip_id, effect_id, drop_empty=False):
+    """Take an effect off a clip. A filter clip without effects does nothing but stays on a
+    timeline; drop_empty (a static compound's layers) deletes it with its last effect."""
     _, c = find(proj, clip_id)
     c["effects"].remove(_effect(c, effect_id))
     if not c["effects"]:
         del c["effects"]
-        if c["type"] == "filter":
-            pass                                # a filter clip without effects does nothing, but stays
+        if c["type"] == "filter" and drop_empty:
+            delete(proj, clip_id)
 
 
 def set_effect_enabled(proj, clip_id, effect_id, on):

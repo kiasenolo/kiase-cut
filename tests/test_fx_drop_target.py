@@ -121,6 +121,19 @@ class StaticFilterLayerTests(unittest.TestCase):
         self.assertGreater(d["start_us"], c["start_us"])
 
 
+class LastEffectOfFilterLayerTests(unittest.TestCase):
+    def test_static_layer_goes_with_its_last_effect(self):
+        p = proj()
+        a = edit.add_filter_clip(p, "builtin:blur", 0, own_track=True)
+        eid = a["effects"][0]["id"]
+        edit.remove_effect(p, a["id"], eid)                                    # (on a timeline it stays, empty)
+        self.assertEqual(edit.find(p, a["id"])[1]["type"], "filter")
+        b = edit.add_filter_clip(p, "builtin:blur", 0, own_track=True)
+        edit.remove_effect(p, b["id"], b["effects"][0]["id"], drop_empty=True)
+        with self.assertRaises(edit.EditError):
+            edit.find(p, b["id"])
+
+
 class PivotUnitsTests(unittest.TestCase):
     def test_pivot_shown_in_object_widths(self):
         from kiasecut.ui.inspector import Inspector

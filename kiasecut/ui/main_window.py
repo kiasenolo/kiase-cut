@@ -476,7 +476,8 @@ class MainWindow(QMainWindow):
         ef = self.effects
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.browseRequested.connect(self.browse_effect)
-        ef.removeRequested.connect(lambda ids, eid: self.fx_each("移除效果", ids, eid, edit.remove_effect))
+        ef.removeRequested.connect(lambda ids, eid: self.fx_each(
+            "移除效果", ids, eid, lambda lvl, cid, e: edit.remove_effect(lvl, cid, e, drop_empty=self.editing_static())))
         ef.enabledChosen.connect(lambda ids, eid, on: self.fx_each(
             "啟用效果" if on else "停用效果", ids, eid, lambda lvl, cid, e: edit.set_effect_enabled(lvl, cid, e, on)))
         ef.moveRequested.connect(lambda ids, eid, d: self.fx_each(

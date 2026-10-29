@@ -92,5 +92,27 @@ class FxDropTargetTests(unittest.TestCase):
         self.assertEqual(applied, ["新增效果"])                                   # not nothing, not a filter clip
 
 
+class PivotUnitsTests(unittest.TestCase):
+    def test_pivot_shown_in_object_widths(self):
+        from kiasecut.ui.inspector import Inspector
+        p = proj()
+        c = edit.find(p, "c1")[1]
+        ins = Inspector()
+        ins.resize(400, 900)
+        ins.show()
+        got = []
+        ins.paramEdited.connect(lambda ids, g, k, v: got.append((g, k, v)))
+        ins.pivot_units = lambda clip, t: (960 / 200, 540 / 100)               # a 200 x 100 object on a 1920 x 1080 canvas
+        c["transform"]["pivot_x"] = 100 / 960                                  # (stored: half-canvas units)
+        ins.show_clips([c], 0, 30)
+        box = ins.widgets[("transform", "pivot_x")]
+        self.assertAlmostEqual(box.value(), 0.5)                               # its right edge
+        box.edited.emit(-0.5)                                                  # its left edge
+        ins._flush()
+        self.assertAlmostEqual(got[-1][2], -100 / 960)
+        ins.close()
+        ins.deleteLater()
+
+
 if __name__ == "__main__":
     unittest.main()

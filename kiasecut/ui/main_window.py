@@ -54,6 +54,7 @@ from .vfx_panel import VfxPanel, dropped_fx
 from . import appevents, icons, inplace, middledrag, wheel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
+from .preview import base_size as preview_base_size
 from .timebase import button_text, edit_timebase
 from .timeline import MEDIA_MIME, US, Timeline, time_text, timebase_of, timecode
 from .menukeys import Menu, keyed
@@ -417,6 +418,7 @@ class MainWindow(QMainWindow):
 
         self.inspector = Inspector()
         ins = self.inspector
+        ins.pivot_units = self.pivot_units
         ins.textEdited.connect(self.on_text_edited)
         ins.paramEdited.connect(self.on_param_edited)
         ins.picture_of = self.dropped_picture
@@ -2561,6 +2563,13 @@ class MainWindow(QMainWindow):
             return
         self.timeline._layout()
         self.timeline.select(c)
+
+    def pivot_units(self, c, t):
+        """(x, y): half-canvas units of 中心點 that are one width / height of clip c's picture (at scale 1, clip time
+        t) - the inspector shows the pivot in those, 0 the centre, ±0.5 the edges."""
+        W, H = self.preview.W, self.preview.H
+        bw, bh = preview_base_size(c, W, H, t)
+        return (W / 2) / max(bw, 1e-6), (H / 2) / max(bh, 1e-6)
 
     def editing_static(self):
         """Whether the open level is a static compound (edited as layers)."""

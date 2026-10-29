@@ -62,8 +62,8 @@ PARAMS = {
                   ("scale", "縮放 X", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("scale_y", "縮放 Y", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
-                  ("pivot_x", "中心點 X", -10.0, 10.0, 0.01, 3, 1, 0.0),       # 中心點: turns / scales about it
-                  ("pivot_y", "中心點 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
+                  ("pivot_x", "中心點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 中心點: turns / scales about it (shown in
+                  ("pivot_y", "中心點 Y", -1.0, 1.0, 0.01, 3, 1, 0.0),       # object widths / heights, see pivot_units)
                   ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0)),
     "mask": (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0),
              ("cy", "中心 Y", -5.0, 5.0, 0.01, 3, 1, 0.0),
@@ -293,6 +293,8 @@ def section(title):
 
 
 class Inspector(QWidget):
+    pivot_units = None                              # (clip, clip time) -> (x, y): half-canvas units per object width / height
+    pk = {}
     # every edit names the clips it applies to (the whole selection)
     textEdited = Signal(list, dict)                 # clip ids, {field: value}
     paramEdited = Signal(list, str, str, object)    # clip ids, group, key, value (number or colour)
@@ -886,9 +888,14 @@ class Inspector(QWidget):
         s.setSingleStep(step)
         s.setDecimals(dec)
         s.setKeyboardTracking(False)
-        s.edited.connect(lambda v: self._queue(key[0], key[1], v / factor))
+        s.edited.connect(lambda v: self._queue(key[0], key[1], v / (factor * self._unit(key))))
         self.widgets[key] = s
         return s
+
+    def _unit(self, key):
+        """How many shown units one stored unit is: 中心點 is stored in half-canvas units and shown in widths /
+        heights of the object (0 the centre, ±0.5 its edges), at the main clip's size (pivot_units)."""
+        return self.pk.get(key[1], 1.0) if key[0] == "transform" else 1.0
 
     def _rows(self, form, group, rows, pairs):
         """Form rows for PARAMS rows; each (a, b, label) of pairs shares one row (X | Y)."""
@@ -1283,6 +1290,12 @@ class Inspector(QWidget):
             self._key_state(w[("key", "text", "stroke_align")],
                             [k["text"].get("stroke_align", "inside") for k in clips], clips, ts)
         easings = set()
+        self.pk = {}
+        if self.pivot_units is not None and c.get("transform") is not None:
+            try:
+                self.pk = dict(zip(("pivot_x", "pivot_y"), self.pivot_units(clips[0], ts[0])))
+            except Exception:
+                self.pk = {}
         for group, rows in PARAMS.items():
             if group not in self.groups or (c if group == "clip" else c.get(group)) is None:
                 continue
@@ -1294,7 +1307,7 @@ class Inspector(QWidget):
                     ps = [h.get("scale_y", h.get("scale", default)) for h in hs]
                 else:
                     ps = [h.get(key, default) for h in hs]
-                vals = [round(curves.value(p, t) * factor, dec) for p, t in zip(ps, ts)]
+                vals = [round(curves.value(p, t) * factor * self._unit((group, key)), dec) for p, t in zip(ps, ts)]
                 self._set((group, key), vals[0] if same(vals) else None)
                 for p, t in zip(ps, ts):
                     if edit.key_at(p, t) is not None:
@@ -1418,7 +1431,7 @@ class Inspector(QWidget):
             r = rows.get(key)
             s = self.widgets.get((group, key))
             if r is not None and s is not None and not s.hasFocus():
-                s.show_value(round(v * r[6], r[5]))
+                s.show_value(round(v * r[6] * self._unit((group, key)), r[5]))
 
     def show_live_time(self, clip_id, start_us, duration_us, fps):
         """Start / length of a clip being dragged or trimmed on the timeline."""

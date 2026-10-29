@@ -85,6 +85,12 @@ class TextAlignTests(unittest.TestCase):
         edit.toggle_key(p, c["id"], "text", "fill", 0)
         self.assertTrue(curves.value(c["text"]["fill"], 0))
 
+    def test_animated_size_does_not_keep_a_font_per_frame(self):
+        spec = dict(edit.add_text(proj(), 0, "Hi")["text"])
+        for i in range(textlayout.MAX_FONTS * 3):
+            textlayout.render(dict(spec, size=5.0 + i * 0.05), 1.0)
+        self.assertLessEqual(len(textlayout._fonts), textlayout.MAX_FONTS)
+
     def test_outline_is_drawn_over_the_fill_with_round_corners(self):
         p = proj()
         c = edit.add_text(p, 0, "I")

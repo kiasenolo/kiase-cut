@@ -30,6 +30,7 @@ BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 
 MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5, "image": 5, "video": 5}
 MAX_LAYER = 8192
 TEX_CACHE = 160
+TEX_CACHE_BYTES = 768 << 20          # (of the card's memory: animated texts are a new picture every frame)
 
 VERTEX = """#version 330
 uniform vec2 size;
@@ -209,6 +210,7 @@ class GL:
                     for p in (self.composite, self.mixer, self.coverer)}
         self.fx = fx.Engine(mgl, ctx)
         self.textures = {}              # QImage cacheKey -> texture (pictures, texts)
+        self.tex_bytes = 0
         self.moving = {}                # (w, h) -> [texture], reused every frame (video frames)
         self.moving_used = {}
         self.free = {}                  # (w, h) -> [Layer]
@@ -241,8 +243,10 @@ class GL:
             else:
                 tex.filter = (self.mgl.LINEAR, self.mgl.LINEAR)
             hit = (tex, straight)
-            while len(self.textures) >= TEX_CACHE:
+            self.tex_bytes += img.width() * img.height() * 4
+            while self.textures and (len(self.textures) >= TEX_CACHE or self.tex_bytes > TEX_CACHE_BYTES):
                 old = self.textures.pop(next(iter(self.textures)))
+                self.tex_bytes -= old[0].width * old[0].height * 4
                 old[0].release()
         self.textures[key] = hit                      # (most recently used last)
         return hit

@@ -46,6 +46,7 @@ TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "
                "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
                "box_w", "box_h")
 BIG = 1e5
+TEXT_CACHE_BYTES = 192 << 20
 # clip blend modes (edit.BLEND_MODES) as the painter's composition modes
 BLEND_OPS = {"normal": QPainter.CompositionMode_SourceOver, "multiply": QPainter.CompositionMode_Multiply,
              "screen": QPainter.CompositionMode_Screen, "overlay": QPainter.CompositionMode_Overlay,
@@ -120,6 +121,7 @@ class Renderer:
         self.video_frame = video_frame
         self.images = {}            # path -> Mips; (path or asset, size) -> QImage
         self.texts = {}             # (spec json, scale) -> QImage
+        self.text_bytes = 0         # what they hold: an animated text makes a new picture every frame
         self.frames = {}            # (spec json, canvas height) -> a 文字框's (w, h)
         self.stills = {}            # (static compound content, scale) -> QImage
         self.cache_limit = cache_limit
@@ -186,7 +188,10 @@ class Renderer:
         if im is None:
             im = QImage(ImageQt(textlayout.render(spec, scale, canvas_h))).convertToFormat(
                 QImage.Format_ARGB32_Premultiplied)
-            self._remember(self.texts, key, im)
+            self.texts[key] = im
+            self.text_bytes += im.sizeInBytes()
+            while self.text_bytes > TEXT_CACHE_BYTES and len(self.texts) > 1 or len(self.texts) > self.cache_limit:
+                self.text_bytes -= self.texts.pop(next(iter(self.texts))).sizeInBytes()    # (the oldest goes)
         return im
 
     def text_disp(self, spec, canvas_h, pic_size, k_size):

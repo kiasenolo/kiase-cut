@@ -29,13 +29,18 @@ FALLBACK_FONTS = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
 ]
 _fonts = {}
+MAX_FONTS = 24      # a CJK face is ~10 MB in memory: a size that is animated asks for a new one every frame
 
 
 def font(path, size):
     path = fonts.resolve(path)                  # a font this system lacks: its stand-in (font map)
     size = max(size, 0.01)                      # (字號 0: FreeType wants more than nothing; draws nothing seen)
     key = (path, round(size * 100))
-    if key not in _fonts:
+    if key in _fonts:
+        _fonts[key] = _fonts.pop(key)           # (most recently used last)
+    else:
+        while len(_fonts) >= MAX_FONTS:
+            del _fonts[next(iter(_fonts))]
         for p in [path] + FALLBACK_FONTS:
             if p and os.path.exists(p):
                 _fonts[key] = ImageFont.truetype(p, size, index=0)

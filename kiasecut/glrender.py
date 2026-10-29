@@ -30,6 +30,7 @@ BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 
 MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5, "image": 5, "video": 5}
 MAX_LAYER = 8192
 TEX_CACHE = 160
+FREE_LAYER_BYTES = 384 << 20         # (the layers waiting to be drawn on again)
 TEX_CACHE_BYTES = 768 << 20          # (of the card's memory: animated texts are a new picture every frame)
 
 VERTEX = """#version 330
@@ -213,7 +214,8 @@ class GL:
         self.tex_bytes = 0
         self.moving = {}                # (w, h) -> [texture], reused every frame (video frames)
         self.moving_used = {}
-        self.free = {}                  # (w, h) -> [Layer]
+        self.free = {}                  # (w, h) -> [Layer], the sizes least recently given back first
+        self.free_bytes = 0             # what they hold
         self.backdrops = {}             # (w, h) -> Layer
         self.matte = None               # texture of the compound mask about to be drawn with (unit 2)
 
@@ -271,17 +273,34 @@ class GL:
 
     def layer(self, w, h, clear=(0.0, 0.0, 0.0, 0.0)):
         pool = self.free.get((w, h))
-        lay = pool.pop() if pool else Layer(self, w, h)
+        if pool:
+            lay = pool.pop()
+            self.free_bytes -= w * h * 4
+        else:
+            lay = Layer(self, w, h)
         lay.fbo.clear(*clear)
         return lay
 
     def release(self, lay):
-        self.free.setdefault((lay.w, lay.h), []).append(lay)
+        key = (lay.w, lay.h)
+        pool = self.free.pop(key, [])              # (most recently used size last)
+        pool.append(lay)
+        self.free[key] = pool
+        self.free_bytes += lay.w * lay.h * 4
+        # a layer whose size follows an animated clip is a new size every frame: without a cap
+        # the pool grew by one for each, and the export slowed down as the card's memory filled
+        while self.free_bytes > FREE_LAYER_BYTES and self.free:
+            old = next(iter(self.free))
+            for gone in self.free.pop(old):
+                self.free_bytes -= gone.w * gone.h * 4
+                gone.release()
 
     def backdrop(self, tgt):
         """A copy of what tgt shows now (the other blend modes read it)."""
         b = self.backdrops.get((tgt.w, tgt.h))
         if b is None:
+            if len(self.backdrops) >= 4:               # (sizes that followed an animated clip)
+                self.backdrops.pop(next(iter(self.backdrops))).release()
             b = self.backdrops[(tgt.w, tgt.h)] = Layer(self, tgt.w, tgt.h)
         self.ctx.copy_framebuffer(b.tex, tgt.fbo)
         return b

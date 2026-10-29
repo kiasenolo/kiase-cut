@@ -700,6 +700,8 @@ class Renderer:
                 if comp is not None:
                     pic = self.matte_image(src, comp, t, self.matte_k(src, t, disp, comp, wt), fps)
                     sources[name] = (image_to_array(pic), source_map(src, t, disp, wt, w, h))
+                    if any(q.name == name and q.type == "float" for q in d.params):
+                        vals[name + fx.RANGE_MIN], vals[name + fx.RANGE_MAX] = fx.source_range(src, vals.get(name, 0.0), t)
             try:
                 out = eng.run(d, vals, arr, time=t / US, progress=min(1.0, max(0.0, t / max(1, duration))),
                               frame=max(0, round(t * fps / US)), unit=unit, sources=sources)

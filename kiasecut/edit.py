@@ -840,7 +840,7 @@ def _valid_key(c, group, key):
     if group.startswith("fxmask:"):
         return key in GROUP_FIELDS["mask"]
     if group.startswith("fxsrc:"):
-        return key in SOURCE_FIELDS and bool(_source(c, group))
+        return key in SOURCE_FIELDS + ("min", "max") and bool(_source(c, group))
     if group == "asset":
         return bool(c.get("asset")) and key in assets.fields_of(c["asset"].get("family"))
     if group == "params":                        # a component instance's own values (元件參數)

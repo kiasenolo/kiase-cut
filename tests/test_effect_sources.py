@@ -80,6 +80,18 @@ class SourceRenderTests(unittest.TestCase):
         self.halves(self.number_view(0.5, self.s.luma), GREY, BLACK)
         self.halves(self.number_view(0.5, self.s.alpha), GREY, GREY)          # see-through: its own number
 
+    def test_number_between_minimum_and_maximum(self):
+        v = self.number_view(1.0, self.s.luma)
+        src = v["tracks"][0]["clips"][0]["effects"][0]["sources"]["amount"]
+        src["min"], src["max"] = 0.5, 0.75                                    # black 0.5, white 0.75
+        self.halves(v, (191, 191, 191), (128, 128, 128))
+        src["min"] = 1.0                                                      # (max stays below: it just mixes)
+        src["max"] = 0.0
+        self.halves(v, BLACK, WHITE)                                          # turned round: white gives 0
+        v = self.number_view(0.5, self.s.alpha)
+        v["tracks"][0]["clips"][0]["effects"][0]["sources"]["amount"].update(min=0.0, max=0.5)
+        self.halves(v, GREY, GREY)                                            # see-through: still its own number
+
     def halves(self, view, left, right, frame=0):
         for r in self.renderers:
             img = r.render(view, frame, W, H)
@@ -138,6 +150,22 @@ class SourceEditTests(unittest.TestCase):
         for name in ("mode", "glow_only"):                                 # a menu, a switch: not numbers
             with self.assertRaises(edit.EditError):
                 edit.set_effect_source(self.p, "c1", self.e["id"], name, "image")
+
+    def test_number_range_is_settable(self):
+        edit.set_effect_source(self.p, "c1", self.e["id"], "radius", "image")
+        g = f"fxsrc:{self.e['id']}:radius"
+        edit.set_param(self.p, "c1", g, "min", 2.0)
+        edit.set_param(self.p, "c1", g, "max", 9.0)
+        self.assertEqual((self.e["sources"]["radius"]["min"], self.e["sources"]["radius"]["max"]), (2.0, 9.0))
+        from kiasecut import fx
+        self.assertEqual(fx.source_range(self.e["sources"]["radius"], 5.0, 0), (2.0, 9.0))
+        self.assertEqual(fx.source_range({}, 5.0, 0), (0.0, 5.0))               # not set: 0 and the number itself
+        from kiasecut.ui.effects_panel import EffectsPanel
+        panel = EffectsPanel()
+        panel.show_clips([edit.find(self.p, "c1")[1]], 0, 30)
+        self.assertIn((g, "min"), panel.widgets)
+        self.assertIn((g, "max"), panel.widgets)
+        self.assertNotIn((f"fxsrc:{self.e['id']}:tint", "min"), panel.widgets)   # (colours have none)
 
     def test_paths_saved_relative_and_swap(self):
         edit.set_effect_source(self.p, "c1", self.e["id"], "tint", "image")

@@ -294,19 +294,31 @@ vec4 %(n)s_at_() {
     return a > 0.0 ? vec4((s.rgb + c.rgb * c.a * (1.0 - s.a)) / a, a) : vec4(0.0);
 }
 #define %(n)s %(n)s_at_()"""
-# a number parameter fed by a picture (使用遮罩): its number times the picture's brightness at
-# this pixel (Rec. 709 weights, as a 明度 mask's), its own number where the picture does not reach
-# or is see-through (premultiplied: brightness on black, plus what the alpha leaves)
+# a number parameter fed by a picture (使用遮罩): from its minimum (black) to its maximum (white) by
+# the picture's brightness at this pixel (Rec. 709 weights, as a 明度 mask's) - 0 and the number
+# itself unless the source says otherwise - and its own number where the picture does not reach,
+# fading to it where the picture is see-through
 SAMPLED_NUMBER = """uniform float %(n)s_val_;
+uniform float %(n)s_min_;
+uniform float %(n)s_max_;
 uniform sampler2D %(n)s_tex_;
 uniform mat3 %(n)s_map_;
 float %(n)s_at_() {
     vec3 q = %(n)s_map_ * vec3(uv_, 1.0);
     vec4 s = (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) ? vec4(0.0) : texture(%(n)s_tex_, q.xy);
-    return %(n)s_val_ * (dot(s.rgb, vec3(0.2126, 0.7152, 0.0722)) + 1.0 - s.a);
+    float k = s.a > 0.0 ? dot(s.rgb, vec3(0.2126, 0.7152, 0.0722)) / s.a : 0.0;
+    return mix(%(n)s_val_, mix(%(n)s_min_, %(n)s_max_, clamp(k, 0.0, 1.0)), s.a);
 }
 #define %(n)s %(n)s_at_()"""
 SOURCE_TYPES = ("color", "float")              # parameters that can read a picture
+RANGE_MIN, RANGE_MAX = "\0min", "\0max"        # (suffixes of a number source's value keys: what black and white give)
+
+
+def source_range(src, own, t):
+    """(minimum, maximum) a number source gives for black and white at clip time t: 0 and the
+    parameter's own number unless the source has its own."""
+    mn, mx = src.get("min"), src.get("max")
+    return (0.0 if mn is None else float(curves.value(mn, t)), own if mx is None else float(curves.value(mx, t)))
 EPILOGUE = "\nvoid main() { fragColor = effect(uv_); }\n"
 # v = 0 is the first row of the picture (its top), both for what is read and what is written
 VERTEX = """#version 330
@@ -453,7 +465,10 @@ class Engine:
             tex.use(2 + i)
             own = ((name + "_col_", tuple(values.get(name, (1.0, 1.0, 1.0, 1.0)))) if types[name] == "color"
                    else (name + "_val_", float(values.get(name, 0.0))))
-            for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)), own):
+            more = [] if types[name] == "color" else [
+                (name + "_min_", float(values.get(name + RANGE_MIN, 0.0))),
+                (name + "_max_", float(values.get(name + RANGE_MAX, values.get(name, 0.0))))]
+            for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)), own, *more):
                 if u in prog:
                     prog[u].value = v
         self.ctx.disable(self.mgl.BLEND)

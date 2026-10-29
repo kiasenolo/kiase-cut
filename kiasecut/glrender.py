@@ -744,6 +744,8 @@ class GLRenderer(render.Renderer):
                 if pic is not None:
                     pics.append(pic)
                     sources[name] = (pic[0].tex, render.source_map(src, t, disp, world, cur.w, cur.h))
+                    if any(q.name == name and q.type == "float" for q in d.params):
+                        vals[name + fx.RANGE_MIN], vals[name + fx.RANGE_MAX] = fx.source_range(src, vals.get(name, 0.0), t)
             try:
                 out = gl.fx.run_tex(d, vals, cur.tex, cur.w, cur.h, time=t / US,
                                     progress=min(1.0, max(0.0, t / max(1, duration))), frame=max(0, round(t * fps / US)),

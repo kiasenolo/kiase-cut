@@ -339,6 +339,8 @@ class EffectsPanel(QWidget):
             kind = ((e.get("sources") or {}).get(p.name) or {}).get("kind")
             if p.type in fx.SOURCE_TYPES and kind:
                 lay.addLayout(self._source_row(e["id"], p.name, kind))
+                if p.type == "float":
+                    lay.addLayout(self._range_row(e["id"], p))
         # where the effect works
         row = QHBoxLayout()
         row.addWidget(QLabel("範圍"))
@@ -534,6 +536,27 @@ class EffectsPanel(QWidget):
                 reg.toggled.connect(lambda v: self._source_region(eid, name, v))
                 self.widgets[("source_region", eid, name)] = reg
                 row.addWidget(reg)
+        return row
+
+    def _range_row(self, eid, p):
+        """What a number's source gives for black and for white (最小值 / 最大值): 0 and the number itself
+        until they are typed."""
+        row = QHBoxLayout()
+        group = f"fxsrc:{eid}:{p.name}"
+        for key, label, tip in (("min", "　最小值", "來源最黑的地方的數字（預設 0）"),
+                                ("max", "最大值", "來源最白的地方的數字（預設是上面的數字本身）")):
+            lab = QLabel(label)
+            lab.setMinimumWidth(70 if key == "min" else 0)
+            row.addWidget(lab)
+            sp = SpinBox()
+            sp.set_limits(p.lo, p.hi)
+            sp.setSingleStep(step_for(p))
+            sp.setDecimals(2 if (p.hi - p.lo) <= 100 else 1)
+            sp.setKeyboardTracking(False)
+            sp.setToolTip(tip)
+            sp.edited.connect(lambda v, g=group, k=key: self._queue(g, k, v))
+            self.widgets[(group, key)] = sp
+            row.addWidget(sp, 1)
         return row
 
     def _number_source(self, eid, name, button):
@@ -762,6 +785,12 @@ class EffectsPanel(QWidget):
                 if kb is not None:
                     Inspector._key_state(kb, stored, pics, ts)
                 srcs = [(x.get("sources") or {}).get(p.name) or {} for x in es]
+                for key, fallback in (("min", lambda x: 0.0), ("max", lambda x: x["params"].get(p.name, p.default))):
+                    sp = w.get((f"fxsrc:{e['id']}:{p.name}", key))
+                    if sp is not None and not (sp.hasFocus() and (f"fxsrc:{e['id']}:{p.name}", key) in self.pending):
+                        vs = alike([curves.value(sv[key] if sv.get(key) is not None else curves.value(fallback(x), t), t)
+                                    for sv, x, t in zip(srcs, es, ts)])
+                        sp.show_mixed() if vs is MIXED else sp.show_value(round(float(vs), 3))
                 sb = w.get(("source_btn", group, p.name))
                 if sb is not None:
                     sb.setChecked(all(sv.get("kind") for sv in srcs))

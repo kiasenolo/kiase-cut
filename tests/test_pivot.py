@@ -71,6 +71,18 @@ class GroupTests(unittest.TestCase):
         for a, b in zip(before, after):
             self.assertTrue(near(a, b, 1e-3), (a, b))
 
+    def test_ungroup_keeps_anchored_clips_in_place(self):
+        p = proj()
+        edit.find(p, "c1")[1]["transform"].update(x=0.1, rotation=30.0, anchor_x=0.2, anchor_y=-0.1, pivot_x=0.3)
+        g = edit.make_group(p, p, ["c1"])
+        g["transform"].update(scale=2.0, x=-0.2, anchor_x=0.15)
+        pts = [QPointF(0, 0), QPointF(300, -100)]
+        before = [self.world(p, "c1", g).map(q) for q in pts]
+        edit.ungroup(p, p, g["id"])
+        after = [self.world(p, "c1").map(q) for q in pts]
+        for a, b in zip(before, after):
+            self.assertTrue(near(a, b, 1e-3), (a, b))
+
     def test_move_into_group_keeps_them_in_place(self):
         p = proj()
         g = edit.make_group(p, p, ["c2"])
@@ -116,6 +128,16 @@ class PreviewTests(unittest.TestCase):
         piv = QPointF(vals["pivot_x"] * W / 2, -vals["pivot_y"] * H / 2)
         self.assertTrue(near(after.map(piv), QPointF(W / 2 + piv.x(), H / 2 + piv.y()), 0.05))   # (turned about, it stays at position + pivot)
         self.assertFalse(near(before.map(QPointF(0, 0)), after.map(QPointF(0, 0)), 5.0))   # the clip swung
+
+    def test_dragging_the_anchor_moves_the_clip_the_other_way(self):
+        got = self.drag(QPoint(480, 270), QPoint(530, 270), Qt.KeyboardModifier.AltModifier)
+        cid, group, vals = got[0]
+        self.assertEqual(set(vals), {"anchor_x", "anchor_y"})                 # (位置 is not touched)
+        self.assertAlmostEqual(vals["anchor_x"], 100 / 960, 3)               # (50 px of the half-size view)
+        for k, v in vals.items():
+            edit.set_param(self.p, cid, group, k, v, 0)
+        after = render.clip_world(self.c, 0, W, H)
+        self.assertTrue(near(after.map(QPointF(0, 0)), QPointF(W / 2 - 100, H / 2), 0.05))
 
     def test_ring_snaps_to_a_corner(self):
         got = self.drag(QPoint(480, 270), QPoint(958, 538), Qt.KeyboardModifier.ControlModifier)   # (at the centre: Ctrl)

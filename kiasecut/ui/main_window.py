@@ -298,6 +298,7 @@ class MainWindow(QMainWindow):
                     ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
+                    ("transform", "anchor_x"): "錨點", ("transform", "anchor_y"): "錨點",
                     ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",
                     ("text", "fill"): "文字填充", ("text", "stroke_on"): "文字外框",
                     ("text", "stroke_color"): "外框顏色", ("text", "stroke"): "外框粗細",
@@ -2531,7 +2532,7 @@ class MainWindow(QMainWindow):
             label = "調整大小"
         else:
             label = "旋轉" if "rotation" in values else "縮放" if "scale" in values else \
-                "中心點" if "pivot_x" in values else "移動位置"
+                "中心點" if "pivot_x" in values else "錨點" if "anchor_x" in values else "移動位置"
 
         def set_all(level):
             for g, vals in (values.items() if group == "multi" else [(group, values)]):

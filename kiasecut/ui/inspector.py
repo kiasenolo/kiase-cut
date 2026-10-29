@@ -62,6 +62,8 @@ PARAMS = {
                   ("scale", "縮放 X", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("scale_y", "縮放 Y", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
+                  ("anchor_x", "錨點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 錨點: the point 位置 places (object widths / heights too)
+                  ("anchor_y", "錨點 Y", -1.0, 1.0, 0.01, 3, 1, 0.0),
                   ("pivot_x", "中心點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 中心點: turns / scales about it (shown in
                   ("pivot_y", "中心點 Y", -1.0, 1.0, 0.01, 3, 1, 0.0),       # object widths / heights, see pivot_units)
                   ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0)),
@@ -496,6 +498,7 @@ class Inspector(QWidget):
                     self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
                 self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"), ("scale", "scale_y", "縮放"),
+                                                                    ("anchor_x", "anchor_y", "錨點"),
                                                                     ("pivot_x", "pivot_y", "中心點")))
                 blend = ComboBox()
                 blend.setPlaceholderText("--")
@@ -1293,7 +1296,8 @@ class Inspector(QWidget):
         self.pk = {}
         if self.pivot_units is not None and c.get("transform") is not None:
             try:
-                self.pk = dict(zip(("pivot_x", "pivot_y"), self.pivot_units(clips[0], ts[0])))
+                ux, uy = self.pivot_units(clips[0], ts[0])
+                self.pk = {"pivot_x": ux, "pivot_y": uy, "anchor_x": ux, "anchor_y": uy}
             except Exception:
                 self.pk = {}
         for group, rows in PARAMS.items():

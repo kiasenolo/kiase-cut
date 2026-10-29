@@ -69,7 +69,7 @@ class Rasterizer:
     def animated(mask, transform):
         return any(curves.is_animated(mask.get(k)) for k in ("cx", "cy", "w", "h", "rotation", "feather")) \
             or any(curves.is_animated(transform.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation",
-                                                                   "pivot_x", "pivot_y"))
+                                                                   "pivot_x", "pivot_y", "anchor_x", "anchor_y"))
 
 
 # -- native masks: the same shapes as bezier splines for MLT's rotoscoping filter ----------

@@ -27,7 +27,9 @@ clip     {id, type: image | video | audio | text | compound, name,
                      optional pivot_x, pivot_y (中心點, animated like the rest): the point it
                      turns and scales about, in its own frame (half-canvas units from its
                      centre, y up, unscaled: it moves, turns and scales with it). x / y still
-                     place its centre while it is not turned or scaled (pivot_shift)
+                     place its centre while it is not turned or scaled (pivot_shift); optional anchor_x,
+                     anchor_y (錨點, the same units and frame): the point of the clip that x / y
+                     place - moving the anchor moves the clip the other way, not x / y
           asset: {key, family, w, h, color, ...}            built-in assets (assets.py): an
                      image clip drawn from these parameters, at its own size (picture_size)
           mask: {kind, invert, cx, cy, w, h, rotation, feather, enabled} or None;
@@ -277,13 +279,16 @@ def anchored(g, track, t_us):
 
 
 def pivot_shift(tf, t, W, H, scale=None, scale_y=None, rotation=None):
-    """中心點: (dx, dy) canvas px (y down) that turning and scaling about the pivot instead of
+    """錨點 and 中心點: (dx, dy) canvas px (y down) that placing the anchor (not the centre) at
+    x / y, and turning and scaling about the pivot instead of
     the centre moves a W x H canvas clip's centre by, at clip time t (scale, scale_y, rotation:
-    other values than tf's, for a drag); (0, 0) without a pivot. The renderers draw a clip at
+    other values than tf's, for a drag); (0, 0) without either. The renderers draw a clip at
     centre_px, which adds this to where x / y put it."""
     px, py = curves.value(tf.get("pivot_x", 0.0), t), curves.value(tf.get("pivot_y", 0.0), t)
+    ax, ay = curves.value(tf.get("anchor_x", 0.0), t), curves.value(tf.get("anchor_y", 0.0), t)
+    gx, gy = -ax * W / 2, ay * H / 2                    # (錨點: x / y place the anchor, so the clip is moved off it)
     if not px and not py:
-        return 0.0, 0.0
+        return gx, gy
     sx = curves.value(tf.get("scale", 1.0), t) if scale is None else scale
     sy = (curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t) if scale is None else scale) \
         if scale_y is None else scale_y
@@ -292,7 +297,7 @@ def pivot_shift(tf, t, W, H, scale=None, scale_y=None, rotation=None):
     qx = lx * sx * (-1 if tf.get("flip_h") else 1)
     qy = ly * sy * (-1 if tf.get("flip_v") else 1)
     b = math.radians(deg)                               # (clockwise on a y-down canvas)
-    return lx - (qx * math.cos(b) - qy * math.sin(b)), ly - (qx * math.sin(b) + qy * math.cos(b))
+    return gx + lx - (qx * math.cos(b) - qy * math.sin(b)), gy + ly - (qx * math.sin(b) + qy * math.cos(b))
 
 
 def centre_px(tf, t, W, H):

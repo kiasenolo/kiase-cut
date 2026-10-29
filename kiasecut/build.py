@@ -287,7 +287,8 @@ class Builder:
         if project.active_mask(c) and self.mask_mode == "native":
             out += self.native_mask(c["mask"], disp or (W, H), f0, f1, clip_start_us, off)
         out += self.filt("qtblend", {
-            "rect": self.anim([x, y, sc, scy, op, size, rot, tf.get("pivot_x", 0.0), tf.get("pivot_y", 0.0)],
+            "rect": self.anim([x, y, sc, scy, op, size, rot, tf.get("pivot_x", 0.0), tf.get("pivot_y", 0.0),
+                               tf.get("anchor_x", 0.0), tf.get("anchor_y", 0.0)],
                               f0, f1, rect, (0.02, 0.02, 0.02, 0.02, 0.0005),
                               clip_start_us, off),
             "rotation": self.anim([rot], f0, f1, lambda t: (curves.value(rot, t),), 0.005,

@@ -669,7 +669,8 @@ TEXT_ALIGNS = ("left", "center", "right", "justify")      # 對齊 (justify: 齊
 TEXT_VALIGNS = ("top", "middle", "bottom")               # 垂直對齊 in a 文字框
 TEXT_STROKE_ALIGNS = ("inside", "center", "outside")
 TEXT_BOX_MODES = ("auto", "auto_h", "fixed")             # 自動寬度 / 自動高度 / 固定大小 (Lunacy's)
-TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity", "pivot_x", "pivot_y")   # (pivot: 中心點)
+TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity", "pivot_x", "pivot_y",
+                    "anchor_x", "anchor_y")   # (pivot: 中心點, anchor: 錨點)
 
 
 def set_text(proj, clip_id, **fields):
@@ -1571,8 +1572,9 @@ def ungroup(root, level, group_id):
             if ktf is not None:
                 ax, ay = moves[id(k)]                            # (中心點跟隨最下層物件: folded in)
                 kpx, kpy = _pivot(ktf)                           # (its own 中心點 scales with it)
-                ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: gx + gs * (v + ax) + (gs - 1) * kpx)
-                ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: gy + gsy * (v + ay) + (gsy - 1) * kpy)
+                kax, kay = _anchor(ktf)                          # (its own 錨點 does not: x / y place it)
+                ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: gx + gs * (v + ax) + (gs - 1) * kpx + (1 - gs) * kax)
+                ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: gy + gsy * (v + ay) + (gsy - 1) * kpy + (1 - gsy) * kay)
                 sx = ktf.get("scale", 1.0)
                 if "scale_y" in ktf or abs(gs - gsy) > 1e-9:
                     ktf["scale_y"] = _map_value(ktf.get("scale_y", sx), lambda v: v * gsy)
@@ -1614,7 +1616,8 @@ def _flat_group(g):
     """(x, y, scale x, scale y) of a group that is not turned, flipped or animated in place
     or size (its clips' canvas place folds in and out of it exactly), else EditError."""
     tf = g.get("transform") or {}
-    if any(curves.is_animated(tf.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation", "pivot_x", "pivot_y")) \
+    if any(curves.is_animated(tf.get(k)) for k in ("x", "y", "scale", "scale_y", "rotation", "pivot_x", "pivot_y",
+                                              "anchor_x", "anchor_y")) \
             or abs(curves.value(tf.get("rotation", 0.0), 0)) > 1e-9 or tf.get("flip_h") or tf.get("flip_v"):
         raise EditError(f"「{g.get('name') or '群組'}」有旋轉或關鍵幀動畫：片段沒辦法不移動地放進去")
     gs = float(tf.get("scale", 1.0))
@@ -1629,11 +1632,17 @@ def _pivot(tf):
     return curves.value(tf.get("pivot_x", 0.0), 0), curves.value(tf.get("pivot_y", 0.0), 0)
 
 
+def _anchor(tf):
+    """A transform's anchor (錨點) at its start, half-canvas units."""
+    return curves.value(tf.get("anchor_x", 0.0), 0), curves.value(tf.get("anchor_y", 0.0), 0)
+
+
 def _placed(tf, gs, gsy):
     """(x, y) where an unturned, unanimated transform scaled gs x gsy puts its centre: x / y
     moved by scaling about its pivot (project.pivot_shift, which turning would add to)."""
     px, py = _pivot(tf)
-    return float(tf.get("x", 0.0)) + (1 - gs) * px, float(tf.get("y", 0.0)) + (1 - gsy) * py
+    ax, ay = curves.value(tf.get("anchor_x", 0.0), 0), curves.value(tf.get("anchor_y", 0.0), 0)   # (錨點: x / y place it)
+    return float(tf.get("x", 0.0)) - ax + (1 - gs) * px, float(tf.get("y", 0.0)) - ay + (1 - gsy) * py
 
 
 def _groups_around(level, track):
@@ -1668,12 +1677,13 @@ def _refit(c, out_of, into):
     tax = [a for _, a in reversed(into)]
 
     piv = _pivot(ktf)                                             # (its 中心點 scales with it)
+    anc = _anchor(ktf)                                            # (its 錨點 does not)
 
     def axis(v, i):
         for f, a in zip(fx, ax):
-            v = f[i] + f[2 + i] * (v + a[i]) + (f[2 + i] - 1) * piv[i]
+            v = f[i] + f[2 + i] * (v + a[i]) + (f[2 + i] - 1) * piv[i] + (1 - f[2 + i]) * anc[i]
         for f, a in zip(tx, tax):
-            v = (v - f[i]) / f[2 + i] - a[i] + (1 / f[2 + i] - 1) * piv[i]
+            v = (v - f[i]) / f[2 + i] - a[i] + (1 / f[2 + i] - 1) * piv[i] + (1 - 1 / f[2 + i]) * anc[i]
         return v
 
     def size(v, i):

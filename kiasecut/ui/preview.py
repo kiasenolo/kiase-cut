@@ -25,7 +25,7 @@ and scales about its pivot (中心點, the ring with a cross, at its centre unle
 scale drag keeps the pivot in place): drag the ring to move the pivot (Ctrl+drag while it is at
 the centre, where a plain drag moves the clip) - x / y stay (a turned or scaled clip swings round the new pivot, as with CSS transform-origin) - and it snaps to the clip's centre, corners and edge middles (Shift: freely). With X / Y
 scale linked a corner or an edge keeps their ratio; unlinked, a corner sets both freely (Shift
-keeps the ratio) and an edge only its own axis. A built-in asset (assets.py) is resized instead:
+keeps the ratio) and an edge only its own axis. The anchor (錨點, the orange diamond: the point of the clip that 位置 places, unmoved while the pivot is) is dragged like the pivot (Alt+drag while it is at the centre): the diamond stays and the clip moves the other way. A built-in asset (assets.py) is resized instead:
 its 寬 / 高 change and its scale stays (an edge changes one side, a corner both, Shift keeps
 their ratio); that drag reports group "multi": {"asset": {w, h}, "transform": {x, y}}. So is a
 text with a 文字框 (textlayout.py; not one as big as its words, which scales): an edge sets its
@@ -153,6 +153,8 @@ class Box:
         self.ox, self.oy = shift                # (canvas px: 中心點跟隨最下層物件 moves its clips)
         self.pdx, self.pdy = project.pivot_shift(tf, t, W, H)     # (中心點: turned about its pivot)
         self.pivot = (v("pivot_x", 0.0), v("pivot_y", 0.0))
+        self.anchor = (v("anchor_x", 0.0), v("anchor_y", 0.0))      # (錨點: what x / y place)
+        self.pos = (W / 2 + v("x", 0.0) * W / 2 + self.ox, H / 2 - v("y", 0.0) * H / 2 + self.oy)
         self.cx = W / 2 + v("x", 0.0) * W / 2 + self.ox + self.pdx
         self.cy = H / 2 - v("y", 0.0) * H / 2 + self.oy + self.pdy
         self.w, self.h = self.bw * abs(self.s), self.bh * abs(self.sy)
@@ -171,6 +173,10 @@ class Box:
     def pivot_local(self):
         """Its pivot (中心點) in its own frame (centre origin, unscaled, y down, canvas px)."""
         return QPointF(self.pivot[0] * self.W / 2, -self.pivot[1] * self.H / 2)
+
+    def anchor_pt(self):
+        """Canvas point 位置 (x / y) puts the anchor (錨點) at."""
+        return QPointF(*self.pos)
 
     def pivot_pt(self):
         """Canvas point of its pivot: what it turns and scales about."""
@@ -952,6 +958,12 @@ class Preview(QWidget):
         for _sx, _sy, pt in box.handles():
             self._handle(p, pt, k)
         self._handle(p, rh, k, round_=True, color="#e6e6e6")
+        an, d = box.anchor_pt(), 4 * k                         # 錨點: a diamond
+        diamond = QPolygonF([an + QPointF(0, -d), an + QPointF(d, 0), an + QPointF(0, d), an + QPointF(-d, 0)])
+        for w, col in ((3 * k, "#111114"), (1.25 * k, "#ffb020")):
+            p.setPen(QPen(QColor(col), w))
+            p.setBrush(Qt.NoBrush)
+            p.drawPolygon(diamond)
         pv, r = box.pivot_pt(), 5 * k                          # 中心點: a ring with a cross
         for w, col in ((3 * k, "#111114"), (1.25 * k, "#ffffff")):
             p.setPen(QPen(QColor(col), w))
@@ -1240,6 +1252,9 @@ class Preview(QWidget):
             if self._near(box.rot_handle(k), m, k):
                 self.drag = {"kind": "rotate", "box": box, "m0": m, "moved": False}
                 return
+            if self._grabs_anchor(box, m, k, e.modifiers()):
+                self.drag = {"kind": "anchor", "box": box, "m0": m, "a0": box.anchor, "moved": False}
+                return
             if self._grabs_pivot(box, m, k, e.modifiers()):
                 self.drag = {"kind": "pivot", "box": box, "m0": m, "moved": False}
                 return
@@ -1414,6 +1429,8 @@ class Preview(QWidget):
             return self._scale_values(box, d, m, e.modifiers())
         if kind == "pivot":
             return "transform", self._pivot_values(box, m, e.modifiers())
+        if kind == "anchor":
+            return "transform", self._anchor_values(box, d, m)
         if kind == "rotate":
             c = box.pivot_pt()                                 # (中心點: it turns about its pivot)
             a0 = math.degrees(math.atan2(d["m0"].y() - c.y(), d["m0"].x() - c.x()))
@@ -1505,6 +1522,19 @@ class Preview(QWidget):
         if (asset or framed) and not out:
             del vals["transform"]
         return ("multi" if asset or framed else "transform"), vals
+
+    def _grabs_anchor(self, box, m, k, mods):
+        """Whether a press at m takes the anchor's diamond: once it is off the centre, else with
+        Alt (a plain press there moves the clip)."""
+        return self._near(box.anchor_pt(), m, k * PIVOT_PICK) and (
+            any(abs(v) > 1e-9 for v in box.anchor) or bool(mods & Qt.AltModifier))
+
+    def _anchor_values(self, box, d, m):
+        """anchor_x / anchor_y of a drag of the anchor (錨點) from d["m0"] to m: the diamond stays
+        where 位置 puts it and the clip moves the other way; x / y are not touched."""
+        a0 = d["a0"]
+        return {"anchor_x": round(a0[0] + (m.x() - d["m0"].x()) / (box.W / 2), 5),
+                "anchor_y": round(a0[1] - (m.y() - d["m0"].y()) / (box.H / 2), 5)}
 
     def _grabs_pivot(self, box, m, k, mods):
         """Whether a press at m takes the pivot's ring: once it is off the centre, else with
@@ -1669,7 +1699,8 @@ class Preview(QWidget):
         elif box is not None and not self.mask_mode:
             if self._near(box.rot_handle(k), m, k):
                 cur = Qt.PointingHandCursor
-            elif not getattr(box, "group", False) and self._grabs_pivot(box, m, k, e.modifiers()):
+            elif not getattr(box, "group", False) and (self._grabs_anchor(box, m, k, e.modifiers())
+                                                       or self._grabs_pivot(box, m, k, e.modifiers())):
                 cur = Qt.CrossCursor
             elif (side := next(((sx, sy) for sx, sy, pt in box.handles() if self._near(pt, m, k)), None)):
                 sx, sy = side

@@ -76,6 +76,12 @@ class LayerDropTests(unittest.TestCase):
         fx.setData(FX_MIME, "builtin:blur".encode())
         drop(fx, 2, low=False)
         self.assertEqual(got, [(["m1", "m2"], [], 1), ("builtin:blur", "c2", 2)])
+        got.clear()
+        fx2 = QMimeData()
+        fx2.setData(FX_MIME, "builtin:blur".encode())
+        low = lst.visualItemRect(lst.item(lst.count() - 1)).bottom()
+        lst.dropEvent(QDropEvent(QPointF(20, low + 40), Qt.CopyAction, fx2, Qt.LeftButton, Qt.NoModifier))
+        self.assertEqual(got, [("builtin:blur", "", 0)])                  # under the list: on top, where it works on the layers
 
     def test_new_layers_go_where_dropped(self):
         from types import SimpleNamespace

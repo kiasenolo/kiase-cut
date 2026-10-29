@@ -177,6 +177,9 @@ class LayerList(QListWidget):
             self.replaceDropped.emit(ident, lit[0].data(ROLE))
         elif md.hasFormat(FX_MIME):
             it = self.itemAt(pos.toPoint())
+            if it is None and (not self.count() or pos.y() > self.visualItemRect(self.item(self.count() - 1)).bottom()):
+                at = 0                                  # the empty part under the list: a filter layer on top (at the bottom
+                                                        # it would work on nothing), as an adjustment layer
             self.fxDropped.emit(bytes(md.data(FX_MIME)).decode("utf-8"), it.data(ROLE) if it else "", at)
         elif md.hasFormat(MEDIA_MIME):
             ids = [i for i in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",") if i]

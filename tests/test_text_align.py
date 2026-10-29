@@ -85,6 +85,21 @@ class TextAlignTests(unittest.TestCase):
         edit.toggle_key(p, c["id"], "text", "fill", 0)
         self.assertTrue(curves.value(c["text"]["fill"], 0))
 
+    def test_outline_is_drawn_over_the_fill_with_round_corners(self):
+        p = proj()
+        c = edit.add_text(p, 0, "I")
+        base = dict(c["text"], color=[1.0, 0.0, 0.0], stroke_color=[0.0, 0.0, 1.0], stroke_on=True, stroke=3.0)
+        for align in ("inside", "center"):
+            im = np.asarray(textlayout.render(dict(base, stroke_align=align), 1.0))
+            blue = (im[..., 2] > 200) & (im[..., 0] < 60) & (im[..., 3] > 200)
+            self.assertTrue(blue.any(), align)               # not hidden under the fill
+        from kiasecut import render
+        for k in ("fill", "stroke_on", "stroke_color", "stroke", "stroke_align"):
+            self.assertIn(k, render.TEXT_FIELDS)             # so keyframes of them are evaluated
+        grown = textlayout._dilate(np.pad(np.full((1, 1), 255, np.uint8), ((8, 8), (8, 8))), 6)
+        self.assertEqual(grown[8 + 6, 8 + 6], 0)             # a disc, not a square: the corner stays empty
+        self.assertEqual(grown[8, 8 + 6], 255)
+
     def test_outline_alignment_changes_its_bounds_and_is_keyframeable(self):
         p = proj()
         c = edit.add_text(p, 0, "O")

@@ -17,7 +17,8 @@ Calibrated frame by frame against a Jianying export:
 import math
 import os
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 from . import curves, fonts
 
@@ -170,6 +171,24 @@ def frame_size(spec, canvas_h=1080, scale=1.0):
     return lay["fw"], lay["fh"]
 
 
+def _dilate(a, r):
+    """a (uint8, H x W) grown by a round brush of radius r px: every pixel takes the largest value within r."""
+    if r <= 0:
+        return a
+    h, w = a.shape
+    pad = np.pad(a, r)
+    rows = [int(math.sqrt(r * r - dy * dy) + 0.5) for dy in range(-r, r + 1)]
+    out = a.copy()
+    wide = pad                                               # pad grown sideways by k px
+    for k in range(r + 1):
+        if k:
+            wide = np.maximum(wide, np.maximum(np.roll(pad, k, 1), np.roll(pad, -k, 1)))
+        for i, hw in enumerate(rows):
+            if hw == k:
+                np.maximum(out, wide[i:i + h, r:r + w], out=out)
+    return out
+
+
 def render(spec, scale, canvas_h=1080):
     """Render text spec at `scale` (1 = clip scale 1). Returns an RGBA image whose centre
     is the text box centre (the 文字框's, when it has one)."""
@@ -204,22 +223,14 @@ def render(spec, scale, canvas_h=1080):
                 mask_draw.text(at, ch, font=f, fill=255, anchor="ls")
     if glyph_mask:
         radius = stroke_width if stroke_align != "center" else (stroke_width + 1) // 2
-        size = radius * 2 + 1
-        expanded = glyph_mask.filter(ImageFilter.MaxFilter(size)) if radius else glyph_mask
-        contracted = glyph_mask.filter(ImageFilter.MinFilter(size)) if stroke_align != "outside" and radius else glyph_mask
-        if stroke_align == "inside":
-            outline = Image.frombytes("L", im.size, bytes(max(0, a - b) for a, b in
-                                    zip(glyph_mask.tobytes(), contracted.tobytes())))
-        elif stroke_align == "outside":
-            outline = Image.frombytes("L", im.size, bytes(max(0, a - b) for a, b in
-                                    zip(expanded.tobytes(), glyph_mask.tobytes())))
-        else:
-            outline = Image.frombytes("L", im.size, bytes(max(0, a - b) for a, b in
-                                    zip(expanded.tobytes(), contracted.tobytes())))
+        g = np.asarray(glyph_mask)
+        expanded = _dilate(g, radius) if stroke_align != "inside" else g
+        contracted = 255 - _dilate(255 - g, radius) if stroke_align != "outside" else g
+        outline = np.clip(expanded.astype(np.int16) - contracted, 0, 255).astype(np.uint8)
         stroke_color = tuple(int(round(v * 255)) for v in (spec.get("stroke_color") or [0, 0, 0])[:3]) + (255,)
         stroke_layer = Image.new("RGBA", im.size, stroke_color)
-        stroke_layer.putalpha(outline)
-        im = Image.alpha_composite(stroke_layer, im)
+        stroke_layer.putalpha(Image.fromarray(outline, "L"))
+        im = Image.alpha_composite(im, stroke_layer)             # (the outline over the fill: inside and centre show)
     if shear:
         im = im.transform(im.size, Image.AFFINE, (1, shear, -shear * H / 2, 0, 1, 0),
                           resample=Image.BICUBIC)

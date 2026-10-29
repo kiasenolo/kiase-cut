@@ -29,7 +29,8 @@ from PIL import Image
 from . import assets, curves, fonts, masks, project, svgimage, textlayout
 
 US = 1_000_000
-TEXT_LAYOUT_FIELDS = ("color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
+TEXT_LAYOUT_FIELDS = ("color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
+               "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
                       "box_w", "box_h")
 
 

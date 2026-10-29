@@ -42,7 +42,8 @@ from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainte
 from . import assets, components, curves, fonts, fx, masks, project, svgimage, textlayout
 
 US = 1_000_000
-TEXT_FIELDS = ("size", "color", "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
+TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
+               "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
                "box_w", "box_h")
 BIG = 1e5
 # clip blend modes (edit.BLEND_MODES) as the painter's composition modes

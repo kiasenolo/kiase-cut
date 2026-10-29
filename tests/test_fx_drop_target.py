@@ -108,6 +108,19 @@ class LayerStackTests(unittest.TestCase):
         self.assertEqual(calls[0][0], "new")
 
 
+class StaticFilterLayerTests(unittest.TestCase):
+    def test_every_filter_layer_is_at_time_zero_on_its_own_track(self):
+        p = proj()
+        a = edit.add_filter_clip(p, "builtin:blur", 0, own_track=True)
+        b = edit.add_filter_clip(p, "builtin:invert", 0, own_track=True)
+        self.assertEqual((a["start_us"], b["start_us"]), (0, 0))              # (a still is drawn at 0: later ones never worked)
+        tracks = [t for t in p["tracks"] if a in t["clips"] or b in t["clips"]]
+        self.assertEqual(len(tracks), 2)
+        c = edit.add_filter_clip(p, "builtin:blur", 0)                         # (on a timeline they still share a track)
+        d = edit.add_filter_clip(p, "builtin:invert", 0)
+        self.assertGreater(d["start_us"], c["start_us"])
+
+
 class PivotUnitsTests(unittest.TestCase):
     def test_pivot_shown_in_object_widths(self):
         from kiasecut.ui.inspector import Inspector

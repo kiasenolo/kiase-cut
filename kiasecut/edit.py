@@ -2128,11 +2128,12 @@ def set_effect_mask_invert(proj, clip_id, effect_id, invert, t=None):
     set_param(proj, clip_id, "fxmask:" + effect_id, "invert", bool(invert), t)
 
 
-def add_filter_clip(proj, ref, at_us, duration_us=FILTER_DEFAULT_US, track_id=None, effect=None):
+def add_filter_clip(proj, ref, at_us, duration_us=FILTER_DEFAULT_US, track_id=None, effect=None, own_track=False):
     """A filter as a clip of its own: it filters everything on the tracks below it while it
     lasts (with effect: a copy of that effect, settings and all, instead of ref at its
     defaults). It goes on the given track, else on a track that only holds filters (topmost
-    with room), else on a new top picture track."""
+    with room), else on a new top picture track (own_track: always a new one - a layer of a static compound,
+    which is one clip on its own track and always at time 0)."""
     clip = {"id": new_clip_id(proj), "type": "filter", "name": fx.label(ref), "start_us": int(at_us),
             "duration_us": int(duration_us), "source_start_us": 0,
             "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0},
@@ -2143,7 +2144,7 @@ def add_filter_clip(proj, ref, at_us, duration_us=FILTER_DEFAULT_US, track_id=No
         t = track_by_id(proj, track_id)
         if t["kind"] != "audio":
             cands = [t]
-    if not cands:
+    if not cands and not own_track:
         cands = [t for t in reversed(proj["tracks"]) if t["kind"] == "video" and t["clips"] and
                  all(k["type"] == "filter" for k in t["clips"])]
     for t in cands:

@@ -4628,7 +4628,8 @@ class MainWindow(QMainWindow):
             return
         start = self.playhead_us() if start_us is None else start_us
         self.apply("新增濾鏡片段", lambda lvl: edit.add_filter_clip(lvl, ref, start, track_id=track_id or None,
-                                                                 effect=effect), select=lambda c: c["id"])
+                                                                 effect=effect, own_track=self.editing_static()),
+                   select=lambda c: c["id"])
 
     def on_filter_dropped(self, payload, cid, track_id, start_us):
         """A filter dragged from the VFX tab, or an effect from the effects panel (a copy with

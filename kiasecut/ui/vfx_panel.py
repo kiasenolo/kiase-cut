@@ -7,7 +7,7 @@ import json
 import queue
 import threading
 
-from PySide6.QtCore import QMimeData, QObject, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
@@ -27,12 +27,14 @@ class Thumbs(QObject):
     must not freeze the window). get() is None until the picture is made; ready(ref) says when
     it is. When the filter engine is not available there are none."""
     ready = Signal(str)
+    moving = Signal(str)                    # the moving picture of a filter is made (animation(ref) has it)
     _made = Signal(object, object)          # (ref, filter key), QImage or None: from the thread
 
     def __init__(self):
         super().__init__()
         self.failed = False
         self.cache = {}                     # (ref, filter key) -> QPixmap or None
+        self.moves = {}                     # ("anim", ref, filter key) -> [QPixmap] ([]: it never changes) or None
         self.asked = set()
         self.todo = queue.Queue()
         self.thread = None
@@ -52,6 +54,22 @@ class Thumbs(QObject):
                 self.thread.start()
         return None
 
+    def animation(self, ref):
+        """The filter's thumbnail moving - the pictures of its first two seconds, [] when it looks
+        the same all the time - or None while it is made (it is asked for the first time) or cannot be."""
+        if self.failed:
+            return None
+        key = ("anim", ref, fx.get(ref).key())
+        if key in self.moves:
+            return self.moves[key]
+        if key not in self.asked:
+            self.asked.add(key)
+            self.todo.put(key)
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._run, name="filter thumbnails", daemon=True)
+                self.thread.start()
+        return None
+
     def _run(self):                         # waits on the process, so the window goes on
         try:
             worker = fxthumbs.Worker()
@@ -60,6 +78,21 @@ class Thumbs(QObject):
             return
         while True:
             key = self.todo.get()
+            if key[0] == "anim":
+                pics = None
+                try:
+                    if fx.get(key[1]).key() == key[2]:
+                        frames = worker.make_anim(key[1])
+                        if frames is not None:
+                            pics = [QImage(f.tobytes(), f.shape[1], f.shape[0], f.shape[1] * 4,
+                                           QImage.Format_RGBA8888_Premultiplied).copy() for f in frames]
+                except OSError:
+                    self.failed = True
+                    return
+                except Exception:
+                    pics = None
+                self._made.emit(key, pics)
+                continue
             img = None
             try:
                 if fx.get(key[0]).key() == key[1]:
@@ -75,6 +108,12 @@ class Thumbs(QObject):
             self._made.emit(key, img)
 
     def _keep(self, key, img):
+        if key[0] == "anim":
+            self.moves[key] = None if img is None else [
+                QPixmap.fromImage(i).scaled(*THUMB, Qt.IgnoreAspectRatio, Qt.SmoothTransformation) for i in img]
+            if img is not None:
+                self.moving.emit(key[1])
+            return
         self.cache[key] = None if img is None else \
             QPixmap.fromImage(img).scaled(*THUMB, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         if img is not None:
@@ -144,9 +183,57 @@ class VfxPanel(QWidget):
         lay.addWidget(self.tree, 1)
         self.thumbs = Thumbs()
         self.thumbs.ready.connect(self._thumb_ready)
+        self.thumbs.moving.connect(self._moving_ready)
+        self.tree.setMouseTracking(True)                  # the filter under the mouse moves: what changes with time shows
+        self.tree.viewport().setMouseTracking(True)
+        self.tree.viewport().installEventFilter(self)
+        self.hover = None                   # (item, ref) of the thumbnail playing
+        self.step = 0
+        self.clock = QTimer(self)
+        self.clock.setInterval(1000 // fxthumbs.ANIM_FPS)
+        self.clock.timeout.connect(self._tick)
         self.mine = []                      # (name, ref) of the Library's filters
         self.rebuild()
         self.setMinimumWidth(260)
+
+    def eventFilter(self, obj, ev):
+        if obj is self.tree.viewport():
+            if ev.type() == QEvent.MouseMove:
+                item = self.tree.itemAt(ev.position().toPoint())
+                if item is not self.hover_item():
+                    self._hover(item)
+            elif ev.type() == QEvent.Leave:
+                self._hover(None)
+        return super().eventFilter(obj, ev)
+
+    def hover_item(self):
+        return self.hover[0] if self.hover else None
+
+    def _hover(self, item):
+        if self.hover:                                    # back to the still picture
+            old, ref = self.hover
+            pix = self.thumbs.get(ref)
+            if pix is not None:
+                old.setIcon(0, QIcon(pix))
+        self.hover = None
+        self.clock.stop()
+        ref = self._ref(item)
+        if ref:
+            self.hover, self.step = (item, ref), 0
+            self.thumbs.animation(ref)                    # (made the first time: the clock starts when it is)
+            self._moving_ready(ref)
+
+    def _moving_ready(self, ref):
+        if self.hover and self.hover[1] == ref and self.thumbs.animation(ref):
+            self.clock.start()
+
+    def _tick(self):
+        frames = self.thumbs.animation(self.hover[1]) if self.hover else None
+        if not frames:
+            self.clock.stop()
+            return
+        self.step = (self.step + 1) % len(frames)
+        self.hover[0].setIcon(0, QIcon(frames[self.step]))
 
     @staticmethod
     def _ref(item):
@@ -158,6 +245,8 @@ class VfxPanel(QWidget):
             self.rebuild()
 
     def rebuild(self):
+        self.hover = None
+        self.clock.stop()
         self.tree.clear()
         cats = {}
         for ref in fx.builtin_refs():

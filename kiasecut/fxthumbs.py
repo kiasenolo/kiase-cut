@@ -7,7 +7,9 @@ cache, so the preview later gets the same filter quickly.
 
 Protocol: the UI writes one filter ref per line on stdin; for each, the process writes
 width, height (uint32, little-endian) and that many RGBA8 premultiplied pixels on stdout
-(0 x 0 when the filter could not run). Worker() is the UI's end.
+(0 x 0 when the filter could not run). A line "anim<TAB>ref" asks for the filter moving instead:
+ANIM_FRAMES pictures, one after the other, of the moments 0, 1/ANIM_FPS, 2/ANIM_FPS ... s
+(what a filter that changes with time does). Worker() is the UI's end.
 """
 import os
 import struct
@@ -19,6 +21,7 @@ import numpy as np
 from . import fx
 
 HEADER = struct.Struct("<II")
+ANIM_FRAMES, ANIM_FPS = 24, 12            # (2 seconds, as the thumbnail is shown on hover)
 
 
 def sample_picture(w=160, h=90):
@@ -37,14 +40,26 @@ def sample_picture(w=160, h=90):
     return img.round().astype(np.uint8)
 
 
-def thumbnail(engine, ref):
-    """The filter at its default settings over sample_picture(), or None."""
+def thumbnail(engine, ref, moment=None):
+    """The filter at its default settings over sample_picture(), or None; moment: the time in
+    seconds (the default one for the still thumbnail)."""
     d = fx.get(ref)
     if d.error:
         return None
     vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
     pic = sample_picture()
-    return engine.run(d, vals, pic, time=0.7, progress=0.5, frame=17, unit=pic.shape[0] / 1080)   # (as on a 1080p canvas)
+    unit = pic.shape[0] / 1080                                           # (as on a 1080p canvas)
+    if moment is None:
+        return engine.run(d, vals, pic, time=0.7, progress=0.5, frame=17, unit=unit)
+    return engine.run(d, vals, pic, time=moment, progress=min(1.0, moment / 2), frame=round(moment * 30), unit=unit)
+
+
+def animation(engine, ref):
+    """ANIM_FRAMES pictures of the filter over time, or None; [] when it looks the same all the time."""
+    frames = [thumbnail(engine, ref, i / ANIM_FPS) for i in range(ANIM_FRAMES)]
+    if frames[0] is None:
+        return None
+    return frames if any(not np.array_equal(frames[0], f) for f in frames[1:]) else []
 
 
 class Worker:
@@ -79,6 +94,16 @@ class Worker:
             return None
         return np.frombuffer(self._read(w * h * 4), np.uint8).reshape(h, w, 4)
 
+    def make_anim(self, ref):
+        """The filter moving: a list of RGBA arrays, [] when it does not change, None when it cannot run."""
+        self.proc.stdin.write(b"anim\t" + ref.encode("utf-8") + b"\n")
+        self.proc.stdin.flush()
+        w, h = HEADER.unpack(self._read(HEADER.size))
+        if not w or not h:
+            return None
+        n = struct.unpack("<I", self._read(4))[0]
+        return [np.frombuffer(self._read(w * h * 4), np.uint8).reshape(h, w, 4) for _ in range(n)]
+
     def close(self):
         try:
             self.proc.stdin.close()
@@ -96,6 +121,20 @@ def main():
         return 1
     for line in sys.stdin.buffer:
         ref = line.rstrip(b"\r\n").decode("utf-8")
+        if ref.startswith("anim\t"):
+            try:
+                frames = animation(engine, ref[5:])
+            except Exception as exc:
+                print(f"{ref}: {exc}", file=sys.stderr)
+                frames = None
+            if frames is None:
+                out.write(HEADER.pack(0, 0))
+            else:
+                h, w = (frames[0] if frames else sample_picture()).shape[:2]
+                out.write(HEADER.pack(w, h) + struct.pack("<I", len(frames)) +
+                          b"".join(np.ascontiguousarray(f).tobytes() for f in frames))
+            out.flush()
+            continue
         try:
             img = thumbnail(engine, ref)
         except Exception as exc:

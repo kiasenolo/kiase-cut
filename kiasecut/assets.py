@@ -15,7 +15,8 @@ Shapes have a fill (fill: on / off, in color) and an outline (stroke_on, in stro
 stroke px wide - 0 draws none) that can be on together. Each is painted with fill_type /
 stroke_type: a plain colour, a gradient (to fill_color2 / stroke_color2, linear at fill_angle
 or radial; across the shape's w x h box) or a picture (fill_image / stroke_image: a file,
-covering the box). stroke_align puts the outline inside
+covering the box) or one of Blender's textures (textures.py, in the two colours, at *_scale and
+moved by *_seed). stroke_align puts the outline inside
 the shape's edge, on it or outside it; join shapes its corners (miter, round, bevel). An
 ellipse can be an arc (arc_start °, clockwise from 3 o'clock; arc_sweep % of the full turn)
 with a hole (ratio: the inner radius, % of the outer), as in Lunacy; a parallelogram leans
@@ -38,7 +39,7 @@ import math
 import os
 import re
 
-from . import curves
+from . import curves, textures
 
 FOLDER = ".內建素材"
 PREFIX = "asset:"
@@ -46,7 +47,9 @@ CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎�
 DEFAULT_COLORS = ("#ffffff", "#000000")
 SHAPE_PX = 400                             # a new shape's size on a 1080-high canvas
 
-PAINT_TYPES = (("純色", "solid"), ("漸變", "gradient"), ("圖片", "image"))
+PAINT_TYPES = (("純色", "solid"), ("漸變", "gradient"), ("圖片", "image"), ("Blender 棋盤格", "checker"),
+               ("Blender 磚塊", "brick"), ("Blender 噪點", "noise"), ("Blender Voronoi", "voronoi"),
+               ("Blender 波浪", "wave"), ("Blender Magic", "magic"))
 GRADIENT_TYPES = (("線性", "linear"), ("放射", "radial"))
 
 # field: label, kind, min, max, step, decimals (min / max: the soft limits a drag keeps to)
@@ -79,6 +82,8 @@ FIELD_INFO = {
     "fill_gtype": ("填充漸變", "choice", GRADIENT_TYPES),
     "fill_angle": ("填充漸變角度 °", "number", -360, 360, 1, 0),
     "fill_image": ("填充圖片", "image"),
+    "fill_scale": ("填充材質比例", "number", 0.1, 100, 0.1, 2),
+    "fill_seed": ("填充材質位置", "number", -1000, 1000, 0.1, 2),
     "stroke_on": ("外框", "toggle"),
     "stroke_type": ("外框類型", "choice", PAINT_TYPES),
     "stroke_color": ("外框顏色", "color"),
@@ -86,6 +91,8 @@ FIELD_INFO = {
     "stroke_gtype": ("外框漸變", "choice", GRADIENT_TYPES),
     "stroke_angle": ("外框漸變角度 °", "number", -360, 360, 1, 0),
     "stroke_image": ("外框圖片", "image"),
+    "stroke_scale": ("外框材質比例", "number", 0.1, 100, 0.1, 2),
+    "stroke_seed": ("外框材質位置", "number", -1000, 1000, 0.1, 2),
     "stroke": ("外框粗細", "number", 0, 2000, 1, 0),
     "stroke_align": ("外框位置", "choice", (("內側", "inside"), ("居中", "center"), ("外側", "outside"))),
     "join": ("轉角", "choice", (("直角", "miter"), ("圓角", "round"), ("倒角", "bevel"))),
@@ -95,7 +102,8 @@ FIELD_INFO = {
 HARD = {"w": (1, 65536), "h": (1, 65536), "angle": (None, None), "radius": (0, None),
         "sides": (3, 100), "points": (3, 100), "inner": (1, 99), "stroke": (0, None),
         "arc_start": (None, None), "skew": (-89, 89), "gcols": (1, 500), "grows": (1, 500),
-        "gratio": (0, 100), "gline": (0.1, None)}
+        "gratio": (0, 100), "gline": (0.1, None), "fill_scale": (0.01, 1000), "stroke_scale": (0.01, 1000),
+        "fill_seed": (None, None), "stroke_seed": (None, None)}
 
 
 def hard_range(f):
@@ -104,9 +112,9 @@ def hard_range(f):
     return HARD.get(f, (info[2], info[3]))
 
 
-FILL_PAINT = ("fill_type", "fill_color2", "fill_gtype", "fill_angle", "fill_image")    # (beside color)
+FILL_PAINT = ("fill_type", "fill_color2", "fill_gtype", "fill_angle", "fill_image", "fill_scale", "fill_seed")    # (beside color)
 STROKE = ("fill", "stroke_on", "stroke_type", "stroke_color", "stroke_color2", "stroke_gtype", "stroke_angle",
-          "stroke_image", "stroke", "stroke_align", "join") + FILL_PAINT
+          "stroke_image", "stroke_scale", "stroke_seed", "stroke", "stroke_align", "join") + FILL_PAINT
 FIELDS = {                                 # what each family has besides w, h and color
     "solid": (),
     "gradient": ("color2", "gtype", "angle"),
@@ -316,7 +324,8 @@ _DEFAULTS = {"fill": True, "stroke_on": False, "stroke": 8, "stroke_align": "ins
              "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX,
              "fill_type": "solid", "fill_color2": "#000000", "fill_gtype": "linear", "fill_angle": 0, "fill_image": "",
              "stroke_type": "solid", "stroke_color2": "#ffffff", "stroke_gtype": "linear", "stroke_angle": 0,
-             "stroke_image": ""}
+             "stroke_image": "",
+             "fill_scale": 5, "fill_seed": 0, "stroke_scale": 5, "stroke_seed": 0}
 
 
 def at(p, t):
@@ -431,6 +440,24 @@ def _picture(path):
     return uri
 
 
+def _texture(kind, w, h, scale, seed, c1, c2):
+    """A data URI of Blender texture `kind` (textures.py) in colours c1, c2 for a w x h shape."""
+    key = (kind, round(w), round(h), scale, seed, c1, c2)
+    uri = _PICTURES.get(key)
+    if uri is None:
+        from PIL import Image
+        import base64
+        import io
+        a = textures.render(kind, w, h, scale, seed, to_rgba(c1), to_rgba(c2, (0.0, 0.0, 0.0, 1.0)))
+        buf = io.BytesIO()
+        Image.fromarray(a, "RGBA").save(buf, "PNG")
+        uri = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+        if len(_PICTURES) >= 16:
+            _PICTURES.pop(next(iter(_PICTURES)))
+        _PICTURES[key] = uri
+    return uri
+
+
 def _paint(p, pre, w, h):
     """How the fill (pre "fill") or outline ("stroke") of p is painted: (kind, value, defs) -
     ("solid", colour, ""), ("gradient", "url(#id)", the gradient) or ("image", data URI, "")."""
@@ -440,6 +467,10 @@ def _paint(p, pre, w, h):
         gid = "g" + pre[0]
         return kind, f"url(#{gid})", _grad_def(gid, c, p.get(pre + "_color2", "#000000"), p.get(pre + "_gtype", "linear"),
                                                p.get(pre + "_angle", 0), w, h)
+    if kind in textures.KINDS:
+        uri = _texture(kind, w, h, p.get(pre + "_scale", 5), p.get(pre + "_seed", 0), c,
+                       p.get(pre + "_color2", "#000000"))
+        return "image", uri, ""
     if kind == "image" and p.get(pre + "_image"):
         uri = _picture(p[pre + "_image"])
         if uri:

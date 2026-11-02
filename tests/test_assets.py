@@ -456,6 +456,18 @@ class PaintTests(unittest.TestCase):
         q = self.shape(fill_type="image", fill_image=os.path.join(self.dir, "none.png"))
         self.assertEqual(self.render(q).pixelColor(100, 50).red(), 255)          # unreadable: the colour
 
+    def test_blender_texture_fill_and_outline(self):
+        from kiasecut import textures
+        for kind in textures.KINDS:
+            q = self.shape(fill_type=kind, fill_color2="#ffffff", color="#000000", stroke_on=True, stroke=20,
+                           stroke_type=kind, stroke_scale=3)
+            im = self.render(q)
+            self.assertGreater(im.pixelColor(100, 50).alpha(), 250, kind)
+            self.assertGreater(im.pixelColor(100, 3).alpha(), 250, kind)
+        q = self.shape(fill_type="checker", color="#000000", fill_color2="#ffffff")
+        im = self.render(q)
+        self.assertGreater(len({im.pixelColor(x, 50).red() for x in range(0, 200, 5)}), 1)    # not one colour
+
     def test_old_parameters_still_load(self):
         p = changed(assets.make(assets.get("shape.star"), "#fff", "#000", 1920, 1080))
         self.assertEqual(p["fill_type"], "solid")

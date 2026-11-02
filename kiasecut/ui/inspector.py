@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, build, components, curves, edit, mapping, normalize, project, textlayout, textvars, viz
+from .. import assets, textures, build, components, curves, edit, mapping, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
@@ -1595,11 +1595,12 @@ class Inspector(QWidget):
             col = "color" if pre == "fill" else "stroke_color"
             kinds = {assets.clean(pre + "_type", curves.value(k["asset"].get(pre + "_type"), t)) for k, t in zip(clips, ts)}
             grad, pic = "gradient" in kinds, "image" in kinds
+            tex = bool(kinds & set(textures.KINDS))
             only_pic = kinds == {"image"}
-            for f, shown in ((col, not only_pic), (pre + "_color2", grad), (pre + "_gtype", grad),
+            for f, shown in ((col, not only_pic), (pre + "_color2", grad or tex), (pre + "_gtype", grad),
                              (pre + "_angle", grad and not all(assets.clean(pre + "_gtype", curves.value(
                                  k["asset"].get(pre + "_gtype"), t)) == "radial" for k, t in zip(clips, ts))),
-                             (pre + "_image", pic)):
+                             (pre + "_image", pic), (pre + "_scale", tex), (pre + "_seed", tex)):
                 if f in rows and form is not None:
                     form.setRowVisible(rows[f], shown)
 

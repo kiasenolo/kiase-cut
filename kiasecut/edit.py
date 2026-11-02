@@ -2795,6 +2795,43 @@ def freeze_at(tracks, t_us):
     return tracks
 
 
+def flatten_static(level, fps):
+    """A static compound's content as one frame: every layer (inside its groups too) starts at 0
+    and lasts one frame, a track holding more than one clip hands the others to tracks of their
+    own right above it, and the compound lasts that frame - whatever is added fills the picture
+    (a layer put after the first frame used never to show)."""
+    frame = max(1, round(US / fps))
+    taken = {t["id"] for t in project.all_tracks(level["tracks"])}      # (ids are the level's, groups' too)
+
+    def new_id():
+        k = len(taken)
+        while f"t{k}" in taken:
+            k += 1
+        taken.add(f"t{k}")
+        return f"t{k}"
+
+    def flat(tracks):
+        out = []
+        for t in tracks:
+            out.append(t)
+            extra = t["clips"][1:]
+            t["clips"] = t["clips"][:1]
+            for c in extra:                              # (one clip a track: the layers' rule)
+                out.append({"id": new_id(), "kind": t["kind"], "name": t.get("name", ""), "clips": [c]})
+        for t in out:
+            for c in t["clips"]:
+                if c["start_us"] or c["duration_us"] != frame:
+                    c["start_us"], c["duration_us"] = 0, frame
+                    for f in ("fade_in_us", "fade_out_us"):
+                        c.pop(f, None)
+                if project.is_group(c):
+                    c["tracks"] = flat(c["tracks"])
+        return out
+    level["tracks"] = flat(level["tracks"])
+    level["duration_us"] = frame
+    return level
+
+
 def kind_name(static, component=False):
     """複合片段, 靜態片段, 元件 or 靜態元件."""
     return ("靜態" if static else "") + "元件" if component else "靜態片段" if static else "複合片段"

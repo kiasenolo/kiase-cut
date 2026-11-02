@@ -129,6 +129,24 @@ class LayerDropTests(unittest.TestCase):
         self.assertEqual([c["type"] for c in order][1], "filter")              # under the top layer
         self.assertIsNone(win.layer_drop_at)
 
+    def test_one_frame(self):
+        """A static compound is one frame: every layer at 0 for that frame, a second clip of a
+        track on a track of its own above it, inside groups too."""
+        p = self.level()
+        p["tracks"][0]["clips"].append(clip("late", 5 * S, S))
+        g = edit.make_group(p, p, ["c1"])
+        g["tracks"][0]["clips"].append(clip("late2", 3 * S, S))
+        edit.flatten_static(p, 30)
+        frame = round(S / 30)
+        clips = [c for t in project.all_tracks(p["tracks"]) for c in t["clips"]]
+        self.assertEqual({(c["start_us"], c["duration_us"]) for c in clips}, {(0, frame)})
+        self.assertTrue(all(len(t["clips"]) <= 1 for t in project.all_tracks(p["tracks"])))
+        self.assertIn("late", [c["id"] for c in edit.layers(p)])
+        self.assertIn("late2", [c["id"] for t in g["tracks"] for c in t["clips"]])
+        self.assertEqual(len({t["id"] for t in project.all_tracks(p["tracks"])}),
+                         len(list(project.all_tracks(p["tracks"]))))                 # ids stay unique
+        self.assertEqual(p["duration_us"], frame)
+
 
 class GroupLayerTests(unittest.TestCase):
     """Groups in the layer list: opened in place, restacked inside, their mask marked."""

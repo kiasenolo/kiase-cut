@@ -2008,6 +2008,13 @@ class MainWindow(QMainWindow):
     def _do(self, label, fn, args, merge, select):
         if not self.history:
             return None
+        if self.editing_static():                        # a static compound is one frame: what comes in fills it
+            inner = fn
+
+            def fn(root, *a):
+                out = inner(root, *a)
+                edit.flatten_static(self.container(root), self.proj["fps"])
+                return out
         try:
             result = self.history.do(label, fn, *args, merge=merge)
         except edit.EditError as exc:
@@ -2017,7 +2024,7 @@ class MainWindow(QMainWindow):
         except Exception as exc:                       # a file that cannot be read, say
             self.statusBar().showMessage(f"{label}失敗：{exc}", 6000)
             return None
-        if self.path_ids:                                # content may outgrow the compound
+        if self.path_ids and not self.editing_static():  # content may outgrow the compound
             node = self.container()
             node["duration_us"] = max(node.get("duration_us") or 0, project.end_us(node["tracks"]))
         if select is not None:

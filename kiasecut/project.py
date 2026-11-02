@@ -468,6 +468,8 @@ def curve_source_offsets(c, ts):
 TIME_FILTER = "builtin:frame_rate"      # 降低幀數: a clip's time steps at its fps (no picture change)
 FREEZE_FILTER = "builtin:freeze"        # 凍結: a clip's time held where its effects begin (its start)
 TIME_FILTERS = (TIME_FILTER, FREEZE_FILTER)
+MOTION_BLUR_FILTER = "builtin:transform_motion_blur"   # 動態模糊: the clip drawn along its move (blur_times)
+PLACE_FILTERS = TIME_FILTERS + (MOTION_BLUR_FILTER,)   # effects the program does itself, not on the picture
 
 
 def stepped(c, t):
@@ -518,8 +520,8 @@ def passes_through(c):
 
 
 def visual_effects(c):
-    """The effects that change a clip's picture: on, and not a time effect (stepped())."""
-    return [e for e in c.get("effects") or () if not e.get("disabled") and e.get("filter") not in TIME_FILTERS]
+    """The effects that change a clip's picture: on, and not a time effect (stepped()) or 動態模糊."""
+    return [e for e in c.get("effects") or () if not e.get("disabled") and e.get("filter") not in PLACE_FILTERS]
 
 
 def active_mask(c):
@@ -713,6 +715,12 @@ def normalize(p):
     for c in all_clips(p):                                 # built-in assets of older versions
         if c.get("asset") and "outline" in c["asset"]:
             c["asset"] = assets.normalize(c["asset"])
+        if "motion_blur" in c:                             # 動態模糊 was a clip setting: now an effect
+            from .edit import new_effect_id
+            mb = c.pop("motion_blur") or {}
+            c.setdefault("effects", []).insert(0, {
+                "id": new_effect_id(), "filter": MOTION_BLUR_FILTER, "enabled": True,
+                "params": {"shutter": float(mb.get("shutter", 180.0)), "samples": int(mb.get("samples", 8))}})
     p["version"] = VERSION
     return link(p)
 
@@ -735,15 +743,17 @@ BLUR_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "pivot_x", "pivot_y", "
 
 
 def blur_times(c, t, fps):
-    """動態模糊 (clip["motion_blur"] {shutter: degrees, samples}): the clip times its picture is
-    drawn at and averaged - spread over the shutter (180°: half a frame) round t, as After Effects
-    does - or None when it is off or nothing of its place moves then."""
-    mb = c.get("motion_blur")
+    """動態模糊 (the clip's first 動態模糊 effect that is on: params shutter in degrees, samples):
+    the clip times its picture is drawn at and averaged - spread over the shutter (180°: half a
+    frame) round t, as After Effects does - or None when it has none or nothing of its place
+    moves then."""
+    mb = next((e.get("params") or {} for e in c.get("effects") or ()
+               if e.get("filter") == MOTION_BLUR_FILTER and not e.get("disabled")), None)
     tf = c.get("transform") or {}
-    if not mb or not any(curves.is_animated(tf.get(k)) for k in BLUR_FIELDS):
+    if mb is None or c.get("type") == "filter" or not any(curves.is_animated(tf.get(k)) for k in BLUR_FIELDS):
         return None
-    n = max(2, min(64, int(mb.get("samples", 8))))
-    span = max(0.0, min(720.0, float(mb.get("shutter", 180.0)))) / 360 * 1_000_000 / max(fps, 1e-6)
+    n = max(2, min(64, int(round(curves.value(mb.get("samples", 8), t)))))
+    span = max(0.0, min(720.0, float(curves.value(mb.get("shutter", 180.0), t)))) / 360 * 1_000_000 / max(fps, 1e-6)
     if span <= 0:
         return None
     times = [t + (i / (n - 1) - 0.5) * span for i in range(n)]

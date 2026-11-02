@@ -1589,23 +1589,6 @@ def _set_speed(proj, clip_id, value):
     return c
 
 
-def set_motion_blur(proj, clip_id, on, shutter=None, samples=None):
-    """動態模糊: the clip's picture smeared along how it moves (position, scale, turning) within
-    the shutter (degrees of a frame, 180 to start) from samples drawings (project.blur_times)."""
-    _, c = find(proj, clip_id)
-    if c["type"] in ("audio", "filter"):
-        raise EditError("這個片段沒有畫面可以模糊")
-    if not on:
-        c.pop("motion_blur", None)
-        return c
-    mb = c.setdefault("motion_blur", {"shutter": 180.0, "samples": 8})
-    if shutter is not None:
-        mb["shutter"] = round(max(0.0, min(720.0, float(shutter))), 1)
-    if samples is not None:
-        mb["samples"] = max(2, min(64, int(samples)))
-    return c
-
-
 def set_normalize(proj, clip_id, target_db):
     """標準化: the clip's sound brought to a peak of target_db (dBFS) over the part it plays, on
     top of its 音量 (normalize.py); None turns it off."""

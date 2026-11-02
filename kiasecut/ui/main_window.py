@@ -412,8 +412,6 @@ class MainWindow(QMainWindow):
         ins.keepPitchChosen.connect(lambda ids, on: self.apply_each("保持音高" if on else "取消保持音高",
                                                                     edit.set_keep_pitch, ids, on))
         ins.freezeChosen.connect(self.on_freeze)
-        ins.motionBlurChosen.connect(lambda ids, on, shutter, samples: self.apply_each(
-            "動態模糊" if on else "取消動態模糊", edit.set_motion_blur, ids, on, shutter, samples))
         ins.normalizeChosen.connect(lambda ids, db: self.apply_each("標準化" if db is not None else "取消標準化",
                                                                     edit.set_normalize, ids, db))
         ins.audioStreamChosen.connect(lambda ids, n: self.apply_each("音軌", edit.set_audio_stream, ids, n))

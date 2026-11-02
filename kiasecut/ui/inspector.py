@@ -353,7 +353,6 @@ class Inspector(QWidget):
     groupAnchorChosen = Signal(list, bool)          # group ids, 中心點跟隨最下層物件 on
     throughChosen = Signal(list, bool)              # compound clip ids, 效果穿透 on
     normalizeChosen = Signal(list, object)          # clip ids, 標準化's peak in dBFS or None (off)
-    motionBlurChosen = Signal(list, bool, object, object)   # clip ids, 動態模糊 on, shutter °, samples (None: as is)
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
     paramReset = Signal(list, list)                 # clip ids, component parameter ids: back to the component's
@@ -597,7 +596,6 @@ class Inspector(QWidget):
                 blend.activated.connect(lambda i: self._emit_now(self.paramEdited, "clip", "blend", blend.itemData(i)))
                 self.widgets["blend"] = blend
                 form.addRow("混合模式", self._with_key(blend, "clip", "blend"))
-                form.addRow("動態模糊", self._blur_row())
         if c["type"] == "group":
             self._build_group(form, c)
         if self.through_row:
@@ -1258,34 +1256,6 @@ class Inspector(QWidget):
         self._queue(group, "value", value)
         self._flush()
 
-    def _blur_row(self):
-        """動態模糊: on, the shutter (degrees of a frame) and how many drawings make it."""
-        row = QWidget()
-        lay = QHBoxLayout(row)
-        lay.setContentsMargins(0, 0, 0, 0)
-        on = QCheckBox("啟用")
-        on.setToolTip("片段的位置、縮放、旋轉有動畫時，沿著移動的方向模糊（像 After Effects 的動態模糊）")
-        shutter = SpinBox()
-        shutter.set_limits(0.0, 720.0)
-        shutter.setDecimals(0)
-        shutter.setSuffix("°")
-        shutter.setKeyboardTracking(False)
-        shutter.setToolTip("快門角度：一格時間裡快門開多久（180° 是半格）；越大越糊")
-        samples = QSpinBox()
-        samples.setRange(2, 64)
-        samples.setKeyboardTracking(False)
-        samples.setToolTip("取樣數：畫幾次來疊出模糊（越多越平滑、越慢）")
-        on.clicked.connect(lambda v: self._emit_now(self.motionBlurChosen, bool(v), None, None))
-        shutter.edited.connect(lambda v: self._emit_now(self.motionBlurChosen, True, float(v), None))
-        samples.valueChanged.connect(lambda v: self._emit_now(self.motionBlurChosen, True, None, int(v)))
-        self.widgets["blur_on"], self.widgets["blur_shutter"], self.widgets["blur_samples"] = on, shutter, samples
-        lay.addWidget(on)
-        lay.addWidget(QLabel("快門"))
-        lay.addWidget(shutter, 1)
-        lay.addWidget(QLabel("取樣"))
-        lay.addWidget(samples)
-        return row
-
     def _build_corners(self, form):
         """圓角: all four at once, then each (top left | top right, bottom left | bottom right)."""
         every = SpinBox()
@@ -1886,20 +1856,6 @@ class Inspector(QWidget):
                     if edit.key_at(p, t) is not None:
                         easings.add(edit.easing_at(p, t))
                 self._key_state(w[("key", group, key)], ps, clips, ts)
-        if "blur_on" in w:
-            mbs = [k.get("motion_blur") for k in clips]
-            ons = {bool(m) for m in mbs}
-            w["blur_on"].blockSignals(True)
-            w["blur_on"].setTristate(len(ons) > 1)
-            w["blur_on"].setCheckState(Qt.PartiallyChecked if len(ons) > 1 else Qt.Checked if ons.pop() else Qt.Unchecked)
-            w["blur_on"].blockSignals(False)
-            first = next((m for m in mbs if m), {"shutter": 180.0, "samples": 8})
-            w["blur_shutter"].show_value(first.get("shutter", 180.0))
-            w["blur_samples"].blockSignals(True)
-            w["blur_samples"].setValue(int(first.get("samples", 8)))
-            w["blur_samples"].blockSignals(False)
-            for k in ("blur_shutter", "blur_samples"):
-                w[k].setEnabled(any(mbs))
         for v in textvars.variables((clips[0].get("text") or {}) if len(clips) == 1 else {}):
             box = w.get(("tvar:" + v["name"], "value"))          # 文字變數: each value at the playhead
             if box is None:

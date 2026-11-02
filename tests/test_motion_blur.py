@@ -1,5 +1,5 @@
-"""動態模糊: a clip's picture averaged over the shutter's moments while its place moves - none
-when it is off or nothing of its place is animated."""
+"""動態模糊 (an effect): a clip's picture averaged over the shutter's moments while its place
+moves - none when it is off or nothing of its place is animated."""
 import os
 import sys
 import tempfile
@@ -39,17 +39,32 @@ class MotionBlurTests(unittest.TestCase):
 
     def test_smears_along_the_move(self):
         sharp = self.lit(7)
-        edit.set_motion_blur(self.p, "a", True, shutter=180, samples=8)
-        self.assertEqual(self.c["motion_blur"], {"shutter": 180.0, "samples": 8})
+        e = edit.add_effect(self.p, "a", project.MOTION_BLUR_FILTER)
+        self.assertEqual(e["params"], {"shutter": 180.0, "samples": 8})
+        self.assertEqual(project.visual_effects(self.c), [])      # (not run as a filter on the picture)
         self.assertGreater(self.lit(7), sharp + 10)               # wider along x (half a frame of 32 px)
         self.assertTrue(renderexport.needs_renderer(self.p))
 
     def test_still_clip_is_not_blurred(self):
-        edit.set_motion_blur(self.p, "a", True)
+        e = edit.add_effect(self.p, "a", project.MOTION_BLUR_FILTER)
         self.assertIsNotNone(project.blur_times(self.c, S // 4, 30))
         self.assertIsNone(project.blur_times(self.c, S, 30))      # (it stopped moving at 0.5 s)
-        edit.set_motion_blur(self.p, "a", False)
+        edit.set_effect_enabled(self.p, "a", e["id"], False)
         self.assertIsNone(project.blur_times(self.c, S // 4, 30))
+
+    def test_shutter_and_samples(self):
+        e = edit.add_effect(self.p, "a", project.MOTION_BLUR_FILTER)
+        e["params"].update(shutter=360.0, samples=5)
+        times = project.blur_times(self.c, S // 4, 30)
+        self.assertEqual(len(times), 5)
+        self.assertAlmostEqual(times[-1] - times[0], S / 30)     # 360°: a whole frame
+
+    def test_old_clip_setting_becomes_the_effect(self):
+        self.c["motion_blur"] = {"shutter": 90.0, "samples": 12}
+        project.normalize(self.p)
+        self.assertNotIn("motion_blur", self.c)
+        e = self.c["effects"][0]
+        self.assertEqual((e["filter"], e["params"]), (project.MOTION_BLUR_FILTER, {"shutter": 90.0, "samples": 12}))
 
 
 if __name__ == "__main__":

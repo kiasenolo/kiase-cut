@@ -768,7 +768,7 @@ class Renderer:
         """Apply a chain of effects to img (QImage ARGB32 premultiplied, unit of its px per canvas
         px) at clip time t; each effect's own mask (clip-local, through world transform wt)
         limits where it shows, its 混合程度 how much."""
-        todo = [e for e in effects if not e.get("disabled") and e.get("filter") not in project.TIME_FILTERS]
+        todo = [e for e in effects if not e.get("disabled") and e.get("filter") not in project.PLACE_FILTERS]
         eng = self.engine() if todo else None
         if eng is None:
             return img

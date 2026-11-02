@@ -498,8 +498,10 @@ class Timeline(QWidget):
         self.update()
 
     def _on_header_edge(self, pos):
-        """Whether pos is on the right edge of the track headers (drag it to widen them)."""
-        return abs(pos.x() - self.header_w) <= 4 and pos.y() >= RULER_H
+        """Whether pos is on the line between the track headers' corner and the ruler (drag it to
+        widen them) - up in the ruler, so that down on the tracks a clip at the very start can be
+        grabbed by its edge."""
+        return self.header_w - 6 <= pos.x() <= self.header_w + 2 and pos.y() < RULER_H
 
     def set_position(self, frame, follow=True):
         """Move the playhead; with follow, scroll so it stays in view (playback, keys)."""
@@ -914,6 +916,11 @@ class Timeline(QWidget):
         self.paint_span = (r.left(), r.right() + 1)  # (clips and headers outside it are not drawn)
         try:
             self._paint(p)
+            if self.proj:                            # the line that sets the track headers' width
+                x = self.header_w - 1
+                p.fillRect(QRectF(x, 0, 1, RULER_H), QColor("#0e0e10"))
+                p.fillRect(QRectF(x - 3, RULER_H / 2 - 6, 1, 12), QColor("#5a5a62"))
+                p.fillRect(QRectF(x - 5, RULER_H / 2 - 6, 1, 12), QColor("#5a5a62"))
         finally:
             p.end()                                  # never leave the painter open on an error
             self.paint_span = (-math.inf, math.inf)

@@ -545,7 +545,9 @@ class Renderer:
                 full = QRectF(-bw / 2, -bh / 2, bw, bh)
                 vis = inv.mapRect(QRectF(0, 0, dev.width(), dev.height())) if ok else full
                 pad = 2 * fit / k
-                vis = vis.adjusted(-pad, -pad, pad, pad).intersected(full)
+                vis = vis.adjusted(-pad, -pad, pad, pad)
+                if kind != "group":                    # a group only gathers its clips: what reaches past the
+                    vis = vis.intersected(full)        # canvas still shows where the group takes it
                 if vis.isEmpty():
                     return
                 ux, uy = (vis.left() + bw / 2) / fit, (vis.top() + bh / 2) / fit      # compound units

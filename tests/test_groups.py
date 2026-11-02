@@ -423,3 +423,30 @@ class GroupPreviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GroupDrawTests(unittest.TestCase):
+    def test_not_cut_at_the_canvas(self):
+        """A clip half past the canvas's edge, in a group moved to bring it all in, shows whole:
+        a group gathers clips, it does not cut them where the canvas ends."""
+        import tempfile
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtGui import QColor, QImage
+        from PySide6.QtWidgets import QApplication
+        from kiasecut import render
+        QApplication.instance() or QApplication([])
+        pic = os.path.join(tempfile.mkdtemp(), "red.png")
+        im = QImage(64, 36, QImage.Format_RGB32)
+        im.fill(QColor("#ff0000"))
+        im.save(pic)
+        p = project.new(1920, 1080, 30)
+        p["tracks"] = [{"id": "t", "kind": "video", "name": "v", "clips": [clip(
+            "a", 0, S, media={"path": pic, "width": 64, "height": 36},
+            transform={"x": 0.9, "y": 0.0, "scale": 0.6, "rotation": 0.0, "opacity": 1.0})]}]
+        project.link(p)
+        g = edit.make_group(p, p, ["a"])
+        g["transform"] = {"x": -0.6, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}
+        project.refresh_duration(p)
+        out = render.Renderer(None).render(p, 0, 480, 270)
+        red = [x for x in range(480) if out.pixelColor(x, 135).red() > 200 and out.pixelColor(x, 135).green() < 60]
+        self.assertGreater(red[-1] - red[0], 280)        # 0.6 of the canvas wide: 288 px here, not cut at 336

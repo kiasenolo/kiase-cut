@@ -628,7 +628,9 @@ class GLRenderer(render.Renderer):
                 # only the part that lands on the target (as render.py)
                 full = QRectF(-bw / 2, -bh / 2, bw, bh)
                 pad = 2 * fit / k
-                vis = inv.mapRect(QRectF(0, 0, tgt.w, tgt.h)).adjusted(-pad, -pad, pad, pad).intersected(full)
+                vis = inv.mapRect(QRectF(0, 0, tgt.w, tgt.h)).adjusted(-pad, -pad, pad, pad)
+                if kind != "group":                      # (a group does not cut its clips at the canvas: render.py)
+                    vis = vis.intersected(full)
                 if vis.isEmpty():
                     return
                 lw, lh = vis.width() / fit * k, vis.height() / fit * k

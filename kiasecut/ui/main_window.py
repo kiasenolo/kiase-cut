@@ -280,7 +280,7 @@ def group_holder(c, group, create=False):
     "place:<param id>" for where a component's picture sits)."""
     if group.startswith("place:") and not create:
         return (c.get("places") or {}).get(group[6:]) or {}
-    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "place:")):
+    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "place:", "tvar:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:
@@ -463,6 +463,7 @@ class MainWindow(QMainWindow):
         ins.lengthChosen.connect(lambda ids, us: self.apply_each("目標長度", edit.set_duration_by_speed, ids, us))
         ins.speedCurveChosen.connect(lambda ids, pts: self.apply_each(
             "取消曲線變速" if pts is False else "曲線變速", edit.set_speed_curve, ids, pts))
+        ins.textVarAction.connect(self.on_text_var)
         ins.keepPitchChosen.connect(lambda ids, on: self.apply_each("保持音高" if on else "取消保持音高",
                                                                     edit.set_keep_pitch, ids, on))
         ins.freezeChosen.connect(self.on_freeze)
@@ -1488,6 +1489,16 @@ class MainWindow(QMainWindow):
         w.show()
         w.raise_()
         w.activateWindow()
+
+    def on_text_var(self, ids, action, arg):
+        """文字變數: 新增 (arg: its kind), 刪除 (its name) or a change (name, {new_name, kind, decimals, fmt})."""
+        if action == "add":
+            self.apply_each("新增變數", edit.add_text_var, ids, arg)
+        elif action == "remove":
+            self.apply_each("刪除變數", edit.remove_text_var, ids, arg)
+        else:
+            name, fields = arg
+            self.apply_each("變數", lambda lvl, cid: edit.set_text_var(lvl, cid, name, **fields), ids)
 
     def make_thumbnail(self):
         """自己做縮圖: the _thumbnail static compound (made now, the canvas's size, when there is

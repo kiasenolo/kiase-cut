@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, components, curves, fonts, fx, masks, project, svgimage, textlayout
+from . import assets, components, curves, fonts, fx, masks, project, svgimage, textlayout, textvars
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -508,13 +508,13 @@ class Renderer:
         if kind == "text":
             tx = c["text"]
             size = tx.get("size", 5.0)
-            animated = any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size") or (
+            animated = any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size") or textvars.animated(tx) or (
                 textlayout.boxed(tx) and curves.is_animated(size))      # (a 文字框 does not grow with the words)
             if animated:
-                spec, k_size = curves.static(tx, t, TEXT_FIELDS), 1.0
+                spec, k_size = textvars.spec_at(tx, t, TEXT_FIELDS, fps), 1.0
             else:
                 ref = curves.max_abs(size) or 1.0
-                spec = curves.static(tx, t, TEXT_FIELDS)
+                spec = textvars.spec_at(tx, t, TEXT_FIELDS, fps)
                 spec["size"] = ref
                 k_size = curves.value(size, t) / ref
             # draw at the target resolution so text stays sharp at any preview size, but

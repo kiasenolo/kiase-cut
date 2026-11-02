@@ -32,7 +32,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QSplitter,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
-from .. import assets, components, curves, edit, fx
+from .. import assets, components, curves, edit, fx, textvars
 from . import wheel
 from .inspector import PARAMS, PLACE_ROWS, SpinBox
 from .wrapdrag import WrapDrag
@@ -58,6 +58,8 @@ def param_rows(c):
     if c.get("text"):
         out += [("text", r[0], r[1], r[6], r[7]) for r in PARAMS["text"]]
         out.append(("text", "color", "文字顏色", 1, [1.0, 1.0, 1.0]))
+        out += [("tvar:" + v["name"], "value", "變數 " + v["name"], 1, textvars.default_value(v["kind"]))
+                for v in textvars.variables(c["text"]) if v["kind"] in ("number", "float", "time")]
     if c.get("mask"):
         out += [("mask", r[0], "遮罩" + r[1], r[6], r[7]) for r in PARAMS["mask"]]
     if "volume" in c:

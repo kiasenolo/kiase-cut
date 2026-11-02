@@ -36,13 +36,15 @@ from PySide6.QtGui import QColor, QValidator
 import os
 
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QSpinBox,
-                               QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
+                               QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
+                               QWidget)
 
-from .. import assets, build, components, curves, edit, normalize, project, textlayout
+from .. import assets, build, components, curves, edit, normalize, project, textlayout, textvars
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
 from .library import PictureDrop
+from . import ask
 from .mediapick import pick_button
 from .speedcurve import SpeedCurveEditor
 from .timeline import US, timecode
@@ -333,6 +335,7 @@ class Inspector(QWidget):
     speedChosen = Signal(list, float)               # clip ids, speed
     lengthChosen = Signal(list, float)              # clip ids, 目標長度 (us): the speed that makes them last that
     keepPitchChosen = Signal(list, bool)            # clip ids, 保持音高
+    textVarAction = Signal(list, str, object)       # clip ids, "add" (kind) / "remove" (name) / "set" ((name, fields))
     speedCurveChosen = Signal(list, object)         # clip ids, 曲線變速 points (None: turn it on, False: off)
     groupMatteChosen = Signal(list, dict)           # group ids, {on / show / invert / body: bool} that changed
     groupAnchorChosen = Signal(list, bool)          # group ids, 中心點跟隨最下層物件 on
@@ -410,6 +413,8 @@ class Inspector(QWidget):
             edit_.textChanged.connect(lambda: self._queue("text", "content", edit_.toPlainText()))
             self.widgets["content"] = edit_
             form.addRow("內容", edit_)
+            if len(self.clip_ids) == 1:                  # 文字變數 (one text at a time)
+                self._build_vars(form, c["text"])
             font = ComboBox()
             font.setPlaceholderText("--")
             font.setMaxVisibleItems(20)
@@ -1061,6 +1066,103 @@ class Inspector(QWidget):
             else:
                 form.addRow(r[1], self._param_row(group, *r))
 
+    VAR_TIP = ("在內容裡寫 {名稱} 放進這個值；浮點數 {名稱:.2f} 指定小數位數、時間 {名稱:mm:ss.SS} 指定格式；"
+               "\\{ 是一個 { 字元")
+
+    def _build_vars(self, form, tx):
+        """文字變數: one row each - its kind (not keyframed), its name, its value (keyframed) - and
+        新增變數. A float's decimal places / a time's format on a row under it."""
+        for v in textvars.variables(tx):
+            name = v["name"]
+            group = "tvar:" + name
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            lay.setSpacing(3)
+            kind = ComboBox()
+            for k, label in textvars.KINDS.items():
+                kind.addItem(label, k)
+            kind.setCurrentIndex(kind.findData(v["kind"]))
+            kind.setToolTip("變數的類型（不能打關鍵幀）")
+            kind.activated.connect(lambda i, cb=kind, v=v: self._var_kind(v, cb))
+            lay.addWidget(kind)
+            nm = QLineEdit(name)
+            nm.setFixedWidth(70)
+            nm.setToolTip(self.VAR_TIP)
+            nm.editingFinished.connect(lambda nm=nm, n=name: nm.text().strip() != n and self._emit_now(
+                self.textVarAction, "set", (n, {"new_name": nm.text().strip()})))
+            lay.addWidget(nm)
+            if v["kind"] in ("number", "float", "time"):
+                val = SpinBox()
+                val.set_limits(-1e9, 1e9)
+                val.setDecimals({"number": 0, "float": int(v.get("decimals", 2)), "time": 3}[v["kind"]])
+                if v["kind"] == "time":
+                    val.setSuffix(" 秒")
+                val.setKeyboardTracking(False)
+                val.edited.connect(lambda x, g=group, k=v["kind"]: self._queue(g, "value", round(x) if k == "number" else x))
+            else:
+                val = QLineEdit()
+                val.setPlaceholderText("#rrggbb" if v["kind"] == "color" else "文字")
+                val.editingFinished.connect(lambda val=val, g=group, k=v["kind"]: self._var_text(g, k, val.text()))
+            self.widgets[(group, "value")] = val
+            lay.addWidget(val, 1)
+            lay.addWidget(self._key_button(group, "value"))
+            rm = QPushButton("✕")
+            rm.setFixedWidth(26)
+            rm.setToolTip("刪除這個變數")
+            rm.clicked.connect(lambda _=False, n=name: self._emit_now(self.textVarAction, "remove", n))
+            lay.addWidget(rm)
+            form.addRow("變數", row)
+            if v["kind"] in ("float", "time"):
+                opt = QWidget()
+                ol = QHBoxLayout(opt)
+                ol.setContentsMargins(0, 0, 0, 0)
+                if v["kind"] == "float":
+                    dec = QSpinBox()
+                    dec.setRange(0, 10)
+                    dec.setValue(int(v.get("decimals", 2)))
+                    dec.setKeyboardTracking(False)
+                    dec.valueChanged.connect(lambda x, n=name: self._emit_now(self.textVarAction, "set", (n, {"decimals": x})))
+                    ol.addWidget(QLabel("小數位數"))
+                    ol.addWidget(dec)
+                else:
+                    fmt = QLineEdit(v.get("format") or "mm:ss")
+                    fmt.setToolTip("hh mm ss：時分秒（兩位數；h m s 不補零），ff：格，SSS / SS / S：毫秒、百分之一、十分之一秒")
+                    fmt.editingFinished.connect(lambda fmt=fmt, n=name: self._emit_now(
+                        self.textVarAction, "set", (n, {"fmt": fmt.text().strip()})))
+                    ol.addWidget(QLabel("格式"))
+                    ol.addWidget(fmt, 1)
+                ol.addStretch(1)
+                form.addRow("", opt)
+        add = QPushButton("＋ 新增變數")
+        add.setToolTip("加一個可以打關鍵幀的值（數字、浮點數、顏色、時間、文字），" + self.VAR_TIP)
+        menu = QMenu(add)
+        for k, label in textvars.KINDS.items():
+            menu.addAction(label, lambda k=k: self._emit_now(self.textVarAction, "add", k))
+        add.setMenu(menu)
+        form.addRow("", add)
+
+    def _var_kind(self, v, box):
+        kind = box.currentData()
+        if kind == v["kind"]:
+            return
+        if curves.is_animated(v.get("value")) and not ask.question(
+                self, "variable_kind", "變更變數類型", f"「{v['name']}」有關鍵幀，換類型會把所有的關鍵幀清掉。要繼續嗎？"):
+            box.setCurrentIndex(box.findData(v["kind"]))     # (as it was)
+            return
+        self._emit_now(self.textVarAction, "set", (v["name"], {"kind": kind}))
+
+    def _var_text(self, group, kind, text):
+        if kind == "color":
+            try:
+                value = textvars.parse_hex(text)
+            except ValueError:
+                return
+        else:
+            value = text
+        self._queue(group, "value", value)
+        self._flush()
+
     def _blur_row(self):
         """動態模糊: on, the shutter (degrees of a frame) and how many drawings make it."""
         row = QWidget()
@@ -1398,6 +1500,8 @@ class Inspector(QWidget):
                                          bool(c.get("timed", c["type"] in edit.TIMED and not project.is_static(c))),
                                          tuple(streams), kind_tag(c.get("mask")), "volume" in c,
                                          all(k.get("speed_curve") for k in clips),
+                                         tuple((v["name"], v["kind"], v.get("decimals"), v.get("format"))
+                                               for v in textvars.variables(c.get("text") or {})),
                                          (c.get("asset") or {}).get("family"), (c.get("mask") or {}).get("compound_id"),
                                          bool((c.get("mask") or {}).get("video")),
                                          tuple((p["id"], p["kind"], p["name"]) for p in
@@ -1524,6 +1628,17 @@ class Inspector(QWidget):
             w["blur_samples"].blockSignals(False)
             for k in ("blur_shutter", "blur_samples"):
                 w[k].setEnabled(any(mbs))
+        for v in textvars.variables((clips[0].get("text") or {}) if len(clips) == 1 else {}):
+            box = w.get(("tvar:" + v["name"], "value"))          # 文字變數: each value at the playhead
+            if box is None:
+                continue
+            val = curves.value(v.get("value", textvars.default_value(v["kind"])), ts[0])
+            if isinstance(box, QLineEdit):
+                if not box.hasFocus():
+                    box.setText(textvars.hex_of(val) if v["kind"] == "color" else str(val))
+            else:
+                self._set(("tvar:" + v["name"], "value"), val)
+            self._key_state(w[("key", "tvar:" + v["name"], "value")], [v.get("value")], clips[:1], ts[:1])
         if "radius_all" in w:                                    # the four corners, when they are alike
             vals = {round(curves.value(k["transform"].get(r, 0.0), t), 1)
                     for k, t in zip(clips, ts) for r in project.CORNERS}

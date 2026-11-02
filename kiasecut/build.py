@@ -26,7 +26,7 @@ from xml.sax.saxutils import escape
 import numpy as np
 from PIL import Image
 
-from . import assets, curves, fonts, masks, normalize, project, svgimage, textlayout
+from . import assets, curves, fonts, masks, normalize, project, svgimage, textlayout, textvars
 
 US = 1_000_000
 TEXT_LAYOUT_FIELDS = ("color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -205,7 +205,7 @@ class Builder:
     def text_sequence(self, tx, rs, f0, f1, clip_start_us):
         """Render a text with animated drawing properties frame by frame (identical frames
         once) into an RGBA movie. Returns (path, width, height); centre = box centre."""
-        specs = [curves.static(tx, self.us(f) - clip_start_us, TEXT_LAYOUT_FIELDS + ("size",))
+        specs = [textvars.spec_at(tx, self.us(f) - clip_start_us, TEXT_LAYOUT_FIELDS + ("size",), self.fps)
                  for f in range(f0, f1)]
         for sp in specs:
             sp["color"] = [round(v, 4) for v in sp["color"]] if isinstance(sp.get("color"), list) else sp.get("color")
@@ -416,7 +416,7 @@ class Builder:
             tf = c.get("transform", {})
             rs = max(curves.max_abs(tf.get("scale", 1.0)), curves.max_abs(tf.get("scale_y", 1.0)), 1.0)
             tx = c["text"]
-            if any(curves.is_animated(tx.get(k)) for k in TEXT_LAYOUT_FIELDS) or (
+            if any(curves.is_animated(tx.get(k)) for k in TEXT_LAYOUT_FIELDS) or textvars.animated(tx) or (
                     textlayout.boxed(tx) and curves.is_animated(tx.get("size"))):
                 # colour / spacing / italic keyframes change the drawing: a frame sequence (and
                 # so does the size of words wrapping in a 文字框, which does not grow with them)
@@ -427,7 +427,7 @@ class Builder:
                 return pid, 0, length, f0, self.visual(c, f0, f1, s_us, (iw / rs, ih / rs))
             # font size scales the whole layout linearly, so its keyframes become scale
             size = tx.get("size", 5.0)
-            spec = curves.static(tx, 0, TEXT_LAYOUT_FIELDS)
+            spec = textvars.spec_at(tx, 0, TEXT_LAYOUT_FIELDS, self.fps)
             spec["size"] = curves.max_abs(size)
             png, iw, ih = self.text_png(spec, rs)
             self.xml.append(f'<producer id="{pid}" in="0" out="{length - 1}">' + self.props({

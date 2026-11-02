@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, fx, project, textlayout
+from . import assets, components, curves, fx, project, textlayout, textvars
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -742,6 +742,71 @@ STYLE_TEXT_FIELDS = ("font_path", "size", "color", "fill", "stroke_on", "stroke_
     + tuple(textlayout.DECOR)
 
 
+def add_text_var(proj, clip_id, kind="number"):
+    """新增變數: a new variable of a text (named value, value2, …); returns it."""
+    _, c = find(proj, clip_id)
+    if not c.get("text"):
+        raise EditError("只有文字片段有變數")
+    if kind not in textvars.KINDS:
+        raise EditError(f"unknown kind {kind}")
+    names = {v["name"] for v in textvars.variables(c["text"])}
+    name, k = "value", 2
+    while name in names:
+        name, k = f"value{k}", k + 1
+    v = {"name": name, "kind": kind, "value": textvars.default_value(kind)}
+    if kind == "float":
+        v["decimals"] = 2
+    if kind == "time":
+        v["format"] = "mm:ss"
+    c["text"].setdefault("vars", []).append(v)
+    return v
+
+
+def remove_text_var(proj, clip_id, name):
+    _, c = find(proj, clip_id)
+    vs = [v for v in textvars.variables(c.get("text") or {}) if v["name"] != name]
+    if vs:
+        c["text"]["vars"] = vs
+    else:
+        (c.get("text") or {}).pop("vars", None)
+    return c
+
+
+def set_text_var(proj, clip_id, name, new_name=None, kind=None, decimals=None, fmt=None):
+    """A text variable's name (its {name}s in the words follow), its kind (its value goes back to
+    that kind's start, keyframes and all), a float's decimal places or a time's format."""
+    _, c = find(proj, clip_id)
+    v = textvars.find(c.get("text") or {}, name)
+    if v is None:
+        raise EditError("沒有這個文字變數")
+    if kind is not None and kind != v["kind"]:
+        if kind not in textvars.KINDS:
+            raise EditError(f"unknown kind {kind}")
+        v["kind"], v["value"] = kind, textvars.default_value(kind)
+        v.pop("decimals", None)
+        v.pop("format", None)
+        if kind == "float":
+            v["decimals"] = 2
+        if kind == "time":
+            v["format"] = "mm:ss"
+    if decimals is not None:
+        v["decimals"] = max(0, min(10, int(decimals)))
+    if fmt is not None:
+        v["format"] = str(fmt) or "mm:ss"
+    if new_name is not None and new_name != name:
+        new_name = new_name.strip()
+        if not textvars.NAME.match(new_name):
+            raise EditError("變數名稱只能用文字、數字和底線，不能以數字開頭")
+        if textvars.find(c["text"], new_name) is not None:
+            raise EditError(f"已經有叫「{new_name}」的變數")
+        c["text"]["content"] = textvars.REF.sub(
+            lambda m: m.group(0) if m.group(1) != name else "{" + new_name + (":" + m.group(2) if m.group(2) is not None
+                                                                                 else "") + "}",
+            c["text"].get("content", ""))
+        v["name"] = new_name
+    return v
+
+
 def apply_text_style(proj, clip_id, style):
     """Give a text clip a saved look (userlib.style_from_clip): font, size, colour, spacing,
     slant and scale. The words stay; keyframes of the replaced values are dropped."""
@@ -776,7 +841,7 @@ def set_text_box(proj, clip_id, mode, t=None):
     if mode not in TEXT_BOX_MODES:
         raise EditError(f"unknown text box {mode}")
     tx = c["text"]
-    w, h = textlayout.frame_size(curves.static(tx, t or 0, TEXT_ANIM_FIELDS))
+    w, h = textlayout.frame_size(textvars.spec_at(tx, t or 0, TEXT_ANIM_FIELDS))
     for key, size, on in (("box_w", w, mode != "auto"), ("box_h", h, mode == "fixed")):
         if not on:
             tx.pop(key, None)
@@ -849,6 +914,8 @@ def _valid_key(c, group, key):
         return bool(c.get("asset")) and key in assets.fields_of(c["asset"].get("family"))
     if group == "params":                        # a component instance's own values (元件參數)
         return components.param(components.of_clip(c), key) is not None
+    if group.startswith("tvar:"):                # a text variable's value (文字變數)
+        return key == "value" and c.get("text") is not None and textvars.find(c["text"], group[5:]) is not None
     if group.startswith("place:"):               # where an image parameter's picture sits in its layer
         p = components.param(components.of_clip(c), group[6:])
         return p is not None and p["kind"] == "image" and key in components.PLACE
@@ -903,6 +970,11 @@ def _holder(c, group):
         if components.of_clip(c) is None:
             raise EditError("不是元件")
         return c.setdefault("params", {})
+    if group.startswith("tvar:"):
+        v = textvars.find(c.get("text") or {}, group[5:])
+        if v is None:
+            raise EditError("沒有這個文字變數")
+        return v
     if group.startswith("place:"):
         if components.of_clip(c) is None:
             raise EditError("不是元件")
@@ -1060,6 +1132,8 @@ def toggle_key(proj, clip_id, group, key, t):
 def _toggle_one(c, h, group, key, t):
     if group == "params":                        # (a component's own value until then)
         default = components.default(c["compound"], components.param(c["compound"], key))
+    elif group.startswith("tvar:"):
+        default = textvars.default_value(h.get("kind", "text"))
     elif key in DISCRETE_DEFAULTS and not group.startswith("fx:"):
         _check_choice(c, group, key, DISCRETE_DEFAULTS[key])
         default = DISCRETE_DEFAULTS[key]
@@ -1171,7 +1245,7 @@ def _aspect(c):
     if c.get("compound"):
         return c["compound"]["width"] / c["compound"]["height"]
     if c.get("text"):
-        w, h = textlayout.frame_size(curves.static(c["text"], 0, TEXT_ANIM_FIELDS))
+        w, h = textlayout.frame_size(textvars.spec_at(c["text"], 0, TEXT_ANIM_FIELDS))
         return w / h if w > 0 and h > 0 else 16 / 9
     return 16 / 9
 

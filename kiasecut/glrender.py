@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, components, curves, fx, project, render, textlayout
+from . import assets, components, curves, fx, project, render, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -577,13 +577,13 @@ class GLRenderer(render.Renderer):
         if kind == "text":
             tx = c["text"]
             size = tx.get("size", 5.0)
-            animated = any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size") or (
+            animated = any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size") or textvars.animated(tx) or (
                 textlayout.boxed(tx) and curves.is_animated(size))      # (a 文字框 does not grow with the words)
             if animated:
-                spec, k_size = curves.static(tx, t, TEXT_FIELDS), 1.0
+                spec, k_size = textvars.spec_at(tx, t, TEXT_FIELDS, fps), 1.0
             else:
                 ref = curves.max_abs(size) or 1.0
-                spec = curves.static(tx, t, TEXT_FIELDS)
+                spec = textvars.spec_at(tx, t, TEXT_FIELDS, fps)
                 spec["size"] = ref
                 k_size = curves.value(size, t) / ref
             em_unit = (curves.value(spec.get("size", 5.0), 0) or 1.0) * textlayout.PX_PER_FONT_UNIT * H / 1080

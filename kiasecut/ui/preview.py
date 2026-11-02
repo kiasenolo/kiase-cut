@@ -94,7 +94,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTran
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
-from .. import components, curves, edit, fonts, project, render, textlayout
+from .. import components, curves, edit, fonts, project, render, textlayout, textvars
 from . import appevents, wheel
 from .wrapdrag import WrapDrag
 
@@ -126,7 +126,7 @@ def text_size(spec, canvas_h):
 def base_size(c, W, H, t):
     """On-canvas size of clip c at scale 1."""
     if c["type"] == "text":
-        spec = curves.static(c["text"], t, render.TEXT_FIELDS)
+        spec = textvars.spec_at(c["text"], t, render.TEXT_FIELDS)
         return text_size(spec, H)
     if c["type"] == "compound":
         w, h = c["compound"]["width"], c["compound"]["height"]

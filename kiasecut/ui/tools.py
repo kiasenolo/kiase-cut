@@ -1,8 +1,8 @@
 """The extra tools (工具 menu): built into the program, each opened from the menu in a window of
 its own that stays open beside the editor. What they keep is in toolsdata.py.
 
-  * cubic-bezier 編輯器: drag the two handles (or type the value), watch it move against a
-    linear one, keep curves under names, copy their value (cubic-bezier(x1, y1, x2, y2)); the
+  * cubic-bezier 編輯器: drag the two handles (or type the value), press ▶ 播放 to watch a ball move
+    along it (for 時間長度 seconds) against a linear one, keep curves under names, copy their value (cubic-bezier(x1, y1, x2, y2)); the
     curves kept here are also offered by the curve editor's 我的曲線.
   * 調色盤: colour cards - each with a name, an Info text and its colours (added with the
     picker, its eyedropper included); a card is imported / exported as a JSON string[] of
@@ -10,16 +10,19 @@ its own that stays open beside the editor. What they keep is in toolsdata.py.
 import os
 import time
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QListWidget,
-                               QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+                               QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
+                               QVBoxLayout, QWidget)
 
 from .. import curves, toolsdata
 from .colorpick import pick_color, qcolor
 from .curve_editor import PRESETS
 from .menukeys import Menu
+
+
+SETTINGS = ("KiaseCut", "KiaseCut")
 
 
 def ease(v, x):
@@ -104,26 +107,47 @@ class BezierField(QWidget):
 
 
 class BezierPreview(QWidget):
-    """Two balls crossing over and over: the curve's on top, a linear one under it."""
+    """Two balls going across: the curve's on top, a linear one under it. It rests at the start until play()
+    is called, goes across once in `seconds`, and rests at the end."""
+    finished = Signal()
 
     def __init__(self):
         super().__init__()
         self.v = [0.42, 0.0, 0.58, 1.0]
-        self.t0 = time.monotonic()
+        self.seconds = 1.6
+        self.k = 0.0                                     # how far along (0 - 1) it is
+        self.t0 = None                                   # when it was started (None: not going)
         self.setMinimumHeight(70)
         self.timer = QTimer(self, interval=16)
-        self.timer.timeout.connect(self.update)
+        self.timer.timeout.connect(self._tick)
+
+    def play(self):
+        self.k, self.t0 = 0.0, time.monotonic()
         self.timer.start()
+        self.update()
+
+    def reset(self):
+        self.timer.stop()
+        self.k, self.t0 = 0.0, None
+        self.update()
+
+    def playing(self):
+        return self.t0 is not None
+
+    def _tick(self):
+        self.k = min(1.0, (time.monotonic() - self.t0) / max(self.seconds, 0.05))
+        if self.k >= 1.0:
+            self.timer.stop()
+            self.t0 = None
+            self.finished.emit()
+        self.update()
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor("#18181b"))
-        span = 1.6                                       # seconds a crossing takes, then a short rest
-        k = ((time.monotonic() - self.t0) % (span + 0.5)) / span
-        k = min(1.0, k)
         w = self.width() - 40
-        for row, (x, col) in enumerate(((ease(self.v, k), "#6fb3ff"), (k, "#55555c"))):
+        for row, (x, col) in enumerate(((ease(self.v, self.k), "#6fb3ff"), (self.k, "#55555c"))):
             y = self.height() * (0.33 + 0.36 * row)
             p.setPen(QPen(QColor("#2e2e33"), 2))
             p.drawLine(QPointF(20, y), QPointF(20 + w, y))
@@ -147,6 +171,22 @@ class BezierTool(QWidget):
         left = QVBoxLayout()
         left.addWidget(self.field, 1)
         left.addWidget(self.preview)
+        play = QHBoxLayout()                             # (nothing moves until 播放 is pressed)
+        self.play_btn = QPushButton("▶ 播放")
+        self.play_btn.setToolTip("讓下面的球照這條曲線跑一次（上面藍色的是曲線，下面灰色的是等速）")
+        self.play_btn.clicked.connect(self.preview.play)
+        play.addWidget(self.play_btn)
+        play.addWidget(QLabel("時間長度"))
+        self.seconds = QDoubleSpinBox()
+        self.seconds.setRange(0.1, 30.0)
+        self.seconds.setDecimals(2)
+        self.seconds.setSingleStep(0.1)
+        self.seconds.setSuffix(" 秒")
+        self.seconds.setValue(self.preview.seconds)
+        self.seconds.valueChanged.connect(self._seconds)
+        play.addWidget(self.seconds)
+        play.addStretch(1)
+        left.addLayout(play)
         row = QHBoxLayout()
         row.addWidget(self.text, 1)
         row.addWidget(copy)
@@ -178,8 +218,16 @@ class BezierTool(QWidget):
         lay = QVBoxLayout(self)
         lay.addWidget(split)
         self.field.changed.connect(self._show)
+        try:                                              # (the length last used)
+            self.seconds.setValue(float(QSettings(*SETTINGS).value("tools/bezier_seconds", 1.6)))
+        except (TypeError, ValueError):
+            pass
         self.set_value([0.42, 0.0, 0.58, 1.0])
         self.fill()
+
+    def _seconds(self, v):
+        self.preview.seconds = v
+        QSettings(*SETTINGS).setValue("tools/bezier_seconds", v)
 
     def set_value(self, v):
         self.field.set_value(v)

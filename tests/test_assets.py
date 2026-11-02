@@ -293,6 +293,13 @@ class AssetTests(unittest.TestCase):
         rows = ins._asset_rows
         self.assertFalse(ins._asset_form.isRowVisible(rows["fill_color2"]))       # (a plain colour: nothing more)
         self.assertFalse(ins._asset_form.isRowVisible(rows["fill_image"]))
+        editor = ins.widgets[("asset", "fill_stops")]                  # the gradient bar: not shown for a colour
+        self.assertFalse(ins._asset_form.isRowVisible(editor))
+        editor.changed.emit([[0, [1, 0, 0, 1]], [0.3, [0, 1, 0, 1]], [1, [0, 0, 1, 1]]])
+        ins._flush()
+        self.assertEqual(got[-1][:3], (["c1"], "asset", "fill_stops"))
+        self.assertEqual(len(got[-1][3]), 3)
+        got.clear()
         ins.widgets[("asset", "w")].setValue(640)
         ins._flush()
         self.assertEqual(got, [(["c1"], "asset", "w", 640.0)])
@@ -467,6 +474,19 @@ class PaintTests(unittest.TestCase):
         q = self.shape(fill_type="checker", color="#000000", fill_color2="#ffffff")
         im = self.render(q)
         self.assertGreater(len({im.pixelColor(x, 50).red() for x in range(0, 200, 5)}), 1)    # not one colour
+
+    def test_gradient_with_several_stops(self):
+        stops = [[0, [1, 0, 0, 1]], [0.5, [0, 1, 0, 1]], [1, [0, 0, 1, 1]]]
+        im = self.render(self.shape(fill_type="gradient", fill_stops=stops))
+        self.assertGreater(im.pixelColor(2, 50).red(), 200)
+        self.assertGreater(im.pixelColor(100, 50).green(), 200)       # the middle stop
+        self.assertGreater(im.pixelColor(197, 50).blue(), 200)
+        g = changed(assets.make(assets.get("gradient.custom.0"), "#ff0000", "#0000ff", 200, 100), stops=stops)
+        self.assertEqual(len(assets.at(g, 0)["stops"]), 3)
+        self.assertIn('offset="0.5"', assets.svg(assets.at(g, 0)))
+        self.assertEqual(assets.clean("stops", [[0, [1, 1, 1, 1]]]), [])      # (one stop: none of its own)
+        self.assertEqual(len(assets.stops_of(assets.at(g, 0))), 3)
+        self.assertEqual(len(assets.stops_of(assets.at(assets.make(assets.get("gradient.0"), "", "", 20, 10), 0))), 2)
 
     def test_old_parameters_still_load(self):
         p = changed(assets.make(assets.get("shape.star"), "#fff", "#000", 1920, 1080))

@@ -46,6 +46,7 @@ from .colorpick import pick_color, qcolor, rgba
 from .library import PictureDrop
 from . import ask
 from .mediapick import pick_button
+from .gradientbar import GradientEditor
 from .params import PARAM_MIME
 from .speedcurve import SpeedCurveEditor
 from .timeline import US, timecode
@@ -1516,6 +1517,12 @@ class Inspector(QWidget):
                 box.clicked.connect(lambda on, f=f: self._emit_now(self.paramEdited, "asset", f, bool(on)))
                 self.widgets[("asset", f)] = box
                 form.addRow("", self._with_key(box, "asset", f))
+            elif info[1] == "stops":
+                ed = GradientEditor()
+                ed.changed.connect(lambda st, f=f: self._queue("asset", f, st))
+                self.widgets[("asset", f)] = ed
+                form.addRow(info[0], ed)
+                self._asset_rows[f] = ed
             elif info[1] == "image":
                 b = QPushButton("選擇圖片…")
                 b.clicked.connect(lambda _=False, f=f: self._asset_image(f, ""))
@@ -1579,25 +1586,37 @@ class Inspector(QWidget):
             elif kind == "choice":
                 opts = [x for _n, x in assets.FIELD_INFO[f][2]]
                 self._set_combo(wid, opts.index(v) if v in opts else "--")
+            elif kind == "stops":
+                if v is not None and not wid.drag:
+                    pre = f[:-6] if f != "stops" else ""
+                    wid.set_stops([[x, assets.to_rgba(c)] for x, c in assets.stops_of(
+                        assets.at(clips[0]["asset"], ts[0]), pre.rstrip("_"))])
             elif kind == "image":
                 wid.setText("--" if v is None else os.path.basename(v) if v else "選擇圖片…")
                 wid.setToolTip(v or "")
             else:
                 self._set(("asset", f), v)
-            self._key_state(self.widgets[("key", "asset", f)], ps, clips, ts)
+            if ("key", "asset", f) in self.widgets:
+                self._key_state(self.widgets[("key", "asset", f)], ps, clips, ts)
         self._asset_paint_rows(clips, ts)
 
     def _asset_paint_rows(self, clips, ts):
         """Show only what the chosen fill / outline type uses (a gradient: colour 2, its shape and
         angle; a picture: the file instead of the colours)."""
         form, rows = getattr(self, "_asset_form", None), getattr(self, "_asset_rows", {})
+        if form is not None and "stops" in rows:                 # a gradient asset: its stops take the two colours' place
+            for f in ("color", "color2"):
+                if f in rows:
+                    form.setRowVisible(rows[f], False)
         for pre in ("fill", "stroke"):
             col = "color" if pre == "fill" else "stroke_color"
             kinds = {assets.clean(pre + "_type", curves.value(k["asset"].get(pre + "_type"), t)) for k, t in zip(clips, ts)}
             grad, pic = "gradient" in kinds, "image" in kinds
+            if pre + "_stops" in rows and form is not None:
+                form.setRowVisible(rows[pre + "_stops"], grad)
             tex = bool(kinds & set(textures.KINDS))
             only_pic = kinds == {"image"}
-            for f, shown in ((col, not only_pic), (pre + "_color2", grad or tex), (pre + "_gtype", grad),
+            for f, shown in ((col, not (only_pic or kinds == {"gradient"})), (pre + "_color2", tex), (pre + "_gtype", grad),
                              (pre + "_angle", grad and not all(assets.clean(pre + "_gtype", curves.value(
                                  k["asset"].get(pre + "_gtype"), t)) == "radial" for k, t in zip(clips, ts))),
                              (pre + "_image", pic), (pre + "_scale", tex), (pre + "_seed", tex), (pre + "_z", tex)):

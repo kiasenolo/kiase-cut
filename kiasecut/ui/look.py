@@ -7,6 +7,7 @@ are always KDE's as they were (but the accent colour is the system's, read as th
 Windows' too), the style sheet covers every kind of widget the program uses the
 way Breeze drew it, and the standard icons are Breeze Dark's (kiasecut/look/icons).
 """
+import gc
 import os
 import re
 
@@ -383,6 +384,7 @@ def apply(app):
     """Give `app` the look: the style, KDE's colours with the system's accent colour, the style
     sheet (and dark title bars)."""
     global ACCENT
+    gc.collect()                      # (dead widgets still waiting for the collector must not go while the style changes under them)
     ACCENT = system_accent(app.palette())
     _icons.clear()
     app.setStyle(Style())

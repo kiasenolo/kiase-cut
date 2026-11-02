@@ -59,6 +59,9 @@ FIELD_INFO = {
     "color": ("顏色", "color"),
     "color2": ("顏色 2", "color"),
     "gtype": ("漸變類型", "choice", GRADIENT_TYPES),
+    "stops": ("漸變色", "stops"),
+    "fill_stops": ("填充漸變色", "stops"),
+    "stroke_stops": ("外框漸變色", "stops"),
     "angle": ("角度 °", "number", -360, 360, 1, 0),
     "radius": ("圓角", "number", 0, 8192, 1, 0),
     "sides": ("邊數", "number", 3, 24, 1, 0),
@@ -114,12 +117,12 @@ def hard_range(f):
     return HARD.get(f, (info[2], info[3]))
 
 
-FILL_PAINT = ("fill_type", "fill_color2", "fill_gtype", "fill_angle", "fill_image", "fill_scale", "fill_seed", "fill_z")    # (beside color)
-STROKE = ("fill", "stroke_on", "stroke_type", "stroke_color", "stroke_color2", "stroke_gtype", "stroke_angle",
+FILL_PAINT = ("fill_type", "fill_color2", "fill_stops", "fill_gtype", "fill_angle", "fill_image", "fill_scale", "fill_seed", "fill_z")    # (beside color)
+STROKE = ("fill", "stroke_on", "stroke_type", "stroke_color", "stroke_color2", "stroke_stops", "stroke_gtype", "stroke_angle",
           "stroke_image", "stroke_scale", "stroke_seed", "stroke_z", "stroke", "stroke_align", "join") + FILL_PAINT
 FIELDS = {                                 # what each family has besides w, h and color
     "solid": (),
-    "gradient": ("color2", "gtype", "angle"),
+    "gradient": ("color2", "gtype", "angle", "stops"),
     "rect": ("radius",) + STROKE,
     "ellipse": ("arc_start", "arc_sweep", "ratio") + STROKE,
     "polygon": ("sides",) + STROKE,
@@ -248,6 +251,8 @@ def clean(f, v):
     if info[1] == "color":
         return to_rgba(v, (0.0, 0.0, 0.0, 1.0) if f in ("color2", "stroke_color", "fill_color2", "stroke_color2")
                        else (1.0, 1.0, 1.0, 1.0))
+    if info[1] == "stops":
+        return _stops(v)
     if info[1] == "image":
         return v.replace("\\", "/") if isinstance(v, str) else ""
     if info[1] == "toggle":
@@ -261,6 +266,26 @@ def clean(f, v):
         v = float(info[2])
     lo, hi = hard_range(f)
     return min(max(v, -math.inf if lo is None else lo), math.inf if hi is None else hi)
+
+
+def _stops(v):
+    """A gradient's colour stops [[position 0 - 1, [r, g, b, a]], ...] in order, or [] (no stops of its
+    own: the gradient goes from its colour to its colour 2)."""
+    try:
+        st = sorted(([min(1.0, max(0.0, float(x))), to_rgba(c)] for x, c in v), key=lambda q: q[0])
+    except (TypeError, ValueError):
+        return []
+    return st if len(st) >= 2 else []
+
+
+def stops_of(p, pre=""):
+    """The colour stops [(position, #rrggbb[aa])] a gradient of p (as at() gives it) is made of: its own,
+    or its two colours at 0 and 1. pre: "fill" / "stroke" for a shape's paint, "" for a gradient asset."""
+    own = p.get((pre + "_" if pre else "") + "stops") or []
+    if own:
+        return [(x, c) for x, c in own]
+    a = p.get("color") if pre in ("", "fill") else p.get("stroke_color", "#000000")
+    return [(0.0, a), (1.0, p.get((pre + "_" if pre else "") + "color2", "#000000"))]
 
 
 def make(a, c1, c2, canvas_w, canvas_h):
@@ -327,6 +352,7 @@ _DEFAULTS = {"fill": True, "stroke_on": False, "stroke": 8, "stroke_align": "ins
              "fill_type": "solid", "fill_color2": "#000000", "fill_gtype": "linear", "fill_angle": 0, "fill_image": "",
              "stroke_type": "solid", "stroke_color2": "#ffffff", "stroke_gtype": "linear", "stroke_angle": 0,
              "stroke_image": "",
+             "fill_stops": [], "stroke_stops": [], "stops": [],
              "fill_scale": 5, "fill_seed": 0, "stroke_scale": 5, "stroke_seed": 0, "fill_z": 0, "stroke_z": 0}
 
 
@@ -340,6 +366,8 @@ def at(p, t):
         v = clean(f, curves.value(p[f], t) if f in p else _DEFAULTS.get(f))
         if FIELD_INFO[f][1] == "color":
             v = hex_of(v)
+        elif FIELD_INFO[f][1] == "stops":
+            v = [[x, hex_of(c)] for x, c in v]
         elif f in ("sides", "points", "gcols", "grows"):
             v = int(round(v))
         elif f in ("w", "h"):
@@ -386,21 +414,24 @@ def _svg(w, h, body, defs="", pad=0.0):
             + (f"<defs>{defs}</defs>\n" if defs else "") + body + "\n</svg>\n")
 
 
-def _grad_def(gid, a, b, gtype, angle, w, h):
-    """The SVG gradient element gid from colour a to b across the w x h box."""
+def _grad_def(gid, a, b, gtype, angle, w, h, stops=None):
+    """The SVG gradient element gid from colour a to b across the w x h box - or along stops
+    [(position, colour)] when it has its own."""
     if gtype == "radial":                 # from the centre to the corners; the middle third holds colour 1
+        body = ("".join(_stop(x, c) for x, c in stops) if stops else f"{_stop(0.35, a)}{_stop(1, b)}")
         return (f'<radialGradient id="{gid}" cx="{w / 2:g}" cy="{h / 2:g}" r="{math.hypot(w, h) / 2:.1f}" '
-                f'gradientUnits="userSpaceOnUse">{_stop(0.35, a)}{_stop(1, b)}</radialGradient>')
+                f'gradientUnits="userSpaceOnUse">{body}</radialGradient>')
     r = math.radians(angle)               # 0° left to right, 90° top to bottom, across the whole box
     dx, dy = math.cos(r), math.sin(r)
     half = (abs(dx) * w + abs(dy) * h) / 2
     x1, y1, x2, y2 = w / 2 - dx * half, h / 2 - dy * half, w / 2 + dx * half, h / 2 + dy * half
     return (f'<linearGradient id="{gid}" x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-            f'gradientUnits="userSpaceOnUse">{_stop(0, a)}{_stop(1, b)}</linearGradient>')
+            f'gradientUnits="userSpaceOnUse">'
+            + ("".join(_stop(x, c) for x, c in stops) if stops else f"{_stop(0, a)}{_stop(1, b)}") + '</linearGradient>')
 
 
 def _gradient(p, w, h):
-    g = _grad_def("g", p["color"], p["color2"], p["gtype"], p["angle"], w, h)
+    g = _grad_def("g", p["color"], p["color2"], p["gtype"], p["angle"], w, h, p.get("stops") or None)
     return _svg(w, h, f'<rect width="{w}" height="{h}" fill="url(#g)"/>', g)
 
 
@@ -468,7 +499,7 @@ def _paint(p, pre, w, h):
     if kind == "gradient":
         gid = "g" + pre[0]
         return kind, f"url(#{gid})", _grad_def(gid, c, p.get(pre + "_color2", "#000000"), p.get(pre + "_gtype", "linear"),
-                                               p.get(pre + "_angle", 0), w, h)
+                                               p.get(pre + "_angle", 0), w, h, p.get(pre + "_stops") or None)
     if kind in textures.KINDS:
         uri = _texture(kind, w, h, p.get(pre + "_scale", 5), p.get(pre + "_seed", 0), p.get(pre + "_z", 0), c,
                        p.get(pre + "_color2", "#000000"))
@@ -697,6 +728,9 @@ def cover(p):
         if f in q:
             q[f] = "#ffffff"
     q["fill_type"] = q["stroke_type"] = "solid"
+    for f in ("stops", "fill_stops", "stroke_stops"):
+        if f in q:
+            q[f] = [[x, "#ffffff"] for x, _c in q[f]]
     if q["family"] not in ("solid", "gradient") and not (q.get("fill", True) or stroked(q)):
         q["fill"] = True
     return q

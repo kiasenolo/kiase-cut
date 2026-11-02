@@ -107,18 +107,22 @@ class AssetList(QListWidget):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-    def resizeEvent(self, e):
-        # as tall as its items need: the tab scrolls, not each list
-        super().resizeEvent(e)
+    def fit(self):
+        """As tall as its items need: the tab scrolls, not each list."""
         g = self.gridSize()
         if self.viewMode() == QListWidget.IconMode and g.width() > 0:
             cols = max(1, self.viewport().width() // g.width())
             rows = max(1, -(-self.count() // cols))
             h = rows * g.height() + 2 * self.frameWidth() + 4
         else:                                               # 列表: one row each
-            h = self.count() * max(1, self.sizeHintForRow(0)) + 2 * self.frameWidth() + 4
+            rows = [self.sizeHintForRow(i) for i in range(self.count())]
+            h = sum(max(r, self.iconSize().height() + 8) for r in rows) + 2 * self.frameWidth() + 4
         if self.height() != h:
             self.setFixedHeight(h)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.fit()
 
     def mimeTypes(self):
         return [MEDIA_MIME]
@@ -195,7 +199,7 @@ class AssetsPanel(QWidget):
         blay.addWidget(lst)
         self.lists[VIZ_CAT[0]] = lst
         blay.addStretch(1)
-        toggles = [list_toggle("assets", lst, QSize(*THUMB), QSize(THUMB[0] + 18, THUMB[1] + 34), QSize(32, 24))
+        toggles = [list_toggle("assets", lst, QSize(*THUMB), QSize(THUMB[0] + 18, THUMB[1] + 34), QSize(*THUMB))
                    for lst in self.lists.values()]
         for b in toggles[1:]:                               # (one button for all of them)
             b.hide()

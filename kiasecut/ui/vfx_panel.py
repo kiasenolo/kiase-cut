@@ -317,8 +317,6 @@ class VfxPanel(QWidget):
         for b in buttons[1:]:                             # (one button for all of them)
             b.hide()
             buttons[0].toggled.connect(b.setChecked)
-        for (_h, lst), b in zip(self.cats, buttons):      # (the lists are as tall as their rows once the mode has changed)
-            b.toggled.connect(lambda _c, l=lst: QTimer.singleShot(0, l.fit))
         self.toggle = buttons[0] if buttons else None
         if self.toggle is not None:
             self.top.addWidget(self.toggle)

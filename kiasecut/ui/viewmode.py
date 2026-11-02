@@ -7,7 +7,7 @@ the same model and selection, showing one level at a time (a folder or a categor
 double-click, 上一層 goes back), whose drags are the tree's own (the model asks the tree for its
 mime data) and whose double-clicks and right-clicks go to the panel as the tree's would. A plain
 list (an icon QListWidget) just changes its view mode."""
-from PySide6.QtCore import QModelIndex, QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QModelIndex, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListView, QListWidget, QPushButton,
                                QStackedWidget, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QToolButton,
                                QVBoxLayout, QWidget)
@@ -195,6 +195,8 @@ def list_toggle(key, lst, grid_icon, grid_size, list_icon=QSize(40, 24)):
         lst.setAcceptDrops(drag[2])
         lst.setDefaultDropAction(drag[3])
         lst.doItemsLayout()
+        if hasattr(lst, "fit"):                          # (a list as tall as its rows: measured again in the new mode)
+            QTimer.singleShot(0, lst.fit)
     mode = remembered(key, "grid")
     apply(mode)
     return toggle_button(mode, apply)

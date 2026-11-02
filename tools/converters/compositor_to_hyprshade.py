@@ -351,6 +351,8 @@ class Converter:
         self.root = self.new_ctx(tree)
         self.root_exprs = {}
         self.uses_input = False
+        self.multipass = False    # KiaseCut: a Glare Bloom may use passes of its own (the filter format's @levels)
+        self.bloom = None         # (ctx id, node name, quality factor) of the Bloom node that does
 
     # -- infrastructure -----------------------------------------------------
     def new_ctx(self, tree, parent=None, pnode=None):
@@ -1841,6 +1843,7 @@ def _glare(h):
     """Glare (Blender 4.4+ / 5.x): highlights -> one of the glare kinds -> saturation, tint, strength.
     Distances are in pixels of the glare image, which Blender computes at 1/q of the size (Quality)."""
     cap = h.heavy()
+    norm_len = ""                                    # (Bloom's strength is divided by its chain's length)
     kind = h.menu("Type", norm(getattr(h.node, "glare_type", "fog_glow")))
     q = GLARE_QUALITY.get(h.menu("Quality", "medium"), 2)
     img = h.i("Image", "vec4")
@@ -1935,6 +1938,18 @@ for (int i = 0; i < ns; i++) {
 vec2 S = Rh + K;                                  // the padded domain, as a disc of the same area
 vec3 g = acc / (wn + fog_psf_ring(r0, sqrt(S.x * S.y / 3.14159265), dpp));
 """, grid=grid, q=fl(q), size=num("Size", "0.5"), cap=cap, hl=hlq("p"), texel=hl_texel, mix=grid_mix("nv"))
+    elif "bloom" in kind and h.c.multipass and h.c.bloom in (None, (h.ctx.id, h.node.name, q)):
+        # KiaseCut: exactly Blender's chain, one pass per step (see KC_BLOOM); the highlights are pass 0 and the
+        # node reads the chain's end (the pass before the last one)
+        first = h.c.bloom is None
+        h.c.bloom = (h.ctx.id, h.node.name, q)
+        if first:
+            size = h.i("Size", "float", uv="vec2(0.5)") if h.has("Size") else "0.5"
+            h.c.funcs.append("float bloom_size() { return %s; }\n#define BLOOM_Q %s\n%s" % (size, fl(q), KC_BLOOM))
+            h.c.funcs.append("vec3 bloom_hl(vec2 uv) {\n    %s\n    return max(%s, vec3(0.0));\n}\n" % (
+                pre.replace("\n", "\n    ").rstrip(), hl("uv")))
+        glare = "vec3 g = bloom_tex(uv);\n"
+        norm_len = "/ float(max(1, bloom_len()))"
     elif "bloom" in kind:
         size = num("Size", "0.5")
         # Blender's bloom is a down/up-sample chain with floor(log2(min(w,h) * size)) levels, energy preserving.
@@ -2074,7 +2089,7 @@ for (int t = 0; t < $n; t++) {
     else:
         h.warn("Glare type '%s' not implemented -> no glare" % kind)
         glare = "vec3 g = vec3(0.0);\n"
-    post = "g = glare_sat(g, %s) * (%s).rgb * %s;\n" % (sat, tint, strength)
+    post = "g = glare_sat(g, %s) * (%s).rgb * %s%s;\n" % (sat, tint, strength, norm_len)
     # the light is added to the picture, and lights spots the picture left clear (alpha rises to the glow's
     # brightest channel there) - where the picture is opaque this is Blender's c.rgb + g
     spread = ("vec4 c = max(%s, vec4(0.0));\n"
@@ -2454,6 +2469,81 @@ def to_hlsl(code):
 # picture below (premultiplied), `time` the seconds since the clip started.  The generated code is the same
 # as for Hyprshade except for the wrapper, and the node group's inputs, which become `// @param` lines.
 
+# Blender's Bloom as passes of a KiaseCut filter (@levels / @extras, see to_kiasecut): pass 0 the highlights at full
+# size, pass 1 the chain's first picture, passes 2 - 12 the downsamples, 13 - 23 the upsamples (each adds the picture of
+# its level to the one above), the last pass is the effect itself.  The chain has floor(log2(smaller side of the glare
+# picture * Size)) pictures; passes past its length draw nothing.
+KC_BLOOM = """vec2 kc_flip(vec2 uv) { return vec2(uv.x, (FLIP_Y != 0) ? 1.0 - uv.y : uv.y); }
+int bloom_len() {
+    vec2 g = floor(res() / BLOOM_Q);
+    return min(int(log2(max(1.0, min(g.x, g.y) * clamp(bloom_size(), 0.0, 1.0)) + 1e-5)), 12);
+}
+float bloom_max(vec4 c) { return max(max(c.r, c.g), max(c.b, c.a)); }
+vec4 bloom_karis(vec4 a, vec4 b, vec4 c, vec4 d) {
+    float wa = 1.0 / (bloom_max(a) + 1.0), wb = 1.0 / (bloom_max(b) + 1.0);
+    float wc = 1.0 / (bloom_max(c) + 1.0), wd = 1.0 / (bloom_max(d) + 1.0);
+    return (a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd);
+}
+vec4 bloom_down(vec2 uv, int k) {
+    if (k >= bloom_len()) return vec4(0.0);
+    vec2 ps = 1.0 / src_px;
+    vec4 c  = src(uv);
+    vec4 ul = src(uv + ps * vec2(-1.0,  1.0)), ur = src(uv + ps * vec2( 1.0,  1.0));
+    vec4 ll = src(uv + ps * vec2(-1.0, -1.0)), lr = src(uv + ps * vec2( 1.0, -1.0));
+    vec4 lf = src(uv + ps * vec2(-2.0,  0.0)), rf = src(uv + ps * vec2( 2.0,  0.0));
+    vec4 uf = src(uv + ps * vec2( 0.0,  2.0)), df = src(uv + ps * vec2( 0.0, -2.0));
+    vec4 ulf = src(uv + ps * vec2(-2.0,  2.0)), urf = src(uv + ps * vec2( 2.0,  2.0));
+    vec4 llf = src(uv + ps * vec2(-2.0, -2.0)), lrf = src(uv + ps * vec2( 2.0, -2.0));
+    if (k == 1)
+        return vec4((4.0 / 8.0) * bloom_karis(ul, ur, lr, ll).rgb + (1.0 / 8.0) * (bloom_karis(ulf, uf, c, lf).rgb
+                  + bloom_karis(uf, urf, rf, c).rgb + bloom_karis(c, rf, lrf, df).rgb + bloom_karis(lf, c, df, llf).rgb), 1.0);
+    return vec4((4.0 / 32.0) * c.rgb + (4.0 / 32.0) * (ul.rgb + ur.rgb + ll.rgb + lr.rgb)
+              + (2.0 / 32.0) * (lf.rgb + rf.rgb + uf.rgb + df.rgb) + (1.0 / 32.0) * (ulf.rgb + urf.rgb + llf.rgb + lrf.rgb), 1.0);
+}
+vec4 bloom_up(vec2 uv, int l) {
+    int len = bloom_len();
+    if (l >= len) return vec4(0.0);
+    vec4 base = extra(uv);
+    if (l == len - 1) return vec4(base.rgb, 1.0);
+    vec2 ps = 1.0 / pass_px;
+    vec3 up = (4.0 / 16.0) * src(uv).rgb
+            + (2.0 / 16.0) * (src(uv + ps * vec2(-1.0, 0.0)).rgb + src(uv + ps * vec2(0.0, 1.0)).rgb
+                            + src(uv + ps * vec2(1.0, 0.0)).rgb + src(uv + ps * vec2(0.0, -1.0)).rgb)
+            + (1.0 / 16.0) * (src(uv + ps * vec2(-1.0, -1.0)).rgb + src(uv + ps * vec2(-1.0, 1.0)).rgb
+                            + src(uv + ps * vec2(1.0, -1.0)).rgb + src(uv + ps * vec2(1.0, 1.0)).rgb);
+    return vec4(base.rgb + up, 1.0);
+}
+// the glow at uv of the (flipped) picture the rest of the filter works on; read in the last pass
+vec3 bloom_tex(vec2 uv) {
+    if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec3(0.0);
+    vec2 n = kc_flip(uv);
+    return bloom_len() < 2 ? extra(n).rgb : src(n).rgb;
+}
+"""
+
+KC_EFFECT_BLOOM = """
+vec4 effect(vec2 uv_in) {
+    vec2 uv = kc_flip(uv_in);
+    if (pass_index == 0) return vec4(bloom_hl(uv), 1.0);
+    if (pass_index < 24) {                                  // (Bloom's chain)
+        if (pass_index == 1) return src(uv_in);
+        return pass_index <= 12 ? bloom_down(uv_in, pass_index - 1) : bloom_up(uv_in, 23 - pass_index);
+    }
+    vec4 c = %s;
+    float a = clamp(c.a, 0.0, 1.0);
+    vec3 rgb = c.rgb;
+#if COMPOSITE_OVER_SCREEN
+    vec4 s = input_tex(uv);
+    rgb += s.rgb * (1.0 - a);   // 'over' the picture below
+    a = a + s.a * (1.0 - a);
+#endif
+#if LINEARIZE
+    rgb = (a > 0.0) ? lin_to_srgb(rgb / a) * a : vec3(0.0);
+#endif
+    return vec4(min(clamp(rgb, 0.0, 1.0), vec3(a)), a);
+}
+"""
+
 KC_INPUT_TEX = """vec4 input_tex(vec2 uv) {
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec4(0.0);
     vec2 t = vec2(uv.x, (FLIP_Y != 0) ? 1.0 - uv.y : uv.y);
@@ -2557,13 +2647,22 @@ def to_kiasecut(code, conv, name):
         raise RuntimeError("could not find the result expression")
     desc = re.sub(r"\s+", " ", "Blender compositor '%s'. Group inputs are parameters; Linear light / Flip Y / sample counts "
                   "are the #define lines below." % name)
-    top = ["// @filter %s" % re.sub(r"\s+", " ", str(name)), "// @category Blender", "// @description " + desc] + head
+    top = ["// @filter %s" % re.sub(r"\s+", " ", str(name)), "// @category Blender", "// @description " + desc]
+    effect = KC_EFFECT
+    if conv.bloom:                                   # Blender's Bloom chain: passes of its own
+        s_ = {1: 0, 2: 1, 4: 2}[conv.bloom[2]]
+        levels = ["0f"] + [str(k + s_) for k in range(0, 12)] + [str(k + s_) for k in range(10, -1, -1)]
+        top += ["// @passes 25", "// @levels " + " ".join(levels),
+                "// @extras " + " ".join(["-"] * 13 + [str(24 - i) for i in range(13, 24)] + ["0"])]
+        lib = lib.replace("unpremultiply(src(t))", "unpremultiply(original(t))")      # (src() is the chain in the last pass)
+        effect = KC_EFFECT_BLOOM
+    top += head
     body = "\n".join(macros)
     marker = "// ---- tunables"
     if marker not in lib:
         raise RuntimeError("unexpected shader layout")
     lib = lib.replace(marker, (body + "\n\n" if body else "") + marker, 1)
-    return "\n".join(top) + "\n" + lib + "\n" + KC_EFFECT % final.group(1)
+    return "\n".join(top) + "\n" + lib + "\n" + effect % final.group(1)
 
 
 def slangp_for(name):
@@ -2577,6 +2676,7 @@ def slangp_for(name):
 
 def convert_tree(tree, settings=None, fmt="HYPRSHADE"):
     c = Converter(tree)
+    c.multipass = fmt == "KIASECUT"
     c.settings.update(settings or {})
     code = _finish(c, c.convert())
     code = apply_settings(code, c.settings, float(scene_fps()))

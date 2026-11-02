@@ -196,6 +196,33 @@ class AddonExportTest(unittest.TestCase):
                 for fmt in ("HYPRSHADE", "HLSL", "SHADERGLASS"):
                     self.assertTrue(self.addon.convert_tree(g, None, fmt)[0].strip())
 
+    def test_bloom_is_blenders_chain_in_kiasecut(self):
+        """Bloom exports as passes (Blender's own chain) for KiaseCut, and as the sampled version elsewhere."""
+        for quality, shift in (("High", 0), ("Medium", 1), ("Low", 2)):
+            g = bpy.data.node_groups.new("Bloom", "CompositorNodeTree")
+            it = g.interface
+            it.new_socket("Image", in_out="INPUT", socket_type="NodeSocketColor")
+            it.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+            gi, go = g.nodes.new("NodeGroupInput"), g.nodes.new("NodeGroupOutput")
+            gl = g.nodes.new("CompositorNodeGlare")
+            gl.inputs["Type"].default_value, gl.inputs["Quality"].default_value = "Bloom", quality
+            gl.inputs["Threshold"].default_value = 0.3
+            g.links.new(gi.outputs[0], gl.inputs[0])
+            g.links.new(gl.outputs[0], go.inputs[0])
+            code, warns = self.addon.convert_tree(g, None, "KIASECUT")
+            self.assertEqual(warns, [])
+            d = fx.parse(code, "x")
+            self.assertIsNone(d.error)
+            self.assertEqual((d.passes, d.levels[:3], d.levels[-1], d.extras[-1]), (25, [0, shift, 1 + shift], shift, 0))
+            for fmt in ("HYPRSHADE", "HLSL", "SHADERGLASS"):
+                self.assertNotIn("bloom_down", self.addon.convert_tree(g, None, fmt)[0])
+            rgba = np.zeros((96, 96, 4), np.uint8)
+            rgba[44:52, 44:52] = 255
+            out = engine().run(d, {}, rgba)                                  # (skipped where there is no OpenGL)
+            self.assertEqual(out[48, 48, 3], 255)
+            self.assertGreater(int(out[48, 58, 0]), 0)                       # (the glow)
+            self.assertGreater(int(out[48, 58, 0]), int(out[48, 90, 0]))     # (fading away)
+
     def menu_group(self, nested=False):
         """Menu input 'Mode' picking a Menu Switch: Keep (the picture) / Red / Brighter (exposure +1);
         nested: the Menu Switch sits in a group inside, picked through that group's own menu input."""

@@ -22,7 +22,7 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
-                               QPushButton, QScrollArea, QSlider, QSplitter, QStackedWidget, QTabBar,
+                               QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTabBar, QToolBar,
                                QVBoxLayout,
                                QWidget)
 
@@ -972,7 +972,19 @@ class MainWindow(QMainWindow):
         plus.setIconSize(QSize(14, 14))
         row.addWidget(plus)
         self.layout_corner = corner                      # (PySide would delete it with this function's locals)
-        self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)
+        if self.menuBar().isNativeMenuBar():             # a global menu (KDE / macOS) shows no corner: a bar of its own
+            bar = QToolBar("佈局")
+            bar.setObjectName("layout_bar")
+            bar.setMovable(False)
+            bar.setFloatable(False)
+            bar.toggleViewAction().setEnabled(False)
+            gap = QWidget()
+            gap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            bar.addWidget(gap)
+            bar.addWidget(corner)
+            self.addToolBar(Qt.TopToolBarArea, bar)
+        else:
+            self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)
         m = keyed(self.menuBar().addMenu("播放(&P)"))
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
         add(m, "標記出點", "O", lambda: self.set_mark("out"))

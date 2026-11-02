@@ -476,6 +476,8 @@ class Inspector(QWidget):
             lay.addWidget(stroke_color, 1)
             lay.addWidget(self._key_button("text", "stroke_color"))
             form.addRow("外框", row)
+            stroke = next(r for r in PARAMS["text"] if r[0] == "stroke")
+            form.addRow(stroke[1], self._param_row("text", *stroke))
             stroke_align = ComboBox()
             for name, value in STROKE_ALIGN_NAMES:
                 stroke_align.addItem(name, value)
@@ -484,7 +486,7 @@ class Inspector(QWidget):
             self.widgets["stroke_align"] = stroke_align
             form.addRow("外框位置", self._with_key(stroke_align, "text", "stroke_align"))
             for r in PARAMS["text"]:
-                if r[0] not in BOX_KEYS:
+                if r[0] not in BOX_KEYS and r[0] != "stroke":
                     form.addRow(r[1], self._param_row("text", *r))
         if c.get("transform") is not None:
             if c["type"] == "filter":                     # a filter has no place of its own: only how strongly it works

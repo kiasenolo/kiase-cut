@@ -1,8 +1,9 @@
 // @filter [Blender] Checker Texture
 // @category Blender
-// @description Blender 的棋盤格紋理：兩種顏色交錯的方格
+// @description Blender 的棋盤格紋理：兩種顏色交錯的方格（3D：Z 每過一格就黑白反轉）
 // @param color1 color #cccccc "顏色 1"
 // @param color2 color #333333 "顏色 2"
+// @param z float 0 -1000 1000 "Z"
 // @param tex_scale float 5 0.001 1000 "比例"
 // @param offset vec2 0,0 -1000 1000 "位置"
 // @param amount float 1 0 1 "強度"
@@ -35,10 +36,10 @@ vec4 finish(vec2 uv, vec3 rgb) {
 }
 
 vec4 effect(vec2 uv) {
-    vec3 p = tex_co(uv);
+    vec3 p = tex_co(uv) + vec3(0.0, 0.0, z);
     // Blender: p = (p * scale + 0.000001) * 0.999999
     p = (p + 0.000001) * 0.999999;
-    int xi = int(abs(floor(p.x))), yi = int(abs(floor(p.y)));
-    bool one = ((xi % 2) == (yi % 2));
+    int xi = int(abs(floor(p.x))), yi = int(abs(floor(p.y))), zi = int(abs(floor(p.z)));
+    bool one = ((xi % 2) == (yi % 2)) == ((zi % 2) == 0);
     return finish(uv, one ? color2.rgb : color1.rgb);
 }

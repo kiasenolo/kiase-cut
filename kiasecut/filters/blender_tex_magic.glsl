@@ -3,6 +3,7 @@
 // @description Blender 的 Magic 紋理：正弦和餘弦疊出來的彩色迷幻圖樣（深度、扭曲）
 // @param depth int 2 0 10 "深度"
 // @param distortion float 1 -1000 1000 "扭曲"
+// @param z float 0 -1000 1000 "Z（3D）"
 // @param tex_scale float 5 0.001 1000 "比例"
 // @param offset vec2 0,0 -1000 1000 "位置"
 // @param amount float 1 0 1 "強度"
@@ -35,7 +36,7 @@ vec4 finish(vec2 uv, vec3 rgb) {
 }
 
 vec4 effect(vec2 uv) {
-    vec3 p = tex_co(uv);
+    vec3 p = tex_co(uv) + vec3(0.0, 0.0, z);
     float x = sin((p.x + p.y + p.z) * 5.0);
     float y = cos((-p.x + p.y - p.z) * 5.0);
     float z = -cos((-p.x - p.y + p.z) * 5.0);

@@ -1,11 +1,11 @@
 // @filter [Blender] Voronoi Texture
 // @category Blender
-// @description Blender 的 Voronoi 紋理：F1、F2、平滑 F1、到邊緣的距離、N 球半徑；可以輸出距離或格子顏色
+// @description Blender 的 Voronoi 紋理（3D）：F1、F2、平滑 F1、到邊緣的距離、N 球半徑；調 Z 讓格點連貫地飄動
 // @param feature menu F1 "F1|F2|平滑 F1|到邊緣距離|N 球半徑" "特徵"
 // @param cell_color bool false "輸出格子顏色"
 // @param color1 color #000000 "顏色 1"
 // @param color2 color #ffffff "顏色 2"
-// @param w float 0 -1000 1000 "W（隨時間變化）"
+// @param z float 0 -1000 1000 "Z（3D）"
 // @param smoothness float 1 0 1 "平滑度"
 // @param randomness float 1 0 1 "隨機性"
 // @param tex_scale float 5 0.001 1000 "比例"
@@ -39,18 +39,19 @@ vec4 finish(vec2 uv, vec3 rgb) {
     return vec4(mix(base, rgb, amount) * c.a, c.a);
 }
 
-// The cell point of cell c: the corner plus a hashed offset (the offset moves with w)
-vec2 cell_pt(vec2 c) { vec3 h = hash2(c + vec2(floor(w), 0.0)); vec3 h2 = hash2(c + vec2(floor(w) + 1.0, 0.0)); return c + mix(h.xy, h2.xy, fract(w)) * randomness + (1.0 - randomness) * 0.5; }
+vec3 hash3c(vec3 c) { return pcg3(uvec3(uint(int(c.x) + 65536), uint(int(c.y) + 65536), uint(int(c.z) + 65536))); }
+// The point of the 3D cell c: the corner plus a hashed offset
+vec3 cell_pt(vec3 c) { return c + hash3c(c) * randomness + (1.0 - randomness) * 0.5; }
 
 vec4 effect(vec2 uv) {
-    vec2 p = tex_co(uv).xy;
-    vec2 ip = floor(p);
+    vec3 p = tex_co(uv) + vec3(0.0, 0.0, z);
+    vec3 ip = floor(p);
     float f1 = 8.0, f2 = 8.0;
-    vec2 c1 = vec2(0.0), c2 = vec2(0.0), q1 = vec2(0.0), q2 = vec2(0.0);
-    float sm = 8.0; vec2 smc = vec2(0.0);
-    for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
-        vec2 c = ip + vec2(i, j);
-        vec2 q = cell_pt(c);
+    vec3 c1 = vec3(0.0), c2 = vec3(0.0), q1 = vec3(0.0), q2 = vec3(0.0);
+    float sm = 8.0; vec3 smc = vec3(0.0);
+    for (int k = -1; k <= 1; k++) for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+        vec3 c = ip + vec3(i, j, k);
+        vec3 q = cell_pt(c);
         float d = distance(p, q);
         if (d < f1) { f2 = f1; c2 = c1; q2 = q1; f1 = d; c1 = c; q1 = q; }
         else if (d < f2) { f2 = d; c2 = c; q2 = q; }
@@ -60,20 +61,19 @@ vec4 effect(vec2 uv) {
             smc = mix(smc, c, h);
         }
     }
-    float fac; vec2 cell;
+    float fac; vec3 cell;
     if (feature == 0) { fac = f1; cell = c1; }
     else if (feature == 1) { fac = f2; cell = c2; }
     else if (feature == 2) { fac = sm; cell = smc; }
     else if (feature == 3) {        // distance to the nearest edge between cells
         float e = 8.0;
-        for (int j = -2; j <= 2; j++) for (int i = -2; i <= 2; i++) {
-            vec2 q = cell_pt(ip + vec2(i, j));
+        for (int k = -1; k <= 1; k++) for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+            vec3 q = cell_pt(ip + vec3(i, j, k));
             if (distance(q, q1) < 1e-5) continue;
-            float de = dot(0.5 * (q1 + q) - p, normalize(q - q1));
-            e = min(e, de);
+            e = min(e, dot(0.5 * (q1 + q) - p, normalize(q - q1)));
         }
         fac = e; cell = c1;
     } else { fac = distance(q1, q2) * 0.5; cell = c1; }   // N-sphere radius
-    vec3 rgb = cell_color ? hash2(cell + 31.0) : mix(color1.rgb, color2.rgb, clamp(fac, 0.0, 1.0));
+    vec3 rgb = cell_color ? hash3c(cell + 31.0) : mix(color1.rgb, color2.rgb, clamp(fac, 0.0, 1.0));
     return finish(uv, rgb);
 }

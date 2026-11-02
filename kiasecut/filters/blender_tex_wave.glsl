@@ -11,6 +11,7 @@
 // @param detail float 2 0 15 "細節"
 // @param roughness float 0.5 0 1 "粗糙度"
 // @param phase float 0 -1000 1000 "相位"
+// @param z float 0 -1000 1000 "Z（3D）"
 // @param tex_scale float 5 0.001 1000 "比例"
 // @param offset vec2 0,0 -1000 1000 "位置"
 // @param amount float 1 0 1 "強度"
@@ -151,7 +152,7 @@ float fbm4(vec4 p, float detail, float rough, float lac, bool normalize_) {
 }
 
 vec4 effect(vec2 uv) {
-    vec3 p = tex_co(uv);
+    vec3 p = tex_co(uv) + vec3(0.0, 0.0, z);
     float n;
     if (kind == 0) n = direction == 0 ? p.x : (direction == 1 ? p.y : (p.x + p.y) * 0.5);
     else n = length(p);

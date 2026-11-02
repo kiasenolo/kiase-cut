@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import edit, project  # noqa: E402
 from kiasecut.ui.preview import Preview  # noqa: E402
-from kiasecut.ui.timeline import HEADER_MIN, HEADER_W, US, Timeline  # noqa: E402
+from kiasecut.ui.timeline import HEADER_MIN, HEADER_W, RULER_H, US, Timeline  # noqa: E402
 from test_edit import S, clip, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -100,7 +100,7 @@ class HeaderWidthTests(unittest.TestCase):
         tl.resize(1000, 400)
         tl.set_project(proj())
         tl.px_per_s, tl.scroll_s = 100.0, 0.0
-        y = tl.tops[0] + 10
+        y = RULER_H // 2                                                    # (the edge is up in the ruler)
         self.assertEqual(tl._x(1.0), HEADER_W + 100)
         QTest.mousePress(tl, Qt.LeftButton, NONE, QPoint(HEADER_W, y))
         QTest.mouseMove(tl, QPoint(HEADER_W + 40, y))

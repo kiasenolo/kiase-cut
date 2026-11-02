@@ -81,8 +81,8 @@ among pictures and sound among sound; a line shows where: tracksReordered); the 
 上移 / 下移 still move one row. Picking
 tracks clears the clip selection and picking clips clears the tracks'.
 Drag the headers' right edge to make them wider (longer track names) or narrower; the
-width (header_w) is kept in view_state with the scroll and zoom. On the ruler that edge is
-left to the playhead.
+width (header_w) is kept in view_state with the scroll and zoom. The edge is grabbed up in the
+ruler, so a clip at the very start can still be grabbed by its edge down on the tracks.
 """
 import copy
 import math

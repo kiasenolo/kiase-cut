@@ -187,7 +187,7 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
             sounds = ([("混音", wav)] if wav else []) + (stem_wavs if multitrack else [])
             stage("繪製與編碼畫面")
             errors = _pictures(view, out, fmt, bool(spec.get("alpha")) and fmt.can_alpha, size, fps, first, last,
-                               opts, sounds, progress, cancelled, os.path.join(cache, "export-profile.log"))
+                               opts, sounds, progress, cancelled, os.path.join(cache, "export-profile.log"), cache)
             encoder = formats.encoder_name(fmt, size)
         else:
             stage("編碼聲音")
@@ -276,7 +276,7 @@ def _profile(renderer, readers, log, i, spent, waited):
 PROFILE_EVERY = 250
 
 
-def _pictures(view, out, fmt, alpha, size, fps, first, last, opts, sounds, progress, cancelled, log=None):
+def _pictures(view, out, fmt, alpha, size, fps, first, last, opts, sounds, progress, cancelled, log=None, cache=None):
     """Draw frames first..last and pipe them to ffmpeg with the sound streams sounds
     [(title, WAV path)], encoded as fmt; the clips the renderer could not draw."""
     W, H = size

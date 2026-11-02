@@ -56,9 +56,8 @@ QSplitter::handle:vertical { height: 3px; }
 QDoubleSpinBox, QSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #141416; border: 1px solid #2c2c31; border-radius: 3px; padding: 2px 5px; selection-background-color: #4a4a52; selection-color: #ffffff; }
 QDoubleSpinBox:focus, QSpinBox:focus, QPlainTextEdit:focus, QLineEdit:focus, QComboBox:focus { border-color: #6a6a72; }
 QDoubleSpinBox:disabled { color: #5c5c62; }
-QDoubleSpinBox { min-height: 31px; }
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; subcontrol-origin: border; }
-QSpinBox { background: transparent; border-color: @FRAME; border-radius: 5px; padding: 2px 5px; min-height: 25px; }
+QSpinBox { background: transparent; border-color: @FRAME; border-radius: 5px; padding: 2px 5px; }
 QSpinBox::up-button, QSpinBox::down-button { width: 16px; border: none; background: transparent; subcontrol-origin: border; }
 QSpinBox::up-button { subcontrol-position: top right; margin: 3px 3px 0 0; }
 QSpinBox::down-button { subcontrol-position: bottom right; margin: 0 3px 3px 0; }
@@ -313,8 +312,11 @@ class Style(wheel.Style):
         return super().subElementRect(element, option, widget)
 
     def sizeFromContents(self, kind, option, size, widget=None):
+        contents = size
         size = super().sizeFromContents(kind, option, size, widget)
-        if kind == QStyle.CT_ItemViewItem:            # Breeze's rows are 3 px roomier all round
+        if kind == QStyle.CT_SpinBox:                 # as tall as a text field: the style sheet
+            size.setHeight(contents.height())         # adds the padding and border, not Fusion
+        elif kind == QStyle.CT_ItemViewItem:            # Breeze's rows are 3 px roomier all round
             size = size.grownBy(QMargins(3, 3, 3, 3))
         elif kind == QStyle.CT_MenuItem and not isinstance(widget, QMenu) \
                 and option.menuItemType != QStyleOptionMenuItem.Separator:

@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpin
                                QPlainTextEdit, QVBoxLayout, QWidget)
 
 from .. import mapping
+from .tools import BezierField
 
 
 def spin(value, decimals=3):
@@ -142,7 +143,14 @@ class MapDialog(QDialog):
         lay.addWidget(self.hint)
         self.preview = CurvePreview()
         self.preview.current, self.preview.env = current, dict(env or {})
-        lay.addWidget(self.preview)
+        self.field = BezierField()                         # (the curve's own editor: drag its two handles)
+        self.field.setMinimumSize(240, 380)
+        self.field.set_value(m["bezier"])
+        self.field.setToolTip("拖曳兩個圓點調整曲線（y 可以超出 0 - 1，會有回彈）")
+        pic = QHBoxLayout()
+        pic.addWidget(self.preview, 1)
+        pic.addWidget(self.field, 1)
+        lay.addLayout(pic)
         self.status = QLabel()
         self.status.setWordWrap(True)
         lay.addWidget(self.status)
@@ -155,6 +163,7 @@ class MapDialog(QDialog):
         self.mode.currentIndexChanged.connect(self._changed)
         self.js.textChanged.connect(self._changed)
         self.presets.activated.connect(self._preset)
+        self.field.changed.connect(self._dragged)
         self._changed()
 
     def _preset(self, i):
@@ -165,6 +174,14 @@ class MapDialog(QDialog):
                 s.setValue(x)
                 s.blockSignals(False)
             self._changed()
+
+    def _dragged(self, v):
+        """The curve's handles were dragged: the four numbers follow."""
+        for s, x in zip(self.bz, v):
+            s.blockSignals(True)
+            s.setValue(x)
+            s.blockSignals(False)
+        self._changed()
 
     def mapping(self):
         return {"mode": self.mode.currentData(), "src": self.src, "in": [self.in_lo.value(), self.in_hi.value()],
@@ -180,6 +197,8 @@ class MapDialog(QDialog):
                 if w is not None:
                     w.setVisible(on)
         self.hint.setVisible(mode == "js")
+        self.field.setVisible(mode == "bezier")
+        self.field.set_value([s.value() for s in self.bz])
         m = self.mapping()
         why = mapping.check(m)
         self.preview.set_mapping(m)

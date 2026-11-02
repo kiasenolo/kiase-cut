@@ -108,6 +108,16 @@ class DialogTests(unittest.TestCase):
         d.presets.activated.emit(d.presets.findText("緩入"))
         self.assertEqual([round(s.value(), 2) for s in d.bz], [0.42, 0.0, 1.0, 1.0])
         d.preview.grab()                                                                                # (it paints)
+        self.assertFalse(d.field.isHidden())                                                            # (the curve's own editor)
+        self.assertEqual([round(x, 2) for x in d.field.v], [0.42, 0.0, 1.0, 1.0])
+        d.field.v[2:4] = [0.25, 1.25]                                                                   # (a handle dragged)
+        d.field.changed.emit(list(d.field.v))
+        self.assertEqual([round(s.value(), 2) for s in d.bz[2:]], [0.25, 1.25])
+        self.assertEqual(d.mapping()["bezier"][2:], [0.25, 1.25])
+        d.bz[1].setValue(0.5)                                                                           # (a number typed)
+        self.assertEqual(d.field.v[1], 0.5)
+        d.mode.setCurrentIndex(d.mode.findData("linear"))
+        self.assertTrue(d.field.isHidden())
 
 
 if __name__ == "__main__":

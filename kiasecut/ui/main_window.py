@@ -506,6 +506,12 @@ class MainWindow(QMainWindow):
         fx_scroll = QScrollArea()
         fx_scroll.setWidget(ef)
         fx_scroll.setWidgetResizable(True)
+        fx_dock = QWidget()                             # 新增效果 stays put above the effects as they scroll
+        fl = QVBoxLayout(fx_dock)
+        fl.setContentsMargins(0, 0, 0, 0)
+        fl.setSpacing(0)
+        fl.addWidget(ef.header)
+        fl.addWidget(fx_scroll, 1)
         self.beats = BeatPanel()
         self.beats.beatEdited.connect(self.on_beat_edited)
         self.beats.resetRequested.connect(lambda cid: self.apply("重置 BPM 對齊", edit.clear_beat, cid))
@@ -788,7 +794,7 @@ class MainWindow(QMainWindow):
         # (佈局) is one arrangement of them (layouts.py)
         self.panels = Panels(self, {
             "library": self.library, "assets": self.assets, "userlib": self.ulpanel, "vfx": self.vfx,
-            "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_scroll,
+            "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_dock,
             "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "timeline": lower})
         # the 遮罩 panel in use (or 編輯遮罩 of an effect in the 效果 one) turns the preview into the mask editor
         def mask_mode():

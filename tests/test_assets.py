@@ -365,5 +365,23 @@ class PanelDragTests(unittest.TestCase):
             viewmode.remember("assets", was)
 
 
+class VisualizerAssetTests(unittest.TestCase):
+    def test_the_four_visualizers_are_in_the_tab(self):
+        from kiasecut import viz
+        from kiasecut.ui.assets_panel import AssetsPanel
+        panel = AssetsPanel()
+        lst = panel.lists["viz"]
+        self.assertEqual([lst.item(i).text() for i in range(lst.count())], list(viz.KINDS.values()))
+        self.assertTrue(lst.dragEnabled())
+        self.assertFalse(lst.item(0).icon().isNull())
+        got = []
+        panel.addRequested.connect(got.append)
+        lst.itemDoubleClicked.emit(lst.item(2))
+        self.assertEqual(got, ["viz:scope"])
+        md = lst.mimeData([lst.item(1)])
+        self.assertEqual(bytes(md.data("application/x-kiasecut-media")).decode(), "viz:wave")
+        panel.refresh()                                             # (the colours of the panel do not touch them)
+
+
 if __name__ == "__main__":
     unittest.main()

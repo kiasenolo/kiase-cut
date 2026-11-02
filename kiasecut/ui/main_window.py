@@ -958,7 +958,7 @@ class MainWindow(QMainWindow):
         add(m, "新增文字", "Ctrl+T", self.do_text)
         viz_menu = m.addMenu("新增 Audio Visualizer")
         for kind, name in viz.KINDS.items():
-            add(viz_menu, name, None, lambda k=kind: self.add_visualizer(k))
+            add(viz_menu, name, None, lambda _=False, k=kind: self.add_visualizer(k))
         add(m, "重新命名", "F2", self.do_rename)
         add(m, "清除空軌道", None, self.clear_empty_tracks)
         m.addSeparator()
@@ -3170,7 +3170,7 @@ class MainWindow(QMainWindow):
             for ident in idents:
                 if ident.startswith("cmp:"):
                     self.place_compound(ident[4:], tid, start)
-                elif ident.startswith(assets.PREFIX):
+                elif ident.startswith((assets.PREFIX, "viz:")):
                     self.place_asset(ident, tid, start)
                 elif ident.startswith("m"):
                     self.place_media(ident, tid, start)
@@ -3839,13 +3839,14 @@ class MainWindow(QMainWindow):
             img.save(path)
         return path.replace("\\", "/")
 
-    def add_visualizer(self, kind):
-        """新增 Audio Visualizer: at the playhead, listening to the first track with sound (else a file)."""
+    def add_visualizer(self, kind, track_id=None, start_us=None):
+        """新增 Audio Visualizer: at start_us (the playhead), on track_id when it has room, listening to the first
+        track with sound (else a file)."""
         if not self.ensure_project():
             return
         level = self.container()
         tr = next((t for t in level["tracks"] if self.sound_track(t)), None)
-        start = round(self.playhead_us())
+        start = round(self.playhead_us() if start_us is None else start_us)
         if tr is not None:
             source = {"type": "track", "id": tr["id"]}
             dur = max(US, project.end_us([tr]) - start) if project.end_us([tr]) > start else 5 * US
@@ -3857,7 +3858,7 @@ class MainWindow(QMainWindow):
             source, dur = {"type": "file", "path": path.replace("\\", "/")}, 10 * US
         media = self.viz_media()
         w, h = level.get("width") or self.proj["width"], level.get("height") or self.proj["height"]
-        self.apply("新增 Audio Visualizer", lambda lvl: edit.add_visualizer(lvl, kind, source, media, start, dur, w, h),
+        self.apply("新增 Audio Visualizer", lambda lvl: edit.add_visualizer(lvl, kind, source, media, start, dur, w, h, track_id or None),
                    select=lambda c: c["id"])
 
     @staticmethod
@@ -3879,6 +3880,9 @@ class MainWindow(QMainWindow):
         return (params, path) if path else None
 
     def place_asset(self, ident, track_id, start_us):
+        if ident.startswith("viz:"):                       # an Audio Visualizer of the 內建素材 tab
+            self.add_visualizer(ident[4:], track_id, start_us)
+            return
         made = self.new_asset(ident)
         if made is None:
             return
@@ -3897,6 +3901,9 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         picture = True
+        if ident.startswith("viz:"):
+            self.statusBar().showMessage("Audio Visualizer 不能用來替換素材", 4000)
+            return
         if ident.startswith(assets.PREFIX):
             made = self.new_asset(ident)
             if made is None:

@@ -59,6 +59,27 @@ class BuiltinFilterTests(unittest.TestCase):
         for n in ("Glare", "Lens Distortion", "Vignette", "Sensor Noise"):
             self.assertIn("[Blender] " + n, names)
 
+    def test_memory_pull_garbles_what_is_under_it(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:memory_pull")
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        vals.update(amount=1.0, spread=False, page=512.0)
+        y, x = np.mgrid[0:64, 0:128]
+        rgba = np.zeros((64, 128, 4), np.uint8)
+        rgba[..., 0], rgba[..., 1], rgba[..., 2], rgba[..., 3] = x * 2, y * 4, 90, 255
+        out = eng.run(d, vals, rgba, time=1.0)
+        self.assertTrue((out[..., 3] == 255).all())                      # (garbage, not nothing: the picture stays there)
+        self.assertGreater(float((out != rgba).any(axis=2).mean()), 0.8)
+        for look, want in ((1, 0), (2, 255)):                              # (the old looks: nothing / black)
+            vals["null_look"] = look
+            out = eng.run(d, vals, rgba, time=1.0)
+            self.assertTrue((out[..., 3] == want).all(), look)
+        self.assertEqual(d.params[[p.name for p in d.params].index("null_look")].items[0], "花屏")
+
     def test_levels_and_extras(self):
         d = fx.parse('// @passes 3\n// @param quality menu a "a|b"\n// @levels 0f 1 2 quality\n// @extras - - 0\n'
                      'vec4 effect(vec2 uv) { return src(uv); }', "t")

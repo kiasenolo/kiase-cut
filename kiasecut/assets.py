@@ -12,7 +12,10 @@ clip["asset"] = {key, family, w, h, color, ...}   key: the preset it came from; 
                 the next keyframe.
 
 Shapes have a fill (fill: on / off, in color) and an outline (stroke_on, in stroke_color,
-stroke px wide - 0 draws none) that can be on together. stroke_align puts the outline inside
+stroke px wide - 0 draws none) that can be on together. Each is painted with fill_type /
+stroke_type: a plain colour, a gradient (to fill_color2 / stroke_color2, linear at fill_angle
+or radial; across the shape's w x h box) or a picture (fill_image / stroke_image: a file,
+covering the box). stroke_align puts the outline inside
 the shape's edge, on it or outside it; join shapes its corners (miter, round, bevel). An
 ellipse can be an arc (arc_start °, clockwise from 3 o'clock; arc_sweep % of the full turn)
 with a hole (ratio: the inner radius, % of the outer), as in Lunacy; a parallelogram leans
@@ -43,13 +46,16 @@ CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎�
 DEFAULT_COLORS = ("#ffffff", "#000000")
 SHAPE_PX = 400                             # a new shape's size on a 1080-high canvas
 
+PAINT_TYPES = (("純色", "solid"), ("漸變", "gradient"), ("圖片", "image"))
+GRADIENT_TYPES = (("線性", "linear"), ("放射", "radial"))
+
 # field: label, kind, min, max, step, decimals (min / max: the soft limits a drag keeps to)
 FIELD_INFO = {
     "w": ("寬", "number", 1, 16384, 1, 0),
     "h": ("高", "number", 1, 16384, 1, 0),
     "color": ("顏色", "color"),
     "color2": ("顏色 2", "color"),
-    "gtype": ("漸變類型", "choice", (("線性", "linear"), ("放射", "radial"))),
+    "gtype": ("漸變類型", "choice", GRADIENT_TYPES),
     "angle": ("角度 °", "number", -360, 360, 1, 0),
     "radius": ("圓角", "number", 0, 8192, 1, 0),
     "sides": ("邊數", "number", 3, 24, 1, 0),
@@ -68,8 +74,18 @@ FIELD_INFO = {
     "gtop": ("上外框", "toggle"),
     "gbottom": ("下外框", "toggle"),
     "fill": ("填充", "toggle"),
+    "fill_type": ("填充類型", "choice", PAINT_TYPES),
+    "fill_color2": ("填充顏色 2", "color"),
+    "fill_gtype": ("填充漸變", "choice", GRADIENT_TYPES),
+    "fill_angle": ("填充漸變角度 °", "number", -360, 360, 1, 0),
+    "fill_image": ("填充圖片", "image"),
     "stroke_on": ("外框", "toggle"),
+    "stroke_type": ("外框類型", "choice", PAINT_TYPES),
     "stroke_color": ("外框顏色", "color"),
+    "stroke_color2": ("外框顏色 2", "color"),
+    "stroke_gtype": ("外框漸變", "choice", GRADIENT_TYPES),
+    "stroke_angle": ("外框漸變角度 °", "number", -360, 360, 1, 0),
+    "stroke_image": ("外框圖片", "image"),
     "stroke": ("外框粗細", "number", 0, 2000, 1, 0),
     "stroke_align": ("外框位置", "choice", (("內側", "inside"), ("居中", "center"), ("外側", "outside"))),
     "join": ("轉角", "choice", (("直角", "miter"), ("圓角", "round"), ("倒角", "bevel"))),
@@ -88,7 +104,9 @@ def hard_range(f):
     return HARD.get(f, (info[2], info[3]))
 
 
-STROKE = ("fill", "stroke_on", "stroke_color", "stroke", "stroke_align", "join")
+FILL_PAINT = ("fill_type", "fill_color2", "fill_gtype", "fill_angle", "fill_image")    # (beside color)
+STROKE = ("fill", "stroke_on", "stroke_type", "stroke_color", "stroke_color2", "stroke_gtype", "stroke_angle",
+          "stroke_image", "stroke", "stroke_align", "join") + FILL_PAINT
 FIELDS = {                                 # what each family has besides w, h and color
     "solid": (),
     "gradient": ("color2", "gtype", "angle"),
@@ -218,7 +236,10 @@ def clean(f, v):
     a number in range (sides and points are rounded when drawn)."""
     info = FIELD_INFO[f]
     if info[1] == "color":
-        return to_rgba(v, (0.0, 0.0, 0.0, 1.0) if f in ("color2", "stroke_color") else (1.0, 1.0, 1.0, 1.0))
+        return to_rgba(v, (0.0, 0.0, 0.0, 1.0) if f in ("color2", "stroke_color", "fill_color2", "stroke_color2")
+                       else (1.0, 1.0, 1.0, 1.0))
+    if info[1] == "image":
+        return v.replace("\\", "/") if isinstance(v, str) else ""
     if info[1] == "toggle":
         return bool(_DEFAULTS.get(f) if v is None else v)
     if info[1] == "choice":
@@ -292,7 +313,10 @@ _DEFAULTS = {"fill": True, "stroke_on": False, "stroke": 8, "stroke_align": "ins
              "stroke_color": "#000000", "radius": 0, "sides": 6, "points": 5, "inner": 40, "angle": 0,
              "arc_start": 0, "arc_sweep": 100, "ratio": 0, "skew": 20,
              "gcols": 16, "grows": 9, "gratio": 0, "gline": 4, "gleft": True, "gright": True, "gtop": True, "gbottom": True,
-             "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX}
+             "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX,
+             "fill_type": "solid", "fill_color2": "#000000", "fill_gtype": "linear", "fill_angle": 0, "fill_image": "",
+             "stroke_type": "solid", "stroke_color2": "#ffffff", "stroke_gtype": "linear", "stroke_angle": 0,
+             "stroke_image": ""}
 
 
 def at(p, t):
@@ -347,23 +371,80 @@ def _stop(offset, c):
 def _svg(w, h, body, defs="", pad=0.0):
     """An SVG document of a w x h asset; pad: room around it for an outline reaching out."""
     vb = f"{-pad:g} {-pad:g} {w + 2 * pad:g} {h + 2 * pad:g}" if pad else f"0 0 {w} {h}"
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w + 2 * pad:g}" height="{h + 2 * pad:g}" viewBox="{vb}">\n'
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{w + 2 * pad:g}" height="{h + 2 * pad:g}" viewBox="{vb}">\n'
             + (f"<defs>{defs}</defs>\n" if defs else "") + body + "\n</svg>\n")
 
 
+def _grad_def(gid, a, b, gtype, angle, w, h):
+    """The SVG gradient element gid from colour a to b across the w x h box."""
+    if gtype == "radial":                 # from the centre to the corners; the middle third holds colour 1
+        return (f'<radialGradient id="{gid}" cx="{w / 2:g}" cy="{h / 2:g}" r="{math.hypot(w, h) / 2:.1f}" '
+                f'gradientUnits="userSpaceOnUse">{_stop(0.35, a)}{_stop(1, b)}</radialGradient>')
+    r = math.radians(angle)               # 0° left to right, 90° top to bottom, across the whole box
+    dx, dy = math.cos(r), math.sin(r)
+    half = (abs(dx) * w + abs(dy) * h) / 2
+    x1, y1, x2, y2 = w / 2 - dx * half, h / 2 - dy * half, w / 2 + dx * half, h / 2 + dy * half
+    return (f'<linearGradient id="{gid}" x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
+            f'gradientUnits="userSpaceOnUse">{_stop(0, a)}{_stop(1, b)}</linearGradient>')
+
+
 def _gradient(p, w, h):
-    a, b = p["color"], p["color2"]
-    if p["gtype"] == "radial":            # from the centre to the corners; the middle third holds colour 1
-        g = (f'<radialGradient id="g" cx="{w / 2:g}" cy="{h / 2:g}" r="{math.hypot(w, h) / 2:.1f}" '
-             f'gradientUnits="userSpaceOnUse">{_stop(0.35, a)}{_stop(1, b)}</radialGradient>')
-    else:                                  # 0° left to right, 90° top to bottom, across the whole box
-        r = math.radians(p["angle"])
-        dx, dy = math.cos(r), math.sin(r)
-        half = (abs(dx) * w + abs(dy) * h) / 2
-        x1, y1, x2, y2 = w / 2 - dx * half, h / 2 - dy * half, w / 2 + dx * half, h / 2 + dy * half
-        g = (f'<linearGradient id="g" x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-             f'gradientUnits="userSpaceOnUse">{_stop(0, a)}{_stop(1, b)}</linearGradient>')
+    g = _grad_def("g", p["color"], p["color2"], p["gtype"], p["angle"], w, h)
     return _svg(w, h, f'<rect width="{w}" height="{h}" fill="url(#g)"/>', g)
+
+
+_PICTURES = {}                             # (path, mtime) -> data URI of the picture (at most 2048 px)
+PICTURE_PX = 2048
+
+
+def _picture(path):
+    """A data URI of the picture file (scaled down to PICTURE_PX), or "" when it cannot be read."""
+    try:
+        key = (path, os.stat(path).st_mtime_ns)
+    except OSError:
+        return ""
+    uri = _PICTURES.get(key)
+    if uri is None:
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+        from PySide6.QtGui import QImage
+        from . import svgimage
+        if svgimage.is_svg(path):
+            try:
+                sw, sh = svgimage.size(path)
+                k = PICTURE_PX / max(sw, sh)
+                im = svgimage.raster(path, sw * k, sh * k)
+            except ValueError:
+                im = QImage()
+        else:
+            im = QImage(path)
+        if not im.isNull() and max(im.width(), im.height()) > PICTURE_PX:
+            im = im.scaled(PICTURE_PX, PICTURE_PX, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        uri = ""
+        if not im.isNull():
+            buf = QBuffer()
+            buf.open(QIODevice.WriteOnly)
+            im.save(buf, "PNG")
+            uri = "data:image/png;base64," + bytes(buf.data().toBase64()).decode("ascii")
+        if len(_PICTURES) >= 16:
+            _PICTURES.pop(next(iter(_PICTURES)))
+        _PICTURES[key] = uri
+    return uri
+
+
+def _paint(p, pre, w, h):
+    """How the fill (pre "fill") or outline ("stroke") of p is painted: (kind, value, defs) -
+    ("solid", colour, ""), ("gradient", "url(#id)", the gradient) or ("image", data URI, "")."""
+    c = p["color"] if pre == "fill" else p.get("stroke_color", "#000000")
+    kind = p.get(pre + "_type", "solid")
+    if kind == "gradient":
+        gid = "g" + pre[0]
+        return kind, f"url(#{gid})", _grad_def(gid, c, p.get(pre + "_color2", "#000000"), p.get(pre + "_gtype", "linear"),
+                                               p.get(pre + "_angle", 0), w, h)
+    if kind == "image" and p.get(pre + "_image"):
+        uri = _picture(p[pre + "_image"])
+        if uri:
+            return kind, uri, ""
+    return "solid", c, ""
 
 
 def _star_points(n, inner):
@@ -534,23 +615,44 @@ def _shape(p, w, h):
     d = outline_d(p, w, h)
     pad = overflow(p)
     body, defs = [], ""
+    box = f'x="{-pad:g}" y="{-pad:g}" width="{w + 2 * pad:g}" height="{h + 2 * pad:g}"'
+
+    def put(pre, make):
+        """Add the fill / outline made by make(paint attributes): a picture shows through a mask
+        of the same shape drawn in white."""
+        nonlocal defs
+        kind, value, gdefs = _paint(p, pre, w, h)
+        defs += gdefs
+        if kind == "image":
+            defs += (f'<mask id="m{pre[0]}" maskUnits="userSpaceOnUse" {box}><rect {box} fill="#000"/>'
+                     f'{make("fill" if pre == "fill" else "stroke", "#fff", 1.0)}</mask>')
+            body.append(f'<image {box} preserveAspectRatio="xMidYMid slice" mask="url(#m{pre[0]})" '
+                        f'xlink:href="{value}"/>')
+        elif kind == "gradient":
+            body.append(make(pre, value, 1.0))
+        else:
+            rgb, op = _alpha(value)
+            body.append(make(pre, rgb, op))
+
+    def attr(prop, v, op):
+        return f'{prop}="{v}"' + (f' {prop}-opacity="{op:.3f}"' if op < 1 else "")
+
     if p.get("fill", True) and d:
-        body.append(f'<path d="{d}" fill-rule="evenodd" {_fill(p["color"])}/>')
+        put("fill", lambda prop, v, op: f'<path d="{d}" fill-rule="evenodd" {attr("fill", v, op)}/>')
     if stroked(p) and d:
-        rgb, op = _alpha(p.get("stroke_color", "#000000"))
         align, s = p.get("stroke_align", "inside"), p["stroke"]
-        line = (f'fill="none" stroke="{rgb}" stroke-linejoin="{p.get("join", "miter")}" '
-                f'stroke-miterlimit="{MITER_LIMIT}"' + (f' stroke-opacity="{op:.3f}"' if op < 1 else ""))
+        line = f'fill="none" stroke-linejoin="{p.get("join", "miter")}" stroke-miterlimit="{MITER_LIMIT}"'
         if align == "center":
-            body.append(f'<path d="{d}" {line} stroke-width="{s:g}"/>')
+            put("stroke", lambda prop, v, op: f'<path d="{d}" {line} {attr("stroke", v, op)} stroke-width="{s:g}"/>')
         else:                              # twice as wide, half of it masked off by the shape
             big = f'x="{-pad - s:g}" y="{-pad - s:g}" width="{w + 2 * (pad + s):g}" height="{h + 2 * (pad + s):g}"'
             if align == "inside":
-                defs = f'<mask id="s" maskUnits="userSpaceOnUse" {big}><path d="{d}" fill-rule="evenodd" fill="#fff"/></mask>'
+                defs += f'<mask id="s" maskUnits="userSpaceOnUse" {big}><path d="{d}" fill-rule="evenodd" fill="#fff"/></mask>'
             else:
-                defs = (f'<mask id="s" maskUnits="userSpaceOnUse" {big}><rect {big} fill="#fff"/>'
-                        f'<path d="{d}" fill-rule="evenodd" fill="#000"/></mask>')
-            body.append(f'<path d="{d}" {line} stroke-width="{2 * s:g}" mask="url(#s)"/>')
+                defs += (f'<mask id="s" maskUnits="userSpaceOnUse" {big}><rect {big} fill="#fff"/>'
+                         f'<path d="{d}" fill-rule="evenodd" fill="#000"/></mask>')
+            put("stroke", lambda prop, v, op: f'<path d="{d}" {line} {attr("stroke", v, op)} '
+                                              f'stroke-width="{2 * s:g}" mask="url(#s)"/>')
     return _svg(w, h, "\n".join(body), defs, pad)
 
 
@@ -558,9 +660,10 @@ def cover(p):
     """Parameters p (as at() gives them) drawn opaque: where the asset is, whatever its colours'
     alpha - what 套用至背景 works inside (a shape with neither fill nor outline: its fill)."""
     q = dict(p)
-    for f in ("color", "color2", "stroke_color"):
+    for f in ("color", "color2", "stroke_color", "fill_color2", "stroke_color2"):
         if f in q:
             q[f] = "#ffffff"
+    q["fill_type"] = q["stroke_type"] = "solid"
     if q["family"] not in ("solid", "gradient") and not (q.get("fill", True) or stroked(q)):
         q["fill"] = True
     return q

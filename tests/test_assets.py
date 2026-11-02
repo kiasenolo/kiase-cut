@@ -290,6 +290,9 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(ins.widgets[("asset", "points")].value(), 5)
         self.assertEqual(ins.widgets[("asset", "color")].text(), "#ff0000")
         self.assertTrue(ins.widgets["scale_link"].isChecked())
+        rows = ins._asset_rows
+        self.assertFalse(ins._asset_form.isRowVisible(rows["fill_color2"]))       # (a plain colour: nothing more)
+        self.assertFalse(ins._asset_form.isRowVisible(rows["fill_image"]))
         ins.widgets[("asset", "w")].setValue(640)
         ins._flush()
         self.assertEqual(got, [(["c1"], "asset", "w", 640.0)])
@@ -397,6 +400,66 @@ class PanelDragTests(unittest.TestCase):
                 self.assertTrue(bytes(md.data("application/x-kiasecut-media")).startswith(b"asset:") or md.formats())
         finally:
             viewmode.remember("assets", was)
+
+
+class PaintTests(unittest.TestCase):
+    """A shape's fill and outline can be a gradient or a picture, not only a colour."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        from PySide6.QtGui import QColor, QImage
+        im = QImage(8, 8, QImage.Format_ARGB32)
+        im.fill(QColor("#00ff00"))
+        self.pic = os.path.join(self.dir, "green.png")
+        im.save(self.pic)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def shape(self, **fields):
+        p = assets.make(assets.get("shape.rect"), "#ff0000", "#0000ff", 1920, 1080)
+        p.update(w=200, h=100)
+        return assets.at(changed(p, **fields), 0)
+
+    def render(self, q, w=200):
+        from PySide6.QtCore import QByteArray
+        from PySide6.QtGui import QColor, QImage, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+        text = assets.svg(q)
+        r = QSvgRenderer(QByteArray(text.encode("utf-8")))
+        self.assertTrue(r.isValid())
+        im = QImage(w + 2 * int(assets.overflow(q)), 100 + 2 * int(assets.overflow(q)), QImage.Format_ARGB32_Premultiplied)
+        im.fill(QColor(0, 0, 0, 0))
+        pt = QPainter(im)
+        r.render(pt)
+        pt.end()
+        return im
+
+    def test_gradient_fill(self):
+        im = self.render(self.shape(fill_type="gradient", color="#ff0000", fill_color2="#0000ff", fill_angle=0))
+        self.assertGreater(im.pixelColor(10, 50).red(), 200)
+        self.assertGreater(im.pixelColor(190, 50).blue(), 200)
+
+    def test_picture_fill_and_outline(self):
+        q = self.shape(fill_type="image", fill_image=self.pic, stroke_on=True, stroke=20, stroke_type="gradient",
+                       stroke_color="#ffffff", stroke_color2="#000000", stroke_angle=90)
+        im = self.render(q)
+        c = im.pixelColor(100, 50)
+        self.assertEqual((c.red(), c.green(), c.blue()), (0, 255, 0))           # the picture inside
+        self.assertGreater(im.pixelColor(100, 2).red(), 150)                     # the outline's white top
+        self.assertLess(im.pixelColor(100, 97).red(), 100)                       # ... fading to black
+
+    def test_picture_outline_and_missing_file(self):
+        im = self.render(self.shape(stroke_on=True, stroke=20, stroke_type="image", stroke_image=self.pic))
+        self.assertEqual(im.pixelColor(100, 3).green(), 255)
+        self.assertEqual(im.pixelColor(100, 50).red(), 255)                      # the fill is still red
+        q = self.shape(fill_type="image", fill_image=os.path.join(self.dir, "none.png"))
+        self.assertEqual(self.render(q).pixelColor(100, 50).red(), 255)          # unreadable: the colour
+
+    def test_old_parameters_still_load(self):
+        p = changed(assets.make(assets.get("shape.star"), "#fff", "#000", 1920, 1080))
+        self.assertEqual(p["fill_type"], "solid")
+        self.assertEqual(assets.normalize({k: v for k, v in p.items() if "type" not in k})["stroke_type"], "solid")
 
 
 class VisualizerAssetTests(unittest.TestCase):

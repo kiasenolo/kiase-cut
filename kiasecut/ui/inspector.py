@@ -1507,7 +1507,8 @@ class Inspector(QWidget):
         fields = ("color",) + assets.FIELDS[family]
         if "fill" in fields:                              # the shape's own, then fill, then outline
             own = tuple(f for f in fields if f not in assets.STROKE and f != "color")
-            fields = own + ("fill", "color") + tuple(f for f in assets.STROKE if f != "fill")
+            fields = own + ("fill", "fill_type", "color") + tuple(f for f in assets.STROKE if f not in ("fill", "fill_type"))
+        self._asset_form, self._asset_rows = form, {}
         for f in fields:
             info = assets.FIELD_INFO[f]
             if info[1] == "toggle":
@@ -1515,12 +1516,22 @@ class Inspector(QWidget):
                 box.clicked.connect(lambda on, f=f: self._emit_now(self.paramEdited, "asset", f, bool(on)))
                 self.widgets[("asset", f)] = box
                 form.addRow("", self._with_key(box, "asset", f))
+            elif info[1] == "image":
+                b = QPushButton("選擇圖片…")
+                b.clicked.connect(lambda _=False, f=f: self._asset_image(f, ""))
+                self.widgets[("asset", f)] = b
+                row = self._with_key(b, "asset", f)
+                row.layout().insertWidget(1, pick_button(("image",), lambda path, f=f: self._asset_image(f, path)))
+                form.addRow(info[0], row)
+                self._asset_rows[f] = row
             elif info[1] == "color":
                 label = "填充顏色" if f == "color" and "fill" in fields else info[0]
                 b = QPushButton()
                 b.clicked.connect(lambda _=False, f=f: self._pick_asset_color(f))
                 self.widgets[("asset", f)] = b
-                form.addRow(label, self._with_key(b, "asset", f))
+                row = self._with_key(b, "asset", f)
+                form.addRow(label, row)
+                self._asset_rows[f] = row
             elif info[1] == "choice":
                 box = ComboBox()
                 box.setPlaceholderText("--")
@@ -1529,9 +1540,13 @@ class Inspector(QWidget):
                 box.activated.connect(lambda i, f=f: self._emit_now(self.paramEdited, "asset", f,
                                                                     assets.FIELD_INFO[f][2][i][1]))
                 self.widgets[("asset", f)] = box
-                form.addRow(info[0], self._with_key(box, "asset", f))
+                row = self._with_key(box, "asset", f)
+                form.addRow(info[0], row)
+                self._asset_rows[f] = row
             else:
-                form.addRow(info[0], self._param_row("asset", f, info[0], *info[2:6], 1, None))
+                row = self._param_row("asset", f, info[0], *info[2:6], 1, None)
+                form.addRow(info[0], row)
+                self._asset_rows[f] = row
 
     def _show_asset(self, clips, ts, easings):
         """The asset fields at the playhead (each clip at its own time), their ◆ states;
@@ -1564,9 +1579,38 @@ class Inspector(QWidget):
             elif kind == "choice":
                 opts = [x for _n, x in assets.FIELD_INFO[f][2]]
                 self._set_combo(wid, opts.index(v) if v in opts else "--")
+            elif kind == "image":
+                wid.setText("--" if v is None else os.path.basename(v) if v else "選擇圖片…")
+                wid.setToolTip(v or "")
             else:
                 self._set(("asset", f), v)
             self._key_state(self.widgets[("key", "asset", f)], ps, clips, ts)
+        self._asset_paint_rows(clips, ts)
+
+    def _asset_paint_rows(self, clips, ts):
+        """Show only what the chosen fill / outline type uses (a gradient: colour 2, its shape and
+        angle; a picture: the file instead of the colours)."""
+        form, rows = getattr(self, "_asset_form", None), getattr(self, "_asset_rows", {})
+        for pre in ("fill", "stroke"):
+            col = "color" if pre == "fill" else "stroke_color"
+            kinds = {assets.clean(pre + "_type", curves.value(k["asset"].get(pre + "_type"), t)) for k, t in zip(clips, ts)}
+            grad, pic = "gradient" in kinds, "image" in kinds
+            only_pic = kinds == {"image"}
+            for f, shown in ((col, not only_pic), (pre + "_color2", grad), (pre + "_gtype", grad),
+                             (pre + "_angle", grad and not all(assets.clean(pre + "_gtype", curves.value(
+                                 k["asset"].get(pre + "_gtype"), t)) == "radial" for k, t in zip(clips, ts))),
+                             (pre + "_image", pic)):
+                if f in rows and form is not None:
+                    form.setRowVisible(rows[f], shown)
+
+    def _asset_image(self, f, path):
+        """A picture chosen for an asset's fill / outline ("": pick a file)."""
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "選一張圖片", "",
+                                                  "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff *.svg)")
+            if not path:
+                return
+        self._emit_now(self.paramEdited, "asset", f, path.replace("\\", "/"))
 
     def _pick_asset_color(self, f):
         cur = self.widgets[("asset", f)].text()

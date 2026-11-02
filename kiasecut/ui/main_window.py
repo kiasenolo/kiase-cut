@@ -539,13 +539,16 @@ class MainWindow(QMainWindow):
         bar.setContentsMargins(6, 2, 6, 2)
         bar.addWidget(self.dur_lbl)
         bar.addStretch()
+        self.transport = []                             # (hidden while a static compound, one picture, is open)
         for name, tip, fn in (("start", "到開頭（Home）", lambda: self.seek(0)),
                               ("prev", "上一幀（←）", lambda: self.step(-1))):
-            bar.addWidget(tool(name, tip, fn))
-        bar.addWidget(self.play_btn)
+            self.transport.append(tool(name, tip, fn))
+        self.transport.append(self.play_btn)
         for name, tip, fn in (("next", "下一幀（→）", lambda: self.step(1)),
                               ("end", "到結尾（End）", lambda: self.seek(self.length - 1))):
-            bar.addWidget(tool(name, tip, fn))
+            self.transport.append(tool(name, tip, fn))
+        for b in self.transport:
+            bar.addWidget(b)
         bar.addStretch()
         self.rate_box = QComboBox()                     # 播放速度
         for r in RATES:
@@ -567,6 +570,7 @@ class MainWindow(QMainWindow):
         self.pitch_btn.setChecked(str(self.settings().value("keep_pitch", "true")).lower() not in ("false", "0"))
         self.pitch_btn.toggled.connect(self.set_keep_pitch)
         bar.addWidget(self.pitch_btn)
+        self.transport += [self.rate_box, self.pitch_btn]
         bar.addWidget(full_btn)
         head = QHBoxLayout()
         head.setContentsMargins(8, 3, 8, 3)
@@ -2682,6 +2686,10 @@ class MainWindow(QMainWindow):
             self.static_btn.setText(static_label(comp))
         for k in ("split",):
             self.buttons[k].setVisible(not static)
+        for b in self.transport:                        # nothing to play in one picture
+            b.setVisible(not static)
+        if static and self.player.worker.playing:
+            self.player.worker.set_playing(False)
         self.preview.accept_media = static              # media dragged onto the picture
         if static:
             self.layers.set_layers(self.container(), self.timeline.selected_ids, self.timeline.selected_id)
@@ -3841,7 +3849,7 @@ class MainWindow(QMainWindow):
 
     def toggle_play(self):
         """Space: play, or stop - where playback is, or (播放模式 回到開始處) back where it began."""
-        if self.proj is None:
+        if self.proj is None or (self.editing_static() and not self.player.worker.playing):
             return
         w = self.player.worker
         if not w.playing:                          # (the player's own state: the UI's lags a moment)

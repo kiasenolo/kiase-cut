@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fx, project, rack, textlayout, textvars, viz
+from . import assets, components, curves, expr, fx, mapping, project, rack, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -3241,10 +3241,16 @@ def set_prop_expr(proj, clip_id, prop, text):
     _, c = find(proj, clip_id)
     if prop not in components.number_props_of(c) + components.instance_props(c):
         raise EditError("這個片段沒有那個數字")
-    text = str(text).strip()
-    why = expr.check(text) if text else None
-    if why:
-        raise EditError(f"表達式有問題：{why}")
+    if mapping.is_mapping(text):
+        why = mapping.check(text)
+        if why:
+            raise EditError(f"映射有問題：{why}")
+        text = copy.deepcopy(text)
+    else:
+        text = str(text).strip()
+        why = expr.check(text) if text else None
+        if why:
+            raise EditError(f"表達式有問題：{why}")
     if text:
         c.setdefault("expr", {})[prop] = text
     else:
@@ -3289,7 +3295,7 @@ def rename_rack_param(root, rid, name):
         if q.get("expr"):
             q["expr"] = rack.rename_in(q["expr"], old, name)
     for c in rack.clips_with_exprs(root):
-        c["expr"] = {k: rack.rename_in(x, old, name) for k, x in c["expr"].items()}
+        c["expr"] = {k: rack.rename_expr(x, old, name) for k, x in c["expr"].items()}
     return p
 
 
@@ -3415,10 +3421,16 @@ def set_bind_expr(root, kid, pid, cid, prop, text):
         raise EditError("只有數字參數可以用表達式")
     if [cid, prop] not in [list(b) for b in p.get("binds") or []]:
         raise EditError("這個參數沒有設定那個屬性")
-    text = str(text).strip()
-    why = expr.check(text) if text else None
-    if why:
-        raise EditError(f"表達式有問題：{why}")
+    if mapping.is_mapping(text):
+        why = mapping.check(text)
+        if why:
+            raise EditError(f"映射有問題：{why}")
+        text = None if text["mode"] == "direct" else copy.deepcopy(text)
+    else:
+        text = str(text).strip()
+        why = expr.check(text) if text else None
+        if why:
+            raise EditError(f"表達式有問題：{why}")
     key = components.expr_key(cid, prop)
     if not text or text == "input":
         (p.get("exprs") or {}).pop(key, None)

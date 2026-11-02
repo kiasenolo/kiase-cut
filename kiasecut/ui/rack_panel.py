@@ -78,7 +78,8 @@ class RackPanel(QWidget):
         head.addWidget(exp)
         head.addStretch()
         lay.addLayout(head)
-        hint = QLabel("整個專案共用的數字。在任何片段的數字上按右鍵 > 表達式…，直接寫參數的名字（例如 speed * 2）就會跟著它走；"
+        hint = QLabel("整個專案共用的數字。在任何片段的數字上按右鍵 > 綁定全局參數，選它的值怎麼變成那個數字"
+                      "（原值、線性、cubic-bezier 曲線或 JavaScript，有曲線預覽）；"
                       "◆ 在播放頭加關鍵幀，✎ 給參數自己的表達式（input 是它的值，可以讀別的參數）。")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #8a8a90;")

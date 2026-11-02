@@ -16,7 +16,7 @@ import copy
 import json
 import re
 
-from . import curves, expr
+from . import curves, expr, mapping
 
 RESERVED = ({"input", "value", "time", "progress", "duration", "Math", "undefined", "null"}
             | set(expr.CONSTANTS) | set(expr.FUNCTIONS) | set(expr.NEEDS_ENV))
@@ -90,10 +90,18 @@ def cycle(root):
 
 
 def _names(text):
+    """The names an expression (text) or a mapping (mapping.py) reads."""
+    if mapping.is_mapping(text):
+        return mapping.names(text)
     try:
         return expr.names(text)
     except expr.ExprError:
         return set()
+
+
+def rename_expr(x, old, new):
+    """An expression text or a mapping with the name `old` read as `new`."""
+    return mapping.renamed(x, old, new) if mapping.is_mapping(x) else rename_in(x, old, new)
 
 
 def values(root, t_us):

@@ -10,7 +10,7 @@ from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
-from .. import assets, components
+from .. import assets, components, mapping
 from .library import PictureDrop
 from . import inplace
 from .menukeys import Menu
@@ -191,10 +191,11 @@ class ParamList(QWidget):
         index = components.layer_index(self.comp)
         binds = [(cid, prop) for cid, prop in p.get("binds") or [] if cid in index]
         if binds and p["kind"] == "number":
-            ex = menu.addMenu("表達式")
+            ex = menu.addMenu("映射")
             for cid, prop in binds:
                 c = index[cid][1]
                 text = components.expr_of(p, cid, prop)
+                text = mapping.label(text) if mapping.is_mapping(text) else text
                 ex.addAction(f"{clip_name(c)}：{components.prop_label(c, prop)}　{text if len(text) < 24 else text[:22] + '…'}",
                              lambda b=(cid, prop): self.paramExpr.emit(pid, *b))
         if binds:

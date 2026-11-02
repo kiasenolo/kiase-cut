@@ -35,7 +35,7 @@ frame). It reaches the layer as layer["place"] (the renderers draw the picture t
 """
 import os
 
-from . import assets, curves, expr, fx, project, svgimage, textvars
+from . import assets, curves, expr, fx, mapping, project, svgimage, textvars
 
 ICON = "❖"
 KINDS = {"text": "文字", "number": "數字", "color": "顏色", "image": "圖片", "visible": "顯示"}
@@ -283,6 +283,8 @@ def number_out(p, cid, prop, v, c, t):
         return v
     dur = max(c.get("duration_us") or 1, 1)
     env = {"input": v, "time": t / curves.US, "progress": min(1.0, max(0.0, t / dur)), "duration": dur / curves.US}
+    if mapping.is_mapping(text):                         # (a mapping of its value: 映射)
+        return mapping.apply(text, v, env)
     return expr.safe(text, env, default=v)
 
 

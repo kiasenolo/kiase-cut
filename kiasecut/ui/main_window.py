@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QWidget)
 
 from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
-               rack, render, renderexport, sysmem, thumbnail, toolsdata, userlib, viz, waveform, workspace)
+               mapping, rack, render, renderexport, sysmem, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -54,7 +54,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
-from . import appevents, exprdialog, icons, inplace, middledrag, wheel
+from . import appevents, exprdialog, icons, inplace, mapdialog, middledrag, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -2757,16 +2757,19 @@ class MainWindow(QMainWindow):
         if prop not in components.number_props_of(c) + components.instance_props(c):
             return
         menu.addSeparator()
-        menu.addAction("表達式…", lambda: self.ask_prop_expr(ids, prop))
-        if (c.get("expr") or {}).get(prop):
-            menu.addAction("清除表達式", lambda: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))
+        have = (c.get("expr") or {}).get(prop)
         sub = menu.addMenu("綁定全局參數")
         sub.addAction("新增全局參數並綁定…", lambda: self.new_rack_and_bind(ids, prop))
         names = [p["name"] for p in rack.params(self.proj)]
         if names:
             sub.addSeparator()
         for n in names:
-            sub.addAction(n, lambda n=n: self.apply_each("綁定全局參數", edit.set_prop_expr, ids, prop, n))
+            sub.addAction(n, lambda n=n: self.bind_rack(ids, prop, n))
+        if mapping.is_mapping(have) and have.get("src"):
+            menu.addAction(f"映射…（{mapping.label(have)}）", lambda: self.bind_rack(ids, prop, have["src"]))
+        menu.addAction("自訂表達式…", lambda: self.ask_prop_expr(ids, prop))
+        if have:
+            menu.addAction("解除綁定／清除表達式", lambda: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))
         comp = self.open_component()
         if comp is not None and not prop.startswith("params."):
             sub = menu.addMenu("設為元件參數")
@@ -2780,6 +2783,36 @@ class MainWindow(QMainWindow):
             if mine:
                 menu.addAction("解除元件參數「" + "、".join(dict.fromkeys(p["name"] for _c, p in mine)) + "」",
                                lambda: self.unbind_params([(cid, prop) for cid in ids]))
+
+    def field_range(self, c, prop):
+        """(lo, hi) a number usually runs between: what its field drags across (a mapping's output at first)."""
+        from .inspector import PARAMS
+        g, k = prop.split(".", 1)
+        for r in PARAMS.get(g, ()):
+            if r[0] == k:
+                return float(r[2]), float(r[3])
+        try:
+            if g == "asset":
+                info = assets.FIELD_INFO[k]
+                return float(info[2]), float(info[3])
+            if g.startswith("fx:"):
+                e = next(e for e in c.get("effects") or [] if e["id"] == g[3:])
+                q = next(q for q in fx.get(e["filter"]).params if q.name == k)
+                return float(q.lo), float(q.hi)
+        except (KeyError, StopIteration, IndexError, TypeError):
+            pass
+        return 0.0, 100.0
+
+    def bind_rack(self, ids, prop, name):
+        """綁定全局參數: the number follows rack parameter `name`, through a 映射 asked for now."""
+        c = edit.find(self.container(), ids[0])[1]
+        have = (c.get("expr") or {}).get(prop)
+        m = have if mapping.is_mapping(have) and have.get("src") == name else mapping.make(src=name)
+        vals = rack.values(self.proj, self.playhead_us())
+        out = mapdialog.ask_mapping(self, f"綁定：{components.prop_label(c, prop)}", m, f"全局參數「{name}」",
+                                    vals.get(name), vals, self.field_range(c, prop))
+        if out is not None:
+            self.apply_each("綁定全局參數", edit.set_prop_expr, ids, prop, out)
 
     def new_rack_and_bind(self, ids, prop):
         """新增全局參數並綁定: a rack parameter with the number's value now, and the number follows it."""
@@ -2799,11 +2832,16 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(why, 5000)
             return
 
+        out = mapdialog.ask_mapping(self, f"綁定：{components.prop_label(c, prop)}", mapping.make(src=name),
+                                    f"新的全局參數「{name}」", cur, {name: cur}, self.field_range(c, prop))
+        if out is None:
+            return
+
         def fn(root):
             edit.add_rack_param(root, name, cur)
             level = self.container(root)
             for cid in ids:
-                edit.set_prop_expr(level, cid, prop, name)
+                edit.set_prop_expr(level, cid, prop, out)
         self.apply_root("新增全局參數並綁定", fn)
 
     def ask_prop_expr(self, ids, prop):
@@ -2899,20 +2937,29 @@ class MainWindow(QMainWindow):
         return comp if components.is_component(comp) else None
 
     def layer_param_expr(self, pid, cid, prop):
-        """The expression a number parameter sets a layer's prop through, asked for now."""
+        """The 映射 a number parameter sets a layer's prop through, asked for now."""
+        self.ask_bind_mapping(pid, [cid], prop)
+
+    def ask_bind_mapping(self, pid, ids, prop):
+        """映射: how component parameter pid's value becomes prop of layers ids (the first one's is shown)."""
         kid = self.open_kid()
         comp = self.open_component()
         p = components.param(comp, pid) if comp else None
-        if p is None:
+        if p is None or p["kind"] != "number":
             return
-        c = edit.find(comp, cid)[1]
-        text = exprdialog.ask_expression(
-            self, f"表達式：{p['name']} → {components.prop_label(c, prop)}", components.expr_of(p, cid, prop),
-            {"input": components.default(comp, p), "time": 0.0, "progress": 0.0, "duration": 1.0},
-            note="input 是參數的值；time 是片段內的秒數、progress 是 0–1 的進度。輸入結果會當成這個屬性的值"
-                 "（不透明度、音量用 % 計）。")
-        if text is not None:
-            self.apply_root("參數表達式", edit.set_bind_expr, kid, pid, cid, prop, text)
+        c = edit.find(comp, ids[0])[1]
+        have = components.expr_of(p, ids[0], prop)
+        if mapping.is_mapping(have):
+            m = have
+        elif have != "input":                              # (an expression written before: as it was)
+            m = mapping.make(mode="js", js=have)
+        else:
+            m = mapping.make()
+        cur = components.default(comp, p)
+        out = mapdialog.ask_mapping(self, f"映射：{p['name']} → {components.prop_label(c, prop)}", m,
+                                    f"元件參數「{p['name']}」", cur, {}, self.field_range(c, prop))
+        if out is not None:
+            self.apply_root("參數映射", lambda root: [edit.set_bind_expr(root, kid, pid, cid, prop, out) for cid in ids])
 
     def unbind_params(self, binds):
         if self.open_kid():
@@ -2927,13 +2974,17 @@ class MainWindow(QMainWindow):
         binds = [(cid, prop) for cid in ids]
         if pid:
             self.apply_root("設為參數", edit.bind_param, kid, pid, binds)
-            return
-        c = edit.find(comp, ids[0])[1]
-        label = components.prop_label(c, prop)
-        name, ok = QInputDialog.getText(self, "新參數", "參數名稱（使用元件的片段在屬性裡看到的名字）：",
-                                        text=label if len(ids) > 1 else f"{clip_name(c)} {label}")
-        if ok:
-            self.apply_root("新增參數", edit.add_param, kid, components.PROPS[prop][0], name, binds)
+        else:
+            c = edit.find(comp, ids[0])[1]
+            label = components.prop_label(c, prop)
+            name, ok = QInputDialog.getText(self, "新參數", "參數名稱（使用元件的片段在屬性裡看到的名字）：",
+                                            text=label if len(ids) > 1 else f"{clip_name(c)} {label}")
+            if not ok:
+                return
+            made = self.apply_root("新增參數", edit.add_param, kid, components.PROPS[prop][0], name, binds)
+            pid = made["id"] if made else None
+        if pid and components.prop_kind(prop) == "number":
+            self.ask_bind_mapping(pid, ids, prop)
 
     def layer_param_action(self, action, pid):
         """The 參數 list: set a parameter's default, rename, restack or delete it."""

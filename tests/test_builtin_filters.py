@@ -89,6 +89,28 @@ class BuiltinFilterTests(unittest.TestCase):
         self.assertFalse(fx.enabled(by["chaos"], fx.named(d, {"null_look": "透明"})))   # (癲狂程度 is for 花屏 only)
         self.assertTrue(fx.enabled(by["chaos"], fx.named(d, {"null_look": "花屏"})))
 
+    def test_memory_blocks_breaks_into_blocks(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:memory_blocks")
+        self.assertIsNone(d.error)
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        y, x = np.mgrid[0:128, 0:256]
+        rgba = np.zeros((128, 256, 4), np.uint8)
+        rgba[..., 0], rgba[..., 1], rgba[..., 2], rgba[..., 3] = x, y * 2, 90, 255
+        vals.update(spread=False, amount=0.0)
+        self.assertTrue((eng.run(d, vals, rgba, time=1.0) == rgba).all())       # (nothing failed: as it was)
+        vals.update(amount=1.0, w_keep=0.0, w_color=0.0, w_chaos=0.0, w_gone=1.0)
+        self.assertTrue((eng.run(d, vals, rgba, time=1.0)[..., :3] == 0).all())   # (all gone: black)
+        vals.update(gone_look=1)
+        self.assertTrue((eng.run(d, vals, rgba, time=1.0)[..., 3] == 0).all())    # (or transparent)
+        vals.update(gone_look=0, w_color=1.0, w_gone=0.0, blk=32.0, split=0.0, stretch=0.0)
+        out = eng.run(d, vals, rgba, time=1.0)
+        self.assertEqual(len(np.unique(out[:32, :32].reshape(-1, 4), axis=0)), 1)   # (only a colour: one block, one colour)
+
     def test_options_that_do_nothing_are_half_faded(self):
         from PySide6.QtWidgets import QApplication
         from kiasecut import edit

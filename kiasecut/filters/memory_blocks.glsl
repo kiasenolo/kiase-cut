@@ -13,7 +13,7 @@
 // @param gone_look menu 黑色 "黑色|透明|白色" "消失的分塊"
 // @panel 分塊種類（比例）
 // @param w_edge float 0.02 0 1 "邊緣雜訊（交界處輪廓特別重）"
-// @param w_color float 0.05 0 1 "只剩色彩"
+// @param w_color float 0.02 0 1 "只剩色彩"
 // @param w_snow float 0.13 0 1 "混沌：雜點"
 // @param w_streak float 0.05 0 1 "混沌：直條紋"
 // @param w_dither float 0.13 0 1 "混沌：抖動殘影"
@@ -23,7 +23,7 @@
 // @param w_cutx float 0.03 0 1 "X 走到一半斷掉"
 // @param w_cuty float 0.03 0 1 "Y 走到一半斷掉"
 // @param w_cutxy float 0.02 0 1 "X、Y 都走到一半斷掉"
-// @param w_gone float 0.1 0 1 "消失"
+// @param w_gone float 0.05 0 1 "消失"
 
 // The picture is cut into blocks of one fixed size (blk high, aspect times as wide - the rows
 // lie flat; `trend` makes the blocks along a row fail and fail alike, as a run of memory does).

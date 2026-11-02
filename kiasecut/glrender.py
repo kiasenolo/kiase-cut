@@ -530,14 +530,14 @@ class GLRenderer(render.Renderer):
         return lay
 
     def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu):
-        for tr in tracks:
+        for i, tr in enumerate(tracks):
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
                 if render.on_frame(c, t_us, fps):
                     try:
                         if c["type"] == "filter":
-                            self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu)
+                            self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu, tracks[:i])
                         else:
                             self.gl_clip(tgt, base, c, W, H, fps, t_us, ppu)
                     except fx.FilterError as exc:
@@ -811,16 +811,19 @@ class GLRenderer(render.Renderer):
             cur = nxt
         return cur
 
-    def gl_filter_clip(self, tgt, base, c, W, H, fps, t_us, ppu):
+    def gl_filter_clip(self, tgt, base, c, W, H, fps, t_us, ppu, below=None):
         """A filter clip: what has been drawn so far goes through its effects, inside its mask
-        and at its opacity (as render.draw_filter_clip)."""
+        and at its opacity; 凍結 / 降低幀數 draw the tracks below again at the held moment (as
+        render.draw_filter_clip)."""
         gl = self.gl
         tf = c.get("transform") or {}
         t = t_us - c["start_us"]
         v = lambda k, d: curves.value(tf.get(k, d), t)
         strength = min(1.0, max(0.0, v("opacity", 1.0)))
         effects = project.visual_effects(c)
-        if strength <= 0 or not effects:
+        held = project.stepped(c, t)
+        timed = below is not None and held != t
+        if strength <= 0 or not (effects or timed):
             return
         local = QTransform()
         local.translate(*project.centre_px(tf, t, W, H))   # (中心點: about its pivot)
@@ -833,21 +836,29 @@ class GLRenderer(render.Renderer):
         snap = gl.layer(tgt.w, tgt.h)
         mask = self.clip_mask(c, t)
         matte = None
+        under = None
         try:
             gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
-            seen = self.gl_seen(tgt, snap)
-            out = self.gl_effects(effects, seen, t, c["duration_us"], fps, wt, (W, H), ppu)
+            if timed:                                    # what is under it as it was at the held moment
+                under = gl.layer(tgt.w, tgt.h)
+                self.gl_tracks(under, base, below, W, H, fps, c["start_us"] + held, ppu)
+                seen = under
+            else:
+                seen = self.gl_seen(tgt, snap)
+            out = self.gl_effects(effects, seen, held, c["duration_us"], fps, wt, (W, H), ppu) if effects else seen
             matte = self.gl_matte(mask, t, (W, H), wt, fps)
             gl.matte = matte and matte[0].tex
             gl.mix(tgt, snap.tex, out.tex, strength, mask, t, (W, H), inv)
             if out is not seen:
                 gl.release(out)
-            if seen is not snap:
+            if seen is not snap and seen is not under:
                 gl.release(seen)
         finally:
             gl.matte = None
             if matte and matte[1]:
                 gl.release(matte[0])
+            if under is not None:
+                gl.release(under)
             gl.release(snap)
 
 

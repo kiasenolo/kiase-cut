@@ -448,14 +448,14 @@ class Renderer:
 
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first."""
-        for tr in tracks:
+        for i, tr in enumerate(tracks):
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
                 if on_frame(c, t_us, fps):
                     try:
                         if c["type"] == "filter":
-                            self.draw_filter_clip(p, c, W, H, fps, t_us, px_per_unit)
+                            self.draw_filter_clip(p, c, W, H, fps, t_us, px_per_unit, tracks[:i])
                         else:
                             self.draw_clip(p, c, W, H, fps, t_us, px_per_unit)
                     except Exception as exc:          # one bad clip must not blank the preview
@@ -693,7 +693,7 @@ class Renderer:
         """Apply a chain of effects to img (QImage ARGB32 premultiplied, unit of its px per canvas
         px) at clip time t; each effect's own mask (clip-local, through world transform wt)
         limits where it shows, its 混合程度 how much."""
-        todo = [e for e in effects if not e.get("disabled") and e.get("filter") != project.TIME_FILTER]
+        todo = [e for e in effects if not e.get("disabled") and e.get("filter") not in project.TIME_FILTERS]
         eng = self.engine() if todo else None
         if eng is None:
             return img
@@ -747,14 +747,17 @@ class Renderer:
         q.drawImage(0, 0, layer)
         q.restore()
 
-    def draw_filter_clip(self, p, c, W, H, fps, t_us, px_per_unit):
+    def draw_filter_clip(self, p, c, W, H, fps, t_us, px_per_unit, below=None):
         """A filter clip: what has been drawn so far (the tracks below) goes through its
-        effects, inside its mask and at its opacity."""
+        effects, inside its mask and at its opacity. With 凍結 / 降低幀數 the tracks below
+        (below) are drawn again at the moment it holds them to, and that goes through instead."""
         tf = c.get("transform") or {}
         t = t_us - c["start_us"]
         v = lambda k, d: curves.value(tf.get(k, d), t)
         strength = min(1.0, max(0.0, v("opacity", 1.0)))
-        if strength <= 0 or not project.visual_effects(c):
+        held = project.stepped(c, t)
+        timed = below is not None and held != t
+        if strength <= 0 or not (project.visual_effects(c) or timed):
             return
         dev = p.device()
         w, h = dev.width(), dev.height()
@@ -770,7 +773,17 @@ class Renderer:
         if base is None:
             return
         base = base.convertToFormat(QImage.Format_ARGB32_Premultiplied)
-        out = self.run_effects(c["effects"], self.seen(p, base), t, c["duration_us"], fps, wt, (W, H), px_per_unit)
+        under = base
+        if timed:                                          # what is under it as it was at the held moment
+            under = QImage(base.size(), QImage.Format_ARGB32_Premultiplied)
+            under.fill(Qt.transparent)
+            hp = QPainter(under)
+            hp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+            hp.setTransform(p.worldTransform())
+            self.draw_tracks(hp, below, W, H, fps, c["start_us"] + held, px_per_unit)
+            hp.end()
+            t = held
+        out = self.run_effects(c["effects"], self.seen(p, under), t, c["duration_us"], fps, wt, (W, H), px_per_unit)
         cov = np.full((h, w), strength, np.float32)
         mk = self.clip_mask(c, t)
         if mk:

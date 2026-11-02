@@ -399,12 +399,17 @@ def source_time(c, t):
 
 
 TIME_FILTER = "builtin:frame_rate"      # 降低幀數: a clip's time steps at its fps (no picture change)
+FREEZE_FILTER = "builtin:freeze"        # 凍結: a clip's time held where its effects begin (its start)
+TIME_FILTERS = (TIME_FILTER, FREEZE_FILTER)
 
 
 def stepped(c, t):
     """Clip time t held to the frame grid of the clip's 降低幀數 effect (the first one that is
-    on), else t: the content, keyframes and effects all move in its steps."""
+    on), or at 0 by 凍結, else t: the content, keyframes and effects all move in its steps.
+    On a filter clip it is the time the tracks under it are drawn at (render.draw_filter_clip)."""
     for e in c.get("effects") or ():
+        if e.get("filter") == FREEZE_FILTER and not e.get("disabled"):
+            return 0
         if e.get("filter") == TIME_FILTER and not e.get("disabled"):
             from . import curves
             rate = curves.value((e.get("params") or {}).get("fps", 12.0), t)
@@ -447,7 +452,7 @@ def passes_through(c):
 
 def visual_effects(c):
     """The effects that change a clip's picture: on, and not a time effect (stepped())."""
-    return [e for e in c.get("effects") or () if not e.get("disabled") and e.get("filter") != TIME_FILTER]
+    return [e for e in c.get("effects") or () if not e.get("disabled") and e.get("filter") not in TIME_FILTERS]
 
 
 def active_mask(c):

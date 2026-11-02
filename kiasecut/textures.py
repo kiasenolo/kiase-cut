@@ -9,7 +9,8 @@ Blender: https://github.com/blender/blender
 SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
 SPDX-License-Identifier: GPL-3.0-or-later
 
-Coordinates are Blender's image coordinates (the long side -1..1, y up) times the scale.
+Coordinates are Blender's image coordinates (the long side -1..1, y up) times the scale; the
+patterns are 3D - z (a number of cells) moves through them, so the picture changes smoothly with it.
 """
 import numpy as np
 
@@ -101,9 +102,10 @@ def _fbm(x, y, z, detail=2.0, rough=0.5, lac=2.0):
 
 
 # -- the textures: a factor 0 - 1 (or a colour for magic) per pixel -------------------------------
-def _checker(x, y):
+def _checker(x, y, z):
     xi, yi = np.abs(np.floor(x * 0.999999)), np.abs(np.floor(y * 0.999999))
-    return ((xi % 2) != (yi % 2)).astype(np.float64)       # 1: colour 1
+    zi = abs(np.floor(z * 0.999999))
+    return (((xi % 2) != (yi % 2)) != (zi % 2 == 1)).astype(np.float64)       # 1: colour 1
 
 
 def _brick(x, y):
@@ -121,25 +123,28 @@ def _brick(x, y):
     return tint, mortar
 
 
-def _voronoi(x, y):
-    ix, iy = np.floor(x), np.floor(y)
+def _voronoi(x, y, z):
+    """Distance to the nearest of the points hashed in each 3D cell (so it moves smoothly with z)."""
+    ix, iy, iz = np.floor(x), np.floor(y), np.floor(z)
+    fz = z - iz
     best = np.full(x.shape, 8.0)
-    for j in range(-1, 2):
-        for i in range(-1, 2):
-            cx, cy = ix + i, iy + j
-            px = cx + _hash(cx, cy, 1)
-            py = cy + _hash(cx, cy, 2)
-            best = np.minimum(best, np.hypot(x - px, y - py))
+    for k in range(-1, 2):
+        for j in range(-1, 2):
+            for i in range(-1, 2):
+                cx, cy, cz = ix + i, iy + j, iz + k
+                px = cx + _hash(cx, cy, cz, 1)
+                py = cy + _hash(cx, cy, cz, 2)
+                pz = cz + _hash(cx, cy, cz, 3)
+                best = np.minimum(best, np.sqrt((x - px) ** 2 + (y - py) ** 2 + (iz + fz - pz) ** 2))
     return np.clip(best, 0, 1)
 
 
-def _wave(x, y, seed):
-    n = x * 20.0
+def _wave(x, y, z):
+    n = x * 20.0 + z * 6.28318530718                      # (a z of 1 moves the bands one period)
     return 0.5 + 0.5 * np.sin(n - 1.57079632679)
 
 
-def _magic(x, y, depth=2, d=1.0):
-    z = np.zeros_like(x)
+def _magic(x, y, z, depth=2, d=1.0):
     a = np.sin((x + y + z) * 5.0)
     b = np.cos((-x + y - z) * 5.0)
     c = -np.cos((-x - y + z) * 5.0)
@@ -152,25 +157,26 @@ def _magic(x, y, depth=2, d=1.0):
     return 0.5 - a / dd, 0.5 - b / dd, 0.5 - c / dd
 
 
-def render(kind, w, h, scale, seed, c1, c2):
+def render(kind, w, h, scale, seed, z, c1, c2):
     """RGBA (uint8, rows top to bottom) of texture `kind` for a w x h shape; colours are
     [r, g, b, a] (0 - 1): colour 1 and 2 of the texture (a brick's mortar is colour 2 darkened)."""
     x, y = _coords(w, h, scale, seed)
+    z = np.full_like(x, z)
     c1, c2 = np.array(c1, dtype=np.float64), np.array(c2, dtype=np.float64)
     mix = lambda f: c1 + (c2 - c1) * np.asarray(f)[..., None]
     if kind == "checker":
-        out = mix(1.0 - _checker(x, y))
+        out = mix(1.0 - _checker(x, y, z))
     elif kind == "brick":
         tint, mortar = _brick(x, y)
         brick = mix(tint)
         out = brick + (c2 * np.array([0.25, 0.25, 0.25, 1.0]) - brick) * mortar[..., None]
     elif kind == "noise":
-        out = mix(np.clip(_fbm(x, y, np.full_like(x, 0.5)), 0, 1))
+        out = mix(np.clip(_fbm(x, y, z + 0.5), 0, 1))
     elif kind == "voronoi":
-        out = mix(_voronoi(x, y))
+        out = mix(_voronoi(x, y, z))
     elif kind == "wave":
-        out = mix(_wave(x, y, seed))
+        out = mix(_wave(x, y, z))
     else:                                                  # magic: its own colours
-        r, g, b = _magic(x, y)
+        r, g, b = _magic(x, y, z)
         out = np.stack([r, g, b, np.ones_like(r) * c1[3]], axis=-1)
     return (np.clip(out, 0, 1) * 255 + 0.5).astype(np.uint8)

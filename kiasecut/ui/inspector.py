@@ -1600,7 +1600,7 @@ class Inspector(QWidget):
             for f, shown in ((col, not only_pic), (pre + "_color2", grad or tex), (pre + "_gtype", grad),
                              (pre + "_angle", grad and not all(assets.clean(pre + "_gtype", curves.value(
                                  k["asset"].get(pre + "_gtype"), t)) == "radial" for k, t in zip(clips, ts))),
-                             (pre + "_image", pic), (pre + "_scale", tex), (pre + "_seed", tex)):
+                             (pre + "_image", pic), (pre + "_scale", tex), (pre + "_seed", tex), (pre + "_z", tex)):
                 if f in rows and form is not None:
                     form.setRowVisible(rows[f], shown)
 

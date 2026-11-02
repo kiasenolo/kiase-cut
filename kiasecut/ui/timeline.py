@@ -368,7 +368,8 @@ class Timeline(QWidget):
         self.rows = list(reversed(visual)) + audio
         self.selected_tracks &= {t["id"] for t in self.rows}
         self._layout()
-        self.drag = None
+        if not (keep_view and self.drag and self.drag["mode"] in ("seek", "pan")):
+            self.drag = None                            # (dragging the playhead goes on past an edit: M adds markers)
         if not keep_view:
             self.selected_id = None
             self.zoom_fit()

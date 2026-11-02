@@ -664,7 +664,8 @@ def new_track_id(proj):
 
 
 TEXT_FIELDS = ("content", "font_path", "size", "color", "fill", "stroke_on", "stroke_color", "stroke",
-               "stroke_align", "letter_spacing", "line_spacing", "italic_deg", "align", "valign", "box_w", "box_h")
+               "stroke_align", "letter_spacing", "line_spacing", "italic_deg", "align", "valign", "box_w", "box_h") \
+    + tuple(textlayout.DECOR)
 TEXT_ALIGNS = ("left", "center", "right", "justify")      # 對齊 (justify: 齊頭尾)
 TEXT_VALIGNS = ("top", "middle", "bottom")               # 垂直對齊 in a 文字框
 TEXT_STROKE_ALIGNS = ("inside", "center", "outside")
@@ -737,7 +738,8 @@ def replace_fonts(proj, mapping):
 
 
 STYLE_TEXT_FIELDS = ("font_path", "size", "color", "fill", "stroke_on", "stroke_color", "stroke",
-                     "stroke_align", "letter_spacing", "line_spacing", "italic_deg", "align", "valign")
+                     "stroke_align", "letter_spacing", "line_spacing", "italic_deg", "align", "valign") \
+    + tuple(textlayout.DECOR)
 
 
 def apply_text_style(proj, clip_id, style):
@@ -792,7 +794,8 @@ def set_transform(proj, clip_id, key, value, t=None):
 
 # -- keyframes ------------------------------------------------------------------------------------
 TEXT_ANIM_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
-                    "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign", "box_w", "box_h")
+                    "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign", "box_w", "box_h") \
+    + tuple(textlayout.DECOR)
 GROUP_FIELDS = {
     "transform": TRANSFORM_FIELDS,
     "text": TEXT_ANIM_FIELDS,
@@ -805,7 +808,7 @@ BLEND_MODES = ("normal", "multiply", "screen", "overlay", "darken", "lighten", "
                "hard_light", "soft_light", "difference", "exclusion", "add", "pass_through")
 DISCRETE_DEFAULTS = {"font_path": project.DEFAULT_FONT, "kind": "rectangle", "invert": False, "blend": "normal",
                      "align": "center", "valign": "top", "fill": True, "stroke_on": False,
-                     "stroke_align": "inside"}
+                     "stroke_align": "inside", "shadow_on": False, "bg_on": False}
 KEY_TOL_US = 1_000_000 // 120      # half a 60 fps frame
 
 
@@ -1063,7 +1066,7 @@ def _toggle_one(c, h, group, key, t):
     else:
         default = {"scale": 1.0, "opacity": 1.0, "volume": 1.0, "w": 1.0, "h": 1.0, "size": 5.0,
                    "color": [1.0, 1.0, 1.0], "stroke_color": [0.0, 0.0, 0.0],
-                   "stroke": 2.0, "mix": 1.0}.get(key, 0.0)
+                   "stroke": 2.0, "mix": 1.0, **textlayout.DECOR}.get(key, 0.0)
     p = h.get(key, default)
     i = key_at(p, t)
     if i is not None:

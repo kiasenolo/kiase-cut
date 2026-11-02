@@ -31,7 +31,7 @@ from . import assets, curves, fonts, masks, normalize, project, svgimage, textla
 US = 1_000_000
 TEXT_LAYOUT_FIELDS = ("color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
                "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
-                      "box_w", "box_h")
+                      "box_w", "box_h") + tuple(textlayout.DECOR)
 
 
 def _hash(*parts):

@@ -38,7 +38,7 @@ import os
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
-from .. import assets, build, components, curves, edit, normalize, project
+from .. import assets, build, components, curves, edit, normalize, project, textlayout
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
@@ -56,7 +56,12 @@ PARAMS = {
              ("italic_deg", "斜體角度", 0.0, 45.0, 1.0, 0, 1, 0.0),
              ("stroke", "邊框粗細 px", 0.0, 100.0, 0.1, 1, 1, 2.0),
              ("box_w", "寬", 0.0, 4000.0, 1.0, 1, 1, 0.0),             # 文字框 (0: 自動)
-             ("box_h", "高", 0.0, 4000.0, 1.0, 1, 1, 0.0)),
+             ("box_h", "高", 0.0, 4000.0, 1.0, 1, 1, 0.0),
+             ("shadow_x", "陰影 X px", -500.0, 500.0, 0.5, 1, 1, 4.0),     # 陰影 / 背景 (textlayout.DECOR)
+             ("shadow_y", "陰影 Y px", -500.0, 500.0, 0.5, 1, 1, 4.0),
+             ("shadow_blur", "陰影模糊 px", 0.0, 200.0, 0.5, 1, 1, 6.0),
+             ("bg_pad", "背景內間隔 px", -500.0, 500.0, 0.5, 1, 1, 12.0),
+             ("bg_radius", "背景圓角 px", 0.0, 500.0, 0.5, 1, 1, 0.0)),
     "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("scale", "縮放 X", 0.0, 50.0, 0.01, 3, 1, 1.0),
@@ -108,6 +113,8 @@ BOX_NAMES = (("自動寬度", "auto", "文字框跟著文字長大，不換行")
              ("固定大小", "fixed", "固定寬高：文字在框裡換行，靠上／置中／靠下"))
 STROKE_ALIGN_NAMES = (("內邊框", "inside"), ("中邊框", "center"), ("外邊框", "outside"))
 BOX_KEYS = ("box_w", "box_h")
+DECOR_ROWS = {"shadow": ("shadow_x", "shadow_y", "shadow_blur"), "bg": ("bg_pad", "bg_radius")}
+DECOR_KEYS = DECOR_ROWS["shadow"] + DECOR_ROWS["bg"]
 EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
 BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "screen"), ("疊加", "overlay"),
                ("變暗", "darken"), ("變亮", "lighten"), ("顏色減淡", "color_dodge"), ("顏色加深", "color_burn"),
@@ -486,8 +493,28 @@ class Inspector(QWidget):
                 lambda i: self._emit_now(self.paramEdited, "text", "stroke_align", stroke_align.itemData(i)))
             self.widgets["stroke_align"] = stroke_align
             form.addRow("外框位置", self._with_key(stroke_align, "text", "stroke_align"))
+            for part, label, tip in (("shadow", "陰影", "文字（和外框）的陰影：顏色可以有透明度"),
+                                     ("bg", "背景", "文字框後面的底色：內間隔可以是負數（比文字範圍小）")):
+                row = QWidget()
+                lay = QHBoxLayout(row)
+                lay.setContentsMargins(0, 0, 0, 0)
+                on = QCheckBox("啟用")
+                on.setToolTip(tip)
+                on.clicked.connect(lambda v, k=part + "_on": self._emit_now(self.paramEdited, "text", k, bool(v)))
+                self.widgets[part + "_on"] = on
+                lay.addWidget(on)
+                lay.addWidget(self._key_button("text", part + "_on"))
+                col = QPushButton()
+                col.clicked.connect(lambda _=False, k=part + "_color": self._pick_color(k))
+                self.widgets[part + "_color"] = col
+                lay.addWidget(col, 1)
+                lay.addWidget(self._key_button("text", part + "_color"))
+                form.addRow(label, row)
+                for r in PARAMS["text"]:
+                    if r[0] in DECOR_ROWS[part]:
+                        form.addRow(r[1], self._param_row("text", *r))
             for r in PARAMS["text"]:
-                if r[0] not in BOX_KEYS and r[0] != "stroke":
+                if r[0] not in BOX_KEYS and r[0] not in DECOR_KEYS and r[0] != "stroke":
                     form.addRow(r[1], self._param_row("text", *r))
         if c.get("transform") is not None:
             if c["type"] == "filter":                     # a filter has no place of its own: only how strongly it works
@@ -1298,7 +1325,7 @@ class Inspector(QWidget):
             self._show_text_color("color",
                                   [curves.value(k["text"].get("color", [1, 1, 1]), t) for k, t in zip(clips, ts)],
                                   clips, ts)
-            for key, default in (("fill", True), ("stroke_on", False)):
+            for key, default in (("fill", True), ("stroke_on", False), ("shadow_on", False), ("bg_on", False)):
                 values = [curves.value(k["text"].get(key, default), t) for k, t in zip(clips, ts)]
                 box = w[key]
                 box.blockSignals(True)
@@ -1310,6 +1337,9 @@ class Inspector(QWidget):
             self._show_text_color("stroke_color",
                                   [curves.value(k["text"].get("stroke_color", [0, 0, 0]), t) for k, t in zip(clips, ts)],
                                   clips, ts)
+            for key in ("shadow_color", "bg_color"):
+                self._show_text_color(key, [curves.value(k["text"].get(key, textlayout.DECOR[key]), t)
+                                            for k, t in zip(clips, ts)], clips, ts)
             stroke_aligns = {curves.value(k["text"].get("stroke_align", "inside"), t) for k, t in zip(clips, ts)}
             self._set_combo(w["stroke_align"], stroke_aligns.pop() if len(stroke_aligns) == 1 else "--")
             self._key_state(w[("key", "text", "stroke_align")],
@@ -1482,11 +1512,12 @@ class Inspector(QWidget):
             signal.emit(list(self.clip_ids), *args)
 
     def _show_text_color(self, key, values, clips, ts):
-        cols = [tuple(int(round(min(1, max(0, v)) * 255)) for v in col[:3]) for col in values]
+        cols = [tuple(int(round(min(1, max(0, v)) * 255)) for v in col[:4]) for col in values]
         button = self.widgets[key]
         if all(col == cols[0] for col in cols[1:]):
-            r, g, b = cols[0]
-            button.setText(f"#{r:02x}{g:02x}{b:02x}")
+            r, g, b = cols[0][:3]
+            a = f"{cols[0][3]:02x}" if len(cols[0]) > 3 and cols[0][3] < 255 else ""
+            button.setText(f"#{r:02x}{g:02x}{b:02x}{a}")
             button.setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
         else:
             button.setText("--")
@@ -1495,14 +1526,16 @@ class Inspector(QWidget):
                         [c["text"].get(key) for c in clips], clips, ts)
 
     def _pick_color(self, key="color"):
-        cur = QColor(self.widgets[key].text()) if self.widgets[key].text() != "--" else QColor("white")
+        text = self.widgets[key].text()
+        cur = QColor("white") if text == "--" else QColor("#" + text[7:9] + text[1:7]) if len(text) == 9 else QColor(text)
         ids = list(self.clip_ids)
-        label = "外框顏色" if key == "stroke_color" else "填充顏色"
-        col = pick_color(self, cur, label, alpha=False,
-                         live=lambda c: self.liveEdited.emit(ids, "text", key, rgba(c)[:3]),
+        label = {"stroke_color": "外框顏色", "shadow_color": "陰影顏色", "bg_color": "背景顏色"}.get(key, "填充顏色")
+        n = 4 if key in ("shadow_color", "bg_color") else 3          # (these can be see-through)
+        col = pick_color(self, cur, label, alpha=n == 4,
+                         live=lambda c: self.liveEdited.emit(ids, "text", key, rgba(c)[:n]),
                          cancel=self.liveCancelled.emit, anchor=self.widgets[key])
         if col is not None:
-            self._queue("text*", key, [col.redF(), col.greenF(), col.blueF()])
+            self._queue("text*", key, [col.redF(), col.greenF(), col.blueF(), col.alphaF()][:n])
             self._flush()
 
     def _flush(self):

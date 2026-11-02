@@ -13,16 +13,22 @@ Calibrated frame by frame against a Jianying export:
     width (a Latin word goes down whole, CJK breaks anywhere) and the text sits at its top,
     middle or bottom (spec["valign"]); text that does not fit runs over it. Its centre is
     the clip position
+  * a shadow (shadow_on: the drawn text and its outline in shadow_color, moved shadow_x /
+    shadow_y and blurred by shadow_blur) and a background (bg_on: a rectangle in bg_color
+    round the text's frame, bg_pad further out - less than 0: inside it - with corners of
+    bg_radius); lengths in px of a 1080-high canvas at scale 1, colours [r, g, b, a] (DECOR)
 """
 import math
 import os
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from . import curves, fonts
 
 PX_PER_FONT_UNIT = 11.13
+DECOR = {"shadow_on": False, "shadow_color": [0.0, 0.0, 0.0, 0.6], "shadow_x": 4.0, "shadow_y": 4.0,
+         "shadow_blur": 6.0, "bg_on": False, "bg_color": [0.0, 0.0, 0.0, 0.6], "bg_pad": 12.0, "bg_radius": 0.0}
 FALLBACK_FONTS = [
     r"C:\Windows\Fonts\GenSekiGothic2-M.ttc", r"C:\Windows\Fonts\msjh.ttc",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
@@ -204,6 +210,15 @@ def render(spec, scale, canvas_h=1080):
         if spec.get("stroke_on", False) else 0
     stroke_align = spec.get("stroke_align", "inside")
     pad = int(base_em * (0.3 + abs(shear))) + (stroke_width if stroke_align != "inside" else 0) + 4
+    px = canvas_h / 1080 * scale
+    d = {k: spec.get(k, v) for k, v in DECOR.items()}
+    shadow = d["shadow_on"] and _rgba(d["shadow_color"])[3] > 0
+    if shadow:                                          # room for the shadow's offset and blur
+        sx, sy, blur = d["shadow_x"] * px, d["shadow_y"] * px, max(0.0, d["shadow_blur"]) * px
+        pad += int(math.ceil(max(abs(sx), abs(sy)) + 2 * blur))
+    bg_pad = d["bg_pad"] * px
+    if d["bg_on"]:
+        pad = max(pad, int(math.ceil(bg_pad)) + 2)
     W = int(math.ceil(2 * lay["half_w"])) + 2 * pad
     H = int(math.ceil(2 * lay["half_h"])) + 2 * pad
     W += W % 2
@@ -239,4 +254,29 @@ def render(spec, scale, canvas_h=1080):
     if shear:
         im = im.transform(im.size, Image.AFFINE, (1, shear, -shear * H / 2, 0, 1, 0),
                           resample=Image.BICUBIC)
-    return im
+    if not (shadow or d["bg_on"]):
+        return im
+    out = Image.new("RGBA", im.size, (0, 0, 0, 0))
+    if d["bg_on"]:                                      # round the frame (not slanted), bg_pad out
+        hw, hh = lay["fw"] / 2 + bg_pad, lay["fh"] / 2 + bg_pad
+        if hw > 0 and hh > 0:
+            r = max(0.0, min(d["bg_radius"] * px, hw, hh))
+            ImageDraw.Draw(out).rounded_rectangle((W / 2 - hw, H / 2 - hh, W / 2 + hw, H / 2 + hh),
+                                                  radius=r, fill=_rgba(d["bg_color"]))
+    if shadow:                                          # the drawn text's shape, moved and blurred
+        col = _rgba(d["shadow_color"])
+        a = im.getchannel("A")
+        if blur > 0:
+            a = a.filter(ImageFilter.GaussianBlur(blur))
+        a = a.point(lambda v: v * col[3] // 255)
+        layer = Image.new("RGBA", im.size, col[:3] + (0,))
+        layer.putalpha(a)
+        out.alpha_composite(layer, (int(round(sx)), int(round(sy))))
+    out.alpha_composite(im)
+    return out
+
+
+def _rgba(col):
+    """A colour [r, g, b(, a)] (0 - 1) as 0 - 255 RGBA."""
+    col = list(col or [0, 0, 0]) + [1.0] * (4 - len(col or [0, 0, 0]))
+    return tuple(int(round(min(1.0, max(0.0, v)) * 255)) for v in col[:4])

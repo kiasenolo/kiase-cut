@@ -17,6 +17,8 @@ viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w,
   bar_w / gap / radius / line_w / inner   pixels of the object's own size (they scale with it)
   f_lo..f_hi, log  the frequencies the bars cover; log 0 - 1 mixes how they sit: 1 evenly in octaves (many
            bars for the bass), 0 evenly in Hz (a plain FFT, most bars for the treble)
+  floor_db / top_db  the levels (dB, a sine of 1 is 0 dB) that give a bar no height / its full height
+  level_map  a mapping (mapping.py) of that 0 - 1 to the height shown (direct: as it is)
   smooth   0 - 1, how much neighbouring bars / points are blended
   auto_freq (oscilloscope) the picture shows `cycles` periods of the pitch it finds in the sound (the
            wave stands still while the note holds); without a clear pitch, or with it off, a window of
@@ -33,6 +35,7 @@ import math
 import os
 
 import numpy as np
+from . import mapping
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF
 
@@ -60,11 +63,12 @@ DEFAULTS = {
     "color": [1.0, 1.0, 1.0, 1.0], "color2": [1.0, 0.35, 0.8, 1.0], "gradient": False,
     "bar_w": 12.0, "gap": 6.0, "radius": 0.0, "mirror": False, "radial": False, "inner": 120.0,
     "f_lo": 30.0, "f_hi": 16000.0, "log": 1.0, "smooth": 0.4, "line_w": 4.0, "grid": True,
+    "floor_db": FLOOR_DB, "top_db": TOP_DB, "level_map": mapping.make("direct"),
     "auto_scale": True, "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
 }
 LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
           "w": (1.0, 16384.0), "h": (1.0, 16384.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
-          "smooth": (0.0, 1.0), "log": (0.0, 1.0), "line_w": (0.5, 100.0), "cycles": (0.5, 16.0), "time_ms": (1.0, 300.0)}
+          "floor_db": (-120.0, -12.0), "top_db": (-60.0, 6.0), "smooth": (0.0, 1.0), "log": (0.0, 1.0), "line_w": (0.5, 100.0), "cycles": (0.5, 16.0), "time_ms": (1.0, 300.0)}
 
 
 def make(kind, source, canvas_w=1920, canvas_h=1080):
@@ -109,8 +113,12 @@ def clean(v):
         elif isinstance(d, (int, float)):
             lo, hi = LIMITS.get(k, (-1e9, 1e9))
             out[k] = min(hi, max(lo, float(x)))
+        elif k == "level_map":
+            out[k] = x if mapping.is_mapping(x) and mapping.check(x) is None else mapping.make("direct")
         elif k == "channel":
             out[k] = x if x in "MLRS" and len(str(x)) == 1 else "M"
+    if out["top_db"] <= out["floor_db"] + 6.0:
+        out["top_db"] = out["floor_db"] + 6.0
     if out["f_hi"] <= out["f_lo"]:
         out["f_hi"] = min(24000.0, out["f_lo"] * 2)
     return out
@@ -214,8 +222,8 @@ def averaged_spectrum(window, t_us, channel):
     return np.sqrt(pw / 3.0)
 
 
-def band_levels(mag, n, f_lo, f_hi, log):
-    """0 - 1 for each of n bars: the level (rms) of the frequencies inside it, in dB between FLOOR_DB and TOP_DB."""
+def band_levels(mag, n, f_lo, f_hi, log, floor_db=FLOOR_DB, top_db=TOP_DB):
+    """0 - 1 for each of n bars: the level (rms) of the frequencies inside it, in dB between floor_db (0) and top_db (1)."""
     hz = RATE / NFFT
     log = float(log)
     edges = log * np.geomspace(f_lo, f_hi, n + 1) + (1.0 - log) * np.linspace(f_lo, f_hi, n + 1)
@@ -227,7 +235,7 @@ def band_levels(mag, n, f_lo, f_hi, log):
     out = np.sqrt(np.maximum(at(hi) - at(lo), 0.0) / np.maximum(hi - lo, 1e-9))
     centre = (edges[:-1] + edges[1:]) / 2 if log < 1.0 else np.sqrt(edges[:-1] * edges[1:])
     db = 20 * np.log10(np.maximum(out, 1e-7)) + TILT_DB * np.log2(np.maximum(centre, 1.0) / 1000.0)
-    return np.clip((db - FLOOR_DB) / (TOP_DB - FLOOR_DB), 0.0, 1.0)
+    return np.clip((db - floor_db) / (top_db - floor_db), 0.0, 1.0)
 
 
 def smooth_across(v, amount):
@@ -316,11 +324,16 @@ def _count_bars(spec, w, u):
 def _bars(p, spec, w, h, u, t_us, window, memo):
     n, bw, gap = _count_bars(spec, w, u)
     ch, lo, hi, lg = spec["channel"], spec["f_lo"], min(spec["f_hi"], RATE / 2 - 1), spec["log"]
+    fl, tp = spec["floor_db"], spec["top_db"]
 
     def raw_at(tt):
-        return memo("bars", tt, (n, lo, hi, lg, ch),
-                    lambda: band_levels(averaged_spectrum(window, tt, ch), n, lo, hi, lg))
-    v = smooth_across(follow(raw_at, t_us, spec["attack"], spec["decay"]), spec["smooth"])
+        return memo("bars", tt, (n, lo, hi, lg, ch, fl, tp),
+                    lambda: band_levels(averaged_spectrum(window, tt, ch), n, lo, hi, lg, fl, tp))
+    lm = spec["level_map"]
+    v = follow(raw_at, t_us, spec["attack"], spec["decay"])
+    if lm["mode"] != "direct":
+        v = np.array([mapping.apply(lm, float(x)) for x in v])
+    v = np.clip(smooth_across(v, spec["smooth"]), 0.0, 1.0)
     maxh, r0, span = _extent(spec, w, h, u)
     rad = spec["radius"] * u                                   # (0: square ends)
     cx, cy = w / 2, h / 2

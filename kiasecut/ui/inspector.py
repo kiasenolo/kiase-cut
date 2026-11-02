@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, build, components, curves, edit, normalize, project, textlayout, textvars, viz
+from .. import assets, build, components, curves, edit, mapping, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
@@ -1307,10 +1307,11 @@ class Inspector(QWidget):
         "time_ms": ("時間長度 ms", 1.0, 300.0, 1.0, 0),
         "inner": ("內徑 px", 10.0, 3000.0, 10.0, 0), "f_lo": ("頻率下限 Hz", 20.0, 20000.0, 10.0, 0),
         "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2),
-        "log": ("對數↔線性頻率軸", 0.0, 1.0, 0.05, 2)}
+        "log": ("對數↔線性頻率軸", 0.0, 1.0, 0.05, 2),
+        "floor_db": ("音量下限 dB", -120.0, -12.0, 1.0, 0), "top_db": ("音量上限 dB", -60.0, 6.0, 1.0, 0)}
     VIZ_FIELDS = {
         "bars": ("channel", "attack", "decay", "bar_w", "gap", "size", "radius", "mirror", "radial", "inner", "f_lo", "f_hi",
-                 "log", "smooth", "color"),
+                 "log", "floor_db", "top_db", "level_map", "smooth", "color"),
         "wave": ("channel", "attack", "decay", "size", "mirror", "radial", "inner", "smooth", "color"),
         "scope": ("channel", "auto_freq", "cycles", "time_ms", "size", "line_w", "radial", "inner", "smooth", "color"),
         "vector": ("decay", "size", "line_w", "grid", "auto_scale", "color")}
@@ -1380,6 +1381,11 @@ class Inspector(QWidget):
                         g.clicked.connect(lambda on: self._viz_edit(gradient=bool(on)))
                         self.widgets[("viz", "gradient")] = g
                         form.addRow("", g)
+            elif f == "level_map":
+                b = QPushButton()
+                b.clicked.connect(self._pick_level_map)
+                self.widgets[("viz", f)] = b
+                form.addRow("音量映射", b)
             elif f in self.VIZ_TOGGLES:
                 box = QCheckBox(self.VIZ_TOGGLES[f])
                 box.clicked.connect(lambda on, f=f: self._viz_edit(**{f: bool(on)}))
@@ -1424,6 +1430,16 @@ class Inspector(QWidget):
         if col is not None and ids:
             self.vizEdited.emit(ids, {fld: rgba(col)})
 
+    def _pick_level_map(self):
+        ids = list(self.clip_ids)
+        if not ids:
+            return
+        from . import mapdialog                          # (here: it needs this module whole)
+        m = viz.clean(self._viz_clip["viz"])["level_map"]
+        out = mapdialog.ask_mapping(self, "音量映射", m, "音量（0 = 音量下限，1 = 音量上限）")
+        if out is not None:
+            self.vizEdited.emit(ids, {"level_map": out})
+
     def _show_viz(self, c):
         self._viz_clip = c
         v = viz.clean(c["viz"])
@@ -1455,6 +1471,8 @@ class Inspector(QWidget):
                 continue
             if f == "channel":
                 self._set_combo(wid, v[f])
+            elif f == "level_map":
+                wid.setText(mapping.label(v[f]))
             elif f in ("color", "color2"):
                 hx = assets.hex_of(v[f])
                 wid.setText(hx)

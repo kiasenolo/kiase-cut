@@ -4,10 +4,14 @@ elsewhere keeps it, Esc calls `cancel` so what was there before shows again.
 
 The picker is a small popup right under what is being coloured (inplace.py: the swatch button,
 the clip, the track), not a window in the middle of the screen: a row of colours, the last ones
-picked, a saturation / brightness square with a hue strip, alpha when it has one, and the hex."""
-from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal
+picked, a saturation / brightness square with a hue strip, alpha when it has one, and the hex.
+滴管 (the eyedropper) takes a colour from anywhere in the program's window - the preview, a
+thumbnail, the timeline: the colour under the pointer shows as it moves, a click keeps it, Esc
+goes back to what it was."""
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QImage, QLinearGradient, QPainter, QPen
-from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QApplication, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
+                               QWidget)
 
 from . import inplace
 
@@ -165,7 +169,18 @@ class ColorPopup(inplace.Overlay):
         top = QHBoxLayout()
         top.addWidget(QLabel(title))
         top.addStretch(1)
+        self.dropper = QPushButton("滴管")
+        self.dropper.setCheckable(True)
+        self.dropper.setFocusPolicy(Qt.NoFocus)
+        self.dropper.setToolTip("從視窗裡任何地方取色（預覽、縮圖、時間軸…）：移動看顏色，按一下取用，Esc 取消")
+        self.dropper.setStyleSheet("QPushButton { padding: 0 6px; }")
+        self.dropper.toggled.connect(self._sample)
+        top.addWidget(self.dropper)
         box.addLayout(top)
+        self.shot = None                                 # the window as it looked when 滴管 began
+        self.before = None                               # the colour then (Esc goes back to it)
+        self.follow = QTimer(self, interval=30)          # (most widgets get no mouse moves without a button)
+        self.follow.timeout.connect(lambda: self._hover(QCursor.pos()))
         grid = QGridLayout()
         grid.setSpacing(3)
         for k, h in enumerate(PRESETS):
@@ -251,7 +266,72 @@ class ColorPopup(inplace.Overlay):
             self.touched = True
             self.changed.emit(col)
 
+    # -- 滴管 ---------------------------------------------------------------------------------------
+    def _sample(self, on):
+        if not on:
+            if self.shot is not None:
+                QApplication.restoreOverrideCursor()
+            self.shot = None
+            self.follow.stop()
+            return
+        win = self.parentWidget()
+        self.hide()                                      # (the window without the picker over it)
+        QApplication.processEvents()
+        self.shot = win.grab().toImage()
+        self.show()
+        self.raise_()
+        self.before = self.color()
+        self.last = None
+        QApplication.setOverrideCursor(Qt.CrossCursor)
+        self.follow.start()
+
+    def _hover(self, gp):
+        """The colour under the pointer shown while 滴管 is on (not over the picker itself)."""
+        if self.shot is None or gp == self.last or QRect(self.mapToGlobal(QPoint(0, 0)), self.size()).contains(gp):
+            return
+        self.last = gp
+        col = self._sampled(gp)
+        if col is not None:
+            a = self.a
+            self._take(col)
+            self.a = a                                   # (the eyedropper takes the colour, not the alpha)
+            self._show()
+
+    def _sampled(self, gp):
+        """The colour of the window at global point gp (None outside it)."""
+        win = self.parentWidget()
+        p = win.mapFromGlobal(gp)
+        k = self.shot.devicePixelRatio()
+        x, y = int(p.x() * k), int(p.y() * k)
+        if not (0 <= x < self.shot.width() and 0 <= y < self.shot.height()):
+            return None
+        col = self.shot.pixelColor(x, y)
+        col.setAlpha(255)
+        return col
+
+    def eventFilter(self, obj, e):
+        if self.shot is None or self._done:
+            return super().eventFilter(obj, e)
+        t = e.type()
+        if t in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease, QEvent.MouseButtonDblClick):
+            gp = e.globalPosition().toPoint()
+            if QRect(self.mapToGlobal(QPoint(0, 0)), self.size()).contains(gp):
+                return super().eventFilter(obj, e) if t != QEvent.MouseMove else False
+            if t != QEvent.MouseButtonRelease:
+                self.last = None
+                self._hover(gp)
+            if t == QEvent.MouseButtonPress:
+                self.dropper.setChecked(False)           # kept: the picker stays open
+            return True                                  # (nothing under it is clicked)
+        if t == QEvent.KeyPress and e.key() == Qt.Key_Escape:
+            self._pick(self.before)
+            self.dropper.setChecked(False)
+            return True
+        return super().eventFilter(obj, e)
+
     def about_to_finish(self, ok):
+        if self.shot is not None:
+            self.dropper.setChecked(False)
         if ok:
             self._typed()                                # (Enter in the hex field)
         self.hex.blockSignals(True)                      # (nothing more once it closes)

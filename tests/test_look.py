@@ -49,6 +49,15 @@ class LookTests(unittest.TestCase):
         self.assertEqual(edge.name(), QColor(look.FRAME).name())
         root.close()
 
+    def test_the_accent_is_the_systems(self):
+        p = APP.palette()
+        p.setColor(QPalette.Accent, QColor("#0078d4"))          # as Windows' platform gives it
+        APP.setPalette(p)
+        look.apply(APP)
+        self.assertEqual(APP.palette().color(QPalette.Highlight).name(), "#0078d4")
+        self.assertIn("border-color: #0078d4", APP.styleSheet())
+        self.assertEqual(APP.palette().color(QPalette.Window).name(), look.COLOURS["Window"])
+
     def test_standard_icons_are_breeze(self):
         for sp in (QStyle.SP_DialogOkButton, QStyle.SP_MessageBoxWarning, QStyle.SP_DirIcon):
             self.assertFalse(APP.style().standardIcon(sp).pixmap(16).isNull())

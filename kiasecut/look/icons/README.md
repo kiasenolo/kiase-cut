@@ -3,4 +3,5 @@ https://invent.kde.org/frameworks/breeze-icons), licensed LGPL-3.0-or-later. The
 standard icons (dialog buttons, message boxes, the library's folders and files) the program
 showed under KDE, so every platform shows the same ones. As KDE did, their ColorScheme-* colours
 are the program's colour scheme's: Text #fcfdfd, NegativeText #43cdbd, NeutralText #5f7dcd,
-Accent #5b4731 (the files are otherwise unchanged).
+Accent #5b4731 - which is replaced by the system's accent colour as the icon is drawn (the files
+are otherwise unchanged).

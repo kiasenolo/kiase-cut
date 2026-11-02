@@ -3,20 +3,24 @@
 It was made under KDE (the Breeze style and a dark colour scheme), and parts the style sheet
 did not cover came from them; elsewhere those parts took the platform's own style and colours
 (on Windows the effects' boxes got white borders). So the style is always Fusion, the colours
-are always KDE's as they were, the style sheet covers every kind of widget the program uses the
+are always KDE's as they were (but the accent colour is the system's, read as the program starts:
+Windows' too), the style sheet covers every kind of widget the program uses the
 way Breeze drew it, and the standard icons are Breeze Dark's (kiasecut/look/icons).
 """
 import os
+import re
 
-from PySide6.QtCore import QMargins, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette
+from PySide6.QtCore import QByteArray, QMargins, QRect, QRectF, Qt
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QAbstractScrollArea, QComboBox, QFrame, QMenu, QStyle, QStyleOptionMenuItem, QStyleOptionProgressBar
 
 from . import wheel
 
 FILES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "look").replace("\\", "/")
 FRAME = "#404042"         # Breeze's frame around scroll areas, spin boxes and tool buttons
-HOVER = "#5b4731"         # the highlight: a hovered tool button's frame, a progress bar
+ACCENT = "#5b4731"        # the system's accent colour (apply reads it; this is KDE's as it was):
+                          # a hovered tool button's frame, a radio button, a progress bar, selections
 ARROW = f"{FILES}/arrow"  # its chevrons: arrow-down.svg, arrow-up.svg ...
 
 # DaVinci Resolve-like: charcoal panels on a near-black frame, flat controls, light grey
@@ -43,9 +47,9 @@ QPushButton#tool:checked { background: #4a4a52; border-color: #5c5c64; }
 QPushButton#tool:disabled { background: transparent; }
 QToolButton { background: transparent; border: 1px solid @FRAME; border-radius: 5px; padding: 6px 8px; }
 QToolButton[autoRaise="true"] { border-color: transparent; padding: 3px; }
-QToolButton:hover { border-color: @HOVER; }
+QToolButton:hover { border-color: @ACCENT; }
 QToolButton:checked, QToolButton:pressed { background: #323234; border-color: @FRAME; }
-QToolButton:checked:hover { border-color: @HOVER; }
+QToolButton:checked:hover { border-color: @ACCENT; }
 QToolButton[popupMode="InstantPopup"] { padding-right: 22px; }
 QToolButton::menu-indicator { image: url(@ARROW-down.svg); width: 14px; height: 14px; subcontrol-origin: padding; subcontrol-position: center right; right: 5px; }
 QToolBar { border: none; }
@@ -118,13 +122,13 @@ QCheckBox::indicator:unchecked { background: #141416; border: 1px solid #4a4a52;
 QCheckBox::indicator:indeterminate { background: #141416; border: 1px solid #c9c9cd; image: url(@/partial.svg); }
 QRadioButton { min-height: 22px; }
 QRadioButton::indicator { width: 16px; height: 16px; border-radius: 9px; border: 1px solid #3a3a3c; background: #1c1c1e; }
-QRadioButton::indicator:hover { border-color: @HOVER; }
-QRadioButton::indicator:checked { border-color: @HOVER; background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5, stop: 0 #d0d0d2, stop: 0.32 #d0d0d2, stop: 0.4 #2f2924, stop: 1 #2f2924); }
+QRadioButton::indicator:hover { border-color: @ACCENT; }
+QRadioButton::indicator:checked { border-color: @ACCENT; background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5, stop: 0 #d0d0d2, stop: 0.32 #d0d0d2, stop: 0.4 @DIM, stop: 1 @DIM); }
 QGroupBox { border: 1px solid @FRAME; border-radius: 5px; margin-top: 22px; padding-top: 6px; }
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 2px 4px; }
 QToolTip { background: #2b2b2f; color: #e0e0e2; border: 1px solid #0e0e10; }
 QProgressDialog QLabel { background: transparent; }
-""".replace("@ARROW", ARROW).replace("@FRAME", FRAME).replace("@HOVER", HOVER).replace("@/", FILES + "/")
+""".replace("@ARROW", ARROW).replace("@FRAME", FRAME).replace("@/", FILES + "/")   # (@ACCENT, @DIM: style_sheet)
 
 # KDE's colours as the program was made with them; the parts the style sheet leaves to the style
 # (selected text, links, placeholders, frames and lines) take these
@@ -133,8 +137,8 @@ COLOURS = {
     "ToolTipBase": "#111216", "ToolTipText": "#fcfdfd", "PlaceholderText": "#f2f3f3", "Text": "#fefefe",
     "Button": "#16181d", "ButtonText": "#fefefe", "BrightText": "#ffffff", "Light": "#abaebb",
     "Midlight": "#888da2", "Mid": "#515669", "Dark": "#6f758f", "Shadow": "#888da2",
-    "Highlight": HOVER, "HighlightedText": "#ffffff", "Link": "#edbc84", "LinkVisited": "#7f8c8d",
-    "Accent": HOVER,
+    "Highlight": ACCENT, "HighlightedText": "#ffffff", "Link": "#edbc84", "LinkVisited": "#7f8c8d",
+    "Accent": ACCENT,
 }
 DISABLED = {
     "WindowText": "#636467", "PlaceholderText": "#606163", "Text": "#646567", "ButtonText": "#67696c",
@@ -143,12 +147,28 @@ DISABLED = {
 }
 
 
+def system_accent(p):
+    """The accent colour the platform's palette `p` has (Windows', macOS's, KDE's)."""
+    role = getattr(QPalette.ColorRole, "Accent", None)  # (Qt 6.6 on; before it, the highlight)
+    return p.color(role if role is not None else QPalette.Highlight).name()
+
+
+def dim(colour, part=0.3, under="#1c1c1e"):
+    """`colour` laid at `part` strength over `under`: a selection's fill."""
+    a, b = QColor(colour), QColor(under)
+    return QColor(*(round(y + (x - y) * part) for x, y in zip(a.getRgb()[:3], b.getRgb()[:3]))).name()
+
+
+def style_sheet():
+    return STYLE.replace("@ACCENT", ACCENT).replace("@DIM", dim(ACCENT))
+
+
 def palette():
     p = QPalette()
     for name, colour in COLOURS.items():
         role = getattr(QPalette.ColorRole, name, None)
         if role is not None:                          # (Accent: Qt 6.6 on)
-            p.setColor(role, QColor(colour))
+            p.setColor(role, QColor(ACCENT if name in ("Highlight", "Accent") else colour))
             if name in DISABLED:
                 p.setColor(QPalette.Disabled, role, QColor(DISABLED[name]))
     return p
@@ -206,8 +226,17 @@ def breeze_icon(name):
         for size in sorted(os.listdir(folder)):
             f = os.path.join(folder, size, name + ".svg")
             if size.isdigit() and os.path.exists(f):
+                with open(f, encoding="utf-8") as fh:  # (as KDE does: their accent is the system's)
+                    svg = QSvgRenderer(QByteArray(re.sub(r"(\.ColorScheme-Accent\s*\{\s*color:\s*)#[0-9a-fA-F]+",
+                                                         r"\g<1>" + ACCENT, fh.read()).encode()))
                 for scale in (1.0, 2.0):
-                    ic.addPixmap(QIcon(f).pixmap(QSize(int(size), int(size)), scale))
+                    pm = QPixmap(int(int(size) * scale), int(int(size) * scale))
+                    pm.fill(Qt.transparent)
+                    painter = QPainter(pm)
+                    svg.render(painter)
+                    painter.end()
+                    pm.setDevicePixelRatio(scale)
+                    ic.addPixmap(pm)
         _icons[name] = ic
     return _icons[name]
 
@@ -283,8 +312,8 @@ class Style(wheel.Style):
         if element == QStyle.CE_MenuItem and isinstance(widget, QComboBox) and option.state & QStyle.State_Selected:
             painter.save()                            # a combo box's list: the item under the mouse
             painter.setRenderHint(QPainter.Antialiasing)
-            painter.setPen(QColor(HOVER))
-            painter.setBrush(QColor("#36302c"))
+            painter.setPen(QColor(ACCENT))
+            painter.setBrush(QColor(dim(ACCENT, under="#26262a")))
             painter.drawRoundedRect(QRectF(option.rect).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
             painter.restore()
             option = QStyleOptionMenuItem(option)
@@ -339,7 +368,7 @@ class Style(wheel.Style):
                 return
             w = r.width() * part
             r = QRectF(r.right() - w, r.y(), w, r.height()) if option.invertedAppearance else QRectF(r.x(), r.y(), w, r.height())
-            colour = QColor(HOVER)
+            colour = QColor(ACCENT)
         else:
             colour = QColor("#353537")
         painter.save()
@@ -351,10 +380,14 @@ class Style(wheel.Style):
 
 
 def apply(app):
-    """Give `app` the look: the style, KDE's colours, the style sheet (and dark title bars)."""
+    """Give `app` the look: the style, KDE's colours with the system's accent colour, the style
+    sheet (and dark title bars)."""
+    global ACCENT
+    ACCENT = system_accent(app.palette())
+    _icons.clear()
     app.setStyle(Style())
     app.setPalette(palette())
     hints = QGuiApplication.styleHints()
     if hasattr(hints, "setColorScheme"):                  # Qt 6.8 on: Windows' title bars go dark
         hints.setColorScheme(Qt.ColorScheme.Dark)
-    app.setStyleSheet(STYLE)
+    app.setStyleSheet(style_sheet())

@@ -342,6 +342,24 @@ class ScaleTests(unittest.TestCase):
                          {"scale": 3.0, "scale_y": 2.0})
 
 
+class UnsavedProjectTests(unittest.TestCase):
+    def test_shapes_drawn_outside_the_project_come_back_into_its_built_in_folder(self):
+        from kiasecut import library
+        d = tempfile.mkdtemp()
+        try:
+            cache, root = os.path.join(d, "cache"), os.path.join(d, "Project")
+            os.makedirs(root)
+            p = proj()
+            a = assets.make(assets.get("shape.rect"), "#ff0000", "#000000", 192, 108)
+            path = assets.store(os.path.join(cache, "media"), a)               # (a project with no folder yet)
+            edit.replace_media(p, "c1", assets.item(a, path), a)
+            plan = library.external_media(p, root)
+            self.assertIn(path, plan)
+            self.assertIn("/Media/" + assets.FOLDER + "/", plan[path])         # (not 匯入的素材)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class PanelDragTests(unittest.TestCase):
     def test_shapes_can_be_dragged_in_the_grid_and_in_the_list(self):
         from PySide6.QtCore import QSettings

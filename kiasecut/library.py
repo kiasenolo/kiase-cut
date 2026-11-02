@@ -15,7 +15,7 @@ import uuid
 
 from PIL import Image
 
-from . import edit, project, svgimage, workspace
+from . import assets, edit, project, svgimage, workspace
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".svg"}
 IMAGE_DEFAULT_US = 5_000_000
@@ -495,7 +495,8 @@ def _outside(proj, root):
     each path once."""
     mroot = norm(mroot_of(root))
     todo = [(it["path"], folder_rel(proj, it["folder"]) if it.get("folder") else "") for it in lib(proj)["items"]]
-    todo += [(c["media"]["path"], "匯入的素材") for c in project.all_clips(proj) if c.get("media")]
+    todo += [(c["media"]["path"], assets.FOLDER if c.get("asset") or c.get("viz") else "匯入的素材")      # (drawn here: back in 內建素材)
+             for c in project.all_clips(proj) if c.get("media")]
     out = {}
     for path, rel in todo:
         path = slash(path or "")

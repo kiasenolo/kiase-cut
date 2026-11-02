@@ -3778,8 +3778,7 @@ class MainWindow(QMainWindow):
 
         def fn(root):
             kid = edit.add_library_compound(root, pack)
-            if self.root:                                # built-in assets are drawn again for this project
-                assets.restore(project.walk_clips(root["compounds"][kid]["tracks"]), workspace.media_dir(self.root))
+            assets.restore(project.walk_clips(root["compounds"][kid]["tracks"]), self.asset_media_dir())   # (drawn again for this project)
             return edit.place_compound(root, self.container(root), kid, track_id or None, start_us)
         self.apply_root("加入複合片段", fn, select=lambda c: c["id"])
 
@@ -3871,18 +3870,25 @@ class MainWindow(QMainWindow):
         self._select_new(self.apply_root("加入素材", lambda root: library.place_items(
             self.container(root), items, track_id or None, start_us, across), select=lambda cs: cs[-1]["id"]))
 
+    def asset_media_dir(self):
+        """Where the files of built-in assets are drawn: the Media folder, or for a project not saved yet (no
+        folder) the project's cache - the first 儲存 copies them into Media with the other outside files."""
+        if self.root:
+            return workspace.media_dir(self.root)
+        return os.path.join(self.cache_dir(), "media")
+
     def store_asset(self, params):
         """Draw built-in asset parameters (assets.py) into the project's Media/.內建素材;
         the file's path, or None after telling the user why not."""
         try:
-            return assets.store(workspace.media_dir(self.root), params)
+            return assets.store(self.asset_media_dir(), params)
         except OSError as exc:
             QMessageBox.critical(self, "無法建立素材", str(exc))
             return None
 
     def viz_media(self):
         """The (empty) picture an Audio Visualizer clip stands on, in Media/.內建素材."""
-        d = os.path.join(workspace.media_dir(self.root), assets.FOLDER)
+        d = os.path.join(self.asset_media_dir(), assets.FOLDER)
         os.makedirs(d, exist_ok=True)
         path = os.path.join(d, "audio-visualizer.png")
         if not os.path.exists(path):
@@ -3985,8 +3991,7 @@ class MainWindow(QMainWindow):
 
                 def one(root, level, k):
                     kid = edit.add_library_compound(root, pack)
-                    if self.root:
-                        assets.restore(project.walk_clips(root["compounds"][kid]["tracks"]), workspace.media_dir(self.root))
+                    assets.restore(project.walk_clips(root["compounds"][kid]["tracks"]), self.asset_media_dir())
                     return edit.replace_with_compound(root, level, k, kid)
             else:
                 picture = it["kind"] != "audio"

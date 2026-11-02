@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QPushButt
 from .. import svgimage
 from . import inplace
 from .menukeys import Menu
+from .viewmode import TreeView
 
 MIME = "application/x-kiasecut-media"
 ROLE_ID = Qt.UserRole
@@ -237,7 +238,7 @@ class LibraryPanel(QWidget):
     revealRequested = Signal(object)          # item / folder id, or None for the Media folder itself
     collectRequested = Signal()               # copy the media from outside the Media folder into it
 
-    def __init__(self, parent=None, import_label="匯入素材"):
+    def __init__(self, parent=None, import_label="匯入素材", view_key="media"):
         super().__init__(parent)
         self.extra_menu = None                  # fn(menu, ident or None): more context menu entries
         self.setMinimumWidth(240)
@@ -268,7 +269,11 @@ class LibraryPanel(QWidget):
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.tree.itemDoubleClicked.connect(lambda it, _c: self._double(it))
-        lay.addWidget(self.tree, 1)
+        self.view = TreeView(view_key, self.tree, folder=lambda it: it.data(0, ROLE_ID).startswith("f"),
+                             menu=self._menu_for)
+        bar.addStretch(1)
+        bar.addWidget(self.view.button)
+        lay.addWidget(self.view, 1)
         self.icons = {}
         self.thumbs = Thumbs()
         self.thumbs.ready.connect(self._thumb_ready)
@@ -371,7 +376,10 @@ class LibraryPanel(QWidget):
         return True
 
     def _menu(self, pos):
-        node = self.tree.itemAt(pos)
+        self._menu_for(self.tree.itemAt(pos), self.tree.viewport().mapToGlobal(pos))
+
+    def _menu_for(self, node, at):
+        """The right-click menu of node (None: the empty part) at global point at."""
         menu = Menu(self)
         if node is not None:
             ident = node.data(0, ROLE_ID)
@@ -386,4 +394,4 @@ class LibraryPanel(QWidget):
         if self.extra_menu:
             menu.addSeparator()
             self.extra_menu(menu, node.data(0, ROLE_ID) if node is not None else None)
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
+        menu.exec(at)

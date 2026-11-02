@@ -14,6 +14,7 @@ from .. import assets
 from .colorpick import hex_of, pick_color, qcolor
 from .timeline import MEDIA_MIME
 from .menukeys import Menu
+from .viewmode import list_toggle
 
 ROLE_KEY = Qt.UserRole + 1
 THUMB = (72, 40)
@@ -58,9 +59,12 @@ class AssetList(QListWidget):
         # as tall as its items need: the tab scrolls, not each list
         super().resizeEvent(e)
         g = self.gridSize()
-        cols = max(1, self.viewport().width() // g.width())
-        rows = max(1, -(-self.count() // cols))
-        h = rows * g.height() + 2 * self.frameWidth() + 4
+        if self.viewMode() == QListWidget.IconMode and g.width() > 0:
+            cols = max(1, self.viewport().width() // g.width())
+            rows = max(1, -(-self.count() // cols))
+            h = rows * g.height() + 2 * self.frameWidth() + 4
+        else:                                               # 列表: one row each
+            h = self.count() * max(1, self.sizeHintForRow(0)) + 2 * self.frameWidth() + 4
         if self.height() != h:
             self.setFixedHeight(h)
 
@@ -98,6 +102,7 @@ class AssetsPanel(QWidget):
         swap.clicked.connect(self._swap)
         row.addWidget(swap)
         row.addStretch(1)
+        self.view_row = row                                 # (網格 / 列表: added once the lists exist)
         lay.addLayout(row)
         body = QWidget()
         blay = QVBoxLayout(body)
@@ -125,6 +130,12 @@ class AssetsPanel(QWidget):
             blay.addWidget(lst)
             self.lists[cat] = lst
         blay.addStretch(1)
+        toggles = [list_toggle("assets", lst, QSize(*THUMB), QSize(THUMB[0] + 18, THUMB[1] + 34), QSize(32, 24))
+                   for lst in self.lists.values()]
+        for b in toggles[1:]:                               # (one button for all of them)
+            b.hide()
+            toggles[0].toggled.connect(b.setChecked)
+        self.view_row.addWidget(toggles[0])
         self.refresh()
         self.setMinimumWidth(260)
 

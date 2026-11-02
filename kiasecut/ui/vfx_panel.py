@@ -9,11 +9,12 @@ import threading
 
 from PySide6.QtCore import QEvent, QMimeData, QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem,
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 from .. import fx, fxthumbs
 from .menukeys import Menu
+from .viewmode import TreeView
 
 FX_MIME = "application/x-kiasecut-fx"          # the filter's ref (a "builtin:…" name or a file path), utf-8,
                                                # or an effect dragged from a clip (effect_mime)
@@ -175,8 +176,13 @@ class VfxPanel(QWidget):
         self.tree.itemDoubleClicked.connect(lambda it, _c: self._ref(it) and self.addClipRequested.emit(self._ref(it)))
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
-        lay.addWidget(self.search)
-        lay.addWidget(self.tree, 1)
+        self.view = TreeView("vfx", self.tree, folder=lambda it: not it.data(0, ROLE_REF), menu=self._menu_for,
+                             icon=QSize(*THUMB))
+        top = QHBoxLayout()
+        top.addWidget(self.search, 1)
+        top.addWidget(self.view.button)
+        lay.addLayout(top)
+        lay.addWidget(self.view, 1)
         self.thumbs = Thumbs()
         self.thumbs.ready.connect(self._thumb_ready)
         self.thumbs.moving.connect(self._moving_ready)
@@ -288,9 +294,13 @@ class VfxPanel(QWidget):
                 it.setHidden(not hit)
                 shown += hit
             top.setHidden(not shown)
+        self.view.grid.sync()
 
     def _menu(self, pos):
-        ref = self._ref(self.tree.itemAt(pos))
+        self._menu_for(self.tree.itemAt(pos), self.tree.viewport().mapToGlobal(pos))
+
+    def _menu_for(self, it, at):
+        ref = self._ref(it)
         if not ref:
             return
         menu = Menu(self)
@@ -298,4 +308,4 @@ class VfxPanel(QWidget):
         menu.addAction("套用到選取的片段", lambda: self.applyRequested.emit(ref))
         menu.addSeparator()
         menu.addAction("濾鏡寫法說明…", self.docRequested)
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
+        menu.exec(at)

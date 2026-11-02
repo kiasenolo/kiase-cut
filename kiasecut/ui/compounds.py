@@ -19,13 +19,14 @@ the list to add a timeline, a compound or a static compound (createRequested: "t
 "compound" / "static" / "component" / "static_component"; a new compound starts empty and opens by itself).
 """
 from PySide6.QtCore import QMimeData, Qt, Signal
-from PySide6.QtWidgets import (QAbstractItemView, QLabel, QTreeWidget, QTreeWidgetItem,
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
 from .. import components, edit, project
 from .library import MIME
 from . import inplace
 from .menukeys import Menu
+from .viewmode import TreeView
 
 US = 1_000_000
 PREFIX = "cmp:"                # in the media drag format: "cmp:<compound id>"
@@ -78,9 +79,16 @@ class CompoundPanel(QWidget):
         self.empty = QLabel("這個專案沒有複合片段")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setStyleSheet("color: #777;")
+        self.view = TreeView("compounds", self.tree, folder=lambda it: False, menu=self._menu_for,
+                             open_item=lambda it: self._double(it, 0))
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(self.tree)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(4, 2, 4, 0)
+        bar.addStretch(1)
+        bar.addWidget(self.view.button)
+        lay.addLayout(bar)
+        lay.addWidget(self.view, 1)
         lay.addWidget(self.empty)
         self.open_path = []
         self.comps = {}
@@ -176,13 +184,15 @@ class CompoundPanel(QWidget):
         return True
 
     def _menu(self, pos):
-        it = self.tree.itemAt(pos)
+        self._menu_for(self.tree.itemAt(pos), self.tree.viewport().mapToGlobal(pos))
+
+    def _menu_for(self, it, at):
         menu = Menu(self)
         if it is not None:
             self._item_actions(menu, it.data(0, Qt.UserRole), it)
             menu.addSeparator()
         self._create_actions(menu)
-        menu.exec(self.tree.viewport().mapToGlobal(pos))
+        menu.exec(at)
 
     def _create_actions(self, menu):
         for text, kind, tip in (("新增時間線", "timeline", "一條新的空白時間線"),

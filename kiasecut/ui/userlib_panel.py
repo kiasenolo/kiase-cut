@@ -39,7 +39,7 @@ class UserLibraryPanel(QWidget):
         self.tabs.tabBar().setExpanding(True)
         self.panels = {}
         for key, title in userlib.CATEGORIES:
-            panel = LibraryPanel(import_label=IMPORT_LABELS[key])
+            panel = LibraryPanel(import_label=IMPORT_LABELS[key], view_key="library_" + key)
             panel.head.hide()
             self.panels[key] = panel
             self.tabs.addTab(panel, title)

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QHBoxLay
 
 from .. import thumbnail, workspace
 from . import ask, inplace
+from .viewmode import list_toggle
 from .menukeys import Menu
 
 CARD = QSize(240, 135)
@@ -134,6 +135,7 @@ class ProjectManager(QDialog):
         top.addWidget(self.up_btn)
         top.addWidget(self.where, 1)
         top.addWidget(self.search)
+        self.view_top = top                         # (網格 / 列表: added once the list exists)
         self.list = Cards()
         self.list.setViewMode(QListView.IconMode)
         self.list.setIconSize(CARD)
@@ -147,6 +149,8 @@ class ProjectManager(QDialog):
             lambda cur, _old: self.open_btn.setEnabled(cur is not None and cur.data(KIND) == "project"))
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
+        self.view_top.addWidget(list_toggle("projects", self.list, CARD, QSize(CARD.width() + 24, CARD.height() + 72),
+                                            QSize(48, 27)))
         self.list.moveRequested.connect(self._move_into)
         for key, fn in (("F2", self.rename), ("Delete", self.delete)):      # the current card
             QShortcut(QKeySequence(key), self.list, lambda fn=fn: self._on_current(fn), context=Qt.WidgetShortcut)

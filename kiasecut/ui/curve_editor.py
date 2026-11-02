@@ -127,6 +127,10 @@ class CurveCanvas(QWidget):
         self.wrap = WrapDrag(self, lambda: QRectF(self.L, self.T, self.width() - self.L - self.R,
                                                   self.height() - self.T - self.B))
 
+    def x_label(self, t):
+        """The ruler's text at t seconds."""
+        return f"{t:.3g}s"
+
     # -- state ------------------------------------------------------------------------------------
     def set_curves(self, specs, duration, fps, t, keep_view=False):
         """specs: [{label, factor, keys, static}] in display order."""
@@ -318,7 +322,7 @@ class CurveCanvas(QWidget):
             p.setPen(QColor("#2c2c33"))
             p.drawLine(QPointF(xx, self.T), QPointF(xx, h - self.B))
             p.setPen(QColor("#8a8a90"))
-            p.drawText(QPointF(xx + 2, h - 6), f"{t:.3g}s")
+            p.drawText(QPointF(xx + 2, h - 6), self.x_label(t))
             t += ts
         p.save()
         p.setClipRect(area)

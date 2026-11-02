@@ -36,7 +36,7 @@ from .colorpick import pick_color, qcolor, rgba
 from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, key_button, kind_tag,
                         section)
 from .mediapick import pick_button
-from .tools import BezierField
+from .curvefield import CurveField
 from .vfx_panel import FX_MIME, effect_mime
 
 DEBOUNCE_MS = 350
@@ -529,13 +529,11 @@ class EffectsPanel(QWidget):
                 src.activated.connect(lambda i, g=group, k=p.name, cb=src: self._source_kind(g[3:], k, cb.itemData(i)))
                 self.widgets[("source", group, p.name)] = src
                 row.addWidget(src)
-        elif p.type == "curve":                                 # a cubic-bezier: drag its two handles
-            field = BezierField()
-            field.setMinimumSize(200, 300)
-            field.changed.connect(lambda v, g=group, k=p.name: self._queue(g, k, [float(x) for x in v]))
+        elif p.type == "curve":                                 # keys with handles, as the keyframe curve editor
+            field = CurveField()
+            field.changed.connect(lambda v, g=group, k=p.name: self._queue(g, k, v))
             self.widgets[(group, p.name)] = field
             row.addWidget(field, 1)
-            row.addWidget(self._key_button(group, p.name))
         else:                                                   # vec2 / vec3
             n = 3 if p.type == "vec3" else 2
             for i in range(n):
@@ -952,7 +950,7 @@ class EffectsPanel(QWidget):
         elif p.type == "curve":
             field = w.get((group, p.name))
             if field is not None and v is not MIXED and field.drag is None:
-                field.set_value(list(v))
+                field.set_value(v)
         elif p.type == "color":
             btn = w.get((group, p.name))
             if btn is not None and v is MIXED:

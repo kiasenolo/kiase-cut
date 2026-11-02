@@ -138,12 +138,31 @@ class CurveParamTests(unittest.TestCase):
         panel = EffectsPanel()
         panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
         field = panel.widgets[("fx:" + e["id"], "ease")]
-        self.assertEqual(field.v, [0.0, 0.0, 1.0, 1.0])                 # (straight: as before)
+        self.assertEqual(len(field.keys), 2)                            # (straight: as before)
         got = []
         panel.paramEdited.connect(lambda *a: got.append(a))
-        field.changed.emit([0.9, 0.0, 1.0, 0.1])
+        field._shape((0.9, 0.0, 1.0, 0.1))                              # a preset on every segment
         panel._flush()
-        self.assertEqual(got, [(["c1"], "fx:" + e["id"], "ease", [0.9, 0.0, 1.0, 0.1])])
+        self.assertEqual(len(got), 1)
+        keys = got[0][3]
+        self.assertEqual(got[0][:3], (["c1"], "fx:" + e["id"], "ease"))
+        self.assertAlmostEqual(keys[0][4], 0.9)                         # the first key's right handle
+        # a key added by double-clicking is kept; deleting them all goes back to a straight line
+        field.canvas.keysCommitted.emit([(0, [[0, 0, 0, 0, 0, 0], [500000, 0.2, 0, 0, 0, 0], [1000000, 1, 0, 0, 0, 0]])])
+        panel._flush()
+        self.assertEqual(len(got[-1][3]), 3)
+        field.canvas.keysCommitted.emit([(0, [])])
+        panel._flush()
+        self.assertEqual(len(got[-1][3]), 2)
+
+    def test_samples(self):
+        from kiasecut import fx
+        line = fx.curve_samples([0, 0, 1, 1])
+        self.assertEqual(len(line), fx.CURVE_N)
+        self.assertAlmostEqual(line[64], 64 / 127, places=2)
+        steep = fx.curve_samples([[0, 0, 0, 0, 0.9, 0], [1, 1, -0.9, 0, 0, 0]])
+        self.assertLess(steep[20], 0.1)
+        self.assertGreater(steep[110], 0.9)
 
 
 if __name__ == "__main__":

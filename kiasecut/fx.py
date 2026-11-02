@@ -339,6 +339,33 @@ def menu_index(p, v):
     return p.items.index(p.default)
 
 
+CURVE_N = 128                    # a curve parameter reaches the shader as this many samples
+
+
+def curve_keys(v):
+    """The keys [[x, y, left dx, left dy, right dx, right dy], ...] (x from 0 to 1, as the
+    keyframe editor's, handles as offsets) of a curve parameter's value: a list of keys, or the
+    four numbers of a cubic-bezier (x1, y1, x2, y2); an empty or unusable one is a straight line."""
+    try:
+        if isinstance(v, (list, tuple)) and len(v) == 4 and not isinstance(v[0], (list, tuple)):
+            x1, y1, x2, y2 = (float(a) for a in v)
+            return [[0.0, 0.0, 0.0, 0.0, x1, y1], [1.0, 1.0, x2 - 1.0, y2 - 1.0, 0.0, 0.0]]
+        keys = [[float(a) for a in k][:6] for k in v]
+        if keys and all(len(k) == 6 for k in keys):
+            return sorted(keys, key=lambda k: k[0])
+    except (TypeError, ValueError):
+        pass
+    return [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]]
+
+
+def curve_samples(v, n=CURVE_N):
+    """n samples of a curve parameter's value from x = 0 to 1 (the keyframe editor's curve: the value
+    holds before its first key and after its last)."""
+    u = 1_000_000
+    param = {"keys": [[k[0] * u, k[1], k[2] * u, k[3], k[4] * u, k[5]] for k in curve_keys(v)]}
+    return tuple(float(curves.value(param, u * i / (n - 1))) for i in range(n))
+
+
 def uniform_value(p, stored, t):
     """The value to give the shader for parameter p (stored: a number / list / curve; a menu
     stores the name of its choice)."""
@@ -354,7 +381,9 @@ def uniform_value(p, stored, t):
     if p.type == "color":
         v = list(v) + [1.0] * (4 - len(v))
         return tuple(float(x) for x in v[:4])
-    n = 4 if p.type == "curve" else 3 if p.type == "vec3" else 2
+    if p.type == "curve":
+        return curve_samples(v)
+    n = 3 if p.type == "vec3" else 2
     v = list(v) + [0.0] * (n - len(v))
     return tuple(float(x) for x in v[:n])
 
@@ -381,18 +410,11 @@ vec4 original(vec2 uv) { return texture(original_, clamp(uv, 0.0, 1.0)); }
 vec4 extra(vec2 uv) { return texture(extra_, clamp(uv, 0.0, 1.0)); }
 vec4 unpremultiply(vec4 c) { return c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(0.0); }
 vec4 premultiply(vec4 c) { return vec4(c.rgb * c.a, c.a); }
-// a curve parameter (cubic-bezier x1,y1,x2,y2 as in CSS): the y it gives at x, 0 - 1 along it
-float curve_ease(vec4 c, float x) {
-    x = clamp(x, 0.0, 1.0);
-    float lo = 0.0, hi = 1.0, t = x;
-    for (int i = 0; i < 24; i++) {
-        t = 0.5 * (lo + hi);
-        float u = 1.0 - t;
-        float bx = 3.0 * u * u * t * c.x + 3.0 * u * t * t * c.z + t * t * t;
-        if (bx < x) lo = t; else hi = t;
-    }
-    float u = 1.0 - t;
-    return 3.0 * u * u * t * c.y + 3.0 * u * t * t * c.w + t * t * t;
+// a curve parameter: its y at x (0 - 1), between its samples
+float curve_ease(float c[128], float x) {
+    float f = clamp(x, 0.0, 1.0) * float(127);
+    int i = int(floor(f));
+    return mix(c[i], c[min(i + 1, 127)], f - float(i));
 }
 float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 // the frame as two small numbers (the frame itself is too big for a hash to stay fine: past ~20000 the float
@@ -448,13 +470,14 @@ out vec2 uv_;
 void main() { uv_ = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }
 """
 GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "vec2": "vec2", "vec3": "vec3",
-              "menu": "int", "curve": "vec4"}
+              "menu": "int", "curve": "float"}
 
 
 def shader_source(d, sampled=()):
     """The fragment shader of filter d; sampled: its colour and number parameters that read a
     picture."""
-    decl = "\n".join(f"uniform {GLSL_TYPES[p.type]} {p.name};" for p in d.params if p.name not in sampled)
+    decl = "\n".join(f"uniform {GLSL_TYPES[p.type]} {p.name}" + (f"[{CURVE_N}]" if p.type == "curve" else "") + ";"
+                     for p in d.params if p.name not in sampled)
     kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
     return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + EPILOGUE
 

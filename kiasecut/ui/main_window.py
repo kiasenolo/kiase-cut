@@ -3829,7 +3829,7 @@ class MainWindow(QMainWindow):
 
     def add_visualizer(self, kind, track_id=None, start_us=None):
         """新增 Audio Visualizer: at start_us (the playhead), on track_id when it has room, listening to the first
-        track with sound (else a file)."""
+        track with sound (else nothing yet: 屬性 chooses)."""
         if not self.ensure_project():
             return
         level = self.container()
@@ -3838,12 +3838,8 @@ class MainWindow(QMainWindow):
         if tr is not None:
             source = {"type": "track", "id": tr["id"]}
             dur = max(US, project.end_us([tr]) - start) if project.end_us([tr]) > start else 5 * US
-        else:
-            path, _ = QFileDialog.getOpenFileName(self, "選一個有聲音的檔案", self.app_root(), "聲音或影片 (*.wav *.mp3 *.flac *.m4a "
-                                                  "*.aac *.ogg *.opus *.mp4 *.mov *.mkv *.webm *.avi);;所有檔案 (*)")
-            if not path:
-                return
-            source, dur = {"type": "file", "path": path.replace("\\", "/")}, 10 * US
+        else:                                           # (no sound yet: the source is chosen in 屬性 afterwards)
+            source, dur = {"type": "track", "id": ""}, 10 * US
         media = self.viz_media()
         w, h = level.get("width") or self.proj["width"], level.get("height") or self.proj["height"]
         self.apply("新增 Audio Visualizer", lambda lvl: edit.add_visualizer(lvl, kind, source, media, start, dur, w, h, track_id or None),

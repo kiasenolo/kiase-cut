@@ -35,6 +35,7 @@ from .. import curves, edit, fx
 from .colorpick import pick_color, qcolor, rgba
 from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, key_button, kind_tag,
                         section)
+from .mediapick import pick_button
 from .vfx_panel import FX_MIME, effect_mime
 
 DEBOUNCE_MS = 350
@@ -540,6 +541,7 @@ class EffectsPanel(QWidget):
         pick.activated.connect(lambda i, cb=pick: self._now(self.sourceMediaChosen, eid, name, cb.itemData(i)))
         self.widgets[("source_media", "fx:" + eid, name)] = pick
         row.addWidget(pick, 1)
+        row.addWidget(pick_button((kind,), lambda value: self._now(self.sourceMediaChosen, eid, name, value)))
         if len(self.clips) == 1:                    # (the preview places one clip's)
             ed = QPushButton("編輯位置")
             ed.setCheckable(True)

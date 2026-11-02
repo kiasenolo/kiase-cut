@@ -43,6 +43,7 @@ from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
 from .library import PictureDrop
+from .mediapick import pick_button
 from .timeline import US, timecode
 from .wrapdrag import WrapDrag
 
@@ -831,7 +832,8 @@ class Inspector(QWidget):
             pick.activated.connect(lambda i: self._emit_now(self.maskCompoundChosen, pick.itemData(i)))
             pick.setToolTip("用這個複合片段的畫面裁切；一般的複合片段跟著片段的時間播放，靜態片段用它那一格")
             self.widgets["mask_compound"] = pick
-            form.addRow("複合片段", pick)
+            form.addRow("複合片段", self._with_pick(pick, ("compound",),
+                                                  lambda kid: self._emit_now(self.maskCompoundChosen, kid)))
             comp = next((n for k, n in self.compounds if k == c["mask"].get("compound_id")), "")
             if c["mask"].get("compound_id") and not comp.startswith("◧"):     # (a static one has no time)
                 region = QCheckBox("編輯區域")
@@ -849,7 +851,7 @@ class Inspector(QWidget):
             pick.activated.connect(lambda i: self._emit_now(self.maskVideoChosen, pick.itemData(i)))
             pick.setToolTip("用這個影片的畫面裁切，跟著片段播放（專案素材裡的影片，或瀏覽一個影片檔）")
             self.widgets["mask_video"] = pick
-            form.addRow("影片", pick)
+            form.addRow("影片", self._with_pick(pick, ("video",), lambda path: self._emit_now(self.maskVideoChosen, path)))
             if c["mask"].get("video"):
                 region = QCheckBox("編輯區域")
                 region.setToolTip("在時間線上，這個片段上面會出現影片的幽靈：左右拖曳它，決定用影片的哪一段來裁切")
@@ -867,7 +869,7 @@ class Inspector(QWidget):
             pick.setToolTip("用這張圖片裁切（專案素材裡的圖片，或瀏覽一個圖片檔；也可以把素材或圖片檔拖進來）")
             PictureDrop(pick, lambda md: self.picture_of(md), lambda path: self._emit_now(self.maskImageChosen, path))
             self.widgets["mask_image"] = pick
-            form.addRow("圖片", pick)
+            form.addRow("圖片", self._with_pick(pick, ("image",), lambda path: self._emit_now(self.maskImageChosen, path)))
         if picture:
             what = "複合片段" if compound else "影片" if video else "圖片"
             matte = ComboBox()
@@ -1000,6 +1002,16 @@ class Inspector(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._spin((group, key), lo, hi, step, dec, factor), 1)
         lay.addWidget(self._key_button(group, key))
+        return row
+
+    @staticmethod
+    def _with_pick(widget, kinds, on_pick):
+        """A row of a source picker and its ◎ (點選來源: click the picture, video or compound to use)."""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(widget, 1)
+        lay.addWidget(pick_button(kinds, on_pick))
         return row
 
     def _with_key(self, widget, group, key):
@@ -1142,6 +1154,8 @@ class Inspector(QWidget):
                 w.clicked.connect(lambda on, pid=pid: self._emit_now(self.paramEdited, "params", pid, bool(on)))
             self.widgets[("params", pid)] = w
             row = self._with_key(w, "params", pid)
+            if kind == "image":
+                row.layout().insertWidget(1, pick_button(("image",), lambda path, pid=pid: self._param_image(pid, path)))
             reset = QPushButton("↺")
             reset.setFixedWidth(26)
             reset.setToolTip("回到元件本身的值（這個片段不再自己設定）")

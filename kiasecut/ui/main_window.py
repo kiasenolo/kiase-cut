@@ -17,7 +17,8 @@ import sys
 import threading
 import time
 
-from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QRect, QSettings, QSize, QStandardPaths, Qt,
+from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QPointF, QRect, QSettings, QSize,
+                            QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
@@ -33,7 +34,7 @@ from ..importers import jianying
 from .assets_panel import AssetsPanel
 from .colorpick import pick_color, qcolor, rgba
 from .font_dialog import FontMapDialog
-from .compounds import CompoundPanel
+from .compounds import PREFIX as COMPOUND_PREFIX, CompoundPanel
 from .docks import Panels
 from .curve_editor import CurveEditor, param_rows as curve_param_rows
 from .beat_panel import BeatPanel
@@ -2721,6 +2722,47 @@ class MainWindow(QMainWindow):
         kid = self.open_kid()
         if kid and components.param(self.proj["compounds"].get(kid), pid) is not None:
             self.apply_root("參數預設值", edit.set_param_default, kid, pid, path.replace("\\", "/"))
+
+    def media_at(self, gp, kinds):
+        """點選來源: what is under global point gp that a picker of kinds ("image", "video",
+        "compound") can use - a picture's / video's path (or a compound's id) of a clip on the
+        timeline, of 專案素材 or the Library, or of the compound list; None when nothing there."""
+        w = QApplication.widgetAt(gp)
+        while w is not None:
+            if w is self.timeline:
+                _row, c, _zone = w._hit(QPointF(w.mapFromGlobal(gp)))
+                if c is None:
+                    return None
+                if c["type"] == "compound" and "compound" in kinds and c.get("compound_id"):
+                    return c["compound_id"]
+                if c["type"] in kinds and c.get("media") and not c.get("asset"):
+                    return c["media"]["path"]
+                return None
+            if isinstance(w, QAbstractItemView):
+                idx = w.indexAt(w.viewport().mapFromGlobal(gp))
+                md = w.model().mimeData([idx]) if idx.isValid() else None
+                return self._media_of(md, kinds) if md is not None else None
+            w = w.parentWidget()
+        return None
+
+    def _media_of(self, md, kinds):
+        """The first path / compound id of kinds that drag data md carries (as media_at)."""
+        if not md.hasFormat(MEDIA_MIME):
+            return None
+        for iid in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(","):
+            if iid.startswith(COMPOUND_PREFIX):
+                if "compound" in kinds:
+                    return iid[len(COMPOUND_PREFIX):]
+                continue
+            if iid.startswith("mu"):
+                it = self.ulib.find(iid)[1] if self.ulib else None
+            else:
+                it = next((i for i in library.lib(self.proj)["items"] if i["id"] == iid), None) if self.proj else None
+            ext = os.path.splitext((it or {}).get("path") or "")[1].lower()
+            kind = "image" if ext in library.IMAGE_EXT else "video" if ext in userlib.VIDEO_EXT else None
+            if kind in kinds:
+                return it["path"]
+        return None
 
     def dropped_picture(self, md):
         """The picture a drag carries: a picture of the media library or of the user's Library,

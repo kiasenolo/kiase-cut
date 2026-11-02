@@ -111,6 +111,24 @@ class LayerDropTests(unittest.TestCase):
         self.assertEqual(len(edit.layers(p)), 4)
         self.assertEqual(edit.layers(p)[2]["media"]["path"], "n.png")    # (redone in its place)
 
+    def test_filter_layer_dropped_on_the_list(self):
+        """An effect dropped between layers: a filter layer there, and the refresh after it goes
+        through (it stopped half way, so the list and the picture did not show it)."""
+        from types import SimpleNamespace
+        from kiasecut.ui.main_window import MainWindow
+        p = self.level()
+        h = edit.History(p)
+        win = SimpleNamespace(proj=p, layer_drop_at=None, container=lambda *_: p, editing_static=lambda: True)
+
+        def add_filter_clip(ref, track_id="", start_us=None, effect=None):     # as the window does it
+            h.do("新增濾鏡片段", lambda q: edit.add_filter_clip(q, ref, 0, own_track=True))
+            MainWindow._place_dropped_layers(win)
+        win.add_filter_clip = add_filter_clip
+        MainWindow.layer_fx_drop(win, "builtin:invert", "", 1)
+        order = edit.layers(p)
+        self.assertEqual([c["type"] for c in order][1], "filter")              # under the top layer
+        self.assertIsNone(win.layer_drop_at)
+
 
 class GroupLayerTests(unittest.TestCase):
     """Groups in the layer list: opened in place, restacked inside, their mask marked."""

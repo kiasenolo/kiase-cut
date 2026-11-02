@@ -3029,7 +3029,7 @@ class MainWindow(QMainWindow):
             self.on_filter_dropped(payload, top[0]["id"], "", 0)
             return
         ref, effect, _src = dropped_fx(payload)
-        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), None)
+        self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), None, None)
         self.add_filter_clip(ref, "", 0, effect)
         self.layer_drop_at = None
 

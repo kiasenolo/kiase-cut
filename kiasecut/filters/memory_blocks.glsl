@@ -1,6 +1,6 @@
 // @filter 記憶體花屏（分塊）
 // @category 風格
-// @description 像顯示記憶體壞掉的花屏：畫面裂成一格一格大小固定的分塊（有橫向的趨勢），輪廓還看得出來，但每一塊各有各的下場——保留原樣、只剩色彩、混沌雜點、隨機色彩、座標只剩 X 或 Y、座標走到一半就斷掉、或已經消失，每一種的比例都可以調
+// @description 像顯示記憶體壞掉的花屏：畫面裂成一格一格大小固定的分塊（有橫向的趨勢），輪廓還看得出來，但每一塊各有各的下場——邊緣雜訊、只剩色彩、混沌雜點、隨機色彩、座標只剩 X 或 Y、座標走到一半就斷掉、或已經消失，每一種的比例都可以調
 // @param amount float 1 0 1 "損壞程度"
 // @param spread bool true "隨時間擴大"
 // @param blk float 40 8 512 "分塊高度（像素）"
@@ -12,7 +12,7 @@
 // @param seed float 0 0 100 "種子"
 // @param gone_look menu 黑色 "黑色|透明|白色" "消失的分塊"
 // @panel 分塊種類（比例）
-// @param w_keep float 0.02 0 1 "保留原樣"
+// @param w_edge float 0.02 0 1 "邊緣雜訊（交界處輪廓特別重）"
 // @param w_color float 0.05 0 1 "只剩色彩"
 // @param w_snow float 0.13 0 1 "混沌：雜點"
 // @param w_streak float 0.05 0 1 "混沌：直條紋"
@@ -30,7 +30,8 @@
 // Each cell is split again into halves of the same shape, up to `levels` deep (`split` says
 // how likely). Each block fails at its own moment (spread: over the effect's length; neighbours
 // tend to fail together, as one chip) and becomes one of the kinds below, by the weights:
-//   keep      as it was
+//   edge      a little noise over a dim base colour, with a heavy outline where the colours change fast
+//             (the stronger the change, the heavier the line; a soft change leaves a faint one)
 //   color     only its colour: the block's average, the outline gone
 //   snow      dark blue with bright specks, more of them where the picture is bright (the outline shows a little)
 //   streak    columns of colour that repeat down the block
@@ -82,7 +83,7 @@ vec4 effect(vec2 uv) {
     // when it fails: part its own, part its chip's (a few big blocks' worth)
     vec2 chip = floor(px / (max(blk, 4.0) * vec2(aspect, 1.0) * 4.0));
     float fail = 0.6 * h1(own, 43.0) + 0.4 * h1(chip.x + chip.y * 313.0, 44.0);
-    float w[12] = float[12](w_keep, w_color, w_snow, w_streak, w_dither, w_random,
+    float w[12] = float[12](w_edge, w_color, w_snow, w_streak, w_dither, w_random,
                             w_vx, w_vy, w_cutx, w_cuty, w_cutxy, w_gone);
     float wsum = 0.0;
     for (int i = 0; i < 12; i++) wsum += w[i];
@@ -97,7 +98,20 @@ vec4 effect(vec2 uv) {
     vec2 o = cell * cs;                                     // the block's corner
     vec2 d = px - o;                                        // where in it
 
-    if (kind == 0) return src(uv);
+    if (kind == 0) {                                        // noise with the outline drawn heavy at the colour changes
+        vec4 c = unpremultiply(at(px));
+        vec3 gx = unpremultiply(at(px + vec2(2.0, 0.0))).rgb - unpremultiply(at(px - vec2(2.0, 0.0))).rgb;
+        vec3 gy = unpremultiply(at(px + vec2(0.0, 2.0))).rgb - unpremultiply(at(px - vec2(0.0, 2.0))).rgb;
+        float g = length(gx) + length(gy);                  // how fast the colour changes here
+        float line = smoothstep(0.08, 0.7, g);
+        line *= line * (3.0 - 2.0 * line) * 1.15;           // a soft change stays faint, a hard one is heavy
+        vec2 t = px + vec2(tick * 17.0, tick * 31.0);
+        vec3 noise = vec3(hp(t, 80.0), hp(t, 81.0), hp(t, 82.0));
+        vec3 base = c.rgb * 0.35 + vec3(0.03, 0.05, 0.14);  // a little of the colour, on a dark blue base
+        vec3 col = base + (noise - 0.5) * 0.14;             // a little noise
+        vec3 edge = mix(c.rgb, vec3(1.0), 0.45) * (0.6 + 0.8 * noise);   // the line: the colour, with noise in it
+        return vec4(clamp(mix(col, edge, clamp(line, 0.0, 1.0)), 0.0, 1.0), 1.0);
+    }
 
     if (kind == 1) {                                        // only the colour
         vec4 sum = vec4(0.0);

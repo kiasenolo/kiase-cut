@@ -752,7 +752,8 @@ def add_visualizer(level, kind, source, media_path, start_us, duration_us, width
             "duration_us": int(duration_us), "source_start_us": 0,
             "media": {"path": media_path, "width": int(width), "height": int(height)},
             "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0},
-            "viz": viz.make(kind, source, height)}
+            "viz": viz.make(kind, source, width, height)}
+    clip["media"]["width"], clip["media"]["height"] = (int(round(clip["viz"]["w"])), int(round(clip["viz"]["h"])))
     track = track_by_id(level, track_id) if track_id else None
     if track is not None and (track["kind"] == "audio" or free_range(track, clip["start_us"], end(clip)) is None):
         track = None
@@ -790,6 +791,7 @@ def set_viz(proj, clip_id, **fields):
     if src.get("type") not in viz.SOURCE_TYPES:
         raise EditError("來源要是檔案、複合片段或軌道")
     c["viz"] = viz.clean(new)
+    c["media"]["width"], c["media"]["height"] = int(round(c["viz"]["w"])), int(round(c["viz"]["h"]))   # (what the picture is)
     c["name"] = c["name"] if c.get("named") else viz.KINDS[c["viz"]["kind"]]
     return c
 

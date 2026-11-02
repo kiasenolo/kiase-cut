@@ -537,6 +537,8 @@ def picture_size(c, W, H, k=1.0, t=0):
         from . import assets
         w, h = assets.size_at(c["asset"], t)
         return w * k, h * k
+    if c.get("viz"):                                    # an Audio Visualizer has a size of its own, as a shape
+        return float(c["viz"].get("w", m["width"])) * k, float(c["viz"].get("h", m["height"])) * k
     fit = min(W / m["width"], H / m["height"])
     return m["width"] * fit, m["height"] * fit
 
@@ -618,6 +620,9 @@ def link(p):
         for t in tracks:
             for c in t["clips"]:
                 legacy_text_padding(c.get("text"))
+                if c.get("viz"):
+                    from . import viz
+                    viz.migrate(c)
                 if "compound_id" in c:
                     c["compound"] = comps[c["compound_id"]]
                 elif "timeline_id" in c:

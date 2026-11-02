@@ -1,8 +1,11 @@
 """Audio Visualizer (音訊視覺化): a picture clip (type image, clip["viz"]) that draws the sound it
 is given, drawn afresh for every frame by both renderers.
 
-viz {kind, source, channel, attack, decay, color, color2, gradient, bar_w, gap, max_h, mirror,
+viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w, gap, radius, mirror,
      radial, inner, f_lo, f_hi, log, smooth, line_w, grid}
+  w, h     the object's size, in canvas pixels, as a shape's: the picture is exactly that rectangle (bars
+           grow from its bottom edge up to its top, a wave or a scope fills its height, a vectorscope its
+           shorter side, a circle's outer edge is half the shorter side)
   kind     bars (Spectrum Bars) | wave (Smooth Filled Waveform) | scope (Oscilloscope) |
            vector (Vectorscope: side against mid, as iZotope Ozone Imager draws it)
   source   {type: file, path} - an audio / video file, played from the clip's source_start_us as a
@@ -11,8 +14,7 @@ viz {kind, source, channel, attack, decay, color, color2, gradient, bar_w, gap, 
            at the level's time
   channel  M (middle) | L | R | S (side) - what bars, wave and scope look at (vector sees both)
   attack / decay  seconds the picture takes to rise / fall (one-pole, as an envelope follower)
-  bar_w / gap / radius / max_h / line_w / inner   pixels of the picture it was made for (media height); they
-           scale with the clip
+  bar_w / gap / radius / line_w / inner   pixels of the object's own size (they scale with it)
   f_lo..f_hi, log  the frequencies the bars cover and whether they sit evenly in octaves (log) or Hz
   smooth   0 - 1, how much neighbouring bars / points are blended
   mirror   bars and waves grow both ways;  radial  around a circle of radius `inner`
@@ -45,31 +47,44 @@ WAVE_US = 60_000                        # the sound a waveform looks at
 SCOPE_N = 2048
 
 DEFAULTS = {
-    "kind": "bars", "channel": "M", "attack": 0.02, "decay": 0.3,
+    "kind": "bars", "w": 1920.0, "h": 420.0, "channel": "M", "attack": 0.02, "decay": 0.3,
     "color": [1.0, 1.0, 1.0, 1.0], "color2": [1.0, 0.35, 0.8, 1.0], "gradient": False,
-    "bar_w": 12.0, "gap": 6.0, "radius": 0.0, "max_h": 420.0, "mirror": False, "radial": False, "inner": 260.0,
+    "bar_w": 12.0, "gap": 6.0, "radius": 0.0, "mirror": False, "radial": False, "inner": 120.0,
     "f_lo": 30.0, "f_hi": 16000.0, "log": True, "smooth": 0.4, "line_w": 4.0, "grid": True,
 }
 LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
-          "max_h": (10.0, 4000.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
+          "w": (1.0, 16384.0), "h": (1.0, 16384.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
           "smooth": (0.0, 1.0), "line_w": (0.5, 100.0)}
 
 
-def make(kind, source, canvas_h=1080):
-    """The parameters of a new visualizer of this kind on this source (its pixels are for a canvas
-    canvas_h high)."""
+def make(kind, source, canvas_w=1920, canvas_h=1080):
+    """The parameters of a new visualizer of this kind on this source, sized for a canvas_w x canvas_h
+    canvas (pixels of it: 1080 high is what the line widths are made for)."""
     v = {k: (list(x) if isinstance(x, list) else x) for k, x in DEFAULTS.items()}
     v["kind"], v["source"] = kind, dict(source)
     k = canvas_h / 1080
-    for f in ("bar_w", "gap", "max_h", "inner", "line_w", "radius"):
+    for f in ("bar_w", "gap", "inner", "line_w", "radius"):
         v[f] = round(v[f] * k, 1)
+    v["w"], v["h"] = float(canvas_w), round(420.0 * k, 1)
     if kind == "wave":
-        v["max_h"] = round(v["max_h"] * 0.6, 1)
+        v["h"] = round(v["h"] * 0.6, 1)
     if kind == "vector":
-        v["max_h"] = round(v["max_h"] * 1.5, 1)
+        v["w"] = v["h"] = round(630.0 * k, 1)
         v["decay"] = 0.15
         v["line_w"] = round(v["line_w"] * 0.6, 1)
     return v
+
+
+def migrate(c):
+    """A visualizer saved with a 最大高度 (max_h) and the canvas for a size gets its own size (w, h)."""
+    v = c.get("viz")
+    if v and "w" not in v:
+        mh = float(v.pop("max_h", 420.0))
+        m = c.get("media") or {}
+        v["w"], v["h"] = (mh, mh) if v.get("kind") == "vector" else (float(m.get("width", 1920)), mh)
+        m["width"], m["height"] = int(round(v["w"])), int(round(v["h"]))
+    elif v:
+        v.pop("max_h", None)
 
 
 def clean(v):
@@ -248,7 +263,7 @@ def paint(spec, probe, c, t_us, w, h, design_h, compounds=None, tracks=None):
     spec = clean(spec)
     p = QPainter(img)
     p.setRenderHints(QPainter.Antialiasing)
-    u = h / max(design_h, 1)
+    u = h / max(spec["h"], 1.0)                         # (the object's own pixels: design_h is its size when it was made)
     sig = (repr(spec["source"]), c["start_us"], c.get("source_start_us", 0), spec["channel"])
 
     def window(tt, n):
@@ -267,6 +282,14 @@ def paint(spec, probe, c, t_us, w, h, design_h, compounds=None, tracks=None):
     return img
 
 
+def _extent(spec, w, h, u):
+    """(height, inner radius, radial length): the whole picture's height; the circle's inner radius and
+    the length from there to its outer edge (half the shorter side)."""
+    outer = min(w, h) / 2
+    r0 = min(spec["inner"] * u, outer * 0.85)
+    return float(h), r0, max(1.0, outer - r0)
+
+
 def _count_bars(spec, w, u):
     bw, gap = max(1.0, spec["bar_w"] * u), max(0.0, spec["gap"] * u)
     if spec["radial"]:
@@ -282,15 +305,14 @@ def _bars(p, spec, w, h, u, t_us, window, memo):
         return memo("bars", tt, (n, lo, hi, lg, ch),
                     lambda: band_levels(spectrum(mono(window(tt, NFFT), ch)), n, lo, hi, lg))
     v = smooth_across(follow(raw_at, t_us, spec["attack"], spec["decay"]), spec["smooth"])
-    maxh = spec["max_h"] * u
+    maxh, r0, span = _extent(spec, w, h, u)
     rad = spec["radius"] * u                                   # (0: square ends)
     cx, cy = w / 2, h / 2
     p.setPen(Qt.NoPen)
     if spec["radial"]:
-        r0 = spec["inner"] * u
-        p.setBrush(_fill(spec, cy - r0, cy - r0 - maxh))
+        p.setBrush(_fill(spec, cy - r0, cy - r0 - span))
         for i in range(n):
-            ln = float(v[i]) * maxh
+            ln = float(v[i]) * span
             if ln < 0.5:
                 continue
             p.save()
@@ -302,7 +324,7 @@ def _bars(p, spec, w, h, u, t_us, window, memo):
             p.restore()
         return
     x0 = (w - (n * bw + (n - 1) * gap)) / 2
-    base = cy if spec["mirror"] else cy + maxh / 2
+    base = cy if spec["mirror"] else float(h)
     p.setBrush(_fill(spec, base, base - (maxh / 2 if spec["mirror"] else maxh)))
     for i in range(n):
         ln = float(v[i]) * maxh * (0.5 if spec["mirror"] else 1.0)
@@ -344,21 +366,20 @@ def _wave(p, spec, w, h, u, t_us, window, memo):
             return x[:cut].reshape(count, -1).max(axis=1) if cut else np.zeros(count)
         return memo("wave", tt, (count, ch), make)
     v = np.clip(smooth_across(follow(raw_at, t_us, spec["attack"], spec["decay"]), spec["smooth"]), 0.0, 1.0)
-    maxh = spec["max_h"] * u
+    maxh, r0, span = _extent(spec, w, h, u)
     cx, cy = w / 2, h / 2
     p.setPen(Qt.NoPen)
     if spec["radial"]:
-        r0 = spec["inner"] * u
         ang = 2 * math.pi * np.arange(count) / count - math.pi / 2
-        out_r = r0 + v * maxh / 2
-        in_r = (r0 - v * maxh / 2) if spec["mirror"] else np.full(count, r0)
+        out_r = r0 + v * span
+        in_r = np.maximum(r0 - v * span, 0.0) if spec["mirror"] else np.full(count, r0)
         outer = _curve([QPointF(cx + r * math.cos(a), cy + r * math.sin(a)) for r, a in zip(out_r, ang)], closed=True)
         inner = _curve([QPointF(cx + r * math.cos(a), cy + r * math.sin(a)) for r, a in zip(in_r, ang)], closed=True)
         path = QPainterPath()
         path.setFillRule(Qt.OddEvenFill)
         path.addPath(outer)
         path.addPath(inner)
-        p.setBrush(_fill(spec, cy - r0, cy - r0 - maxh / 2))
+        p.setBrush(_fill(spec, cy - r0, cy - r0 - span))
         p.drawPath(path)
         return
     xs = np.linspace(0, w, count)
@@ -382,7 +403,7 @@ def _scope(p, spec, w, h, u, t_us, window, memo):
     pts = max(16, min(len(seg), int(w / max(1.0, 2.0 * u)), 800))
     seg = np.interp(np.linspace(0, len(seg) - 1, pts), np.arange(len(seg)), seg)
     seg = smooth_across(seg, spec["smooth"] * 0.5)
-    maxh = spec["max_h"] * u
+    maxh, r0, span = _extent(spec, w, h, u)
     cx, cy = w / 2, h / 2
     pen = QPen(_qc(spec["color"]), max(1.0, spec["line_w"] * u), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
     if spec["gradient"]:
@@ -393,9 +414,8 @@ def _scope(p, spec, w, h, u, t_us, window, memo):
     p.setPen(pen)
     p.setBrush(Qt.NoBrush)
     if spec["radial"]:
-        r0 = spec["inner"] * u
         ang = 2 * math.pi * np.arange(pts) / pts - math.pi / 2
-        poly = QPolygonF([QPointF(cx + (r0 + float(a) * maxh / 2) * math.cos(t), cy + (r0 + float(a) * maxh / 2) * math.sin(t))
+        poly = QPolygonF([QPointF(cx + (r0 + float(a) * span) * math.cos(t), cy + (r0 + float(a) * span) * math.sin(t))
                           for a, t in zip(seg, ang)])
         poly.append(poly[0])
         p.drawPolyline(poly)
@@ -405,7 +425,7 @@ def _scope(p, spec, w, h, u, t_us, window, memo):
 
 
 def _vector(p, spec, w, h, u, t_us, window, memo):
-    radius = spec["max_h"] * u / 2
+    radius = min(w, h) / 2
     cx, cy = w / 2, h / 2
     if spec["grid"]:
         g = _qc(spec["color"], 0.25)

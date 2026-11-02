@@ -1340,15 +1340,15 @@ class Inspector(QWidget):
         "attack": ("起音 秒", 0.0, 2.0, 0.01, 2), "decay": ("衰減 秒", 0.0, 3.0, 0.05, 2),
         "bar_w": ("條寬 px", 1.0, 400.0, 1.0, 1), "gap": ("間距 px", 0.0, 400.0, 1.0, 1),
         "radius": ("圓角 px", 0.0, 400.0, 1.0, 1),
-        "max_h": ("最大高度 px", 10.0, 4000.0, 10.0, 0), "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1),
+        "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1),
         "inner": ("內徑 px", 10.0, 3000.0, 10.0, 0), "f_lo": ("頻率下限 Hz", 20.0, 20000.0, 10.0, 0),
         "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2)}
     VIZ_FIELDS = {
-        "bars": ("channel", "attack", "decay", "bar_w", "gap", "radius", "max_h", "mirror", "radial", "inner", "f_lo", "f_hi",
+        "bars": ("channel", "attack", "decay", "bar_w", "gap", "size", "radius", "mirror", "radial", "inner", "f_lo", "f_hi",
                  "log", "smooth", "color"),
-        "wave": ("channel", "attack", "decay", "max_h", "mirror", "radial", "inner", "smooth", "color"),
-        "scope": ("channel", "max_h", "line_w", "radial", "inner", "smooth", "color"),
-        "vector": ("decay", "max_h", "line_w", "grid", "color")}
+        "wave": ("channel", "attack", "decay", "size", "mirror", "radial", "inner", "smooth", "color"),
+        "scope": ("channel", "size", "line_w", "radial", "inner", "smooth", "color"),
+        "vector": ("decay", "size", "line_w", "grid", "color")}
     VIZ_TOGGLES = {"mirror": "鏡像（上下對稱）", "radial": "放射狀（繞成圓形）", "log": "對數頻率軸（每個八度一樣寬）",
                    "grid": "顯示格線"}
 
@@ -1383,6 +1383,23 @@ class Inspector(QWidget):
                 box.activated.connect(lambda i, box=box: self._viz_edit(channel=box.itemData(i)))
                 self.widgets[("viz", f)] = box
                 form.addRow("聲道", box)
+            elif f == "size":                                # 大小: the object's width and height, as a shape's
+                row = QWidget()
+                lay = QHBoxLayout(row)
+                lay.setContentsMargins(0, 0, 0, 0)
+                lay.setSpacing(3)
+                for fld, tag in (("w", "寬"), ("h", "高")):
+                    t = QLabel(tag)
+                    t.setStyleSheet("color: #8e8e94;")
+                    lay.addWidget(t)
+                    sp = SpinBox()
+                    sp.set_limits(1.0, 4000.0, 1.0, 16384.0)
+                    sp.setDecimals(0)
+                    sp.setKeyboardTracking(False)
+                    sp.edited.connect(lambda x, fld=fld: self._viz_edit(**{fld: x}))
+                    self.widgets[("viz", fld)] = sp
+                    lay.addWidget(sp, 1)
+                form.addRow("大小 px", row)
             elif f == "color":
                 for fld, label in (("color", "顏色"), ("color2", "漸層顏色")):
                     b = QPushButton()
@@ -1463,7 +1480,7 @@ class Inspector(QWidget):
                 i = pick.count() - 1
             pick.setCurrentIndex(i)
         pick.blockSignals(False)
-        for f in self.VIZ_FIELDS[v["kind"]] + ("gradient", "color2"):
+        for f in self.VIZ_FIELDS[v["kind"]] + ("gradient", "color2", "w", "h"):
             wid = w.get(("viz", f))
             if wid is None:
                 continue

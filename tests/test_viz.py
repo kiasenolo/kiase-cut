@@ -45,7 +45,8 @@ class VizTests(unittest.TestCase):
                         "aevalsrc='0.5*sin(2*PI*1000*t)|0':s=48000:d=2", "-c:a", "pcm_s16le", cls.left], check=True)
 
     def clip(self, path, **kw):
-        v = viz.make("bars", {"type": "file", "path": path}, 180)
+        v = viz.make("bars", {"type": "file", "path": path}, W, H)
+        v.update(w=W, h=H)
         v.update(kw)
         c = {"id": "v1", "type": "image", "name": "v", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,
              "media": {"path": "x.png", "width": W, "height": H}, "transform": {}, "viz": v}
@@ -94,7 +95,8 @@ class VizTests(unittest.TestCase):
             for extra in ({}, {"mirror": True}, {"radial": True}, {"radial": True, "mirror": True},
                           {"gradient": True, "log": False}):
                 c = self.clip(self.both)
-                c["viz"] = viz.make(kind, {"type": "file", "path": self.both}, 180)
+                c["viz"] = viz.make(kind, {"type": "file", "path": self.both}, W, H)
+                c["viz"].update(w=W, h=H)
                 c["viz"].update(extra)
                 img = self.paint(c, S // 2)
                 self.assertEqual((img.width(), img.height()), (W, H))
@@ -102,8 +104,8 @@ class VizTests(unittest.TestCase):
 
     def test_the_vectorscope_shows_mono_as_a_vertical_line_and_side_as_a_horizontal_one(self):
         c = self.clip(self.both)
-        c["viz"] = viz.make("vector", {"type": "file", "path": self.both}, 180)
-        c["viz"].update(grid=False, decay=0.0)
+        c["viz"] = viz.make("vector", {"type": "file", "path": self.both}, W, H)
+        c["viz"].update(w=W, h=H, grid=False, decay=0.0)
         img = self.paint(c, S // 2)
         a = np.frombuffer(bytes(img.constBits()), np.uint8).reshape(H, W, 4)[..., 3]
         ys, xs = np.nonzero(a)
@@ -138,9 +140,9 @@ class VizTests(unittest.TestCase):
     def test_white_and_square_by_default(self):
         for kind in viz.KINDS:
             self.assertEqual(viz.make(kind, {"type": "track", "id": ""})["color"], [1.0, 1.0, 1.0, 1.0], kind)
-        v = viz.make("bars", {"type": "track", "id": ""}, 180)
+        v = viz.make("bars", {"type": "track", "id": ""}, 1920, 1080)
         self.assertEqual(v["radius"], 0.0)
-        c = self.clip(self.both, attack=0.0, decay=0.0, smooth=0.0, bar_w=20.0, gap=4.0, max_h=100.0)
+        c = self.clip(self.both, attack=0.0, decay=0.0, smooth=0.0, bar_w=20.0, gap=4.0)
         img = self.paint(c, S // 2)
         a = np.frombuffer(bytes(img.constBits()), np.uint8).reshape(H, W, 4)
         col = int(np.argmax(columns(img)))
@@ -155,6 +157,34 @@ class VizTests(unittest.TestCase):
         col = int(np.argmax(columns(img)))
         ys = np.nonzero(a[:, col, 3] > 200)[0]
         self.assertLess(len(np.nonzero(a[ys.min() + 2][:, 3] > 200)[0]), 17)     # (rounded: the top is narrower)
+
+    def test_it_has_a_size_like_a_shape(self):
+        p = project.link(dict(project.new(), width=W, height=H, tracks=[]))
+        c = edit.add_visualizer(p, "bars", {"type": "file", "path": self.both}, "x.png", 0, 2 * S, W, H)
+        self.assertEqual((c["viz"]["w"], c["viz"]["h"]), (float(W), 420.0 * H / 1080))
+        edit.set_viz(p, c["id"], w=100.0, h=50.0, attack=0.0, decay=0.0, smooth=0.0)
+        self.assertEqual(project.picture_size(c, W, H), (100.0, 50.0))                  # (not fitted into the canvas)
+        self.assertEqual((c["media"]["width"], c["media"]["height"]), (100, 50))
+        c["viz"]["source"] = {"type": "file", "path": self.both}
+        r = render.Renderer()
+        r.cache_dir = self.dir
+        im = r.render(p, int(0.5 * p["fps"]), W, H, alpha=True)
+        a = np.frombuffer(bytes(im.constBits()), np.uint8).reshape(H, W, 4)[..., 3]
+        ys, xs = np.nonzero(a > 100)
+        self.assertGreaterEqual(ys.min(), (H - 50) // 2 - 1)                           # inside its own 100 x 50 rectangle
+        self.assertLessEqual(ys.max(), (H + 50) // 2 + 1)
+        self.assertGreaterEqual(xs.min(), (W - 100) // 2 - 1)
+        self.assertLessEqual(xs.max(), (W + 100) // 2 + 1)
+        self.assertGreater(ys.max() - ys.min(), 40)                                    # the tallest bar fills the object's height
+
+    def test_older_visualizers_get_their_size(self):
+        old = {"id": "v", "type": "image", "start_us": 0, "duration_us": S, "media": {"path": "x.png", "width": 1920, "height": 1080},
+               "viz": dict(viz.make("bars", {"type": "track", "id": "t"}), max_h=300.0)}
+        for k in ("w", "h"):
+            old["viz"].pop(k)
+        viz.migrate(old)
+        self.assertEqual((old["viz"]["w"], old["viz"]["h"], "max_h" in old["viz"]), (1920.0, 300.0, False))
+        self.assertEqual((old["media"]["width"], old["media"]["height"]), (1920, 300))
 
     def test_edit_and_export(self):
         p = project.link(dict(project.new(), tracks=[]))
@@ -206,6 +236,8 @@ class VizInspectorTests(unittest.TestCase):
         self.assertEqual(ins.widgets[("viz", "source_pick")].currentText(), "歌")
         self.assertEqual(ins.widgets[("viz", "bar_w")].value(), c["viz"]["bar_w"])
         self.assertNotIn(("viz", "grid"), ins.widgets)
+        self.assertEqual((ins.widgets[("viz", "w")].value(), ins.widgets[("viz", "h")].value()), (c["viz"]["w"], c["viz"]["h"]))
+        self.assertNotIn(("viz", "max_h"), ins.widgets)
         ins.widgets[("viz", "bar_w")].edited.emit(20.0)
         ins.widgets[("viz", "mirror")].click()
         ins.widgets[("viz", "channel")].activated.emit(1)

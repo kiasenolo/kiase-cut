@@ -71,7 +71,11 @@ PARAMS = {
                   ("anchor_y", "錨點 Y", -1.0, 1.0, 0.01, 3, 1, 0.0),
                   ("pivot_x", "中心點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 中心點: turns / scales about it (shown in
                   ("pivot_y", "中心點 Y", -1.0, 1.0, 0.01, 3, 1, 0.0),       # object widths / heights, see pivot_units)
-                  ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0)),
+                  ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0),
+                  ("radius_tl", "圓角 左上", 0.0, 4000.0, 1.0, 1, 1, 0.0),       # 圓角 (project.CORNERS): px of a
+                  ("radius_tr", "圓角 右上", 0.0, 4000.0, 1.0, 1, 1, 0.0),       # 1080-high canvas, the clip at scale 1
+                  ("radius_bl", "圓角 左下", 0.0, 4000.0, 1.0, 1, 1, 0.0),
+                  ("radius_br", "圓角 右下", 0.0, 4000.0, 1.0, 1, 1, 0.0)),
     "mask": (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0),
              ("cy", "中心 Y", -5.0, 5.0, 0.01, 3, 1, 0.0),
              ("w", "寬", 0.0, 10.0, 0.01, 3, 1, 1.0),
@@ -527,9 +531,11 @@ class Inspector(QWidget):
                 if components.of_clip(c) is not None:
                     self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
-                self._rows(form, "transform", PARAMS["transform"], (("x", "y", "位置"), ("scale", "scale_y", "縮放"),
-                                                                    ("anchor_x", "anchor_y", "錨點"),
-                                                                    ("pivot_x", "pivot_y", "中心點")))
+                self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS],
+                           (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("anchor_x", "anchor_y", "錨點"),
+                            ("pivot_x", "pivot_y", "中心點")))
+                if c["type"] in ("image", "video", "compound") and not c.get("asset"):
+                    self._build_corners(form)
                 blend = ComboBox()
                 blend.setPlaceholderText("--")
                 for name, k in ((PASS_THROUGH,) if c["type"] == "group" else ()) + BLEND_NAMES:
@@ -975,6 +981,19 @@ class Inspector(QWidget):
             else:
                 form.addRow(r[1], self._param_row(group, *r))
 
+    def _build_corners(self, form):
+        """圓角: all four at once, then each (top left | top right, bottom left | bottom right)."""
+        every = SpinBox()
+        every.set_limits(0.0, 4000.0)
+        every.setDecimals(1)
+        every.setKeyboardTracking(False)
+        every.setToolTip("四個角一起設定（px，1080 高的畫面、縮放 1）；下面可以分開設定")
+        every.edited.connect(lambda v: [self._queue("transform", k, v) for k in project.CORNERS])
+        self.widgets["radius_all"] = every
+        form.addRow("圓角", every)
+        rows = [r for r in PARAMS["transform"] if r[0] in project.CORNERS]
+        self._rows(form, "transform", rows, (("radius_tl", "radius_tr", ""), ("radius_bl", "radius_br", "")))
+
     def _param_row(self, group, key, _label, lo, hi, step, dec, factor, _default):
         row = QWidget()
         lay = QHBoxLayout(row)
@@ -1369,6 +1388,10 @@ class Inspector(QWidget):
                     if edit.key_at(p, t) is not None:
                         easings.add(edit.easing_at(p, t))
                 self._key_state(w[("key", group, key)], ps, clips, ts)
+        if "radius_all" in w:                                    # the four corners, when they are alike
+            vals = {round(curves.value(k["transform"].get(r, 0.0), t), 1)
+                    for k, t in zip(clips, ts) for r in project.CORNERS}
+            self._set("radius_all", vals.pop() if len(vals) == 1 else None)
         if "scale_link" in w:
             w["scale_link"].blockSignals(True)
             w["scale_link"].setChecked(all(edit.linked(k["transform"]) for k in clips))

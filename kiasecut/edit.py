@@ -671,7 +671,7 @@ TEXT_VALIGNS = ("top", "middle", "bottom")               # 垂直對齊 in a 文
 TEXT_STROKE_ALIGNS = ("inside", "center", "outside")
 TEXT_BOX_MODES = ("auto", "auto_h", "fixed")             # 自動寬度 / 自動高度 / 固定大小 (Lunacy's)
 TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity", "pivot_x", "pivot_y",
-                    "anchor_x", "anchor_y")   # (pivot: 中心點, anchor: 錨點)
+                    "anchor_x", "anchor_y") + project.CORNERS   # (pivot: 中心點, anchor: 錨點; 圓角)
 
 
 def set_text(proj, clip_id, **fields):

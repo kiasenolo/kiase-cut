@@ -83,8 +83,22 @@ uniform int edge;            // soften the picture's own border (a quad, not a w
 uniform float opacity;
 uniform int blend;           // 0 normal (GL blending does it), else BLEND_INDEX
 uniform sampler2D backdrop;  // what was there, for the other blend modes
+uniform int cround;          // 圓角: cut the picture's corners round
+uniform mat3 dev_clip;       // device px -> clip space (origin at the frame's centre, y down)
+uniform vec2 chalf;          // half the frame's size in clip units
+uniform vec4 crad;           // radii: top left, top right, bottom right, bottom left
 %(mask)s
 out vec4 frag;
+
+float corner_at(vec2 p) {
+    if (cround == 0) return 1.0;
+    vec2 q = (dev_clip * vec3(p, 1.0)).xy;
+    float r = q.x < 0.0 ? (q.y < 0.0 ? crad.x : crad.w) : (q.y < 0.0 ? crad.y : crad.z);
+    vec2 d = abs(q) - chalf + r;
+    float dist = length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - r;
+    vec2 fw = fwidth(q);
+    return clamp(0.5 - dist / max(max(fw.x, fw.y), 1e-6), 0.0, 1.0);
+}
 
 float soft_light_d(float cb) {
     return cb <= 0.25 ? ((16.0 * cb - 12.0) * cb + 4.0) * cb : sqrt(cb);
@@ -117,7 +131,7 @@ void main() {
     vec2 uv = (dev_uv * vec3(p, 1.0)).xy;
     vec4 c = texture(tex, uv);
     if (straight == 1) c.rgb *= c.a;
-    float a = opacity * mask_at(p);
+    float a = opacity * mask_at(p) * corner_at(p);
     if (edge == 1) {
         vec2 fw = max(fwidth(uv), vec2(1e-7));
         vec2 e = min(uv, 1.0 - uv) / fw;
@@ -332,9 +346,11 @@ class GL:
         tgt.fbo.use()
         self.ctx.viewport = (0, 0, tgt.w, tgt.h)
 
-    def draw(self, tgt, tex, straight, rect, world, opacity=1.0, mask=None, t=0, disp=None, blend=0):
+    def draw(self, tgt, tex, straight, rect, world, opacity=1.0, mask=None, t=0, disp=None, blend=0, corners=None):
         """Draw texture tex, which covers clip-space rect, onto layer tgt through world (clip ->
-        device), with opacity, mask (in clip space, disp = the clip's size there) and blend."""
+        device), with opacity, mask (in clip space, disp = the clip's size there), blend and
+        corners ((w, h) of the frame round the clip's origin, (radii clockwise from top left)):
+        圓角."""
         inv, ok = world.inverted()
         if not ok or rect.isEmpty():               # (縮放 / 字號 0: nothing to draw)
             return
@@ -344,6 +360,12 @@ class GL:
         r = rect.adjusted(-e, -e, e, e)
         pts = [world.map(r.topLeft()), world.map(r.topRight()), world.map(r.bottomLeft()), world.map(r.bottomRight())]
         self._quad(tgt, pts)
+        prog["cround"].value = 1 if corners else 0
+        if corners:
+            (fw, fh), radii = corners
+            prog["dev_clip"].value = mat3(inv)
+            prog["chalf"].value = (fw / 2, fh / 2)
+            prog["crad"].value = tuple(float(r) for r in radii)
         self._common(prog, tgt, tex, straight, inv * rect_uv(rect), opacity, 1, mask, t, disp, inv, blend)
 
     def draw_layer(self, tgt, lay, opacity=1.0, mask=None, t=0, disp=None, inv_world=None, blend=0):
@@ -351,6 +373,7 @@ class GL:
         pts = [QPointF(0, 0), QPointF(tgt.w, 0), QPointF(0, tgt.h), QPointF(tgt.w, tgt.h)]
         self._quad(tgt, pts)
         to_uv = QTransform.fromScale(1 / tgt.w, 1 / tgt.h)
+        self.composite["cround"].value = 0
         self._common(self.composite, tgt, lay.tex, False, to_uv, opacity, 0, mask, t, disp, inv_world, blend)
 
     def _common(self, prog, tgt, tex, straight, dev_uv, opacity, edge, mask, t, disp, inv_world, blend):
@@ -640,6 +663,8 @@ class GLRenderer(render.Renderer):
         else:
             return
         disp = disp if kind == "text" else (bw, bh)
+        radii = project.corner_radii(c, t, disp, H)
+        corners = (disp, radii) if radii else None      # 圓角: cut where the picture is drawn, before its effects
         mask = self.clip_mask(c, t)
         blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
         effects = project.visual_effects(c)
@@ -650,7 +675,8 @@ class GLRenderer(render.Renderer):
                 cover = gl.layer(tgt.w, tgt.h)
                 snap = gl.layer(tgt.w, tgt.h)
                 try:
-                    gl.draw(cover, *(shape or (tex, straight)), rect, world, 1.0 if shape else opacity, mask, t, disp)
+                    gl.draw(cover, *(shape or (tex, straight)), rect, world, 1.0 if shape else opacity, mask, t, disp,
+                            corners=corners)
                     gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
                     seen = self.gl_seen(tgt, snap)
                     out = self.gl_effects(effects, seen, t, c["duration_us"], fps, world, disp, ppu)
@@ -663,11 +689,11 @@ class GLRenderer(render.Renderer):
                     gl.release(cover)
                     gl.release(snap)
                 if not hide and opacity > 0:
-                    gl.draw(tgt, tex, straight, rect, world, opacity, mask, t, disp, blend)
+                    gl.draw(tgt, tex, straight, rect, world, opacity, mask, t, disp, blend, corners)
             elif effects:
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
-                    gl.draw(lay, tex, straight, rect, world)
+                    gl.draw(lay, tex, straight, rect, world, corners=corners)
                     out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp, ppu)
                     gl.matte = matte and matte[0].tex
                     gl.draw_layer(tgt, out, opacity, mask, t, disp, inv, blend)
@@ -677,7 +703,7 @@ class GLRenderer(render.Renderer):
                     gl.release(lay)
             else:
                 gl.matte = matte and matte[0].tex
-                gl.draw(tgt, tex, straight, rect, world, opacity, mask, t, disp, blend)
+                gl.draw(tgt, tex, straight, rect, world, opacity, mask, t, disp, blend, corners)
         finally:
             gl.matte = None
             if matte and matte[1]:

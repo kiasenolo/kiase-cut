@@ -360,6 +360,32 @@ def speed(c):
     return v if v > 0 else 1.0
 
 
+CORNERS = ("radius_tl", "radius_tr", "radius_br", "radius_bl")    # 圓角 (in transform), clockwise from top left
+
+
+def corner_radii(c, t, disp, H):
+    """(top left, top right, bottom right, bottom left) 圓角 of picture clip c at clip time t, in
+    the units of disp (its frame's (w, h) in canvas px; H the canvas height: the radii are px of a
+    1080-high canvas at scale 1, so they grow with the clip), scaled down together where two of a
+    side would overlap (as CSS does); None: square corners."""
+    if c["type"] not in ("image", "video", "compound") or c.get("asset"):
+        return None
+    tf = c.get("transform") or {}
+    r = [max(0.0, curves.value(tf.get(k, 0.0), t)) * H / 1080 for k in CORNERS]
+    if not any(v > 0 for v in r):
+        return None
+    w, h = disp
+    sides = ((w, r[0] + r[1]), (w, r[3] + r[2]), (h, r[0] + r[3]), (h, r[1] + r[2]))
+    f = min([1.0] + [side / s for side, s in sides if s > 0])
+    return tuple(v * f for v in r)
+
+
+def has_corners(c):
+    tf = c.get("transform") or {}
+    return c["type"] in ("image", "video", "compound") and not c.get("asset") \
+        and any(curves.is_animated(tf.get(k)) or (tf.get(k) or 0) > 0 for k in CORNERS)
+
+
 def frozen(c):
     """The source time a frozen clip holds at (凍結幀), or None."""
     f = c.get("freeze")

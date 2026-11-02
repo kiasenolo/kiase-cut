@@ -577,6 +577,15 @@ class Renderer:
             disp = (bw, bh)
         else:
             return
+        radii = project.corner_radii(c, t, disp, H)
+        if radii:                                          # 圓角: the picture cut round, before its effects
+            square = draw
+
+            def draw(q=p):
+                q.save()
+                q.setClipPath(rounded_path(disp, radii), Qt.IntersectClip)
+                square(q)
+                q.restore()
         if backdrop:                                       # 套用至背景: the effects work on what is under it
             self.draw_backdrop(p, c, W, H, t, disp, fps, px_per_unit,
                                lambda q: self.paint_body(q, c, W, H, t, disp, cover or draw,
@@ -860,6 +869,26 @@ def array_to_image(arr):
     h, w = arr.shape[:2]
     im = QImage(np.ascontiguousarray(arr).data, w, h, w * 4, QImage.Format_RGBA8888_Premultiplied).copy()
     return im.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+
+
+def rounded_path(disp, radii):
+    """A (w, h) frame round its centre with corners (top left, top right, bottom right, bottom
+    left) of these radii, as a QPainterPath (y down)."""
+    w, h = disp
+    tl, tr, br, bl = radii
+    x0, y0, x1, y1 = -w / 2, -h / 2, w / 2, h / 2
+    path = QPainterPath()
+    path.moveTo(x0 + tl, y0)
+    path.lineTo(x1 - tr, y0)
+    path.arcTo(x1 - 2 * tr, y0, 2 * tr, 2 * tr, 90, -90)
+    path.lineTo(x1, y1 - br)
+    path.arcTo(x1 - 2 * br, y1 - 2 * br, 2 * br, 2 * br, 0, -90)
+    path.lineTo(x0 + bl, y1)
+    path.arcTo(x0, y1 - 2 * bl, 2 * bl, 2 * bl, 270, -90)
+    path.lineTo(x0, y0 + tl)
+    path.arcTo(x0, y0, 2 * tl, 2 * tl, 180, -90)
+    path.closeSubpath()
+    return path
 
 
 def group_content(g, W, H):

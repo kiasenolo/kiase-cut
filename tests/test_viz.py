@@ -223,6 +223,45 @@ class VizTests(unittest.TestCase):
         self.assertGreater(alpha_sum(loud), 1000)
 
 
+class ScopeTests(unittest.TestCase):
+    """自動頻率: the oscilloscope shows a set number of periods of the pitch it finds."""
+
+    @staticmethod
+    def tone(hz, n=viz.SCOPE_N, phase=0.3):
+        return np.sin(2 * np.pi * hz * np.arange(n) / viz.RATE + phase)
+
+    def spec(self, **kw):
+        s = viz.clean(viz.make("scope", {"type": "track", "id": ""}))
+        s.update(kw)
+        return s
+
+    def test_the_period_is_found(self):
+        for hz in (55.0, 220.0, 440.0, 1000.0):
+            self.assertAlmostEqual(viz.period_of(self.tone(hz)), viz.RATE / hz, delta=viz.RATE / hz * 0.02, msg=hz)
+        rng = np.random.default_rng(1)
+        self.assertIsNone(viz.period_of(rng.standard_normal(8192)))              # (noise has no pitch)
+        self.assertIsNone(viz.period_of(np.zeros(8192)))
+        # a chord of a note and its fifth: the note's period, not the octave below
+        both = self.tone(220.0) + 0.8 * self.tone(330.0)
+        self.assertAlmostEqual(viz.period_of(both), viz.RATE / 110.0, delta=6.0)    # (they repeat together every 110 Hz)
+
+    def test_cycles_or_milliseconds(self):
+        x = self.tone(220.0)
+        seg = viz.scope_segment(x, self.spec(auto_freq=True, cycles=2.0))
+        self.assertAlmostEqual(len(seg), 2 * viz.RATE / 220.0, delta=8)
+        self.assertLess(abs(seg[0]), 0.1)                                          # (starts at a zero crossing, going up)
+        self.assertGreater(seg[5], seg[0])
+        self.assertEqual(len(viz.scope_segment(x, self.spec(auto_freq=False, time_ms=10.0))), 480)
+        rng = np.random.default_rng(2)
+        self.assertEqual(len(viz.scope_segment(rng.standard_normal(viz.SCOPE_N), self.spec(auto_freq=True, time_ms=5.0))), 240)
+
+    def test_it_stands_still_while_the_note_holds(self):
+        a = viz.scope_segment(self.tone(330.0, phase=0.0), self.spec(cycles=3.0))
+        b = viz.scope_segment(self.tone(330.0, phase=2.0), self.spec(cycles=3.0))    # (the same note, a moment later)
+        m = min(len(a), len(b), 400)
+        self.assertLess(float(np.abs(a[:m] - b[:m]).max()), 0.1)
+
+
 class VizInspectorTests(unittest.TestCase):
     def test_rows_follow_the_kind_and_report_edits(self):
         from kiasecut.ui.inspector import Inspector
@@ -250,6 +289,12 @@ class VizInspectorTests(unittest.TestCase):
         self.assertFalse(ins.widgets[("viz", "color2")].isHidden())
         edit.set_viz(p, c["id"], kind="scope")
         ins.show_clips([c], 0, 60)
+        self.assertFalse(ins.widgets[("viz", "cycles")].isHidden())                 # (自動頻率 is on: how many periods)
+        self.assertTrue(ins.widgets[("viz", "time_ms")].isHidden())
+        edit.set_viz(p, c["id"], auto_freq=False)
+        ins.show_clips([c], 0, 60)
+        self.assertTrue(ins.widgets[("viz", "cycles")].isHidden())
+        self.assertFalse(ins.widgets[("viz", "time_ms")].isHidden())
         self.assertNotIn(("viz", "color2"), ins.widgets)                            # (an oscilloscope has one colour)
         self.assertNotIn(("viz", "gradient"), ins.widgets)
         edit.set_viz(p, c["id"], kind="vector")

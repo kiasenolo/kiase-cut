@@ -17,6 +17,9 @@ viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w,
   bar_w / gap / radius / line_w / inner   pixels of the object's own size (they scale with it)
   f_lo..f_hi, log  the frequencies the bars cover and whether they sit evenly in octaves (log) or Hz
   smooth   0 - 1, how much neighbouring bars / points are blended
+  auto_freq (oscilloscope) the picture shows `cycles` periods of the pitch it finds in the sound (the
+           wave stands still while the note holds); without a clear pitch, or with it off, a window of
+           time_ms milliseconds
   mirror   bars and waves grow both ways;  radial  around a circle of radius `inner`
   gradient color at the foot to color2 at the top
 
@@ -44,17 +47,19 @@ TILT_DB = 3.0                           # dB per octave added, so the highs are 
 LAUNCH = 3.0                            # a picture looks back this many time constants
 MAX_BACK = 60                           # ... but at most this many steps
 WAVE_US = 60_000                        # the sound a waveform looks at
-SCOPE_N = 2048
+SCOPE_N = 16384                         # the sound an oscilloscope looks at (room for 300 ms and a trigger search)
+MIN_HZ, MAX_HZ = 40.0, 2000.0            # the pitches 自動頻率 looks for
 
 DEFAULTS = {
     "kind": "bars", "w": 1920.0, "h": 420.0, "channel": "M", "attack": 0.02, "decay": 0.3,
     "color": [1.0, 1.0, 1.0, 1.0], "color2": [1.0, 0.35, 0.8, 1.0], "gradient": False,
     "bar_w": 12.0, "gap": 6.0, "radius": 0.0, "mirror": False, "radial": False, "inner": 120.0,
     "f_lo": 30.0, "f_hi": 16000.0, "log": True, "smooth": 0.4, "line_w": 4.0, "grid": True,
+    "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
 }
 LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
           "w": (1.0, 16384.0), "h": (1.0, 16384.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
-          "smooth": (0.0, 1.0), "line_w": (0.5, 100.0)}
+          "smooth": (0.0, 1.0), "line_w": (0.5, 100.0), "cycles": (0.5, 16.0), "time_ms": (1.0, 300.0)}
 
 
 def make(kind, source, canvas_w=1920, canvas_h=1080):
@@ -392,14 +397,51 @@ def _wave(p, spec, w, h, u, t_us, window, memo):
     p.drawPath(path)
 
 
+def period_of(x):
+    """The period (samples) of the pitch in x, 40 - 2000 Hz, or None when there is none clear: the first
+    peak of its autocorrelation that is nearly as high as the highest (so an octave below is not taken)."""
+    s = np.asarray(x[:8192], np.float64)
+    s = s - s.mean()
+    e = float(np.dot(s, s))
+    if e < 1e-9:
+        return None
+    n = 1 << (2 * len(s) - 1).bit_length()
+    f = np.fft.rfft(s, n)
+    acf = np.fft.irfft(f * np.conj(f), n)[:len(s)] / e
+    lo, hi = int(RATE / MAX_HZ), min(int(RATE / MIN_HZ), len(acf) - 2)
+    seg = acf[lo:hi]
+    peaks = np.nonzero((seg[1:-1] >= seg[:-2]) & (seg[1:-1] > seg[2:]))[0] + 1
+    if not len(peaks):
+        return None
+    top = float(seg[peaks].max())
+    if top < 0.4:
+        return None
+    first = peaks[seg[peaks] >= 0.9 * top][0]
+    return float(lo + first)
+
+
+def scope_segment(x, spec):
+    """The part of the sound (centred in x) an oscilloscope draws: from a rising zero crossing, `cycles`
+    periods long (自動頻率) or time_ms milliseconds."""
+    mid = len(x) // 2
+    length = int(spec["time_ms"] / 1000.0 * RATE)
+    if spec["auto_freq"]:
+        t = period_of(x[mid - 4096:mid + 4096])
+        if t is not None:
+            length = int(round(t * spec["cycles"]))
+    length = max(16, min(length, len(x) // 2 - 1200))
+    search = x[mid - 1200:mid + 1200]
+    rising = np.nonzero((search[:-1] < 0) & (search[1:] >= 0))[0]
+    start = mid - 1200 + (int(rising[len(rising) // 2]) if len(rising) else 1200)       # (the one nearest the middle)
+    return x[start:start + length]
+
+
 def _scope(p, spec, w, h, u, t_us, window, memo):
     ch = spec["channel"]
     x = mono(window(t_us, SCOPE_N), ch)
-    half = len(x) // 2
-    rising = np.nonzero((x[:half] < 0) & (x[1:half + 1] >= 0))[0]            # (starts where the wave crosses upward)
-    seg = x[rising[0] if len(rising) else 0:][:half]
+    seg = scope_segment(x, spec)
     if len(seg) < 8:
-        seg = np.zeros(half)
+        seg = np.zeros(16)
     pts = max(16, min(len(seg), int(w / max(1.0, 2.0 * u)), 800))
     seg = np.interp(np.linspace(0, len(seg) - 1, pts), np.arange(len(seg)), seg)
     seg = smooth_across(seg, spec["smooth"] * 0.5)

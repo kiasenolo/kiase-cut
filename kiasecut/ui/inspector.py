@@ -1340,18 +1340,19 @@ class Inspector(QWidget):
         "attack": ("起音 秒", 0.0, 2.0, 0.01, 2), "decay": ("衰減 秒", 0.0, 3.0, 0.05, 2),
         "bar_w": ("條寬 px", 1.0, 400.0, 1.0, 1), "gap": ("間距 px", 0.0, 400.0, 1.0, 1),
         "radius": ("圓角 px", 0.0, 400.0, 1.0, 1),
-        "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1),
+        "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1), "cycles": ("顯示週期數", 0.5, 16.0, 0.5, 1),
+        "time_ms": ("時間長度 ms", 1.0, 300.0, 1.0, 0),
         "inner": ("內徑 px", 10.0, 3000.0, 10.0, 0), "f_lo": ("頻率下限 Hz", 20.0, 20000.0, 10.0, 0),
         "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2)}
     VIZ_FIELDS = {
         "bars": ("channel", "attack", "decay", "bar_w", "gap", "size", "radius", "mirror", "radial", "inner", "f_lo", "f_hi",
                  "log", "smooth", "color"),
         "wave": ("channel", "attack", "decay", "size", "mirror", "radial", "inner", "smooth", "color"),
-        "scope": ("channel", "size", "line_w", "radial", "inner", "smooth", "color"),
+        "scope": ("channel", "auto_freq", "cycles", "time_ms", "size", "line_w", "radial", "inner", "smooth", "color"),
         "vector": ("decay", "size", "line_w", "grid", "color")}
     VIZ_GRADIENT = ("bars", "wave")                     # (the kinds that can fill from one colour to another)
-    VIZ_TOGGLES = {"mirror": "鏡像（上下對稱）", "radial": "放射狀（繞成圓形）", "log": "對數頻率軸（每個八度一樣寬）",
-                   "grid": "顯示格線"}
+    VIZ_TOGGLES = {"auto_freq": "自動頻率（依聲音的音高決定顯示幾個週期，波形會停住）", "mirror": "鏡像（上下對稱）",
+                   "radial": "放射狀（繞成圓形）", "log": "對數頻率軸（每個八度一樣寬）", "grid": "顯示格線"}
 
     def _viz_edit(self, **fields):
         if self.clip_ids:
@@ -1500,7 +1501,8 @@ class Inspector(QWidget):
                 wid.blockSignals(False)
             elif not wid.hasFocus():
                 wid.show_value(v[f])
-        for fld, shown in (("inner", v["radial"]), ("color2", v["gradient"]), ("gradient", True)):   # (only what does something)
+        for fld, shown in (("inner", v["radial"]), ("color2", v["gradient"]), ("gradient", True),
+                           ("cycles", v["auto_freq"]), ("time_ms", not v["auto_freq"])):   # (only what does something)
             wid = w.get(("viz", fld))
             if wid is not None:
                 self._viz_form.setRowVisible(wid, bool(shown))

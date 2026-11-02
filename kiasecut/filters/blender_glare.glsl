@@ -200,7 +200,7 @@ int streak_skip() {
     int ns = clamp(streaks, 1, 16);
     float total = exp2(2.0 * float(N));
     float nmax = fd < 1.0 ? min(total, ceil(log(1e-3) / log(fd))) : total;
-    float per = float(max(min(64, 512 / ns), 4));
+    float per = float(max(min(1024, 2048 / ns), 4));
     int m = 0;
     while (m < N && nmax / exp2(2.0 * float(m)) > per) m++;
     return m;
@@ -282,20 +282,23 @@ vec3 simple_star(vec2 uv, vec2 R, float q) {
     return g;
 }
 
-vec3 sun_beams(vec2 uv, vec2 R) {
-    vec2 P = uv * R;
-    vec2 v = sun_position * R - P;
+vec3 sun_beams(vec2 uv, vec2 R, float q) {
+    // along the line to the sun, one step per glare pixel (q canvas px; never finer than this pass's own pixels):
+    // every step is read, so the picture stays free of grain however fine the highlights are
+    float k = pass_px.x / R.x;                                 // this pass's px per canvas px
+    vec2 P = uv * pass_px;
+    vec2 v = sun_position * pass_px - P;
     float dist = length(v);
     vec2 dir = v / max(dist, 1e-6);
-    float L = min(max(size, 0.0) * length(R), dist);
-    float jit = hash31(vec3(gl_FragCoord.xy, 3.0));
-    int steps = quality == 0 ? 32 : quality == 1 ? 24 : 16;
+    float L = min(max(size, 0.0) * length(pass_px), dist);
+    float step_px = max(1.0, q * k);
+    int steps = int(clamp(ceil(L / step_px), 1.0, 2304.0));
     vec3 acc = vec3(0.0);
     float wsum = 0.0;
     for (int i = 0; i < steps; i++) {
-        float t = (float(i) + jit) / float(steps);
+        float t = (float(i) + 0.5) / float(steps);
         float w = (1.0 - t) * (1.0 - t);
-        acc += w * H((P + dir * t * L) / R);
+        acc += w * H((P + dir * t * L) / pass_px);
         wsum += w;
     }
     return acc / max(wsum, 1e-6);
@@ -305,7 +308,7 @@ vec3 sun_beams(vec2 uv, vec2 R) {
 // streaks - leave some) is smoothed over a few pixels of this very picture: a small Gaussian
 float grain_sigma() {
     if (type == 3) return 2.0;
-    if (type == 1 || type == 5) return 1.6;
+    if (type == 1) return 1.6;
     if (type == 2 && streak_skip() > 0) return 1.1;
     return 0.0;
 }
@@ -324,7 +327,7 @@ vec4 effect(vec2 uv) {
         vec2 R = resolution;
         float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;
         g = type == 0 ? bloom(uv) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streak_lines(uv, R, q)
-          : type == 3 ? fog_glow(uv, R, q) : type == 4 ? simple_star(uv, R, q) : sun_beams(uv, R);
+          : type == 3 ? fog_glow(uv, R, q) : type == 4 ? simple_star(uv, R, q) : sun_beams(uv, R, q);
         vec3 hsv = rgb2hsv(max(g, vec3(0.0)));                 // saturation as Blender mixes it
         hsv.y = clamp(hsv.y * max(saturation, 0.0), 0.0, 1.0);
         // (Bloom adds one picture per step of its chain, so Blender divides by the chain's length)

@@ -53,19 +53,19 @@ QToolBar::separator { background: @FRAME; width: 1px; height: 1px; margin: 4px; 
 QSplitter::handle { background: #0e0e10; }
 QSplitter::handle:horizontal { width: 3px; }
 QSplitter::handle:vertical { height: 3px; }
-QDoubleSpinBox, QSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #141416; border: 1px solid #2c2c31; border-radius: 3px; padding: 2px 4px; selection-background-color: #4a4a52; selection-color: #ffffff; }
+QDoubleSpinBox, QSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #141416; border: 1px solid #2c2c31; border-radius: 3px; padding: 2px 5px; selection-background-color: #4a4a52; selection-color: #ffffff; }
 QDoubleSpinBox:focus, QSpinBox:focus, QPlainTextEdit:focus, QLineEdit:focus, QComboBox:focus { border-color: #6a6a72; }
 QDoubleSpinBox:disabled { color: #5c5c62; }
 QDoubleSpinBox { min-height: 31px; }
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; subcontrol-origin: border; }
-QSpinBox { background: transparent; border-color: @FRAME; border-radius: 5px; padding: 2px 6px; min-height: 25px; }
+QSpinBox { background: transparent; border-color: @FRAME; border-radius: 5px; padding: 2px 5px; min-height: 25px; }
 QSpinBox::up-button, QSpinBox::down-button { width: 16px; border: none; background: transparent; subcontrol-origin: border; }
 QSpinBox::up-button { subcontrol-position: top right; margin: 3px 3px 0 0; }
 QSpinBox::down-button { subcontrol-position: bottom right; margin: 0 3px 3px 0; }
 QSpinBox::up-arrow { image: url(@ARROW-up.svg); width: 14px; height: 14px; }
 QSpinBox::down-arrow { image: url(@ARROW-down.svg); width: 14px; height: 14px; }
 QComboBox { padding-right: 22px; }
-QComboBox:editable { padding-left: 4px; }
+QComboBox:editable { padding-left: 5px; }
 QComboBox::drop-down { width: 20px; border: none; border-left: 1px solid #171719; subcontrol-origin: padding; subcontrol-position: top right; }
 QComboBox::down-arrow { image: url(@ARROW-down.svg); width: 14px; height: 14px; }
 QComboBox QAbstractItemView { background: #26262a; border: none; outline: none; }

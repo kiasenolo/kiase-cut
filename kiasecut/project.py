@@ -590,6 +590,14 @@ def dumps(p, **kw):
     return json.dumps(detached(p), ensure_ascii=False, **kw)
 
 
+def legacy_text_padding(tx):
+    """A text saved with one background padding (bg_pad) gets it on each of the four sides (bg_pad_l / r / t / b)."""
+    if tx and "bg_pad" in tx and not any(f"bg_pad_{k}" in tx for k in "lrtb"):
+        import copy
+        for k in "lrtb":
+            tx[f"bg_pad_{k}"] = copy.deepcopy(tx["bg_pad"])
+
+
 def link(p):
     """Point every compound clip at its shared entry and p.tracks at the open timeline (after
     loading or restoring a snapshot)."""
@@ -609,6 +617,7 @@ def link(p):
     def visit(tracks):
         for t in tracks:
             for c in t["clips"]:
+                legacy_text_padding(c.get("text"))
                 if "compound_id" in c:
                     c["compound"] = comps[c["compound_id"]]
                 elif "timeline_id" in c:

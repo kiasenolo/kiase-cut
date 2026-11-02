@@ -65,7 +65,10 @@ PARAMS = {
              ("shadow_x", "陰影 X px", -500.0, 500.0, 0.5, 1, 1, 4.0),     # 陰影 / 背景 (textlayout.DECOR)
              ("shadow_y", "陰影 Y px", -500.0, 500.0, 0.5, 1, 1, 4.0),
              ("shadow_blur", "陰影模糊 px", 0.0, 200.0, 0.5, 1, 1, 6.0),
-             ("bg_pad", "背景內間隔 px", -500.0, 500.0, 0.5, 1, 1, 12.0),
+             ("bg_pad_t", "背景間隔 上", -500.0, 500.0, 0.5, 1, 1, 12.0),
+             ("bg_pad_b", "背景間隔 下", -500.0, 500.0, 0.5, 1, 1, 12.0),
+             ("bg_pad_l", "背景間隔 左", -500.0, 500.0, 0.5, 1, 1, 12.0),
+             ("bg_pad_r", "背景間隔 右", -500.0, 500.0, 0.5, 1, 1, 12.0),
              ("bg_radius", "背景圓角 px", 0.0, 500.0, 0.5, 1, 1, 0.0)),
     "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
@@ -122,7 +125,8 @@ BOX_NAMES = (("自動寬度", "auto", "文字框跟著文字長大，不換行")
              ("固定大小", "fixed", "固定寬高：文字在框裡換行，靠上／置中／靠下"))
 STROKE_ALIGN_NAMES = (("內邊框", "inside"), ("中邊框", "center"), ("外邊框", "outside"))
 BOX_KEYS = ("box_w", "box_h")
-DECOR_ROWS = {"shadow": ("shadow_x", "shadow_y", "shadow_blur"), "bg": ("bg_pad", "bg_radius")}
+DECOR_ROWS = {"shadow": ("shadow_x", "shadow_y", "shadow_blur"),
+              "bg": ("bg_pad_t", "bg_pad_b", "bg_pad_l", "bg_pad_r", "bg_radius")}
 DECOR_KEYS = DECOR_ROWS["shadow"] + DECOR_ROWS["bg"]
 EASING_NAMES = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
 BLEND_NAMES = (("正常", "normal"), ("正片疊底", "multiply"), ("濾色", "screen"), ("疊加", "overlay"),
@@ -546,8 +550,19 @@ class Inspector(QWidget):
                 lay.addWidget(col, 1)
                 lay.addWidget(self._key_button("text", part + "_color"))
                 form.addRow(label, row)
+                if part == "bg":                         # 內間隔: all four sides at once, then each (上 | 下, 左 | 右)
+                    every = SpinBox()
+                    every.set_limits(-500.0, 500.0)
+                    every.setDecimals(1)
+                    every.setKeyboardTracking(False)
+                    every.setToolTip("四邊一起設定（px，1080 高的畫面、縮放 1；負的往文字裡縮）；下面可以分開設定")
+                    every.edited.connect(lambda v: [self._queue("text", f"bg_pad_{k}", v) for k in textlayout.PADS])
+                    self.widgets["bg_pad_all"] = every
+                    form.addRow("背景內間隔 px", every)
+                    pads = [r for r in PARAMS["text"] if r[0].startswith("bg_pad_")]
+                    self._rows(form, "text", pads, (("bg_pad_t", "bg_pad_b", "　上 | 下"), ("bg_pad_l", "bg_pad_r", "　左 | 右")))
                 for r in PARAMS["text"]:
-                    if r[0] in DECOR_ROWS[part]:
+                    if r[0] in DECOR_ROWS[part] and not r[0].startswith("bg_pad_"):
                         form.addRow(r[1], self._param_row("text", *r))
             for r in PARAMS["text"]:
                 if r[0] not in BOX_KEYS and r[0] not in DECOR_KEYS and r[0] != "stroke":
@@ -1883,6 +1898,10 @@ class Inspector(QWidget):
             else:
                 self._set(("tvar:" + v["name"], "value"), val)
             self._key_state(w[("key", "tvar:" + v["name"], "value")], [v.get("value")], clips[:1], ts[:1])
+        if "bg_pad_all" in w:                                    # the four paddings, when they are alike
+            vals = {round(curves.value(k["text"].get(f"bg_pad_{s}", textlayout.DECOR["bg_pad"]), t), 1)
+                    for k, t in zip(clips, ts) for s in textlayout.PADS}
+            self._set("bg_pad_all", vals.pop() if len(vals) == 1 else None)
         if "radius_all" in w:                                    # the four corners, when they are alike
             vals = {round(curves.value(k["transform"].get(r, 0.0), t), 1)
                     for k, t in zip(clips, ts) for r in project.CORNERS}

@@ -15,8 +15,8 @@ Calibrated frame by frame against a Jianying export:
     the clip position
   * a shadow (shadow_on: the drawn text and its outline in shadow_color, moved shadow_x /
     shadow_y and blurred by shadow_blur) and a background (bg_on: a rectangle in bg_color
-    round the text's frame, bg_pad further out - less than 0: inside it - with corners of
-    bg_radius); lengths in px of a 1080-high canvas at scale 1, colours [r, g, b, a] (DECOR)
+    round the text's frame, bg_pad_l / _r / _t / _b (left, right, top, bottom) further out -
+    less than 0: inside it - with corners of bg_radius; a file with only bg_pad has it on every side); lengths in px of a 1080-high canvas at scale 1, colours [r, g, b, a] (DECOR)
 """
 import math
 import os
@@ -28,7 +28,9 @@ from . import curves, fonts
 
 PX_PER_FONT_UNIT = 11.13
 DECOR = {"shadow_on": False, "shadow_color": [0.0, 0.0, 0.0, 0.6], "shadow_x": 4.0, "shadow_y": 4.0,
-         "shadow_blur": 6.0, "bg_on": False, "bg_color": [0.0, 0.0, 0.0, 0.6], "bg_pad": 12.0, "bg_radius": 0.0}
+         "shadow_blur": 6.0, "bg_on": False, "bg_color": [0.0, 0.0, 0.0, 0.6], "bg_pad": 12.0, "bg_radius": 0.0,
+         "bg_pad_l": 12.0, "bg_pad_r": 12.0, "bg_pad_t": 12.0, "bg_pad_b": 12.0}
+PADS = ("l", "r", "t", "b")                      # the background's padding, side by side (bg_pad: every side, older files)
 FALLBACK_FONTS = [
     r"C:\Windows\Fonts\GenSekiGothic2-M.ttc", r"C:\Windows\Fonts\msjh.ttc",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
@@ -216,9 +218,9 @@ def render(spec, scale, canvas_h=1080):
     if shadow:                                          # room for the shadow's offset and blur
         sx, sy, blur = d["shadow_x"] * px, d["shadow_y"] * px, max(0.0, d["shadow_blur"]) * px
         pad += int(math.ceil(max(abs(sx), abs(sy)) + 2 * blur))
-    bg_pad = d["bg_pad"] * px
+    pads = {k: (spec[f"bg_pad_{k}"] if f"bg_pad_{k}" in spec else d["bg_pad"]) * px for k in PADS}
     if d["bg_on"]:
-        pad = max(pad, int(math.ceil(bg_pad)) + 2)
+        pad = max(pad, int(math.ceil(max(pads.values()))) + 2)
     W = int(math.ceil(2 * lay["half_w"])) + 2 * pad
     H = int(math.ceil(2 * lay["half_h"])) + 2 * pad
     W += W % 2
@@ -258,11 +260,11 @@ def render(spec, scale, canvas_h=1080):
         return im
     out = Image.new("RGBA", im.size, (0, 0, 0, 0))
     if d["bg_on"]:                                      # round the frame (not slanted), bg_pad out
-        hw, hh = lay["fw"] / 2 + bg_pad, lay["fh"] / 2 + bg_pad
-        if hw > 0 and hh > 0:
-            r = max(0.0, min(d["bg_radius"] * px, hw, hh))
-            ImageDraw.Draw(out).rounded_rectangle((W / 2 - hw, H / 2 - hh, W / 2 + hw, H / 2 + hh),
-                                                  radius=r, fill=_rgba(d["bg_color"]))
+        x0, x1 = W / 2 - lay["fw"] / 2 - pads["l"], W / 2 + lay["fw"] / 2 + pads["r"]
+        y0, y1 = H / 2 - lay["fh"] / 2 - pads["t"], H / 2 + lay["fh"] / 2 + pads["b"]
+        if x1 > x0 and y1 > y0:
+            r = max(0.0, min(d["bg_radius"] * px, (x1 - x0) / 2, (y1 - y0) / 2))
+            ImageDraw.Draw(out).rounded_rectangle((x0, y0, x1, y1), radius=r, fill=_rgba(d["bg_color"]))
     if shadow:                                          # the drawn text's shape, moved and blurred
         col = _rgba(d["shadow_color"])
         a = im.getchannel("A")

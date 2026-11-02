@@ -193,7 +193,7 @@ class UserLibrary:
 # -- text styles ------------------------------------------------------------------------------------
 STYLE_FIELDS = ("font_path", "size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
                 "letter_spacing", "line_spacing", "italic_deg", "align", "shadow_on", "shadow_color", "shadow_x",
-                "shadow_y", "shadow_blur", "bg_on", "bg_color", "bg_pad", "bg_radius")
+                "shadow_y", "shadow_blur", "bg_on", "bg_color", "bg_pad", "bg_pad_l", "bg_pad_r", "bg_pad_t", "bg_pad_b", "bg_radius")
 
 
 def style_from_clip(clip):
@@ -218,6 +218,7 @@ def load_style(path):
         d = json.load(fh)
     if d.get("format") not in ("kiasecut-textstyle", "tesetoa-textstyle") or not isinstance(d.get("text"), dict):
         raise ValueError("不是文字樣式檔")
+    project.legacy_text_padding(d["text"])
     return d
 
 

@@ -74,7 +74,11 @@ NUMBERS = {
     "text.shadow_x": ("陰影 X px", 4.0, 1, None, None),
     "text.shadow_y": ("陰影 Y px", 4.0, 1, None, None),
     "text.shadow_blur": ("陰影模糊 px", 6.0, 1, 0.0, None),
-    "text.bg_pad": ("背景內間隔 px", 12.0, 1, None, None),
+    "text.bg_pad": ("背景內間隔 px（四邊）", 12.0, 1, None, None),
+    "text.bg_pad_l": ("背景內間隔 左 px", 12.0, 1, None, None),
+    "text.bg_pad_r": ("背景內間隔 右 px", 12.0, 1, None, None),
+    "text.bg_pad_t": ("背景內間隔 上 px", 12.0, 1, None, None),
+    "text.bg_pad_b": ("背景內間隔 下 px", 12.0, 1, None, None),
     "text.bg_radius": ("背景圓角 px", 0.0, 1, 0.0, None),
     "mask.cx": ("遮罩 中心 X", 0.0, 1, None, None),
     "mask.cy": ("遮罩 中心 Y", 0.0, 1, None, None),
@@ -363,6 +367,8 @@ def _put(c, prop, v):
         new = dict(base, **{key: v})
         if group == "text" and key == "size":
             new.pop("styles", None)                     # (a size for the whole text replaces per-range ones)
+        if group == "text" and key == "bg_pad":
+            new.update({f"bg_pad_{k}": v for k in "lrtb"})      # (every side)
         return dict(c, **{group: new})
     return c
 

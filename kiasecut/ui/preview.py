@@ -842,8 +842,7 @@ class Preview(QWidget):
         r = self._rect()
         p.fillRect(r, QColor("black"))
         if self.img is not None:
-            p.setRenderHint(QPainter.SmoothPixmapTransform)
-            p.drawImage(r, self.img)
+            p.drawImage(r, self.img)                   # (no smoothing: zoomed in, the pixels stay square)
         if not self.interactive:
             return
         if self.zoom != 1.0 or self.pan != QPointF(0, 0):

@@ -949,7 +949,7 @@ class EffectsPanel(QWidget):
                 box.blockSignals(False)
         elif p.type == "curve":
             field = w.get((group, p.name))
-            if field is not None and v is not MIXED and field.drag is None:
+            if field is not None and v is not MIXED and field.drag is None and (group, p.name) not in self.pending:
                 field.set_value(v)
         elif p.type == "color":
             btn = w.get((group, p.name))

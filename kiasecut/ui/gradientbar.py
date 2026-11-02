@@ -48,8 +48,8 @@ class GradientBar(QWidget):
         self.setMouseTracking(True)
 
     def set_stops(self, stops):
-        if self.dragging:
-            return
+        if self.dragging or self.stops == [[x, list(c)] for x, c in stops]:
+            return                                              # (nothing new: keep the selection and the drag)
         self.stops = copy.deepcopy(stops)
         self.sel = min(self.sel, len(self.stops) - 1)
         self.update()

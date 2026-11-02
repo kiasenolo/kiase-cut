@@ -58,7 +58,10 @@ class CurveField(QWidget):
 
     # -- value <-> the canvas (x in microseconds there, 1 s = the whole 0 - 1) -------------------------
     def set_value(self, v):
-        self.keys = fx.curve_keys(v)
+        keys = fx.curve_keys(v)
+        if self.canvas.drag is not None or keys == self.keys:
+            return                                              # (nothing new: keep the selection and the drag)
+        self.keys = keys
         self._show()
 
     def _show(self):

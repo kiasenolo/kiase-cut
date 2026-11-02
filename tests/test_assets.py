@@ -500,6 +500,18 @@ class PaintTests(unittest.TestCase):
         edit.set_param(p, "c1", "fx:" + e["id"], "ease", keys)
         self.assertEqual(edit.find(p, "c1")[1]["effects"][0]["params"]["ease"], keys)
 
+    def test_the_editor_is_not_pulled_back_while_it_is_used(self):
+        from kiasecut.ui.gradientbar import GradientEditor
+        ed = GradientEditor()
+        ed.set_stops([[0, [1, 0, 0, 1]], [1, [0, 0, 1, 1]]])
+        ed.bar.sel = 1
+        ed.set_stops([[0, [1, 0, 0, 1]], [1, [0, 0, 1, 1]]])          # (the same: nothing is reset)
+        self.assertEqual(ed.bar.sel, 1)
+        ed.bar.dragging = True
+        ed.bar.stops[1][0] = 0.6
+        ed.set_stops([[0, [1, 0, 0, 1]], [1, [0, 0, 1, 1]]])          # (a refresh with the old value, mid-drag)
+        self.assertEqual(ed.bar.stops[1][0], 0.6)
+
     def test_old_parameters_still_load(self):
         p = changed(assets.make(assets.get("shape.star"), "#fff", "#000", 1920, 1080))
         self.assertEqual(p["fill_type"], "solid")

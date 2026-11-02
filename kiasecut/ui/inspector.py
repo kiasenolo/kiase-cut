@@ -1587,7 +1587,7 @@ class Inspector(QWidget):
                 opts = [x for _n, x in assets.FIELD_INFO[f][2]]
                 self._set_combo(wid, opts.index(v) if v in opts else "--")
             elif kind == "stops":
-                if v is not None and not wid.drag:
+                if v is not None and not wid.drag and (("asset", f) not in self.pending):
                     pre = f[:-6] if f != "stops" else ""
                     wid.set_stops([[x, assets.to_rgba(c)] for x, c in assets.stops_of(
                         assets.at(clips[0]["asset"], ts[0]), pre.rstrip("_"))])

@@ -93,7 +93,7 @@ class VizTests(unittest.TestCase):
     def test_every_kind_and_option_draws(self):
         for kind in viz.KINDS:
             for extra in ({}, {"mirror": True}, {"radial": True}, {"radial": True, "mirror": True},
-                          {"gradient": True, "log": False}):
+                          {"gradient": True, "log": 0.0}):
                 c = self.clip(self.both)
                 c["viz"] = viz.make(kind, {"type": "file", "path": self.both}, W, H)
                 c["viz"].update(w=W, h=H)

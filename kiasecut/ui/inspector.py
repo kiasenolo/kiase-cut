@@ -1306,7 +1306,8 @@ class Inspector(QWidget):
         "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1), "cycles": ("顯示週期數", 0.5, 16.0, 0.5, 1),
         "time_ms": ("時間長度 ms", 1.0, 300.0, 1.0, 0),
         "inner": ("內徑 px", 10.0, 3000.0, 10.0, 0), "f_lo": ("頻率下限 Hz", 20.0, 20000.0, 10.0, 0),
-        "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2)}
+        "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2),
+        "log": ("對數↔線性頻率軸", 0.0, 1.0, 0.05, 2)}
     VIZ_FIELDS = {
         "bars": ("channel", "attack", "decay", "bar_w", "gap", "size", "radius", "mirror", "radial", "inner", "f_lo", "f_hi",
                  "log", "smooth", "color"),
@@ -1315,7 +1316,7 @@ class Inspector(QWidget):
         "vector": ("decay", "size", "line_w", "grid", "auto_scale", "color")}
     VIZ_GRADIENT = ("bars", "wave")                     # (the kinds that can fill from one colour to another)
     VIZ_TOGGLES = {"auto_freq": "自動頻率", "mirror": "鏡像", "radial": "放射狀",
-                   "log": "對數頻率軸", "grid": "顯示格線", "auto_scale": "自動縮放"}
+                   "grid": "顯示格線", "auto_scale": "自動縮放"}
 
     def _viz_edit(self, **fields):
         if self.clip_ids:

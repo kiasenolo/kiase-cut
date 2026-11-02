@@ -15,7 +15,8 @@ viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w,
   channel  M (middle) | L | R | S (side) - what bars, wave and scope look at (vector sees both)
   attack / decay  seconds the picture takes to rise / fall (one-pole, as an envelope follower)
   bar_w / gap / radius / line_w / inner   pixels of the object's own size (they scale with it)
-  f_lo..f_hi, log  the frequencies the bars cover and whether they sit evenly in octaves (log) or Hz
+  f_lo..f_hi, log  the frequencies the bars cover; log 0 - 1 mixes how they sit: 1 evenly in octaves (many
+           bars for the bass), 0 evenly in Hz (a plain FFT, most bars for the treble)
   smooth   0 - 1, how much neighbouring bars / points are blended
   auto_freq (oscilloscope) the picture shows `cycles` periods of the pitch it finds in the sound (the
            wave stands still while the note holds); without a clear pitch, or with it off, a window of
@@ -58,12 +59,12 @@ DEFAULTS = {
     "kind": "bars", "w": 1920.0, "h": 420.0, "channel": "M", "attack": 0.02, "decay": 0.3,
     "color": [1.0, 1.0, 1.0, 1.0], "color2": [1.0, 0.35, 0.8, 1.0], "gradient": False,
     "bar_w": 12.0, "gap": 6.0, "radius": 0.0, "mirror": False, "radial": False, "inner": 120.0,
-    "f_lo": 30.0, "f_hi": 16000.0, "log": True, "smooth": 0.4, "line_w": 4.0, "grid": True,
+    "f_lo": 30.0, "f_hi": 16000.0, "log": 1.0, "smooth": 0.4, "line_w": 4.0, "grid": True,
     "auto_scale": True, "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
 }
 LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
           "w": (1.0, 16384.0), "h": (1.0, 16384.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
-          "smooth": (0.0, 1.0), "line_w": (0.5, 100.0), "cycles": (0.5, 16.0), "time_ms": (1.0, 300.0)}
+          "smooth": (0.0, 1.0), "log": (0.0, 1.0), "line_w": (0.5, 100.0), "cycles": (0.5, 16.0), "time_ms": (1.0, 300.0)}
 
 
 def make(kind, source, canvas_w=1920, canvas_h=1080):
@@ -208,7 +209,8 @@ def spectrum(x):
 def band_levels(mag, n, f_lo, f_hi, log):
     """0 - 1 for each of n bars: the loudest frequency inside it, in dB between FLOOR_DB and TOP_DB."""
     hz = RATE / NFFT
-    edges = np.geomspace(f_lo, f_hi, n + 1) if log else np.linspace(f_lo, f_hi, n + 1)
+    log = float(log)
+    edges = log * np.geomspace(f_lo, f_hi, n + 1) + (1.0 - log) * np.linspace(f_lo, f_hi, n + 1)
     lo, hi = edges[:-1] / hz, edges[1:] / hz
     top = len(mag) - 1
     out = np.empty(n)
@@ -218,7 +220,7 @@ def band_levels(mag, n, f_lo, f_hi, log):
             out[i] = np.interp((lo[i] + hi[i]) / 2, np.arange(top + 1), mag)
         else:
             out[i] = mag[max(a, 0):min(b, top) + 1].max()
-    centre = np.sqrt(edges[:-1] * edges[1:]) if log else (edges[:-1] + edges[1:]) / 2
+    centre = (edges[:-1] + edges[1:]) / 2 if log < 1.0 else np.sqrt(edges[:-1] * edges[1:])
     db = 20 * np.log10(np.maximum(out, 1e-7)) + TILT_DB * np.log2(np.maximum(centre, 1.0) / 1000.0)
     return np.clip((db - FLOOR_DB) / (TOP_DB - FLOOR_DB), 0.0, 1.0)
 

@@ -259,6 +259,15 @@ def param_spec(it, name, t, val, items=None):
     return spec
 
 
+def panel_of(it):
+    """(name, closed at first) of the interface panel a group input sits in (its innermost one), or
+    None at the top level: the KiaseCut filter's `// @panel`, as Blender folds them."""
+    parent = getattr(it, "parent", None)
+    if parent is None or getattr(parent, "item_type", "") != "PANEL" or not getattr(parent, "name", ""):
+        return None
+    return parent.name, bool(getattr(parent, "default_closed", False))
+
+
 class Ctx:
     """One instance of a node tree (root, or an inlined node group)."""
     def __init__(self, cid, tree, parent=None, pnode=None):
@@ -610,6 +619,7 @@ class Converter:
             spec = param_spec(it, name, t, val, items)
             if spec is not None:
                 spec["const_line"] = line
+                spec["panel"] = panel_of(it)
                 self.params.append(spec)
 
     def find_output(self):
@@ -2527,7 +2537,11 @@ def to_kiasecut(code, conv, name):
     lib = lib.replace("vec2 res() { return vec2(textureSize(tex, 0)); }", "vec2 res() { return resolution; }")
     lib, n = re.subn(r"vec4 input_tex\(vec2 uv\) \{.*?\n\}\n", lambda m_: KC_INPUT_TEX, lib, count=1, flags=re.S)
     head, macros = [], []
-    for p in conv.params:
+    panel = None
+    for p in sorted(conv.params, key=lambda q: q.get("panel") is not None):   # (KiaseCut: top-level ones first)
+        if p.get("panel") != panel:                              # Blender's panels: `// @panel name [closed]`
+            panel = p.get("panel")
+            head.append("// @panel %s%s" % ('"%s"' % panel[0], " closed" if panel[1] else "") if panel else "// @panel -")
         h, mc = kc_param(p)
         head.append(h)
         if mc:

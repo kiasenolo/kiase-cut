@@ -5,13 +5,16 @@
 // @precision float
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
 // @param quality menu 中 "高|中|低" "品質"
+// @panel 亮部
 // @param threshold float 0.7 0 1 "亮度門檻"
 // @param smoothness float 0.1 0 1 "門檻柔邊"
 // @param clamp_on bool false "限制亮度"
 // @param maximum float 1 0 1 "最大亮度"
+// @panel 調整
 // @param strength float 1 0 4 "強度"
 // @param saturation float 1 0 1 "飽和度"
 // @param tint color #ffffff "光的顏色"
+// @panel 光芒
 // @param size float 0.5 0 1 "大小"
 // @param streaks int 4 1 16 "光芒數"
 // @param streak_angle float 0 -180 180 "光芒角度"
@@ -20,6 +23,15 @@
 // @param color_modulation float 0.25 0 1 "色彩調變"
 // @param diagonal bool true "斜向星芒"
 // @param sun_position vec2 0.5,0.5 0 1 "光源位置"
+// @enable maximum clamp_on
+// @enable size type == Bloom|Fog Glow|Sun Beams
+// @enable streaks type == Streaks
+// @enable streak_angle type == Streaks
+// @enable iterations type == Streaks
+// @enable fade type == Streaks
+// @enable color_modulation type == Ghosts|Streaks
+// @enable diagonal type == Simple Star
+// @enable sun_position type == Sun Beams
 
 // Source: Blender's Glare compositor node, rewritten by hand for KiaseCut (exported first with
 // tools/converters/compositor_to_hyprshade.py).

@@ -29,6 +29,8 @@ vec4 effect(vec2 uv) {
 | `// @passes N` | 要繪製幾次（預設 1，最多 8）。第 2 次起 `src()` 讀到的是上一次的結果，可以用來做分離式模糊；要讀原本的畫面用 `original()` |
 | `// @precision float` | 搭配 `@passes`：最後一次之前的每一次繪製都用 16 位元浮點數存（不寫或寫 `8bit` 就是 8 位元），暗部不會被量化、亮度也能超過 1 |
 | `// @param 名稱 型別 預設值 [最小 最大] ["顯示名稱"]` | 宣告一個參數，見下面（`menu` 是 `// @param 名稱 menu 預設選項 "選項1\|選項2\|…" ["顯示名稱"]`） |
+| `// @panel 名稱 [closed]` | 之後的參數放進一個可以摺疊的面板（像 Blender 節點的面板）；`closed` 是一開始收起來；`// @panel -` 回到最上層 |
+| `// @enable 參數 條件` | 條件不成立時，這個參數在面板上變灰（用不上），見下面「用不上的參數」 |
 
 ### 參數
 
@@ -60,6 +62,28 @@ vec4 effect(vec2 uv) {
 - `float` 參數在「效果」面板有「使用遮罩」按鈕：選一張圖片、影片或複合片段（一樣擺在片段上），
   濾鏡讀到的就是 **數字 × 那個位置的明度**（白色是數字本身、黑色是 0），來源沒蓋到或透明的地方是數字本身。
   一樣是 `#define`，照常用名字讀就好；因為每個像素可能不同，不要把它用在 `#if` 或陣列大小這種要固定的地方。
+
+### 面板和用不上的參數
+
+```glsl
+// @param type menu Bloom "Bloom|Streaks|Fog Glow" "類型"
+// @panel 亮部
+// @param threshold float 0.7 0 1 "亮度門檻"
+// @param clamp_on bool false "限制亮度"
+// @param maximum float 1 0 1 "最大亮度"
+// @panel 光芒
+// @param size float 0.5 0 1 "大小"
+// @param streaks int 4 1 16 "光芒數"
+// @enable maximum clamp_on
+// @enable size type == Bloom|Fog Glow
+// @enable streaks type != Bloom
+```
+
+- 沒有在任何 `@panel` 裡的參數排在最上面，面板照寫的順序排在後面；面板在「效果」面板上可以摺疊。
+- `@enable` 的條件：`布林參數`（打勾時才用得上）、`!布林參數`、`參數 == 值1|值2`、`參數 != 值`。
+  menu 的值寫選項的名字（也可以寫編號），數字參數寫數字。同一個參數可以有好幾行 `@enable`，全部成立才用得上。
+  `@enable` 可以寫在檔案標頭的任何位置。
+- 用不上的參數只是變灰，值照樣傳給 shader，也照樣可以打關鍵幀。
 
 ## 程式提供的東西
 
@@ -104,6 +128,7 @@ vec4 effect(vec2 uv) {
   沒接線的群組節點的 `Image`／`Input` 插槽，或叫「Input」的 Image 節點。所以 Blender 裡不需要一直載著一張圖片。
 - 群組的輸入（Image／Input 以外）會變成參數，面板上可以調、可以打關鍵幀：Float → `float`、Integer → `int`、Boolean → `bool`、
   Color → `color`、Vector → `vec3`（2D 向量 → `vec2`）、Menu → `menu`。群組輸入的最小／最大值就是欄位範圍。
+- 群組介面裡的**面板**（Panel）會變成 `// @panel`，一樣可以摺疊；面板預設收起來的，匯出後也是收起來。
 - Menu 輸入會變成下拉選單，匯出後還能切換、打關鍵幀（可以隔著轉接點、穿進內層群組的 Menu 輸入）：
   接到 Menu Switch 時選項就是 Menu Switch 的項目；接到節點自己的選單（例如 Glare 的 Type、Quality，Blur 的類型）時，
   選項就是那個選單的選項，匯出檔裡每個選項各有一份程式，由參數挑一份來跑。

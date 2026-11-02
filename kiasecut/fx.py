@@ -43,14 +43,18 @@ class Param:
         self.name, self.type, self.default = name, type_, default
         self.lo, self.hi, self.label = lo, hi, label or name
         self.items = list(items)                 # a menu's choices, in order (the shader gets the index)
+        self.panel = None                        # the @panel it is in (None: the effect's own rows)
+        self.enable = []                         # @enable conditions: (other param, negate, values or None)
 
     def __repr__(self):
         return f"Param({self.name}, {self.type}, {self.default})"
 
 
 class FilterDef:
-    def __init__(self, ref, name, code, params=(), category="", description="", passes=1, error=None, precise=False):
+    def __init__(self, ref, name, code, params=(), category="", description="", passes=1, error=None, precise=False,
+                 panels=()):
         self.ref, self.name, self.code = ref, name, code
+        self.panels = list(panels)               # [(name, closed at first)], in order (@panel)
         self.precise = precise                   # the passes before the last one keep 16-bit floats, not 8 bits
         self.params, self.category, self.description = list(params), category, description
         self.passes, self.error = passes, error
@@ -131,11 +135,67 @@ def _menu_param(name, default, extra):
     return Param(name, "menu", default, 0, len(items) - 1, extra[1] if len(extra) > 1 else None, items)
 
 
+ENABLE = re.compile(r"^(\w+)\s+(?:(!?)(\w+)|(\w+)\s*(==|!=)\s*(.+))$")
+
+
+def _enable(rest, params):
+    """`// @enable target cond`: cond is `flag`, `!flag` (a bool parameter) or `other == A|B`,
+    `other != A` (a menu's choices, or numbers)."""
+    m = ENABLE.match(rest.strip())
+    if not m:
+        raise ValueError("@enable 要寫成：參數 條件（例如 size type == Bloom|Fog Glow，或 maximum clamp_on）")
+    target, neg, flag, other, op, vals = m.groups()
+    by = {p.name: p for p in params}
+    if target not in by:
+        raise ValueError(f"@enable：沒有叫「{target}」的參數")
+    name = flag or other
+    if name not in by:
+        raise ValueError(f"@enable：沒有叫「{name}」的參數")
+    if flag:
+        by[target].enable.append((name, bool(neg), None))
+    else:
+        by[target].enable.append((name, op == "!=", [v.strip() for v in vals.split("|")]))
+
+
+def enabled(p, values):
+    """Whether parameter p does anything with the effect's other values {name: value} (its
+    @enable conditions; a menu's value is its choice's name, or its number)."""
+    for other, negate, want in p.enable:
+        v = values.get(other)
+        if want is None:
+            ok = bool(v)
+        else:
+            ok = str(v) in want or (isinstance(v, (int, float)) and not isinstance(v, bool)
+                                    and any(_num(w) == v for w in want))
+        if ok == negate:
+            return False
+    return True
+
+
+def named(d, values):
+    """values {name: value} of filter d with each menu's value as its choice's name (a number
+    stored for one becomes the name), as enabled() compares them."""
+    out = dict(values)
+    for p in d.params:
+        v = out.get(p.name)
+        if p.type == "menu" and isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= int(v) < len(p.items):
+            out[p.name] = p.items[int(v)]
+    return out
+
+
+def _num(text):
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
 def parse(text, ref, fallback_name="濾鏡"):
     """FilterDef of a filter file's text. A file with mistakes still gives a FilterDef, with
     `error` set (the panel shows it) so that one bad file never breaks the program."""
     head = {}
     params, error = [], None
+    panels, panel, enables = [], None, []
     for line in text.splitlines():
         m = HEADER.match(line)
         if not m:
@@ -146,7 +206,15 @@ def parse(text, ref, fallback_name="濾鏡"):
                 p = _param(rest)
                 if any(q.name == p.name for q in params):
                     raise ValueError(f"參數「{p.name}」重複了")
+                p.panel = panel
                 params.append(p)
+            elif key == "panel":                          # the params after it go in a folding panel
+                words = shlex.split(rest) if rest.strip() else []
+                panel = words[0] if words and words[0] != "-" else None
+                if panel and all(n != panel for n, _ in panels):
+                    panels.append((panel, "closed" in words[1:]))
+            elif key == "enable":                         # (read once every @param is known)
+                enables.append((line, rest))
             elif key in ("filter", "category", "description"):
                 head[key] = rest
             elif key == "passes":
@@ -157,10 +225,15 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head["precise"] = rest.lower() == "float"
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
+    for line, rest in enables:
+        try:
+            _enable(rest, params)
+        except ValueError as exc:
+            error = error or f"{line.strip()}\n{exc}"
     if "effect" not in text:
         error = error or "找不到 effect() 函式"
     return FilterDef(ref, head.get("filter") or fallback_name, text, params, head.get("category", ""),
-                     head.get("description", ""), head.get("passes", 1), error, head.get("precise", False))
+                     head.get("description", ""), head.get("passes", 1), error, head.get("precise", False), panels)
 
 
 _cache = {}

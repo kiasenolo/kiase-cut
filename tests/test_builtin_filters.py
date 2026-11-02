@@ -39,6 +39,21 @@ class BuiltinFilterTests(unittest.TestCase):
                     if p:
                         vals[p.name] = fx.uniform_value(p, None, 0)
 
+    def test_panels_and_enable(self):
+        d = fx.parse('// @param mode menu A "A|B|C"\n// @param on bool false\n// @panel 面板 closed\n'
+                     '// @param x float 1\n// @param y float 1\n// @enable x mode == B|C\n// @enable y !on\n'
+                     '// @panel -\n// @param z float 1\nvec4 effect(vec2 uv) { return src(uv); }', "t")
+        self.assertIsNone(d.error)
+        self.assertEqual(d.panels, [("面板", True)])
+        by = {p.name: p for p in d.params}
+        self.assertEqual((by["x"].panel, by["z"].panel), ("面板", None))
+        self.assertFalse(fx.enabled(by["x"], fx.named(d, {"mode": "A"})))
+        self.assertTrue(fx.enabled(by["x"], fx.named(d, {"mode": 2})))          # (a menu stored as its number)
+        self.assertFalse(fx.enabled(by["y"], {"on": True}))
+        self.assertTrue(fx.enabled(by["z"], {}))
+        bad = fx.parse("// @param x float 1\n// @enable x nothing == 1\nvec4 effect(vec2 uv) { return src(uv); }", "t")
+        self.assertIn("nothing", bad.error)
+
     def test_blender_ones_named(self):
         names = {fx.get(ref).name for ref in fx.builtin_refs()}
         for n in ("Glare", "Lens Distortion", "Vignette", "Sensor Noise"):

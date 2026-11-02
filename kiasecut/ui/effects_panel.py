@@ -153,6 +153,8 @@ class EffectsPanel(QWidget):
         self.timer = QTimer(self, singleShot=True, interval=DEBOUNCE_MS)
         self.timer.timeout.connect(self._flush)
         self.collapsed = set()                      # effect ids folded to their head row (this session)
+        self.panel_open = {}                        # (effect id, @panel name): open (this session)
+        self.param_rows = {}                        # (effect id, param name): its row (greyed when @enable says)
         lay = QVBoxLayout(self)
         self.header = QWidget()                     # 效果 and 新增效果: kept above the scrolling form (main_window)
         hl = QVBoxLayout(self.header)
@@ -228,6 +230,7 @@ class EffectsPanel(QWidget):
         old.deleteLater()
         self.widgets = {}
         self.boxes = []
+        self.param_rows = {}
         self.built = [e["id"] for e in (c.get("effects") or [])] if c else []
         self.alias = {}
         self.many_note = None
@@ -355,13 +358,24 @@ class EffectsPanel(QWidget):
             lay.addWidget(where)
         lay.addLayout(self._number_row("fxmix:" + e["id"], "mix", "混合程度 %", 0.0, 100.0, 1.0, 0, 100))
         group = "fx:" + e["id"]
-        for p in d.params:
-            lay.addLayout(self._param_row(group, p))
+        sections = {name: self._panel(e["id"], name, closed) for name, closed in d.panels}   # Blender's panels
+        for p in sorted(d.params, key=lambda q: q.panel is not None):    # (the effect's own rows first)
+            pl = sections[p.panel][1] if p.panel in sections else lay
+            row = QWidget()
+            rl = QVBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            rl.addLayout(self._param_row(group, p))
             kind = ((e.get("sources") or {}).get(p.name) or {}).get("kind")
             if p.type in fx.SOURCE_TYPES and kind:
-                lay.addLayout(self._source_row(e["id"], p.name, kind))
+                rl.addLayout(self._source_row(e["id"], p.name, kind))
                 if p.type == "float":
-                    lay.addLayout(self._range_row(e["id"], p))
+                    rl.addLayout(self._range_row(e["id"], p))
+            if p.enable:
+                row.setToolTip("這個選項現在用不上（看其他選項的設定）")
+                self.param_rows[(e["id"], p.name)] = row
+            pl.addWidget(row)
+        for sec, _rows in sections.values():                    # (after the effect's own rows, in order)
+            lay.addWidget(sec)
         # where the effect works
         row = QHBoxLayout()
         row.addWidget(QLabel("範圍"))
@@ -401,6 +415,33 @@ class EffectsPanel(QWidget):
                     continue
                 lay.addLayout(self._number_row(mgroup, r[0], r[1], r[2], r[3], r[4], r[5], r[6]))
         return box
+
+    def _panel(self, eid, name, closed):
+        """A folding section of an effect's form (@panel): (the section, the layout its rows go
+        in) - its title with an arrow; open or shut is remembered while the program runs."""
+        sec = QWidget()
+        sl = QVBoxLayout(sec)
+        sl.setContentsMargins(0, 2, 0, 0)
+        sl.setSpacing(2)
+        head = QToolButton()
+        head.setText(name)
+        head.setAutoRaise(True)
+        head.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        head.setStyleSheet("QToolButton { font-weight: bold; color: #c8c8cc; }")
+        body = QWidget()
+        bl = QVBoxLayout(body)
+        bl.setContentsMargins(14, 0, 0, 0)
+        sl.addWidget(head)
+        sl.addWidget(body)
+        key = (eid, name)
+
+        def show():
+            on = self.panel_open.get(key, not closed)
+            body.setVisible(on)
+            head.setArrowType(Qt.DownArrow if on else Qt.RightArrow)
+        head.clicked.connect(lambda: (self.panel_open.__setitem__(key, not self.panel_open.get(key, not closed)), show()))
+        show()
+        return sec, bl
 
     def _number_row(self, group, key, label, lo, hi, step, dec, factor):
         row = QHBoxLayout()
@@ -800,6 +841,11 @@ class EffectsPanel(QWidget):
             if ("key", xgroup, "mix") in w:
                 Inspector._key_state(w[("key", xgroup, "mix")], stored, pics, ts)
             group = "fx:" + e["id"]
+            now = fx.named(d, {p.name: curves.value(es[0]["params"].get(p.name, p.default), ts[0]) for p in d.params})
+            for p in d.params:                                      # options that do nothing now: greyed
+                row = self.param_rows.get((e["id"], p.name))
+                if row is not None:
+                    row.setEnabled(fx.enabled(p, now))
             for p in d.params:
                 stored = [x["params"].get(p.name, p.default) for x in es]
                 self._show(group, p, alike([curves.value(v, t) for v, t in zip(stored, ts)]))

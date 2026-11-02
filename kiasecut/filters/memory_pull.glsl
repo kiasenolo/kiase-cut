@@ -8,7 +8,7 @@
 // @param flips float 0.3 0 1 "位元翻轉"
 // @param chaos float 0.7 0 1 "癲狂程度"
 // @param null_look menu 花屏 "花屏|透明|黑色|白色" "壞掉的分頁"
-// @param rate float 12 0 60 "每秒變化"
+// @param rate float 60 0 240 "每秒變化（60：每格不同）"
 // @param seed float 0 0 100 "種子"
 // @enable chaos null_look == 花屏
 

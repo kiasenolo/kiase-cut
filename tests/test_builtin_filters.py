@@ -79,6 +79,8 @@ class BuiltinFilterTests(unittest.TestCase):
             out = eng.run(d, vals, rgba, time=1.0)
             self.assertTrue((out[..., 3] == want).all(), look)
         self.assertEqual(d.params[[p.name for p in d.params].index("null_look")].items[0], "花屏")
+        rate = by_name = next(q for q in d.params if q.name == "rate")
+        self.assertEqual((rate.default, rate.lo, rate.hi), (60.0, 0.0, 240.0))            # (a new picture every frame at 60 fps)
         vals["null_look"] = 0
         calm = eng.run(d, dict(vals, chaos=0.0), rgba, time=1.0).astype(int)
         mad = eng.run(d, dict(vals, chaos=1.0), rgba, time=1.0).astype(int)

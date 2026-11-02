@@ -199,9 +199,10 @@ class Picture:
 
 
 class Layer:
-    def __init__(self, gl, w, h):
-        self.w, self.h = w, h
-        self.tex = gl.ctx.texture((w, h), 4)
+    def __init__(self, gl, w, h, dtype="f1"):
+        self.w, self.h, self.dtype = w, h, dtype      # f2: 16-bit floats (what 動態模糊 adds up in)
+        self.key, self.bytes = (w, h, dtype), w * h * (8 if dtype == "f2" else 4)
+        self.tex = gl.ctx.texture((w, h), 4, dtype=dtype)
         self.tex.filter = (gl.mgl.LINEAR, gl.mgl.LINEAR)
         self.tex.repeat_x = self.tex.repeat_y = False
         self.fbo = gl.ctx.framebuffer(color_attachments=[self.tex])
@@ -285,28 +286,27 @@ class GL:
     def new_frame(self):
         self.moving_used.clear()
 
-    def layer(self, w, h, clear=(0.0, 0.0, 0.0, 0.0)):
-        pool = self.free.get((w, h))
+    def layer(self, w, h, clear=(0.0, 0.0, 0.0, 0.0), dtype="f1"):
+        pool = self.free.get((w, h, dtype))
         if pool:
             lay = pool.pop()
-            self.free_bytes -= w * h * 4
+            self.free_bytes -= lay.bytes
         else:
-            lay = Layer(self, w, h)
+            lay = Layer(self, w, h, dtype)
         lay.fbo.clear(*clear)
         return lay
 
     def release(self, lay):
-        key = (lay.w, lay.h)
-        pool = self.free.pop(key, [])              # (most recently used size last)
+        pool = self.free.pop(lay.key, [])          # (most recently used size last)
         pool.append(lay)
-        self.free[key] = pool
-        self.free_bytes += lay.w * lay.h * 4
+        self.free[lay.key] = pool
+        self.free_bytes += lay.bytes
         # a layer whose size follows an animated clip is a new size every frame: without a cap
         # the pool grew by one for each, and the export slowed down as the card's memory filled
         while self.free_bytes > FREE_LAYER_BYTES and self.free:
             old = next(iter(self.free))
             for gone in self.free.pop(old):
-                self.free_bytes -= gone.w * gone.h * 4
+                self.free_bytes -= gone.bytes
                 gone.release()
 
     def backdrop(self, tgt):
@@ -368,15 +368,16 @@ class GL:
             prog["crad"].value = tuple(float(r) for r in radii)
         self._common(prog, tgt, tex, straight, inv * rect_uv(rect), opacity, 1, mask, t, disp, inv, blend)
 
-    def draw_layer(self, tgt, lay, opacity=1.0, mask=None, t=0, disp=None, inv_world=None, blend=0):
-        """A whole layer (the size of tgt) onto tgt, with opacity, mask and blend."""
+    def draw_layer(self, tgt, lay, opacity=1.0, mask=None, t=0, disp=None, inv_world=None, blend=0, add=False):
+        """A whole layer (the size of tgt) onto tgt, with opacity, mask and blend; add: added to
+        what tgt has (its alpha too), as 動態模糊 sums its drawings."""
         pts = [QPointF(0, 0), QPointF(tgt.w, 0), QPointF(0, tgt.h), QPointF(tgt.w, tgt.h)]
         self._quad(tgt, pts)
         to_uv = QTransform.fromScale(1 / tgt.w, 1 / tgt.h)
         self.composite["cround"].value = 0
-        self._common(self.composite, tgt, lay.tex, False, to_uv, opacity, 0, mask, t, disp, inv_world, blend)
+        self._common(self.composite, tgt, lay.tex, False, to_uv, opacity, 0, mask, t, disp, inv_world, blend, add)
 
-    def _common(self, prog, tgt, tex, straight, dev_uv, opacity, edge, mask, t, disp, inv_world, blend):
+    def _common(self, prog, tgt, tex, straight, dev_uv, opacity, edge, mask, t, disp, inv_world, blend, add=False):
         prog["size"].value = (tgt.w, tgt.h)
         prog["dev_uv"].value = mat3(dev_uv)
         prog["straight"].value = 1 if straight else 0
@@ -393,7 +394,7 @@ class GL:
             self.ctx.disable(self.mgl.BLEND)
         else:
             self.ctx.enable(self.mgl.BLEND)
-            self.ctx.blend_func = (self.mgl.ONE, self.mgl.ONE_MINUS_SRC_ALPHA)
+            self.ctx.blend_func = (self.mgl.ONE, self.mgl.ONE if add else self.mgl.ONE_MINUS_SRC_ALPHA)
         tex.use(0)
         self.vao[id(prog)].render(self.mgl.TRIANGLE_STRIP)
         self.ctx.disable(self.mgl.BLEND)
@@ -544,6 +545,10 @@ class GLRenderer(render.Renderer):
             for c in tr["clips"]:
                 if render.on_frame(c, t_us, fps):
                     try:
+                        times = project.shutter_times(c, t_us, fps)
+                        if times:
+                            self.gl_blurred(tgt, base, c, times, W, H, fps, ppu)
+                            continue
                         c = propexpr.at(c, t_us - c["start_us"], self.names)
                         if c["type"] == "filter":
                             self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu, tracks[:i])
@@ -553,6 +558,24 @@ class GLRenderer(render.Renderer):
                         self.errors.append(f"{c.get('name') or c['type']}: {exc}")
                     except Exception as exc:          # one bad clip must not blank the frame
                         self.errors.append(f"{c.get('name') or c['type']}: {exc}")
+
+    def gl_blurred(self, tgt, base, c, times, W, H, fps, ppu):
+        """動態模糊 (as render.draw_blurred): clip c drawn as it is at each of times on a clear
+        layer, added up at 1 / n each in 16-bit floats, and that put on tgt in its blend mode."""
+        gl = self.gl
+        plain = dict(c, blend="normal")
+        acc = gl.layer(tgt.w, tgt.h, dtype="f2")
+        one = gl.layer(tgt.w, tgt.h)
+        try:
+            for u in times:
+                one.fbo.clear(0.0, 0.0, 0.0, 0.0)
+                self.gl_clip(one, base, propexpr.at(plain, u - c["start_us"], self.names), W, H, fps, u, ppu)
+                gl.draw_layer(acc, one, 1.0 / len(times), add=True)
+            t = project.stepped(c, times[len(times) // 2] - c["start_us"])
+            gl.draw_layer(tgt, acc, blend=BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0))
+        finally:
+            gl.release(one)
+            gl.release(acc)
 
     def gl_clip(self, tgt, base, c, W, H, fps, t_us, ppu):
         gl = self.gl
@@ -676,8 +699,6 @@ class GLRenderer(render.Renderer):
         else:
             return
         disp = disp if kind == "text" else (bw, bh)
-        times = project.blur_times(c, t, fps) if not backdrop else None
-        worlds = [render.clip_world(c, u, W, H) * base for u in times] if times else None   # 動態模糊
         radii = project.corner_radii(c, t, disp, H)
         corners = (disp, radii) if radii else None      # 圓角: cut where the picture is drawn, before its effects
         mask = self.clip_mask(c, t)
@@ -708,20 +729,12 @@ class GLRenderer(render.Renderer):
             elif effects:
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
-                    self.gl_body(lay, tex, straight, rect, world, worlds, corners)
+                    gl.draw(lay, tex, straight, rect, world, corners=corners)
                     out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp, ppu)
                     gl.matte = matte and matte[0].tex
                     gl.draw_layer(tgt, out, opacity, mask, t, disp, inv, blend)
                     if out is not lay:
                         gl.release(out)
-                finally:
-                    gl.release(lay)
-            elif worlds:                                 # 動態模糊: the samples averaged, then put on as one picture
-                lay = gl.layer(tgt.w, tgt.h)
-                try:
-                    self.gl_body(lay, tex, straight, rect, world, worlds, corners)
-                    gl.matte = matte and matte[0].tex
-                    gl.draw_layer(tgt, lay, opacity, mask, t, disp, inv, blend)
                 finally:
                     gl.release(lay)
             else:
@@ -735,15 +748,6 @@ class GLRenderer(render.Renderer):
                 gl.release(held)
         if self.matte_preview and self.matte_preview.get("clip") == c["id"]:
             self.gl_matte_ghost(tgt, c.get("mask"), t, disp, world, fps, self.matte_preview.get("opacity", 0.4))
-
-    def gl_body(self, dst, tex, straight, rect, world, worlds, corners):
-        """The clip's picture onto the (cleared) layer dst: once through world, or (動態模糊) once
-        through each of worlds, added at 1 / n each - their average."""
-        if not worlds:
-            self.gl.draw(dst, tex, straight, rect, world, corners=corners)
-            return
-        for w in worlds:
-            self.gl.draw(dst, tex, straight, rect, w, 1.0 / len(worlds), blend=BLEND_INDEX["add"], corners=corners)
 
     def gl_matte(self, mask, t, disp, world, fps):
         """(layer, give it back after) with a compound mask's picture (see render.matte_image),

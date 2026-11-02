@@ -468,7 +468,7 @@ def curve_source_offsets(c, ts):
 TIME_FILTER = "builtin:frame_rate"      # 降低幀數: a clip's time steps at its fps (no picture change)
 FREEZE_FILTER = "builtin:freeze"        # 凍結: a clip's time held where its effects begin (its start)
 TIME_FILTERS = (TIME_FILTER, FREEZE_FILTER)
-MOTION_BLUR_FILTER = "builtin:transform_motion_blur"   # 動態模糊: the clip drawn along its move (blur_times)
+MOTION_BLUR_FILTER = "builtin:transform_motion_blur"   # 動態模糊: the clip drawn over the shutter (shutter_times)
 PLACE_FILTERS = TIME_FILTERS + (MOTION_BLUR_FILTER,)   # effects the program does itself, not on the picture
 
 
@@ -739,26 +739,24 @@ def is_static(c):
     return c.get("type") == "compound" and bool((c.get("compound") or {}).get("static"))
 
 
-BLUR_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "pivot_x", "pivot_y", "anchor_x", "anchor_y")
-
-
-def blur_times(c, t, fps):
+def shutter_times(c, t_us, fps):
     """動態模糊 (the clip's first 動態模糊 effect that is on: params shutter in degrees, samples):
-    the clip times its picture is drawn at and averaged - spread over the shutter (180°: half a
-    frame) round t, as After Effects does - or None when it has none or nothing of its place
-    moves then."""
+    the times (us, on the clip's timeline) clip c is drawn at and averaged - the samples spread
+    over the shutter (180°: half a frame) round t_us, as After Effects does, kept inside the clip -
+    or None when it has none or works on what is under it (套用至背景, 效果穿透). The whole clip is
+    drawn each time, so everything that moves in it smears: its place, its keyframes and
+    expressions, a text's or a shape's animation, the clips in a compound, a video's frames."""
     mb = next((e.get("params") or {} for e in c.get("effects") or ()
                if e.get("filter") == MOTION_BLUR_FILTER and not e.get("disabled")), None)
-    tf = c.get("transform") or {}
-    if mb is None or c.get("type") == "filter" or not any(curves.is_animated(tf.get(k)) for k in BLUR_FIELDS):
+    if mb is None or c.get("type") in ("filter", "audio") or backdrop_of(c)[0] or passes_through(c):
         return None
-    n = max(2, min(64, int(round(curves.value(mb.get("samples", 8), t)))))
+    t = t_us - c["start_us"]
+    n = max(2, min(64, int(round(curves.value(mb.get("samples", 16), t)))))
     span = max(0.0, min(720.0, float(curves.value(mb.get("shutter", 180.0), t)))) / 360 * 1_000_000 / max(fps, 1e-6)
     if span <= 0:
         return None
-    times = [t + (i / (n - 1) - 0.5) * span for i in range(n)]
-    places = {tuple(round(curves.value(tf.get(k, 0.0), u), 6) for k in BLUR_FIELDS) for u in times}
-    return times if len(places) > 1 else None
+    lo, hi = c["start_us"], c["start_us"] + max(0, c["duration_us"] - 1)
+    return [min(hi, max(lo, t_us + ((i + 0.5) / n - 0.5) * span)) for i in range(n)]
 
 
 def compound_holders(c):

@@ -498,6 +498,10 @@ class Renderer:
             for c in tr["clips"]:
                 if on_frame(c, t_us, fps):
                     try:
+                        times = project.shutter_times(c, t_us, fps) if isinstance(p.device(), QImage) else None
+                        if times:
+                            self.draw_blurred(p, c, times, W, H, fps, px_per_unit)
+                            continue
                         c = propexpr.at(c, t_us - c["start_us"], self.names)
                         if c["type"] == "filter":
                             self.draw_filter_clip(p, c, W, H, fps, t_us, px_per_unit, tracks[:i])
@@ -505,6 +509,41 @@ class Renderer:
                             self.draw_clip(p, c, W, H, fps, t_us, px_per_unit)
                     except Exception as exc:          # one bad clip must not blank the preview
                         self.errors.append(f"{c.get('name') or c['type']}: {exc}")
+
+    def draw_blurred(self, p, c, times, W, H, fps, px_per_unit):
+        """動態模糊: clip c drawn as it is at each of times (project.shutter_times) on a clear layer
+        the size of p's, and their average put on p in the clip's blend mode; when the first and
+        the last drawing are the same nothing moves, and that one is the picture."""
+        dev = p.device()
+        plain = dict(c, blend="normal")
+        acc = pic = None
+        for i, u in enumerate([times[0], times[-1]] + times[1:-1]):
+            layer = QImage(dev.width(), dev.height(), QImage.Format_ARGB32_Premultiplied)
+            layer.fill(Qt.transparent)
+            lp = QPainter(layer)
+            lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+            lp.setTransform(p.worldTransform())
+            try:
+                self.draw_clip(lp, propexpr.at(plain, u - c["start_us"], self.names), W, H, fps, u, px_per_unit)
+            finally:
+                lp.end()
+            arr = image_to_array(layer)
+            if acc is None:
+                acc, pic = arr.astype(np.float32), layer
+                continue
+            if i == 1 and np.array_equal(arr, acc):
+                break
+            acc += arr
+            pic = None
+        if pic is None:
+            pic = array_to_image((acc / len(times)).round().clip(0, 255).astype(np.uint8))
+        p.save()
+        p.resetTransform()
+        p.setCompositionMode(BLEND_OPS.get(curves.value(c.get("blend", "normal"), project.stepped(c, times[len(times) // 2]
+                                                                                                    - c["start_us"])),
+                                           QPainter.CompositionMode_SourceOver))
+        p.drawImage(0, 0, pic)
+        p.restore()
 
     def draw_clip(self, p, c, W, H, fps, t_us, px_per_unit):
         tf = c.get("transform") or {}
@@ -650,11 +689,7 @@ class Renderer:
 
     def paint_body(self, p, c, W, H, t, disp, draw, opacity, fps):
         """A clip's picture (draw(painter) in its own space) put on p: opacity, blend mode,
-        transform and mask; 動態模糊: the average of it drawn at each of the shutter's moments."""
-        times = project.blur_times(c, t, fps)
-        if times and isinstance(p.device(), QImage):
-            self.paint_blurred(p, c, W, H, t, disp, draw, opacity, fps, times)
-            return
+        transform and mask."""
         tf = c.get("transform") or {}
         v = lambda k, d: curves.value(tf.get(k, d), t)
         sx = v("scale", 1.0)
@@ -675,30 +710,6 @@ class Renderer:
             draw(p)
         if self.matte_preview and self.matte_preview.get("clip") == c["id"]:
             self.draw_matte_ghost(p, c.get("mask"), t, disp, fps, self.matte_preview.get("opacity", 0.4))
-        p.restore()
-
-    def paint_blurred(self, p, c, W, H, t, disp, draw, opacity, fps, times):
-        dev = p.device()
-        base = p.worldTransform()
-        acc = np.zeros((dev.height(), dev.width(), 4), np.float32)
-        for u in times:
-            layer = QImage(dev.width(), dev.height(), QImage.Format_ARGB32_Premultiplied)
-            layer.fill(Qt.transparent)
-            lp = QPainter(layer)
-            lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-            lp.setTransform(clip_world(c, u, W, H) * base)
-            draw(lp)
-            lp.end()
-            acc += image_to_array(layer)
-        acc *= opacity / len(times)
-        mask = self.clip_mask(c, t)
-        if mask:
-            acc *= self.mask_coverage(mask, t, disp, clip_world(c, t, W, H) * base, dev.width(), dev.height(),
-                                      fps)[..., None]
-        p.save()
-        p.resetTransform()
-        p.setCompositionMode(BLEND_OPS.get(curves.value(c.get("blend", "normal"), t), QPainter.CompositionMode_SourceOver))
-        p.drawImage(0, 0, array_to_image(np.ascontiguousarray(acc.round().clip(0, 255).astype(np.uint8))))
         p.restore()
 
     def draw_backdrop(self, p, c, W, H, t, disp, fps, unit, body):

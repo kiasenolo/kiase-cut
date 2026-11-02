@@ -1,14 +1,16 @@
-"""Settings: where the Library lives, the default place for new projects, autosave (how often,
-how many are kept), where project caches go, GPU acceleration, and a check that the filter engine works on this
-computer."""
+"""Settings: the KiaseCut root folder (where the Library, projects, autosaves, layouts and tools
+go unless set apart), where the Library lives, the default place for new projects, autosave (how
+often, how many are kept, where), where project caches go, GPU acceleration, a check that the
+filter engine works on this computer, and the questions answered for good (不再詢問, ask.py)."""
 import os
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout)
+                               QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import fx, gpu, library, workspace
+from . import ask
 
 CACHE_CHOICES = ((workspace.CACHE_DEFAULT, "預設（使用者的緩存資料夾）"),
                  (workspace.CACHE_PROJECT, "專案內（專案資料夾裡的 Cache）"),
@@ -18,13 +20,27 @@ CACHE_CHOICES = ((workspace.CACHE_DEFAULT, "預設（使用者的緩存資料夾
 class SettingsDialog(QDialog):
     def __init__(self, parent, library_dir, default_library, project_dir, autosave_min, use_gpu=True,
                  autosave_limit=30, autosave_dir="", cache_mode=workspace.CACHE_DEFAULT, cache_custom="",
-                 default_cache=""):
+                 default_cache="", root_dir="", autosave_custom=""):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(600)
         self.old_library = library_dir
         self.default_library = default_library
         form = QFormLayout()
+
+        row = QHBoxLayout()
+        self.root = QLineEdit(root_dir)
+        self.root_was = root_dir
+        browse = QPushButton("瀏覽…")
+        browse.clicked.connect(lambda: self._browse(self.root, "選擇 KiaseCut 根資料夾"))
+        row.addWidget(self.root, 1)
+        row.addWidget(browse)
+        form.addRow("根資料夾", row)
+        note = QLabel("Library、新專案、自動存檔、佈局和額外工具的資料，沒有另外設定位置時都放在這裡。")
+        note.setStyleSheet("color: #9a9aa0;")
+        note.setWordWrap(True)
+        form.addRow("", note)
+        self.root.textChanged.connect(self._root_changed)
 
         row = QHBoxLayout()
         self.library = QLineEdit(library_dir)
@@ -76,8 +92,16 @@ class SettingsDialog(QDialog):
         row.addWidget(show)
         row.addStretch(1)
         form.addRow("自動存檔上限", row)
+        row = QHBoxLayout()
+        self.autosave_dir = QLineEdit(autosave_custom)
+        self.autosave_dir.setPlaceholderText("根資料夾裡的 auto-save")
+        browse = QPushButton("瀏覽…")
+        browse.clicked.connect(lambda: self._browse(self.autosave_dir, "選擇放自動存檔的資料夾"))
+        row.addWidget(self.autosave_dir, 1)
+        row.addWidget(browse)
+        form.addRow("自動存檔位置", row)
         note = QLabel(f"有未儲存的修改時，每隔一段時間存一份到 {autosave_dir}，只留最新的幾份。\n"
-                      "程式沒有正常結束（當掉、斷電）時，下次開啟會問要不要回復。")
+                      "程式沒有正常結束（當掉、斷電）時，下次開啟會問要不要回復。換位置在下次開啟程式時生效。")
         note.setStyleSheet("color: #9a9aa0;")
         note.setWordWrap(True)
         form.addRow("", note)
@@ -120,6 +144,16 @@ class SettingsDialog(QDialog):
         row.addWidget(test)
         form.addRow("濾鏡引擎", row)
 
+        row = QHBoxLayout()
+        reset_all = QPushButton("重置所有的「不再詢問」")
+        reset_all.clicked.connect(self._reset_questions)
+        each = QPushButton("選擇哪些要問…")
+        each.clicked.connect(lambda: QuestionsDialog(self).exec())
+        row.addWidget(reset_all)
+        row.addWidget(each)
+        row.addStretch(1)
+        form.addRow("詢問", row)
+
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.buttons.accepted.connect(self._accept)
         self.buttons.rejected.connect(self.reject)
@@ -131,6 +165,19 @@ class SettingsDialog(QDialog):
         self.library.textChanged.connect(self._library_changed)
         self._library_changed()
         self._cache_changed()
+
+    def _root_changed(self, text):
+        """Fields that were the old root's own places follow it to the new one."""
+        old, new = self.root_was.rstrip("/\\"), text.strip().rstrip("/\\")
+        if old and new:
+            for edit_, sub in ((self.library, "Library"), (self.projects, "")):
+                if library.norm(edit_.text().strip() or "-") == library.norm(os.path.join(old, sub) if sub else old):
+                    edit_.setText((os.path.join(new, sub) if sub else new).replace("\\", "/"))
+        self.root_was = text.strip()
+
+    def _reset_questions(self):
+        ask.reset()
+        QMessageBox.information(self, "詢問", "之後每個問題都會再問一次。")
 
     def _browse(self, edit, title):
         d = QFileDialog.getExistingDirectory(self, title, edit.text() or "")
@@ -190,9 +237,51 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def values(self):
-        return {"library": library.norm(self.library.text().strip()),
+        return {"root": library.norm(self.root.text().strip()) if self.root.text().strip() else "",
+                "autosave_dir": library.norm(self.autosave_dir.text().strip()) if self.autosave_dir.text().strip() else "",
+                "library": library.norm(self.library.text().strip()),
                 "copy_library": self.copy.isVisible() and self.copy.isChecked(),
                 "project_dir": self.projects.text().strip(), "autosave_min": self.autosave.value(),
                 "autosave_limit": self.autosave_limit.value(),
                 "gpu": self.gpu.isChecked(), "cache_mode": self.cache_mode.currentData(),
                 "cache_custom": library.norm(self.cache_custom.text().strip()) if self.cache_custom.text().strip() else ""}
+
+
+class QuestionsDialog(QDialog):
+    """Each question with 不再詢問: 每次詢問, 一律「是」 or 一律「否」 (ask.py)."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("詢問")
+        self.setMinimumSize(460, 420)
+        body = QWidget()
+        form = QFormLayout(body)
+        self.boxes = {}
+        for key, name in ask.QUESTIONS.items():
+            box = QComboBox()
+            for value, text in ask.ANSWERS:
+                box.addItem(text, value)
+            box.setCurrentIndex(max(0, box.findData(ask.remembered(key))))
+            self.boxes[key] = box
+            form.addRow(name, box)
+        scroll = QScrollArea()
+        scroll.setWidget(body)
+        scroll.setWidgetResizable(True)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("確定")
+        buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        buttons.accepted.connect(self._keep)
+        buttons.rejected.connect(self.reject)
+        lay = QVBoxLayout(self)
+        note = QLabel("勾過「不再詢問」的問題會直接用記住的答案；在這裡可以改回每次詢問。"
+                      "未儲存的修改、永久刪除這類問題一定會問。")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: #9a9aa0;")
+        lay.addWidget(note)
+        lay.addWidget(scroll, 1)
+        lay.addWidget(buttons)
+
+    def _keep(self):
+        for key, box in self.boxes.items():
+            ask.remember(key, box.currentData())
+        self.accept()

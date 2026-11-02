@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import shiboken6  # noqa: E402
-from PySide6.QtWidgets import QApplication, QDialogButtonBox, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialogButtonBox  # noqa: E402
 
 from kiasecut import workspace  # noqa: E402
 from kiasecut.ui import main_window  # noqa: E402
@@ -102,10 +102,10 @@ class Window(Base):
         ident = workspace.cache_id(self.proj, self.root)
         for d in (self.root + "/Cache", f"{self.base}/{ident}", f"{custom}/{ident}"):
             fill(d)
-        with mock.patch.object(main_window.QMessageBox, "question", return_value=QMessageBox.No):
+        with mock.patch.object(main_window.questions, "question", return_value=False):
             MW.clear_project_cache(w)
         self.assertTrue(os.path.exists(self.root + "/Cache"))
-        with mock.patch.object(main_window.QMessageBox, "question", return_value=QMessageBox.Yes):
+        with mock.patch.object(main_window.questions, "question", return_value=True):
             MW.clear_project_cache(w)
         for d in (self.root + "/Cache", f"{self.base}/{ident}", f"{custom}/{ident}"):
             self.assertFalse(os.path.exists(d))

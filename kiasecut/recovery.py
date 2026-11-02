@@ -33,6 +33,11 @@ def folder(documents):
     return os.path.join(documents, SUBDIR)
 
 
+def folder_in(root):
+    """The autosave folder in a KiaseCut root folder (設定 > 根資料夾)."""
+    return os.path.join(root, os.path.basename(SUBDIR)).replace("\\", "/")
+
+
 def _session_file(where, pid=None):
     return os.path.join(where, f"session-{pid or os.getpid()}.json")
 

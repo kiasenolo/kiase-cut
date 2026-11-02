@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QHBoxLay
                                QVBoxLayout)
 
 from .. import thumbnail, workspace
-from . import inplace
+from . import ask, inplace
 from .menukeys import Menu
 
 CARD = QSize(240, 135)
@@ -297,10 +297,10 @@ class ProjectManager(QDialog):
     def remove_thumbnail(self, it, path):
         """拿掉縮圖; a project with a _thumbnail compound asks first (saving would draw it back,
         so it is turned off until 套用縮圖)."""
-        if thumbnail.has_compound(path) and QMessageBox.question(
-                self, "拿掉縮圖", "這個專案有「_thumbnail」靜態複合片段，縮圖是用它畫的。\n"
+        if thumbnail.has_compound(path) and not ask.question(
+                self, "remove_thumbnail", "拿掉縮圖", "這個專案有「_thumbnail」靜態複合片段，縮圖是用它畫的。\n"
                 "真的要拿掉嗎？之後儲存也不會再用它畫縮圖；\n"
-                "要用回來：開啟專案，在複合片段清單對「_thumbnail」按右鍵 →「套用縮圖」。") != QMessageBox.Yes:
+                "要用回來：開啟專案，在複合片段清單對「_thumbnail」按右鍵 →「套用縮圖」。"):
             return
         try:
             thumbnail.remove(path)
@@ -364,7 +364,7 @@ class ProjectManager(QDialog):
                     if workspace.owns_folder(path) else f"專案檔「{os.path.basename(path)}」")
         else:
             what = f"資料夾「{os.path.basename(path)}」和裡面所有的專案"
-        if QMessageBox.question(self, "刪除", f"把{what}移到資源回收筒？") != QMessageBox.Yes:
+        if not ask.question(self, "delete_project", "刪除", f"把{what}移到資源回收筒？"):
             return
         try:
             if kind == "project":

@@ -34,6 +34,7 @@ from ..importers import jianying
 from .assets_panel import AssetsPanel
 from .colorpick import pick_color, qcolor, rgba
 from .font_dialog import FontMapDialog
+from . import ask as questions
 from .compounds import PREFIX as COMPOUND_PREFIX, CompoundPanel
 from .docks import Panels
 from .curve_editor import CurveEditor, param_rows as curve_param_rows
@@ -1225,7 +1226,7 @@ class MainWindow(QMainWindow):
         elif action == "duplicate":
             self.apply_root("複製時間線", lambda root: edit.add_timeline(root, copy_of=tid))
         elif action == "delete":
-            if QMessageBox.question(self, "刪除時間線", f"刪除「{tl['name']}」和上面的片段？") == QMessageBox.Yes:
+            if questions.question(self, "delete_timeline", "刪除時間線", f"刪除「{tl['name']}」和上面的片段？"):
                 self.apply_root("刪除時間線", edit.delete_timeline, tid)
 
     def _update_crumb(self):
@@ -1392,9 +1393,10 @@ class MainWindow(QMainWindow):
             return str(s)
         docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or os.path.expanduser("~")
         old = os.path.join(docs, "tesetoa")                 # the program's earlier name
-        if os.path.isdir(old) and not os.path.isdir(os.path.join(docs, "KiaseCut")):
+        if os.path.isdir(old) and not os.path.isdir(os.path.join(docs, "KiaseCut")) and \
+                not self.settings().value("root_dir"):
             return old.replace("\\", "/")
-        return os.path.join(docs, "KiaseCut").replace("\\", "/")
+        return self.app_root()
 
     def recent(self):
         v = self.settings().value("recent", [])
@@ -1606,7 +1608,7 @@ class MainWindow(QMainWindow):
             if not ok or not name:
                 return False
             fn = workspace.project_file(self.root, name)
-            if os.path.exists(fn) and QMessageBox.question(self, "覆蓋", f"「{name}」已經存在，要覆蓋嗎？") != QMessageBox.Yes:
+            if os.path.exists(fn) and not questions.question(self, "overwrite_project", "覆蓋", f"「{name}」已經存在，要覆蓋嗎？"):
                 return False
             self.path = fn
         self.proj["view"] = self.view_state()
@@ -1752,7 +1754,7 @@ class MainWindow(QMainWindow):
 
     def begin_session(self):
         """At start: this program's session in the autosave folder (~/Documents/KiaseCut/auto-save)."""
-        self.autosave_dir = recovery.folder(self.documents_dir())
+        self.autosave_dir = self.autosave_folder()
         try:
             recovery.begin(self.autosave_dir)
         except OSError:
@@ -1898,9 +1900,9 @@ class MainWindow(QMainWindow):
         if not plan:
             self.statusBar().showMessage("所有素材都已經在專案資料夾裡了", 4000)
             return
-        if ask and QMessageBox.question(
-                self, "整理素材",
-                f"有 {len(plan)} 個素材在專案資料夾外面。\n要把它們複製到專案的 Media 資料夾嗎？\n（原檔不會被動到）") != QMessageBox.Yes:
+        if ask and not questions.question(
+                self, "collect_media", "整理素材",
+                f"有 {len(plan)} 個素材在專案資料夾外面。\n要把它們複製到專案的 Media 資料夾嗎？\n（原檔不會被動到）"):
             return
         prog = QProgressDialog("複製素材到專案資料夾…", None, 0, 1000, self)
         prog.setWindowModality(Qt.WindowModal)
@@ -2197,7 +2199,7 @@ class MainWindow(QMainWindow):
         n = len(project.compound_uses(self.proj).get(kid, []))
         name = self.proj["compounds"][kid].get("name") or "複合片段"
         msg = f"刪除「{name}」？" + (f"\n時間軸上有 {n} 個片段在使用它，會一起刪除。" if n else "")
-        if QMessageBox.question(self, "刪除複合片段", msg) == QMessageBox.Yes:
+        if questions.question(self, "delete_compound", "刪除複合片段", msg):
             self.timeline.selected_id = None
             self.apply_root("刪除複合片段", lambda root: edit.delete_compound(root, kid, force=True))
 
@@ -2242,8 +2244,8 @@ class MainWindow(QMainWindow):
             return
         label = "轉回" + edit.kind_name(self.proj["compounds"][kid].get("static"))
         n = sum(1 for _tl, _p, c in project.compound_uses(self.proj).get(kid) or [] if c.get("params"))
-        if n and QMessageBox.question(self, label, f"有 {n} 個片段自己設定了這個元件的參數，"
-                                      f"{label}後這些設定會消失。要繼續嗎？") != QMessageBox.Yes:
+        if n and not questions.question(self, "unmake_component", label, f"有 {n} 個片段自己設定了這個元件的參數，"
+                                  f"{label}後這些設定會消失。要繼續嗎？"):
             return
         self.apply_root(label, edit.unmake_component, kid)
 
@@ -2697,8 +2699,8 @@ class MainWindow(QMainWindow):
         elif action == "delete":
             n = sum(1 for _tl, _p, c in project.compound_uses(self.proj).get(kid) or []
                     if pid in (c.get("params") or {}))
-            if n and QMessageBox.question(self, "刪除參數", f"有 {n} 個片段自己設定了「{p['name']}」，"
-                                          "刪除後這些設定會消失。要繼續嗎？") != QMessageBox.Yes:
+            if n and not questions.question(self, "delete_param", "刪除參數", f"有 {n} 個片段自己設定了「{p['name']}」，"
+                                      "刪除後這些設定會消失。要繼續嗎？"):
                 return
             self.apply_root("刪除參數", edit.delete_param, kid, pid)
         elif action == "default":
@@ -3205,7 +3207,7 @@ class MainWindow(QMainWindow):
         level = self.container()
         n = sum(len(edit.track_by_id(level, tid)["clips"]) for tid in tids)
         what = "軌道上" if len(tids) == 1 else f"這 {len(tids)} 條軌道上"
-        if n and QMessageBox.question(self, "刪除軌道", f"{what}有 {n} 個片段，一起刪除嗎？") != QMessageBox.Yes:
+        if n and not questions.question(self, "delete_tracks", "刪除軌道", f"{what}有 {n} 個片段，一起刪除嗎？"):
             return
         self.timeline.selected_tracks = set()
         self.apply("刪除軌道" if len(tids) == 1 else f"刪除 {len(tids)} 條軌道", edit.delete_tracks, tids)
@@ -3451,7 +3453,7 @@ class MainWindow(QMainWindow):
             gone = {library.item(self.proj, ident)["path"]}
         used = sum(1 for c in project.all_clips(self.proj) if c.get("media") and c["media"]["path"] in gone)
         note = f"\n\n時間軸上有 {used} 個片段用到，刪除後它們會找不到素材。" if used else ""
-        if QMessageBox.question(self, "刪除", f"要刪除這個{what}嗎？它們會被移到資源回收筒。{note}") == QMessageBox.Yes:
+        if questions.question(self, "delete_media", "刪除", f"要刪除這個{what}嗎？它們會被移到資源回收筒。{note}"):
             ok, _ = self.library_do("刪除", lambda: library.delete_on_disk(self.proj, self.root, ident, self.trash))
             if ok:
                 self.after_edit("刪除素材")
@@ -4357,8 +4359,18 @@ class MainWindow(QMainWindow):
     def documents_dir(self):
         return QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or os.path.expanduser("~")
 
+    def app_root(self):
+        """設定 > 根資料夾: where the Library, new projects, autosaves, layouts and tools go unless
+        set apart (Documents/KiaseCut to start with)."""
+        s = self.settings().value("root_dir")
+        return library.norm(str(s)) if s else os.path.join(self.documents_dir(), userlib.APP_FOLDER).replace("\\", "/")
+
+    def autosave_folder(self):
+        s = self.settings().value("autosave_dir")
+        return library.norm(str(s)) if s else recovery.folder_in(self.app_root())
+
     def default_library_root(self):
-        return userlib.default_root(self.documents_dir())
+        return os.path.join(self.app_root(), "Library").replace("\\", "/")
 
     def library_root(self):
         s = self.settings().value("library_dir")
@@ -4407,10 +4419,9 @@ class MainWindow(QMainWindow):
         if not size:
             self.statusBar().showMessage("這個專案沒有緩存", 4000)
             return
-        if QMessageBox.question(self, "清除專案緩存",
-                                f"要刪除這個專案的緩存（{workspace.show_size(size)}）嗎？\n"
-                                "波形、聲音、文字和遮罩的圖片、代理圖片會在需要時重新產生，素材和專案不受影響。") \
-                != QMessageBox.Yes:
+        if not questions.question(self, "clear_cache", "清除專案緩存",
+                            f"要刪除這個專案的緩存（{workspace.show_size(size)}）嗎？\n"
+                            "波形、聲音、文字和遮罩的圖片、代理圖片會在需要時重新產生，素材和專案不受影響。"):
             return
         freed = workspace.clear_cache(dirs)
         self.statusBar().showMessage(f"已清除專案緩存（{workspace.show_size(freed)}）", 4000)
@@ -4431,12 +4442,16 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         dlg = SettingsDialog(self, self.ulib.root if self.ulib else self.library_root(), self.default_library_root(),
                              self.default_location(), self.autosave_min(), gpu.enabled, self.autosave_limit(),
-                             self.autosave_dir or recovery.folder(self.documents_dir()),
-                             self.cache_mode(), self.cache_custom(), self.default_cache_base())
+                             self.autosave_dir or self.autosave_folder(),
+                             self.cache_mode(), self.cache_custom(), self.default_cache_base(),
+                             root_dir=self.app_root(), autosave_custom=str(self.settings().value("autosave_dir") or ""))
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
         s = self.settings()
+        if v["root"] and v["root"] != self.app_root():
+            s.setValue("root_dir", v["root"])
+        s.setValue("autosave_dir", v["autosave_dir"])
         s.setValue("project_dir", v["project_dir"])
         s.setValue("autosave_min", v["autosave_min"])
         s.setValue("autosave_limit", v["autosave_limit"])
@@ -4618,8 +4633,8 @@ class MainWindow(QMainWindow):
                 used += bool(c.get("media") and c["media"]["path"] in gone)
                 used += sum(1 for e in c.get("effects") or [] if e["filter"] in gone)
         note = f"\n\n目前的專案有 {used} 個地方用到，刪除後它們會找不到檔案。" if used else ""
-        if QMessageBox.question(self, "刪除", f"要刪除這個{what}嗎？它們會被移到資源回收筒。\n"
-                                f"（Library 是所有專案共用的）{note}") != QMessageBox.Yes:
+        if not questions.question(self, "delete_library", "刪除", f"要刪除這個{what}嗎？它們會被移到資源回收筒。\n"
+                            f"（Library 是所有專案共用的）{note}"):
             return
         ok, _ = self.ul_do(key, lambda: library.delete_on_disk(proj, self.ulib.mirror(key), ident, self.trash), "刪除")
         if ok:
@@ -5107,7 +5122,7 @@ class MainWindow(QMainWindow):
 
     # -- layouts (佈局) -----------------------------------------------------------------------------
     def layout_dir(self):
-        return layouts.folder(self.documents_dir())
+        return layouts.folder_in(self.app_root())
 
     def layout_keys(self):
         return ([layouts.builtin_key(i) for i, _ in layouts.BUILTIN]
@@ -5182,8 +5197,8 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "另存為新佈局", str(exc))
             return
-        if name in layouts.list_user(self.layout_dir()) and QMessageBox.question(
-                self, "另存為新佈局", f"已經有叫「{name}」的佈局，要覆寫它嗎？") != QMessageBox.Yes:
+        if name in layouts.list_user(self.layout_dir()) and not questions.question(
+                self, "overwrite_layout", "另存為新佈局", f"已經有叫「{name}」的佈局，要覆寫它嗎？"):
             return
         self.keep_layout()                               # the one left keeps its arrangement too
         self._write_layout(name)
@@ -5225,8 +5240,7 @@ class MainWindow(QMainWindow):
 
     def delete_layout(self, key):
         name = key.partition(":")[2]
-        if QMessageBox.question(self, "刪除佈局", f"刪除佈局「{name}」？\n（它的檔案會從 KiaseCut/preset/layout 移除）") \
-                != QMessageBox.Yes:
+        if not questions.question(self, "delete_layout", "刪除佈局", f"刪除佈局「{name}」？\n（它的檔案會從 KiaseCut/preset/layout 移除）"):
             return
         try:
             layouts.remove(self.layout_dir(), name)

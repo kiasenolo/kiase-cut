@@ -8,9 +8,10 @@ Switching it off keeps the numbers; 重置 (after asking) deletes them and switc
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QCheckBox, QFormLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFormLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .. import edit
+from . import ask
 from .inspector import ComboBox, SpinBox, section
 from .timeline import BEAT_COLORS, US
 
@@ -114,6 +115,6 @@ class BeatPanel(QWidget):
             self.beatEdited.emit(self.clip_id, fields)
 
     def _reset(self):
-        if self.clip_id and QMessageBox.question(
-                self, "重置 BPM 對齊", "刪除這個片段的 BPM 和起頭偏移，並關閉 BPM 對齊？") == QMessageBox.Yes:
+        if self.clip_id and ask.question(
+                self, "reset_bpm", "重置 BPM 對齊", "刪除這個片段的 BPM 和起頭偏移，並關閉 BPM 對齊？"):
             self.resetRequested.emit(self.clip_id)

@@ -25,6 +25,11 @@ def folder(documents):
     return os.path.join(documents, SUBDIR)
 
 
+def folder_in(root):
+    """The layouts' folder in a KiaseCut root folder (設定 > 根資料夾)."""
+    return os.path.join(root, "preset", "layout")
+
+
 def builtin_key(ident):
     return "builtin:" + ident
 

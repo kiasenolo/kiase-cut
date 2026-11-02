@@ -38,13 +38,15 @@ def ease(v, x):
 
 
 class BezierField(QWidget):
-    """The curve in its square (y from -0.5 to 1.5 shows overshoot); the two handles drag."""
+    """The curve in its square (y from -0.5 to 1.5 shows overshoot); the two handles drag - with Shift held,
+    along one direction only: across or up and down, whichever it has gone further."""
     changed = Signal(list)
 
     def __init__(self):
         super().__init__()
         self.v = [0.42, 0.0, 0.58, 1.0]
         self.drag = None
+        self.start = None
         self.setMinimumSize(260, 300)
 
     def frame(self):
@@ -90,6 +92,7 @@ class BezierField(QWidget):
         pos = e.position()
         d = [(pos - self.at(self.v[0], self.v[1])).manhattanLength(), (pos - self.at(self.v[2], self.v[3])).manhattanLength()]
         self.drag = 0 if d[0] <= d[1] else 1
+        self.start = (pos, list(self.v[2 * self.drag:2 * self.drag + 2]))      # (where it was: Shift keeps one of the two)
         self.mouseMoveEvent(e)
 
     def mouseMoveEvent(self, e):
@@ -98,6 +101,11 @@ class BezierField(QWidget):
         x0, y0, side = self.frame()
         x = min(1.0, max(0.0, (e.position().x() - x0) / side))
         y = min(1.5, max(-0.5, (y0 - e.position().y()) / side))
+        if e.modifiers() & Qt.ShiftModifier:                # Shift: one direction only - whichever way it has gone further
+            if abs(e.position().x() - self.start[0].x()) >= abs(e.position().y() - self.start[0].y()):
+                y = self.start[1][1]
+            else:
+                x = self.start[1][0]
         self.v[2 * self.drag:2 * self.drag + 2] = [round(x, 3), round(y, 3)]
         self.update()
         self.changed.emit(list(self.v))

@@ -76,5 +76,35 @@ class BezierPlayTests(unittest.TestCase):
         tool.close()
 
 
+class BezierDragTests(unittest.TestCase):
+    def test_shift_keeps_a_handle_to_one_direction(self):
+        from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.tools import BezierField
+        APP = QApplication.instance() or QApplication([])
+        f = BezierField()
+        f.resize(300, 600)
+        f.set_value([0.42, 0.0, 0.58, 1.0])
+        start = f.at(0.42, 0.0).toPoint()
+
+        def move(to, mods=Qt.NoModifier):
+            f.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPointF(to), f.mapToGlobal(QPointF(to)), Qt.NoButton,
+                                         Qt.LeftButton, mods))
+        QTest.mousePress(f, Qt.LeftButton, Qt.NoModifier, start)
+        move(start + QPoint(30, -10), Qt.ShiftModifier)                    # mostly across: the height stays
+        self.assertGreater(f.v[0], 0.42)
+        self.assertEqual(f.v[1], 0.0)
+        move(start + QPoint(5, -60), Qt.ShiftModifier)                     # mostly up: the place across stays
+        self.assertEqual(f.v[0], 0.42)
+        self.assertGreater(f.v[1], 0.0)
+        move(start + QPoint(30, -60))                                      # no Shift: free
+        self.assertGreater(f.v[0], 0.42)
+        self.assertGreater(f.v[1], 0.0)
+        QTest.mouseRelease(f, Qt.LeftButton, Qt.NoModifier, start)
+        self.assertEqual(f.v[2:], [0.58, 1.0])                             # (the other handle did not move)
+
+
 if __name__ == "__main__":
     unittest.main()

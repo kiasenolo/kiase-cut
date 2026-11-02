@@ -19,7 +19,7 @@ from .viewmode import list_toggle
 FX_MIME = "application/x-kiasecut-fx"          # the filter's ref (a "builtin:…" name or a file path), utf-8,
                                                # or an effect dragged from a clip (effect_mime)
 ROLE_REF = Qt.UserRole + 1
-THUMB = (64, 36)
+THUMB = (96, 54)
 
 
 class Thumbs(QObject):
@@ -167,7 +167,8 @@ class VfxList(QListWidget):
             cols = max(1, self.viewport().width() // g.width())
             h = max(1, -(-self.shown() // cols)) * g.height() + 2 * self.frameWidth() + 4
         else:                                               # 列表: one row each
-            h = self.shown() * max(1, self.sizeHintForRow(0)) + 2 * self.frameWidth() + 4
+            rows = [self.sizeHintForRow(i) for i in range(self.count()) if not self.item(i).isHidden()]
+            h = sum(max(r, self.iconSize().height() + 8) for r in rows) + 2 * self.frameWidth() + 4
         if self.height() != h:
             self.setFixedHeight(h)
 
@@ -312,10 +313,12 @@ class VfxPanel(QWidget):
         if self.toggle is not None:
             self.top.removeWidget(self.toggle)
             self.toggle.deleteLater()
-        buttons = [list_toggle("vfx", lst, QSize(*THUMB), VfxList.GRID, QSize(32, 24)) for _h, lst in self.cats]
+        buttons = [list_toggle("vfx", lst, QSize(*THUMB), VfxList.GRID, QSize(*THUMB)) for _h, lst in self.cats]
         for b in buttons[1:]:                             # (one button for all of them)
             b.hide()
             buttons[0].toggled.connect(b.setChecked)
+        for (_h, lst), b in zip(self.cats, buttons):      # (the lists are as tall as their rows once the mode has changed)
+            b.toggled.connect(lambda _c, l=lst: QTimer.singleShot(0, l.fit))
         self.toggle = buttons[0] if buttons else None
         if self.toggle is not None:
             self.top.addWidget(self.toggle)

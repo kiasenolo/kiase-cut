@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, fx, project, textlayout, textvars
+from . import assets, components, curves, expr, fx, project, textlayout, textvars
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -2790,6 +2790,9 @@ def add_library_compound(root, pack):
                         h["compound_id"] = ids[h["compound_id"]]
         for p in comp.get("params") or []:               # a component's parameters follow its layers
             p["binds"] = [[renamed.get(cid, cid), prop] for cid, prop in p.get("binds") or []]
+            if p.get("exprs"):
+                p["exprs"] = {components.expr_key(renamed.get(k.split(":", 1)[0], k.split(":", 1)[0]), k.split(":", 1)[1]): x
+                              for k, x in p["exprs"].items()}
         comps[ids[old]] = comp
     comps[ids[pack["root"]]]["library_source"] = pack["source"]
     if pack.get("name"):                                 # named as it was saved
@@ -3130,8 +3133,8 @@ def _check_binds(comp, kind, binds):
     for cid, prop in binds:
         if cid not in index or prop not in components.props_of(index[cid][1]):
             raise EditError("這個圖層沒有那個屬性")
-        if components.PROPS[prop][0] != kind:
-            raise EditError(f"「{components.PROPS[prop][1]}」不是{components.KINDS[kind]}參數能設的")
+        if components.prop_kind(prop) != kind:
+            raise EditError(f"「{components.prop_label(index[cid][1], prop)}」不是{components.KINDS[kind]}參數能設的")
         out.append([cid, prop])
     return out
 
@@ -3140,6 +3143,10 @@ def _unbind(comp, binds):
     gone = {tuple(b) for b in binds}
     for p in components.params(comp):
         p["binds"] = [b for b in p.get("binds") or [] if tuple(b) not in gone]
+        for cid, prop in gone:                           # (the expression a number was set through goes too)
+            (p.get("exprs") or {}).pop(components.expr_key(cid, prop), None)
+        if "exprs" in p and not p["exprs"]:
+            del p["exprs"]
 
 
 def add_param(root, kid, kind, name, binds):
@@ -3172,6 +3179,29 @@ def bind_param(root, kid, pid, binds):
 def unbind_param(root, kid, binds):
     """No parameter sets these [(clip id, prop)] any more."""
     _unbind(_component(root, kid), binds)
+
+
+def set_bind_expr(root, kid, pid, cid, prop, text):
+    """The expression (expr.py) through which number parameter pid sets prop of layer cid ("" or
+    "input": the value as it is)."""
+    p = components.param(_component(root, kid), pid)
+    if p is None:
+        raise EditError("元件沒有這個參數")
+    if p["kind"] != "number":
+        raise EditError("只有數字參數可以用表達式")
+    if [cid, prop] not in [list(b) for b in p.get("binds") or []]:
+        raise EditError("這個參數沒有設定那個屬性")
+    text = str(text).strip()
+    why = expr.check(text) if text else None
+    if why:
+        raise EditError(f"表達式有問題：{why}")
+    key = components.expr_key(cid, prop)
+    if not text or text == "input":
+        (p.get("exprs") or {}).pop(key, None)
+        if "exprs" in p and not p["exprs"]:
+            del p["exprs"]
+    else:
+        p.setdefault("exprs", {})[key] = text
 
 
 def rename_param(root, kid, pid, name):
@@ -3229,6 +3259,11 @@ def set_param_default(root, kid, pid, value):
             if size is None:
                 raise EditError("讀不到這張圖片")
             replace_media(comp, cid, {"kind": "image", "path": value, "width": size[0], "height": size[1]})
+        elif "." in prop:
+            group, key = prop.split(".", 1)
+            _label, _d, factor, lo, hi = components.number_info(c, prop)
+            v = min(max(float(value) / factor, -1e12 if lo is None else lo), 1e12 if hi is None else hi)
+            set_param(comp, cid, group, key, v, at)
         elif prop == "visible":
             if len(t["clips"]) > 1:
                 raise EditError(f"「{c.get('name') or c['type']}」的軌道上還有別的片段：顯示開關的預設值是"

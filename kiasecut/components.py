@@ -9,14 +9,24 @@ time: colours blend between keyframes, words, pictures and switches hold until t
 - an animated static instance is drawn afresh for each frame. A value holds for the whole
 content: it replaces the layer's own (keyframed or not).
 
-param {id, name, kind: text | color | image | visible, binds: [[clip id, prop]]}
+param {id, name, kind: text | number | color | image | visible, binds: [[clip id, prop]],
+       exprs: {"clip id:prop": expression}}
       binds: the clips of the component's content (inside its groups too) it sets and what
       of them (PROPS); one parameter can set several clips (a 主色 for three shapes). Its
       default is what its first clip has at that clip's start (a static one: at the
       picture's moment). A clip that was deleted leaves its binding behind, unused. Visibility
       only touches the picture (a hidden clip still sounds, as on a hidden track).
 
-Values: text a str, color [r, g, b, a] (0 - 1), image a picture file's path, visible a bool.
+Values: text a str, number a float (shown in the units the inspector shows: opacity in %),
+color [r, g, b, a] (0 - 1), image a picture file's path, visible a bool.
+
+A number parameter sets numbers of a layer - NUMBERS: its position, scale, rotation, opacity,
+a text's size, a shape's corner radius, ... as "group.key" props - each through an expression
+of its own (expr.py, exprs; absent: `input`, the parameter's value as it is). The expression
+reads input, time (seconds into the instance), progress (0 - 1) and duration, so a number
+can drive a layer with sin(time) as well as with the instance's value, and is worked out for
+every frame an instance draws. An instance that leaves a number out gets the expression of
+the default; a broken expression leaves the value as it is.
 
 An image parameter's picture can also be placed in its layer's frame, per instance:
 clip["places"] {param id: {cx, cy, w, h}} - its centre in half-frame units (y up) and its size
@@ -25,10 +35,10 @@ frame). It reaches the layer as layer["place"] (the renderers draw the picture t
 """
 import os
 
-from . import assets, curves, project, svgimage
+from . import assets, curves, expr, project, svgimage
 
 ICON = "❖"
-KINDS = {"text": "文字", "color": "顏色", "image": "圖片", "visible": "顯示"}
+KINDS = {"text": "文字", "number": "數字", "color": "顏色", "image": "圖片", "visible": "顯示"}
 PROPS = {                         # prop: (kind, label)
     "content": ("text", "文字內容"),
     "text_color": ("color", "文字顏色"),
@@ -38,7 +48,43 @@ PROPS = {                         # prop: (kind, label)
     "source": ("image", "圖片"),
     "visible": ("visible", "顯示"),
 }
-FALLBACK = {"text": "", "color": [1.0, 1.0, 1.0, 1.0], "image": "", "visible": True}
+FALLBACK = {"text": "", "number": 0.0, "color": [1.0, 1.0, 1.0, 1.0], "image": "", "visible": True}
+# a layer's numbers a parameter can set: "group.key": (label, default, shown units per stored unit,
+# lowest stored value, highest) - group transform / text / mask / clip (volume) / asset (assets.FIELD_INFO)
+NUMBERS = {
+    "transform.x": ("位置 X", 0.0, 1, None, None),
+    "transform.y": ("位置 Y", 0.0, 1, None, None),
+    "transform.scale": ("縮放 X", 1.0, 1, 0.0, None),
+    "transform.scale_y": ("縮放 Y", 1.0, 1, 0.0, None),
+    "transform.rotation": ("旋轉 °", 0.0, 1, None, None),
+    "transform.opacity": ("不透明度 %", 1.0, 100, 0.0, 1.0),
+    "transform.anchor_x": ("錨點 X", 0.0, 1, None, None),
+    "transform.anchor_y": ("錨點 Y", 0.0, 1, None, None),
+    "transform.radius_tl": ("圓角 左上", 0.0, 1, 0.0, None),
+    "transform.radius_tr": ("圓角 右上", 0.0, 1, 0.0, None),
+    "transform.radius_bl": ("圓角 左下", 0.0, 1, 0.0, None),
+    "transform.radius_br": ("圓角 右下", 0.0, 1, 0.0, None),
+    "text.size": ("文字大小", 48.0, 1, 0.0, None),
+    "text.stroke": ("邊框粗細 px", 2.0, 1, 0.0, None),
+    "text.letter_spacing": ("字距", 0.0, 1, None, None),
+    "text.line_spacing": ("行距", 0.0, 1, None, None),
+    "text.italic_deg": ("斜體角度", 0.0, 1, -89.0, 89.0),
+    "text.box_w": ("文字框寬", 0.0, 1, 0.0, None),
+    "text.box_h": ("文字框高", 0.0, 1, 0.0, None),
+    "text.shadow_x": ("陰影 X px", 4.0, 1, None, None),
+    "text.shadow_y": ("陰影 Y px", 4.0, 1, None, None),
+    "text.shadow_blur": ("陰影模糊 px", 6.0, 1, 0.0, None),
+    "text.bg_pad": ("背景內間隔 px", 12.0, 1, None, None),
+    "text.bg_radius": ("背景圓角 px", 0.0, 1, 0.0, None),
+    "mask.cx": ("遮罩 中心 X", 0.0, 1, None, None),
+    "mask.cy": ("遮罩 中心 Y", 0.0, 1, None, None),
+    "mask.w": ("遮罩 寬", 1.0, 1, 0.0, None),
+    "mask.h": ("遮罩 高", 1.0, 1, 0.0, None),
+    "mask.rotation": ("遮罩 旋轉 °", 0.0, 1, None, None),
+    "mask.feather": ("遮罩 羽化", 0.0, 1, 0.0, None),
+    "clip.volume": ("音量 %", 1.0, 100, 0.0, None),
+}
+NO_NUMBERS = ("audio", "filter")          # (layer types that have no transform)
 PLACE = {"cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0}     # an image parameter's placement (the whole frame)
 
 
@@ -72,11 +118,53 @@ def props_of(c):
         out.append("source")
     if c["type"] != "filter":
         out.append("visible")
+    return out + number_props_of(c)
+
+
+def prop_kind(prop):
+    """The kind of parameter that can set prop (a "group.key" number prop is a number)."""
+    return "number" if "." in prop else PROPS[prop][0]
+
+
+def number_info(c, prop):
+    """(label, default, factor, lo, hi) of number prop "group.key" of layer c."""
+    group, key = prop.split(".", 1)
+    if group == "asset":
+        info = assets.FIELD_INFO[key]
+        lo, hi = assets.hard_range(key)
+        return info[0], float(assets._DEFAULTS.get(key, info[2])), 1, lo, hi
+    return NUMBERS[prop]
+
+
+def number_props_of(c):
+    """The numbers of layer c a number parameter can set."""
+    out = []
+    t = c["type"]
+    if t not in NO_NUMBERS:
+        out += [k for k in NUMBERS if k.startswith("transform.")]
+    if t == "text":
+        out += [k for k in NUMBERS if k.startswith("text.")]
+    if c.get("mask"):
+        out += [k for k in NUMBERS if k.startswith("mask.")]
+    if "volume" in c or t in ("video", "audio"):
+        out.append("clip.volume")
+    a = c.get("asset")
+    if a:
+        out += ["asset." + f for f in assets.fields_of(a.get("family"))
+                if assets.FIELD_INFO[f][1] == "number" and f not in ("w", "h")]
     return out
+
+
+def number_prop_for(c, group, key):
+    """The number prop of layer c that the inspector's group / key row is, or None."""
+    prop = f"{group}.{key}"
+    return prop if prop in number_props_of(c) else None
 
 
 def prop_label(c, prop):
     """What prop of layer c is called (a shape's colour is its 填充顏色)."""
+    if "." in prop:
+        return number_info(c, prop)[0]
     if prop == "color" and c is not None and "fill" in assets.fields_of((c.get("asset") or {}).get("family")):
         return "填充顏色"
     return PROPS[prop][1]
@@ -98,6 +186,11 @@ def layer_value(track, c, prop):
         return assets.clean(prop, curves.value(c["asset"].get(prop), 0))
     if prop == "source":
         return (c.get("media") or {}).get("path", "")
+    if "." in prop:
+        group, key = prop.split(".", 1)
+        _label, dflt, factor, _lo, _hi = number_info(c, prop)
+        h = c if group == "clip" else c.get(group) or {}
+        return float(curves.value(h.get(key, dflt), 0)) * factor
     return not track.get("hidden")
 
 
@@ -111,10 +204,36 @@ def default(comp, p, index=None):
     return FALLBACK[p["kind"]]
 
 
-def value(c, p, t):
+def value(c, p, t, index=None):
     """Instance c's value of parameter p at clip time t (the default when it has none)."""
     own = (c.get("params") or {}).get(p["id"])
-    return default(c["compound"], p) if own is None else curves.value(own, t)
+    return default(c["compound"], p, index) if own is None else curves.value(own, t)
+
+
+# -- number parameters' expressions -------------------------------------------------------------------
+def expr_key(cid, prop):
+    return f"{cid}:{prop}"
+
+
+def expr_of(p, cid, prop):
+    """The expression through which number parameter p sets prop of layer cid ("input": as it is)."""
+    return (p.get("exprs") or {}).get(expr_key(cid, prop)) or "input"
+
+
+def has_exprs(comp):
+    """Whether a number parameter of the component has an expression of its own (an instance
+    that sets nothing then still shows something other than the layers' values)."""
+    return any(p["kind"] == "number" and p.get("exprs") for p in params(comp))
+
+
+def number_out(p, cid, prop, v, c, t):
+    """What number parameter p (valued v) sets prop of layer cid to for instance c at clip time t."""
+    text = expr_of(p, cid, prop)
+    if text == "input":
+        return v
+    dur = max(c.get("duration_us") or 1, 1)
+    env = {"input": v, "time": t / curves.US, "progress": min(1.0, max(0.0, t / dur)), "duration": dur / curves.US}
+    return expr.safe(text, env, default=v)
 
 
 def place_of(c, pid, t=None):
@@ -142,10 +261,20 @@ def content(c, t):
     comp = c.get("compound")
     own = c.get("params") or {}
     places = c.get("places") or {}
-    if not (own or places) or not is_component(comp):
+    if not is_component(comp) or not (own or places or has_exprs(comp)):
         return comp
     over = {}
+    index = None
     for p in params(comp):
+        if p["kind"] == "number":
+            if p["id"] not in own and not p.get("exprs"):
+                continue
+            index = layer_index(comp) if index is None else index
+            v = float(value(c, p, t, index))
+            for cid, prop in p.get("binds") or []:
+                if cid in index:
+                    over.setdefault(cid, []).append((prop, number_out(p, cid, prop, v, c, t)))
+            continue
         if p["id"] in own:
             v = curves.value(own[p["id"]], t)
             for cid, prop in p.get("binds") or []:
@@ -216,6 +345,20 @@ def _put(c, prop, v):
         return out
     if prop == "place":
         return dict(c, place=v) if c["type"] == "image" else c
+    if "." in prop:
+        group, key = prop.split(".", 1)
+        _label, _d, factor, lo, hi = number_info(c, prop)
+        if group == "asset" and not c.get("asset") or group in ("text", "mask") and not c.get(group):
+            return c
+        v = float(v) / factor
+        v = min(max(v, -1e12 if lo is None else lo), 1e12 if hi is None else hi)
+        if group == "clip":
+            return dict(c, **{key: v})
+        base = c.get(group) or {}
+        new = dict(base, **{key: v})
+        if group == "text" and key == "size":
+            new.pop("styles", None)                     # (a size for the whole text replaces per-range ones)
+        return dict(c, **{group: new})
     return c
 
 
@@ -249,4 +392,9 @@ def clean(p, v):
         return [float(x) for x in assets.clean("color", v)]
     if kind == "visible":
         return bool(v)
+    if kind == "number":
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
     return "" if v is None else str(v)

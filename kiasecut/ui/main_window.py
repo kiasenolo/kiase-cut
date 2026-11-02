@@ -54,7 +54,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
-from . import appevents, icons, inplace, middledrag, wheel
+from . import appevents, exprdialog, icons, inplace, middledrag, wheel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .preview import base_size as preview_base_size
@@ -428,6 +428,9 @@ class MainWindow(QMainWindow):
         ins.textEdited.connect(self.on_text_edited)
         ins.paramEdited.connect(self.on_param_edited)
         ins.picture_of = self.dropped_picture
+        ins.component_of = self.open_component
+        ins.paramBindRequested.connect(self.layer_param_bind)
+        ins.paramUnbindRequested.connect(self.unbind_params)
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
         ins.paramReset.connect(lambda ids, pids: self.apply_each(
@@ -775,6 +778,7 @@ class MainWindow(QMainWindow):
         self.tl_params.paramUnbind.connect(self.unbind_params)
         self.tl_params.paramAction.connect(self.layer_param_action)
         self.tl_params.defaultDropped.connect(self.param_default_dropped)
+        self.tl_params.paramExpr.connect(self.layer_param_expr)
         self.tl_params.picture_of = self.dropped_picture
         self.tl_split.addWidget(self.tl_params)
         self.tl_split.setStretchFactor(0, 1)
@@ -805,6 +809,7 @@ class MainWindow(QMainWindow):
         lp.paramUnbind.connect(self.unbind_params)
         lp.paramAction.connect(self.layer_param_action)
         lp.defaultDropped.connect(self.param_default_dropped)
+        lp.paramExpr.connect(self.layer_param_expr)
         lp.params_box.picture_of = self.dropped_picture
         lp.componentRequested.connect(lambda: self.open_kid() and self.component_kind(self.open_kid(), True))
         lp.shapeRequested.connect(lambda key: self.place_asset(assets.ident(key, *self.assets.colors), "", 0))
@@ -2712,6 +2717,28 @@ class MainWindow(QMainWindow):
             return None
         return steps[-1][2] if steps else None
 
+    def open_component(self):
+        """The component being edited (its content), or None."""
+        kid = self.open_kid()
+        comp = self.proj["compounds"].get(kid) if kid and self.proj else None
+        return comp if components.is_component(comp) else None
+
+    def layer_param_expr(self, pid, cid, prop):
+        """The expression a number parameter sets a layer's prop through, asked for now."""
+        kid = self.open_kid()
+        comp = self.open_component()
+        p = components.param(comp, pid) if comp else None
+        if p is None:
+            return
+        c = edit.find(comp, cid)[1]
+        text = exprdialog.ask_expression(
+            self, f"表達式：{p['name']} → {components.prop_label(c, prop)}", components.expr_of(p, cid, prop),
+            {"input": components.default(comp, p), "time": 0.0, "progress": 0.0, "duration": 1.0},
+            note="input 是參數的值；time 是片段內的秒數、progress 是 0–1 的進度。輸入結果會當成這個屬性的值"
+                 "（不透明度、音量用 % 計）。")
+        if text is not None:
+            self.apply_root("參數表達式", edit.set_bind_expr, kid, pid, cid, prop, text)
+
     def unbind_params(self, binds):
         if self.open_kid():
             self.apply_root("解除參數", edit.unbind_param, self.open_kid(), binds)
@@ -2760,6 +2787,8 @@ class MainWindow(QMainWindow):
             elif p["kind"] == "color":
                 col = pick_color(self, qcolor(assets.hex_of(v)), p["name"])
                 v, ok = (rgba(col), True) if col is not None else (None, False)
+            elif p["kind"] == "number":
+                v, ok = QInputDialog.getDouble(self, p["name"], "預設的值：", float(v), -1e9, 1e9, 4)
             elif p["kind"] == "image":
                 v, _ = QFileDialog.getOpenFileName(self, p["name"], self.root or "",
                                                    "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tif *.tiff *.svg)")

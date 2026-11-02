@@ -6,7 +6,7 @@ Click a parameter to select the clips it sets, double-click it to set its defaul
 every clip it sets gets; a picture parameter's: drop a picture on it too), right-click to
 rename, restack, unbind a clip or delete it.
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
@@ -16,6 +16,25 @@ from . import inplace
 from .menukeys import Menu
 
 ROLE = Qt.UserRole
+PARAM_MIME = "application/x-kiase-component-param"       # a parameter dragged onto a property (拖曳綁定)
+
+
+class DragList(QListWidget):
+    """The 參數 list: a parameter can be dragged onto a number in the properties to set it."""
+
+    def __init__(self):
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setDefaultDropAction(Qt.CopyAction)
+
+    def mimeData(self, items):
+        md = QMimeData()
+        if items:
+            md.setData(PARAM_MIME, str(items[0].data(ROLE)).encode("utf-8"))
+        return md
+
+    def supportedDropActions(self):
+        return Qt.CopyAction
 
 
 def clip_name(c):
@@ -33,6 +52,8 @@ def value_text(p, v):
     if p["kind"] == "text":
         v = (v or "").replace("\n", " ")
         return f"「{v[:14]}{'…' if len(v) > 14 else ''}」"
+    if p["kind"] == "number":
+        return f"{float(v):.4g}"
     if p["kind"] == "color":
         return assets.hex_of(v)
     if p["kind"] == "image":
@@ -52,12 +73,21 @@ def param_menu(menu, comp, clips, bind, unbind):
     ids = [c["id"] for c in clips]
     sub = menu.addMenu("設為參數")
     sub.setEnabled(bool(props))
+    numbers = None
     for prop in props:
         label = components.prop_label(clips[0], prop)
-        sub.addAction(f"新參數：{label}", lambda pr=prop: bind("", pr, ids))
+        kind = components.prop_kind(prop)
+        at = sub
+        if kind == "number":                              # (many: in a menu of their own, one each)
+            numbers = numbers or sub.addMenu("數字")
+            at = numbers.addMenu(label)
+            at.addAction("新參數", lambda pr=prop: bind("", pr, ids))
+        else:
+            at.addAction(f"新參數：{label}", lambda pr=prop: bind("", pr, ids))
         for p in components.params(comp):
-            if p["kind"] == components.PROPS[prop][0]:
-                sub.addAction(f"　交給「{p['name']}」：{label}", lambda pid=p["id"], pr=prop: bind(pid, pr, ids))
+            if p["kind"] == kind:
+                at.addAction(f"　交給「{p['name']}」" + ("" if kind == "number" else f"：{label}"),
+                             lambda pid=p["id"], pr=prop: bind(pid, pr, ids))
     bound = components.bound(comp)
     mine = [(c, p, prop) for c in clips for p, prop in bound.get(c["id"], ())]
     if mine:
@@ -74,9 +104,10 @@ class ParamList(QWidget):
     selectionPicked = Signal(object, object)       # {clip ids} a parameter sets, the first one
     paramUnbind = Signal(list)                     # [(clip id, prop)] no parameter sets any more
     paramAction = Signal(str, str)                 # "default" / "rename" / "up" / "down" / "delete", parameter id
+    paramExpr = Signal(str, str, str)              # parameter id, clip id, prop: edit the expression it sets that through
     defaultDropped = Signal(str, str)              # parameter id, the picture dropped on it (its new default)
 
-    def __init__(self, hint="在圖層上按右鍵 > 設為參數；按兩下參數設定預設值", parent=None):
+    def __init__(self, hint="在圖層上按右鍵 > 設為參數，或把參數拖到屬性的數字上；按兩下參數設定預設值", parent=None):
         super().__init__(parent)
         self.comp = None
         lay = QVBoxLayout(self)
@@ -91,7 +122,7 @@ class ParamList(QWidget):
         tip.setVisible(bool(hint))
         head.addWidget(tip, 1)
         lay.addLayout(head)
-        self.list = QListWidget()
+        self.list = DragList()
         self.list.itemClicked.connect(self._clicked)
         self.list.itemDoubleClicked.connect(lambda it: it.data(ROLE) and self.paramAction.emit("default", it.data(ROLE)))
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -159,6 +190,13 @@ class ParamList(QWidget):
                 menu.addAction(text, lambda a=action: (inplace.item_hint(self.list, it), self.paramAction.emit(a, pid)))
         index = components.layer_index(self.comp)
         binds = [(cid, prop) for cid, prop in p.get("binds") or [] if cid in index]
+        if binds and p["kind"] == "number":
+            ex = menu.addMenu("表達式")
+            for cid, prop in binds:
+                c = index[cid][1]
+                text = components.expr_of(p, cid, prop)
+                ex.addAction(f"{clip_name(c)}：{components.prop_label(c, prop)}　{text if len(text) < 24 else text[:22] + '…'}",
+                             lambda b=(cid, prop): self.paramExpr.emit(pid, *b))
         if binds:
             un = menu.addMenu("解除片段")
             for cid, prop in binds:

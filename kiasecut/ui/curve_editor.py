@@ -78,6 +78,8 @@ def param_rows(c):
             out += [(f"fxsrc:{e['id']}:{n}", r[0], f"{name}·{label}來源{r[1]}", r[6], r[7]) for r in PARAMS["mask"]
                     if r[0] in edit.SOURCE_FIELDS]
     for p in components.params(components.of_clip(c)):  # where a component's pictures sit (元件參數)
+        if p["kind"] == "number":
+            out.append(("params", p["id"], p["name"], 1, components.default(c["compound"], p)))
         if p["kind"] == "image":
             out += [("place:" + p["id"], r[0], f"{p['name']}·{'位置' if r[0] in ('cx', 'cy') else '大小'} {r[1]}",
                      r[6], r[7]) for r in PLACE_ROWS]

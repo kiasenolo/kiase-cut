@@ -46,6 +46,7 @@ from .colorpick import pick_color, qcolor, rgba
 from .library import PictureDrop
 from . import ask
 from .mediapick import pick_button
+from .params import PARAM_MIME
 from .speedcurve import SpeedCurveEditor
 from .timeline import US, timecode
 from .wrapdrag import WrapDrag
@@ -164,6 +165,7 @@ class SpinBox(QDoubleSpinBox):
     def __init__(self, *a):
         super().__init__(*a)
         self.mixed = False
+        self.on_param_drop = None        # f(parameter id): a component's parameter dragged onto the number
         self.soft = None                 # (lo, hi) dragging keeps to; None: the hard range
         self._typed = False              # the user typed over "--" and has not finished yet
         self._scrub = None               # press position / value while dragging the number
@@ -181,6 +183,12 @@ class SpinBox(QDoubleSpinBox):
         t = e.type()
         if obj is not self.lineEdit() or not self.isEnabled():
             return False
+        if t in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop) and self.on_param_drop is not None \
+                and e.mimeData().hasFormat(PARAM_MIME):
+            e.acceptProposedAction()
+            if t == QEvent.Drop:
+                self.on_param_drop(bytes(e.mimeData().data(PARAM_MIME)).decode("utf-8"))
+            return True
         if t == QEvent.FocusOut:
             self.editing = False
             return False
@@ -345,6 +353,8 @@ class Inspector(QWidget):
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
     paramReset = Signal(list, list)                 # clip ids, component parameter ids: back to the component's
+    paramBindRequested = Signal(str, str, list)     # parameter id ("": a new one), number prop, clip ids: 設為參數
+    paramUnbindRequested = Signal(list)             # [(clip id, prop)]: 解除參數
     audioStreamChosen = Signal(list, int)           # clip ids, which of the file's sound streams plays
 
     def __init__(self, parent=None, part="main"):
@@ -364,6 +374,7 @@ class Inspector(QWidget):
         self.videos = []                  # [(path, name)] videos a video mask can use
         self.tracks = []                  # [(id, name)] tracks of the open level a 軌道 mask can use
         self.picture_of = lambda md: None  # the picture a drag carries (dropped on an image picker)
+        self.component_of = lambda: None   # the component being edited (its content), or None
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
@@ -1032,8 +1043,61 @@ class Inspector(QWidget):
         s.setDecimals(dec)
         s.setKeyboardTracking(False)
         s.edited.connect(lambda v: self._queue(key[0], key[1], v / (factor * self._unit(key))))
+        s.lineEdit().setContextMenuPolicy(Qt.CustomContextMenu)
+        s.lineEdit().customContextMenuRequested.connect(lambda pos, s=s, key=key: self._spin_menu(s, key, pos))
+        if self.part == "main" and key[0] in ("transform", "text", "mask", "clip", "asset"):
+            s.on_param_drop = lambda pid, key=key: self._bind_number(pid, key)
         self.widgets[key] = s
         return s
+
+    def _number_prop(self, key):
+        """The number prop of component layers that the (group, key) field is, or None."""
+        prop = f"{key[0]}.{key[1]}"
+        return prop if prop in components.NUMBERS or key[0] == "asset" and key[1] in assets.FIELD_INFO \
+            and assets.FIELD_INFO[key[1]][1] == "number" and key[1] not in ("w", "h") else None
+
+    def _bind_number(self, pid, key):
+        prop = self._number_prop(key)
+        if prop and self.clip_ids and self.component_of() is not None:
+            self.paramBindRequested.emit(pid, prop, list(self.clip_ids))
+
+    def _spin_menu(self, spin, key, pos):
+        """The field's usual menu, and inside a component 設為元件參數 / 解除元件參數."""
+        menu = spin.lineEdit().createStandardContextMenu()
+        comp = self.component_of()
+        prop = self._number_prop(key)
+        if comp is not None and prop and self.clip_ids:
+            ids = list(self.clip_ids)
+            menu.addSeparator()
+            sub = menu.addMenu("設為元件參數")
+            sub.addAction("新參數", lambda: self.paramBindRequested.emit("", prop, ids))
+            for p in components.params(comp):
+                if p["kind"] == "number":
+                    sub.addAction(f"交給「{p['name']}」", lambda pid=p["id"]: self.paramBindRequested.emit(pid, prop, ids))
+            bound = components.bound(comp)
+            mine = [p for cid in ids for p, pr in bound.get(cid, ()) if pr == prop]
+            if mine:
+                menu.addAction("解除元件參數「" + "、".join(dict.fromkeys(p["name"] for p in mine)) + "」",
+                               lambda: self.paramUnbindRequested.emit([(cid, prop) for cid in ids]))
+        menu.exec(spin.lineEdit().mapToGlobal(pos))
+        menu.deleteLater()
+
+    def _mark_bound(self, clips):
+        """Number fields a component's parameter sets are outlined, and say which one."""
+        comp = self.component_of()
+        bound = components.bound(comp) if comp is not None and len(clips) == 1 else {}
+        sets = {}
+        for p, prop in bound.get(clips[0]["id"], ()) if clips else ():
+            sets.setdefault(prop, []).append(p["name"])
+        for key, w in self.widgets.items():
+            if not (isinstance(key, tuple) and len(key) == 2 and isinstance(w, SpinBox) and key[0] != "params"):
+                continue
+            names = sets.get(f"{key[0]}.{key[1]}")
+            if names == getattr(w, "bound_names", None):
+                continue
+            w.bound_names = names
+            w.setStyleSheet("QDoubleSpinBox { border: 1px solid #b07cff; }" if names else "")
+            w.setToolTip("元件參數：" + "、".join(names) if names else "")
 
     def _unit(self, key):
         """How many shown units one stored unit is: 中心點 is stored in half-canvas units and shown in widths /
@@ -1345,6 +1409,8 @@ class Inspector(QWidget):
                 w = QPlainTextEdit()
                 w.setFixedHeight(54)
                 w.textChanged.connect(lambda w=w, pid=pid: self._queue("params", pid, w.toPlainText()))
+            elif kind == "number":
+                w = self._spin(("params", pid), -1000.0, 1000.0, 0.1, 3)
             elif kind == "color":
                 w = QPushButton()
                 w.clicked.connect(lambda _=False, p=p: self._pick_param_color(p))
@@ -1395,7 +1461,9 @@ class Inspector(QWidget):
                     easings.add(edit.easing_at(q, t))
             v = vals[0] if len({repr(x) for x in vals}) == 1 else None
             kind = p["kind"]
-            if kind == "text":
+            if kind == "number":
+                self._set(("params", p["id"]), None if v is None else round(float(v), 3))
+            elif kind == "text":
                 wid.setPlaceholderText("--" if v is None else "")
                 if wid.toPlainText() != (v or "") and not wid.hasFocus():
                     wid.blockSignals(True)
@@ -1649,6 +1717,7 @@ class Inspector(QWidget):
             w["scale_link"].blockSignals(False)
         if ("asset", "w") in w:
             self._show_asset(clips, ts, easings)
+        self._mark_bound(clips)
         if any(isinstance(k, tuple) and k[0] == "reset" for k in w):
             self._show_params(clips, ts, easings)
         if "speed" in w:

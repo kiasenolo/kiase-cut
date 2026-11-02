@@ -7,6 +7,9 @@ rate x HS apart in the input, so the sound is that much shorter or longer, but e
 move up to TOL samples from there to where it best matches how the last one went on (the
 cross-correlation's peak), so the waves join without the warble of a plain overlap-add.
 
+stretch_all does the same to a whole piece at once (a clip's 保持音高, audiomix.py): no delay
+at the start, the first half frame fading in.
+
 Stretch.feed takes the sound as it comes and gives back exactly as much as it should last
 (len / rate, the leftover fractions carried as speed_pcm does); the first frame needs a
 little sound ahead, so the very start comes out as a few ms of silence (a constant delay).
@@ -78,3 +81,25 @@ class Stretch:
         if len(out) < n:                                    # (the start: silence until a frame is ready)
             out = np.concatenate([np.zeros((n - len(out), self.ch), np.float32), out])
         return np.clip(np.round(out), -32768, 32767).astype(np.int16).tobytes(), want - n
+
+
+def stretch_all(a, rate):
+    """int16 [n, ch] sound played rate times as fast at its own pitch, all of it: n / rate samples."""
+    a = a.astype(np.float32)
+    n, ch = a.shape
+    out_n = int(n / rate)
+    out = np.zeros((out_n + N, ch), np.float32)
+    if n < N or out_n <= 0:
+        return np.zeros((max(0, out_n), ch), np.int16)
+    last = None
+    for k in range(out_n // HS + 1):
+        nom = min(int(round(k * HS * rate)), n - N)
+        if last is None:
+            c = nom
+        else:
+            nat = min(last + HS, n - N)                    # how the last frame went on
+            lo, hi = max(0, nom - TOL), min(nom + TOL, n - N)
+            c = lo + best_lag(a[lo:hi + N].mean(axis=1), a[nat:nat + N].mean(axis=1)) if hi > lo else nom
+        out[k * HS:k * HS + N] += a[c:c + N] * WIN
+        last = c
+    return np.clip(np.round(out[:out_n]), -32768, 32767).astype(np.int16)

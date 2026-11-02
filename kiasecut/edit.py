@@ -1468,6 +1468,27 @@ def set_normalize(proj, clip_id, target_db):
     return c
 
 
+def set_keep_pitch(proj, clip_id, on):
+    """保持音高: a clip played faster or slower keeps its sound's pitch (off: it follows the speed)."""
+    _, c = find(proj, clip_id)
+    _timed(c)
+    if on:
+        c["keep_pitch"] = True
+    else:
+        c.pop("keep_pitch", None)
+    return c
+
+
+def set_duration_by_speed(proj, clip_id, target_us):
+    """目標長度: the speed that makes the clip last target_us, playing the same part of its source
+    (as far as the room after it allows - set_speed)."""
+    _, c = find(proj, clip_id)
+    _timed(c)
+    if target_us <= 0:
+        raise EditError("長度要大於 0")
+    return set_speed(proj, clip_id, project.speed(c) * c["duration_us"] / float(target_us))
+
+
 def set_freeze(proj, clip_id, on, src_us=None):
     """凍結幀: hold the clip at source time src_us (default: where it is now held, else its
     first frame) - or let it play again."""

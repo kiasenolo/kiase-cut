@@ -329,6 +329,8 @@ class Inspector(QWidget):
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
     speedChosen = Signal(list, float)               # clip ids, speed
+    lengthChosen = Signal(list, float)              # clip ids, 目標長度 (us): the speed that makes them last that
+    keepPitchChosen = Signal(list, bool)            # clip ids, 保持音高
     groupMatteChosen = Signal(list, dict)           # group ids, {on / show / invert / body: bool} that changed
     groupAnchorChosen = Signal(list, bool)          # group ids, 中心點跟隨最下層物件 on
     throughChosen = Signal(list, bool)              # compound clip ids, 效果穿透 on
@@ -675,7 +677,27 @@ class Inspector(QWidget):
         sp.setToolTip("播放速度：2 × 快一倍（片段變短），0.5 × 慢一倍（片段變長）；聲音的音高跟著變")
         sp.edited.connect(lambda v: self._emit_now(self.speedChosen, float(v)))
         self.widgets["speed"] = sp
-        form.addRow("速度", sp)
+        length = SpinBox()
+        length.set_limits(0.01, 36000.0, 0.001, None)
+        length.setDecimals(2)
+        length.setSingleStep(0.1)
+        length.setSuffix(" 秒")
+        length.setToolTip("目標長度：要片段變成多長，速度自動算出來（播放的還是同一段素材）")
+        length.edited.connect(lambda v: self._emit_now(self.lengthChosen, float(v) * US))
+        self.widgets["target_length"] = length
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(QLabel("倍率"))
+        lay.addWidget(sp, 1)
+        lay.addWidget(QLabel("目標長度"))
+        lay.addWidget(length, 1)
+        form.addRow("速度", row)
+        pitch = QCheckBox("保持音高")
+        pitch.setToolTip("變速時聲音保持原本的音高（不像錄音帶那樣變高變低）；預覽和匯出都是")
+        pitch.clicked.connect(lambda v: self._emit_now(self.keepPitchChosen, bool(v)))
+        self.widgets["keep_pitch"] = pitch
+        form.addRow("", pitch)
         row = QWidget()
         lay = QHBoxLayout(row)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -704,6 +726,14 @@ class Inspector(QWidget):
         w = self.widgets
         speeds = {round(project.speed(k), 4) for k in clips}
         self._set("speed", speeds.pop() if len(speeds) == 1 else None)
+        lens = {round(k["duration_us"] / US, 3) for k in clips}
+        self._set("target_length", lens.pop() if len(lens) == 1 else None)
+        pitches = {bool(k.get("keep_pitch")) for k in clips}
+        w["keep_pitch"].blockSignals(True)
+        w["keep_pitch"].setTristate(len(pitches) > 1)
+        w["keep_pitch"].setCheckState(Qt.PartiallyChecked if len(pitches) > 1 else
+                                      Qt.Checked if pitches.pop() else Qt.Unchecked)
+        w["keep_pitch"].blockSignals(False)
         frozen = [project.frozen(k) for k in clips]
         on = {f is not None for f in frozen}
         w["freeze"].blockSignals(True)

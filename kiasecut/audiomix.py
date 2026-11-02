@@ -3,7 +3,8 @@
 Follows the export rules (build.py / MLT): a clip plays source time source_start + t,
 volume and fades apply as in build.Builder.audio, and an MP3's start_time (encoder delay)
 shifts its sound later. A clip with a speed (project.speed) plays its source faster or slower
-- resampled, so the pitch follows, as a tape would - and so does everything inside a compound
+- resampled, so the pitch follows, as a tape would (with 保持音高, clip["keep_pitch"], it is
+time-stretched once at its own pitch instead: stretch.stretch_all) - and so does everything inside a compound
 clip with a speed; a frozen clip (凍結幀) is silent. Decoding runs in a background thread; clips not decoded yet are
 silent until they are.
 """
@@ -14,7 +15,7 @@ import threading
 
 import numpy as np
 
-from . import curves, normalize, project
+from . import curves, normalize, project, stretch
 from .build import audio_stream, find_ffmpeg, media_start
 
 RATE, CHANNELS = 48000, 2
@@ -30,9 +31,16 @@ class Source:
         self.win = win                        # (lo, hi) us where it may sound
         self.pcm = None                       # int16 [n, 2] once decoded
         self.offset = 0                       # samples of leading silence (encoder delay)
+        sp = project.speed(clip)
+        self.pitched = bool(clip.get("keep_pitch")) and abs(sp - 1.0) > 1e-9 and not clip.get("speed_curve")
 
     def key(self):
         return key_of(self.clip)
+
+    def dkey(self):
+        """What its decoded sound is kept under: the source range, and with 保持音高 the speed it
+        was stretched to (that sound is already at the clip's pace)."""
+        return self.key() + (("pitch", project.speed(self.clip)) if self.pitched else ())
 
 
 def key_of(c):
@@ -115,8 +123,8 @@ class Mixer:
         srcs = sources(view["tracks"], only=only, level=project.level_tracks(view))
         with self.lock:
             for s in srcs:
-                if s.key() in self.decoded:
-                    s.pcm, s.offset = self.decoded[s.key()]
+                if s.dkey() in self.decoded:
+                    s.pcm, s.offset = self.decoded[s.dkey()]
             self.sources = srcs
             self.queue = [s for s in srcs if s.pcm is None]
         if self.queue and (self.thread is None or not self.thread.is_alive()):
@@ -129,8 +137,8 @@ class Mixer:
                 if not self.queue:
                     return
                 s = self.queue.pop(0)
-                if s.key() in self.decoded:
-                    s.pcm, s.offset = self.decoded[s.key()]
+                if s.dkey() in self.decoded:
+                    s.pcm, s.offset = self.decoded[s.dkey()]
                     continue
             try:
                 pcm, offset = self._decode(s)
@@ -139,10 +147,13 @@ class Mixer:
                     s.pcm, s.offset = np.zeros((0, CHANNELS), np.int16), 0
                 continue
             normalize.remember(s.key(), pcm)
+            if s.pitched:                               # 保持音高: stretched to the clip's pace once
+                sp = project.speed(s.clip)
+                pcm, offset = stretch.stretch_all(pcm, sp), round(offset / sp)
             with self.lock:
-                self.decoded[s.key()] = (pcm, offset)
+                self.decoded[s.dkey()] = (pcm, offset)
                 for o in self.sources:
-                    if o.key() == s.key():
+                    if o.dkey() == s.dkey():
                         o.pcm, o.offset = pcm, offset
 
     def _decode(self, s):
@@ -172,14 +183,15 @@ class Mixer:
                 g *= max(0.0, (dur - t) / fo)
             if g <= 0:
                 continue
-            step = s.rate * project.speed(c)            # source samples per mixed sample
+            sp = 1.0 if s.pitched else project.speed(c)    # (保持音高: decoded at the clip's pace already)
+            step = s.rate * sp                          # source samples per mixed sample
             if abs(step - 1.0) < 1e-9:
-                i0 = round(t / US * RATE) - s.offset    # sample index into the decoded range
+                i0 = round(t * sp / US * RATE) - s.offset    # sample index into the decoded range
                 lo, hi = max(i0, 0), min(i0 + n, len(s.pcm))
                 if hi > lo:
                     acc[lo - i0:hi - i0] += s.pcm[lo:hi] * g
             else:                                       # faster / slower: resampled (pitch follows)
-                pos = t * project.speed(c) / US * RATE - s.offset + np.arange(n) * step
+                pos = t * sp / US * RATE - s.offset + np.arange(n) * step
                 ok = (pos >= 0) & (pos < len(s.pcm) - 1)
                 if ok.any():
                     i = pos[ok].astype(np.int64)

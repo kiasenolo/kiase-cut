@@ -65,5 +65,71 @@ class CurveViewTests(unittest.TestCase):
         self.assertAlmostEqual(self.span()[1], vs)
 
 
+class DragLockTests(unittest.TestCase):
+    """Shift keeps a dragged keyframe to the time axis, Alt to the values; a handle with Shift to one direction."""
+
+    def setUp(self):
+        self.cv = CurveCanvas()
+        self.cv.resize(800, 400)
+        keys = [[0, 0.0, 0, 0, S // 4, 5.0], [S, 50.0, -S // 4, -5.0, S // 4, 5.0], [2 * S, 100.0, -S // 4, -5.0, 0, 0]]
+        self.cv.set_curves([{"label": "x", "factor": 1.0, "keys": keys, "static": 0.0}], 2 * S, 30.0, 0)
+
+    def move(self, to, mods=NONE):
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+        g = self.cv.mapToGlobal(QPointF(to))
+        self.cv.mouseMoveEvent(QMouseEvent(QEvent.MouseMove, QPointF(to), g, Qt.NoButton, Qt.LeftButton, mods))
+
+    def key(self):
+        return list(self.cv.curves[0]["keys"][1])
+
+    def press_key(self):
+        a = self.cv.key_point(0, 1).toPoint()
+        QTest.mousePress(self.cv, Qt.LeftButton, NONE, a)
+        return a
+
+    def test_plain_drag_moves_both(self):
+        a = self.press_key()
+        self.move(a + QPoint(60, -40))
+        self.move(a + QPoint(60, -40))
+        k = self.key()
+        QTest.mouseRelease(self.cv, Qt.LeftButton, NONE, a + QPoint(60, -40))
+        self.assertNotEqual(k[0], S)
+        self.assertNotEqual(k[1], 50.0)
+
+    def test_shift_keeps_to_the_time_and_alt_to_the_values(self):
+        a = self.press_key()
+        self.move(a + QPoint(60, -40), Qt.ShiftModifier)
+        k = self.key()
+        self.assertNotEqual(k[0], S)
+        self.assertEqual(k[1], 50.0)                                       # (the value stayed)
+        self.move(a + QPoint(60, -40), Qt.AltModifier)
+        k = self.key()
+        self.assertEqual(k[0], S)                                          # (the time stayed)
+        self.assertGreater(k[1], 50.0)
+        QTest.mouseRelease(self.cv, Qt.LeftButton, NONE, a)
+
+    def test_a_handle_with_shift_keeps_one_direction(self):
+        a = self.press_key()
+        QTest.mouseRelease(self.cv, Qt.LeftButton, NONE, a)                # (selected: its handles show)
+        (side, hp), = [h for h in self.cv._handle_points(0, 1) if h[0] == "r"]
+        hp = hp.toPoint()
+        before = self.key()
+        QTest.mousePress(self.cv, Qt.LeftButton, NONE, hp)
+        self.move(hp + QPoint(50, 8), Qt.ShiftModifier)                    # (mostly across)
+        across = self.key()
+        self.assertGreater(across[4], before[4])
+        self.assertEqual(across[5], before[5])
+        self.move(hp + QPoint(6, -60), Qt.ShiftModifier)                   # (mostly up)
+        up = self.key()
+        self.assertEqual(up[4], before[4])
+        self.assertGreater(up[5], before[5])
+        self.move(hp + QPoint(50, -60))                                    # (no Shift: free)
+        free = self.key()
+        self.assertGreater(free[4], before[4])
+        self.assertGreater(free[5], before[5])
+        QTest.mouseRelease(self.cv, Qt.LeftButton, NONE, hp)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,8 @@ can be compared; without it they share one axis in the inspector's units.
 
 Click a keyframe to select it; Ctrl / Shift + click adds or removes keyframes, dragging on
 empty space draws a selection box, Ctrl+A selects all. Dragging a selected keyframe moves
-the whole selection (time snaps to frames; hold Shift to keep to one axis). The round
+the whole selection (time snaps to frames; hold Shift to move along the time only, Alt along the values
+only; a handle with Shift keeps to the one direction - across or up and down - it has gone further). The round
 handles shape the ease of a selected keyframe. Double-click adds a keyframe to the nearest
 curve, Delete removes the selection, Ctrl+D clears it. The wheel moves the view up and
 down, Shift+wheel left and right, Ctrl+wheel zooms time around the mouse, Alt+wheel zooms
@@ -414,7 +415,9 @@ class CurveCanvas(QWidget):
         adding = bool(e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier))
         kind, ref, side = self._hit(pos)
         if kind == "handle":
-            self.drag = {"kind": "handle", "ref": ref, "side": side, "moved": False}
+            k = self.curves[ref[0]]["keys"][ref[1]]
+            self.drag = {"kind": "handle", "ref": ref, "side": side, "moved": False, "pos": pos,
+                         "o": (k[4], k[5]) if side == "r" else (k[2], k[3])}       # (where it was: Shift keeps one of the two)
             return
         if kind == "key":
             if adding:
@@ -502,11 +505,10 @@ class CurveCanvas(QWidget):
             lo, hi = d["bounds"]
             dt = min(max(dt, lo), hi)
             dp = self.p_of(pos.y()) - self.p_of(d["pos"].y())
-            if e.modifiers() & Qt.ShiftModifier:           # keep to the main direction
-                if abs(pos.x() - d["pos"].x()) >= abs(pos.y() - d["pos"].y()):
-                    dp = 0.0
-                else:
-                    dt = 0
+            if e.modifiers() & Qt.ShiftModifier:           # Shift: along the time only (the values stay)
+                dp = 0.0
+            elif e.modifiers() & Qt.AltModifier:           # Alt: along the values only (the times stay)
+                dt = 0
             for ci, i in self.sel:
                 o = d["orig"][ci][i]
                 k = self.curves[ci]["keys"][i]
@@ -524,12 +526,19 @@ class CurveCanvas(QWidget):
             keys, k = c["keys"], c["keys"][d["ref"][1]]
             t = min(max(self.t_of(pos.x()), 0), self.duration)
             v = self.vv(ci, self.p_of(pos.y()))
-            if d["side"] == "r":
-                k[4] = min(max(t - k[0], 0), keys[i + 1][0] - k[0])
-                k[5] = 0.0 if c["color"] else v - k[1]
+            right = d["side"] == "r"
+            dt, dv = t - k[0], v - k[1]
+            if e.modifiers() & Qt.ShiftModifier:          # Shift: one direction only - whichever way it has gone further
+                if abs(pos.x() - d["pos"].x()) >= abs(pos.y() - d["pos"].y()):
+                    dv = d["o"][1]                          # (across: the height stays)
+                else:
+                    dt = d["o"][0]                          # (up or down: the length stays)
+            if right:
+                k[4] = min(max(dt, 0), keys[i + 1][0] - k[0])
+                k[5] = 0.0 if c["color"] else dv
             else:
-                k[2] = max(min(t - k[0], 0), -(k[0] - keys[i - 1][0]))
-                k[3] = 0.0 if c["color"] else v - k[1]
+                k[2] = max(min(dt, 0), -(k[0] - keys[i - 1][0]))
+                k[3] = 0.0 if c["color"] else dv
             d["moved"] = True
             self._paths = None
             self.keysLive.emit(self._changes([ci]))

@@ -217,9 +217,10 @@ def compound_deps(proj, kid):
             raise ValueError("複合片段裡面用到了時間線，不能存到 Library")
         out.append(k)
         for c in project.walk_clips(proj["compounds"][k]["tracks"]):
-            ref = project.ref_of(c)
-            if ref:
-                todo.append(ref)
+            if c.get("timeline_id"):
+                todo.append(c["timeline_id"])
+            todo += [h["compound_id"] for h in project.compound_holders(c)
+                     if h["compound_id"] in proj["compounds"]]          # (masks and effect sources too)
     return out
 
 

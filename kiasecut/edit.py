@@ -2604,11 +2604,15 @@ def add_library_compound(root, pack):
         comps[ids[old]] = {"tracks": []}                 # (taken, for the next new id)
     for old, comp in pack["compounds"].items():
         comp = copy.deepcopy(comp)
+        renamed = {}
         for t in project.all_tracks(comp["tracks"]):
             for c in t["clips"]:
-                c["id"] = new_clip_id()
-                if c.get("compound_id") in ids:
-                    c["compound_id"] = ids[c["compound_id"]]
+                renamed[c["id"]] = c["id"] = new_clip_id()
+                for h in project.compound_holders(c):    # (a compound clip, mask or effect source)
+                    if h["compound_id"] in ids:
+                        h["compound_id"] = ids[h["compound_id"]]
+        for p in comp.get("params") or []:               # a component's parameters follow its layers
+            p["binds"] = [[renamed.get(cid, cid), prop] for cid, prop in p.get("binds") or []]
         comps[ids[old]] = comp
     comps[ids[pack["root"]]]["library_source"] = pack["source"]
     if pack.get("name"):                                 # named as it was saved

@@ -41,6 +41,21 @@ class ComponentTests(unittest.TestCase):
         im = (renderer or render.Renderer()).render(view, frame, 192, 108)
         return im.pixelColor(x, 54)
 
+    def test_from_the_library_keeps_its_parameters(self):
+        """存到 Library and back: the layers get new ids, and the parameters follow them."""
+        from kiasecut import userlib
+        pr = edit.add_param(self.p, self.kid, "color", "主色", [("c1", "color")])
+        lib = os.path.join(self.dir, "Library")
+        path = userlib.save_compound(lib, os.path.join(lib, "compounds"), "按鈕", self.p, self.kid)
+        p2 = proj()
+        kid = edit.add_library_compound(p2, userlib.load_compound(path))
+        comp = p2["compounds"][kid]
+        (cid, prop), = components.param(comp, pr["id"])["binds"]
+        self.assertEqual(prop, "color")
+        self.assertIn(cid, [c["id"] for c in project.walk_clips(comp["tracks"])])     # bound to its layer
+        self.assertNotEqual(cid, "c1")
+        self.assertEqual([(q["id"], k) for q, k in components.bound(comp)[cid]], [(pr["id"], "color")])
+
     def test_made_as_a_component(self):
         self.assertTrue(components.is_component(self.comp))
         self.assertTrue(self.comp["name"].startswith("靜態元件"))

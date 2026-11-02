@@ -645,6 +645,17 @@ def is_static(c):
     return c.get("type") == "compound" and bool((c.get("compound") or {}).get("static"))
 
 
+def compound_holders(c):
+    """The dicts of clip c that name a compound by its "compound_id": the clip itself (a
+    compound clip), its compound mask, its effects' compound sources."""
+    out = [c] if c.get("compound_id") else []
+    if (c.get("mask") or {}).get("compound_id"):
+        out.append(c["mask"])
+    for e in c.get("effects") or []:
+        out += [s for s in (e.get("sources") or {}).values() if isinstance(s, dict) and s.get("compound_id")]
+    return out
+
+
 def ref_of(c):
     """The compound id or timeline id a clip shows, or None."""
     return c.get("compound_id") or c.get("timeline_id")

@@ -9,12 +9,12 @@ import threading
 
 from PySide6.QtCore import QEvent, QMimeData, QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QImage, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QLineEdit, QTreeWidget, QTreeWidgetItem,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QScrollArea, QVBoxLayout, QWidget)
 
 from .. import fx, fxthumbs
 from .menukeys import Menu
-from .viewmode import TreeView
+from .viewmode import list_toggle
 
 FX_MIME = "application/x-kiasecut-fx"          # the filter's ref (a "builtin:…" name or a file path), utf-8,
                                                # or an effect dragged from a clip (effect_mime)
@@ -137,23 +137,50 @@ def dropped_fx(payload):
     return payload, None, None
 
 
-class VfxTree(QTreeWidget):
+class VfxList(QListWidget):
+    """One category's filters: icons in a grid, or a list (the same arrangement as the 內建素材 tab)."""
+    GRID = QSize(THUMB[0] + 18, THUMB[1] + 34)
+
     def __init__(self):
         super().__init__()
-        self.setHeaderHidden(True)
+        self.setViewMode(QListWidget.IconMode)
         self.setIconSize(QSize(*THUMB))
+        self.setGridSize(self.GRID)
+        self.setResizeMode(QListWidget.Adjust)
+        self.setMovement(QListWidget.Static)
+        self.setWordWrap(True)
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragOnly)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.setIndentation(12)
-        self.setUniformRowHeights(False)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+
+    def shown(self):
+        return sum(1 for i in range(self.count()) if not self.item(i).isHidden())
+
+    def fit(self):
+        """As tall as its items need: the tab scrolls, not each list."""
+        g = self.gridSize()
+        if self.viewMode() == QListWidget.IconMode and g.width() > 0:
+            cols = max(1, self.viewport().width() // g.width())
+            h = max(1, -(-self.shown() // cols)) * g.height() + 2 * self.frameWidth() + 4
+        else:                                               # 列表: one row each
+            h = self.shown() * max(1, self.sizeHintForRow(0)) + 2 * self.frameWidth() + 4
+        if self.height() != h:
+            self.setFixedHeight(h)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.fit()
 
     def mimeTypes(self):
         return [FX_MIME]
 
     def mimeData(self, items):
         md = QMimeData()
-        refs = [i.data(0, ROLE_REF) for i in items if i.data(0, ROLE_REF)]
+        refs = [i.data(ROLE_REF) for i in items if i.data(ROLE_REF)]
         if refs:
             md.setData(FX_MIME, refs[0].encode("utf-8"))
         return md
@@ -172,24 +199,23 @@ class VfxPanel(QWidget):
         self.search.setPlaceholderText("搜尋濾鏡…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(self._filter)
-        self.tree = VfxTree()
-        self.tree.itemDoubleClicked.connect(lambda it, _c: self._ref(it) and self.addClipRequested.emit(self._ref(it)))
-        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.tree.customContextMenuRequested.connect(self._menu)
-        self.view = TreeView("vfx", self.tree, folder=lambda it: not it.data(0, ROLE_REF), menu=self._menu_for,
-                             icon=QSize(*THUMB))
-        top = QHBoxLayout()
-        top.addWidget(self.search, 1)
-        top.addWidget(self.view.button)
-        lay.addLayout(top)
-        lay.addWidget(self.view, 1)
+        self.top = QHBoxLayout()                          # (the 網格 / 列表 button is added once there are lists)
+        self.top.addWidget(self.search, 1)
+        lay.addLayout(self.top)
+        self.body = QWidget()
+        self.body_lay = QVBoxLayout(self.body)
+        self.body_lay.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidget(self.body)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        lay.addWidget(scroll, 1)
+        self.cats = []                      # [(header label, VfxList)]
+        self.toggle = None
         self.thumbs = Thumbs()
         self.thumbs.ready.connect(self._thumb_ready)
         self.thumbs.moving.connect(self._moving_ready)
-        self.tree.setMouseTracking(True)                  # the filter under the mouse moves: what changes with time shows
-        self.tree.viewport().setMouseTracking(True)
-        self.tree.viewport().installEventFilter(self)
-        self.hover = None                   # (item, ref) of the thumbnail playing
+        self.hover = None                   # (list, item, ref) of the thumbnail playing
         self.step = 0
         self.clock = QTimer(self)
         self.clock.setInterval(1000 // fxthumbs.ANIM_FPS)
@@ -199,47 +225,48 @@ class VfxPanel(QWidget):
         self.setMinimumWidth(260)
 
     def eventFilter(self, obj, ev):
-        if obj is self.tree.viewport():
-            if ev.type() == QEvent.MouseMove:
-                item = self.tree.itemAt(ev.position().toPoint())
-                if item is not self.hover_item():
-                    self._hover(item)
-            elif ev.type() == QEvent.Leave:
-                self._hover(None)
+        for _head, lst in self.cats:                      # (the filter under the mouse moves: what changes with time shows)
+            if obj is lst.viewport():
+                if ev.type() == QEvent.MouseMove:
+                    item = lst.itemAt(ev.position().toPoint())
+                    if item is not self.hover_item():
+                        self._hover(lst, item)
+                elif ev.type() == QEvent.Leave:
+                    self._hover(None, None)
         return super().eventFilter(obj, ev)
 
     def hover_item(self):
-        return self.hover[0] if self.hover else None
+        return self.hover[1] if self.hover else None
 
-    def _hover(self, item):
+    def _hover(self, lst, item):
         if self.hover:                                    # back to the still picture
-            old, ref = self.hover
+            _l, old, ref = self.hover
             pix = self.thumbs.get(ref)
             if pix is not None:
-                old.setIcon(0, QIcon(pix))
+                old.setIcon(QIcon(pix))
         self.hover = None
         self.clock.stop()
         ref = self._ref(item)
         if ref:
-            self.hover, self.step = (item, ref), 0
+            self.hover, self.step = (lst, item, ref), 0
             self.thumbs.animation(ref)                    # (made the first time: the clock starts when it is)
             self._moving_ready(ref)
 
     def _moving_ready(self, ref):
-        if self.hover and self.hover[1] == ref and self.thumbs.animation(ref):
+        if self.hover and self.hover[2] == ref and self.thumbs.animation(ref):
             self.clock.start()
 
     def _tick(self):
-        frames = self.thumbs.animation(self.hover[1]) if self.hover else None
+        frames = self.thumbs.animation(self.hover[2]) if self.hover else None
         if not frames:
             self.clock.stop()
             return
         self.step = (self.step + 1) % len(frames)
-        self.hover[0].setIcon(0, QIcon(frames[self.step]))
+        self.hover[1].setIcon(QIcon(frames[self.step]))
 
     @staticmethod
     def _ref(item):
-        return item.data(0, ROLE_REF) if item is not None else None
+        return item.data(ROLE_REF) if item is not None else None
 
     def set_user_filters(self, mine):
         if mine != self.mine:
@@ -249,7 +276,10 @@ class VfxPanel(QWidget):
     def rebuild(self):
         self.hover = None
         self.clock.stop()
-        self.tree.clear()
+        for head, lst in self.cats:
+            head.deleteLater()
+            lst.deleteLater()
+        self.cats = []
         cats = {}
         for ref in fx.builtin_refs():
             d = fx.get(ref)
@@ -257,50 +287,61 @@ class VfxPanel(QWidget):
         if self.mine:
             cats["我的濾鏡（Library）"] = [(name, ref, fx.get(ref).description, fx.get(ref).error)
                                           for name, ref in self.mine]
+        while self.body_lay.count():
+            self.body_lay.takeAt(0)
         for cat, items in cats.items():
-            top = QTreeWidgetItem([cat])
-            top.setFlags(Qt.ItemIsEnabled)
-            self.tree.addTopLevelItem(top)
+            head = QLabel(cat)
+            head.setStyleSheet("font-weight: bold; margin-top: 4px;")
+            lst = VfxList()
+            lst.itemDoubleClicked.connect(lambda it: self._ref(it) and self.addClipRequested.emit(self._ref(it)))
+            lst.setContextMenuPolicy(Qt.CustomContextMenu)
+            lst.customContextMenuRequested.connect(lambda pos, l=lst: self._menu(l, pos))
+            lst.viewport().installEventFilter(self)
             for name, ref, desc, err in items:
-                it = QTreeWidgetItem([name])
-                it.setData(0, ROLE_REF, ref)
-                it.setToolTip(0, f"{name}\n{desc}" + (f"\n（有錯誤：{err.splitlines()[0]}）" if err else ""))
-                it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsDragEnabled)
+                it = QListWidgetItem(name)
+                it.setData(ROLE_REF, ref)
+                it.setToolTip(f"{name}\n{desc}" + (f"\n（有錯誤：{err.splitlines()[0]}）" if err else ""))
                 pix = self.thumbs.get(ref)
                 if pix is not None:
-                    it.setIcon(0, QIcon(pix))
-                top.addChild(it)
-            top.setExpanded(True)
+                    it.setIcon(QIcon(pix))
+                lst.addItem(it)
+            self.body_lay.addWidget(head)
+            self.body_lay.addWidget(lst)
+            self.cats.append((head, lst))
+        self.body_lay.addStretch(1)
+        if self.toggle is not None:
+            self.top.removeWidget(self.toggle)
+            self.toggle.deleteLater()
+        buttons = [list_toggle("vfx", lst, QSize(*THUMB), VfxList.GRID, QSize(32, 24)) for _h, lst in self.cats]
+        for b in buttons[1:]:                             # (one button for all of them)
+            b.hide()
+            buttons[0].toggled.connect(b.setChecked)
+        self.toggle = buttons[0] if buttons else None
+        if self.toggle is not None:
+            self.top.addWidget(self.toggle)
         self._filter(self.search.text())
 
     def _thumb_ready(self, ref):
         pix = self.thumbs.get(ref)
         if pix is None:
             return
-        for i in range(self.tree.topLevelItemCount()):
-            top = self.tree.topLevelItem(i)
-            for j in range(top.childCount()):
-                if top.child(j).data(0, ROLE_REF) == ref:
-                    top.child(j).setIcon(0, QIcon(pix))
+        for _head, lst in self.cats:
+            for i in range(lst.count()):
+                if lst.item(i).data(ROLE_REF) == ref:
+                    lst.item(i).setIcon(QIcon(pix))
 
     def _filter(self, text):
         text = text.strip().lower()
-        for i in range(self.tree.topLevelItemCount()):
-            top = self.tree.topLevelItem(i)
-            shown = 0
-            for j in range(top.childCount()):
-                it = top.child(j)
-                hit = not text or text in it.text(0).lower() or text in top.text(0).lower()
-                it.setHidden(not hit)
-                shown += hit
-            top.setHidden(not shown)
-        self.view.grid.sync()
+        for head, lst in self.cats:
+            for i in range(lst.count()):
+                it = lst.item(i)
+                it.setHidden(bool(text) and text not in it.text().lower() and text not in head.text().lower())
+            head.setHidden(lst.shown() == 0)
+            lst.setHidden(lst.shown() == 0)
+            lst.fit()
 
-    def _menu(self, pos):
-        self._menu_for(self.tree.itemAt(pos), self.tree.viewport().mapToGlobal(pos))
-
-    def _menu_for(self, it, at):
-        ref = self._ref(it)
+    def _menu(self, lst, pos):
+        ref = self._ref(lst.itemAt(pos))
         if not ref:
             return
         menu = Menu(self)
@@ -308,4 +349,4 @@ class VfxPanel(QWidget):
         menu.addAction("套用到選取的片段", lambda: self.applyRequested.emit(ref))
         menu.addSeparator()
         menu.addAction("濾鏡寫法說明…", self.docRequested)
-        menu.exec(at)
+        menu.exec(lst.viewport().mapToGlobal(pos))

@@ -44,6 +44,7 @@ from . import icons
 from .colorpick import pick_color, qcolor, rgba
 from .library import PictureDrop
 from .mediapick import pick_button
+from .speedcurve import SpeedCurveEditor
 from .timeline import US, timecode
 from .wrapdrag import WrapDrag
 
@@ -331,6 +332,7 @@ class Inspector(QWidget):
     speedChosen = Signal(list, float)               # clip ids, speed
     lengthChosen = Signal(list, float)              # clip ids, 目標長度 (us): the speed that makes them last that
     keepPitchChosen = Signal(list, bool)            # clip ids, 保持音高
+    speedCurveChosen = Signal(list, object)         # clip ids, 曲線變速 points (None: turn it on, False: off)
     groupMatteChosen = Signal(list, dict)           # group ids, {on / show / invert / body: bool} that changed
     groupAnchorChosen = Signal(list, bool)          # group ids, 中心點跟隨最下層物件 on
     throughChosen = Signal(list, bool)              # compound clip ids, 效果穿透 on
@@ -367,6 +369,7 @@ class Inspector(QWidget):
         self.playhead_t = 0               # the playhead in the primary clip's time
         self.shape = None                 # what the form was built for
         self.streams = []                 # the labels of the clips' file's sound streams (when several)
+        self.curve_rows = False           # the form has 曲線變速's editor (every clip has a curve)
         self.widgets = {}
         self.pending = {}
         self.timer = QTimer(self, singleShot=True, interval=DEBOUNCE_MS)
@@ -697,7 +700,23 @@ class Inspector(QWidget):
         pitch.setToolTip("變速時聲音保持原本的音高（不像錄音帶那樣變高變低）；預覽和匯出都是")
         pitch.clicked.connect(lambda v: self._emit_now(self.keepPitchChosen, bool(v)))
         self.widgets["keep_pitch"] = pitch
-        form.addRow("", pitch)
+        curve = QCheckBox("曲線變速")
+        curve.setToolTip("速度沿著片段變化（像剪映的曲線變速）：在下面的曲線上拉點，這裡快、那裡慢；\n"
+                         "播放的還是同一段素材，片段的長度跟著變；聲音的音高跟著速度")
+        curve.clicked.connect(lambda v: self._emit_now(self.speedCurveChosen, None if v else False))
+        self.widgets["speed_curve_on"] = curve
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(pitch)
+        lay.addWidget(curve)
+        lay.addStretch(1)
+        form.addRow("", row)
+        if self.curve_rows:                               # (one clip, or alike ones, with a curve on)
+            ed = SpeedCurveEditor()
+            ed.curveChosen.connect(lambda pts: self._emit_now(self.speedCurveChosen, pts))
+            self.widgets["speed_curve"] = ed
+            form.addRow(ed)
         row = QWidget()
         lay = QHBoxLayout(row)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -728,6 +747,16 @@ class Inspector(QWidget):
         self._set("speed", speeds.pop() if len(speeds) == 1 else None)
         lens = {round(k["duration_us"] / US, 3) for k in clips}
         self._set("target_length", lens.pop() if len(lens) == 1 else None)
+        curved = {bool(k.get("speed_curve")) for k in clips}
+        w["speed_curve_on"].blockSignals(True)
+        w["speed_curve_on"].setTristate(len(curved) > 1)
+        w["speed_curve_on"].setCheckState(Qt.PartiallyChecked if len(curved) > 1 else
+                                          Qt.Checked if curved == {True} else Qt.Unchecked)
+        w["speed_curve_on"].blockSignals(False)
+        for k in ("speed", "keep_pitch"):                       # (a curve has no one speed, its sound follows it)
+            w[k].setEnabled(curved != {True})
+        if "speed_curve" in w:
+            w["speed_curve"].show_clip(clips[0], ts[0])
         pitches = {bool(k.get("keep_pitch")) for k in clips}
         w["keep_pitch"].blockSignals(True)
         w["keep_pitch"].setTristate(len(pitches) > 1)
@@ -1351,6 +1380,7 @@ class Inspector(QWidget):
         shape = None if c is None else (len(clips) > 1, c["type"], bool(c.get("text")), c.get("transform") is not None,
                                          bool(c.get("timed", c["type"] in edit.TIMED and not project.is_static(c))),
                                          tuple(streams), kind_tag(c.get("mask")), "volume" in c,
+                                         all(k.get("speed_curve") for k in clips),
                                          (c.get("asset") or {}).get("family"), (c.get("mask") or {}).get("compound_id"),
                                          bool((c.get("mask") or {}).get("video")),
                                          tuple((p["id"], p["kind"], p["name"]) for p in
@@ -1368,6 +1398,7 @@ class Inspector(QWidget):
         if shape != self.shape:
             self.shape = shape
             self.streams = streams
+            self.curve_rows = bool(clips) and all(k.get("speed_curve") for k in clips)
             self.through_row = through
             self._build(c)
         if self.place_edit and not (c is not None and components.of_clip(c) is not None and

@@ -185,7 +185,14 @@ class Mixer:
                 continue
             sp = 1.0 if s.pitched else project.speed(c)    # (保持音高: decoded at the clip's pace already)
             step = s.rate * sp                          # source samples per mixed sample
-            if abs(step - 1.0) < 1e-9:
+            if c.get("speed_curve"):                    # 曲線變速: each sample where the curve has got to
+                pos = project.curve_source_offsets(c, t + np.arange(n) * s.rate * US / RATE) / US * RATE - s.offset
+                ok = (pos >= 0) & (pos < len(s.pcm) - 1)
+                if ok.any():
+                    i = pos[ok].astype(np.int64)
+                    f = (pos[ok] - i)[:, None]
+                    acc[ok] += (s.pcm[i] * (1 - f) + s.pcm[i + 1] * f) * g
+            elif abs(step - 1.0) < 1e-9:
                 i0 = round(t * sp / US * RATE) - s.offset    # sample index into the decoded range
                 lo, hi = max(i0, 0), min(i0 + n, len(s.pcm))
                 if hi > lo:

@@ -68,5 +68,51 @@ class ClipTests(unittest.TestCase):
         self.assertEqual((round(project.speed(c), 3), c["duration_us"]), (2.0, 2 * S))
 
 
+class SpeedCurveTests(unittest.TestCase):
+    def clip(self):
+        c = {"id": "v", "type": "video", "name": "x", "start_us": 0, "duration_us": 4 * S, "source_start_us": S,
+             "media": {"path": "x.mp4", "duration_us": 20 * S, "width": 10, "height": 10}, "transform": {},
+             "volume": 1.0, "fade_in_us": S}
+        p = project.new()
+        p["tracks"] = [{"id": "t", "kind": "video", "name": "v", "clips": [c]}]
+        project.link(p)
+        return p, c
+
+    def test_same_source_new_length(self):
+        p, c = self.clip()
+        edit.set_speed_curve(p, "v", [[0, 1], [0.5, 4], [1, 1]])
+        self.assertAlmostEqual(project.source_time(c, 0), S)
+        self.assertAlmostEqual(project.source_time(c, c["duration_us"]), 5 * S, delta=5)    # the same 4 s of it
+        self.assertLess(c["duration_us"], 2 * S)                                             # mean above 2x
+        self.assertAlmostEqual(project.speed(c), 4 * S / c["duration_us"], delta=1e-3)
+        mid = project.source_time(c, c["duration_us"] / 2) - S
+        self.assertAlmostEqual(mid, 2 * S, delta=S * 0.01)                                   # (symmetric)
+        early = project.source_time(c, c["duration_us"] * 0.1) - S
+        self.assertLess(early / (c["duration_us"] * 0.1), project.speed(c))                  # slow at the start
+        self.assertLess(c["fade_in_us"], S)                                                  # stretched with it
+        edit.set_speed_curve(p, "v", False)
+        self.assertNotIn("speed_curve", c)
+        self.assertAlmostEqual(project.speed(c), 4 * S / c["duration_us"], delta=1e-3)       # its mean, plain
+
+    def test_points_cleaned(self):
+        p, c = self.clip()
+        edit.set_speed_curve(p, "v", [[0.2, 50], [0.6, 0.01]])
+        self.assertEqual(c["speed_curve"]["points"], [[0.0, 10.0], [1.0, 0.1]])
+        with self.assertRaises(edit.EditError):
+            edit.set_speed_curve(p, "v", [[0.5, 1]])
+        edit.set_speed(p, "v", 2.0)                                                          # a plain speed: off
+        self.assertNotIn("speed_curve", c)
+
+
+@unittest.skipUnless(FFMPEG, "needs ffmpeg")
+class SpeedCurveSoundTests(ClipTests):
+    def test_pitch_follows_the_curve(self):
+        p = self.proj()
+        edit.set_speed_curve(p, "s", [[0, 2], [1, 2]])                                       # flat 2x: a tape at 880
+        self.assertAlmostEqual(pitch(self.mixed(p)), 880, delta=10)
+
+    test_keep_pitch = test_target_length = None
+
+
 if __name__ == "__main__":
     unittest.main()

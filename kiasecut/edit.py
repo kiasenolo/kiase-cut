@@ -1412,6 +1412,13 @@ def scale_keys(c, k):
 
 
 def set_speed(proj, clip_id, value):
+    """A clip's plain speed (曲線變速 off): _set_speed."""
+    _, c = find(proj, clip_id)
+    c.pop("speed_curve", None)
+    return _set_speed(proj, clip_id, value)
+
+
+def _set_speed(proj, clip_id, value):
     """A clip's speed: its source plays value times as fast. The clip keeps the same stretch
     of its source, so it gets shorter or longer - as far as the room after it allows (and its
     source lasts); keyframes and fades stretch with it."""
@@ -1465,6 +1472,45 @@ def set_normalize(proj, clip_id, target_db):
         c.pop("normalize", None)
     else:
         c["normalize"] = round(min(0.0, max(-60.0, float(target_db))), 2)
+    return c
+
+
+CURVE_DEFAULT = [[0.0, 1.0], [0.25, 1.0], [0.5, 1.0], [0.75, 1.0], [1.0, 1.0]]
+
+
+def _clean_curve(points):
+    pts = sorted([min(1.0, max(0.0, float(u))), min(project.CURVE_MAX, max(project.CURVE_MIN, float(s)))]
+                 for u, s in points)
+    if len(pts) < 2:
+        raise EditError("曲線變速至少要兩個點")
+    pts[0][0], pts[-1][0] = 0.0, 1.0                     # (from the clip's start to its end)
+    return [[round(u, 4), round(s, 4)] for u, s in pts]
+
+
+def set_speed_curve(proj, clip_id, points):
+    """曲線變速 on (points: [[u, speed]], None: the curve it has, or a flat one), or off (False:
+    it keeps its mean speed as a plain one). The clip goes on playing the same part of its source,
+    so its length follows the curve's mean speed (as far as the room after it allows - then it
+    plays less of it); keyframes and fades stretch with it."""
+    t, c = find(proj, clip_id)
+    _timed(c)
+    if points is False:
+        c.pop("speed_curve", None)
+        return c
+    old = c.get("speed_curve")
+    span = c["duration_us"] * project.speed(c)          # (the part of the source it plays)
+    pts = _clean_curve(points if points is not None else (old or {}).get("points") or CURVE_DEFAULT)
+    mean = project.curve_mean(pts)
+    room = free_range(t, c["start_us"], end(c), ignore=c)[1] - c["start_us"]
+    new_dur = int(max(MIN_US, min(span / mean, room)))
+    scale_keys(c, new_dur / c["duration_us"] if c["duration_us"] else 1.0)
+    for f in ("fade_in_us", "fade_out_us"):
+        if c.get(f):
+            c[f] = int(min(c[f] * new_dur / max(c["duration_us"], 1), new_dur))
+    c["duration_us"] = new_dur
+    c["speed_curve"] = {"points": pts}
+    c["speed"] = round(mean, 6)
+    c.pop("keep_pitch", None)                           # (a curve's sound follows its speed)
     return c
 
 

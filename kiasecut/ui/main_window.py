@@ -459,6 +459,8 @@ class MainWindow(QMainWindow):
         ins.liveCancelled.connect(self.rebuild)
         ins.speedChosen.connect(lambda ids, v: self.apply_each("速度", edit.set_speed, ids, v))
         ins.lengthChosen.connect(lambda ids, us: self.apply_each("目標長度", edit.set_duration_by_speed, ids, us))
+        ins.speedCurveChosen.connect(lambda ids, pts: self.apply_each(
+            "取消曲線變速" if pts is False else "曲線變速", edit.set_speed_curve, ids, pts))
         ins.keepPitchChosen.connect(lambda ids, on: self.apply_each("保持音高" if on else "取消保持音高",
                                                                     edit.set_keep_pitch, ids, on))
         ins.freezeChosen.connect(self.on_freeze)

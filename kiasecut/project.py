@@ -393,9 +393,76 @@ def frozen(c):
 
 
 def source_time(c, t):
-    """The source time a clip shows at clip time t: with its speed, held when frozen."""
+    """The source time a clip shows at clip time t: with its speed (or its 曲線變速), held when frozen."""
     f = frozen(c)
-    return f if f is not None else c.get("source_start_us", 0) + t * speed(c)
+    if f is not None:
+        return f
+    sc = c.get("speed_curve")
+    if sc:
+        dur = max(c["duration_us"], 1)
+        return c.get("source_start_us", 0) + curve_progress(sc["points"], t / dur) * dur * curve_mean(sc["points"])
+    return c.get("source_start_us", 0) + t * speed(c)
+
+
+# 曲線變速: speed_curve {points: [[u, speed]]}: u the place in the clip (0 - 1, the first point at
+# 0 and the last at 1), speed 0.1 - 10 there; between two points the speed eases from one to the
+# other (smoothly, in log scale, as 剪映's curves look). The clip plays its length times the
+# curve's mean speed of its source, and "speed" holds that mean (what the rest of the program
+# takes as its speed: trimming, the sound's range); trimmed, the curve keeps its shape.
+CURVE_SAMPLES = 512
+CURVE_MIN, CURVE_MAX = 0.1, 10.0
+
+
+def curve_speed_at(points, u):
+    """The speed of a 曲線變速 at u (0 - 1)."""
+    u = min(1.0, max(0.0, u))
+    for (u0, s0), (u1, s1) in zip(points, points[1:]):
+        if u <= u1:
+            k = 0.0 if u1 <= u0 else (u - u0) / (u1 - u0)
+            k = k * k * (3 - 2 * k)
+            return math.exp(math.log(s0) + (math.log(s1) - math.log(s0)) * k)
+    return points[-1][1]
+
+
+_cum = {}
+
+
+def curve_table(points):
+    """(u samples, the share of the source played by each: 0 - 1) of a 曲線變速, and its mean speed."""
+    key = tuple(map(tuple, points))
+    hit = _cum.get(key)
+    if hit is None:
+        import numpy as np
+        u = np.linspace(0.0, 1.0, CURVE_SAMPLES + 1)
+        s = np.array([curve_speed_at(points, x) for x in u])
+        cum = np.concatenate([[0.0], np.cumsum((s[1:] + s[:-1]) / 2) / CURVE_SAMPLES])
+        mean = float(cum[-1])
+        hit = (u, cum / mean, mean)
+        if len(_cum) > 64:
+            _cum.clear()
+        _cum[key] = hit
+    return hit
+
+
+def curve_progress(points, u):
+    """How much of its source a 曲線變速 clip has played at u (0 - 1) of its length."""
+    import numpy as np
+    us, share, _mean = curve_table(points)
+    return float(np.interp(u, us, share))
+
+
+def curve_mean(points):
+    return curve_table(points)[2]
+
+
+def curve_source_offsets(c, ts):
+    """For a 曲線變速 clip: how far into the part of its source it plays (us) at clip times ts
+    (a numpy array) - its sound's samples, all at once."""
+    import numpy as np
+    pts = c["speed_curve"]["points"]
+    us, share, mean = curve_table(pts)
+    dur = max(c["duration_us"], 1)
+    return np.interp(np.asarray(ts, float) / dur, us, share) * dur * mean
 
 
 TIME_FILTER = "builtin:frame_rate"      # 降低幀數: a clip's time steps at its fps (no picture change)

@@ -1442,6 +1442,8 @@ class MainWindow(QMainWindow):
         """Every project with its thumbnail; open one, or start / find another."""
         dlg = ProjectManager(self, self.default_location(), self.recent(), current=self.path)
         accepted = dlg.exec() == QDialog.Accepted
+        if dlg.new_location:                             # ✎: the projects folder changed there
+            self.settings().setValue("project_dir", dlg.new_location)
         if dlg.moved or dlg.removed:                     # projects moved, renamed or deleted there
             moved = dict(dlg.moved)
             rec = [moved.get(p, p) for p in self.recent() if p not in dlg.removed]

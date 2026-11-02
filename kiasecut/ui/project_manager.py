@@ -12,21 +12,56 @@ Double-click (or 開啟) opens one; 新增專案… makes one in the folder show
 move it to another folder (or drag it onto a folder card / 上一層), delete it (to the recycle
 bin: a project that owns its folder goes with the whole folder), open its folder or take its
 thumbnail away. The open project cannot be deleted, moved or renamed here.
+排序 orders the folders and the projects (each among their own) by name, the time they were last
+changed or their size (a project that owns its folder: the whole folder), either way round; it is
+remembered. The ✎ beside the path picks another projects folder (設定's 新專案預設位置), left in
+`new_location`.
 The choice is left in `choice`: ("open", project file), ("new", folder) or ("browse",);
 `moved` lists (old, new) project files and `removed` the deleted ones (for the recent list).
 """
 import datetime
 import os
 
-from PySide6.QtCore import QFile, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QFile, QSettings, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QListView, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSizePolicy,
                                QVBoxLayout)
 
 from .. import thumbnail, workspace
 from . import ask, inplace
 from .viewmode import list_toggle
+
+SETTINGS = ("KiaseCut", "KiaseCut")
+SORTS = (("最近修改", "time_desc"), ("最早修改", "time_asc"), ("名稱 A→Z", "name_asc"), ("名稱 Z→A", "name_desc"),
+         ("大小（大→小）", "size_desc"), ("大小（小→大）", "size_asc"))
+
+
+def size_of(path, project=False):
+    """Bytes a folder (or a project: its folder when it owns one, else its file) takes up."""
+    if project and not workspace.owns_folder(path):
+        return os.path.getsize(path) if os.path.exists(path) else 0
+    top = workspace.root_of(path) if project else path
+    total = 0
+    for d, _dirs, files in os.walk(top):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(d, f))
+            except OSError:
+                pass
+    return total
+
+
+def order(paths, how, projects=False):
+    """paths in 排序's order (how: SORTS's keys)."""
+    field, way = (how or "time_desc").rsplit("_", 1)
+    if field == "name":
+        key = lambda p: (label(p).split("\n")[0] if projects else os.path.basename(p)).lower()
+    elif field == "size":
+        key = lambda p: size_of(p, projects)
+    else:
+        key = lambda p: os.path.getmtime(p) if os.path.exists(p) else 0
+    return sorted(paths, key=key, reverse=way == "desc")
 from .menukeys import Menu
 
 CARD = QSize(240, 135)
@@ -121,6 +156,7 @@ class ProjectManager(QDialog):
         self.current = os.path.abspath(current) if current else None
         self.choice = None
         self.moved, self.removed = [], []
+        self.new_location = None                    # ✎: another projects folder was picked
         top = QHBoxLayout()
         self.up_btn = QPushButton("上一層")
         self.up_btn.clicked.connect(self.go_up)
@@ -132,8 +168,22 @@ class ProjectManager(QDialog):
         self.search.setPlaceholderText("搜尋所有資料夾的專案…")
         self.search.setClearButtonEnabled(True)
         self.search.textChanged.connect(lambda _t: self.fill())
+        pen = QPushButton("✎")
+        pen.setFixedWidth(30)
+        pen.setToolTip("換一個專案資料夾（新專案預設存放的地方）")
+        pen.clicked.connect(self.pick_location)
+        self.sort = QComboBox()
+        for text, key in SORTS:
+            self.sort.addItem(text, key)
+        s = QSettings(*SETTINGS)
+        self.sort.setCurrentIndex(max(0, self.sort.findData(s.value("pm_sort", "time_desc"))))
+        self.sort.setToolTip("排序（資料夾和專案各自排）")
+        self.sort.currentIndexChanged.connect(lambda _i: (QSettings(*SETTINGS).setValue("pm_sort", self.sort.currentData()),
+                                                          self.fill()))
         top.addWidget(self.up_btn)
         top.addWidget(self.where, 1)
+        top.addWidget(pen)
+        top.addWidget(self.sort)
         top.addWidget(self.search)
         self.view_top = top                         # (網格 / 列表: added once the list exists)
         self.list = Cards()
@@ -202,6 +252,7 @@ class ProjectManager(QDialog):
                 it.setData(Qt.UserRole, os.path.dirname(self.folder))
                 it.setData(KIND, "up")
                 self.list.addItem(it)
+        folders, projects = order(folders, self.sort.currentData()), order(projects, self.sort.currentData(), True)
         for f in folders:
             it = QListWidgetItem(QIcon(folder_card()), os.path.basename(f))
             it.setData(Qt.UserRole, f)
@@ -228,6 +279,13 @@ class ProjectManager(QDialog):
         self.where.setText(f"專案資料夾：{self.location}" + ("" if rel == "." else f" / {rel.replace(os.sep, ' / ')}"))
         self.where.setToolTip(self.folder)
         self.up_btn.setEnabled(not self.at_top() and not searching)
+
+    def pick_location(self):
+        """✎: browse another projects folder (and make it 新專案's place)."""
+        d = QFileDialog.getExistingDirectory(self, "選擇專案資料夾", self.location)
+        if d:
+            self.location = self.new_location = d.replace("\\", "/")
+            self.open_folder(self.location)
 
     def paths(self):
         return [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())

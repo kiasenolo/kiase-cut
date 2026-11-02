@@ -116,6 +116,24 @@ class ThumbnailTests(Base):
         self.assertFalse(thumbnail.is_off(plain))
 
 
+class SortTests(Base):
+    def test_orders(self):
+        from kiasecut.ui.project_manager import order
+        _, b = self.make("Beta")
+        _, a = self.make("Alpha")
+        os.utime(b, (time.time() + 100, time.time() + 100))                 # Beta saved last
+        with open(os.path.join(workspace.root_of(a), "big.bin"), "wb") as fh:
+            fh.write(b"x" * 100000)                                          # Alpha's folder the biggest
+        names = lambda ps: [workspace.project_name(p) for p in ps]
+        self.assertEqual(names(order([a, b], "name_asc", True)), ["Alpha", "Beta"])
+        self.assertEqual(names(order([a, b], "name_desc", True)), ["Beta", "Alpha"])
+        self.assertEqual(names(order([a, b], "time_desc", True)), ["Beta", "Alpha"])
+        self.assertEqual(names(order([a, b], "size_desc", True)), ["Alpha", "Beta"])
+        dlg = ProjectManager(None, self.home, [])
+        dlg.sort.setCurrentIndex(dlg.sort.findData("name_asc"))
+        self.assertEqual(names(dlg.paths()), ["Alpha", "Beta"])
+
+
 class LabelTests(Base):
     def test_title_folder_time(self):
         proj, path = self.make("Folder A")

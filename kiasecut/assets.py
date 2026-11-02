@@ -63,7 +63,10 @@ FIELD_INFO = {
     "grows": ("列數", "number", 1, 100, 1, 0),
     "gratio": ("格子比例 寬/高（0＝填滿）", "number", 0, 10, 0.05, 2),
     "gline": ("線寬 px", "number", 0.5, 200, 0.5, 1),
-    "gborder": ("外框", "toggle"),
+    "gleft": ("左外框", "toggle"),
+    "gright": ("右外框", "toggle"),
+    "gtop": ("上外框", "toggle"),
+    "gbottom": ("下外框", "toggle"),
     "fill": ("填充", "toggle"),
     "stroke_on": ("外框", "toggle"),
     "stroke_color": ("外框顏色", "color"),
@@ -97,7 +100,7 @@ FIELDS = {                                 # what each family has besides w, h a
     "arrow": STROKE,
     "parallelogram": ("skew",) + STROKE,
     "line": (),
-    "grid": ("gcols", "grows", "gratio", "gline", "gborder"),
+    "grid": ("gcols", "grows", "gratio", "gline", "gleft", "gright", "gtop", "gbottom"),
 }
 NAMES = {"solid": "純色", "gradient": "漸變", "rect": "矩形", "ellipse": "橢圓", "polygon": "多邊形",
          "star": "星形", "heart": "心形", "arrow": "箭頭", "parallelogram": "平行四邊形", "line": "線條", "grid": "網格"}
@@ -257,6 +260,10 @@ def make(a, c1, c2, canvas_w, canvas_h):
 def _migrate(p):
     """Parameters of an older project (outline: filled or outline only) as fill / stroke_on;
     others as they are."""
+    if "gborder" in p:                                      # (one switch for all four edges, before they had their own)
+        p = dict(p)
+        on = p.pop("gborder")
+        p.update(gleft=on, gright=on, gtop=on, gbottom=on)
     if "outline" not in p or "fill" in p:
         return p
     p = dict(p)
@@ -284,7 +291,7 @@ def normalize(p):
 _DEFAULTS = {"fill": True, "stroke_on": False, "stroke": 8, "stroke_align": "inside", "join": "miter",
              "stroke_color": "#000000", "radius": 0, "sides": 6, "points": 5, "inner": 40, "angle": 0,
              "arc_start": 0, "arc_sweep": 100, "ratio": 0, "skew": 20,
-             "gcols": 16, "grows": 9, "gratio": 0, "gline": 4, "gborder": True,
+             "gcols": 16, "grows": 9, "gratio": 0, "gline": 4, "gleft": True, "gright": True, "gtop": True, "gbottom": True,
              "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX}
 
 
@@ -503,7 +510,7 @@ def outline_d(p, w, h):
 
 def _grid(p, w, h):
     """Lines of colour dividing the w x h box into gcols x grows cells; gratio > 0 holds the cells
-    to that width / height (the grid is as large as fits, centred), gborder draws its outer edge."""
+    to that width / height (the grid is as large as fits, centred), gleft / gright / gtop / gbottom draw the outer edges."""
     cols, rows, s = p["gcols"], p["grows"], p["gline"]
     aw, ah = max(w - s, 1.0), max(h - s, 1.0)                 # (the lines stay inside the box)
     cw, ch = aw / cols, ah / rows
@@ -514,8 +521,8 @@ def _grid(p, w, h):
     x0, y0 = (w - gw) / 2, (h - gh) / 2
     xs = [x0 + i * cw for i in range(cols + 1)]
     ys = [y0 + j * ch for j in range(rows + 1)]
-    if not p["gborder"]:
-        xs, ys = xs[1:-1], ys[1:-1]
+    xs = xs[(0 if p["gleft"] else 1):len(xs) - (0 if p["gright"] else 1)]
+    ys = ys[(0 if p["gtop"] else 1):len(ys) - (0 if p["gbottom"] else 1)]
     d = "".join(f"M{_num(x)} {_num(y0)} V{_num(y0 + gh)} " for x in xs) + "".join(f"M{_num(x0)} {_num(y)} H{_num(x0 + gw)} " for y in ys)
     rgb, op = _alpha(p["color"])
     body = (f'<path d="{d}" fill="none" stroke="{rgb}" stroke-width="{s:g}" stroke-linecap="square"'

@@ -934,10 +934,6 @@ class Inspector(QWidget):
             row.addWidget(drop)
         form.addRow("形狀", row)
         if not c.get("mask"):
-            hint = QLabel("選一個形狀，或勾選「啟用遮罩」加上矩形遮罩")
-            hint.setStyleSheet("color: #9a9aa0;")
-            hint.setWordWrap(True)
-            form.addRow(hint)
             return
         if compound:
             pick = ComboBox()
@@ -1034,10 +1030,6 @@ class Inspector(QWidget):
         rows = [r for r in PARAMS["mask"] if not (kind_tag(c["mask"]) == "line" and r[0] in ("w", "h"))
                 and not (picture and r[0] == "feather")]
         self._rows(form, "mask", rows, (("cx", "cy", "中心"), ("w", "h", "大小")))
-        hint = QLabel("在預覽上拖曳：中間移動、方塊調大小、圓點旋轉" + ("" if picture else "、箭頭羽化"))
-        hint.setStyleSheet("color: #9a9aa0;")
-        hint.setWordWrap(True)
-        form.addRow(hint)
         self._key_section(form)
 
     def _matte_region_toggled(self, on):
@@ -1322,9 +1314,8 @@ class Inspector(QWidget):
         "scope": ("channel", "auto_freq", "cycles", "time_ms", "size", "line_w", "radial", "inner", "smooth", "color"),
         "vector": ("decay", "size", "line_w", "grid", "auto_scale", "color")}
     VIZ_GRADIENT = ("bars", "wave")                     # (the kinds that can fill from one colour to another)
-    VIZ_TOGGLES = {"auto_freq": "自動頻率（依聲音的音高決定顯示幾個週期，波形會停住）", "mirror": "鏡像（上下對稱）",
-                   "radial": "放射狀（繞成圓形）", "log": "對數頻率軸（每個八度一樣寬）", "grid": "顯示格線",
-                   "auto_scale": "自動縮放（依最近的聲音大小放大，最大的振幅剛好碰到外圈）"}
+    VIZ_TOGGLES = {"auto_freq": "自動頻率", "mirror": "鏡像", "radial": "放射狀",
+                   "log": "對數頻率軸", "grid": "顯示格線", "auto_scale": "自動縮放"}
 
     def _viz_edit(self, **fields):
         if self.clip_ids:
@@ -1384,7 +1375,7 @@ class Inspector(QWidget):
                     self.widgets[("viz", fld)] = b
                     form.addRow(label, b)
                     if fld == "color" and v["kind"] in self.VIZ_GRADIENT:
-                        g = QCheckBox("漸層（底部用顏色、頂部用漸層顏色）")
+                        g = QCheckBox("漸層")
                         g.clicked.connect(lambda on: self._viz_edit(gradient=bool(on)))
                         self.widgets[("viz", "gradient")] = g
                         form.addRow("", g)
@@ -1572,10 +1563,6 @@ class Inspector(QWidget):
         """元件參數: the component's parameters as this clip's own values, each with ◆ and ↺."""
         form.addRow(section("元件參數"))
         if not components.params(comp):
-            note = QLabel("這個元件還沒有參數：進入編輯它，在圖層上按右鍵 > 設為參數")
-            note.setWordWrap(True)
-            note.setStyleSheet("color: #8e8e94;")
-            form.addRow(note)
             return
         for p in components.params(comp):
             pid, kind = p["id"], p["kind"]

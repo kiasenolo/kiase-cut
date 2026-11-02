@@ -93,9 +93,6 @@ class TimebasePopup(inplace.Overlay):
         self.take.setToolTip("BPM 和偏移照選取的聲音片段的節拍設定：第 1 小節從它的第一拍開始")
         self.take.clicked.connect(self._take)
         form.addRow(self.take)
-        note = QLabel("只顯示第幾小節、第幾拍，不會吸附")
-        note.setStyleSheet("color: #8a8a90")
-        form.addRow(note)
         self.fields = (self.bpm, self.div, self.meter, self.offset, here)
         self._enable()
 

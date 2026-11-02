@@ -158,4 +158,4 @@ class SpeedCurveEditor(QWidget):
 
     def _show_length(self, points):
         self.length.setText(f"長度 {self.span_us / project.curve_mean(points) / 1_000_000:.2f} 秒"
-                            f"（平均 {project.curve_mean(points):.2f}x）；按兩下加點，右鍵刪點")
+                            f"（平均 {project.curve_mean(points):.2f}x）")

@@ -13,7 +13,7 @@ from .. import fx, gpu, library, workspace
 from . import ask
 
 CACHE_CHOICES = ((workspace.CACHE_DEFAULT, "預設（使用者的緩存資料夾）"),
-                 (workspace.CACHE_PROJECT, "專案內（專案資料夾裡的 Cache）"),
+                 (workspace.CACHE_PROJECT, "專案內"),
                  (workspace.CACHE_CUSTOM, "專案外（自訂資料夾）"))
 
 
@@ -36,10 +36,6 @@ class SettingsDialog(QDialog):
         row.addWidget(self.root, 1)
         row.addWidget(browse)
         form.addRow("根資料夾", row)
-        note = QLabel("Library、新專案、自動存檔、佈局和額外工具的資料，沒有另外設定位置時都放在這裡。")
-        note.setStyleSheet("color: #9a9aa0;")
-        note.setWordWrap(True)
-        form.addRow("", note)
         self.root.textChanged.connect(self._root_changed)
 
         row = QHBoxLayout()
@@ -61,10 +57,6 @@ class SettingsDialog(QDialog):
         self.copy = QCheckBox("把目前 Library 的內容複製到新位置")
         self.copy.setChecked(True)
         form.addRow("", self.copy)
-        note = QLabel("直接把檔案放進這個資料夾裡也可以，程式會自動認得；放在裡面的檔案不會被複製到專案。")
-        note.setStyleSheet("color: #9a9aa0;")
-        note.setWordWrap(True)
-        form.addRow("", note)
 
         row = QHBoxLayout()
         self.projects = QLineEdit(project_dir)
@@ -125,7 +117,7 @@ class SettingsDialog(QDialog):
         self.cache_mode.currentIndexChanged.connect(self._cache_changed)
         self.cache_custom.textChanged.connect(self._cache_changed)
 
-        self.gpu = QCheckBox("使用 GPU 加速（NVIDIA：匯出用 NVENC 編碼，HEVC / AV1 / VP9 影片用 GPU 解碼）")
+        self.gpu = QCheckBox("使用 GPU 加速")
         self.gpu.setChecked(use_gpu)
         self.gpu_note = QLabel(gpu.describe())
         self.gpu_note.setStyleSheet("color: #9a9aa0;")

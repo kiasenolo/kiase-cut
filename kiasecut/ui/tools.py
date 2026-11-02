@@ -212,7 +212,7 @@ class BezierTool(QWidget):
         save = QPushButton("儲存目前的曲線…")
         save.clicked.connect(self._save)
         right = QVBoxLayout()
-        right.addWidget(QLabel("我的曲線（按兩下套用，右鍵：複製數值、重新命名、刪除）"))
+        right.addWidget(QLabel("我的曲線"))
         right.addWidget(self.list, 1)
         right.addWidget(save)
         lw, rw = QWidget(), QWidget()

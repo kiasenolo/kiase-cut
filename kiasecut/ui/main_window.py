@@ -1605,7 +1605,7 @@ class MainWindow(QMainWindow):
                 return False
         elif save_as:
             old = workspace.project_name(self.path)
-            name, ok = QInputDialog.getText(self, "另存新檔", "專案檔名稱（存在同一個專案資料夾裡，共用素材）",
+            name, ok = QInputDialog.getText(self, "另存新檔", "專案檔名稱",
                                             text=old + " 2")
             name = workspace.safe_name(name, "")
             if not ok or not name:
@@ -2821,7 +2821,7 @@ class MainWindow(QMainWindow):
         elif action in ("up", "down"):
             self.apply_root("全局參數順序", edit.move_rack_param, rid, -1 if action == "up" else 1)
         elif action == "rename":
-            name, ok = QInputDialog.getText(self, "重新命名全局參數", "名稱（用到它的表達式會跟著改）：", text=p["name"])
+            name, ok = QInputDialog.getText(self, "重新命名全局參數", "名稱：", text=p["name"])
             if ok and name.strip() != p["name"]:
                 self.apply_root("重新命名全局參數", edit.rename_rack_param, rid, name)
         elif action == "expr":
@@ -2910,7 +2910,7 @@ class MainWindow(QMainWindow):
         else:
             c = edit.find(comp, ids[0])[1]
             label = components.prop_label(c, prop)
-            name, ok = QInputDialog.getText(self, "新參數", "參數名稱（使用元件的片段在屬性裡看到的名字）：",
+            name, ok = QInputDialog.getText(self, "新參數", "參數名稱：",
                                             text=label if len(ids) > 1 else f"{clip_name(c)} {label}")
             if not ok:
                 return
@@ -5546,7 +5546,7 @@ class MainWindow(QMainWindow):
         self._write_layout(name)
 
     def save_layout_as(self):
-        name, ok = QInputDialog.getText(self, "另存為新佈局", "佈局名稱（存在 KiaseCut/preset/layout）", text="我的佈局")
+        name, ok = QInputDialog.getText(self, "另存為新佈局", "佈局名稱", text="我的佈局")
         if not ok:
             return
         try:

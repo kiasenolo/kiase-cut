@@ -107,7 +107,7 @@ class ParamList(QWidget):
     paramExpr = Signal(str, str, str)              # parameter id, clip id, prop: edit the expression it sets that through
     defaultDropped = Signal(str, str)              # parameter id, the picture dropped on it (its new default)
 
-    def __init__(self, hint="在圖層上按右鍵 > 設為參數，或把參數拖到屬性的數字上；按兩下參數設定預設值", parent=None):
+    def __init__(self, hint="", parent=None):
         super().__init__(parent)
         self.comp = None
         lay = QVBoxLayout(self)

@@ -57,7 +57,7 @@ def question(parent, key, title, text):
         return v == "yes"
     box = QMessageBox(QMessageBox.Question, title, text, QMessageBox.Yes | QMessageBox.No, parent)
     box.setDefaultButton(QMessageBox.Yes)
-    again = QCheckBox("不再詢問（記住這次的選擇，可在 設定 > 詢問 改回來）")
+    again = QCheckBox("不再詢問")
     box.setCheckBox(again)
     yes = box.exec() == QMessageBox.Yes
     if again.isChecked():

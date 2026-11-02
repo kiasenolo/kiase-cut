@@ -116,7 +116,7 @@ class ExportDialog(QDialog):
         self.adv = QWidget()
         adv = QFormLayout(self.adv)
         adv.setContentsMargins(16, 0, 0, 0)
-        self.alpha = QCheckBox("透明背景（沒有畫面的地方是透明的）")
+        self.alpha = QCheckBox("透明背景")
         adv.addRow("畫面", self.alpha)
         self.audio = QCheckBox("包含混音")
         self.audio.setChecked(spec.get("audio", True))
@@ -195,9 +195,9 @@ class ExportDialog(QDialog):
         if f.kind == "sequence":
             notes.append(f"每格存成一張 PNG，放在「{name}」資料夾。")
         if f.kind == "gif":
-            notes.append("GIF 沒有聲音、只有 256 色，適合短片段與低幀率。")
+            notes.append("GIF 沒有聲音、只有 256 色。")
         if self.stems.isChecked():
-            notes.append(f"分軌音檔放在「{name} - 分軌」資料夾（只含有聲音、沒被靜音的軌道）。")
+            notes.append(f"分軌音檔放在「{name} - 分軌」資料夾。")
         self.adv_note.setText("\n".join(notes))
         self.adv_note.setVisible(bool(notes))
         self._update_info(f, w, h)

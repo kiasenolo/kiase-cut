@@ -67,7 +67,7 @@ class SubtitlePanel(QWidget):
         tracks = [t for t in rows if any(c["id"] in ids for c in t["clips"])]
         clips = sorted((c for t in tracks for c in t["clips"] if c["id"] in ids), key=lambda c: c["start_us"])
         if not clips:
-            hint = "在同一條軌道上選取文字片段（Ctrl / Shift + 點選、框選，或軌道選單的「選取軌道上的所有片段」），就能在這裡一次編輯它們的文字。"
+            hint = "在同一條軌道上選取文字片段，就能在這裡一次編輯它們的文字。"
         elif len(tracks) > 1:
             hint = "選取的片段在不同軌道上：字幕只能編輯同一條軌道的文字片段。"
         elif any(c["type"] != "text" for c in clips):

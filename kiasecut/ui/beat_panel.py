@@ -27,10 +27,6 @@ class BeatPanel(QWidget):
         self.clip_id = None
         lay = QVBoxLayout(self)
         lay.addWidget(section("BPM 對齊"))
-        self.hint = QLabel("選一個聲音片段，就能為它設定節拍。")
-        self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color: #8a8a90")
-        lay.addWidget(self.hint)
         self.body = QWidget()
         form = QFormLayout(self.body)
         form.setContentsMargins(0, 0, 0, 0)
@@ -82,7 +78,6 @@ class BeatPanel(QWidget):
     def show_clips(self, clips, _t_us=None, _fps=None):
         c = clips[0] if len(clips) == 1 and edit.has_sound(clips[0]) else None
         self.clip_id = c["id"] if c else None
-        self.hint.setVisible(c is None)
         self.body.setVisible(c is not None)
         if c is None:
             return

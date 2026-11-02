@@ -2075,7 +2075,12 @@ for (int t = 0; t < $n; t++) {
         h.warn("Glare type '%s' not implemented -> no glare" % kind)
         glare = "vec3 g = vec3(0.0);\n"
     post = "g = glare_sat(g, %s) * (%s).rgb * %s;\n" % (sat, tint, strength)
-    return [pre + glare + post + "vec4 c = max(%s, vec4(0.0));\nreturn vec4(c.rgb + g, c.a);" % img,
+    # the light is added to the picture, and lights spots the picture left clear (alpha rises to the glow's
+    # brightest channel there) - where the picture is opaque this is Blender's c.rgb + g
+    spread = ("vec4 c = max(%s, vec4(0.0));\n"
+              "float ga = clamp(max(c.a, max(g.r, max(g.g, g.b))), 0.0, 1.0);\n"
+              "return vec4(ga > 0.0 ? (c.rgb * c.a + g) / ga : vec3(0.0), ga);" % img)
+    return [pre + glare + post + spread,
             pre + glare + post + "return vec4(g, 1.0);",
             pre + hl_grid + "return vec4(g, 1.0);"]
 

@@ -270,8 +270,12 @@ vec4 effect(vec2 uv) {
     hsv.y = clamp(hsv.y * max(saturation, 0.0), 0.0, 1.0);
     g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * max(strength, 0.0);
 
+    // the light is added to the picture (premultiplied, linear); where it is brighter than the
+    // picture is opaque, it lights that spot itself - the glow spreads over what was clear
     vec4 c = linear(original(uv));
     float a = clamp(c.a, 0.0, 1.0);
-    vec3 rgb = a > 0.0 ? lin_to_srgb((c.rgb + g) / a) * a : vec3(0.0);
-    return vec4(min(rgb, vec3(a)), a);
+    vec3 t = max(c.rgb + g, vec3(0.0));
+    float A = clamp(max(a, max(t.r, max(t.g, t.b))), 0.0, 1.0);
+    vec3 rgb = A > 0.0 ? lin_to_srgb(t / A) * A : vec3(0.0);
+    return vec4(min(rgb, vec3(A)), A);
 }

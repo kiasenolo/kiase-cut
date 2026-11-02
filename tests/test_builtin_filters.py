@@ -59,6 +59,26 @@ class BuiltinFilterTests(unittest.TestCase):
         for n in ("Glare", "Lens Distortion", "Vignette", "Sensor Noise"):
             self.assertIn("[Blender] " + n, names)
 
+    def test_glare_spreads_over_what_was_clear(self):
+        """A bright spot on a transparent picture: the glow has alpha where the picture had none."""
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:blender_glare")
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        vals.update(type=0, threshold=0.2, size=0.5, strength=4.0, quality=0)         # (Bloom)
+        rgba = np.zeros((96, 96, 4), np.uint8)
+        rgba[44:52, 44:52] = (255, 255, 255, 255)
+        out = eng.run(d, vals, rgba)
+        self.assertEqual(out[48, 48, 3], 255)
+        for x in (54, 58):                                                           # (a few pixels from the spot)
+            self.assertGreater(int(out[48, x, 3]), 0)
+            self.assertGreater(int(out[48, x, :3].max()), 0)
+            self.assertLessEqual(int(out[48, x, :3].max()), int(out[48, x, 3]))      # (still a valid premultiplied pixel)
+        self.assertGreater(int(out[48, 54, 3]), int(out[48, 58, 3]))                 # (and fading away)
+
     def test_transform_filters_are_available(self):
         names = {fx.get(ref).name for ref in fx.builtin_refs()}
         self.assertTrue({"Transform", "Scale", "Translate"}.issubset(names))

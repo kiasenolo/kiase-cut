@@ -241,6 +241,8 @@ class Renderer:
         self.matte_preview = view.get("matte_preview")
         self.level = project.level_tracks(view)
 
+    track_ctx = None                    # (tracks, W, H, time) of the level being drawn: what 軌道 sources read
+
     def matte_compound(self, mask, t=0):
         """What a picture mask cuts with: the compound of a compound mask, or for an image mask
         {image, width, height}; None when it is not one, has none (chosen, deleted, a file that
@@ -253,6 +255,13 @@ class Renderer:
             path, w, h = mask.get("video"), mask.get("vid_w"), mask.get("vid_h")
             return ({"video": path, "width": w, "height": h, "duration_us": mask.get("vid_dur") or 0}
                     if path and w and h else None)
+        if kind == "track":                              # 軌道: that track of this level, at this moment
+            tracks, W, H, t_us = self.track_ctx or ((), 0, 0, 0)
+            tid = mask.get("track_id")
+            tr = next((x for x in project.all_tracks(tracks) if x["id"] == tid), None)
+            if tr is None or "track:" + str(tid) in self._matting or not W:
+                return None
+            return {"width": W, "height": H, "tracks": [tr], "level_t": t_us, "track_id": tid}
         if kind != "compound":
             return None
         kid = mask.get("compound_id")
@@ -261,7 +270,7 @@ class Renderer:
     def clip_mask(self, c, t):
         """The mask that cuts clip c now (None: none, off, or a picture mask without its picture)."""
         m = project.active_mask(c)
-        if m and curves.value(m.get("kind"), t) in ("compound", "image", "video") and self.matte_compound(m, t) is None:
+        if m and curves.value(m.get("kind"), t) in ("compound", "image", "video", "track") and self.matte_compound(m, t) is None:
             return None
         return m
 
@@ -284,6 +293,22 @@ class Renderer:
                 pic = QImage(1, 1, QImage.Format_ARGB32_Premultiplied)
                 pic.fill(QColor("white"))
             return pic
+        if comp.get("level_t") is not None:              # 軌道: the track drawn alone, at the level's moment
+            key = "track:" + str(comp["track_id"])
+            self._matting.add(key)
+            try:
+                cw, ch = comp["width"], comp["height"]
+                k = min(k, self.MATTE_MAX_PX / max(cw, ch))
+                im = QImage(max(1, math.ceil(cw * k)), max(1, math.ceil(ch * k)), QImage.Format_ARGB32_Premultiplied)
+                im.fill(Qt.transparent)
+                lp = QPainter(im)
+                lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+                lp.scale(k, k)
+                self.draw_tracks(lp, comp["tracks"], cw, ch, fps, comp["level_t"], k)
+                lp.end()
+                return im
+            finally:
+                self._matting.discard(key)
         kid = mask.get("compound_id")
         self._matting.add(kid)
         try:
@@ -448,6 +473,13 @@ class Renderer:
 
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first."""
+        outer, self.track_ctx = self.track_ctx, (tracks, W, H, t_us)     # (what a 軌道 source reads)
+        try:
+            self._draw_tracks(p, tracks, W, H, fps, t_us, px_per_unit)
+        finally:
+            self.track_ctx = outer
+
+    def _draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
         for i, tr in enumerate(tracks):
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue

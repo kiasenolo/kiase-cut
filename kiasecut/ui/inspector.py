@@ -109,7 +109,7 @@ def hard_limits(group, key):
 
 
 MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"),
-              ("複合片段", "compound"), ("圖片", "image"), ("影片", "video"))
+              ("複合片段", "compound"), ("圖片", "image"), ("影片", "video"), ("軌道", "track"))
 MATTE_NAMES = (("Alpha（不透明度）", "alpha"), ("明度", "luma"))
 ALIGN_NAMES = (("靠左", "left"), ("置中", "center"), ("靠右", "right"), ("齊頭尾（左右對齊）", "justify"))
 VALIGN_NAMES = (("靠上（文字框固定高度時）", "top"), ("垂直置中（文字框固定高度時）", "middle"),
@@ -321,6 +321,7 @@ class Inspector(QWidget):
     maskCompoundChosen = Signal(list, str)          # clip ids, compound id (a compound mask's)
     maskImageChosen = Signal(list, str)             # clip ids, picture file (an image mask's; "" : browse)
     maskVideoChosen = Signal(list, str)             # clip ids, video file (a video mask's; "" : browse)
+    maskTrackChosen = Signal(list, str)             # clip ids, track id (a 軌道 mask's: of the clip's level)
     matteRegionChosen = Signal(bool)                # 編輯區域: a compound mask's part, on the timeline
     maskMatteChosen = Signal(list, str)             # clip ids, "alpha" / "luma"
     mattePreviewChosen = Signal(bool)               # 預覽複合片段 or its opacity changed
@@ -358,6 +359,7 @@ class Inspector(QWidget):
         self.compounds = []               # [(id, name)] compounds a compound mask can use here
         self.images = []                  # [(path, name)] pictures an image mask can use
         self.videos = []                  # [(path, name)] videos a video mask can use
+        self.tracks = []                  # [(id, name)] tracks of the open level a 軌道 mask can use
         self.picture_of = lambda md: None  # the picture a drag carries (dropped on an image picker)
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
@@ -828,6 +830,12 @@ class Inspector(QWidget):
             self.videos = list(items)
             self.shape = None
 
+    def set_tracks(self, items):
+        """The tracks of the open level a 軌道 mask can show: [(id, name)]."""
+        if list(items) != self.tracks:
+            self.tracks = list(items)
+            self.shape = None
+
     def set_compounds(self, items):
         """The compounds a compound mask can cut with here: [(id, name)]."""
         if list(items) != self.compounds:
@@ -920,6 +928,15 @@ class Inspector(QWidget):
                 region.toggled.connect(self._matte_region_toggled)
                 self.widgets["matte_region"] = region
                 form.addRow("", region)
+        elif kind_tag(c.get("mask")) == "track":
+            pick = ComboBox()
+            pick.setPlaceholderText("選擇軌道…")
+            for tid, name in self.tracks:
+                pick.addItem(name, tid)
+            pick.activated.connect(lambda i: self._emit_now(self.maskTrackChosen, pick.itemData(i)))
+            pick.setToolTip("用這條軌道在同一時刻的畫面裁切（同一層的軌道）")
+            self.widgets["mask_track"] = pick
+            form.addRow("軌道", pick)
         elif picture:
             pick = ComboBox()
             pick.setPlaceholderText("選擇圖片…")
@@ -932,7 +949,7 @@ class Inspector(QWidget):
             self.widgets["mask_image"] = pick
             form.addRow("圖片", self._with_pick(pick, ("image",), lambda path: self._emit_now(self.maskImageChosen, path)))
         if picture:
-            what = "複合片段" if compound else "影片" if video else "圖片"
+            what = "複合片段" if compound else "影片" if video else "軌道" if kind_tag(c.get("mask")) == "track" else "圖片"
             matte = ComboBox()
             for name, k in MATTE_NAMES:
                 matte.addItem(name, k)
@@ -1574,6 +1591,7 @@ class Inspector(QWidget):
             if ("key", "mask", "kind") in w:
                 self._key_state(w[("key", "mask", "kind")], [k["mask"].get("kind") for k in clips], clips, ts)
         for key, field in (("mask_compound", "compound_id"), ("mask_image", "image"), ("mask_video", "video"),
+                           ("mask_track", "track_id"),
                            ("mask_matte", "matte")):
             if key in w:
                 vals = {(k.get("mask") or {}).get(field, "alpha" if field == "matte" else None) for k in clips}

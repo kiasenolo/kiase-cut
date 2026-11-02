@@ -1177,10 +1177,11 @@ def _aspect(c):
 
 
 MATTES = ("alpha", "luma")          # what of a compound mask's picture lets the clip through
-PICTURE_MASKS = ("compound", "image", "video")   # masks that cut with a picture: a compound's, an image file's,
-PICTURE_FIELDS = {"compound": ("compound_id", "t_off"),        # or a video's (playing)
-                  "image": ("image", "img_w", "img_h"),
-                  "video": ("video", "vid_w", "vid_h", "vid_dur", "t_off")}
+PICTURE_MASKS = ("compound", "image", "video", "track")   # masks that cut with a picture: a compound's, an image
+PICTURE_FIELDS = {"compound": ("compound_id", "t_off"),        # file's, a video's (playing), or what a track of
+                  "image": ("image", "img_w", "img_h"),        # the clip's own level shows at that moment
+                  "video": ("video", "vid_w", "vid_h", "vid_dur", "t_off"),
+                  "track": ("track_id", "trk_w", "trk_h")}
 
 
 def _new_mask(old, kind, aspect):
@@ -1243,6 +1244,21 @@ def set_mask_compound(proj, clip_id, compound_id=None, comp=None, matte=None):
         if matte not in MATTES:
             raise EditError(f"unknown matte {matte}")
         m["matte"] = matte
+    return c
+
+
+def set_mask_track(proj, clip_id, track_id, size):
+    """A 軌道 mask's track (of the clip's own level: what it shows at the same moment cuts the
+    clip); size: (width, height) of that level's canvas - the mask takes its proportions."""
+    t, c = find(proj, clip_id)
+    m = c.get("mask")
+    if not m or m.get("kind") != "track":
+        raise EditError("這個片段的遮罩不是軌道")
+    if not any(tr["id"] == track_id for tr in project.all_tracks(proj["tracks"])):
+        raise EditError("找不到這條軌道")
+    a, b = _aspect(c), size[0] / size[1]
+    m.update(track_id=track_id, trk_w=int(size[0]), trk_h=int(size[1]))
+    m["w"], m["h"] = (1.0, round(a / b, 4)) if b > a else (round(b / a, 4), 1.0)
     return c
 
 
@@ -2188,16 +2204,19 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
     return e
 
 
-def set_effect_source_media(proj, clip_id, effect_id, param, image=None, video=None, compound=None):
+def set_effect_source_media(proj, clip_id, effect_id, param, image=None, video=None, compound=None, track=None):
     """What a colour source shows: image (path, width, height), video (path, width, height,
     duration_us) or compound (its id, its entry); it takes that picture's proportions, fitted
     into the clip."""
     _, c = find(proj, clip_id)
     src = _source(c, f"fxsrc:{effect_id}:{param}")
-    kind = "image" if image else "video" if video else "compound"
+    kind = "image" if image else "video" if video else "track" if track else "compound"
     if src["kind"] != kind:
         raise EditError("來源的種類不對")
-    if image:
+    if track:                                            # (track id, (width, height) of its level)
+        tid, (w, h) = track
+        src.update(track_id=tid, trk_w=int(w), trk_h=int(h))
+    elif image:
         path, w, h = image
         if not path or not w or not h:
             raise EditError("找不到這張圖片")

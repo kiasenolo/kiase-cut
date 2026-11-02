@@ -449,6 +449,8 @@ class MainWindow(QMainWindow):
         mp.mattePreviewChosen.connect(lambda _on: self._matte_preview_changed(force=True))
         mp.maskImageChosen.connect(self.on_mask_image)
         mp.maskVideoChosen.connect(self.on_mask_video)
+        mp.maskTrackChosen.connect(lambda ids, tid: self.apply_each(
+            "遮罩軌道", lambda lvl, cid: edit.set_mask_track(lvl, cid, tid, self.level_size()), ids))
         mp.matteRegionChosen.connect(lambda _on: self._update_matte_region())
         mp.keyJump.connect(self.jump_key)
         mask_scroll = QScrollArea()
@@ -2532,12 +2534,13 @@ class MainWindow(QMainWindow):
         times = self.key_times([c["id"] for c in clips])
         self.inspector.show_clips(clips, t, self.fps, [times[c["id"]] for c in clips])
         if self.proj is not None:
-            self.effects.set_media(self.mask_images(), self.mask_videos(), self.mask_compounds())
+            self.effects.set_media(self.mask_images(), self.mask_videos(), self.mask_compounds(), self.mask_tracks())
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
             self.mask_panel.set_compounds(self.mask_compounds())
             self.mask_panel.set_images(self.mask_images())
             self.mask_panel.set_videos(self.mask_videos())
+            self.mask_panel.set_tracks(self.mask_tracks())
             self.inspector.set_images(self.mask_images())          # (a component's picture parameters)
         self.mask_panel.show_clips(clips, t, self.fps)
         self.beats.show_clips(clips)
@@ -3779,6 +3782,11 @@ class MainWindow(QMainWindow):
             self.fx_each("效果來源", ids, eid, lambda lvl, cid, e: edit.set_effect_source_media(
                 lvl, cid, e, name, compound=(value, comp)))
             return
+        if kind == "track":
+            size = self.level_size()
+            self.fx_each("效果來源", ids, eid, lambda lvl, cid, e: edit.set_effect_source_media(
+                lvl, cid, e, name, track=(value, size)))
+            return
         if not value:
             what = "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.svg)" if kind == "image" else \
                 "影片 (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.gif)"
@@ -3841,6 +3849,15 @@ class MainWindow(QMainWindow):
         """Draw the frame again when what matte_target() shows has changed."""
         if self.proj is not None and (force or self.matte_target() != getattr(self, "_matte_shown", None)):
             self.rebuild()
+
+    def mask_tracks(self):
+        """[(id, name)] of the open level's picture tracks (what a 軌道 source can show)."""
+        return [(t["id"], t.get("name") or t["id"]) for t in reversed(self.container()["tracks"]) if t["kind"] != "audio"]
+
+    def level_size(self):
+        """(width, height) of the open level's canvas."""
+        lvl = self.container()
+        return lvl.get("width") or self.proj["width"], lvl.get("height") or self.proj["height"]
 
     def mask_compounds(self):
         """[(id, name)] of the compounds a clip of the open level can be masked with: not one

@@ -39,7 +39,7 @@ from .mediapick import pick_button
 from .vfx_panel import FX_MIME, effect_mime
 
 DEBOUNCE_MS = 350
-SOURCE_NAMES = (("顏色", None), ("圖片", "image"), ("影片", "video"), ("複合片段", "compound"))
+SOURCE_NAMES = (("顏色", None), ("圖片", "image"), ("影片", "video"), ("複合片段", "compound"), ("軌道", "track"))
 
 
 def step_for(p):
@@ -144,7 +144,7 @@ class EffectsPanel(QWidget):
         self.mask_edit = None                       # effect id whose mask the preview edits (編輯遮罩)
         self.source_edit = None                     # (effect id, colour param) whose source the preview places (編輯位置)
         self.source_region = None                   # (effect id, colour param) whose 編輯區域 shows on the timeline
-        self.media = {"image": [], "video": [], "compound": []}    # [(path or compound id, name)] sources can show
+        self.media = {"image": [], "video": [], "compound": [], "track": []}    # [(path / id, name)] sources can show
         self.shape = None
         self.built = []                             # the effect ids the form was built with
         self.alias = {}                             # those -> the shown clip's effect ids
@@ -558,10 +558,10 @@ class EffectsPanel(QWidget):
         head, sep, eid = x.rpartition(":")
         return head + sep + self.alias.get(eid, eid)
 
-    def set_media(self, images, videos, compounds):
-        """What a colour source can show: the media library's pictures and videos, the compounds
-        ([(path or compound id, name)])."""
-        media = {"image": list(images), "video": list(videos), "compound": list(compounds)}
+    def set_media(self, images, videos, compounds, tracks=()):
+        """What a colour source can show: the media library's pictures and videos, the compounds,
+        the open level's tracks ([(path, compound id or track id, name)])."""
+        media = {"image": list(images), "video": list(videos), "compound": list(compounds), "track": list(tracks)}
         if media != self.media:
             self.media = media
             self.shape = None                       # (the pickers are built with the form)
@@ -574,15 +574,17 @@ class EffectsPanel(QWidget):
         lab.setMinimumWidth(70)
         row.addWidget(lab)
         pick = ComboBox()
-        pick.setPlaceholderText({"image": "選擇圖片…", "video": "選擇影片…", "compound": "選擇複合片段…"}[kind])
-        for value, label in self.media[kind]:
+        pick.setPlaceholderText({"image": "選擇圖片…", "video": "選擇影片…", "compound": "選擇複合片段…",
+                                 "track": "選擇軌道…"}[kind])
+        for value, label in self.media.get(kind, []):
             pick.addItem(label, value)
-        if kind != "compound":
+        if kind in ("image", "video"):
             pick.addItem("瀏覽圖片檔…" if kind == "image" else "瀏覽影片檔…", "")
         pick.activated.connect(lambda i, cb=pick: self._now(self.sourceMediaChosen, eid, name, cb.itemData(i)))
         self.widgets[("source_media", "fx:" + eid, name)] = pick
         row.addWidget(pick, 1)
-        row.addWidget(pick_button((kind,), lambda value: self._now(self.sourceMediaChosen, eid, name, value)))
+        if kind != "track":
+            row.addWidget(pick_button((kind,), lambda value: self._now(self.sourceMediaChosen, eid, name, value)))
         if len(self.clips) == 1:                    # (the preview places one clip's)
             ed = QPushButton("編輯位置")
             ed.setCheckable(True)
@@ -866,7 +868,7 @@ class EffectsPanel(QWidget):
                     box = w.get(key)
                     if box is None:
                         continue
-                    vals = {sv.get(field) if field else sv.get({"image": "image", "video": "video"}.get(
+                    vals = {sv.get(field) if field else sv.get({"image": "image", "video": "video", "track": "track_id"}.get(
                         sv.get("kind"), "compound_id")) for sv in srcs}
                     v = vals.pop() if len(vals) == 1 else MIXED
                     i = -1 if v is MIXED else box.findData(v)

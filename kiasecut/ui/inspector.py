@@ -357,6 +357,7 @@ class Inspector(QWidget):
     paramUnbindRequested = Signal(list)             # [(clip id, prop)]: 解除參數
     exprRequested = Signal(list, str)               # clip ids, number prop: 表達式… (edit the expression of the number)
     exprCleared = Signal(list, str)                 # clip ids, number prop: 清除表達式
+    exprChosen = Signal(list, str, str)             # clip ids, number prop, expression: 綁定到全局參數 (its name)
     audioStreamChosen = Signal(list, int)           # clip ids, which of the file's sound streams plays
 
     def __init__(self, parent=None, part="main"):
@@ -378,6 +379,7 @@ class Inspector(QWidget):
         self.picture_of = lambda md: None  # the picture a drag carries (dropped on an image picker)
         self.component_of = lambda: None   # the component being edited (its content), or None
         self.expr_texts = {}              # {number prop: its expression} of the primary clip (表達式)
+        self.rack_names = lambda: []      # the names of the global parameters (全局參數架)
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
@@ -1073,6 +1075,11 @@ class Inspector(QWidget):
             menu.addSeparator()
             ids = list(self.clip_ids)
             menu.addAction("表達式…", lambda: self.exprRequested.emit(ids, prop))
+            names = self.rack_names()
+            if names:
+                bind = menu.addMenu("綁定到全局參數")
+                for n in names:
+                    bind.addAction(n, lambda n=n: self.exprChosen.emit(ids, prop, n))
             if self.expr_texts.get(prop):
                 menu.addAction("清除表達式", lambda: self.exprCleared.emit(ids, prop))
         if comp is not None and prop and self.clip_ids:

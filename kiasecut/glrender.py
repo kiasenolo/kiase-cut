@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, components, curves, fx, project, propexpr, render, textlayout, textvars
+from . import assets, components, curves, fx, project, propexpr, rack, render, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -443,6 +443,7 @@ class GLRenderer(render.Renderer):
             gl.new_frame()
             tgt = gl.layer(width, height, (0.0, 0.0, 0.0, 0.0 if alpha else 1.0))
             self.begin(view)
+            self.names = rack.values(view, frame / view["fps"] * US)
             try:
                 base = QTransform.fromScale(width / view["width"], height / view["height"])
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],

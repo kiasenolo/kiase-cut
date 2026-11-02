@@ -25,6 +25,7 @@ QUESTIONS = {                                    # key: what it asks, as the set
     "reset_bpm": "重置 BPM 對齊",
     "speed_keys": "變速曲線：換掉方式時清掉它的點",
     "variable_kind": "文字變數：換類型時清掉它的關鍵幀",
+    "delete_rack": "刪除還有片段在用的全局參數",
 }
 ANSWERS = (("", "每次詢問"), ("yes", "一律「是」"), ("no", "一律「否」"))
 

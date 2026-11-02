@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fx, project, textlayout, textvars
+from . import assets, components, curves, expr, fx, project, rack, textlayout, textvars
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -3198,6 +3198,157 @@ def set_prop_expr(proj, clip_id, prop, text):
         if not c.get("expr"):
             c.pop("expr", None)
     return c
+
+
+# -- the parameter rack (全局參數架, rack.py) --------------------------------------------------------
+def _rack_param(root, rid):
+    p = rack.find(root, rid)
+    if p is None:
+        raise EditError("沒有這個全局參數")
+    return p
+
+
+def add_rack_param(root, name, value=0.0):
+    """A new global parameter; returns it."""
+    name = str(name).strip()
+    why = rack.name_problem(root, name)
+    if why:
+        raise EditError(why)
+    ids = {p["id"] for p in rack.params(root)}
+    rid = next(f"r{i}" for i in range(1, len(ids) + 2) if f"r{i}" not in ids)
+    p = {"id": rid, "name": name, "value": float(value)}
+    root.setdefault("rack", []).append(p)
+    return p
+
+
+def rename_rack_param(root, rid, name):
+    """Rename a parameter; every expression that reads it (clips', other parameters') follows."""
+    p = _rack_param(root, rid)
+    name = str(name).strip()
+    why = rack.name_problem(root, name, rid)
+    if why:
+        raise EditError(why)
+    old, p["name"] = p["name"], name
+    if old == name:
+        return p
+    for q in rack.params(root):
+        if q.get("expr"):
+            q["expr"] = rack.rename_in(q["expr"], old, name)
+    for c in rack.clips_with_exprs(root):
+        c["expr"] = {k: rack.rename_in(x, old, name) for k, x in c["expr"].items()}
+    return p
+
+
+def delete_rack_param(root, rid):
+    """Remove a parameter (expressions that read it are left, and read nothing)."""
+    _rack_param(root, rid)
+    root["rack"] = [p for p in rack.params(root) if p["id"] != rid]
+    if not root["rack"]:
+        del root["rack"]
+
+
+def move_rack_param(root, rid, d):
+    ps = rack.params(root)
+    i = next((i for i, p in enumerate(ps) if p["id"] == rid), None)
+    if i is None:
+        raise EditError("沒有這個全局參數")
+    j = min(max(i + d, 0), len(ps) - 1)
+    ps.insert(j, ps.pop(i))
+
+
+def set_rack_expr(root, rid, text):
+    """The expression of a parameter ("" or "input": none). Refused when it makes a circle."""
+    p = _rack_param(root, rid)
+    text = str(text).strip()
+    why = expr.check(text) if text else None
+    if why:
+        raise EditError(f"表達式有問題：{why}")
+    before = p.get("expr")
+    if not text or text == "input":
+        p.pop("expr", None)
+        return p
+    p["expr"] = text
+    loop = rack.cycle(root)
+    if loop:
+        if before:
+            p["expr"] = before
+        else:
+            p.pop("expr", None)
+        raise EditError("循環依賴：" + " → ".join(loop + [loop[0]]))
+    return p
+
+
+def set_rack_value(root, rid, value, t_us=None):
+    """A parameter's value; with keyframes, the key at t_us (new when none is there)."""
+    p = _rack_param(root, rid)
+    value = float(value)
+    cur = p.get("value", 0.0)
+    if not curves.is_animated(cur):
+        p["value"] = value
+        return p
+    if t_us is None:
+        raise EditError("這個參數有關鍵幀：要給時間")
+    i = key_at(cur, t_us)
+    if i is None:
+        cur["keys"].append([int(t_us), value, 0.0, 0.0, 0.0, 0.0])
+        cur["keys"].sort(key=lambda k: k[0])
+    else:
+        cur["keys"][i][1] = value
+    return p
+
+
+def toggle_rack_key(root, rid, t_us):
+    """Add a key at t_us holding the value there, or remove the key that is there."""
+    p = _rack_param(root, rid)
+    cur = p.get("value", 0.0)
+    i = key_at(cur, t_us)
+    if i is not None:
+        k = cur["keys"].pop(i)
+        if not cur["keys"]:
+            p["value"] = k[1]
+        return p
+    v = curves.value(cur, t_us)
+    if curves.is_animated(cur):
+        cur["keys"].append([int(t_us), v, 0.0, 0.0, 0.0, 0.0])
+        cur["keys"].sort(key=lambda k: k[0])
+    else:
+        p["value"] = {"keys": [[int(t_us), v, 0.0, 0.0, 0.0, 0.0]]}
+    return p
+
+
+def set_rack_easing(root, rid, t_us, easing):
+    """Shape the curve from the key at t_us to the next one with a preset (EASINGS)."""
+    p = _rack_param(root, rid)
+    cur = p.get("value", 0.0)
+    i = key_at(cur, t_us)
+    if i is None or i + 1 >= len(cur["keys"]):
+        raise EditError("需要播放頭上有關鍵幀，而且後面還有下一個")
+    if easing not in EASINGS:
+        raise EditError(f"unknown easing {easing}")
+    a, b = cur["keys"][i], cur["keys"][i + 1]
+    dt = b[0] - a[0]
+    x1, x2 = EASINGS[easing]
+    a[4], a[5] = x1 * dt, 0.0
+    b[2], b[3] = (x2 - 1.0) * dt, 0.0
+    return p
+
+
+def import_rack(root, items):
+    """Add the parameters of an exported rack (rack.parse_import); one whose name is taken gets a
+    number after it. Returns how many were added."""
+    for d in items:
+        name, k = d["name"], 2
+        while rack.name_problem(root, name):
+            name, k = f"{d['name']}{k}", k + 1
+        p = add_rack_param(root, name, 0.0)
+        p["value"] = copy.deepcopy(d["value"])
+        if d.get("expr"):
+            p["expr"] = d["expr"]
+    loop = rack.cycle(root)
+    if loop:                                                  # (names that were taken may have joined a circle)
+        for p in rack.params(root)[-len(items):]:
+            p.pop("expr", None)
+    return len(items)
 
 
 def set_bind_expr(root, kid, pid, cid, prop, text):

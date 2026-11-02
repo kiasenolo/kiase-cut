@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QWidget)
 
 from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
-               render, renderexport, sysmem, thumbnail, toolsdata, userlib, waveform, workspace)
+               rack, render, renderexport, sysmem, thumbnail, toolsdata, userlib, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -55,6 +55,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from . import appevents, exprdialog, icons, inplace, middledrag, wheel
+from .rack_window import RackWindow
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .preview import base_size as preview_base_size
@@ -432,6 +433,8 @@ class MainWindow(QMainWindow):
         ins.paramBindRequested.connect(self.layer_param_bind)
         ins.paramUnbindRequested.connect(self.unbind_params)
         ins.exprRequested.connect(self.ask_prop_expr)
+        ins.exprChosen.connect(lambda ids, prop, text: self.apply_each("綁定全局參數", edit.set_prop_expr, ids, prop, text))
+        ins.rack_names = lambda: [p["name"] for p in rack.params(self.proj)] if self.proj else []
         ins.exprCleared.connect(lambda ids, prop: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
@@ -967,6 +970,7 @@ class MainWindow(QMainWindow):
         m = keyed(self.menuBar().addMenu("工具(&O)"))          # built in, each opened when wanted (ui/tools.py)
         add(m, "cubic-bezier 編輯器", None, lambda: self.open_tool("bezier"))
         add(m, "調色盤", None, lambda: self.open_tool("palette"))
+        add(m, "全局參數架", None, self.open_rack)
         m = keyed(self.menuBar().addMenu("視窗(&W)"))
         self.layout_menu = m.addMenu("佈局")
         self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
@@ -1294,7 +1298,7 @@ class MainWindow(QMainWindow):
                 "master_gain": self.proj.get("master_gain", 1.0),
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"], "compounds": self.proj.get("compounds", {}),
-                "markers": node.get("markers") or [],
+                "markers": node.get("markers") or [], "rack": self.proj.get("rack") or [],
                 "open_component": node if components.is_component(node) else None}
 
     def show_compound(self, tl_id, parent_path, cid):
@@ -2074,6 +2078,7 @@ class MainWindow(QMainWindow):
         self._update_crumb()
         self._update_buttons()
         self.refresh_inspector()
+        self.show_rack()
         self.statusBar().showMessage(label, 2000)
         self.rebuild()
 
@@ -2725,12 +2730,95 @@ class MainWindow(QMainWindow):
         label = components.prop_label(c, prop)
         text = exprdialog.ask_expression(
             self, f"表達式：{label}", (c.get("expr") or {}).get(prop, ""),
-            {"value": components.number_at(c, prop, 0), "time": 0.0, "progress": 0.0, "duration": 1.0},
+            {"value": components.number_at(c, prop, 0), "time": 0.0, "progress": 0.0, "duration": 1.0,
+             **rack.values(self.proj, self.playhead_us())},
             default="value",
-            note="value 是這個數字原本的值（關鍵幀的結果）；time 是片段內的秒數、progress 是 0–1 的進度。"
-                 "例：value + wiggle(2, 30)、100 * Math.abs(Math.sin(time))。")
+            note="value 是這個數字原本的值（關鍵幀的結果）；time 是片段內的秒數、progress 是 0–1 的進度；"
+                 "全局參數直接寫名字。例：value + wiggle(2, 30)、100 * Math.abs(Math.sin(time))。")
         if text is not None:
             self.apply_each("表達式", edit.set_prop_expr, ids, prop, "" if text == "value" else text)
+
+    # -- the parameter rack (全局參數架) ---------------------------------------------------------
+    def open_rack(self):
+        w = self.__dict__.get("rack_window")
+        if w is None:
+            w = self.rack_window = RackWindow()
+            w.action.connect(self.on_rack_action)
+            w.addRequested.connect(self.add_rack_param)
+            w.importRequested.connect(self.import_rack)
+            w.exportRequested.connect(self.export_rack)
+        if self.proj:
+            w.fill(self.proj, self.playhead_us())
+        w.show()
+        w.raise_()
+        w.activateWindow()
+
+    def show_rack(self):
+        """Keep the rack window in step with the project and the playhead."""
+        w = self.__dict__.get("rack_window")
+        if w is not None and w.isVisible() and self.proj:
+            w.fill(self.proj, self.playhead_us())
+
+    def add_rack_param(self):
+        name, ok = QInputDialog.getText(self, "新增全局參數", "名稱（在表達式裡直接寫它；英文字母、數字、_）：")
+        if ok and name.strip():
+            self.apply_root("新增全局參數", edit.add_rack_param, name, 0.0)
+
+    def on_rack_action(self, rid, action, arg):
+        p = rack.find(self.proj, rid)
+        if p is None:
+            return
+        t = self.playhead_us()
+        if action == "value":
+            self.apply_root("調整全局參數", edit.set_rack_value, rid, arg, t, merge=("rack", rid, round(t)))
+        elif action == "key":
+            self.apply_root("全局參數關鍵幀", edit.toggle_rack_key, rid, t)
+        elif action == "easing":
+            self.apply_root("全局參數曲線", edit.set_rack_easing, rid, t, arg)
+        elif action in ("up", "down"):
+            self.apply_root("全局參數順序", edit.move_rack_param, rid, -1 if action == "up" else 1)
+        elif action == "rename":
+            name, ok = QInputDialog.getText(self, "重新命名全局參數", "名稱（用到它的表達式會跟著改）：", text=p["name"])
+            if ok and name.strip() != p["name"]:
+                self.apply_root("重新命名全局參數", edit.rename_rack_param, rid, name)
+        elif action == "expr":
+            others = {q["name"]: v for q, v in ((q, rack.values(self.proj, t).get(q["name"], 0.0))
+                                                 for q in rack.params(self.proj)) if q is not p}
+            text = exprdialog.ask_expression(
+                self, f"表達式：{p['name']}", p.get("expr", ""), {"input": float(curves.value(p.get("value", 0.0), t)),
+                                                                 "time": t / US, **others},
+                note="input 是這個參數自己的值；time 是時間線的秒數；其他全局參數直接寫名字（不能繞一圈讀回自己）。")
+            if text is not None:
+                self.apply_root("全局參數表達式", edit.set_rack_expr, rid, "" if text == "input" else text)
+        elif action == "delete":
+            n = rack.users(self.proj, p["name"])
+            if n and not questions.question(self, "delete_rack", "刪除全局參數", f"有 {n} 個片段的表達式用到「{p['name']}」，"
+                                            "刪除後它們會讀不到這個名字（數字維持原樣）。要繼續嗎？"):
+                return
+            self.apply_root("刪除全局參數", edit.delete_rack_param, rid)
+
+    def import_rack(self):
+        path, _ = QFileDialog.getOpenFileName(self, "匯入全局參數", self.app_root(), "全局參數架 (*.json)")
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as fh:
+                items = rack.parse_import(fh.read())
+        except (OSError, ValueError) as exc:
+            self.statusBar().showMessage(f"匯入失敗：{exc}", 5000)
+            return
+        self.apply_root("匯入全局參數", edit.import_rack, items)
+
+    def export_rack(self):
+        if not rack.params(self.proj):
+            self.statusBar().showMessage("還沒有全局參數可以匯出", 3000)
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "匯出全局參數", os.path.join(self.app_root(), "參數架.json"),
+                                              "全局參數架 (*.json)")
+        if path:
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(rack.export_text(self.proj))
+            self.statusBar().showMessage(f"已匯出 {path}", 4000)
 
     def open_component(self):
         """The component being edited (its content), or None."""
@@ -4030,6 +4118,7 @@ class MainWindow(QMainWindow):
 
     def on_frame(self, img, pos):
         self.pos = pos
+        self.show_rack()
         self.preview.show_image(img)
         if self.fullscreen:
             self.fullscreen.canvas.show_image(img)

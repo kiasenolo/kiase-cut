@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, components, curves, fonts, fx, masks, project, propexpr, svgimage, textlayout, textvars
+from . import assets, components, curves, fonts, fx, masks, project, propexpr, rack, svgimage, textlayout, textvars
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -363,6 +363,7 @@ class Renderer:
         p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         p.scale(width / view["width"], height / view["height"])
         self.begin(view)
+        self.names = rack.values(view, frame / view["fps"] * US)
         self.draw_tracks(p, view["tracks"], view["width"], view["height"], view["fps"],
                          frame / view["fps"] * US, width / view["width"])
         p.end()

@@ -220,6 +220,8 @@ def band_levels(mag, n, f_lo, f_hi, log):
     log = float(log)
     edges = log * np.geomspace(f_lo, f_hi, n + 1) + (1.0 - log) * np.linspace(f_lo, f_hi, n + 1)
     lo, hi = edges[:-1] / hz, edges[1:] / hz
+    mid, half = (lo + hi) / 2, np.maximum(hi - lo, 1.0) / 2           # (a bar narrower than a bin looks at one bin's
+    lo, hi = mid - half, mid + half                                   # width round it: the bins fade into each other)
     cum = np.concatenate([[0.0], np.cumsum(np.square(mag))])         # bin i covers [i - 0.5, i + 0.5]
     at = lambda x: np.interp(x + 0.5, np.arange(len(cum)), cum)
     out = np.sqrt(np.maximum(at(hi) - at(lo), 0.0) / np.maximum(hi - lo, 1e-9))

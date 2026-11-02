@@ -46,7 +46,7 @@ def needs_renderer(proj):
                or ((c.get("params") or c.get("places") or components.has_exprs(c.get("compound")))
                    and components.of_clip(c) is not None)
                or project.speed(c) != 1.0 or c.get("speed_curve") or project.frozen(c) is not None or project.is_group(c)
-               or project.has_corners(c) or c.get("motion_blur")
+               or project.has_corners(c) or c.get("motion_blur") or c.get("expr")
                or (c["type"] == "text" and project.active_mask(c))
                or assets.animated(c.get("asset")) or (c.get("asset") and assets.overflow(assets.at(c["asset"], 0)))
                for c in project.all_clips(proj))

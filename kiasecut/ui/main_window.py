@@ -431,6 +431,8 @@ class MainWindow(QMainWindow):
         ins.component_of = self.open_component
         ins.paramBindRequested.connect(self.layer_param_bind)
         ins.paramUnbindRequested.connect(self.unbind_params)
+        ins.exprRequested.connect(self.ask_prop_expr)
+        ins.exprCleared.connect(lambda ids, prop: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))
         ins.keyToggled.connect(self.on_key_toggled)
         ins.easingChosen.connect(self.on_easing)
         ins.paramReset.connect(lambda ids, pids: self.apply_each(
@@ -2716,6 +2718,19 @@ class MainWindow(QMainWindow):
         except (edit.EditError, KeyError):
             return None
         return steps[-1][2] if steps else None
+
+    def ask_prop_expr(self, ids, prop):
+        """表達式…: the expression a clip's number follows, asked for now (on every clip selected)."""
+        c = edit.find(self.container(), ids[0])[1]
+        label = components.prop_label(c, prop)
+        text = exprdialog.ask_expression(
+            self, f"表達式：{label}", (c.get("expr") or {}).get(prop, ""),
+            {"value": components.number_at(c, prop, 0), "time": 0.0, "progress": 0.0, "duration": 1.0},
+            default="value",
+            note="value 是這個數字原本的值（關鍵幀的結果）；time 是片段內的秒數、progress 是 0–1 的進度。"
+                 "例：value + wiggle(2, 30)、100 * Math.abs(Math.sin(time))。")
+        if text is not None:
+            self.apply_each("表達式", edit.set_prop_expr, ids, prop, "" if text == "value" else text)
 
     def open_component(self):
         """The component being edited (its content), or None."""

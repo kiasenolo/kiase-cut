@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, components, curves, fonts, fx, masks, project, svgimage, textlayout, textvars
+from . import assets, components, curves, fonts, fx, masks, project, propexpr, svgimage, textlayout, textvars
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -133,6 +133,7 @@ class Renderer:
         self.level = frozenset()    # ids of the tracks a 參考 track shows on (project.level_tracks)
         self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
         self.outer = None           # (painter / layer, what is under it) of a 效果穿透 compound's layer
+        self.names = {}             # the names expressions read besides their own (the parameter rack)
 
     # -- assets -----------------------------------------------------------------------------------
     def asset(self, p, w, h):
@@ -486,6 +487,7 @@ class Renderer:
             for c in tr["clips"]:
                 if on_frame(c, t_us, fps):
                     try:
+                        c = propexpr.at(c, t_us - c["start_us"], self.names)
                         if c["type"] == "filter":
                             self.draw_filter_clip(p, c, W, H, fps, t_us, px_per_unit, tracks[:i])
                         else:

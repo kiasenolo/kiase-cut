@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, components, curves, fx, project, render, textlayout, textvars
+from . import assets, components, curves, fx, project, propexpr, render, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -543,6 +543,7 @@ class GLRenderer(render.Renderer):
             for c in tr["clips"]:
                 if render.on_frame(c, t_us, fps):
                     try:
+                        c = propexpr.at(c, t_us - c["start_us"], self.names)
                         if c["type"] == "filter":
                             self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu, tracks[:i])
                         else:

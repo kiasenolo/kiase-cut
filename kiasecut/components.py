@@ -187,11 +187,16 @@ def layer_value(track, c, prop):
     if prop == "source":
         return (c.get("media") or {}).get("path", "")
     if "." in prop:
-        group, key = prop.split(".", 1)
-        _label, dflt, factor, _lo, _hi = number_info(c, prop)
-        h = c if group == "clip" else c.get(group) or {}
-        return float(curves.value(h.get(key, dflt), 0)) * factor
+        return number_at(c, prop, 0)
     return not track.get("hidden")
+
+
+def number_at(c, prop, t):
+    """Number prop "group.key" of layer c at clip time t, in the units the inspector shows."""
+    group, key = prop.split(".", 1)
+    _label, dflt, factor, _lo, _hi = number_info(c, prop)
+    h = c if group == "clip" else c.get(group) or {}
+    return float(curves.value(h.get(key, dflt), t)) * factor
 
 
 def default(comp, p, index=None):

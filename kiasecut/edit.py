@@ -3181,6 +3181,25 @@ def unbind_param(root, kid, binds):
     _unbind(_component(root, kid), binds)
 
 
+def set_prop_expr(proj, clip_id, prop, text):
+    """The expression (propexpr.py) the clip's number prop ("group.key", components.number_props_of)
+    follows; "" takes it away."""
+    _, c = find(proj, clip_id)
+    if prop not in components.number_props_of(c):
+        raise EditError("這個片段沒有那個數字")
+    text = str(text).strip()
+    why = expr.check(text) if text else None
+    if why:
+        raise EditError(f"表達式有問題：{why}")
+    if text:
+        c.setdefault("expr", {})[prop] = text
+    else:
+        (c.get("expr") or {}).pop(prop, None)
+        if not c.get("expr"):
+            c.pop("expr", None)
+    return c
+
+
 def set_bind_expr(root, kid, pid, cid, prop, text):
     """The expression (expr.py) through which number parameter pid sets prop of layer cid ("" or
     "input": the value as it is)."""

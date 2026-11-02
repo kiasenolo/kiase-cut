@@ -355,6 +355,8 @@ class Inspector(QWidget):
     paramReset = Signal(list, list)                 # clip ids, component parameter ids: back to the component's
     paramBindRequested = Signal(str, str, list)     # parameter id ("": a new one), number prop, clip ids: 設為參數
     paramUnbindRequested = Signal(list)             # [(clip id, prop)]: 解除參數
+    exprRequested = Signal(list, str)               # clip ids, number prop: 表達式… (edit the expression of the number)
+    exprCleared = Signal(list, str)                 # clip ids, number prop: 清除表達式
     audioStreamChosen = Signal(list, int)           # clip ids, which of the file's sound streams plays
 
     def __init__(self, parent=None, part="main"):
@@ -375,6 +377,7 @@ class Inspector(QWidget):
         self.tracks = []                  # [(id, name)] tracks of the open level a 軌道 mask can use
         self.picture_of = lambda md: None  # the picture a drag carries (dropped on an image picker)
         self.component_of = lambda: None   # the component being edited (its content), or None
+        self.expr_texts = {}              # {number prop: its expression} of the primary clip (表達式)
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
@@ -1066,6 +1069,12 @@ class Inspector(QWidget):
         menu = spin.lineEdit().createStandardContextMenu()
         comp = self.component_of()
         prop = self._number_prop(key)
+        if prop and self.clip_ids and self.part == "main":
+            menu.addSeparator()
+            ids = list(self.clip_ids)
+            menu.addAction("表達式…", lambda: self.exprRequested.emit(ids, prop))
+            if self.expr_texts.get(prop):
+                menu.addAction("清除表達式", lambda: self.exprCleared.emit(ids, prop))
         if comp is not None and prop and self.clip_ids:
             ids = list(self.clip_ids)
             menu.addSeparator()
@@ -1089,15 +1098,20 @@ class Inspector(QWidget):
         sets = {}
         for p, prop in bound.get(clips[0]["id"], ()) if clips else ():
             sets.setdefault(prop, []).append(p["name"])
+        exprs = (clips[0].get("expr") or {}) if len(clips) == 1 else {}
+        self.expr_texts = dict(exprs)
         for key, w in self.widgets.items():
             if not (isinstance(key, tuple) and len(key) == 2 and isinstance(w, SpinBox) and key[0] != "params"):
                 continue
-            names = sets.get(f"{key[0]}.{key[1]}")
-            if names == getattr(w, "bound_names", None):
+            prop = f"{key[0]}.{key[1]}"
+            names, text = sets.get(prop), exprs.get(prop)
+            if (names, text) == getattr(w, "bound_names", None):
                 continue
-            w.bound_names = names
-            w.setStyleSheet("QDoubleSpinBox { border: 1px solid #b07cff; }" if names else "")
-            w.setToolTip("元件參數：" + "、".join(names) if names else "")
+            w.bound_names = (names, text)
+            w.setStyleSheet("QDoubleSpinBox { border: 1px solid #e0a030; }" if text else
+                            "QDoubleSpinBox { border: 1px solid #b07cff; }" if names else "")
+            w.setToolTip(("表達式：" + text if text else "") + ("\n" if text and names else "") +
+                         ("元件參數：" + "、".join(names) if names else ""))
 
     def _unit(self, key):
         """How many shown units one stored unit is: 中心點 is stored in half-canvas units and shown in widths /

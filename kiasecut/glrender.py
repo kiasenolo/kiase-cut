@@ -606,6 +606,8 @@ class GLRenderer(render.Renderer):
                 rect = render.asset_rect(q, bw, bh)
                 if backdrop:                             # where it is, not its colours' alpha
                     shape = gl.picture(self.asset(assets.cover(q), tw, th), mipmap=True)
+            elif c.get("viz"):                       # drawn from the sound at t (viz.py)
+                tex, straight = gl.picture(self.viz_picture(c, t, tw, th))
             elif kind == "image":
                 pl = c.get("place") or {}
                 tex, straight = gl.picture(self.image(m["path"], tw * pl.get("w", 1.0), th * pl.get("h", 1.0)),

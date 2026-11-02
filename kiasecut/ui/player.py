@@ -207,6 +207,7 @@ class Worker(QObject):
                     view, cache = new
                     first = self.view is None
                     self.view = view
+                    self.cache_dir = self.renderer.cache_dir = cache
                     if self.mixer is None or self.mixer.dir != os.path.join(cache, "audio"):   # (設定 > 緩存位置)
                         self.mixer = Mixer(cache)
                     self.mixer.set_view(view)
@@ -263,7 +264,9 @@ class Worker(QObject):
 
     def _renderer(self):
         """The GPU compositor when GPU acceleration is on (and works here), else QPainter."""
-        return glrender.make(self._video) if gpu.enabled else render.Renderer(self._video)
+        r = glrender.make(self._video) if gpu.enabled else render.Renderer(self._video)
+        r.cache_dir = getattr(self, "cache_dir", None)           # (the sound an Audio Visualizer looks at)
+        return r
 
     def _start_sink(self, old):
         """(sink, its device to write to): a new sound output on the default device as it is

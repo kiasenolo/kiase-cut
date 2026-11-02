@@ -163,48 +163,54 @@ class Mixer:
         """PCM bytes (s16 stereo) for one frame."""
         a = round(frame * RATE / fps)
         b = round((frame + 1) * RATE / fps)
-        n = b - a
-        acc = np.zeros((n, CHANNELS), np.float32)
-        t_frame = frame / fps * US
         with self.lock:
             srcs = list(self.sources)
-        for s in srcs:
-            if s.pcm is None or not (s.win[0] <= t_frame < s.win[1]):
-                continue
-            c = s.clip
-            t = (t_frame - s.start_us) * s.rate         # time into the clip
-            g = curves.value(c.get("volume", 1.0), t) * s.gain
-            if normalize.target(c) is not None:         # 標準化: on top of 音量
-                g *= normalize.gain_of(c, normalize.peak(s.key(), s.pcm))
-            fi, fo, dur = c.get("fade_in_us", 0), c.get("fade_out_us", 0), c["duration_us"]
-            if fi and t < fi:
-                g *= max(0.0, t / fi)
-            if fo and t > dur - fo:
-                g *= max(0.0, (dur - t) / fo)
-            if g <= 0:
-                continue
-            sp = 1.0 if s.pitched else project.speed(c)    # (保持音高: decoded at the clip's pace already)
-            step = s.rate * sp                          # source samples per mixed sample
-            if c.get("speed_curve"):                    # 曲線變速: each sample where the curve has got to
-                pos = project.curve_source_offsets(c, t + np.arange(n) * s.rate * US / RATE) / US * RATE - s.offset
-                ok = (pos >= 0) & (pos < len(s.pcm) - 1)
-                if ok.any():
-                    i = pos[ok].astype(np.int64)
-                    f = (pos[ok] - i)[:, None]
-                    acc[ok] += (s.pcm[i] * (1 - f) + s.pcm[i + 1] * f) * g
-            elif abs(step - 1.0) < 1e-9:
-                i0 = round(t * sp / US * RATE) - s.offset    # sample index into the decoded range
-                lo, hi = max(i0, 0), min(i0 + n, len(s.pcm))
-                if hi > lo:
-                    acc[lo - i0:hi - i0] += s.pcm[lo:hi] * g
-            else:                                       # faster / slower: resampled (pitch follows)
-                pos = t * sp / US * RATE - s.offset + np.arange(n) * step
-                ok = (pos >= 0) & (pos < len(s.pcm) - 1)
-                if ok.any():
-                    i = pos[ok].astype(np.int64)
-                    f = (pos[ok] - i)[:, None]
-                    acc[ok] += (s.pcm[i] * (1 - f) + s.pcm[i + 1] * f) * g
-        return np.clip(acc * self.master, -32768, 32767).astype(np.int16).tobytes()
+        acc = mix_window(srcs, b - a, frame / fps * US, self.master)
+        return np.clip(acc, -32768, 32767).astype(np.int16).tobytes()
+
+
+def mix_window(srcs, n, t_us, master=1.0):
+    """n samples (float32 [n, 2], not clipped) of the decoded sources srcs starting at mixed
+    time t_us: volumes, fades, speeds and 標準化 as the clips sound."""
+    acc = np.zeros((n, CHANNELS), np.float32)
+    t_frame = t_us
+    for s in srcs:
+        if s.pcm is None or not (s.win[0] <= t_frame < s.win[1]):
+            continue
+        c = s.clip
+        t = (t_frame - s.start_us) * s.rate         # time into the clip
+        g = curves.value(c.get("volume", 1.0), t) * s.gain
+        if normalize.target(c) is not None:         # 標準化: on top of 音量
+            g *= normalize.gain_of(c, normalize.peak(s.key(), s.pcm))
+        fi, fo, dur = c.get("fade_in_us", 0), c.get("fade_out_us", 0), c["duration_us"]
+        if fi and t < fi:
+            g *= max(0.0, t / fi)
+        if fo and t > dur - fo:
+            g *= max(0.0, (dur - t) / fo)
+        if g <= 0:
+            continue
+        sp = 1.0 if s.pitched else project.speed(c)    # (保持音高: decoded at the clip's pace already)
+        step = s.rate * sp                          # source samples per mixed sample
+        if c.get("speed_curve"):                    # 曲線變速: each sample where the curve has got to
+            pos = project.curve_source_offsets(c, t + np.arange(n) * s.rate * US / RATE) / US * RATE - s.offset
+            ok = (pos >= 0) & (pos < len(s.pcm) - 1)
+            if ok.any():
+                i = pos[ok].astype(np.int64)
+                f = (pos[ok] - i)[:, None]
+                acc[ok] += (s.pcm[i] * (1 - f) + s.pcm[i + 1] * f) * g
+        elif abs(step - 1.0) < 1e-9:
+            i0 = round(t * sp / US * RATE) - s.offset    # sample index into the decoded range
+            lo, hi = max(i0, 0), min(i0 + n, len(s.pcm))
+            if hi > lo:
+                acc[lo - i0:hi - i0] += s.pcm[lo:hi] * g
+        else:                                       # faster / slower: resampled (pitch follows)
+            pos = t * sp / US * RATE - s.offset + np.arange(n) * step
+            ok = (pos >= 0) & (pos < len(s.pcm) - 1)
+            if ok.any():
+                i = pos[ok].astype(np.int64)
+                f = (pos[ok] - i)[:, None]
+                acc[ok] += (s.pcm[i] * (1 - f) + s.pcm[i + 1] * f) * g
+    return acc * master
 
 
 def stem_tracks(view):

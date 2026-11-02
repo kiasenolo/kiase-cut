@@ -46,7 +46,7 @@ def needs_renderer(proj):
                or ((c.get("params") or c.get("places") or components.has_exprs(c.get("compound")))
                    and components.of_clip(c) is not None)
                or project.speed(c) != 1.0 or c.get("speed_curve") or project.frozen(c) is not None or project.is_group(c)
-               or project.has_corners(c) or c.get("motion_blur") or c.get("expr")
+               or project.has_corners(c) or c.get("motion_blur") or c.get("expr") or c.get("viz")
                or (c["type"] == "text" and project.active_mask(c))
                or assets.animated(c.get("asset")) or (c.get("asset") and assets.overflow(assets.at(c["asset"], 0)))
                for c in project.all_clips(proj))
@@ -207,7 +207,7 @@ STILL_FORMATS = (("PNG", ".png", True), ("JPEG", ".jpg", False), ("WebP", ".webp
                  ("TIFF", ".tif", True), ("BMP", ".bmp", False))      # (name, extension, can be transparent)
 
 
-def still(view, t_us, size, out, alpha=True, background=None, quality=92):
+def still(view, t_us, size, out, alpha=True, background=None, quality=92, cache_dir=None):
     """Draw the moment t_us of a project-like view at size (w, h) and save it to out (its
     extension picks the format): on a transparent background with alpha (where the format
     keeps it), else on background (a QColor, black when None). The clips the renderer could
@@ -229,6 +229,7 @@ def still(view, t_us, size, out, alpha=True, background=None, quality=92):
         return QImage(px, rw, rh, rw * 4, QImage.Format_RGBA8888).copy()
 
     renderer = glrender.make(video) if gpu.enabled else render.Renderer(video)
+    renderer.cache_dir = cache_dir
     try:
         frame = round(t_us * view["fps"] / US)
         img = renderer.render(view, frame, W, H, alpha=True)
@@ -297,6 +298,7 @@ def _pictures(view, out, fmt, alpha, size, fps, first, last, opts, sounds, progr
 
     CAP_W, CAP_H = max(W, 3840), max(H, 2160)      # (the engine sends pictures at their own size)
     renderer = glrender.make(video) if gpu.enabled else render.Renderer(video)
+    renderer.cache_dir = cache                     # (the sound an Audio Visualizer looks at)
 
     inputs, maps = [], [] if fmt.kind == "gif" else ["-map", "0:v"]       # (GIF's filter graph names its output)
     audio = ["-an"]

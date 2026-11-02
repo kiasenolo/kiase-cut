@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QWidget)
 
 from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
-               rack, render, renderexport, sysmem, thumbnail, toolsdata, userlib, waveform, workspace)
+               rack, render, renderexport, sysmem, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -433,6 +433,7 @@ class MainWindow(QMainWindow):
         ins.paramBindRequested.connect(self.layer_param_bind)
         ins.paramUnbindRequested.connect(self.unbind_params)
         ins.exprRequested.connect(self.ask_prop_expr)
+        ins.vizEdited.connect(lambda ids, fields: self.apply_each("Audio Visualizer", lambda lvl, cid: edit.set_viz(lvl, cid, **fields), ids))
         ins.exprChosen.connect(lambda ids, prop, text: self.apply_each("綁定全局參數", edit.set_prop_expr, ids, prop, text))
         ins.rack_names = lambda: [p["name"] for p in rack.params(self.proj)] if self.proj else []
         ins.exprCleared.connect(lambda ids, prop: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))
@@ -950,6 +951,9 @@ class MainWindow(QMainWindow):
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
         add(m, "新增文字", "Ctrl+T", self.do_text)
+        viz_menu = m.addMenu("新增 Audio Visualizer")
+        for kind, name in viz.KINDS.items():
+            add(viz_menu, name, None, lambda k=kind: self.add_visualizer(k))
         add(m, "重新命名", "F2", self.do_rename)
         add(m, "清除空軌道", None, self.clear_empty_tracks)
         m.addSeparator()
@@ -2562,6 +2566,10 @@ class MainWindow(QMainWindow):
         starts = edit.abs_starts(self.container()) if self.proj else {}
         clips, t = [self.placed(c, starts) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
         times = self.key_times([c["id"] for c in clips])
+        if self.proj is not None and any(c.get("viz") for c in clips):       # (what an Audio Visualizer can listen to)
+            self.inspector.set_sound_tracks([(tr["id"], tr.get("name") or tr["id"])
+                                             for tr in reversed(self.container()["tracks"]) if self.sound_track(tr)])
+            self.inspector.set_compounds(self.mask_compounds())
         self.inspector.show_clips(clips, t, self.fps, [times[c["id"]] for c in clips])
         if self.proj is not None:
             self.effects.set_media(self.mask_images(), self.mask_videos(), self.mask_compounds(), self.mask_tracks())
@@ -3754,6 +3762,44 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "無法建立素材", str(exc))
             return None
 
+    def viz_media(self):
+        """The (empty) picture an Audio Visualizer clip stands on, in Media/.內建素材."""
+        d = os.path.join(workspace.media_dir(self.root), assets.FOLDER)
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "audio-visualizer.png")
+        if not os.path.exists(path):
+            img = QImage(1, 1, QImage.Format_ARGB32)
+            img.fill(Qt.transparent)
+            img.save(path)
+        return path.replace("\\", "/")
+
+    def add_visualizer(self, kind):
+        """新增 Audio Visualizer: at the playhead, listening to the first track with sound (else a file)."""
+        if not self.ensure_project():
+            return
+        level = self.container()
+        tr = next((t for t in level["tracks"] if self.sound_track(t)), None)
+        start = round(self.playhead_us())
+        if tr is not None:
+            source = {"type": "track", "id": tr["id"]}
+            dur = max(US, project.end_us([tr]) - start) if project.end_us([tr]) > start else 5 * US
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "選一個有聲音的檔案", self.app_root(), "聲音或影片 (*.wav *.mp3 *.flac *.m4a "
+                                                  "*.aac *.ogg *.opus *.mp4 *.mov *.mkv *.webm *.avi);;所有檔案 (*)")
+            if not path:
+                return
+            source, dur = {"type": "file", "path": path.replace("\\", "/")}, 10 * US
+        media = self.viz_media()
+        w, h = level.get("width") or self.proj["width"], level.get("height") or self.proj["height"]
+        self.apply("新增 Audio Visualizer", lambda lvl: edit.add_visualizer(lvl, kind, source, media, start, dur, w, h),
+                   select=lambda c: c["id"])
+
+    @staticmethod
+    def sound_track(t):
+        """Whether a track has something a visualizer can listen to."""
+        return any(c["type"] in ("audio", "video") and c.get("media") or project.is_group(c) or c["type"] == "compound"
+                   for c in t["clips"])
+
     def new_asset(self, ident):
         """(parameters, file path) of a new clip of the 內建素材 preset ident, sized for the
         open level's canvas; None when there is nothing to make."""
@@ -4544,10 +4590,11 @@ class MainWindow(QMainWindow):
             return
         self.settings().setValue("still_spec", json.dumps(st))
         t = self.playhead_us()
+        cache = self.cache_dir()
 
         def work(_progress):
             os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-            return renderexport.still(view, t, size, out, alpha, bg, quality)
+            return renderexport.still(view, t, size, out, alpha, bg, quality, cache)
 
         def done(errors):
             self.statusBar().showMessage(f"已匯出目前畫面：{out}" + (f"（{len(errors)} 個片段畫不出來）" if errors else ""),

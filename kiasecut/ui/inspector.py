@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, build, components, curves, edit, normalize, project, textlayout, textvars
+from .. import assets, build, components, curves, edit, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
@@ -358,6 +358,7 @@ class Inspector(QWidget):
     exprRequested = Signal(list, str)               # clip ids, number prop: 表達式… (edit the expression of the number)
     exprCleared = Signal(list, str)                 # clip ids, number prop: 清除表達式
     exprChosen = Signal(list, str, str)             # clip ids, number prop, expression: 綁定到全局參數 (its name)
+    vizEdited = Signal(list, dict)                  # clip ids, {Audio Visualizer setting: value} (viz.py)
     audioStreamChosen = Signal(list, int)           # clip ids, which of the file's sound streams plays
 
     def __init__(self, parent=None, part="main"):
@@ -373,6 +374,7 @@ class Inspector(QWidget):
         self._last_font = None
         self.fonts = []                   # [{path, name}] installed fonts (fonts.py), for the picker
         self.compounds = []               # [(id, name)] compounds a compound mask can use here
+        self.sound_tracks = []            # [(id, name)] tracks of the open level an Audio Visualizer can listen to
         self.images = []                  # [(path, name)] pictures an image mask can use
         self.videos = []                  # [(path, name)] videos a video mask can use
         self.tracks = []                  # [(id, name)] tracks of the open level a 軌道 mask can use
@@ -558,6 +560,8 @@ class Inspector(QWidget):
             else:
                 if c.get("asset"):
                     self._build_asset(form, c["asset"]["family"])
+                if c.get("viz"):
+                    self._build_viz(form, c["viz"])
                 if components.of_clip(c) is not None:
                     self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
@@ -855,6 +859,12 @@ class Inspector(QWidget):
         """The tracks of the open level a 軌道 mask can show: [(id, name)]."""
         if list(items) != self.tracks:
             self.tracks = list(items)
+            self.shape = None
+
+    def set_sound_tracks(self, items):
+        """The tracks an Audio Visualizer can listen to here: [(id, name)]."""
+        if list(items) != self.sound_tracks:
+            self.sound_tracks = list(items)
             self.shape = None
 
     def set_compounds(self, items):
@@ -1326,6 +1336,150 @@ class Inspector(QWidget):
         self.widgets["scale_link"] = b
         return b
 
+    # -- Audio Visualizer (viz.py) -------------------------------------------------------------------
+    VIZ_ROWS = {        # field: (label, lo, hi, step, decimals)
+        "attack": ("起音 秒", 0.0, 2.0, 0.01, 2), "decay": ("衰減 秒", 0.0, 3.0, 0.05, 2),
+        "bar_w": ("條寬 px", 1.0, 400.0, 1.0, 1), "gap": ("間距 px", 0.0, 400.0, 1.0, 1),
+        "max_h": ("最大高度 px", 10.0, 4000.0, 10.0, 0), "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1),
+        "inner": ("內徑 px", 10.0, 3000.0, 10.0, 0), "f_lo": ("頻率下限 Hz", 20.0, 20000.0, 10.0, 0),
+        "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2)}
+    VIZ_FIELDS = {
+        "bars": ("channel", "attack", "decay", "bar_w", "gap", "max_h", "mirror", "radial", "inner", "f_lo", "f_hi",
+                 "log", "smooth", "color"),
+        "wave": ("channel", "attack", "decay", "max_h", "mirror", "radial", "inner", "smooth", "color"),
+        "scope": ("channel", "max_h", "line_w", "radial", "inner", "smooth", "color"),
+        "vector": ("decay", "max_h", "line_w", "grid", "color")}
+    VIZ_TOGGLES = {"mirror": "鏡像（上下對稱）", "radial": "放射狀（繞成圓形）", "log": "對數頻率軸（每個八度一樣寬）",
+                   "grid": "顯示格線"}
+
+    def _viz_edit(self, **fields):
+        if self.clip_ids:
+            self.vizEdited.emit(list(self.clip_ids), fields)
+
+    def _build_viz(self, form, v):
+        """Audio Visualizer: what it draws, the sound it listens to, and how it looks."""
+        form.addRow(section("Audio Visualizer"))
+        kind = ComboBox()
+        for k, name in viz.KINDS.items():
+            kind.addItem(name, k)
+        kind.activated.connect(lambda i: self._viz_edit(kind=kind.itemData(i)))
+        self.widgets[("viz", "kind")] = kind
+        form.addRow("種類", kind)
+        src = ComboBox()
+        for k, name in (("track", "軌道"), ("compound", "複合片段"), ("file", "檔案")):
+            src.addItem(name, k)
+        src.activated.connect(lambda i: self._viz_source(src.itemData(i)))
+        self.widgets[("viz", "source_type")] = src
+        pick = ComboBox()
+        pick.activated.connect(lambda i: self._viz_edit(source=self._viz_source_of(pick.itemData(i))))
+        self.widgets[("viz", "source_pick")] = pick
+        form.addRow("聲音來源", src)
+        form.addRow("", pick)
+        for f in self.VIZ_FIELDS[v["kind"]]:
+            if f == "channel":
+                box = ComboBox()
+                for k, name in viz.CHANNELS:
+                    box.addItem(name, k)
+                box.activated.connect(lambda i, box=box: self._viz_edit(channel=box.itemData(i)))
+                self.widgets[("viz", f)] = box
+                form.addRow("聲道", box)
+            elif f == "color":
+                for fld, label in (("color", "顏色"), ("color2", "漸層顏色")):
+                    b = QPushButton()
+                    b.clicked.connect(lambda _=False, fld=fld, label=label: self._pick_viz_color(fld, label))
+                    self.widgets[("viz", fld)] = b
+                    form.addRow(label, b)
+                    if fld == "color":
+                        g = QCheckBox("漸層（底部用顏色、頂部用漸層顏色）")
+                        g.clicked.connect(lambda on: self._viz_edit(gradient=bool(on)))
+                        self.widgets[("viz", "gradient")] = g
+                        form.addRow("", g)
+            elif f in self.VIZ_TOGGLES:
+                box = QCheckBox(self.VIZ_TOGGLES[f])
+                box.clicked.connect(lambda on, f=f: self._viz_edit(**{f: bool(on)}))
+                self.widgets[("viz", f)] = box
+                form.addRow("", box)
+            else:
+                label, lo, hi, step, dec = self.VIZ_ROWS[f]
+                sp = SpinBox()
+                sp.set_limits(lo, hi, lo, hi)
+                sp.setSingleStep(step)
+                sp.setDecimals(dec)
+                sp.setKeyboardTracking(False)
+                sp.edited.connect(lambda x, f=f: self._viz_edit(**{f: x}))
+                self.widgets[("viz", f)] = sp
+                form.addRow(label, sp)
+
+    def _viz_source_of(self, token):
+        """The source dict a source picker's item stands for."""
+        t = self.widgets[("viz", "source_type")].currentData()
+        if token == "":                                  # (a file: ask)
+            path, _ = QFileDialog.getOpenFileName(self, "選一個有聲音的檔案", "", "聲音或影片 (*.wav *.mp3 *.flac *.m4a "
+                                                  "*.aac *.ogg *.opus *.mp4 *.mov *.mkv *.webm *.avi);;所有檔案 (*)")
+            return {"type": "file", "path": path.replace("\\", "/")} if path else None
+        return {"type": t, "id": token} if t != "file" else {"type": "file", "path": token}
+
+    def _viz_source(self, typ):
+        """The source type changed: take the first thing of that type (or ask for the file)."""
+        if typ == "file":
+            src = self._viz_source_of("")
+        else:
+            items = self.sound_tracks if typ == "track" else self.compounds
+            src = {"type": typ, "id": items[0][0]} if items else None
+        if src is None:                                  # (nothing to listen to there: show what is set again)
+            self._show_viz(self._viz_clip)
+            return
+        self._viz_edit(source=src)
+
+    def _pick_viz_color(self, fld, label):
+        btn = self.widgets[("viz", fld)]
+        ids = list(self.clip_ids)
+        col = pick_color(self, qcolor(btn.text()), label, anchor=btn)
+        if col is not None and ids:
+            self.vizEdited.emit(ids, {fld: rgba(col)})
+
+    def _show_viz(self, c):
+        self._viz_clip = c
+        v = viz.clean(c["viz"])
+        w = self.widgets
+        for k in range(w[("viz", "kind")].count()):
+            if w[("viz", "kind")].itemData(k) == v["kind"]:
+                w[("viz", "kind")].setCurrentIndex(k)
+        typ = v["source"].get("type", "track")
+        self._set_combo(w[("viz", "source_type")], typ)
+        pick = w[("viz", "source_pick")]
+        pick.blockSignals(True)
+        pick.clear()
+        if typ == "file":
+            path = v["source"].get("path") or ""
+            pick.addItem(os.path.basename(path) if path else "（還沒有檔案）", path)
+            pick.addItem("選擇其他檔案…", "")
+        else:
+            for ident, name in (self.sound_tracks if typ == "track" else self.compounds):
+                pick.addItem(name, ident)
+            i = pick.findData(v["source"].get("id"))
+            if i < 0 and v["source"].get("id"):
+                pick.addItem("（找不到）", v["source"]["id"])
+                i = pick.count() - 1
+            pick.setCurrentIndex(i)
+        pick.blockSignals(False)
+        for f in self.VIZ_FIELDS[v["kind"]] + ("gradient", "color2"):
+            wid = w.get(("viz", f))
+            if wid is None:
+                continue
+            if f == "channel":
+                self._set_combo(wid, v[f])
+            elif f in ("color", "color2"):
+                hx = assets.hex_of(v[f])
+                wid.setText(hx)
+                wid.setStyleSheet(f"background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'};")
+            elif isinstance(wid, QCheckBox):
+                wid.blockSignals(True)
+                wid.setChecked(bool(v[f]))
+                wid.blockSignals(False)
+            elif not wid.hasFocus():
+                wid.show_value(v[f])
+
     def _build_asset(self, form, family):
         """素材參數: size, colours and the family's own fields (assets.FIELDS), each with ◆."""
         form.addRow(section("素材參數"))
@@ -1591,7 +1745,8 @@ class Inspector(QWidget):
                                          all(k.get("speed_curve") for k in clips),
                                          tuple((v["name"], v["kind"], v.get("decimals"), v.get("format"))
                                                for v in textvars.variables(c.get("text") or {})),
-                                         (c.get("asset") or {}).get("family"), (c.get("mask") or {}).get("compound_id"),
+                                         (c.get("asset") or {}).get("family"), (c.get("viz") or {}).get("kind"),
+                                         (c.get("mask") or {}).get("compound_id"),
                                          bool((c.get("mask") or {}).get("video")),
                                          tuple((p["id"], p["kind"], p["name"]) for p in
                                                components.params(components.of_clip(c))))
@@ -1739,6 +1894,8 @@ class Inspector(QWidget):
         if ("asset", "w") in w:
             self._show_asset(clips, ts, easings)
         self._mark_bound(clips)
+        if ("viz", "kind") in w and clips[0].get("viz"):
+            self._show_viz(clips[0])
         if any(isinstance(k, tuple) and k[0] == "reset" for k in w):
             self._show_params(clips, ts, easings)
         if "speed" in w:

@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fx, project, rack, textlayout, textvars
+from . import assets, components, curves, expr, fx, project, rack, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -740,6 +740,58 @@ def replace_fonts(proj, mapping):
 STYLE_TEXT_FIELDS = ("font_path", "size", "color", "fill", "stroke_on", "stroke_color", "stroke",
                      "stroke_align", "letter_spacing", "line_spacing", "italic_deg", "align", "valign") \
     + tuple(textlayout.DECOR)
+
+
+def add_visualizer(level, kind, source, media_path, start_us, duration_us, width, height, track_id=None):
+    """A new Audio Visualizer (viz.py) clip of this kind drawing `source`, the size of a
+    width x height canvas, on the topmost picture track with room (or track_id), else a new
+    track. media_path is the (empty) picture file it stands on. Returns the clip."""
+    if kind not in viz.KINDS:
+        raise EditError(f"unknown visualizer {kind}")
+    clip = {"id": new_clip_id(level), "type": "image", "name": viz.KINDS[kind], "start_us": int(start_us),
+            "duration_us": int(duration_us), "source_start_us": 0,
+            "media": {"path": media_path, "width": int(width), "height": int(height)},
+            "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0},
+            "viz": viz.make(kind, source, height)}
+    track = track_by_id(level, track_id) if track_id else None
+    if track is not None and (track["kind"] == "audio" or free_range(track, clip["start_us"], end(clip)) is None):
+        track = None
+    if track is None:
+        for t in reversed(level["tracks"]):
+            if t["kind"] == "video" and not project.locked(t) and free_range(t, clip["start_us"], end(clip)) is not None:
+                track = t
+                break
+    if track is not None:
+        rng = free_range(track, clip["start_us"], end(clip))
+        clip["duration_us"] = min(clip["duration_us"], rng[1] - clip["start_us"])
+        track["clips"].append(clip)
+        _sort(track)
+        return clip
+    n = sum(1 for t in level["tracks"] if t["kind"] == "video") + 1
+    track = {"id": new_track_id(level), "kind": "video", "name": f"video {n}", "clips": [clip]}
+    audio_at = next((i for i, t in enumerate(level["tracks"]) if t["kind"] == "audio"), len(level["tracks"]))
+    level["tracks"].insert(audio_at, track)
+    return clip
+
+
+def set_viz(proj, clip_id, **fields):
+    """Change an Audio Visualizer's settings (viz.py DEFAULTS' names, kind, source); the rest is cleaned."""
+    _, c = find(proj, clip_id)
+    if not c.get("viz"):
+        raise EditError("不是 Audio Visualizer")
+    new = dict(c["viz"])
+    for k, v in fields.items():
+        if k not in viz.DEFAULTS and k != "source":
+            raise EditError(f"unknown visualizer setting {k}")
+        new[k] = v
+    if new.get("kind") not in viz.KINDS:
+        raise EditError(f"unknown visualizer {new.get('kind')}")
+    src = new.get("source") or {}
+    if src.get("type") not in viz.SOURCE_TYPES:
+        raise EditError("來源要是檔案、複合片段或軌道")
+    c["viz"] = viz.clean(new)
+    c["name"] = c["name"] if c.get("named") else viz.KINDS[c["viz"]["kind"]]
+    return c
 
 
 def add_text_var(proj, clip_id, kind="number"):

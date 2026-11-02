@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, components, curves, fonts, fx, masks, project, propexpr, rack, svgimage, textlayout, textvars
+from . import assets, components, curves, fonts, fx, masks, project, propexpr, rack, svgimage, textlayout, textvars, viz
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -134,6 +134,8 @@ class Renderer:
         self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
         self.outer = None           # (painter / layer, what is under it) of a 效果穿透 compound's layer
         self.names = {}             # the names expressions read besides their own (the parameter rack)
+        self.cache_dir = None       # the project's cache: where the sound a visualizer looks at is decoded to
+        self._probe = None
 
     # -- assets -----------------------------------------------------------------------------------
     def asset(self, p, w, h):
@@ -243,6 +245,14 @@ class Renderer:
         self.level = project.level_tracks(view)
 
     track_ctx = None                    # (tracks, W, H, time) of the level being drawn: what 軌道 sources read
+
+    def viz_picture(self, c, t, tw, th):
+        """An Audio Visualizer clip's picture (viz.py) at clip time t, tw x th pixels."""
+        if self._probe is None and self.cache_dir:
+            self._probe = viz.Probe(self.cache_dir)
+        tracks = self.track_ctx[0] if self.track_ctx else None
+        return viz.paint(c["viz"], self._probe, c, t, max(1, round(tw)), max(1, round(th)), c["media"]["height"],
+                         self.compounds, tracks)
 
     def matte_compound(self, mask, t=0):
         """What a picture mask cuts with: the compound of a compound mask, or for an image mask
@@ -541,6 +551,8 @@ class Renderer:
                 if backdrop:
                     shape = self.asset(assets.cover(q), tw, th)
                     cover = lambda qq=p: qq.drawImage(rect, shape)
+            elif c.get("viz"):                       # drawn from the sound at t (viz.py)
+                pic = self.viz_picture(c, t, tw, th)
             elif kind == "image":
                 pl = c.get("place") or {}
                 pic = self.image(m["path"], tw * pl.get("w", 1.0), th * pl.get("h", 1.0))

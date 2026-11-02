@@ -416,6 +416,7 @@ class Inspector(QWidget):
         old.hide()                       # deleteLater waits for the event loop; never show both
         old.deleteLater()
         form = QFormLayout(self.body)
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)   # every input fills its row
         self.widgets = {}
         if c is None:
             form.addRow(QLabel("在時間軸上選一個片段"))

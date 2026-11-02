@@ -134,7 +134,7 @@ class WrapTests(unittest.TestCase):
         win.show()
         s.show_value(0)
         le = s.lineEdit()
-        hand = Hand(le, le.mapToGlobal(QPointF(le.width() / 2, le.height() / 2)))
+        hand = Hand(le, le.mapToGlobal(QPointF(le.width() // 2, le.height() // 2)))   # (a pointer is on whole px)
         start = QPointF(hand.g)
         hand.move(0, -4, 100)                                   # 400 px up in a 120 px window
         self.assertTrue(hidden())

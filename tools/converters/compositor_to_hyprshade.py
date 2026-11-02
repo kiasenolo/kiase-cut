@@ -869,6 +869,7 @@ uint hash4(int x, int y, int z, int w) {
     a += uint(w);
     jfinal(a, b, c); return c;
 }
+float hash_uint3_to_float(uint kx, uint ky, uint kz) { return float(hash3(int(kx), int(ky), int(kz))) / 4294967295.0; }   // (Blender's gpu_shader_common_hash)
 float nfade(float t) { return t * t * t * (t * (t * 6.0 - 15.0) + 10.0); }
 float ngrad3(uint h, float x, float y, float z) {
     h &= 15u;
@@ -1739,38 +1740,80 @@ $post
 return m;""", size=size, src0=h.i("Mask", "float"), src=src, post=post)]
 
 
+def _bilinear_zero(h, uv, name, ind=""):
+    """Statements computing `vec4 name`: the Image bilinearly sampled at uv (an expression), as Blender does,
+    with nothing (not a repeated edge) outside the picture - the four texels around uv read one by one."""
+    taps = [(0, 0), (1, 0), (0, 1), (1, 1)]
+    lines = ["vec2 %s_t = (%s) * R - 0.5;" % (name, uv), "vec2 %s_i = floor(%s_t);" % (name, name),
+             "vec2 %s_f = %s_t - %s_i;" % (name, name, name)]
+    for n, (dx, dy) in enumerate(taps):
+        q = "%s_i + vec2(%s, %s)" % (name, fl(dx), fl(dy))
+        lines.append("vec4 %s%d = (all(greaterThanEqual(%s, vec2(0.0))) && all(lessThan(%s, R))) ? %s : vec4(0.0);" % (
+            name, n, q, q, h.i("Image", "vec4", uv="((%s + 0.5) / R)" % q)))
+    lines.append("vec4 %s = mix(mix(%s0, %s1, %s_f.x), mix(%s2, %s3, %s_f.x), %s_f.y);" % ((name,) + (name,) * 3 + (name,) * 4))
+    return "\n".join(ind + ln for ln in lines)
+
+
 def _lens_distortion(h):
-    h.heavy()
+    """Lens Distortion as Blender computes it (compositor_radial_lens_distortion.glsl / _horizontal_): the same
+    integration along the change of distortion from red to green and from green to blue, the same steps."""
+    cap = h.heavy()
     kind = h.menu("Type", "radial")
     fit = h.flag("Fit", False)
+    jitter = h.flag("Jitter", False)
+    if kind in ("horizontal", "projector"):
+        return [T("""vec2 R = res();
+float shift = 5.0 * clamp($disp, 0.0, 1.0) / R.x;
+$red
+$blue
+vec4 green = $green;
+return vec4(red.r, green.g, blue.b, (red.a + green.a + blue.a) / 3.0);""", disp=h.i("Dispersion", "float"),
+                  red=_bilinear_zero(h, "uv + vec2(shift, 0.0)", "red"), blue=_bilinear_zero(h, "uv - vec2(shift, 0.0)", "blue"),
+                  green=h.i("Image", "vec4"))]
     if kind != "radial":
         h.warn("Lens Distortion type '%s' approximated as Radial" % kind)
-    s = lambda k: h.i("Image", "vec4", uv=k)
-    # Formula fitted against Blender's own output (distortion exact, dispersion approximate).
-    return [T("""float k = clamp($dist, -0.999, 1.0);
-float dp = clamp($disp, 0.0, 1.0);
-float ke = k + 0.25 * dp;
-float sc = ($fit && ke > 0.0) ? 1.0 / (1.0 + 2.0 * ke) : 1.0 / (1.0 + ke);
-vec2 p = (uv * 2.0 - 1.0) * sc;
-float r2 = dot(p, p);
-float kr = 4.0 * k + 0.7 * dp, kg = 4.0 * k, kb = 4.0 * k - 0.7 * dp;
-vec2 pr = p / (1.0 + sqrt(max(1.0 - kr * r2, 0.0))) + 0.5;
-vec2 pg = p / (1.0 + sqrt(max(1.0 - kg * r2, 0.0))) + 0.5;
-vec2 pb = p / (1.0 + sqrt(max(1.0 - kb * r2, 0.0))) + 0.5;
-vec4 cg = $sg;
-if (dp <= 0.0) return cg;
-vec3 acc = vec3(0.0), wsum = vec3(0.0);
-for (int i = 0; i < 8; i++) {
-    float t = (float(i) + 0.5) / 8.0;
-    float kk = mix(kr, kb, t);
-    vec2 pp = p / (1.0 + sqrt(max(1.0 - kk * r2, 0.0))) + 0.5;
-    vec4 c = $sx;
-    vec3 w = vec3(max(1.0 - 2.0 * t, 0.0), 1.0 - abs(2.0 * t - 1.0), max(2.0 * t - 1.0, 0.0));
-    acc += c.rgb * w; wsum += w;
-}
-vec3 o = acc / max(wsum, vec3(1e-4));
-return vec4(o, cg.a);""", dist=h.i("Distortion", "float"), disp=h.i("Dispersion", "float"),
-               fit="true" if fit else "false", sg=s("pg"), sx=s("pp"))]
+    rgb = "rgb"
+    passes = []
+    for start, end, steps in ((0, 1, "sr"), (1, 2, "sb")):
+        a, b = rgb[start], rgb[end]
+        passes.append(T("""{
+    float amount = cd.$e - cd.$s;
+    for (int i = 0; i < $n; i++) {
+        float increment = (float(i) + $jit) / float($n);
+        float ds = 1.0 / (1.0 + sqrt(max(0.0, 1.0 - (cd.$s + increment * amount) * d2)));
+        vec2 puv = u2 * ds + 0.5;
+$bz
+        acc.$s += (1.0 - increment) * smp.$s;
+        acc.$e += increment * smp.$e;
+        acc.w += smp.w;
+    }
+}""", s=a, e=b, n=steps, bz=_bilinear_zero(h, "puv", "smp", "        "),
+                        jit=("hash_uint3_to_float(uint(tex.x), uint(tex.y), uint(%d * %s + i))" % (start, steps)) if jitter else "0.5"))
+    return [T("""vec2 R = res();
+float gd = clamp($dist, -0.999, 1.0);
+float dsp = clamp($disp, 0.0, 1.0) / 4.0;
+vec3 d3 = vec3(clamp(gd + dsp, -0.999, 1.0), gd, clamp(gd - dsp, -0.999, 1.0));
+vec3 cd = d3 * 4.0;                                   // Blender's chromatic distortion (red, green, blue)
+float mxd = max(d3.x, max(d3.y, d3.z));
+float scl = ($fit && mxd > 0.0) ? 1.0 / (1.0 + 2.0 * mxd) : 1.0 / (1.0 + mxd);
+vec2 ctr = R / 2.0;
+vec2 tex = floor(uv * R);
+vec2 u2 = scl * (tex + 0.5 - ctr) / ctr;
+float d2 = dot(u2, u2);
+if (any(greaterThan(cd * d2, vec3(1.0))))
+    return vec4(0.0);                                 // distorted past what is possible: nothing
+vec3 dsc = 1.0 / (1.0 + sqrt(max(vec3(0.0), 1.0 - cd * d2)));
+vec2 dr = (u2 * dsc.x + 0.5) * R, dg = (u2 * dsc.y + 0.5) * R, db = (u2 * dsc.z + 0.5) * R;
+float sr0 = distance(dr, dg), sb0 = distance(dg, db);        // (the pixels the red / blue are apart from the green)
+$heur
+vec4 acc = vec4(0.0);
+$p0
+$p1
+return acc * vec4(vec3(2.0), 1.0) / vec4(float(sr), float(sr + sb), float(sb), float(sr + sb));""",
+               dist=h.i("Distortion", "float"), disp=h.i("Dispersion", "float"), fit="true" if fit else "false",
+               heur=("int sr = sr0 < 4.0 ? 2 : int(sqrt(sr0 + 1.0));\nint sb = sb0 < 4.0 ? 2 : int(sqrt(sb0 + 1.0));" if jitter else
+                     "// (Blender's steps have no cap: here the budget of this loop)\nint sr = int(min(sr0 + 1.0, float($cap)));\nint sb = int(min(sb0 + 1.0, float($cap)));".replace("$cap", cap)),
+               p0=passes[0], p1=passes[1])]
 
 
 GLARE_QUALITY = {"high": 1, "medium": 2, "low": 4}   # Blender computes the glare at 1/1, 1/2, 1/4 of the size

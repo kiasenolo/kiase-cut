@@ -180,6 +180,78 @@ class BuiltinFilterTests(unittest.TestCase):
             self.assertLessEqual(int(out[48, x, :3].max()), int(out[48, x, 3]))      # (still a valid premultiplied pixel)
         self.assertGreater(int(out[48, 54, 3]), int(out[48, 58, 3]))                 # (and fading away)
 
+    def lens(self, rgba, **kw):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:blender_lens_distortion")
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        vals.update(kw)
+        return eng.run(d, vals, rgba).astype(int)
+
+    def test_lens_distortion_is_blenders(self):
+        """Blender 5.2's Lens Distortion node (Distortion 0.4, Dispersion 0.6) on a small picture: the rows below
+        are its render, in sRGB. Pixels the lens shows nothing of stay empty (the corners), the rest agrees to
+        the 8-bit rounding."""
+        import numpy as np
+        h, w = 16, 24
+        y, x = np.mgrid[0:h, 0:w]
+        rgba = np.zeros((h, w, 4), np.uint8)
+        rgba[..., 3] = 255
+        rgba[..., 0], rgba[..., 1], rgba[..., 2] = 40 + 8 * x, 60 + 8 * y, 200 - 6 * x
+        rgba[:, 15] = 255
+        rgba[5, :, :3] = (255, 40, 40)
+        out = self.lens(rgba, mode=0, distortion=0.4, dispersion=0.6)
+        row8 = [[52, 123, 183], [65, 123, 177], [75, 123, 172], [83, 123, 167], [90, 123, 162], [96, 123, 157], [102, 123, 153],
+                [108, 123, 149], [114, 123, 145], [119, 123, 141], [124, 123, 137], [129, 123, 133], [135, 123, 129],
+                [140, 123, 125], [145, 123, 121], [150, 123, 117], [211, 200, 196], [240, 238, 239], [171, 139, 135],
+                [174, 123, 100], [181, 123, 96], [189, 123, 90], [199, 123, 85], [212, 123, 79]]
+        row2 = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [71, 84, 170], [83, 86, 165], [91, 87, 160], [98, 87, 155], [105, 88, 150],
+                [111, 88, 146], [117, 89, 142], [123, 89, 137], [129, 89, 133], [135, 89, 129], [141, 89, 125], [147, 89, 121],
+                [164, 104, 116], [245, 232, 224], [197, 181, 204], [173, 87, 103], [182, 86, 97], [193, 84, 92], [0, 0, 0],
+                [0, 0, 0], [0, 0, 0]]
+        alpha0 = [0, 0, 0, 0, 0, 0, 223, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 223, 0, 0, 0, 0, 0, 0]
+        # (the colour is premultiplied here: straight in the rows above, which are opaque or empty)
+        self.assertLessEqual(int(np.abs(out[8, :, :3] - np.array(row8)).max()), 3)
+        self.assertLessEqual(int(np.abs(out[2, :, :3] - np.array(row2)).max()), 3)
+        self.assertLessEqual(int(np.abs(out[0, :, 3] - np.array(alpha0)).max()), 2)
+
+    def test_lens_distortion_leaves_what_the_lens_cannot_show_empty(self):
+        import numpy as np
+        out = self.lens(np.full((40, 60, 4), 255, np.uint8), mode=0, distortion=1.0)
+        self.assertEqual(tuple(out[0, 0]), (0, 0, 0, 0))                    # (past the lens: not even the picture's edge)
+        self.assertEqual(tuple(out[20, 30]), (255, 255, 255, 255))
+        # a pincushion (negative distortion) fills the corners from further out, so the picture's edge stays in
+        out = self.lens(np.full((40, 60, 4), 255, np.uint8), mode=0, distortion=-0.5)
+        self.assertEqual(tuple(out[20, 30]), (255, 255, 255, 255))
+        self.assertEqual(out[0, 0, 3], 255)
+
+    def test_lens_distortion_disperses_red_in_and_blue_out(self):
+        """A bright vertical line right of the centre: with a barrel (positive) distortion red lands nearer the
+        centre and blue further out (green between), and the jitter changes nothing about where."""
+        import numpy as np
+        rgba = np.zeros((40, 200, 4), np.uint8)
+        rgba[..., 3] = 255
+        rgba[:, 150:152, :3] = 255
+        for jitter in (False, True):
+            out = self.lens(rgba, mode=0, distortion=0.3, dispersion=1.0, jitter=jitter)
+            peak = [int(np.argmax(out[20, 100:, c])) for c in range(3)]
+            self.assertLess(peak[0], peak[2], peak)
+
+    def test_lens_distortion_horizontal_shifts_red_left_and_blue_right(self):
+        """水平: 5 px per unit of dispersion, the alpha the average of the three taps (where one reads past the edge)."""
+        import numpy as np
+        rgba = np.zeros((10, 40, 4), np.uint8)
+        rgba[..., 3] = 255
+        rgba[:, 20] = 255
+        out = self.lens(rgba, mode=1, dispersion=1.0)
+        self.assertEqual([tuple(out[5, x, :3]) for x in (15, 20, 25)], [(255, 0, 0), (0, 255, 0), (0, 0, 255)])
+        self.assertEqual(int(out[5, 14:26, :3].astype(bool).sum()), 3)
+        self.assertEqual(int(out[5, 0, 3]), 170)                              # (2/3: the blue tap is outside)
+        self.assertEqual(int(out[5, 20, 3]), 255)
+
     def test_transform_filters_are_available(self):
         names = {fx.get(ref).name for ref in fx.builtin_refs()}
         self.assertTrue({"Transform", "Scale", "Translate"}.issubset(names))

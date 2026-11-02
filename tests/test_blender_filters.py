@@ -196,6 +196,42 @@ class AddonExportTest(unittest.TestCase):
                 for fmt in ("HYPRSHADE", "HLSL", "SHADERGLASS"):
                     self.assertTrue(self.addon.convert_tree(g, None, fmt)[0].strip())
 
+    def test_lens_distortion_export_is_the_builtin_filter(self):
+        """Lens Distortion (Blender's own steps in both) exports to the same picture the built-in filter makes."""
+        h, w = 16, 24
+        y, x = np.mgrid[0:h, 0:w]
+        rgba = np.zeros((h, w, 4), np.uint8)
+        rgba[..., 3] = 255
+        rgba[..., 0], rgba[..., 1], rgba[..., 2] = 40 + 8 * x, 60 + 8 * y, 200 - 6 * x
+        rgba[:, 15] = 255
+        builtin = fx.get("builtin:blender_lens_distortion")
+        for kind, dist, disp, jitter, fit in (("Radial", 0.4, 0.6, False, False), ("Radial", 0.3, 1.0, True, False),
+                                              ("Radial", -0.3, 0.5, False, True), ("Horizontal", 0.0, 0.8, False, False)):
+            g = bpy.data.node_groups.new("Lens", "CompositorNodeTree")
+            it = g.interface
+            it.new_socket("Image", in_out="INPUT", socket_type="NodeSocketColor")
+            it.new_socket("Image", in_out="OUTPUT", socket_type="NodeSocketColor")
+            gi, go = g.nodes.new("NodeGroupInput"), g.nodes.new("NodeGroupOutput")
+            n = g.nodes.new("CompositorNodeLensdist")
+            n.inputs["Type"].default_value = kind
+            n.inputs["Distortion"].default_value, n.inputs["Dispersion"].default_value = dist, disp
+            n.inputs["Jitter"].default_value, n.inputs["Fit"].default_value = jitter, fit
+            g.links.new(gi.outputs[0], n.inputs[0])
+            g.links.new(n.outputs[0], go.inputs[0])
+            code, warns = self.addon.convert_tree(g, None, "KIASECUT")
+            self.assertEqual(warns, [], kind)
+            d = fx.parse(code, "x")
+            self.assertIsNone(d.error)
+            for fmt in ("HYPRSHADE", "HLSL", "SHADERGLASS"):
+                self.assertTrue(self.addon.convert_tree(g, None, fmt)[0].strip())
+            eng = engine()                                       # (skipped where there is no OpenGL, after the exports)
+            vals = {p.name: fx.uniform_value(p, None, 0) for p in builtin.params}
+            vals.update(mode=int(kind == "Horizontal"), distortion=dist, dispersion=disp, jitter=jitter, fit=fit)
+            want = eng.run(builtin, vals, rgba).astype(int)
+            got = eng.run(d, {}, rgba).astype(int)
+            self.assertLessEqual(int(np.abs(got - want).max()), 3 if not jitter else 12, (kind, jitter))
+            self.assertLessEqual(float(np.abs(got - want).mean()), 0.5, (kind, jitter))
+
     def test_bloom_is_blenders_chain_in_kiasecut(self):
         """Bloom exports as passes (Blender's own chain) for KiaseCut, and as the sampled version elsewhere."""
         for quality, shift in (("High", 0), ("Medium", 1), ("Low", 2)):

@@ -88,6 +88,7 @@ class ParamList(QWidget):
         tip = QLabel(hint)
         tip.setStyleSheet("color: #8a8a90;")
         tip.setWordWrap(True)
+        tip.setVisible(bool(hint))
         head.addWidget(tip, 1)
         lay.addLayout(head)
         self.list = QListWidget()
@@ -124,10 +125,6 @@ class ParamList(QWidget):
             self.list.addItem(it)
             if p["id"] == keep:
                 self.list.setCurrentItem(it)
-        if not self.list.count():
-            it = QListWidgetItem("還沒有參數：在片段上按右鍵 > 設為參數")
-            it.setFlags(Qt.NoItemFlags)
-            self.list.addItem(it)
 
     def _clicked(self, it):
         p = components.param(self.comp, it.data(ROLE))

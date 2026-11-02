@@ -83,10 +83,6 @@ class AssetsPanel(QWidget):
         self.colors = list(assets.DEFAULT_COLORS)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
-        hint = QLabel("把素材拖到時間軸（按住 Alt 放到圖片片段上＝替換素材），雙擊＝在播放頭加入。"
-                      "顏色 1 / 2 用在形狀和「自訂」素材；放上去之後在「屬性」的素材參數裡調大小、顏色、圓角、外框等。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #9a9aa0;")
         row = QHBoxLayout()
         self.color_btns = []
         for i, title in enumerate(("顏色 1", "顏色 2")):
@@ -102,7 +98,6 @@ class AssetsPanel(QWidget):
         swap.clicked.connect(self._swap)
         row.addWidget(swap)
         row.addStretch(1)
-        lay.addWidget(hint)
         lay.addLayout(row)
         body = QWidget()
         blay = QVBoxLayout(body)

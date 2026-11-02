@@ -245,6 +245,7 @@ class LibraryPanel(QWidget):
         lay.setContentsMargins(4, 4, 4, 4)
         self.head = QLabel("")                  # the project folder this library mirrors
         self.head.setStyleSheet("color: #9a9aa0;")
+        self.head.hide()
         lay.addWidget(self.head)
         bar = QHBoxLayout()
         for label, fn in ((import_label, lambda: self.importRequested.emit(self.current_folder())),

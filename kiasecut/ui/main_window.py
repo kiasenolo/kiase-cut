@@ -736,7 +736,7 @@ class MainWindow(QMainWindow):
         tl_row.setSpacing(0)
         tl_row.addWidget(tl, 1)
         # a live component's parameters, beside its timeline (a static one's are under its layers)
-        self.tl_params = ParamList("在片段上按右鍵 > 設為參數；按兩下參數設定預設值")
+        self.tl_params = ParamList("")
         self.tl_params.setFixedWidth(270)
         self.tl_params.setVisible(False)
         self.tl_params.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
@@ -992,8 +992,7 @@ class MainWindow(QMainWindow):
     def _update_title(self):
         name = workspace.title_of(self.proj, self.path) if self.proj else ""
         self.setWindowTitle("KiaseCut" + (f" — {name}" if name else "") + (" *" if self.dirty else ""))
-        self.library.set_origin(f"專案資料夾：{os.path.basename(self.root)} / Media" if self.root else "（還沒有專案）",
-                                self.root or "")
+        self.library.set_origin("", self.root or "")
 
     def _update_buttons(self):
         h = self.history

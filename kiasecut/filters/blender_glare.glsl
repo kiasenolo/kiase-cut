@@ -1,9 +1,9 @@
 // @filter [Blender] Glare
 // @category Blender
 // @description Blender 合成器的 Glare：亮部的光暈、鬼影、光芒、霧光、星芒、光束（在線性光裡運算）
-// @passes 25
+// @passes 26
 // @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 quality
-// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0
+// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 -
 // @precision float
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
 // @param quality menu 中 "高|中|低" "品質"
@@ -193,6 +193,19 @@ vec3 ghosts(vec2 uv, vec2 R, float q) {
     return g;
 }
 
+// how many of a streak's iterations are read every few pixels (the skipped ones folded into a weight)
+int streak_skip() {
+    float fd = clamp(fade, 0.75, 1.0);
+    int N = clamp(iterations, 2, 5);
+    int ns = clamp(streaks, 1, 16);
+    float total = exp2(2.0 * float(N));
+    float nmax = fd < 1.0 ? min(total, ceil(log(1e-3) / log(fd))) : total;
+    float per = float(max(min(64, 512 / ns), 4));
+    int m = 0;
+    while (m < N && nmax / exp2(2.0 * float(m)) > per) m++;
+    return m;
+}
+
 vec3 streak_lines(vec2 uv, vec2 R, float q) {
     float fd = clamp(fade, 0.75, 1.0);
     float cm = clamp(color_modulation, 0.0, 1.0);
@@ -200,10 +213,8 @@ vec3 streak_lines(vec2 uv, vec2 R, float q) {
     int ns = clamp(streaks, 1, 16);
     float total = exp2(2.0 * float(N));
     float nmax = fd < 1.0 ? min(total, ceil(log(1e-3) / log(fd))) : total;
-    float per = float(max(min(64, 512 / ns), 4));
     // Blender's streak after N iterations, read every st-th pixel (the skipped ones folded into wlow)
-    int m = 0;
-    while (m < N && nmax / exp2(2.0 * float(m)) > per) m++;
+    int m = streak_skip();
     vec3 wlow = vec3(1.0);
     for (int k = 0; k < m; k++) {
         float c = 1.0 - pow(cm, float(k + 1));
@@ -290,6 +301,15 @@ vec3 sun_beams(vec2 uv, vec2 R) {
     return acc / max(wsum, 1e-6);
 }
 
+// the gathered light's grain (the types that read at random spots - ghosts, fog glow, sun beams, long
+// streaks - leave some) is smoothed over a few pixels of this very picture: a small Gaussian
+float grain_sigma() {
+    if (type == 3) return 2.0;
+    if (type == 1 || type == 5) return 1.6;
+    if (type == 2 && streak_skip() > 0) return 1.1;
+    return 0.0;
+}
+
 vec4 effect(vec2 uv) {
     if (pass_index == 0)
         return vec4(max(highlights(linear(src(uv)).rgb), vec3(0.0)), 1.0);
@@ -299,14 +319,33 @@ vec4 effect(vec2 uv) {
         return pass_index <= 12 ? bloom_down(uv, pass_index - 1) : bloom_up(uv, 23 - pass_index);
     }
 
-    vec2 R = resolution;
-    float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;
-    vec3 g = type == 0 ? bloom(uv) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streak_lines(uv, R, q)
-           : type == 3 ? fog_glow(uv, R, q) : type == 4 ? simple_star(uv, R, q) : sun_beams(uv, R);
-    vec3 hsv = rgb2hsv(max(g, vec3(0.0)));                     // saturation as Blender mixes it
-    hsv.y = clamp(hsv.y * max(saturation, 0.0), 0.0, 1.0);
-    // (Bloom adds one picture per step of its chain, so Blender divides by the chain's length)
-    g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * (max(strength, 0.0) / (type == 0 ? float(max(1, bloom_length())) : 1.0));
+    vec3 g;
+    if (pass_index == 24) {                                    // the light: gathered, then its saturation, colour and strength
+        vec2 R = resolution;
+        float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;
+        g = type == 0 ? bloom(uv) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streak_lines(uv, R, q)
+          : type == 3 ? fog_glow(uv, R, q) : type == 4 ? simple_star(uv, R, q) : sun_beams(uv, R);
+        vec3 hsv = rgb2hsv(max(g, vec3(0.0)));                 // saturation as Blender mixes it
+        hsv.y = clamp(hsv.y * max(saturation, 0.0), 0.0, 1.0);
+        // (Bloom adds one picture per step of its chain, so Blender divides by the chain's length)
+        g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * (max(strength, 0.0) / (type == 0 ? float(max(1, bloom_length())) : 1.0));
+        return vec4(g, 1.0);
+    }
+    float sg = grain_sigma();                                  // pass 25: smooth the grain, add the light to the picture
+    if (sg > 0.0) {
+        vec2 px = 1.0 / pass_px;
+        vec3 acc = vec3(0.0);
+        float wsum = 0.0;
+        for (int j = -3; j <= 3; j++)
+            for (int i = -3; i <= 3; i++) {
+                float w = exp(-float(i * i + j * j) / (2.0 * sg * sg));
+                acc += w * src(uv + vec2(float(i), float(j)) * px).rgb;
+                wsum += w;
+            }
+        g = acc / wsum;
+    } else {
+        g = src(uv).rgb;
+    }
 
     // the light is added to the picture (premultiplied, linear); where it is brighter than the
     // picture is opaque, it lights that spot itself - the glow spreads over what was clear

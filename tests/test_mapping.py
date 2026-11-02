@@ -87,6 +87,26 @@ class BoundNumberTests(unittest.TestCase):
         self.assertEqual(components.expr_of(prm, "c1", "transform.opacity"), "input")
 
 
+class SavedCurveTests(unittest.TestCase):
+    def test_my_curves_are_offered_and_can_be_kept(self):
+        from unittest import mock
+        from kiasecut.ui import mapdialog
+        kept = [{"name": "彈跳", "value": [0.3, 1.4, 0.6, 1.0]}]
+        with mock.patch.object(mapdialog, "saved_curves", lambda: list(kept)), \
+                mock.patch.object(mapdialog, "save_curve", lambda n, v: kept.append({"name": n, "value": v})):
+            d = mapdialog.MapDialog(None, "t", mapping.make("bezier", src="a"), "x")
+            i = d.presets.findText("我的：彈跳")
+            self.assertGreater(i, 0)
+            d.presets.activated.emit(i)
+            self.assertEqual([round(s.value(), 2) for s in d.bz], [0.3, 1.4, 0.6, 1.0])
+            self.assertEqual([round(x, 2) for x in d.field.v], [0.3, 1.4, 0.6, 1.0])
+            with mock.patch.object(mapdialog.QInputDialog, "getText", staticmethod(lambda *a, **k: ("慢慢來", True))):
+                d.bz[3].setValue(0.8)
+                d._keep()
+            self.assertEqual(kept[-1], {"name": "慢慢來", "value": [0.3, 1.4, 0.6, 0.8]})
+            self.assertGreater(d.presets.findText("我的：慢慢來"), 0)
+
+
 class DialogTests(unittest.TestCase):
     def test_dialog_gives_the_mapping_and_checks_it(self):
         from PySide6.QtWidgets import QDialogButtonBox

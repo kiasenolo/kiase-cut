@@ -3,11 +3,15 @@
 JavaScript expression - with a picture of the curve it makes."""
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel,
-                               QPlainTextEdit, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QInputDialog,
+                               QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from .. import mapping
 from .tools import BezierField
+
+
+saved_curves = lambda: []                     # () -> [{name, value}]: the curves kept in 工具 > cubic-bezier 編輯器
+save_curve = lambda name, value: None         # (name, [x1, y1, x2, y2]): keeps one there (both set by the main window)
 
 
 def spin(value, decimals=3):
@@ -126,10 +130,19 @@ class MapDialog(QDialog):
         self.presets.addItem("預設曲線…", None)
         for name, v in mapping.BEZIER_PRESETS:
             self.presets.addItem(name, v)
-        self.form.addRow("曲線預設", self.presets)
+        self.fill_saved()
+        keep = QPushButton("存成我的曲線…")
+        keep.setToolTip("把現在這條曲線存進 工具 > cubic-bezier 編輯器 的「我的曲線」")
+        keep.clicked.connect(self._keep)
+        row = QWidget()
+        pl = QHBoxLayout(row)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.addWidget(self.presets, 1)
+        pl.addWidget(keep)
+        self.form.addRow("曲線預設", row)
         self.form.addRow("cubic-bezier (x1, y1, x2, y2)", box)
         self.rows["bezier"] = (box, self.form.labelForField(box))
-        self.rows["presets"] = (self.presets, self.form.labelForField(self.presets))
+        self.rows["presets"] = (row, self.form.labelForField(row))
         self.js = QPlainTextEdit(m["js"])
         self.js.setFont(QFont("monospace"))
         self.js.setFixedHeight(70)
@@ -165,6 +178,20 @@ class MapDialog(QDialog):
         self.presets.activated.connect(self._preset)
         self.field.changed.connect(self._dragged)
         self._changed()
+
+    def fill_saved(self):
+        """The curves of 我的曲線 after the built-in ones."""
+        for i in range(self.presets.count() - 1, 0, -1):
+            if self.presets.itemText(i).startswith("我的："):
+                self.presets.removeItem(i)
+        for c in saved_curves():
+            self.presets.addItem("我的：" + c["name"], tuple(c["value"]))
+
+    def _keep(self):
+        name, ok = QInputDialog.getText(self, "存成我的曲線", "曲線的名字：")
+        if ok and name.strip():
+            save_curve(name.strip(), [s.value() for s in self.bz])
+            self.fill_saved()
 
     def _preset(self, i):
         v = self.presets.itemData(i)

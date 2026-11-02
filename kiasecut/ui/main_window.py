@@ -500,6 +500,9 @@ class MainWindow(QMainWindow):
         self.curves = CurveEditor()
         cv = self.curves
         cv.saved_curves = lambda: toolsdata.load_curves(self.app_root())      # (工具 > cubic-bezier 編輯器)
+        mapdialog.saved_curves = cv.saved_curves                              # (the 映射 window offers them too)
+        mapdialog.save_curve = lambda name, value: toolsdata.save_curves(
+            self.app_root(), toolsdata.load_curves(self.app_root()) + [{"name": name, "value": value}])
         colorpick.cards = lambda: toolsdata.load_cards(self.app_root())       # (工具 > 調色盤)
         cv.keysChanged.connect(self.on_curve_keys)
         cv.seekRequested.connect(self.seek_clip_time)

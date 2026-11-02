@@ -1001,7 +1001,7 @@ class MainWindow(QMainWindow):
         return False
 
     def _update_title(self):
-        name = workspace.title_of(self.proj, self.path) if self.proj else ""
+        name = (workspace.title_of(self.proj, self.path) or "未儲存的新專案") if self.proj else ""
         self.setWindowTitle("KiaseCut" + (f" — {name}" if name else "") + (" *" if self.dirty else ""))
         self.library.set_origin("", self.root or "")
 
@@ -1455,17 +1455,15 @@ class MainWindow(QMainWindow):
     def new_project(self, location=None):
         if not self.maybe_save():
             return False
-        dlg = NewProjectDialog(self, location or self.default_location())
+        dlg = NewProjectDialog(self, location or self.default_location(), place=False)
         if dlg.exec() != QDialog.Accepted:
             return False
-        location, name, w, h, fps = dlg.values()
-        try:
-            os.makedirs(location, exist_ok=True)
-            proj, path = workspace.create(location, name, w, h, fps)
-        except Exception as exc:
-            QMessageBox.critical(self, "無法建立專案", str(exc))
+        _, _, w, h, fps = dlg.values()
+        was, self.path = self.path, None                # nothing is written until 儲存 (Ctrl+S) asks where
+        if not self.set_project(project.new(w, h, fps)):
+            self.path = was
             return False
-        self.open_loaded(proj, path)
+        self.new_location = location                    # (the first save offers it)
         return True
 
     def open_loaded(self, proj, path):
@@ -1564,8 +1562,8 @@ class MainWindow(QMainWindow):
 
     def new_location_for_unsaved(self):
         """A project without a folder (made by a tool): ask where its folder goes."""
-        dlg = NewProjectDialog(self, self.default_location(), "新專案", (self.proj["width"], self.proj["height"],
-                                                                       self.proj["fps"]), "儲存專案")
+        dlg = NewProjectDialog(self, getattr(self, "new_location", None) or self.default_location(), "新專案",
+                               (self.proj["width"], self.proj["height"], self.proj["fps"]), "儲存專案")
         if dlg.exec() != QDialog.Accepted:
             return False
         location, name = dlg.values()[:2]
@@ -3299,6 +3297,8 @@ class MainWindow(QMainWindow):
         """A file operation on Media: it is done on the disk at once (not part of undo); clips,
         the undo history and the library follow the files."""
         if not self.proj or not self.root:
+            if self.proj:
+                self.statusBar().showMessage("先儲存專案（Ctrl+S），才有專案資料夾可以放素材", 6000)
             return False, None
         try:
             result = fn()

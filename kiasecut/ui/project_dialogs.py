@@ -65,22 +65,26 @@ class CompoundSizeDialog(QDialog):
 
 
 class NewProjectDialog(QDialog):
-    """Name + where to put the project folder (+ size and frame rate for an empty project)."""
+    """Name + where to put the project folder (+ size and frame rate for an empty project);
+    place=False: only the size and frame rate (a new project not saved yet - its name and place
+    are asked at the first save)."""
 
-    def __init__(self, parent, location, name="新專案", fixed_format=None, title="新專案"):
+    def __init__(self, parent, location, name="新專案", fixed_format=None, title="新專案", place=True):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumWidth(520)
         form = QFormLayout()
+        self.place = place
         self.name = QLineEdit(name)
-        form.addRow("專案名稱", self.name)
-        row = QHBoxLayout()
         self.location = QLineEdit(location)
-        browse = QPushButton("瀏覽…")
-        browse.clicked.connect(self._browse)
-        row.addWidget(self.location, 1)
-        row.addWidget(browse)
-        form.addRow("存放位置", row)
+        if place:
+            form.addRow("專案名稱", self.name)
+            row = QHBoxLayout()
+            browse = QPushButton("瀏覽…")
+            browse.clicked.connect(self._browse)
+            row.addWidget(self.location, 1)
+            row.addWidget(browse)
+            form.addRow("存放位置", row)
         self.preset = QComboBox()
         self.fps = QComboBox()
         self.fixed = fixed_format
@@ -119,7 +123,7 @@ class NewProjectDialog(QDialog):
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
-        self.buttons.button(QDialogButtonBox.Ok).setText("建立專案")
+        self.buttons.button(QDialogButtonBox.Ok).setText("建立專案" if place else "開始")
         self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
         lay = QVBoxLayout(self)
         lay.addLayout(form)
@@ -138,7 +142,9 @@ class NewProjectDialog(QDialog):
 
     def _check(self):
         ok, msg = True, ""
-        if not self.name.text().strip() or not self.location.text().strip():
+        if not self.place:
+            msg = "專案的名稱和存放位置在第一次儲存（Ctrl+S）時再決定"
+        elif not self.name.text().strip() or not self.location.text().strip():
             ok, msg = False, "請輸入名稱和位置"
         else:
             f = self.folder()

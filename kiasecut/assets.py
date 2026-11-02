@@ -59,6 +59,11 @@ FIELD_INFO = {
     "arc_sweep": ("弧掃 %", "number", 0, 100, 1, 1),
     "ratio": ("比例 %", "number", 0, 100, 1, 1),
     "skew": ("斜度 °", "number", -80, 80, 1, 0),
+    "gcols": ("欄數", "number", 1, 100, 1, 0),
+    "grows": ("列數", "number", 1, 100, 1, 0),
+    "gratio": ("格子比例 寬/高（0＝填滿）", "number", 0, 10, 0.05, 2),
+    "gline": ("線寬 px", "number", 0.5, 200, 0.5, 1),
+    "gborder": ("外框", "toggle"),
     "fill": ("填充", "toggle"),
     "stroke_on": ("外框", "toggle"),
     "stroke_color": ("外框顏色", "color"),
@@ -70,7 +75,8 @@ FIELD_INFO = {
 # the soft ones; clean() keeps values inside them
 HARD = {"w": (1, 65536), "h": (1, 65536), "angle": (None, None), "radius": (0, None),
         "sides": (3, 100), "points": (3, 100), "inner": (1, 99), "stroke": (0, None),
-        "arc_start": (None, None), "skew": (-89, 89)}
+        "arc_start": (None, None), "skew": (-89, 89), "gcols": (1, 500), "grows": (1, 500),
+        "gratio": (0, 100), "gline": (0.1, None)}
 
 
 def hard_range(f):
@@ -91,9 +97,10 @@ FIELDS = {                                 # what each family has besides w, h a
     "arrow": STROKE,
     "parallelogram": ("skew",) + STROKE,
     "line": (),
+    "grid": ("gcols", "grows", "gratio", "gline", "gborder"),
 }
 NAMES = {"solid": "純色", "gradient": "漸變", "rect": "矩形", "ellipse": "橢圓", "polygon": "多邊形",
-         "star": "星形", "heart": "心形", "arrow": "箭頭", "parallelogram": "平行四邊形", "line": "線條"}
+         "star": "星形", "heart": "心形", "arrow": "箭頭", "parallelogram": "平行四邊形", "line": "線條", "grid": "網格"}
 
 
 class Asset:
@@ -134,7 +141,8 @@ _SHAPES = [("rect", "矩形", "rect", {}), ("roundrect", "圓角矩形", "rect",
            ("ring", "圓環", "ellipse", {"ratio": 68}),
            ("rectframe", "外框矩形", "rect", {"fill": False, "stroke_on": True, "stroke": 24}),
            ("circleframe", "外框圓形", "ellipse", {"fill": False, "stroke_on": True, "stroke": 24}),
-           ("line", "線條", "line", {"w": 800, "h": 16})]
+           ("line", "線條", "line", {"w": 800, "h": 16}),
+           ("grid", "網格", "grid", {"w": 1440, "h": 810})]
 
 ASSETS = ([Asset(f"solid.{i}", "solid", name, "solid", (c, c)) for i, (name, c) in enumerate(_SOLIDS)]
           + [Asset("solid.custom", "solid", "自訂純色", "solid")]
@@ -238,7 +246,7 @@ def make(a, c1, c2, canvas_w, canvas_h):
     for f, v in a.params.items():
         p[f] = v
     if a.cat == "shape":
-        for f in ("w", "h", "radius", "stroke"):
+        for f in ("w", "h", "radius", "stroke", "gline"):
             if f in p:
                 p[f] = max(1, round(p[f] * k)) if f in ("w", "h") else round(p[f] * k)
     else:
@@ -276,6 +284,7 @@ def normalize(p):
 _DEFAULTS = {"fill": True, "stroke_on": False, "stroke": 8, "stroke_align": "inside", "join": "miter",
              "stroke_color": "#000000", "radius": 0, "sides": 6, "points": 5, "inner": 40, "angle": 0,
              "arc_start": 0, "arc_sweep": 100, "ratio": 0, "skew": 20,
+             "gcols": 16, "grows": 9, "gratio": 0, "gline": 4, "gborder": True,
              "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX}
 
 
@@ -289,7 +298,7 @@ def at(p, t):
         v = clean(f, curves.value(p[f], t) if f in p else _DEFAULTS.get(f))
         if FIELD_INFO[f][1] == "color":
             v = hex_of(v)
-        elif f in ("sides", "points"):
+        elif f in ("sides", "points", "gcols", "grows"):
             v = int(round(v))
         elif f in ("w", "h"):
             v = round(v, 2)
@@ -492,6 +501,28 @@ def outline_d(p, w, h):
         "C " + " ".join(f"{x:.1f} {y:.1f}" for x, y in q[i:i + 3]) for i in range(1, len(q), 3)) + " Z")
 
 
+def _grid(p, w, h):
+    """Lines of colour dividing the w x h box into gcols x grows cells; gratio > 0 holds the cells
+    to that width / height (the grid is as large as fits, centred), gborder draws its outer edge."""
+    cols, rows, s = p["gcols"], p["grows"], p["gline"]
+    aw, ah = max(w - s, 1.0), max(h - s, 1.0)                 # (the lines stay inside the box)
+    cw, ch = aw / cols, ah / rows
+    if p["gratio"] > 0:
+        cw = min(cw, ch * p["gratio"])
+        ch = cw / p["gratio"]
+    gw, gh = cw * cols, ch * rows
+    x0, y0 = (w - gw) / 2, (h - gh) / 2
+    xs = [x0 + i * cw for i in range(cols + 1)]
+    ys = [y0 + j * ch for j in range(rows + 1)]
+    if not p["gborder"]:
+        xs, ys = xs[1:-1], ys[1:-1]
+    d = "".join(f"M{_num(x)} {_num(y0)} V{_num(y0 + gh)} " for x in xs) + "".join(f"M{_num(x0)} {_num(y)} H{_num(x0 + gw)} " for y in ys)
+    rgb, op = _alpha(p["color"])
+    body = (f'<path d="{d}" fill="none" stroke="{rgb}" stroke-width="{s:g}" stroke-linecap="square"'
+            + (f' stroke-opacity="{op:.3f}"' if op < 1 else "") + "/>") if d else ""
+    return _svg(w, h, body)
+
+
 def _shape(p, w, h):
     d = outline_d(p, w, h)
     pad = overflow(p)
@@ -535,6 +566,8 @@ def svg(p):
         return _svg(w, h, f'<rect width="{w}" height="{h}" {_fill(p["color"])}/>')
     if p["family"] == "gradient":
         return _gradient(p, w, h)
+    if p["family"] == "grid":
+        return _grid(p, w, h)
     return _shape(p, w, h)
 
 

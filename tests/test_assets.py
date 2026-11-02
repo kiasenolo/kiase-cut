@@ -114,6 +114,19 @@ class AssetTests(unittest.TestCase):
         none = changed(base, fill=False, stroke=0)
         self.assertEqual(at(none, 2, 50).alpha(), 0)
 
+    def test_grid_lines_and_cells(self):
+        p = assets.make(assets.get("shape.grid"), "#ffffff", "", 1080, 1080)
+        self.assertEqual((p["gcols"], p["grows"]), (16, 9))
+        path = assets.store(self.dir, changed(p, w=400, h=400, gcols=4, grows=4, gline=8, gborder=True))
+        self.assertEqual(pixel(path, 50, 50, 400).alpha(), 0)         # inside a cell: nothing
+        self.assertGreater(pixel(path, 100, 200, 400).alpha(), 200)   # on the middle line
+        self.assertGreater(pixel(path, 2, 50, 400).alpha(), 200)      # the outer edge
+        path = assets.store(self.dir, changed(p, w=400, h=400, gcols=4, grows=4, gline=8, gborder=False))
+        self.assertEqual(pixel(path, 2, 50, 400).alpha(), 0)
+        path = assets.store(self.dir, changed(p, w=400, h=400, gcols=2, grows=1, gline=8, gratio=1.0))
+        self.assertEqual(pixel(path, 200, 5, 400).alpha(), 0)         # square cells: two of 200, centred (above them: empty)
+        self.assertGreater(pixel(path, 200, 100, 400).alpha(), 200)
+
     def test_arc_ring_and_parallelogram(self):
         e = changed(assets.make(assets.get("shape.circle"), "#ffffff", "", 1080, 1080), w=100, h=100)
         ring = changed(e, ratio=50)

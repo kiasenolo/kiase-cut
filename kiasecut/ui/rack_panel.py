@@ -1,7 +1,7 @@
-"""全局參數架 (rack.py) in a window of its own (工具 menu): the project's named numbers, each with its
+"""全局參數架 (rack.py), the panel after 屬性 and its tabs: the project's named numbers, each with its
 value at the playhead (◆: keyframes along the timeline), a ✎ for an expression, and the names to
 write in any clip's expression. Right-click a clip's number > 表達式 > 綁定到… uses one."""
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from .. import curves, edit, rack
@@ -56,7 +56,7 @@ class RackRow(QWidget):
         self.result.setToolTip(p.get("expr", ""))
 
 
-class RackWindow(QWidget):
+class RackPanel(QWidget):
     action = Signal(str, str, object)        # parameter id, "value" (a number) / "key" / "rename" / "expr" / "up" / "down" /
                                              # "delete" / "easing" (a name)
     addRequested = Signal()
@@ -64,9 +64,8 @@ class RackWindow(QWidget):
     exportRequested = Signal()
 
     def __init__(self):
-        super().__init__(None, Qt.Window)
-        self.setWindowTitle("全局參數架")
-        self.resize(640, 360)
+        super().__init__()
+        self.setMinimumWidth(300)
         lay = QVBoxLayout(self)
         head = QHBoxLayout()
         add = QPushButton("＋ 新增參數")

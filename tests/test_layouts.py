@@ -136,8 +136,23 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(self.pn.active, "inspector")
         self.assertIn("mask", got)
 
+    def test_a_layout_saved_before_the_rack_gets_it_last_in_the_inspector_tabs(self):
+        self.assertEqual(SIDE[-1], "rack")                                            # (the last tab of 屬性 and its mates)
+        self.pn["rack"].setObjectName("not_there_yet")                                # a layout saved without it
+        old = self.pn.state()
+        self.pn["rack"].setObjectName("dock_rack")
+        self.assertNotIn("dock_rack".encode("utf-16-be"), old)
+        self.pn.arrange("design")
+        self.assertTrue(self.pn.restore(old, []))
+        QApplication.processEvents()
+        tabs = {d.key for d in self.win.tabifiedDockWidgets(self.pn["inspector"])}
+        self.assertIn("rack", tabs)
+        self.assertFalse(self.pn["rack"].isFloating())
+
     def test_tabs_dragged_as_one_from_their_bar(self):
         ins, lib = self.pn["inspector"], self.pn["library"]
+        self.win.resizeDocks([self.pn["inspector"], self.pn["preview"]], [800, 500], Qt.Horizontal)   # (room past the last tab)
+        QApplication.processEvents()
         bar = next(b for b in self.win.findChildren(QTabBar) if b.metaObject().className() == "QMainWindowTabBar"
                    and "屬性" in [b.tabText(i) for i in range(b.count())])
         empty = QPoint(bar.width() - 3, bar.height() // 2)
@@ -174,6 +189,8 @@ class PanelTests(unittest.TestCase):
 
     def test_tabs_floated_together_have_a_title_bar_to_bring_them_back(self):
         ins, lib = self.pn["inspector"], self.pn["library"]
+        self.win.resizeDocks([self.pn["inspector"], self.pn["preview"]], [800, 500], Qt.Horizontal)   # (room past the last tab)
+        QApplication.processEvents()
         bar = next(b for b in self.win.findChildren(QTabBar) if b.metaObject().className() == "QMainWindowTabBar"
                    and "屬性" in [b.tabText(i) for i in range(b.count())])
         empty = QPoint(bar.width() - 3, bar.height() // 2)

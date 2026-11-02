@@ -55,7 +55,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from . import appevents, exprdialog, icons, inplace, middledrag, wheel
-from .rack_window import RackWindow
+from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .preview import base_size as preview_base_size
@@ -831,12 +831,20 @@ class MainWindow(QMainWindow):
         self.lower_stack.addWidget(self.layers)
         ll.addWidget(self.lower_stack, 1)
 
+        self.rack_panel = RackPanel()                  # 全局參數架 (rack.py)
+        rp = self.rack_panel
+        rp.action.connect(self.on_rack_action)
+        rp.addRequested.connect(self.add_rack_param)
+        rp.importRequested.connect(self.import_rack)
+        rp.exportRequested.connect(self.export_rack)
         # every panel is a dock: moved, put in tabs, split, floated freely (docks.py); a layout
         # (佈局) is one arrangement of them (layouts.py)
         self.panels = Panels(self, {
             "library": self.library, "assets": self.assets, "userlib": self.ulpanel, "vfx": self.vfx,
             "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_dock,
-            "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "timeline": lower})
+            "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "rack": self.rack_panel,
+            "timeline": lower})
+        self.panels["rack"].visibilityChanged.connect(lambda on: on and self.show_rack())
         for key, split in (("split/curves", cv.split), ("split/component", self.tl_split),
                            ("split/layers", self.layers.split)):     # where their lines were dragged to
             state = self.settings().value(key)
@@ -2814,24 +2822,14 @@ class MainWindow(QMainWindow):
 
     # -- the parameter rack (全局參數架) ---------------------------------------------------------
     def open_rack(self):
-        w = self.__dict__.get("rack_window")
-        if w is None:
-            w = self.rack_window = RackWindow()
-            w.action.connect(self.on_rack_action)
-            w.addRequested.connect(self.add_rack_param)
-            w.importRequested.connect(self.import_rack)
-            w.exportRequested.connect(self.export_rack)
-        if self.proj:
-            w.fill(self.proj, self.playhead_us())
-        w.show()
-        w.raise_()
-        w.activateWindow()
+        """工具 > 全局參數架: the panel, brought to the front."""
+        self.panels.show("rack")
+        self.show_rack()
 
     def show_rack(self):
-        """Keep the rack window in step with the project and the playhead."""
-        w = self.__dict__.get("rack_window")
-        if w is not None and w.isVisible() and self.proj:
-            w.fill(self.proj, self.playhead_us())
+        """Keep the rack panel in step with the project and the playhead."""
+        if self.proj and self.panels["rack"].isVisible():
+            self.rack_panel.fill(self.proj, self.playhead_us())
 
     def add_rack_param(self):
         name, ok = QInputDialog.getText(self, "新增全局參數", "名稱（在表達式裡直接寫它；英文字母、數字、_）：")

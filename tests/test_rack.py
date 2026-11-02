@@ -125,12 +125,12 @@ class RackTests(unittest.TestCase):
                 rack.parse_import(bad)
 
 
-class RackWindowTests(unittest.TestCase):
+class RackPanelTests(unittest.TestCase):
     def test_rows_follow_the_project_and_report_edits(self):
-        from kiasecut.ui.rack_window import RackWindow
+        from kiasecut.ui.rack_panel import RackPanel
         p = proj()
         a = edit.add_rack_param(p, "speed", 1.5)
-        w = RackWindow()
+        w = RackPanel()
         got = []
         w.action.connect(lambda rid, act, arg: got.append((rid, act, arg)))
         w.fill(p, 0)

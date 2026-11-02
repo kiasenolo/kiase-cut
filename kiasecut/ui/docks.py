@@ -25,10 +25,10 @@ from . import appevents, icons
 
 STATE_VERSION = 1
 LEFT = ("library", "assets", "userlib", "vfx", "compounds")
-SIDE = ("inspector", "effects", "mask", "beats", "subtitles", "curves")
+SIDE = ("inspector", "effects", "mask", "beats", "subtitles", "curves", "rack")
 TITLES = {"library": "專案素材", "assets": "內建素材", "userlib": "Library", "vfx": "VFX", "compounds": "複合片段",
           "preview": "預覽", "inspector": "屬性", "effects": "效果", "mask": "遮罩", "beats": "節拍",
-          "subtitles": "字幕", "curves": "關鍵幀曲線", "timeline": "時間線"}
+          "subtitles": "字幕", "curves": "關鍵幀曲線", "rack": "全局參數架", "timeline": "時間線"}
 ORDER = LEFT + ("preview",) + SIDE + ("timeline",)
 NOTES = {"effects": "選取的片段沒有效果可用", "mask": "選取的片段不能加遮罩", "beats": "選取一個有聲音的片段",
          "subtitles": "選取文字片段", "curves": "選取一個片段"}
@@ -375,7 +375,7 @@ class Panels(QObject):
                 w.splitDockWidget(D["assets"], D["compounds"], Qt.Vertical)
                 for k in ("library", "userlib", "vfx"):
                     w.tabifyDockWidget(D["assets"], D[k])
-                for k in ("effects", "mask", "curves", "beats", "subtitles"):
+                for k in ("effects", "mask", "curves", "beats", "subtitles", "rack"):
                     w.tabifyDockWidget(D["inspector"], D[k])
                 w.addDockWidget(Qt.BottomDockWidgetArea, D["timeline"])
                 closed = ("curves", "beats", "subtitles")
@@ -417,6 +417,11 @@ class Panels(QObject):
         try:
             ok = self.win.restoreState(state, STATE_VERSION)
             if ok:
+                for k in SIDE:                          # a panel the layout was saved without goes in the 屬性 tabs, last
+                    if k != "inspector" and ("dock_" + k).encode("utf-16-be") not in bytes(state):
+                        self.win.removeDockWidget(self.docks[k])
+                        self.win.addDockWidget(Qt.TopDockWidgetArea, self.docks[k])
+                        self.win.tabifyDockWidget(self.docks["inspector"], self.docks[k])
                 for k, d in self.docks.items():
                     d.user_closed = k in closed
                     d.auto_hidden = False

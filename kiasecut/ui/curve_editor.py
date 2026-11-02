@@ -59,7 +59,7 @@ def param_rows(c):
         out += [("text", r[0], r[1], r[6], r[7]) for r in PARAMS["text"]]
         out.append(("text", "color", "文字顏色", 1, [1.0, 1.0, 1.0]))
         out += [("tvar:" + v["name"], "value", "變數 " + v["name"], 1, textvars.default_value(v["kind"]))
-                for v in textvars.variables(c["text"]) if v["kind"] in ("number", "float", "time")]
+                for v in textvars.variables(c["text"]) if v["kind"] in ("number", "float", "time", "color")]
     if c.get("mask"):
         out += [("mask", r[0], "遮罩" + r[1], r[6], r[7]) for r in PARAMS["mask"]]
     if "volume" in c:
@@ -89,7 +89,7 @@ def param_rows(c):
 def holder(c, group):
     if group.startswith("place:"):
         return (c.get("places") or {}).get(group[6:]) or {}
-    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:")):
+    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "tvar:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:

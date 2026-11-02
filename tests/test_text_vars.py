@@ -62,5 +62,27 @@ class TextVarTests(unittest.TestCase):
         self.assertNotIn("vars", spec)
 
 
+class CurveEditorTests(unittest.TestCase):
+    def test_a_keyframed_variable_is_in_the_curves(self):
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.curve_editor import CurveEditor
+        APP = QApplication.instance() or QApplication([])
+        p = project.new()
+        c = edit.add_text(p, 0, "分數 {value}", duration_us=4 * S)
+        edit.add_text_var(p, c["id"], "number")
+        edit.add_text_var(p, c["id"], "color")
+        edit.toggle_key(p, c["id"], "tvar:value", "value", 0)
+        edit.set_param(p, c["id"], "tvar:value", "value", 50, S)
+        edit.toggle_key(p, c["id"], "tvar:value2", "value", 0)
+        ed = CurveEditor()
+        ed.set_clip(c, S // 2, 30)
+        names = {r[:2] for r in ed.rows}
+        self.assertIn(("tvar:value", "value"), names)
+        self.assertIn(("tvar:value2", "value"), names)
+        self.assertTrue(ed.checked >= {("tvar:value", "value"), ("tvar:value2", "value")})     # (animated: shown at once)
+        shown = [cv for cv in ed.canvas.curves if cv.get("keys")]
+        self.assertGreaterEqual(len(shown), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,7 +14,7 @@ import threading
 
 import numpy as np
 
-from . import curves, project
+from . import curves, normalize, project
 from .build import audio_stream, find_ffmpeg, media_start
 
 RATE, CHANNELS = 48000, 2
@@ -32,10 +32,39 @@ class Source:
         self.offset = 0                       # samples of leading silence (encoder delay)
 
     def key(self):
-        """(file, first source us, source us decoded, sound stream): the source range the clip plays."""
-        c = self.clip
-        return (c["media"]["path"], c.get("source_start_us", 0), round(c["duration_us"] * project.speed(c)),
-                audio_stream(c))
+        return key_of(self.clip)
+
+
+def key_of(c):
+    """(file, first source us, source us decoded, sound stream): the source range clip c plays."""
+    return (c["media"]["path"], c.get("source_start_us", 0), round(c["duration_us"] * project.speed(c)),
+            audio_stream(c))
+
+
+def decode(cache_dir, key):
+    """(int16 [n, 2] pcm, samples of leading silence) of a source range (key_of), decoded once
+    into the cache's audio folder."""
+    folder = os.path.join(cache_dir, "audio")
+    path, src_us, dur_us, stream = key
+    st = os.stat(path)
+    name = hashlib.sha1(repr((path, st.st_size, st.st_mtime, src_us, dur_us)
+                             + ((stream,) if stream else ())).encode()).hexdigest()[:16]
+    cached = os.path.join(folder, name + ".npy")
+    lead = media_start(path, stream)                    # the stream's first sample time
+    offset = max(0, round((lead - src_us / US) * RATE))
+    if os.path.exists(cached):
+        return np.load(cached), offset
+    start = max(src_us / US, lead)
+    r = subprocess.run([find_ffmpeg(), "-v", "error", "-ss", f"{start:.6f}", "-t", f"{dur_us / US + 0.1:.6f}",
+                        "-i", path, "-map", f"0:a:{stream}", "-vn", "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "-"],
+                       capture_output=True, timeout=120 + dur_us / US / 5)   # (an hour off a USB drive)
+    if r.returncode != 0 and not r.stdout:
+        raise RuntimeError(r.stderr.decode(errors="replace")[-300:])
+    pcm = np.frombuffer(r.stdout, np.int16)
+    pcm = pcm[: len(pcm) // CHANNELS * CHANNELS].reshape(-1, CHANNELS).copy()
+    os.makedirs(folder, exist_ok=True)                  # (the project's cache may have been cleared)
+    np.save(cached, pcm)
+    return pcm, offset
 
 
 def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rate=1.0, level=()):
@@ -70,6 +99,7 @@ def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rat
 
 class Mixer:
     def __init__(self, cache_dir):
+        self.cache_dir = cache_dir
         self.dir = os.path.join(cache_dir, "audio")
         os.makedirs(self.dir, exist_ok=True)
         self.decoded = {}                     # key -> (pcm, offset)
@@ -108,6 +138,7 @@ class Mixer:
                 with self.lock:
                     s.pcm, s.offset = np.zeros((0, CHANNELS), np.int16), 0
                 continue
+            normalize.remember(s.key(), pcm)
             with self.lock:
                 self.decoded[s.key()] = (pcm, offset)
                 for o in self.sources:
@@ -115,26 +146,7 @@ class Mixer:
                         o.pcm, o.offset = pcm, offset
 
     def _decode(self, s):
-        path, src_us, dur_us, stream = s.key()
-        st = os.stat(path)
-        name = hashlib.sha1(repr((path, st.st_size, st.st_mtime, src_us, dur_us)
-                                 + ((stream,) if stream else ())).encode()).hexdigest()[:16]
-        cached = os.path.join(self.dir, name + ".npy")
-        lead = media_start(path, stream)                # the stream's first sample time
-        offset = max(0, round((lead - src_us / US) * RATE))
-        if os.path.exists(cached):
-            return np.load(cached), offset
-        start = max(src_us / US, lead)
-        r = subprocess.run([find_ffmpeg(), "-v", "error", "-ss", f"{start:.6f}", "-t", f"{dur_us / US + 0.1:.6f}",
-                            "-i", path, "-map", f"0:a:{stream}", "-vn", "-f", "s16le", "-ac", str(CHANNELS), "-ar", str(RATE), "-"],
-                           capture_output=True, timeout=120 + dur_us / US / 5)   # (an hour off a USB drive)
-        if r.returncode != 0 and not r.stdout:
-            raise RuntimeError(r.stderr.decode(errors="replace")[-300:])
-        pcm = np.frombuffer(r.stdout, np.int16)
-        pcm = pcm[: len(pcm) // CHANNELS * CHANNELS].reshape(-1, CHANNELS).copy()
-        os.makedirs(self.dir, exist_ok=True)            # (the project's cache may have been cleared)
-        np.save(cached, pcm)
-        return pcm, offset
+        return decode(self.cache_dir, s.key())
 
     def mix(self, frame, fps):
         """PCM bytes (s16 stereo) for one frame."""
@@ -151,6 +163,8 @@ class Mixer:
             c = s.clip
             t = (t_frame - s.start_us) * s.rate         # time into the clip
             g = curves.value(c.get("volume", 1.0), t) * s.gain
+            if normalize.target(c) is not None:         # 標準化: on top of 音量
+                g *= normalize.gain_of(c, normalize.peak(s.key(), s.pcm))
             fi, fo, dur = c.get("fade_in_us", 0), c.get("fade_out_us", 0), c["duration_us"]
             if fi and t < fi:
                 g *= max(0.0, t / fi)

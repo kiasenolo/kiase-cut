@@ -1435,6 +1435,19 @@ def set_speed(proj, clip_id, value):
     return c
 
 
+def set_normalize(proj, clip_id, target_db):
+    """標準化: the clip's sound brought to a peak of target_db (dBFS) over the part it plays, on
+    top of its 音量 (normalize.py); None turns it off."""
+    _, c = find(proj, clip_id)
+    if "volume" not in c and c["type"] not in ("audio", "video"):
+        raise EditError("這個片段沒有聲音")
+    if target_db is None:
+        c.pop("normalize", None)
+    else:
+        c["normalize"] = round(min(0.0, max(-60.0, float(target_db))), 2)
+    return c
+
+
 def set_freeze(proj, clip_id, on, src_us=None):
     """凍結幀: hold the clip at source time src_us (default: where it is now held, else its
     first frame) - or let it play again."""

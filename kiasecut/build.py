@@ -26,7 +26,7 @@ from xml.sax.saxutils import escape
 import numpy as np
 from PIL import Image
 
-from . import assets, curves, fonts, masks, project, svgimage, textlayout
+from . import assets, curves, fonts, masks, normalize, project, svgimage, textlayout
 
 US = 1_000_000
 TEXT_LAYOUT_FIELDS = ("color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -328,8 +328,10 @@ class Builder:
         fi, fo = c.get("fade_in_us", 0), c.get("fade_out_us", 0)
         dur = c["duration_us"]
 
+        norm = normalize.gain(c, self.cache)            # 標準化 (1 when off), on top of 音量
+
         def gain(t):
-            g = curves.value(vol, t)
+            g = curves.value(vol, t) * norm
             if fi and t < fi:
                 g *= max(0.0, t / fi)
             if fo and t > dur - fo:

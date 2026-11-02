@@ -38,7 +38,7 @@ import os
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
-from .. import assets, build, components, curves, edit, project
+from .. import assets, build, components, curves, edit, normalize, project
 from .. import fonts as fontlib
 from . import icons
 from .colorpick import pick_color, qcolor, rgba
@@ -320,6 +320,7 @@ class Inspector(QWidget):
     groupMatteChosen = Signal(list, dict)           # group ids, {on / show / invert / body: bool} that changed
     groupAnchorChosen = Signal(list, bool)          # group ids, 中心點跟隨最下層物件 on
     throughChosen = Signal(list, bool)              # compound clip ids, 效果穿透 on
+    normalizeChosen = Signal(list, object)          # clip ids, 標準化's peak in dBFS or None (off)
     freezeChosen = Signal(list, bool, object)       # clip ids, frozen, frame (clip time us) or None: keep it
     spacingRequested = Signal(object)               # the gap between the selected clips (None: their average)
     paramReset = Signal(list, list)                 # clip ids, component parameter ids: back to the component's
@@ -530,6 +531,25 @@ class Inspector(QWidget):
                 self.widgets["audio_stream"] = box
                 form.addRow("音軌", box)
             form.addRow(PARAMS["clip"][0][1], self._param_row("clip", *PARAMS["clip"][0]))
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(0, 0, 0, 0)
+            on = QCheckBox("啟用")
+            on.setToolTip("把這個片段用到的那一段聲音調到最大聲的地方剛好是目標峰值（只看片段裡有的部分）；\n"
+                          "音量照常調整，會乘在標準化之後")
+            level = SpinBox()
+            level.set_limits(-60.0, 0.0)
+            level.setDecimals(1)
+            level.setSingleStep(0.5)
+            level.setSuffix(" dB")
+            level.setKeyboardTracking(False)
+            level.setToolTip("目標峰值（dBFS）")
+            on.clicked.connect(lambda v: self._emit_now(self.normalizeChosen, level.value() if v else None))
+            level.edited.connect(lambda v: self._emit_now(self.normalizeChosen, float(v)))
+            self.widgets["normalize_on"], self.widgets["normalize_db"] = on, level
+            lay.addWidget(on)
+            lay.addWidget(level, 1)
+            form.addRow("標準化", row)
         self._key_section(form)
 
     ALIGN_TIPS = (("left", "靠左對齊"), ("hcenter", "水平置中"), ("right", "靠右對齊"),
@@ -1362,6 +1382,16 @@ class Inspector(QWidget):
             w["mask_on"].setCheckState(Qt.PartiallyChecked if len(on) > 1 else
                                        (Qt.Checked if on.pop() else Qt.Unchecked))
             w["mask_on"].blockSignals(False)
+        if "normalize_on" in w:
+            targets = {k.get("normalize") for k in clips}
+            w["normalize_on"].setTristate(len({t is None for t in targets}) > 1)
+            w["normalize_on"].setCheckState(Qt.PartiallyChecked if len({t is None for t in targets}) > 1 else
+                                            Qt.Unchecked if None in targets else Qt.Checked)
+            known = sorted(t for t in targets if t is not None)
+            w["normalize_db"].blockSignals(True)
+            w["normalize_db"].setValue(known[0] if known else normalize.TARGET_DB)
+            w["normalize_db"].blockSignals(False)
+            w["normalize_db"].setEnabled(bool(known))
         if "blend" in w:
             modes = {curves.value(k.get("blend", "normal"), t) for k, t in zip(clips, ts)}
             self._set_combo(w["blend"], modes.pop() if len(modes) == 1 else "--")

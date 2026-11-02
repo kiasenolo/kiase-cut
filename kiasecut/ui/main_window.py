@@ -455,6 +455,8 @@ class MainWindow(QMainWindow):
         ins.liveCancelled.connect(self.rebuild)
         ins.speedChosen.connect(lambda ids, v: self.apply_each("速度", edit.set_speed, ids, v))
         ins.freezeChosen.connect(self.on_freeze)
+        ins.normalizeChosen.connect(lambda ids, db: self.apply_each("標準化" if db is not None else "取消標準化",
+                                                                    edit.set_normalize, ids, db))
         ins.audioStreamChosen.connect(lambda ids, n: self.apply_each("音軌", edit.set_audio_stream, ids, n))
         ins.groupMatteChosen.connect(lambda ids, fields: self.apply_each(
             "群組遮罩", lambda lvl, cid: edit.set_group_matte(lvl, cid, **fields), ids))

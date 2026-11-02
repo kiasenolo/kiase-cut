@@ -29,7 +29,7 @@ import math
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
-from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QSplitter,
+from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QSplitter,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, components, curves, edit, fx
@@ -732,6 +732,11 @@ class CurveEditor(QWidget):
             b = QPushButton(name)
             b.clicked.connect(lambda _=False, s=spec: self._set_bezier(s))
             grid.addWidget(b, 0, i)
+        mine = QPushButton("我的曲線")
+        mine.setToolTip("在「工具 > cubic-bezier 編輯器」存的曲線")
+        mine.setMenu(QMenu(mine))
+        mine.menu().aboutToShow.connect(lambda: self._fill_mine(mine.menu()))
+        grid.addWidget(mine, 0, len(PRESETS))
         form.addRow("", grid)
         lay.addLayout(form)
         acts = QHBoxLayout()
@@ -967,6 +972,15 @@ class CurveEditor(QWidget):
             self._typed(lambda c, k: None if c["color"] else k.__setitem__(1, v / c["factor"]))
         finally:
             self.typing = False
+
+    saved_curves = staticmethod(lambda: [])          # () -> [{name, value}] (toolsdata, set by the window)
+
+    def _fill_mine(self, menu):
+        menu.clear()
+        for c in self.saved_curves():
+            menu.addAction(c["name"], lambda v=c["value"]: self._set_bezier(tuple(v)))
+        if menu.isEmpty():
+            menu.addAction("（還沒有：在 工具 > cubic-bezier 編輯器 存）").setEnabled(False)
 
     def _set_bezier(self, spec):
         cv = self.canvas

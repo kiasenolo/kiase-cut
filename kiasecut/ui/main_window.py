@@ -28,10 +28,11 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QWidget)
 
 from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
-               render, renderexport, sysmem, thumbnail, userlib, waveform, workspace)
+               render, renderexport, sysmem, thumbnail, toolsdata, userlib, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
+from . import colorpick
 from .colorpick import pick_color, qcolor, rgba
 from .font_dialog import FontMapDialog
 from . import ask as questions
@@ -477,6 +478,8 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         self.curves = CurveEditor()
         cv = self.curves
+        cv.saved_curves = lambda: toolsdata.load_curves(self.app_root())      # (工具 > cubic-bezier 編輯器)
+        colorpick.cards = lambda: toolsdata.load_cards(self.app_root())       # (工具 > 調色盤)
         cv.keysChanged.connect(self.on_curve_keys)
         cv.seekRequested.connect(self.seek_clip_time)
         cv.addAtPlayhead.connect(self.add_key_at_playhead)
@@ -946,6 +949,9 @@ class MainWindow(QMainWindow):
         add(m, "新增自訂濾鏡檔…", None, lambda: self.new_filter_file(None))
         add(m, "濾鏡寫法說明…", None, self.show_filter_doc)
         add(m, "檢查所有濾鏡", None, self.check_filters)
+        m = keyed(self.menuBar().addMenu("工具(&O)"))          # built in, each opened when wanted (ui/tools.py)
+        add(m, "cubic-bezier 編輯器", None, lambda: self.open_tool("bezier"))
+        add(m, "調色盤", None, lambda: self.open_tool("palette"))
         m = keyed(self.menuBar().addMenu("視窗(&W)"))
         self.layout_menu = m.addMenu("佈局")
         self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
@@ -1460,6 +1466,19 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "專案縮圖", str(exc))
             return
         self.statusBar().showMessage("已把目前的畫面設為專案縮圖", 4000)
+
+    def open_tool(self, kind):
+        """工具: the cubic-bezier editor or the palette, in a window of its own (one of each)."""
+        tools = self.__dict__.setdefault("_tools", {})
+        w = tools.get(kind)
+        if w is None:
+            from .tools import BezierTool, PaletteTool
+            w = tools[kind] = (BezierTool if kind == "bezier" else PaletteTool)(self.app_root)
+        else:
+            w.fill()
+        w.show()
+        w.raise_()
+        w.activateWindow()
 
     def make_thumbnail(self):
         """自己做縮圖: the _thumbnail static compound (made now, the canvas's size, when there is

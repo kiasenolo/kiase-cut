@@ -10,14 +10,15 @@ thumbnail, the timeline: the colour under the pointer shows as it moves, a click
 goes back to what it was."""
 from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QImage, QLinearGradient, QPainter, QPen
-from PySide6.QtWidgets import (QApplication, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
-                               QWidget)
+from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from . import inplace
 
 PRESETS = ["#e05252", "#e8893a", "#e8c547", "#6cc24a", "#3fb8a6", "#4a90e2", "#8b6be0", "#d461b4",
            "#ffffff", "#c0c0c4", "#888888", "#55555a", "#2b2b2f", "#000000", "#8a5a3c", "#3c6e8a"]
 recent = []                     # the colours picked lately, newest first
+cards = lambda: []              # () -> [{name, colors}]: the 調色盤's colour cards (set by the window)
 
 
 def _checker(p, r, n=5):
@@ -196,6 +197,29 @@ class ColorPopup(inplace.Overlay):
             self.recent.append(sw)
             grid.addWidget(sw, 2, k)
         box.addLayout(grid)
+        try:
+            mine = [c for c in cards() if c.get("colors")]
+        except Exception:                                # (a card folder that cannot be read: none)
+            mine = []
+        if mine:                                         # 調色盤: a card's colours, the card picked above them
+            pick = QComboBox()
+            for c in mine:
+                pick.addItem(c["name"], c["colors"])
+            box.addWidget(pick)
+            cg = QGridLayout()
+            cg.setSpacing(3)
+            box.addLayout(cg)
+
+            def show_card(_i=0):
+                while cg.count():
+                    cg.takeAt(0).widget().deleteLater()
+                for k, h in enumerate((pick.currentData() or [])[:32]):
+                    sw = _Swatch()
+                    sw.set(qcolor(h))
+                    sw.picked.connect(self._pick)
+                    cg.addWidget(sw, k // 8, k % 8)
+            pick.currentIndexChanged.connect(show_card)
+            show_card()
         row = QHBoxLayout()
         row.setSpacing(6)
         self.sv = _Field(self, "sv", QSize(176, 120))

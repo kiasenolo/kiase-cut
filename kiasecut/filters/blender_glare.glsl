@@ -1,7 +1,9 @@
 // @filter [Blender] Glare
 // @category Blender
 // @description Blender 合成器的 Glare：亮部的光暈、鬼影、光芒、霧光、星芒、光束（在線性光裡運算）
-// @passes 2
+// @passes 25
+// @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 quality
+// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0
 // @precision float
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
 // @param quality menu 中 "高|中|低" "品質"
@@ -42,9 +44,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // (Blender's code is GPL-2.0-or-later.)
 
-// Pass 0 keeps the highlights (what glows, as Blender computes it); pass 1 spreads them by the
-// chosen type, each sample one read of pass 0, and adds them to the picture. 品質 中 / 低 spread
-// over every 2nd / 4th canvas pixel, as Blender's Medium / Low work on a picture 2 / 4 times smaller.
+// Pass 0 keeps the highlights (what glows, as Blender computes it). Bloom is Blender's own chain, one
+// pass per step (@levels shrinks them): pass 1 the highlights at the glare's size, passes 2 - 12 the
+// downsamples (13 taps, the first Karis-weighted), passes 13 - 23 the upsamples (3 x 3 tent, each level
+// added to the one before it); every other type is gathered in the last pass from pass 0 (@extras), each
+// sample one read of it. 品質 中 / 低 work on a picture 2 / 4 times smaller, as Blender's do.
 
 vec3 srgb_to_lin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
 vec3 lin_to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
@@ -72,7 +76,7 @@ vec3 highlights(vec3 c) {
 // pass 0's highlights at p (kept as 16-bit floats, linear); none outside
 vec3 H(vec2 p) {
     if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) return vec3(0.0);
-    return src(p).rgb;
+    return extra(p).rgb;
 }
 
 vec3 rgb2hsv(vec3 c) {
@@ -106,22 +110,50 @@ float fog_psf_ring(float a, float b, float dpp) {
 
 vec2 r2(int i, float a, float b) { return fract(vec2(0.7548776662, 0.5698402910) * float(i + 1) + vec2(a, b)); }
 
-vec3 bloom(vec2 uv, vec2 R) {
-    float Lf = floor(log2(max(min(R.x, R.y) * clamp(size, 0.0, 1.0), 1.0)));
-    if (Lf < 1.0) return H(uv);
-    int nl = int(clamp(Lf, 3.0, 10.0));
-    float rot = hash31(vec3(gl_FragCoord.xy, 5.0)), jr = hash31(vec3(gl_FragCoord.xy, 6.0));
-    int ns = max(quality == 0 ? 48 : quality == 1 ? 32 : 20, nl);
-    vec3 acc = vec3(0.0);
-    for (int i = 0; i < ns; i++) {              // Gaussians of radius 2^level, every level ~ns/nl samples
-        vec2 q = r2(i, jr, rot);
-        float lv = min(floor((float(i) + jr) / float(ns) * float(nl)), float(nl - 1));
-        float rr = (Lf < 3.0 ? 0.9 : 1.2) * exp2(lv) * sqrt(-2.0 * log(max(1.0 - q.x, 1e-4)));
-        float an = 6.2831853 * q.y;
-        acc += H(uv + rr * vec2(cos(an), sin(an)) / R);
-    }
-    return acc / float(ns);
+// Blender's Bloom: a chain of floor(log2(smaller side of the glare picture * size)) pictures, each half the one before
+int bloom_length() {
+    float q = exp2(float(quality));
+    vec2 g = floor(resolution / q);
+    return min(int(log2(max(1.0, min(g.x, g.y) * clamp(size, 0.0, 1.0)) + 1e-5)), 12);
 }
+float brightest(vec4 c) { return max(max(c.r, c.g), max(c.b, c.a)); }    // (all four, alpha 1 included, as Blender's reduce_max)
+vec4 karis(vec4 a, vec4 b, vec4 c, vec4 d) {
+    float wa = 1.0 / (brightest(a) + 1.0), wb = 1.0 / (brightest(b) + 1.0);
+    float wc = 1.0 / (brightest(c) + 1.0), wd = 1.0 / (brightest(d) + 1.0);
+    return (a * wa + b * wb + c * wc + d * wd) / (wa + wb + wc + wd);
+}
+// pass k + 1 (k >= 1): picture k of the chain from picture k - 1 (the pass before), 13 bilinear taps
+vec4 bloom_down(vec2 uv, int k) {
+    if (k >= bloom_length()) return vec4(0.0);
+    vec2 ps = 1.0 / src_px;
+    vec4 c  = src(uv);
+    vec4 ul = src(uv + ps * vec2(-1.0,  1.0)), ur = src(uv + ps * vec2( 1.0,  1.0));
+    vec4 ll = src(uv + ps * vec2(-1.0, -1.0)), lr = src(uv + ps * vec2( 1.0, -1.0));
+    vec4 lf = src(uv + ps * vec2(-2.0,  0.0)), rf = src(uv + ps * vec2( 2.0,  0.0));
+    vec4 uf = src(uv + ps * vec2( 0.0,  2.0)), df = src(uv + ps * vec2( 0.0, -2.0));
+    vec4 ulf = src(uv + ps * vec2(-2.0,  2.0)), urf = src(uv + ps * vec2( 2.0,  2.0));
+    vec4 llf = src(uv + ps * vec2(-2.0, -2.0)), lrf = src(uv + ps * vec2( 2.0, -2.0));
+    if (k == 1)
+        return vec4((4.0 / 8.0) * karis(ul, ur, lr, ll).rgb + (1.0 / 8.0) * (karis(ulf, uf, c, lf).rgb + karis(uf, urf, rf, c).rgb
+                  + karis(c, rf, lrf, df).rgb + karis(lf, c, df, llf).rgb), 1.0);
+    return vec4((4.0 / 32.0) * c.rgb + (4.0 / 32.0) * (ul.rgb + ur.rgb + ll.rgb + lr.rgb)
+              + (2.0 / 32.0) * (lf.rgb + rf.rgb + uf.rgb + df.rgb) + (1.0 / 32.0) * (ulf.rgb + urf.rgb + llf.rgb + lrf.rgb), 1.0);
+}
+// passes 13 - 23 (l = 10 .. 0): picture l of the chain plus the one above it (the pass before) spread by a 3 x 3 tent
+vec4 bloom_up(vec2 uv, int l) {
+    int len = bloom_length();
+    if (l >= len) return vec4(0.0);
+    vec4 base = extra(uv);
+    if (l == len - 1) return vec4(base.rgb, 1.0);
+    vec2 ps = 1.0 / pass_px;
+    vec3 up = (4.0 / 16.0) * src(uv).rgb
+            + (2.0 / 16.0) * (src(uv + ps * vec2(-1.0, 0.0)).rgb + src(uv + ps * vec2(0.0, 1.0)).rgb
+                            + src(uv + ps * vec2(1.0, 0.0)).rgb + src(uv + ps * vec2(0.0, -1.0)).rgb)
+            + (1.0 / 16.0) * (src(uv + ps * vec2(-1.0, -1.0)).rgb + src(uv + ps * vec2(-1.0, 1.0)).rgb
+                            + src(uv + ps * vec2(1.0, -1.0)).rgb + src(uv + ps * vec2(1.0, 1.0)).rgb);
+    return vec4(base.rgb + up, 1.0);
+}
+vec3 bloom(vec2 uv) { return bloom_length() < 2 ? extra(uv).rgb : src(uv).rgb; }
 
 vec3 ghosts(vec2 uv, vec2 R, float q) {
     vec2 y = uv - 0.5;
@@ -261,14 +293,20 @@ vec3 sun_beams(vec2 uv, vec2 R) {
 vec4 effect(vec2 uv) {
     if (pass_index == 0)
         return vec4(max(highlights(linear(src(uv)).rgb), vec3(0.0)), 1.0);
+    if (pass_index < 24) {                                     // (Bloom's chain; the other types leave it empty)
+        if (type != 0) return vec4(0.0);
+        if (pass_index == 1) return src(uv);
+        return pass_index <= 12 ? bloom_down(uv, pass_index - 1) : bloom_up(uv, 23 - pass_index);
+    }
 
     vec2 R = resolution;
     float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;
-    vec3 g = type == 0 ? bloom(uv, R) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streak_lines(uv, R, q)
+    vec3 g = type == 0 ? bloom(uv) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streak_lines(uv, R, q)
            : type == 3 ? fog_glow(uv, R, q) : type == 4 ? simple_star(uv, R, q) : sun_beams(uv, R);
     vec3 hsv = rgb2hsv(max(g, vec3(0.0)));                     // saturation as Blender mixes it
     hsv.y = clamp(hsv.y * max(saturation, 0.0), 0.0, 1.0);
-    g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * max(strength, 0.0);
+    // (Bloom adds one picture per step of its chain, so Blender divides by the chain's length)
+    g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * (max(strength, 0.0) / (type == 0 ? float(max(1, bloom_length())) : 1.0));
 
     // the light is added to the picture (premultiplied, linear); where it is brighter than the
     // picture is opaque, it lights that spot itself - the glow spreads over what was clear

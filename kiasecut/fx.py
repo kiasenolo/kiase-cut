@@ -27,10 +27,10 @@ PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filters")
 DOC_PATH = os.path.join(PKG, "FORMAT.md")
 TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
-MAX_PASSES = 8
+MAX_PASSES = 32
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu")
-RESERVED = {"source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "src",
+RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "src",
             "original", "effect", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
 
 
@@ -52,8 +52,12 @@ class Param:
 
 class FilterDef:
     def __init__(self, ref, name, code, params=(), category="", description="", passes=1, error=None, precise=False,
-                 panels=()):
+                 panels=(), levels=(), level_param=None, extras=(), fixed=()):
         self.ref, self.name, self.code = ref, name, code
+        self.levels = list(levels)               # @levels: pass i < len is drawn 2^levels[i] times smaller than the canvas
+        self.level_param = level_param           # ... and another 2^(that menu's choice number) times (Glare's 品質)
+        self.fixed = list(fixed)                 # ... except the passes written "2f": those keep to the canvas size
+        self.extras = list(extras)               # @extras: the earlier pass each pass can also read with extra() (None: none)
         self.panels = list(panels)               # [(name, closed at first)], in order (@panel)
         self.precise = precise                   # the passes before the last one keep 16-bit floats, not 8 bits
         self.params, self.category, self.description = list(params), category, description
@@ -219,6 +223,10 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head[key] = rest
             elif key == "passes":
                 head["passes"] = max(1, min(MAX_PASSES, int(rest)))
+            elif key == "levels":                         # (read once every @param is known)
+                head["levels"] = rest.split()
+            elif key == "extras":
+                head["extras"] = [None if w == "-" else int(w) for w in rest.split()]
             elif key == "precision":
                 if rest.lower() not in ("float", "8bit"):
                     raise ValueError("@precision 要寫 float 或 8bit")
@@ -230,10 +238,25 @@ def parse(text, ref, fallback_name="濾鏡"):
             _enable(rest, params)
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
+    levels, level_param, fixed = [], None, []
+    words = head.get("levels", [])
+    if words and not words[-1].rstrip("f").lstrip("-").isdigit():
+        level_param = words.pop()
+        if not any(q.name == level_param and q.type == "menu" for q in params):
+            error = error or f"@levels：「{level_param}」不是選單參數"
+    try:
+        levels = [max(0, int(w.rstrip("f"))) for w in words]
+        fixed = [w.endswith("f") for w in words]
+    except ValueError:
+        error = error or "@levels 要寫一串數字（每一次繪製縮小幾次），最後可以接一個選單參數的名字"
+    n = head.get("passes", 1)
+    if len(levels) > n or any(e is not None and not 0 <= e < i for i, e in enumerate(head.get("extras", []))):
+        error = error or "@levels 不能比 @passes 多；@extras 只能讀前面的繪製"
     if "effect" not in text:
         error = error or "找不到 effect() 函式"
     return FilterDef(ref, head.get("filter") or fallback_name, text, params, head.get("category", ""),
-                     head.get("description", ""), head.get("passes", 1), error, head.get("precise", False), panels)
+                     head.get("description", ""), n, error, head.get("precise", False), panels, levels, level_param,
+                     head.get("extras", []), fixed)
 
 
 _cache = {}
@@ -342,11 +365,16 @@ uniform float progress;
 uniform int frame;
 uniform float scale;
 uniform int pass_index;
+uniform sampler2D extra_;
+uniform vec2 pass_px;
+uniform vec2 src_px;
+uniform vec2 extra_px;
 %(params)s
 in vec2 uv_;
 out vec4 fragColor;
 vec4 src(vec2 uv) { return texture(source, clamp(uv, 0.0, 1.0)); }
 vec4 original(vec2 uv) { return texture(original_, clamp(uv, 0.0, 1.0)); }
+vec4 extra(vec2 uv) { return texture(extra_, clamp(uv, 0.0, 1.0)); }
 vec4 unpremultiply(vec4 c) { return c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(0.0); }
 vec4 premultiply(vec4 c) { return vec4(c.rgb * c.a, c.a); }
 float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
@@ -442,6 +470,7 @@ class Engine:
         self.programs = {}
         self.targets = {}            # (w, h) -> [(texture, fbo)] x 3
         self.mid_targets = {}        # (w, h) -> [(texture, fbo)] x 2, 16-bit floats (@precision float)
+        self.level_targets = {}      # (filter key, pass, w, h) -> (texture, fbo): a pass of @levels (16-bit floats, kept)
 
     def _program(self, d, sampled=()):
         key = (d.key(), sampled)
@@ -490,6 +519,26 @@ class Engine:
                 t.append((tex, self.ctx.framebuffer(color_attachments=[tex])))
             self.mid_targets[(w, h)] = t
         return t
+
+    def _level_target(self, d, i, w, h):
+        key = (d.key(), i, w, h)
+        t = self.level_targets.get(key)
+        if t is None:
+            if len(self.level_targets) > 96:
+                self.level_targets.clear()
+            tex = self.ctx.texture((w, h), 4, dtype="f4")
+            tex.filter = (self.mgl.LINEAR, self.mgl.LINEAR)
+            tex.repeat_x = tex.repeat_y = False
+            t = self.level_targets[key] = (tex, self.ctx.framebuffer(color_attachments=[tex]))
+        return t
+
+    @staticmethod
+    def level_size(d, i, values, w, h, canvas):
+        """(w, h) pass i of a filter with @levels is drawn at: the canvas shrunk 2^level times (and 2^choice
+        more for the @levels menu), never bigger than the picture it is drawn for."""
+        q = 0 if d.fixed and d.fixed[i] else int(values.get(d.level_param, 0) if d.level_param else 0)
+        shrink = 2 ** (d.levels[i] + q)
+        return (max(1, min(w, int(canvas[0]) // shrink)), max(1, min(h, int(canvas[1]) // shrink)))
 
     def run(self, d, values, rgba, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None):
         """Filter rgba (H x W x 4, uint8, premultiplied) with filter d. values: {param: value
@@ -549,17 +598,35 @@ class Engine:
                     prog[u].value = v
         self.ctx.disable(self.mgl.BLEND)
         read = src
+        made = []                                      # each pass's (texture, w, h), for @extras
+        if "extra_" in prog:
+            prog["extra_"].value = 7
+        canvas = (w / unit, h / unit)
         for i in range(d.passes):
             if "pass_index" in prog:
                 prog["pass_index"].value = i
-            pool = self._mid_targets(w, h) if d.precise and i < d.passes - 1 else targets
-            dst_tex, dst_fbo = next(t for t in pool if t[0] is not read and t[0] is not src)
+            if i < len(d.levels):
+                tw, th = self.level_size(d, i, values, w, h, canvas)
+                dst_tex, dst_fbo = self._level_target(d, i, tw, th)
+            else:
+                tw, th = w, h
+                pool = self._mid_targets(w, h) if d.precise and i < d.passes - 1 else targets
+                dst_tex, dst_fbo = next(t for t in pool if t[0] is not read and t[0] is not src)
+            sw, sh = (made[-1][1], made[-1][2]) if made else (w, h)
+            ex = d.extras[i] if i < len(d.extras) else None
+            for name, v in (("pass_px", (float(tw), float(th))), ("src_px", (float(sw), float(sh))),
+                            ("extra_px", (float(made[ex][1]), float(made[ex][2])) if ex is not None else (1.0, 1.0))):
+                if name in prog:
+                    prog[name].value = v
             dst_fbo.use()
-            self.ctx.viewport = (0, 0, w, h)
+            self.ctx.viewport = (0, 0, tw, th)
             read.use(0)
             src.use(1)
+            if ex is not None:
+                made[ex][0].use(7)
             vao.render(self.mgl.TRIANGLE_STRIP)
             read = dst_tex
+            made.append((dst_tex, tw, th))
         return read
 
     def close(self):

@@ -11,7 +11,7 @@ viz {kind, source, channel, attack, decay, color, color2, gradient, bar_w, gap, 
            at the level's time
   channel  M (middle) | L | R | S (side) - what bars, wave and scope look at (vector sees both)
   attack / decay  seconds the picture takes to rise / fall (one-pole, as an envelope follower)
-  bar_w / gap / max_h / line_w / inner   pixels of the picture it was made for (media height); they
+  bar_w / gap / radius / max_h / line_w / inner   pixels of the picture it was made for (media height); they
            scale with the clip
   f_lo..f_hi, log  the frequencies the bars cover and whether they sit evenly in octaves (log) or Hz
   smooth   0 - 1, how much neighbouring bars / points are blended
@@ -46,11 +46,11 @@ SCOPE_N = 2048
 
 DEFAULTS = {
     "kind": "bars", "channel": "M", "attack": 0.02, "decay": 0.3,
-    "color": [0.25, 0.8, 1.0, 1.0], "color2": [1.0, 0.35, 0.8, 1.0], "gradient": False,
-    "bar_w": 12.0, "gap": 6.0, "max_h": 420.0, "mirror": False, "radial": False, "inner": 260.0,
+    "color": [1.0, 1.0, 1.0, 1.0], "color2": [1.0, 0.35, 0.8, 1.0], "gradient": False,
+    "bar_w": 12.0, "gap": 6.0, "radius": 0.0, "max_h": 420.0, "mirror": False, "radial": False, "inner": 260.0,
     "f_lo": 30.0, "f_hi": 16000.0, "log": True, "smooth": 0.4, "line_w": 4.0, "grid": True,
 }
-LIMITS = {"attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
+LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
           "max_h": (10.0, 4000.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
           "smooth": (0.0, 1.0), "line_w": (0.5, 100.0)}
 
@@ -61,14 +61,11 @@ def make(kind, source, canvas_h=1080):
     v = {k: (list(x) if isinstance(x, list) else x) for k, x in DEFAULTS.items()}
     v["kind"], v["source"] = kind, dict(source)
     k = canvas_h / 1080
-    for f in ("bar_w", "gap", "max_h", "inner", "line_w"):
+    for f in ("bar_w", "gap", "max_h", "inner", "line_w", "radius"):
         v[f] = round(v[f] * k, 1)
     if kind == "wave":
         v["max_h"] = round(v["max_h"] * 0.6, 1)
-    if kind == "scope":
-        v["color"] = [0.45, 1.0, 0.55, 1.0]
     if kind == "vector":
-        v["color"] = [0.4, 0.9, 1.0, 1.0]
         v["max_h"] = round(v["max_h"] * 1.5, 1)
         v["decay"] = 0.15
         v["line_w"] = round(v["line_w"] * 0.6, 1)
@@ -286,6 +283,7 @@ def _bars(p, spec, w, h, u, t_us, window, memo):
                     lambda: band_levels(spectrum(mono(window(tt, NFFT), ch)), n, lo, hi, lg))
     v = smooth_across(follow(raw_at, t_us, spec["attack"], spec["decay"]), spec["smooth"])
     maxh = spec["max_h"] * u
+    rad = spec["radius"] * u                                   # (0: square ends)
     cx, cy = w / 2, h / 2
     p.setPen(Qt.NoPen)
     if spec["radial"]:
@@ -299,7 +297,8 @@ def _bars(p, spec, w, h, u, t_us, window, memo):
             p.translate(cx, cy)
             p.rotate(360.0 * i / n)
             top, bottom = -r0 - ln, (-r0 + min(ln, r0)) if spec["mirror"] else -r0
-            p.drawRoundedRect(QRectF(-bw / 2, top, bw, bottom - top), bw / 2, bw / 2)
+            r = min(rad, bw / 2, (bottom - top) / 2)
+            p.drawRoundedRect(QRectF(-bw / 2, top, bw, bottom - top), r, r)
             p.restore()
         return
     x0 = (w - (n * bw + (n - 1) * gap)) / 2
@@ -311,7 +310,8 @@ def _bars(p, spec, w, h, u, t_us, window, memo):
             continue
         x = x0 + i * (bw + gap)
         top, bottom = base - ln, base + (ln if spec["mirror"] else 0.0)
-        p.drawRoundedRect(QRectF(x, top, bw, bottom - top), min(bw / 2, ln), min(bw / 2, ln))
+        r = min(rad, bw / 2, (bottom - top) / 2)
+        p.drawRoundedRect(QRectF(x, top, bw, bottom - top), r, r)
 
 
 def _curve(points, closed=False):

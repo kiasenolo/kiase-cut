@@ -1339,11 +1339,12 @@ class Inspector(QWidget):
     VIZ_ROWS = {        # field: (label, lo, hi, step, decimals)
         "attack": ("起音 秒", 0.0, 2.0, 0.01, 2), "decay": ("衰減 秒", 0.0, 3.0, 0.05, 2),
         "bar_w": ("條寬 px", 1.0, 400.0, 1.0, 1), "gap": ("間距 px", 0.0, 400.0, 1.0, 1),
+        "radius": ("圓角 px", 0.0, 400.0, 1.0, 1),
         "max_h": ("最大高度 px", 10.0, 4000.0, 10.0, 0), "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1),
         "inner": ("內徑 px", 10.0, 3000.0, 10.0, 0), "f_lo": ("頻率下限 Hz", 20.0, 20000.0, 10.0, 0),
         "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2)}
     VIZ_FIELDS = {
-        "bars": ("channel", "attack", "decay", "bar_w", "gap", "max_h", "mirror", "radial", "inner", "f_lo", "f_hi",
+        "bars": ("channel", "attack", "decay", "bar_w", "gap", "radius", "max_h", "mirror", "radial", "inner", "f_lo", "f_hi",
                  "log", "smooth", "color"),
         "wave": ("channel", "attack", "decay", "max_h", "mirror", "radial", "inner", "smooth", "color"),
         "scope": ("channel", "max_h", "line_w", "radial", "inner", "smooth", "color"),

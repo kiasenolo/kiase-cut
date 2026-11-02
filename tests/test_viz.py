@@ -135,6 +135,27 @@ class VizTests(unittest.TestCase):
         c["viz"]["source"] = {"type": "track", "id": "nope"}
         self.assertEqual(alpha_sum(viz.paint(c["viz"], probe, c, S // 2, W, H, H, {}, p["tracks"])), 0)
 
+    def test_white_and_square_by_default(self):
+        for kind in viz.KINDS:
+            self.assertEqual(viz.make(kind, {"type": "track", "id": ""})["color"], [1.0, 1.0, 1.0, 1.0], kind)
+        v = viz.make("bars", {"type": "track", "id": ""}, 180)
+        self.assertEqual(v["radius"], 0.0)
+        c = self.clip(self.both, attack=0.0, decay=0.0, smooth=0.0, bar_w=20.0, gap=4.0, max_h=100.0)
+        img = self.paint(c, S // 2)
+        a = np.frombuffer(bytes(img.constBits()), np.uint8).reshape(H, W, 4)
+        col = int(np.argmax(columns(img)))
+        ys = np.nonzero(a[:, col, 3] > 200)[0]
+        top = a[ys.min() + 2]                                   # the bar's top rows: square ends fill it to the corners
+        xs = np.nonzero(top[:, 3] > 200)[0]
+        self.assertGreaterEqual(len(xs), 19)                    # (20 px wide, drawn as is)
+        self.assertEqual(tuple(top[xs[0], :3]), (255, 255, 255))
+        c["viz"]["radius"] = 10.0
+        img = self.paint(c, S // 2)
+        a = np.frombuffer(bytes(img.constBits()), np.uint8).reshape(H, W, 4)
+        col = int(np.argmax(columns(img)))
+        ys = np.nonzero(a[:, col, 3] > 200)[0]
+        self.assertLess(len(np.nonzero(a[ys.min() + 2][:, 3] > 200)[0]), 17)     # (rounded: the top is narrower)
+
     def test_edit_and_export(self):
         p = project.link(dict(project.new(), tracks=[]))
         c = edit.add_visualizer(p, "wave", {"type": "file", "path": self.both}, "x.png", S, 3 * S, 1920, 1080)

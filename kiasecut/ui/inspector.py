@@ -1349,6 +1349,7 @@ class Inspector(QWidget):
         "wave": ("channel", "attack", "decay", "size", "mirror", "radial", "inner", "smooth", "color"),
         "scope": ("channel", "size", "line_w", "radial", "inner", "smooth", "color"),
         "vector": ("decay", "size", "line_w", "grid", "color")}
+    VIZ_GRADIENT = ("bars", "wave")                     # (the kinds that can fill from one colour to another)
     VIZ_TOGGLES = {"mirror": "鏡像（上下對稱）", "radial": "放射狀（繞成圓形）", "log": "對數頻率軸（每個八度一樣寬）",
                    "grid": "顯示格線"}
 
@@ -1359,6 +1360,7 @@ class Inspector(QWidget):
     def _build_viz(self, form, v):
         """Audio Visualizer: what it draws, the sound it listens to, and how it looks."""
         form.addRow(section("Audio Visualizer"))
+        self._viz_form = form
         kind = ComboBox()
         for k, name in viz.KINDS.items():
             kind.addItem(name, k)
@@ -1402,11 +1404,13 @@ class Inspector(QWidget):
                 form.addRow("大小 px", row)
             elif f == "color":
                 for fld, label in (("color", "顏色"), ("color2", "漸層顏色")):
+                    if fld == "color2" and v["kind"] not in self.VIZ_GRADIENT:
+                        continue
                     b = QPushButton()
                     b.clicked.connect(lambda _=False, fld=fld, label=label: self._pick_viz_color(fld, label))
                     self.widgets[("viz", fld)] = b
                     form.addRow(label, b)
-                    if fld == "color":
+                    if fld == "color" and v["kind"] in self.VIZ_GRADIENT:
                         g = QCheckBox("漸層（底部用顏色、頂部用漸層顏色）")
                         g.clicked.connect(lambda on: self._viz_edit(gradient=bool(on)))
                         self.widgets[("viz", "gradient")] = g
@@ -1496,6 +1500,10 @@ class Inspector(QWidget):
                 wid.blockSignals(False)
             elif not wid.hasFocus():
                 wid.show_value(v[f])
+        for fld, shown in (("inner", v["radial"]), ("color2", v["gradient"]), ("gradient", True)):   # (only what does something)
+            wid = w.get(("viz", fld))
+            if wid is not None:
+                self._viz_form.setRowVisible(wid, bool(shown))
 
     def _build_asset(self, form, family):
         """素材參數: size, colours and the family's own fields (assets.FIELDS), each with ◆."""

@@ -2,7 +2,7 @@
 is given, drawn afresh for every frame by both renderers.
 
 viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w, gap, radius, mirror,
-     radial, inner, f_lo, f_hi, log, smooth, line_w, grid}
+     radial, inner, f_lo, f_hi, log, smooth, line_w, grid}   (gradient: bars and waves only)
   w, h     the object's size, in canvas pixels, as a shape's: the picture is exactly that rectangle (bars
            grow from its bottom edge up to its top, a wave or a scope fills its height, a vectorscope its
            shorter side, a circle's outer edge is half the shorter side)
@@ -406,11 +406,6 @@ def _scope(p, spec, w, h, u, t_us, window, memo):
     maxh, r0, span = _extent(spec, w, h, u)
     cx, cy = w / 2, h / 2
     pen = QPen(_qc(spec["color"]), max(1.0, spec["line_w"] * u), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
-    if spec["gradient"]:
-        g = QLinearGradient(0, cy - maxh / 2, 0, cy + maxh / 2)
-        g.setColorAt(0, _qc(spec["color2"]))
-        g.setColorAt(1, _qc(spec["color"]))
-        pen.setBrush(QBrush(g))
     p.setPen(pen)
     p.setBrush(Qt.NoBrush)
     if spec["radial"]:

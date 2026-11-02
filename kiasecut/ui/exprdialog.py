@@ -1,8 +1,10 @@
 """The expression editor (表達式, expr.py): a text box that reads the expression as it is typed -
 the reason when it cannot be read, else what it gives for a few sample values of `input` and
 the moment - with the names and functions it can use listed under it."""
+import re
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QPlainTextEdit, QVBoxLayout
 
 from .. import expr
@@ -59,6 +61,8 @@ class ExprDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         self.buttons.button(QDialogButtonBox.RestoreDefaults).setText(f"還原（{default}）")
         self.buttons.button(QDialogButtonBox.RestoreDefaults).clicked.connect(lambda: self.box.setPlainText(default))
+        check = self.buttons.addButton("檢查語法", QDialogButtonBox.ActionRole)
+        check.clicked.connect(self._check)
         lay.addWidget(self.buttons)
         self.box.textChanged.connect(self._changed)
         self._changed()
@@ -79,6 +83,25 @@ class ExprDialog(QDialog):
         self.status.setText(sample_text(text, self._env()))
         self.status.setStyleSheet("color: #6fd08c;" if ok else "color: #ff7a7a;")
         self.buttons.button(QDialogButtonBox.Ok).setEnabled(ok)
+
+    def _check(self):
+        """檢查語法: the reason it cannot be read, with the character it points at selected; else
+        what it gives for the samples (the names and functions are tried too)."""
+        text = self.box.toPlainText()
+        why = expr.check(text.strip())
+        if why is None:
+            self.status.setText("✓ 語法正確　" + sample_text(text.strip(), self._env())[2:])
+            return
+        self.status.setText("✗ " + why)
+        m = re.match(r"第 (\d+) 個字", why)
+        if m:
+            at = min(int(m.group(1)) - 1, len(text))
+            cur = self.box.textCursor()
+            cur.setPosition(at)
+            if at < len(text):
+                cur.setPosition(at + 1, QTextCursor.KeepAnchor)
+            self.box.setTextCursor(cur)
+        self.box.setFocus()
 
     def text(self):
         return self.box.toPlainText().strip()

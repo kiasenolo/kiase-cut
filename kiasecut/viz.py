@@ -207,7 +207,7 @@ def spectrum(x):
 
 
 def band_levels(mag, n, f_lo, f_hi, log):
-    """0 - 1 for each of n bars: the loudest frequency inside it, in dB between FLOOR_DB and TOP_DB."""
+    """0 - 1 for each of n bars: the level (rms) of the frequencies inside it, in dB between FLOOR_DB and TOP_DB."""
     hz = RATE / NFFT
     log = float(log)
     edges = log * np.geomspace(f_lo, f_hi, n + 1) + (1.0 - log) * np.linspace(f_lo, f_hi, n + 1)
@@ -219,7 +219,7 @@ def band_levels(mag, n, f_lo, f_hi, log):
         if b - a <= 1:                                    # narrower than a bin: where its middle falls
             out[i] = np.interp((lo[i] + hi[i]) / 2, np.arange(top + 1), mag)
         else:
-            out[i] = mag[max(a, 0):min(b, top) + 1].max()
+            out[i] = math.sqrt(np.mean(np.square(mag[max(a, 0):min(b, top) + 1])))
     centre = (edges[:-1] + edges[1:]) / 2 if log < 1.0 else np.sqrt(edges[:-1] * edges[1:])
     db = 20 * np.log10(np.maximum(out, 1e-7)) + TILT_DB * np.log2(np.maximum(centre, 1.0) / 1000.0)
     return np.clip((db - FLOOR_DB) / (TOP_DB - FLOOR_DB), 0.0, 1.0)

@@ -196,8 +196,6 @@ class ExportDialog(QDialog):
             notes.append(f"每格存成一張 PNG，放在「{name}」資料夾。")
         if f.kind == "gif":
             notes.append("GIF 沒有聲音、只有 256 色，適合短片段與低幀率。")
-        if self.alpha.isEnabled() and self.alpha.isChecked():
-            notes.append("透明背景的檔案可放進 Premiere、After Effects、DaVinci Resolve 等，疊在其他畫面上。")
         if self.stems.isChecked():
             notes.append(f"分軌音檔放在「{name} - 分軌」資料夾（只含有聲音、沒被靜音的軌道）。")
         self.adv_note.setText("\n".join(notes))

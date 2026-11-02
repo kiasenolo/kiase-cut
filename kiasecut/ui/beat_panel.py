@@ -71,11 +71,6 @@ class BeatPanel(QWidget):
         self.period = QLabel()
         self.period.setStyleSheet("color: #8a8a90")
         form.addRow("每拍", self.period)
-        note = QLabel("開啟後，拖曳片段、修剪、關鍵幀和播放頭都會吸附到這個片段的拍子上（片段上方的刻度，顏色同上）。"
-                      "關掉時設定會保留。")
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #8a8a90")
-        form.addRow(note)
         self.reset = QPushButton("重置")
         self.reset.setToolTip("刪除這個片段的 BPM 設定並關閉 BPM 對齊")
         self.reset.clicked.connect(self._reset)

@@ -61,8 +61,7 @@ class SettingsDialog(QDialog):
         self.copy = QCheckBox("把目前 Library 的內容複製到新位置")
         self.copy.setChecked(True)
         form.addRow("", self.copy)
-        note = QLabel("Library 是所有專案共用的素材：影片、圖片、音效、濾鏡、文字樣式。\n"
-                      "直接把檔案放進這個資料夾裡也可以，程式會自動認得；放在裡面的檔案不會被複製到專案。")
+        note = QLabel("直接把檔案放進這個資料夾裡也可以，程式會自動認得；放在裡面的檔案不會被複製到專案。")
         note.setStyleSheet("color: #9a9aa0;")
         note.setWordWrap(True)
         form.addRow("", note)
@@ -100,8 +99,7 @@ class SettingsDialog(QDialog):
         row.addWidget(self.autosave_dir, 1)
         row.addWidget(browse)
         form.addRow("自動存檔位置", row)
-        note = QLabel(f"有未儲存的修改時，每隔一段時間存一份到 {autosave_dir}，只留最新的幾份。\n"
-                      "程式沒有正常結束（當掉、斷電）時，下次開啟會問要不要回復。換位置在下次開啟程式時生效。")
+        note = QLabel("換位置在下次開啟程式時生效。")
         note.setStyleSheet("color: #9a9aa0;")
         note.setWordWrap(True)
         form.addRow("", note)
@@ -206,9 +204,7 @@ class SettingsDialog(QDialog):
         where = {workspace.CACHE_DEFAULT: f"放在 {self.default_cache}，每個專案一個資料夾。",
                  workspace.CACHE_PROJECT: "放在專案資料夾裡的 Cache，跟著專案一起搬移、複製。",
                  workspace.CACHE_CUSTOM: "放在上面選的資料夾裡，每個專案一個資料夾。"}[mode]
-        self.cache_note.setText(where + "\n緩存是波形、聲音、文字和遮罩的圖片等，刪掉會在需要時重新產生；"
-                                "放在專案外，搬移專案時就不用帶著它。換位置後舊的緩存留在原處，"
-                                "可以用「檔案 > 清除專案緩存」刪掉。")
+        self.cache_note.setText(where + "\n換位置後舊的緩存留在原處，可以用「檔案 > 清除專案緩存」刪掉。")
         self.buttons.button(QDialogButtonBox.Ok).setEnabled(bool(self.library.text().strip()) and
                                                            (not custom or bool(self.cache_custom.text().strip())))
 
@@ -273,8 +269,7 @@ class QuestionsDialog(QDialog):
         buttons.accepted.connect(self._keep)
         buttons.rejected.connect(self.reject)
         lay = QVBoxLayout(self)
-        note = QLabel("勾過「不再詢問」的問題會直接用記住的答案；在這裡可以改回每次詢問。"
-                      "未儲存的修改、永久刪除這類問題一定會問。")
+        note = QLabel("未儲存的修改、永久刪除這類問題一定會問。")
         note.setWordWrap(True)
         note.setStyleSheet("color: #9a9aa0;")
         lay.addWidget(note)

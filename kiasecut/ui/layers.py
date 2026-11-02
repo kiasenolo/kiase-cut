@@ -330,9 +330,7 @@ class LayerPanel(QWidget):
         title = QLabel("圖層")
         title.setObjectName("title")
         head.addWidget(title)
-        self.note = QLabel("靜態複合片段：做一張圖，用圖層排好上下順序")
-        self.note.setStyleSheet("color: #8a8a90;")
-        head.addWidget(self.note, 1)
+        head.addStretch(1)
         self.to_component = QPushButton("轉為元件")
         self.to_component.setToolTip("變成元件：圖層的文字、顏色、圖片和顯示開關可以設成參數，"
                                      "每個使用它的片段在屬性裡設定自己的")
@@ -446,8 +444,6 @@ class LayerPanel(QWidget):
         """Show the layers of level (a static compound's content), selection included."""
         self._shown = (level, set(selected_ids), primary)
         comp = components.is_component(level)
-        self.note.setText("元件：圖層的屬性可以設成參數，每個使用它的片段自己設定" if comp
-                          else "靜態複合片段：做一張圖，用圖層排好上下順序")
         self.to_component.setVisible(bool(level.get("static")) and not comp)
         self.params_box.setVisible(comp)
         bound = components.bound(level) if comp else {}

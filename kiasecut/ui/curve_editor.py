@@ -920,7 +920,7 @@ class CurveEditor(QWidget):
             if i + 1 < len(ks):
                 x1, y1, x2, y2 = curves.segment_bezier(ks[i], ks[i + 1])
                 self.bezier.setText(f"{x1:.3g}, {y1:.3g}, {x2:.3g}, {y2:.3g}")
-                self.hint.setText(f"{cv.curves[ci]['label']}：曲線作用在選取的關鍵幀到下一個關鍵幀之間")
+                self.hint.setText("")
             else:
                 self.bezier.clear()
                 self.hint.setText(f"{cv.curves[ci]['label']}：最後一個關鍵幀之後沒有曲線")

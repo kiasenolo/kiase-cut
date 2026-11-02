@@ -54,7 +54,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
-from . import appevents, exprdialog, icons, inplace, mapdialog, middledrag, wheel
+from . import appevents, exprdialog, icons, inplace, look, mapdialog, middledrag, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -62,74 +62,6 @@ from .preview import base_size as preview_base_size
 from .timebase import button_text, edit_timebase
 from .timeline import MEDIA_MIME, US, Timeline, time_text, timebase_of, timecode
 from .menukeys import Menu, keyed
-
-# DaVinci Resolve-like: charcoal panels on a near-black frame, flat controls, light grey
-# text; colour is left to clips, keyframes, the playhead and the meter
-STYLE = """
-QWidget { background: #1c1c1e; color: #d0d0d2; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC', sans-serif; font-size: 12px; }
-QMainWindow { background: #111113; }
-QMenuBar { background: #18181a; border-bottom: 1px solid #0e0e10; }
-QMenu { background: #26262a; border: 1px solid #0e0e10; }
-QMenu::item { padding: 4px 22px; }
-QMenu::item:selected, QMenuBar::item:selected { background: #3d3d43; }
-QMenu::separator { height: 1px; background: #3a3a40; margin: 3px 6px; }
-QPushButton { background: #2b2b2f; border: 1px solid #141416; border-radius: 3px; padding: 4px 10px; }
-QPushButton:hover { background: #36363b; }
-QPushButton:pressed { background: #1f1f22; }
-QPushButton:checked { background: #c9c9cd; color: #121214; border-color: #c9c9cd; }
-QPushButton:disabled { color: #5c5c62; }
-QPushButton#tool { background: transparent; border: 1px solid transparent; padding: 3px; }
-QPushButton#tool:hover { background: #33333a; border-color: #141416; }
-QPushButton#tool:checked { background: #4a4a52; border-color: #5c5c64; }
-QPushButton#tool:disabled { background: transparent; }
-QSplitter::handle { background: #0e0e10; }
-QSplitter::handle:horizontal { width: 3px; }
-QSplitter::handle:vertical { height: 3px; }
-QDoubleSpinBox, QPlainTextEdit, QLineEdit, QComboBox { background: #141416; border: 1px solid #2c2c31; border-radius: 3px; padding: 2px 4px; selection-background-color: #4a4a52; }
-QDoubleSpinBox:focus, QPlainTextEdit:focus, QLineEdit:focus, QComboBox:focus { border-color: #6a6a72; }
-QDoubleSpinBox:disabled { color: #5c5c62; }
-QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; subcontrol-origin: border; }
-QComboBox QAbstractItemView { background: #26262a; selection-background-color: #3d3d43; }
-QTreeWidget, QListWidget { background: #1c1c1e; border: none; alternate-background-color: #202023; }
-QTreeWidget::item, QListWidget::item { padding: 2px; }
-QTreeWidget::item:selected, QListWidget::item:selected { background: #3d3d43; color: #ffffff; }
-QHeaderView::section { background: #232326; color: #8e8e94; border: none; border-bottom: 1px solid #0e0e10; padding: 4px; }
-QLabel#time { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 15px; color: #e8e8ea; }
-QLabel#viewer { color: #8e8e94; }
-QLabel#title { color: #8e8e94; font-weight: 600; font-size: 11px; }
-QLabel#crumb { color: #d0d0d2; font-weight: 600; }
-QWidget#bar { background: #232326; border-top: 1px solid #0e0e10; border-bottom: 1px solid #0e0e10; }
-QTabWidget::pane { border: none; border-top: 1px solid #0e0e10; }
-QWidget#docktitle { background: #18181a; border-bottom: 1px solid #0e0e10; }
-QMainWindow::separator { background: #0e0e10; width: 3px; height: 3px; }
-QMainWindow::separator:hover { background: #4a4a52; }
-QTabBar#layouts { background: transparent; }
-QTabBar#layouts::tab { padding: 3px 12px; border: none; background: transparent; }
-QTabBar#layouts::tab:selected { background: #2b2b2f; color: #ffffff; border-radius: 3px; }
-QTabBar { background: #18181a; }
-QTabBar::tab { background: #18181a; color: #8e8e94; padding: 6px 14px; border: none; border-right: 1px solid #0e0e10; }
-QTabBar::tab:selected { background: #232326; color: #ffffff; }
-QTabBar::tab:hover:!selected { color: #c0c0c4; }
-QTabBar#timelines::tab { padding: 4px 14px; border-top-left-radius: 3px; border-top-right-radius: 3px; }
-QTabBar#timelines::tab:selected { background: #2b2b2f; }
-QMessageBox, QInputDialog, QColorDialog, QDialog { background: #1c1c1e; }
-QMessageBox QLabel { color: #d0d0d2; background: transparent; }
-QStatusBar { background: #18181a; color: #8e8e94; border-top: 1px solid #0e0e10; }
-QSlider::groove:horizontal { height: 4px; background: #34343a; border-radius: 2px; }
-QSlider::sub-page:horizontal { background: #8e8e94; border-radius: 2px; }
-QSlider::handle:horizontal { background: #d0d0d2; width: 10px; margin: -4px 0; border-radius: 5px; }
-QSlider::groove:vertical { width: 4px; background: #34343a; border-radius: 2px; }
-QSlider::add-page:vertical { background: #8e8e94; border-radius: 2px; }
-QSlider::handle:vertical { background: #d0d0d2; height: 10px; margin: 0 -5px; border-radius: 5px; }
-QScrollBar { background: #1c1c1e; width: 10px; height: 10px; }
-QScrollBar::handle { background: #3a3a40; border-radius: 4px; min-height: 20px; min-width: 20px; }
-QScrollBar::handle:hover { background: #4a4a52; }
-QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { width: 0; height: 0; background: none; }
-QCheckBox::indicator { width: 12px; height: 12px; border-radius: 2px; }
-QCheckBox::indicator:checked { background: #c9c9cd; border: 1px solid #c9c9cd; }
-QCheckBox::indicator:unchecked { background: #141416; border: 1px solid #4a4a52; }
-QToolTip { background: #2b2b2f; color: #e0e0e2; border: 1px solid #0e0e10; }
-"""
 
 
 class Task(QObject):
@@ -5779,7 +5711,7 @@ def run(argv):
         # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
     app = QApplication(argv)
-    app.setStyle(wheel.Style(app.style().name()))   # lists scroll by pixels (touchpads)
+    look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area
     # the logo (Icon.svg beside the package; Icon.free is its Lunacy source) on every window;
     # Wayland desktops take the icon from kiasecut.desktop instead, found by this name
@@ -5787,7 +5719,6 @@ def run(argv):
     logo = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Icon.svg")
     if os.path.exists(logo):
         app.setWindowIcon(QIcon(logo))
-    app.setStyleSheet(STYLE)
     win = MainWindow()
     win.show()
     win.begin_session()

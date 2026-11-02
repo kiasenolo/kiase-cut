@@ -79,6 +79,13 @@ class BuiltinFilterTests(unittest.TestCase):
             out = eng.run(d, vals, rgba, time=1.0)
             self.assertTrue((out[..., 3] == want).all(), look)
         self.assertEqual(d.params[[p.name for p in d.params].index("null_look")].items[0], "花屏")
+        vals["null_look"] = 0
+        calm = eng.run(d, dict(vals, chaos=0.0), rgba, time=1.0).astype(int)
+        mad = eng.run(d, dict(vals, chaos=1.0), rgba, time=1.0).astype(int)
+        self.assertGreater(int(np.abs(calm - mad).sum()), 0)                  # (madder: not the same picture)
+        by = {p.name: p for p in d.params}
+        self.assertFalse(fx.enabled(by["chaos"], fx.named(d, {"null_look": "透明"})))   # (癲狂程度 is for 花屏 only)
+        self.assertTrue(fx.enabled(by["chaos"], fx.named(d, {"null_look": "花屏"})))
 
     def test_options_that_do_nothing_are_half_faded(self):
         from PySide6.QtWidgets import QApplication

@@ -294,6 +294,20 @@ class ProjectManager(QDialog):
         if it is not None and it.isSelected() and it.data(KIND) != "up":
             fn(it)
 
+    def remove_thumbnail(self, it, path):
+        """拿掉縮圖; a project with a _thumbnail compound asks first (saving would draw it back,
+        so it is turned off until 套用縮圖)."""
+        if thumbnail.has_compound(path) and QMessageBox.question(
+                self, "拿掉縮圖", "這個專案有「_thumbnail」靜態複合片段，縮圖是用它畫的。\n"
+                "真的要拿掉嗎？之後儲存也不會再用它畫縮圖；\n"
+                "要用回來：開啟專案，在複合片段清單對「_thumbnail」按右鍵 →「套用縮圖」。") != QMessageBox.Yes:
+            return
+        try:
+            thumbnail.remove(path)
+        except OSError as exc:
+            QMessageBox.warning(self, "拿掉縮圖", str(exc))
+        it.setIcon(QIcon(card(path)))
+
     def rename(self, it):
         kind, path = it.data(KIND), it.data(Qt.UserRole)
         if self._refuse_open(path):
@@ -382,7 +396,7 @@ class ProjectManager(QDialog):
         if kind == "project":
             menu.addAction("開啟", lambda: self._open(path))
             menu.addAction("開啟專案資料夾", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(workspace.root_of(path))))
-            a = menu.addAction("拿掉縮圖", lambda: (thumbnail.remove(path), it.setIcon(QIcon(card(path)))))
+            a = menu.addAction("拿掉縮圖", lambda: self.remove_thumbnail(it, path))
             a.setEnabled(thumbnail.load(path) is not None)
             menu.addSeparator()
             menu.addAction("重新命名…", lambda: self.rename(it))

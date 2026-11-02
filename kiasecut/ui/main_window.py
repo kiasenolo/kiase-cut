@@ -377,6 +377,7 @@ class MainWindow(QMainWindow):
         self.compounds.tabRequested.connect(self.open_in_tab)
         self.compounds.libraryRequested.connect(self.save_compound_to_library)
         self.compounds.cloneRequested.connect(self.clone_compound_item)
+        self.compounds.thumbnailRequested.connect(lambda _kid: self.apply_thumbnail_compound())
         self.ulpanel = UserLibraryPanel()
         self.ulpanel.settingsRequested.connect(self.open_settings)
         self.ulpanel.newFilterRequested.connect(self.new_filter_file)
@@ -876,6 +877,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         add(m, "專案資訊…", "F11", self.show_project_info)
         add(m, "把目前畫面設為專案縮圖", None, self.thumbnail_from_frame)
+        add(m, "自己做縮圖", None, self.make_thumbnail)
         add(m, "開啟專案資料夾", None, lambda: self.reveal(None))
         add(m, "整理素材到專案資料夾", None, self.collect_external)
         add(m, "清除專案緩存…", None, self.clear_project_cache)
@@ -1426,6 +1428,40 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "專案縮圖", str(exc))
             return
         self.statusBar().showMessage("已把目前的畫面設為專案縮圖", 4000)
+
+    def make_thumbnail(self):
+        """自己做縮圖: the _thumbnail static compound (made now, the canvas's size, when there is
+        none) opened to be drawn; every save draws it into the thumbnail."""
+        if not self.proj:
+            return
+        comp = project.thumbnail_compound(self.proj)
+        if comp is None:
+            if any(c.get("name") == project.THUMBNAIL for c in self.proj.get("compounds", {}).values()):
+                QMessageBox.information(self, "自己做縮圖", f"已經有一個叫「{project.THUMBNAIL}」的複合片段，但它不是靜態的。\n"
+                                                        f"把它改名，或轉為靜態複合片段。")
+                return
+
+            def make(root):
+                kid = edit.add_compound(root, static=True)
+                root["compounds"][kid]["name"] = project.THUMBNAIL
+                return kid
+            kid = self.apply_root("自己做縮圖", make)
+        else:
+            kid = next(k for k, c in self.proj["compounds"].items() if c is comp)
+        if self.path:
+            thumbnail.turn_on(self.path)
+        if kid:
+            self.open_compound_entry(kid)
+            self.statusBar().showMessage(f"在「{project.THUMBNAIL}」裡做縮圖：每次儲存都會用它的畫面更新縮圖", 6000)
+
+    def apply_thumbnail_compound(self):
+        """套用縮圖: the _thumbnail compound is the thumbnail again (after the project manager's 拿掉縮圖)."""
+        if not self.path:
+            QMessageBox.information(self, "專案縮圖", "先儲存專案，才能替它做縮圖。")
+            return
+        thumbnail.turn_on(self.path)
+        self.update_thumbnail()
+        self.statusBar().showMessage(f"已用「{project.THUMBNAIL}」的畫面當專案縮圖", 4000)
 
     def update_thumbnail(self):
         """After a save: draw the _thumbnail static compound (if any) into the thumbnail."""

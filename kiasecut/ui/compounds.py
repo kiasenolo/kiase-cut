@@ -66,6 +66,7 @@ class CompoundPanel(QWidget):
     tabRequested = Signal(str)                   # compound or timeline id: open it in a tab of its own
     libraryRequested = Signal(str)               # compound id: save it in the user's Library
     cloneRequested = Signal(str)                 # compound or timeline id: a copy of it of its own
+    thumbnailRequested = Signal(str)             # compound id (_thumbnail): 套用縮圖
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -215,6 +216,9 @@ class CompoundPanel(QWidget):
                                    lambda: self.componentRequested.emit(kid, False))
                 else:
                     menu.addAction("轉為元件", lambda: self.componentRequested.emit(kid, True))
+                if comp.get("static") and comp.get("name") == project.THUMBNAIL:
+                    a = menu.addAction("套用縮圖", lambda: self.thumbnailRequested.emit(kid))
+                    a.setToolTip("用它的畫面當專案縮圖（在專案管理器拿掉縮圖之後，用這個用回來）")
                 if not comp.get("static") and edit.steady(comp):
                     menu.addAction("轉為" + ("靜態元件" if components.is_component(comp) else "靜態複合片段"),
                                    lambda: self.staticRequested.emit(kid))

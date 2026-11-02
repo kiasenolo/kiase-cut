@@ -88,6 +88,33 @@ class ThumbnailTests(Base):
         got = thumbnail.load(path)
         self.assertEqual(got.pixelColor(got.width() // 2, got.height() // 2).name(), "#ff0000")
 
+    def test_taken_away_and_back(self):
+        """拿掉縮圖 with a _thumbnail compound: saving does not draw it back until 套用縮圖; the
+        mark goes with the project when it is renamed or copied."""
+        proj, path = self.make("A")
+        proj["tracks"].append({"id": "t0", "kind": "video", "name": "v", "clips": [self.red()]})
+        project.link(proj)
+        st = edit.make_compound(proj, proj, ["r"], 0, static=True)
+        edit.rename_compound(proj, st["compound_id"], "_thumbnail")
+        project.save(proj, path)
+        self.assertTrue(thumbnail.has_compound(path))
+        self.assertEqual(thumbnail.update(proj, path), "compound")
+        thumbnail.remove(path)
+        self.assertIsNone(thumbnail.load(path))
+        self.assertTrue(thumbnail.is_off(path))
+        self.assertEqual(thumbnail.update(proj, path), "off")               # a save leaves it away
+        self.assertIsNone(thumbnail.load(path))
+        copy = workspace.copy_project(path)
+        self.assertTrue(thumbnail.is_off(copy))
+        path = workspace.rename_project(path, "B")
+        self.assertTrue(thumbnail.is_off(path))
+        thumbnail.turn_on(path)                                              # 套用縮圖
+        self.assertEqual(thumbnail.update(proj, path), "compound")
+        self.assertIsNotNone(thumbnail.load(path))
+        _, plain = self.make("C")                                            # no compound: no mark
+        thumbnail.remove(plain)
+        self.assertFalse(thumbnail.is_off(plain))
+
 
 class LabelTests(Base):
     def test_title_folder_time(self):

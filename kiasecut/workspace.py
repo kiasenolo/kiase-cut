@@ -149,6 +149,17 @@ def thumbnail_file(path):
     return sub(root_of(path), project_name(path) + ".thumbnail.png")
 
 
+def thumbnail_off_file(path):
+    """A file whose presence says the _thumbnail compound is not drawn into the thumbnail
+    (thumbnail.py: taken away in the project manager)."""
+    return sub(root_of(path), project_name(path) + ".thumbnail.off")
+
+
+def _sidecars(path):
+    """(the project file's thumbnail-related files, the way to name each for another project file)"""
+    return ((thumbnail_file(path), thumbnail_file), (thumbnail_off_file(path), thumbnail_off_file))
+
+
 def find_projects(location, extra=()):
     """Every project file in location (in it and in its project folders, one level down)
     plus the existing ones of extra (the recent list), newest first; each once."""
@@ -249,8 +260,7 @@ def new_folder(parent, name="新資料夾"):
 
 def _project_files(path):
     """The project file and the files that go with it in its folder (its thumbnail)."""
-    thumb = thumbnail_file(path)
-    return [path] + ([thumb] if os.path.exists(thumb) else [])
+    return [path] + [f for f, _ in _sidecars(path) if os.path.exists(f)]
 
 
 def rename_project(path, name):
@@ -273,10 +283,11 @@ def rename_project(path, name):
     if os.path.abspath(new) != os.path.abspath(path):
         if os.path.exists(new):
             raise FileExistsError(f"「{name}」已經有了")
-        old_thumb = thumbnail_file(path)
+        sidecars = _sidecars(path)
         os.rename(path, new)
-        if os.path.exists(old_thumb):
-            os.rename(old_thumb, thumbnail_file(new))
+        for old, name_for in sidecars:
+            if os.path.exists(old):
+                os.rename(old, name_for(new))
     return new.replace("\\", "/")
 
 
@@ -319,9 +330,10 @@ def copy_project(path):
         return rename_project(copied, os.path.basename(dst))
     root = root_of(path)
     new = project_file(root, _unique(root, safe_name(name)))
-    for src in _project_files(path):
-        dst = new if src == path else thumbnail_file(new)
-        shutil.copy2(src, dst)
+    shutil.copy2(path, new)
+    for src, name_for in _sidecars(path):
+        if os.path.exists(src):
+            shutil.copy2(src, name_for(new))
     return new.replace("\\", "/")
 
 

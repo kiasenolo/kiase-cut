@@ -91,6 +91,7 @@ class BuiltinFilterTests(unittest.TestCase):
         from PySide6.QtWidgets import QApplication
         from kiasecut import edit
         from kiasecut.ui.effects_panel import EffectsPanel
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from test_edit import proj
         APP = QApplication.instance() or QApplication([])
         p = proj()

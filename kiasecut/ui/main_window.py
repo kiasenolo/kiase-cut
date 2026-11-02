@@ -956,6 +956,7 @@ class MainWindow(QMainWindow):
         add(m, "取消選區", "Ctrl+Shift+D", lambda: self.set_mark(None))
         add(m, "新增時間線標記", "M", lambda: self.add_marker())
         add(m, "自動吸附", "N", lambda: self.snap_btn.toggle())
+        add(m, "設定 / 取消為參考軌道", "R", self.toggle_reference)
         m.addSeparator()
         add(m, "上一個剪輯點", "Up", lambda: self.jump_edit(-1))
         add(m, "下一個剪輯點", "Down", lambda: self.jump_edit(1))
@@ -3020,6 +3021,19 @@ class MainWindow(QMainWindow):
                 h["color"] = was
         self.timeline.update()
         return col
+
+    def toggle_reference(self):
+        """R: the selected tracks (else the tracks of the selected clips) become 參考 tracks, or stop being."""
+        tl = self.timeline
+        ids = set(tl.selected_tracks) or {t["id"] for t in tl.rows for c in project.walk_clips([t])
+                                           if c["id"] in tl.selected_ids}
+        tracks = [t for t in tl.rows if t["id"] in ids]
+        if not tracks:
+            return
+        on = not all(t.get("reference") for t in tracks)
+        tids = [t["id"] for t in tracks]
+        self.apply(("設為" if on else "取消") + "參考軌道" + (f"（{len(tids)} 條）" if len(tids) > 1 else ""),
+                   lambda lvl: [edit.set_track_flag(lvl, i, "reference", on) for i in tids])
 
     def on_track_action(self, action, tid):
         t = edit.track_by_id(self.container(), tid)

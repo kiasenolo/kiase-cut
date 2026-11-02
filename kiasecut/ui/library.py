@@ -303,6 +303,8 @@ class LibraryPanel(QWidget):
             return self.icons.setdefault("#textstyle", glyph_icon("Aa", "#7c5574"))
         if it["kind"] == "compound":
             return self.icons.setdefault("#compound", glyph_icon("⧉", "#4a6a9a"))
+        if it["kind"] == "preset":
+            return self.icons.setdefault("#preset", glyph_icon("fx+", "#3f7a5a"))
         if it["kind"] == "image":
             return self.thumbs.get(it["path"]) or self.style().standardIcon(QStyle.SP_FileIcon)
         return self.style().standardIcon(QStyle.SP_MediaVolume if it["kind"] == "audio" else QStyle.SP_MediaPlay)

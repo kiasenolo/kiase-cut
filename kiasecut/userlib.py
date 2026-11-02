@@ -6,6 +6,7 @@
         textstyles/                    saved text looks (.json)
         compounds/                     saved compounds (.kccomp): transitions, titles, …
             .media/                    files they use that were not in the Library (hidden)
+        presets/                       效果預設: chains of effects made up already (.kcfx), a few to start
 
 Inside a category the user can make folders as they like. A file inside the Library is not
 copied into a project's Media folder: clips use it where it is (the project file stores it
@@ -21,12 +22,20 @@ from . import library, project, workspace
 
 APP_FOLDER = "KiaseCut"
 CATEGORIES = (("videos", "影片"), ("images", "圖片"), ("sounds", "音效"), ("filters", "濾鏡"),
-              ("textstyles", "文字樣式"), ("compounds", "複合片段"))
+              ("textstyles", "文字樣式"), ("compounds", "複合片段"), ("presets", "效果預設"))
 VIDEO_EXT = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v", ".flv", ".wmv", ".ts", ".mts"}
 SOUND_EXT = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
 EXTS = {"videos": VIDEO_EXT, "images": library.IMAGE_EXT, "sounds": SOUND_EXT,
-        "filters": {".glsl"}, "textstyles": {".json"}, "compounds": {".kccomp"}}
+        "filters": {".glsl"}, "textstyles": {".json"}, "compounds": {".kccomp"}, "presets": {".kcfx"}}
 COMPOUND_EXT = ".kccomp"
+PRESET_EXT = ".kcfx"
+STARTER_PRESETS = (                 # (name, [(filter, its params)]): put in a new Library's presets/
+    ("復古錄影帶", [("builtin:vhs", {}), ("builtin:grain", {}), ("builtin:vignette", {})]),
+    ("電影感", [("builtin:split_tone", {}), ("builtin:grain", {"amount": 0.15}), ("builtin:letterbox", {})]),
+    ("夢幻光暈", [("builtin:glow", {}), ("builtin:light_leak", {})]),
+    ("老電視", [("builtin:crt", {}), ("builtin:rgb_shift", {}), ("builtin:scanlines", {})]),
+    ("黑白老片", [("builtin:grayscale", {}), ("builtin:old_film", {})]),
+)
 COMPOUND_MEDIA = ".media"       # (a hidden folder: not listed in the Library)
 INDEX = ".index.json"
 
@@ -46,7 +55,12 @@ def ensure_layout(root):
     """Create the category folders, and put the filter format notes and an example filter
     where people look for them."""
     for key, _ in CATEGORIES:
+        new = not os.path.isdir(category_dir(root, key))
         os.makedirs(category_dir(root, key), exist_ok=True)
+        if new and key == "presets":                     # (once: the user may delete them)
+            for name, chain in STARTER_PRESETS:
+                save_preset(category_dir(root, key), name, [{"filter": ref, "params": params} for ref, params in chain],
+                            root)
     from . import fx
     folder = category_dir(root, "filters")
     for name, src in (("FORMAT.md", fx.DOC_PATH), (EXAMPLE, fx.TEMPLATE_PATH)):
@@ -103,6 +117,8 @@ class Prober:
             info = {"kind": "textstyle"}
         elif ext == COMPOUND_EXT:
             info = {"kind": "compound"}
+        elif ext == PRESET_EXT:
+            info = {"kind": "preset"}
         else:
             info = library.probe(path)
         self.cache[path] = {"key": key, "info": info}
@@ -275,6 +291,51 @@ def load_compound(path):
     return pack
 
 
+# -- 效果預設 ---------------------------------------------------------------------------------------
+def _effect_holder(effects):
+    """effects in the shape project._map_paths walks (one clip's)."""
+    return {"tracks": [{"id": "t", "kind": "video", "clips": [{"id": "x", "type": "image", "effects": effects}]}]}
+
+
+def save_preset(folder, name, effects, root=None):
+    """A chain of effects (as clips keep them: filter, params, mask, mix, sources) as a .kcfx file
+    in folder; files inside the Library (root) are stored as @library/… so it moves with it."""
+    effects = json.loads(json.dumps([{k: v for k, v in e.items() if k != "id"} for e in effects]))
+    if root:
+        root = library.norm(root)
+        project._map_paths(_effect_holder(effects), lambda p: project.LIB_TAG + library.norm(p)[len(root) + 1:]
+                           if library.within(library.norm(p), root) else p)
+    name = workspace.safe_name(name, "效果預設")
+    os.makedirs(folder, exist_ok=True)
+    dst = os.path.join(folder, library.unique_name(folder, name + PRESET_EXT))
+    with open(dst, "w", encoding="utf-8") as fh:
+        json.dump({"format": "kiasecut-preset", "effects": effects}, fh, ensure_ascii=False, indent=1)
+    return dst
+
+
+def load_preset(path):
+    """The effects of a .kcfx file, ready to go on a clip: every one complete (a filter's
+    parameters it leaves out at their defaults) and its paths absolute."""
+    from . import fx
+    with open(path, encoding="utf-8") as fh:
+        pack = json.load(fh)
+    if pack.get("format") != "kiasecut-preset" or not isinstance(pack.get("effects"), list):
+        raise ValueError("不是效果預設檔")
+    effects = pack["effects"]
+    project._map_paths(_effect_holder(effects), lambda p: project.to_abs(p, os.path.dirname(path)))
+    out = []
+    for e in effects:
+        if not e.get("filter"):
+            continue
+        full = fx.new_effect(e["filter"], "")
+        full["params"].update(e.get("params") or {})
+        full.update({k: v for k, v in e.items() if k not in ("params", "id")})
+        out.append(full)
+    if not out:
+        raise ValueError("這個預設沒有效果")
+    return out
+
+
 # -- sorting files into categories ------------------------------------------------------------------
 def category_for(path, prefer=None):
     """Which category a file belongs to by its extension (None: not for the Library). `prefer`
@@ -282,7 +343,7 @@ def category_for(path, prefer=None):
     ext = os.path.splitext(path)[1].lower()
     if prefer and ext in EXTS[prefer]:
         return prefer
-    for key in ("videos", "images", "sounds", "filters", "compounds"):
+    for key in ("videos", "images", "sounds", "filters", "compounds", "presets"):
         if ext in EXTS[key]:
             return key
     return None

@@ -385,6 +385,7 @@ class MainWindow(QMainWindow):
         self.ulpanel.newFilterRequested.connect(self.new_filter_file)
         self.ulpanel.saveStyleRequested.connect(self.save_text_style)
         self.ulpanel.saveCompoundRequested.connect(self.save_selected_compound)
+        self.ulpanel.savePresetRequested.connect(self.save_effect_preset)
         self.ulpanel.docRequested.connect(self.show_filter_doc)
         self.ulpanel.checkRequested.connect(self.check_filters)
         for key, panel in self.ulpanel.panels.items():
@@ -3535,6 +3536,8 @@ class MainWindow(QMainWindow):
                 self.apply_text_style(it["path"])
             elif key == "compounds":
                 self.place_library_compound(it["path"], track_id, start_us)
+            elif key == "presets":
+                self.use_effect_preset(it["path"], track_id, start_us)
             else:
                 self.apply_root("加入素材", lambda root: library.place_item(
                     self.container(root), it, track_id or None, start_us), select=lambda c: c["id"])
@@ -3552,7 +3555,7 @@ class MainWindow(QMainWindow):
         for iid in item_ids:
             if iid.startswith("mu"):                         # the user's Library: media only
                 key, it = self.ulib.find(iid)
-                if it is not None and key not in ("filters", "textstyles", "compounds"):
+                if it is not None and key not in ("filters", "textstyles", "compounds", "presets"):
                     items.append(it)
             else:
                 it = next((i for i in library.lib(self.proj)["items"] if i["id"] == iid), None)
@@ -4670,7 +4673,8 @@ class MainWindow(QMainWindow):
         "videos": "影片 (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.flv *.wmv *.ts *.mts)",
         "images": "圖片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff *.svg)",
         "sounds": "音效 (*.mp3 *.wav *.m4a *.aac *.flac *.ogg *.opus *.wma)",
-        "filters": "GLSL 濾鏡 (*.glsl)", "textstyles": "文字樣式 (*.json)", "compounds": "複合片段 (*.kccomp)"}
+        "filters": "GLSL 濾鏡 (*.glsl)", "textstyles": "文字樣式 (*.json)", "compounds": "複合片段 (*.kccomp)",
+        "presets": "效果預設 (*.kcfx)"}
 
     def ul_import(self, key, folder):
         files, _ = QFileDialog.getOpenFileNames(self, "加入 Library", "", self.IMPORT_FILTERS[key] + ";;All files (*)")
@@ -4747,6 +4751,10 @@ class MainWindow(QMainWindow):
             menu.addAction("用編輯器開啟（改完存檔就會更新）", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(it["path"])))
         elif key == "compounds":
             menu.addAction("放到播放頭", lambda: self.place_library_compound(it["path"], "", self.playhead_us()))
+        elif key == "presets":
+            menu.addAction("套用到選取的片段", lambda: self.use_effect_preset(it["path"], "", None, clip_ids=True))
+            menu.addAction("放成濾鏡片段（播放頭位置）", lambda: self.use_effect_preset(it["path"], "", self.playhead_us(),
+                                                                                  clip_ids=False))
         elif key == "textstyles":
             menu.addAction("套用到選取的文字", lambda: self.apply_text_style(it["path"], new_if_none=False))
             menu.addAction("用這個樣式新增文字", lambda: self.apply_text_style(it["path"], force_new=True))
@@ -4833,6 +4841,56 @@ class MainWindow(QMainWindow):
         the selected clips' effects are not alike: it replaces them all (add_effects_to)."""
         ref, effect, _src = dropped_fx(payload)
         self.add_effects_to(ids, [effect or ref], "複製效果" if effect else "新增效果")
+
+    def use_effect_preset(self, path, track_id, start_us, clip_ids=None):
+        """效果預設: its effects added to the selected picture clips (clip_ids True; None: when some
+        are selected and it was not dropped on a track), else a filter clip carrying them all at
+        start_us (the playhead when None)."""
+        try:
+            effects = userlib.load_preset(path)
+        except (OSError, ValueError) as exc:
+            self.statusBar().showMessage(f"讀不到效果預設：{exc}", 5000)
+            return
+        ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]
+        if clip_ids is None:
+            clip_ids = bool(ids) and not track_id
+        if clip_ids:
+            if not ids:
+                self.statusBar().showMessage("先在時間軸選一個畫面片段", 4000)
+                return
+            self.apply("套用效果預設", lambda lvl: [edit.put_effect(lvl, cid, e) for cid in ids for e in effects])
+            self.panels.show("effects")
+            return
+        start = self.playhead_us() if start_us is None else start_us
+
+        def fn(lvl):
+            c = edit.add_filter_clip(lvl, effects[0]["filter"], start, track_id=track_id or None, effect=effects[0],
+                                     own_track=self.editing_static())
+            for e in effects[1:]:
+                edit.put_effect(lvl, c["id"], e)
+            return c
+        self.apply("新增濾鏡片段", fn, select=lambda c: c["id"])
+
+    def save_effect_preset(self, folder):
+        """存選取片段的效果: the selected clip's effects, as they are, as a 效果預設 in the Library."""
+        c = next((k for k in self.timeline.selected_clips_primary_first() if k.get("effects")), None)
+        if c is None:
+            self.statusBar().showMessage("先在時間軸選一個有效果的片段", 5000)
+            return
+        name, ok = QInputDialog.getText(self, "存成效果預設", "名稱", text="我的效果")
+        if not ok or not name.strip():
+            return
+        base = library.folder_dir(self.ulib.proj("presets"), self.ulib.mirror("presets"), folder)
+        try:
+            userlib.save_preset(base, name.strip(), c["effects"], self.ulib.root)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "存成效果預設", str(exc))
+            return
+        self.ul_epoch += 1
+        self.request_ul_sync(0)
+        self.panels.show("userlib")
+        self.ulpanel.show_category("presets")
+        self.statusBar().showMessage(f"已存到 Library > 效果預設：{name.strip()}", 4000)
 
     def apply_filter_to_selected(self, ref):
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]

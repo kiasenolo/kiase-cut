@@ -7,13 +7,14 @@ from .. import userlib
 from .library import LibraryPanel
 
 IMPORT_LABELS = {"videos": "加入影片", "images": "加入圖片", "sounds": "加入音效", "filters": "加入檔案",
-                 "textstyles": "加入檔案", "compounds": "加入檔案"}
+                 "textstyles": "加入檔案", "compounds": "加入檔案", "presets": "加入檔案"}
 
 
 class UserLibraryPanel(QWidget):
     settingsRequested = Signal()
     newFilterRequested = Signal(object)         # folder id or None
     saveStyleRequested = Signal(object)         # folder id or None
+    savePresetRequested = Signal(object)        # folder id or None: the selected clip's effects as a 效果預設
     saveCompoundRequested = Signal(object)      # folder id or None
     docRequested = Signal()
     checkRequested = Signal()
@@ -66,6 +67,12 @@ class UserLibraryPanel(QWidget):
                      "拖到時間軸上，或在「複合片段」分頁按右鍵 > 存到 Library")
         b.clicked.connect(lambda: self.saveCompoundRequested.emit(k.current_folder()))
         k.bar2.addWidget(b)
+        f = self.panels["presets"]
+        b = QPushButton("存選取片段的效果")
+        b.setToolTip("把時間軸上選取的片段身上所有的效果（設定、關鍵幀、範圍都一起）存成一個預設；\n"
+                     "之後拖到片段上、按兩下或按右鍵就能一次套用")
+        b.clicked.connect(lambda: self.savePresetRequested.emit(f.current_folder()))
+        f.bar2.addWidget(b)
         lay.addWidget(self.tabs, 1)
         self.setMinimumWidth(260)
 

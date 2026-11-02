@@ -13,8 +13,13 @@ stream is only started for a request that follows on from a recent one (playing,
 dragging forward); get() returns None for a jump, and when ffmpeg cannot read the file, and
 the caller then asks the engine for that one picture.
 
+Seek prefetch (Readers.prefetch): when the playhead stops after a jump, the player starts the
+streams it will need right there and decodes the next half second into memory, so pressing
+play does not wait for ffmpeg to start (the first play after a jump stuttered).
+
 Readers belong to one thread (the player's worker, or an export): each makes its own.
 """
+import collections
 import json
 import math
 import os
@@ -97,6 +102,8 @@ class Stream:
         self.index = -1                      # frame last read (frame i is at start_us + i / fps)
         self.image = None
         self.used = 0
+        self.ahead = collections.deque()     # frames decoded ahead of index, not looked at yet (prefetch)
+        self.ended = False
         cmd = [find_ffmpeg(), "-v", "error", "-nostdin"]
         if hw:
             cmd += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
@@ -118,13 +125,23 @@ class Stream:
         ffmpeg gave nothing at all."""
         size = self.w * self.h * 4
         while self.index < i:
-            data = self.proc.stdout.read(size)
+            data = self.ahead.popleft() if self.ahead else self.proc.stdout.read(size)
             if len(data) < size:                 # the end of the file: hold the last picture
                 break
             self.index += 1
             if self.index == i:                  # (frames skipped over are not converted)
                 self.image = QImage(data, self.w, self.h, self.w * 4, QImage.Format_RGBA8888).copy()
         return self.image
+
+    def fill(self, n, stop=lambda: False):
+        """Decode up to n frames past index into memory (stop(): give up between frames)."""
+        size = self.w * self.h * 4
+        while len(self.ahead) < n and not self.ended and not stop():
+            data = self.proc.stdout.read(size)
+            if len(data) < size:
+                self.ended = True
+                break
+            self.ahead.append(data)
 
     def close(self):
         try:
@@ -169,6 +186,22 @@ class Readers:
         if not follows:                          # a jump: the engine is quicker for one picture
             return None
         return self._start(path, us, sw, sh, inf)
+
+    def prefetch(self, path, us, w, h, seconds=0.5, stop=lambda: False):
+        """Have a stream of path at source time us (started now unless one is there) with the
+        next `seconds` decoded, so playing from us reads them at once (stop(): give up)."""
+        inf = info(path)
+        if inf is None or not find_ffmpeg() or stop():
+            return
+        sw, sh = stream_size(inf["w"], inf["h"], w, h)
+        s = next((s for s in self.streams if s.path == path and (s.w, s.h) == (sw, sh)
+                  and s.index <= s.index_of(us) <= s.index + len(s.ahead)), None)
+        if s is None:
+            if self._start(path, us, sw, sh, inf) is None:
+                return
+            s = self.streams[-1]
+        self.recent.setdefault(path, []).append(us)
+        s.fill(math.ceil(seconds * s.fps) + 1, stop)
 
     def _start(self, path, us, w, h, inf):
         decoder = alpha_decoder(inf)

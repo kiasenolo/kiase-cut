@@ -19,6 +19,11 @@ project's frame rate), so a fine timeline costs nothing more while playing.
 the clock runs that much faster or slower, pictures that cannot keep up are skipped as ever,
 and the sound is made to fit: at its own pitch with 保持音高 (set_keep_pitch, stretch.py), else
 resampled, its pitch following like a tape (speed_pcm).
+
+Seek prefetch: when the playhead rests PREFETCH_REST_S after a jump, the video streams the
+picture there needs are started and PREFETCH_S of them decoded into memory
+(videoreader.Readers.prefetch), so pressing play right after does not stall on ffmpeg starting;
+the sound is decoded per clip when the project is set (audiomix), so it is ready already.
 """
 import os
 import threading
@@ -37,6 +42,8 @@ PREVIEW_W = 960            # until the preview reports its size
 MIN_W = 160
 LEAD = 6                    # frames of sound kept queued ahead of the picture while playing
 RATES = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)     # 播放速度 choices
+PREFETCH_REST_S = 0.15      # the playhead rests this long after a jump: its video streams start ahead
+PREFETCH_S = 0.5            # and decode this much of it into memory
 
 
 def speed_pcm(pcm, rate, carry=0.0):
@@ -85,6 +92,8 @@ class Worker(QObject):
         self.rate_carry = 0.0       # (speed_pcm's leftover fraction of a sample)
         self.keep_pitch = True      # 保持音高: the sound keeps its pitch at other speeds
         self.stretcher = None       # (the stretch.Stretch doing it, from where the sound began)
+        self.asked = []             # video pictures the last stopped picture needed (path, us, w, h)
+        self.prefetch = None        # those, to stream ahead once the playhead rests (seek prefetch)
 
     # called from the UI thread -----------------------------------------------------------
     def set_view(self, view, cache_dir):
@@ -153,6 +162,8 @@ class Worker(QObject):
     def _video(self, path, us, w, h):
         """A video picture: from a streaming reader while playing (videoreader.py), from the
         engine for a single jump."""
+        if not self.playing:
+            self.asked.append((path, us, w, h))
         img = self.readers.get(path, us, w, h)
         if img is not None:
             return img
@@ -176,14 +187,21 @@ class Worker(QObject):
             with self.cv:
                 while not (self.quit or self.new_view or self.want is not None or self.playing
                            or was_playing):
-                    self.cv.wait()
+                    if self.prefetch and not self.cv.wait(PREFETCH_REST_S):
+                        break                           # resting there: stream ahead (below)
+                    if not self.prefetch:
+                        self.cv.wait()
                 if self.quit:
                     break
+                rest = not (self.new_view or self.want is not None or self.playing or was_playing)
                 new, self.new_view = self.new_view, None
                 want, self.want = self.want, None
                 moved_output, self.new_output = self.new_output, False
                 new_rate, self.new_rate = self.new_rate, False
                 playing = self.playing
+            if rest:
+                self._prefetch()
+                continue
             try:
                 if new:
                     view, cache = new
@@ -232,6 +250,17 @@ class Worker(QObject):
         if self.engine:
             self.engine.close()
 
+    def _prefetch(self):
+        """Seek prefetch: the playhead rests after a jump - start the video streams it shows from
+        there and decode PREFETCH_S ahead (given up as soon as anything else comes in)."""
+        todo, self.prefetch = self.prefetch or [], None
+        stop = lambda: bool(self.new_view or self.want is not None or self.playing or self.quit)
+        for path, us, w, h in todo:
+            try:
+                self.readers.prefetch(path, us, w, h, PREFETCH_S, stop)
+            except Exception:                           # (a stream that cannot start: the engine is used, as before)
+                pass
+
     def _renderer(self):
         """The GPU compositor when GPU acceleration is on (and works here), else QPainter."""
         return glrender.make(self._video) if gpu.enabled else render.Renderer(self._video)
@@ -267,7 +296,10 @@ class Worker(QObject):
             self.renderer = self._renderer()
         w = max(2, min(self.render_w, v["width"]))
         h = max(2, round(w * v["height"] / v["width"]))
+        self.asked = []
         self.frameReady.emit(self.renderer.render(v, pos, w, h), pos)
+        if not self.playing:
+            self.prefetch = list(self.asked)            # (streamed ahead if the playhead rests here)
         if self.renderer.errors:
             self.failed.emit("；".join(dict.fromkeys(self.renderer.errors)))
             self.renderer.errors.clear()

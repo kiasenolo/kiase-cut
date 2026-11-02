@@ -342,5 +342,28 @@ class ScaleTests(unittest.TestCase):
                          {"scale": 3.0, "scale_y": 2.0})
 
 
+class PanelDragTests(unittest.TestCase):
+    def test_shapes_can_be_dragged_in_the_grid_and_in_the_list(self):
+        from PySide6.QtCore import QSettings
+        from PySide6.QtWidgets import QAbstractItemView
+        from kiasecut.ui import viewmode
+        from kiasecut.ui.assets_panel import AssetsPanel
+        was = viewmode.remembered("assets", "grid")
+        try:
+            for mode in ("grid", "list", "grid"):
+                viewmode.remember("assets", mode)
+                panel = AssetsPanel()
+                for lst in panel.lists.values():
+                    self.assertTrue(lst.dragEnabled(), mode)
+                    self.assertEqual(lst.dragDropMode(), QAbstractItemView.DragOnly)
+                panel.view_row.itemAt(panel.view_row.count() - 1).widget().click()      # (the other view)
+                for lst in panel.lists.values():
+                    self.assertTrue(lst.dragEnabled(), mode)
+                md = panel.lists["shape"].mimeData([panel.lists["shape"].item(0)])
+                self.assertTrue(bytes(md.data("application/x-kiasecut-media")).startswith(b"asset:") or md.formats())
+        finally:
+            viewmode.remember("assets", was)
+
+
 if __name__ == "__main__":
     unittest.main()

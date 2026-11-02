@@ -174,6 +174,8 @@ class TreeView(QWidget):
 
 def list_toggle(key, lst, grid_icon, grid_size, list_icon=QSize(40, 24)):
     """A button switching an icon QListWidget / QListView between its grid and a list."""
+    drag = (lst.dragEnabled(), lst.dragDropMode(), lst.acceptDrops(), lst.defaultDropAction())
+
     def apply(mode):
         remember(key, mode)
         if mode == "grid":
@@ -187,7 +189,11 @@ def list_toggle(key, lst, grid_icon, grid_size, list_icon=QSize(40, 24)):
             lst.setGridSize(QSize())
             lst.setWordWrap(False)
         lst.setResizeMode(QListView.Adjust)
-        lst.setMovement(QListView.Static if isinstance(lst, QListWidget) and not lst.acceptDrops() else lst.movement())
+        lst.setMovement(QListView.Static if isinstance(lst, QListWidget) and not drag[2] else lst.movement())
+        lst.setDragEnabled(drag[0])                      # (Qt turns dragging off when the view mode changes)
+        lst.setDragDropMode(drag[1])
+        lst.setAcceptDrops(drag[2])
+        lst.setDefaultDropAction(drag[3])
         lst.doItemsLayout()
     mode = remembered(key, "grid")
     apply(mode)

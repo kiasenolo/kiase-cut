@@ -3237,7 +3237,7 @@ def set_prop_expr(proj, clip_id, prop, text):
     """The expression (propexpr.py) the clip's number prop ("group.key", components.number_props_of)
     follows; "" takes it away."""
     _, c = find(proj, clip_id)
-    if prop not in components.number_props_of(c):
+    if prop not in components.number_props_of(c) + components.instance_props(c):
         raise EditError("這個片段沒有那個數字")
     text = str(text).strip()
     why = expr.check(text) if text else None

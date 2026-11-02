@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from kiasecut import assets, components, edit, project, propexpr, render, renderexport  # noqa: E402
+from kiasecut import assets, components, edit, fx, project, propexpr, render, renderexport, textvars  # noqa: E402
 from test_edit import proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -82,6 +82,26 @@ class PropExprTests(unittest.TestCase):
         self.assertIn("time * 2", ins.widgets[("transform", "x")].toolTip())
         self.assertEqual(ins.widgets[("transform", "y")].toolTip(), "")
         self.assertEqual(ins.expr_texts, {"transform.x": "time * 2"})
+
+    def test_a_filters_number_follows_an_expression(self):
+        e = edit.add_effect(self.p, "c1", "builtin:blur")
+        name = next(q.name for q in fx.get("builtin:blur").params if q.type in ("float", "int"))
+        prop = f"fx:{e['id']}.{name}"
+        self.assertIn(prop, components.number_props_of(self.c))
+        edit.set_prop_expr(self.p, "c1", prop, "time * 10 + 1")
+        out = propexpr.at(self.c, 2 * 1_000_000)
+        self.assertAlmostEqual(out["effects"][0]["params"][name], 21.0)
+        self.assertNotEqual(self.c["effects"][0]["params"].get(name), 21.0)                  # (the clip itself is not touched)
+        self.assertAlmostEqual(components.number_at(self.c, prop, 0), float(fx.get("builtin:blur").params[0].default))
+
+    def test_a_text_variables_number_and_an_instances_parameter(self):
+        p = project.new()
+        t = edit.add_text(p, 0, "分 {value}", duration_us=4 * 1_000_000)
+        edit.add_text_var(p, t["id"], "number")
+        edit.set_prop_expr(p, t["id"], "tvar:value.value", "time * 100")
+        out = propexpr.at(t, 1_500_000)
+        self.assertEqual(textvars.expand(out["text"], 1_500_000), "分 150")
+        self.assertEqual(t["text"]["vars"][0]["value"], 0)
 
     def test_needs_the_programs_renderer(self):
         self.assertFalse(renderexport.needs_renderer(self.p))

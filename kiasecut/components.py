@@ -35,7 +35,7 @@ frame). It reaches the layer as layer["place"] (the renderers draw the picture t
 """
 import os
 
-from . import assets, curves, expr, project, svgimage
+from . import assets, curves, expr, fx, project, svgimage, textvars
 
 ICON = "❖"
 KINDS = {"text": "文字", "number": "數字", "color": "顏色", "image": "圖片", "visible": "顯示"}
@@ -122,7 +122,7 @@ def props_of(c):
         out.append("source")
     if c["type"] != "filter":
         out.append("visible")
-    return out + number_props_of(c)
+    return out + [q for q in number_props_of(c) if not q.startswith("params.")]
 
 
 def prop_kind(prop):
@@ -137,7 +137,32 @@ def number_info(c, prop):
         info = assets.FIELD_INFO[key]
         lo, hi = assets.hard_range(key)
         return info[0], float(assets._DEFAULTS.get(key, info[2])), 1, lo, hi
+    if group.startswith("fx:"):                          # a filter's own number: "fx:<effect id>.<name>"
+        e = _effect_of(c, group[3:])
+        d = fx.get(e["filter"])
+        q = next(q for q in d.params if q.name == key)
+        return f"{d.name}·{q.label}", float(q.default), 1, None, None
+    if group.startswith("tvar:"):                        # a text variable's value
+        return "變數 " + group[5:], 0.0, 1, None, None
+    if group == "params":                                # a component instance's own value
+        p = param(c["compound"], key)
+        return p["name"], 0.0, 1, None, None
     return NUMBERS[prop]
+
+
+def _effect_of(c, eid):
+    return next(e for e in c.get("effects") or [] if e["id"] == eid)
+
+
+def _holder_of(c, group):
+    """The dict that holds the numbers of `group` of clip c (read only; {} when it has none)."""
+    if group == "clip":
+        return c
+    if group.startswith("fx:"):
+        return _effect_of(c, group[3:])["params"]
+    if group.startswith("tvar:"):
+        return textvars.find(c.get("text") or {}, group[5:]) or {}
+    return c.get(group) or {}
 
 
 def number_props_of(c):
@@ -156,7 +181,20 @@ def number_props_of(c):
     if a:
         out += ["asset." + f for f in assets.fields_of(a.get("family"))
                 if assets.FIELD_INFO[f][1] == "number" and f not in ("w", "h")]
+    for e in c.get("effects") or []:                     # the numbers of its filters
+        try:
+            out += [f"fx:{e['id']}.{q.name}" for q in fx.get(e["filter"]).params if q.type in ("float", "int")]
+        except Exception:
+            pass
+    if c.get("text"):                                    # and of its text variables
+        out += [f"tvar:{v['name']}.value" for v in textvars.variables(c["text"]) if v["kind"] in ("number", "float", "time")]
     return out
+
+
+def instance_props(c):
+    """The numbers a component instance's own number parameters are (they take expressions too)."""
+    comp = of_clip(c)
+    return [f"params.{p['id']}" for p in params(comp) if p["kind"] == "number"] if comp is not None else []
 
 
 def number_prop_for(c, group, key):
@@ -199,7 +237,10 @@ def number_at(c, prop, t):
     """Number prop "group.key" of layer c at clip time t, in the units the inspector shows."""
     group, key = prop.split(".", 1)
     _label, dflt, factor, _lo, _hi = number_info(c, prop)
-    h = c if group == "clip" else c.get(group) or {}
+    if group == "params":                                # (its own value, else the component's default)
+        own = (c.get("params") or {}).get(key)
+        return float(default(c["compound"], param(c["compound"], key)) if own is None else curves.value(own, t))
+    h = _holder_of(c, group)
     return float(curves.value(h.get(key, dflt), t)) * factor
 
 
@@ -363,6 +404,16 @@ def _put(c, prop, v):
         v = min(max(v, -1e12 if lo is None else lo), 1e12 if hi is None else hi)
         if group == "clip":
             return dict(c, **{key: v})
+        if group == "params":
+            return dict(c, params=dict(c.get("params") or {}, **{key: v}))
+        if group.startswith("fx:"):
+            eid = group[3:]
+            return dict(c, effects=[dict(e, params=dict(e["params"], **{key: v})) if e["id"] == eid else e
+                                    for e in c["effects"]])
+        if group.startswith("tvar:"):
+            name = group[5:]
+            tx = c["text"]
+            return dict(c, text=dict(tx, vars=[dict(x, value=v) if x["name"] == name else x for x in tx["vars"]]))
         base = c.get(group) or {}
         new = dict(base, **{key: v})
         if group == "text" and key == "size":

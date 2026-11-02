@@ -12,7 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from kiasecut import assets, components, curves, edit, project, renderexport  # noqa: E402
+from kiasecut import assets, components, curves, edit, project, propexpr, renderexport  # noqa: E402
 from test_edit import proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -105,6 +105,17 @@ class NumberParamTests(unittest.TestCase):
         self.assertEqual(self.layer()["asset"]["radius"], 120.0)
 
 
+class InstanceNumberTests(NumberParamTests):
+    def test_an_instances_own_number_takes_an_expression(self):
+        p = edit.add_param(self.p, self.kid, "number", "橫移", [("c1", "transform.x")])
+        self.assertIn(f"params.{p['id']}", components.instance_props(self.inst))
+        edit.set_prop_expr(self.p, self.cid, f"params.{p['id']}", "time / 2")
+        out = propexpr.at(self.inst, 1_000_000)
+        self.assertAlmostEqual(out["params"][p["id"]], 0.5)
+        content = components.content(out, 1_000_000)
+        self.assertAlmostEqual(content["tracks"][0]["clips"][0]["transform"]["x"], 0.5)
+
+
 class NumberParamUiTests(unittest.TestCase):
     """The inspector: a number row on the instance, 設為元件參數 on the layers' numbers, drag to bind."""
 
@@ -146,7 +157,7 @@ class NumberParamUiTests(unittest.TestCase):
         ev = QDropEvent(QPointF(3, 3), Qt.CopyAction, md, Qt.LeftButton, Qt.NoModifier)
         self.assertTrue(spin.eventFilter(spin.lineEdit(), ev))                  # (as the field's own filter gets it)
         self.assertEqual(asked, [(p["id"], "transform.x", [layer["id"]])])
-        self.assertIsNone(ins._number_prop(("params", p["id"])))
+        self.assertEqual(ins._number_prop(("params", p["id"])), "params." + p["id"])
         self.assertEqual(ins._number_prop(("asset", "radius")), "asset.radius")
 
 

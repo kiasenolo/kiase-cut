@@ -140,6 +140,7 @@ class EffectsPanel(QWidget):
         self.clip = None                            # the main clip of the form as last shown (what a drag copies)
         self.clips = []                             # the clips the form edits, the main one first
         self.ids = []                               # the picture clips of the selection
+        self.menu_extender = None                   # f(menu, clip ids, number prop): the binding entries of a number's menu
         self.boxes = []                             # the effects' boxes, in order
         self.mask_edit = None                       # effect id whose mask the preview edits (編輯遮罩)
         self.source_edit = None                     # (effect id, colour param) whose source the preview places (編輯位置)
@@ -459,10 +460,20 @@ class EffectsPanel(QWidget):
         s.setDecimals(dec)
         s.setKeyboardTracking(False)
         s.edited.connect(lambda v, g=group, k=key, f=factor: self._queue(g, k, v / f))
+        if group.startswith("fx:"):                  # (a filter's number: 表達式 / 全局參數 / 元件參數)
+            s.lineEdit().setContextMenuPolicy(Qt.CustomContextMenu)
+            s.lineEdit().customContextMenuRequested.connect(lambda pos, s=s, g=group, k=key: self._number_menu(s, f"{g}.{k}", pos))
         self.widgets[(group, key)] = s
         row.addWidget(s, 1)
         row.addWidget(self._key_button(group, key))
         return row
+
+    def _number_menu(self, spin, prop, pos):
+        menu = spin.lineEdit().createStandardContextMenu()
+        if self.ids and self.menu_extender is not None:
+            self.menu_extender(menu, list(self.ids), prop)
+        menu.exec(spin.lineEdit().mapToGlobal(pos))
+        menu.deleteLater()
 
     def _key_button(self, group, key):
         b = key_button(lambda: self._now(self.keyToggled, group, key))

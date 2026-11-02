@@ -433,6 +433,7 @@ class MainWindow(QMainWindow):
         ins.paramBindRequested.connect(self.layer_param_bind)
         ins.paramUnbindRequested.connect(self.unbind_params)
         ins.exprRequested.connect(self.ask_prop_expr)
+        ins.menu_extender = self.number_menu
         ins.vizEdited.connect(lambda ids, fields: self.apply_each("Audio Visualizer", lambda lvl, cid: edit.set_viz(lvl, cid, **fields), ids))
         ins.exprChosen.connect(lambda ids, prop, text: self.apply_each("綁定全局參數", edit.set_prop_expr, ids, prop, text))
         ins.rack_names = lambda: [p["name"] for p in rack.params(self.proj)] if self.proj else []
@@ -444,6 +445,9 @@ class MainWindow(QMainWindow):
         self.mask_panel = Inspector(part="mask")
         mp = self.mask_panel
         mp.paramEdited.connect(self.on_param_edited)
+        mp.menu_extender = self.number_menu
+        mp.component_of = self.open_component
+        mp.paramBindRequested.connect(self.layer_param_bind)
         mp.picture_of = self.dropped_picture
         mp.keyToggled.connect(self.on_key_toggled)
         mp.easingChosen.connect(self.on_easing)
@@ -525,6 +529,7 @@ class MainWindow(QMainWindow):
         ef.sourceMediaChosen.connect(self.on_fx_source_media)
         ef.sourceRegionChanged.connect(self._update_matte_region)
         ef.paramEdited.connect(self.on_fx_param_edited)
+        ef.menu_extender = self.number_menu
         ef.keyToggled.connect(self.on_key_toggled)
         ef.liveEdited.connect(self.on_fx_live_edit)
         ef.liveCancelled.connect(self.rebuild)
@@ -2731,6 +2736,67 @@ class MainWindow(QMainWindow):
         except (edit.EditError, KeyError):
             return None
         return steps[-1][2] if steps else None
+
+    def number_menu(self, menu, ids, prop):
+        """What a number's right-click menu adds (the inspector's, the mask panel's, a filter's): 表達式,
+        a global parameter of the rack (or a new one made from its value), and in a component its parameters."""
+        if not self.proj:
+            return
+        try:
+            c = edit.find(self.container(), ids[0])[1]
+        except edit.EditError:
+            return
+        if prop not in components.number_props_of(c) + components.instance_props(c):
+            return
+        menu.addSeparator()
+        menu.addAction("表達式…", lambda: self.ask_prop_expr(ids, prop))
+        if (c.get("expr") or {}).get(prop):
+            menu.addAction("清除表達式", lambda: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))
+        sub = menu.addMenu("綁定全局參數")
+        sub.addAction("新增全局參數並綁定…", lambda: self.new_rack_and_bind(ids, prop))
+        names = [p["name"] for p in rack.params(self.proj)]
+        if names:
+            sub.addSeparator()
+        for n in names:
+            sub.addAction(n, lambda n=n: self.apply_each("綁定全局參數", edit.set_prop_expr, ids, prop, n))
+        comp = self.open_component()
+        if comp is not None and not prop.startswith("params."):
+            sub = menu.addMenu("設為元件參數")
+            sub.addAction("新參數", lambda: self.layer_param_bind("", prop, ids))
+            nums = [p for p in components.params(comp) if p["kind"] == "number"]
+            if nums:
+                sub.addSeparator()
+            for p in nums:
+                sub.addAction(f"交給「{p['name']}」", lambda pid=p["id"]: self.layer_param_bind(pid, prop, ids))
+            mine = [(cid, p) for cid in ids for p, pr in components.bound(comp).get(cid, ()) if pr == prop]
+            if mine:
+                menu.addAction("解除元件參數「" + "、".join(dict.fromkeys(p["name"] for _c, p in mine)) + "」",
+                               lambda: self.unbind_params([(cid, prop) for cid in ids]))
+
+    def new_rack_and_bind(self, ids, prop):
+        """新增全局參數並綁定: a rack parameter with the number's value now, and the number follows it."""
+        c = edit.find(self.container(), ids[0])[1]
+        t = self.key_times(ids)[ids[0]]
+        cur = components.number_at(c, prop, t)
+        taken = {p["name"] for p in rack.params(self.proj)}
+        name, k = "param", 1
+        while f"{name}{k}" in taken:
+            k += 1
+        name, ok = QInputDialog.getText(self, "新增全局參數", "名稱（在表達式裡直接寫它；英文字母、數字、_）：", text=f"{name}{k}")
+        name = name.strip()
+        if not ok or not name:
+            return
+        why = rack.name_problem(self.proj, name)
+        if why:
+            self.statusBar().showMessage(why, 5000)
+            return
+
+        def fn(root):
+            edit.add_rack_param(root, name, cur)
+            level = self.container(root)
+            for cid in ids:
+                edit.set_prop_expr(level, cid, prop, name)
+        self.apply_root("新增全局參數並綁定", fn)
 
     def ask_prop_expr(self, ids, prop):
         """表達式…: the expression a clip's number follows, asked for now (on every clip selected)."""

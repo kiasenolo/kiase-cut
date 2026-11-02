@@ -386,6 +386,7 @@ class Inspector(QWidget):
         self.component_of = lambda: None   # the component being edited (its content), or None
         self.expr_texts = {}              # {number prop: its expression} of the primary clip (表達式)
         self.rack_names = lambda: []      # the names of the global parameters (全局參數架)
+        self.menu_extender = None         # f(menu, clip ids, number prop): adds the binding entries to a number's menu
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
         self.matte_opacity = 0.5          # how strongly it shows (0 - 1)
@@ -1075,16 +1076,22 @@ class Inspector(QWidget):
         s.edited.connect(lambda v: self._queue(key[0], key[1], v / (factor * self._unit(key))))
         s.lineEdit().setContextMenuPolicy(Qt.CustomContextMenu)
         s.lineEdit().customContextMenuRequested.connect(lambda pos, s=s, key=key: self._spin_menu(s, key, pos))
-        if self.part == "main" and key[0] in ("transform", "text", "mask", "clip", "asset"):
+        if self.part == "main" and key[0] in ("transform", "text", "mask", "clip", "asset"):          # (drag a 參數 here)
             s.on_param_drop = lambda pid, key=key: self._bind_number(pid, key)
         self.widgets[key] = s
         return s
 
     def _number_prop(self, key):
-        """The number prop of component layers that the (group, key) field is, or None."""
-        prop = f"{key[0]}.{key[1]}"
-        return prop if prop in components.NUMBERS or key[0] == "asset" and key[1] in assets.FIELD_INFO \
-            and assets.FIELD_INFO[key[1]][1] == "number" and key[1] not in ("w", "h") else None
+        """The number prop of clip layers (components.py) that the (group, key) field is, or None."""
+        g, k = key
+        prop = f"{g}.{k}"
+        if g in ("transform", "text", "mask", "clip"):
+            return prop if prop in components.NUMBERS else None
+        if g == "asset":
+            return prop if k in assets.FIELD_INFO and assets.FIELD_INFO[k][1] == "number" and k not in ("w", "h") else None
+        if g == "params" or g.startswith("tvar:"):
+            return prop
+        return None
 
     def _bind_number(self, pid, key):
         prop = self._number_prop(key)
@@ -1092,34 +1099,11 @@ class Inspector(QWidget):
             self.paramBindRequested.emit(pid, prop, list(self.clip_ids))
 
     def _spin_menu(self, spin, key, pos):
-        """The field's usual menu, and inside a component 設為元件參數 / 解除元件參數."""
+        """The field's usual menu, then (menu_extender) what binds it: 表達式, a global parameter, a component's."""
         menu = spin.lineEdit().createStandardContextMenu()
-        comp = self.component_of()
         prop = self._number_prop(key)
-        if prop and self.clip_ids and self.part == "main":
-            menu.addSeparator()
-            ids = list(self.clip_ids)
-            menu.addAction("表達式…", lambda: self.exprRequested.emit(ids, prop))
-            names = self.rack_names()
-            if names:
-                bind = menu.addMenu("綁定到全局參數")
-                for n in names:
-                    bind.addAction(n, lambda n=n: self.exprChosen.emit(ids, prop, n))
-            if self.expr_texts.get(prop):
-                menu.addAction("清除表達式", lambda: self.exprCleared.emit(ids, prop))
-        if comp is not None and prop and self.clip_ids:
-            ids = list(self.clip_ids)
-            menu.addSeparator()
-            sub = menu.addMenu("設為元件參數")
-            sub.addAction("新參數", lambda: self.paramBindRequested.emit("", prop, ids))
-            for p in components.params(comp):
-                if p["kind"] == "number":
-                    sub.addAction(f"交給「{p['name']}」", lambda pid=p["id"]: self.paramBindRequested.emit(pid, prop, ids))
-            bound = components.bound(comp)
-            mine = [p for cid in ids for p, pr in bound.get(cid, ()) if pr == prop]
-            if mine:
-                menu.addAction("解除元件參數「" + "、".join(dict.fromkeys(p["name"] for p in mine)) + "」",
-                               lambda: self.paramUnbindRequested.emit([(cid, prop) for cid in ids]))
+        if prop and self.clip_ids and self.menu_extender is not None:
+            self.menu_extender(menu, list(self.clip_ids), prop)
         menu.exec(spin.lineEdit().mapToGlobal(pos))
         menu.deleteLater()
 

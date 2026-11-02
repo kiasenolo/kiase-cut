@@ -359,10 +359,13 @@ def _bars(p, spec, w, h, u, t_us, window, memo):
         ln = float(v[i]) * maxh * (0.5 if spec["mirror"] else 1.0)
         if ln < 0.5:
             continue
-        x = x0 + i * (bw + gap)
+        x, xw = x0 + i * (bw + gap), bw
+        if gap <= 0.0:                                         # (touching bars share one whole-pixel edge: no hairline seam)
+            x = round(x)
+            xw = round(x0 + (i + 1) * bw) - x
         top, bottom = base - ln, base + (ln if spec["mirror"] else 0.0)
         r = min(rad, bw / 2, (bottom - top) / 2)
-        p.drawRoundedRect(QRectF(x, top, bw, bottom - top), r, r)
+        p.drawRoundedRect(QRectF(x, top, xw, bottom - top), r, r)
 
 
 def _curve(points, closed=False):

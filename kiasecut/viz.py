@@ -206,20 +206,23 @@ def spectrum(x):
     return mag
 
 
+def averaged_spectrum(window, t_us, channel):
+    """spectrum() of three windows a quarter of a window apart, averaged as power: the chance spikes of a
+    single window (each bin of noisy sound is random) fade, the steady parts stay."""
+    step = NFFT / 4 / RATE * US
+    pw = sum(np.square(spectrum(mono(window(t_us + k * step, NFFT), channel))) for k in (-1, 0, 1))
+    return np.sqrt(pw / 3.0)
+
+
 def band_levels(mag, n, f_lo, f_hi, log):
     """0 - 1 for each of n bars: the level (rms) of the frequencies inside it, in dB between FLOOR_DB and TOP_DB."""
     hz = RATE / NFFT
     log = float(log)
     edges = log * np.geomspace(f_lo, f_hi, n + 1) + (1.0 - log) * np.linspace(f_lo, f_hi, n + 1)
     lo, hi = edges[:-1] / hz, edges[1:] / hz
-    top = len(mag) - 1
-    out = np.empty(n)
-    for i in range(n):
-        a, b = int(math.floor(lo[i])), int(math.ceil(hi[i]))
-        if b - a <= 1:                                    # narrower than a bin: where its middle falls
-            out[i] = np.interp((lo[i] + hi[i]) / 2, np.arange(top + 1), mag)
-        else:
-            out[i] = math.sqrt(np.mean(np.square(mag[max(a, 0):min(b, top) + 1])))
+    cum = np.concatenate([[0.0], np.cumsum(np.square(mag))])         # bin i covers [i - 0.5, i + 0.5]
+    at = lambda x: np.interp(x + 0.5, np.arange(len(cum)), cum)
+    out = np.sqrt(np.maximum(at(hi) - at(lo), 0.0) / np.maximum(hi - lo, 1e-9))
     centre = (edges[:-1] + edges[1:]) / 2 if log < 1.0 else np.sqrt(edges[:-1] * edges[1:])
     db = 20 * np.log10(np.maximum(out, 1e-7)) + TILT_DB * np.log2(np.maximum(centre, 1.0) / 1000.0)
     return np.clip((db - FLOOR_DB) / (TOP_DB - FLOOR_DB), 0.0, 1.0)
@@ -314,7 +317,7 @@ def _bars(p, spec, w, h, u, t_us, window, memo):
 
     def raw_at(tt):
         return memo("bars", tt, (n, lo, hi, lg, ch),
-                    lambda: band_levels(spectrum(mono(window(tt, NFFT), ch)), n, lo, hi, lg))
+                    lambda: band_levels(averaged_spectrum(window, tt, ch), n, lo, hi, lg))
     v = smooth_across(follow(raw_at, t_us, spec["attack"], spec["decay"]), spec["smooth"])
     maxh, r0, span = _extent(spec, w, h, u)
     rad = spec["radius"] * u                                   # (0: square ends)

@@ -80,6 +80,28 @@ class BuiltinFilterTests(unittest.TestCase):
             self.assertTrue((out[..., 3] == want).all(), look)
         self.assertEqual(d.params[[p.name for p in d.params].index("null_look")].items[0], "花屏")
 
+    def test_options_that_do_nothing_are_half_faded(self):
+        from PySide6.QtWidgets import QApplication
+        from kiasecut import edit
+        from kiasecut.ui.effects_panel import EffectsPanel
+        from test_edit import proj
+        APP = QApplication.instance() or QApplication([])
+        p = proj()
+        e = edit.put_effect(p, "c1", "builtin:blender_glare")
+        e["params"]["type"] = "Streaks"
+        panel = EffectsPanel()
+        c = edit.find(p, "c1")[1]
+        panel.show_clips([c], 0, 30)
+        row = lambda name: panel.param_rows[(e["id"], name)]
+        self.assertEqual(row("streaks").graphicsEffect().opacity(), 1.0)          # (Streaks uses these)
+        self.assertTrue(row("streaks").isEnabled())
+        self.assertEqual(row("sun_position").graphicsEffect().opacity(), 0.5)     # (Sun Beams' only)
+        self.assertFalse(row("sun_position").isEnabled())
+        e["params"]["type"] = "Sun Beams"
+        panel.show_clips([c], 0, 30)
+        self.assertEqual(row("sun_position").graphicsEffect().opacity(), 1.0)
+        self.assertEqual(row("streaks").graphicsEffect().opacity(), 0.5)
+
     def test_levels_and_extras(self):
         d = fx.parse('// @passes 3\n// @param quality menu a "a|b"\n// @levels 0f 1 2 quality\n// @extras - - 0\n'
                      'vec4 effect(vec2 uv) { return src(uv); }', "t")

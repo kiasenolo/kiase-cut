@@ -28,8 +28,8 @@ import os
 
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDrag
-from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
-                               QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
+                               QPushButton, QToolButton, QVBoxLayout, QWidget)
 
 from .. import curves, edit, fx
 from .colorpick import pick_color, qcolor, rgba
@@ -373,6 +373,8 @@ class EffectsPanel(QWidget):
                     rl.addLayout(self._range_row(e["id"], p))
             if p.enable:
                 row.setToolTip("這個選項現在用不上（看其他選項的設定）")
+                row.setGraphicsEffect(QGraphicsOpacityEffect(row))     # (a row that does nothing now: half faded, label too)
+                row.graphicsEffect().setOpacity(1.0)
                 self.param_rows[(e["id"], p.name)] = row
             pl.addWidget(row)
         for sec, _rows in sections.values():                    # (after the effect's own rows, in order)
@@ -858,7 +860,9 @@ class EffectsPanel(QWidget):
             for p in d.params:                                      # options that do nothing now: greyed
                 row = self.param_rows.get((e["id"], p.name))
                 if row is not None:
-                    row.setEnabled(fx.enabled(p, now))
+                    on = fx.enabled(p, now)
+                    row.setEnabled(on)
+                    row.graphicsEffect().setOpacity(1.0 if on else 0.5)
             for p in d.params:
                 stored = [x["params"].get(p.name, p.default) for x in es]
                 self._show(group, p, alike([curves.value(v, t) for v, t in zip(stored, ts)]))

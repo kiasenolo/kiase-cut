@@ -29,7 +29,7 @@ import math
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
-from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QSplitter,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, components, curves, edit, fx
@@ -657,12 +657,21 @@ class CurveEditor(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(4, 4, 4, 4)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(4, 4, 4, 4)
+        self.split = QSplitter(Qt.Vertical)             # the parameters | the curves: drag the line between
+        self.split.setChildrenCollapsible(False)
+        outer.addWidget(self.split)
         self.params = QListWidget()
-        self.params.setMaximumHeight(118)
+        self.params.setMinimumHeight(40)
         self.params.itemChanged.connect(self._ticked)
-        lay.addWidget(self.params)
+        self.split.addWidget(self.params)
+        rest = QWidget()
+        self.split.addWidget(rest)
+        self.split.setStretchFactor(1, 1)
+        self.split.setSizes([118, 600])
+        lay = QVBoxLayout(rest)
+        lay.setContentsMargins(0, 0, 0, 0)
         top = QHBoxLayout()
         self.norm = QCheckBox("正規化")
         self.norm.setToolTip("每條曲線拉到同樣高度；取消則共用一個數值軸")

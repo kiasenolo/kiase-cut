@@ -22,7 +22,7 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
-                               QPushButton, QScrollArea, QSlider, QStackedWidget, QTabBar,
+                               QPushButton, QScrollArea, QSlider, QSplitter, QStackedWidget, QTabBar,
                                QVBoxLayout,
                                QWidget)
 
@@ -745,17 +745,23 @@ class MainWindow(QMainWindow):
         tl_row = QHBoxLayout()
         tl_row.setContentsMargins(0, 0, 0, 0)
         tl_row.setSpacing(0)
-        tl_row.addWidget(tl, 1)
+        self.tl_split = QSplitter(Qt.Horizontal)        # the timeline | a live component's parameters
+        self.tl_split.setChildrenCollapsible(False)
+        self.tl_split.addWidget(tl)
+        tl_row.addWidget(self.tl_split, 1)
         # a live component's parameters, beside its timeline (a static one's are under its layers)
         self.tl_params = ParamList("")
-        self.tl_params.setFixedWidth(270)
+        self.tl_params.setMinimumWidth(160)
         self.tl_params.setVisible(False)
         self.tl_params.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
         self.tl_params.paramUnbind.connect(self.unbind_params)
         self.tl_params.paramAction.connect(self.layer_param_action)
         self.tl_params.defaultDropped.connect(self.param_default_dropped)
         self.tl_params.picture_of = self.dropped_picture
-        tl_row.addWidget(self.tl_params)
+        self.tl_split.addWidget(self.tl_params)
+        self.tl_split.setStretchFactor(0, 1)
+        self.tl_split.setStretchFactor(1, 0)
+        self.tl_split.setSizes([1300, 270])
         self.meter = MeterPanel()
         self.meter.masterChanged.connect(self.on_master)
         tl_row.addWidget(self.meter)
@@ -797,6 +803,12 @@ class MainWindow(QMainWindow):
             "library": self.library, "assets": self.assets, "userlib": self.ulpanel, "vfx": self.vfx,
             "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_dock,
             "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "timeline": lower})
+        for key, split in (("split/curves", cv.split), ("split/component", self.tl_split),
+                           ("split/layers", self.layers.split)):     # where their lines were dragged to
+            state = self.settings().value(key)
+            if state is not None:
+                split.restoreState(state)
+            split.splitterMoved.connect(lambda *_a, k=key, sp=split: self.settings().setValue(k, sp.saveState()))
         # the 遮罩 panel in use (or 編輯遮罩 of an effect in the 效果 one) turns the preview into the mask editor
         def mask_mode():
             pn = self.panels

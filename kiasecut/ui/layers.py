@@ -30,7 +30,7 @@ parameter sets is marked ❖. A plain static compound has 轉為元件 at the to
 from PySide6.QtCore import QItemSelectionModel, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
-                               QPushButton, QVBoxLayout, QWidget)
+                               QPushButton, QSplitter, QVBoxLayout, QWidget)
 
 from .. import assets, components, edit, project
 from .params import ParamList, bound_tip, clip_name, param_menu
@@ -316,12 +316,15 @@ class LayerPanel(QWidget):
         self.thumb = None               # thumb(clip, level) -> QPixmap or None: a layer's small picture
         self.opened = set()             # groups open in the list
         self._shown = None              # (level, selected ids, primary): what the list shows
-        outer = QHBoxLayout(self)                   # the layers, and a component's parameters beside them
-        outer.setContentsMargins(6, 4, 6, 4)
-        outer.setSpacing(12)
-        lay = QVBoxLayout()
-        lay.setContentsMargins(0, 0, 0, 0)
-        outer.addLayout(lay, 3)
+        box = QHBoxLayout(self)
+        box.setContentsMargins(6, 4, 6, 4)
+        self.split = QSplitter(Qt.Horizontal)       # the layers | a component's parameters: drag the line between
+        self.split.setChildrenCollapsible(False)
+        box.addWidget(self.split)
+        left = QWidget()
+        self.split.addWidget(left)
+        lay = QVBoxLayout(left)
+        lay.setContentsMargins(0, 0, 6, 0)
         head = QHBoxLayout()
         title = QLabel("圖層")
         title.setObjectName("title")
@@ -378,7 +381,9 @@ class LayerPanel(QWidget):
         self.params_box.paramAction.connect(self.paramAction)
         self.params_box.defaultDropped.connect(self.defaultDropped)
         self.params = self.params_box.list
-        outer.addWidget(self.params_box, 2)
+        self.split.addWidget(self.params_box)
+        self.split.setStretchFactor(0, 3)
+        self.split.setStretchFactor(1, 2)
 
     def rename_current(self):
         """F2: rename the one selected layer; False otherwise."""

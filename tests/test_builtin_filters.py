@@ -103,13 +103,18 @@ class BuiltinFilterTests(unittest.TestCase):
         rgba[..., 0], rgba[..., 1], rgba[..., 2], rgba[..., 3] = x, y * 2, 90, 255
         vals.update(spread=False, amount=0.0)
         self.assertTrue((eng.run(d, vals, rgba, time=1.0) == rgba).all())       # (nothing failed: as it was)
-        vals.update(amount=1.0, w_keep=0.0, w_color=0.0, w_chaos=0.0, w_gone=1.0)
+        for k in [q.name for q in d.params if q.name.startswith("w_")]:
+            vals[k] = 0.0
+        vals.update(amount=1.0, w_gone=1.0)
         self.assertTrue((eng.run(d, vals, rgba, time=1.0)[..., :3] == 0).all())   # (all gone: black)
         vals.update(gone_look=1)
         self.assertTrue((eng.run(d, vals, rgba, time=1.0)[..., 3] == 0).all())    # (or transparent)
-        vals.update(gone_look=0, w_color=1.0, w_gone=0.0, blk=32.0, split=0.0, stretch=0.0)
+        vals.update(gone_look=0, w_color=1.0, w_gone=0.0, blk=32.0, aspect=1.0, split=0.0)
         out = eng.run(d, vals, rgba, time=1.0)
         self.assertEqual(len(np.unique(out[:32, :32].reshape(-1, 4), axis=0)), 1)   # (only a colour: one block, one colour)
+        vals.update(w_color=0.0, w_vx=1.0)                                          # (only X: a block's columns are all the same down)
+        out = eng.run(d, vals, rgba, time=1.0)
+        self.assertTrue((out[:32, :32] == out[:1, :32]).all())
 
     def test_options_that_do_nothing_are_half_faded(self):
         from PySide6.QtWidgets import QApplication

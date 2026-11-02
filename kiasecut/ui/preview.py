@@ -79,9 +79,11 @@ the project's units: transform x / y in half-canvas units (y up), scale, clockwi
 mask cx / cy in half-material units (y up), w / h as fractions of the material, feather.
 A fullscreen window shows the same frames.
 
-While a static compound is open (accept_media), media can be dragged onto the canvas from the
-media library, the Library tab, 內建素材, the compound list or the file manager: mediaDropped
-reports them and where they were let go (they become the top layer, centred there). With Alt
+Media can be dragged onto the canvas from the media library, the Library tab, 內建素材, the
+compound list or the file manager: mediaDropped reports them and where they were let go (centred
+there: a top layer when a static compound is open, else a clip at the playhead). The point snaps
+to the canvas centre lines and edges and to the centres and edges of the clips shown (Ctrl: freely),
+and the lines it has snapped to are drawn. With Alt
 held, media dropped on a picture clip replace its source (replaceDropped; on one of several
 selected clips, all of them: 批量替換), and the clips that would change are outlined. Dropped
 on a group (its box lit while they would), they go into it instead (移入群組).
@@ -671,7 +673,7 @@ class Preview(QWidget):
     # -- drops ------------------------------------------------------------------------------------
     def _takes(self, md):
         from .timeline import MEDIA_MIME
-        return self.accept_media and self.view is not None and (md.hasFormat(MEDIA_MIME) or md.hasUrls())
+        return self.view is not None and (md.hasFormat(MEDIA_MIME) or md.hasUrls())
 
     def dragEnterEvent(self, e):
         if self._takes(e.mimeData()):
@@ -685,13 +687,35 @@ class Preview(QWidget):
             e.ignore()
             return
         self.drop_replace = self._replace_boxes(e)
-        self.drop_at = None if self.drop_replace else QPointF(*self._to_canvas(e.position()))
-        self.drop_group = None if self.drop_replace else self._group_at(*self._to_canvas(e.position()))
+        self.drop_at, self.guides = (None, []) if self.drop_replace else self._drop_point(e)
+        self.drop_group = None if self.drop_replace or not self.accept_media else self._group_at(*self._to_canvas(e.position()))
         e.setDropAction(Qt.CopyAction)
         e.accept()
         self.update()
 
+    def _drop_point(self, e):
+        """(canvas point a drop is centred at, guides): where the pointer is, snapped to the canvas
+        centre lines and edges and to the centres and edges of the clips shown (Ctrl: as it is)."""
+        x, y = self._to_canvas(e.position())
+        if e.modifiers() & Qt.ControlModifier:
+            return QPointF(x, y), []
+        tol = SNAP_PX * self._k()
+        rects = [b.extents() for b in self.visible_boxes()]
+        tx = [self.W / 2, 0, self.W] + [v for o in rects for v in ((o[0] + o[1]) / 2, o[0], o[1])]
+        ty = [self.H / 2, 0, self.H] + [v for o in rects for v in ((o[2] + o[3]) / 2, o[2], o[3])]
+        guides = []
+        hit = self._best([x], tx, tol)
+        if hit:
+            x = hit[1]
+            guides.append(("x", x))
+        hit = self._best([y], ty, tol)
+        if hit:
+            y = hit[1]
+            guides.append(("y", y))
+        return QPointF(x, y), guides
+
     def dragLeaveEvent(self, e):
+        self.guides = []
         self.drop_at, self.drop_replace, self.drop_group = None, [], None
         self.update()
 
@@ -721,6 +745,8 @@ class Preview(QWidget):
     def dropEvent(self, e):
         from .timeline import MEDIA_MIME
         lit = self._replace_boxes(e) if self._takes(e.mimeData()) else []
+        at = self._drop_point(e)[0]
+        self.guides = []
         self.drop_at, self.drop_replace, self.drop_group = None, [], None
         self.update()
         md = e.mimeData()
@@ -732,8 +758,8 @@ class Preview(QWidget):
             e.accept()
             return
         x, y = self._to_canvas(e.position())
-        tx, ty = round((x - self.W / 2) / (self.W / 2), 5), round((self.H / 2 - y) / (self.H / 2), 5)
-        g = self._group_at(x, y)
+        tx, ty = round((at.x() - self.W / 2) / (self.W / 2), 5), round((self.H / 2 - at.y()) / (self.H / 2), 5)
+        g = self._group_at(x, y) if self.accept_media else None
         gid = g.clip["id"] if g is not None else ""
         if md.hasFormat(MEDIA_MIME):
             ids = [i for i in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",") if i]

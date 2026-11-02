@@ -261,6 +261,7 @@ class MainWindow(QMainWindow):
         self.font_check = None          # 字體對應 waiting for the font list (auto or not), or None
         self.font_dlg = None            # the 字體對應 window while it is open
         self.closing = False
+        self.centre_drop = None         # media dropped on the picture of a timeline: (clips before, (x, y), when)
         self.layer_drop_at = None       # media dropped on the layer list: (layers above, layers before, when, where, group)
         self.group_drop_at = None       # media dropped on a group's lane: (group, its track, start, clips before, when)
         self.autosave_dir = None        # recovery: the autosave folder once this program's session began
@@ -352,7 +353,7 @@ class MainWindow(QMainWindow):
         self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
         self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
-        self.preview.mediaDropped.connect(lambda ids, paths, x, y, g: self.layer_drop(ids, paths, 0, (x, y), g or None))
+        self.preview.mediaDropped.connect(self.preview_drop)
         self.preview.replaceDropped.connect(self.replace_source)
 
         self.inspector = Inspector()
@@ -2007,6 +2008,7 @@ class MainWindow(QMainWindow):
     def after_edit(self, label):
         self.dirty = True
         self._place_dropped_layers()
+        self._centre_dropped()
         self._place_into_group()
         self.meter.set_gain(self.proj.get("master_gain", 1.0))
         try:
@@ -3038,7 +3040,7 @@ class MainWindow(QMainWindow):
             b.setVisible(not static)
         if static and self.player.worker.playing:
             self.player.worker.set_playing(False)
-        self.preview.accept_media = static              # media dragged onto the picture
+        self.preview.accept_media = static              # (the layers of a static compound: groups take drops)
         if static:
             self.layers.set_layers(self.container(), self.timeline.selected_ids, self.timeline.selected_id)
 
@@ -3142,6 +3144,41 @@ class MainWindow(QMainWindow):
             return
         self._place_idents(idents, "", 0)
         self.layer_drop_at = None                        # (placed by now; only imports come later)
+
+    def preview_drop(self, idents, paths, x, y, group):
+        """Media dropped on the picture: layers of a static compound, else clips at the playhead
+        (as dropped on the timeline there), centred at transform position x, y."""
+        if not self.proj:
+            return
+        if self.editing_static():
+            self.layer_drop(idents, paths, 0, (x, y), group or None)
+            return
+        before = {c["id"] for c in project.walk_clips(self.container()["tracks"])}
+        self.centre_drop = (before, (x, y), time.monotonic())
+        start = self.playhead_us()
+        if paths:
+            self.drop_files(paths, self.library.current_folder(), ("", start, False))
+            return
+        self._place_idents(idents, "", start)
+        self.centre_drop = None                          # (placed by now; only imports come later)
+
+    def _centre_dropped(self):
+        """After an edit: clips that came from a drop on the picture are centred where it was."""
+        pend = self.centre_drop
+        if not pend or self.editing_static():
+            return
+        before, (x, y), when = pend
+        if time.monotonic() - when > 120:                # (an import that never came)
+            self.centre_drop = None
+            return
+        new = [c for c in project.walk_clips(self.container()["tracks"]) if c["id"] not in before]
+        if not new:
+            return
+        self.centre_drop = None
+        for c in new:
+            tf = c.get("transform")
+            if tf is not None and not curves.is_animated(tf.get("x")) and not curves.is_animated(tf.get("y")):
+                tf["x"], tf["y"] = x, y
 
     def _place_idents(self, idents, tid, start):
         """Media / assets / compounds by their drag idents, onto the level at start."""

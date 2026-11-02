@@ -249,10 +249,7 @@ class PreviewDropTests(unittest.TestCase):
         r = pv._rect()
         at = QPointF(r.x() + r.width() * 0.75, r.y() + r.height() * 0.25)       # right, up
         pv.dropEvent(QDropEvent(at, Qt.CopyAction, md, Qt.LeftButton, Qt.NoModifier))
-        self.assertEqual(got, [])                                                 # only while a static compound is open
-        pv.accept_media = True
-        pv.dropEvent(QDropEvent(at, Qt.CopyAction, md, Qt.LeftButton, Qt.NoModifier))
-        self.assertEqual(got[0][0], ["m9"])
+        self.assertEqual(got[0][0], ["m9"])                                       # (any level takes a drop)
         self.assertAlmostEqual(got[0][1], 0.5, places=2)
         self.assertAlmostEqual(got[0][2], 0.5, places=2)
         h = edit.History(p)
@@ -269,6 +266,23 @@ class PreviewDropTests(unittest.TestCase):
         self.assertEqual(top["media"]["path"], "n.png")                           # the top layer,
         self.assertEqual((top["transform"]["x"], top["transform"]["y"]), (got[0][1], got[0][2]))  # centred there
         self.assertEqual(len(h.undo_stack), 1)
+
+    def test_drop_point_snaps(self):
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import QMimeData, QPointF, Qt
+        from PySide6.QtGui import QDropEvent
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.preview import Preview
+        QApplication.instance() or QApplication([])
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.set_scene(proj(), 0, None)
+        r = pv._rect()
+        near = QPointF(r.x() + r.width() * 0.5 + 2, r.y() + r.height() * 0.5 - 2)
+        for mods, snapped in ((Qt.NoModifier, True), (Qt.ControlModifier, False)):
+            ev = QDropEvent(near, Qt.CopyAction, QMimeData(), Qt.LeftButton, mods)
+            d, guides = pv._drop_point(ev)
+            self.assertEqual((d.x() == pv.W / 2 and d.y() == pv.H / 2, len(guides) == 2), (snapped, snapped))
 
 
 class GroupInspectorTests(unittest.TestCase):

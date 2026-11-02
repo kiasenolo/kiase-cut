@@ -1320,10 +1320,11 @@ class Inspector(QWidget):
                  "log", "smooth", "color"),
         "wave": ("channel", "attack", "decay", "size", "mirror", "radial", "inner", "smooth", "color"),
         "scope": ("channel", "auto_freq", "cycles", "time_ms", "size", "line_w", "radial", "inner", "smooth", "color"),
-        "vector": ("decay", "size", "line_w", "grid", "color")}
+        "vector": ("decay", "size", "line_w", "grid", "auto_scale", "color")}
     VIZ_GRADIENT = ("bars", "wave")                     # (the kinds that can fill from one colour to another)
     VIZ_TOGGLES = {"auto_freq": "自動頻率（依聲音的音高決定顯示幾個週期，波形會停住）", "mirror": "鏡像（上下對稱）",
-                   "radial": "放射狀（繞成圓形）", "log": "對數頻率軸（每個八度一樣寬）", "grid": "顯示格線"}
+                   "radial": "放射狀（繞成圓形）", "log": "對數頻率軸（每個八度一樣寬）", "grid": "顯示格線",
+                   "auto_scale": "自動縮放（依最近的聲音大小放大，最大的振幅剛好碰到外圈）"}
 
     def _viz_edit(self, **fields):
         if self.clip_ids:

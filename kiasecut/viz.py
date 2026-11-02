@@ -2,7 +2,7 @@
 is given, drawn afresh for every frame by both renderers.
 
 viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w, gap, radius, mirror,
-     radial, inner, f_lo, f_hi, log, smooth, line_w, grid}   (gradient: bars and waves only)
+     radial, inner, f_lo, f_hi, log, smooth, line_w, grid, auto_scale}   (gradient: bars and waves only)
   w, h     the object's size, in canvas pixels, as a shape's: the picture is exactly that rectangle (bars
            grow from its bottom edge up to its top, a wave or a scope fills its height, a vectorscope its
            shorter side, a circle's outer edge is half the shorter side)
@@ -20,6 +20,8 @@ viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w,
   auto_freq (oscilloscope) the picture shows `cycles` periods of the pitch it finds in the sound (the
            wave stands still while the note holds); without a clear pitch, or with it off, a window of
            time_ms milliseconds
+  auto_scale (vectorscope) the picture is scaled so the widest swing of the last AUTO_BACK seconds just
+           reaches the outer circle (a quiet sound fills it too; silence stays at the centre)
   mirror   bars and waves grow both ways;  radial  around a circle of radius `inner`
   gradient color at the foot to color2 at the top
 
@@ -48,6 +50,8 @@ LAUNCH = 3.0                            # a picture looks back this many time co
 MAX_BACK = 60                           # ... but at most this many steps
 WAVE_US = 60_000                        # the sound a waveform looks at
 SCOPE_N = 16384                         # the sound an oscilloscope looks at (room for 300 ms and a trigger search)
+AUTO_BACK = 0.5                         # seconds a vectorscope's 自動縮放 looks back for the widest swing
+AUTO_MAX = 40.0                         # ... and the most it magnifies (a whisper is not blown up into noise)
 MIN_HZ, MAX_HZ = 40.0, 2000.0            # the pitches 自動頻率 looks for
 
 DEFAULTS = {
@@ -55,7 +59,7 @@ DEFAULTS = {
     "color": [1.0, 1.0, 1.0, 1.0], "color2": [1.0, 0.35, 0.8, 1.0], "gradient": False,
     "bar_w": 12.0, "gap": 6.0, "radius": 0.0, "mirror": False, "radial": False, "inner": 120.0,
     "f_lo": 30.0, "f_hi": 16000.0, "log": True, "smooth": 0.4, "line_w": 4.0, "grid": True,
-    "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
+    "auto_scale": True, "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
 }
 LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
           "w": (1.0, 16384.0), "h": (1.0, 16384.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
@@ -479,7 +483,8 @@ def _vector(p, spec, w, h, u, t_us, window, memo):
     k0 = int(math.floor(t_us / STEP_US))
     n = int(RATE * STEP_US / US)
     width = max(1.0, spec["line_w"] * u)
-    for back in range(trail, -1, -1):
+
+    def points(back):
         tt = (k0 - back) * STEP_US
 
         def make(tt=tt):
@@ -487,9 +492,16 @@ def _vector(p, spec, w, h, u, t_us, window, memo):
             l, r = pcm[:, 0], pcm[:, 1]
             step = max(1, len(l) // 160)
             return np.stack([(l - r)[::step] / math.sqrt(2), (l + r)[::step] / math.sqrt(2)], axis=1)
-        xy = memo("vector", tt, (n,), make)
+        return memo("vector", tt, (n,), make)
+    gain = 1.0
+    if spec.get("auto_scale"):
+        peak = max(float(np.hypot(xy[:, 0], xy[:, 1]).max()) if len(xy) else 0.0
+                   for xy in (points(b) for b in range(max(trail, int(AUTO_BACK * US / STEP_US)) + 1)))
+        gain = min(AUTO_MAX, 1.0 / peak) if peak > 1e-4 else 1.0
+    for back in range(trail, -1, -1):
+        xy = points(back)
         alpha = math.exp(-back * STEP_US / US / max(spec["decay"], 1e-3)) if spec["decay"] > 0 else (1.0 if back == 0 else 0.0)
         if alpha < 0.02:
             continue
         p.setPen(QPen(_qc(spec["color"], alpha), width, Qt.SolidLine, Qt.RoundCap))
-        p.drawPoints(QPolygonF([QPointF(cx + float(a) * radius, cy - float(b) * radius) for a, b in xy]))
+        p.drawPoints(QPolygonF([QPointF(cx + float(a) * gain * radius, cy - float(b) * gain * radius) for a, b in xy]))

@@ -665,6 +665,8 @@ class GLRenderer(render.Renderer):
         else:
             return
         disp = disp if kind == "text" else (bw, bh)
+        times = project.blur_times(c, t, fps) if not backdrop else None
+        worlds = [render.clip_world(c, u, W, H) * base for u in times] if times else None   # 動態模糊
         radii = project.corner_radii(c, t, disp, H)
         corners = (disp, radii) if radii else None      # 圓角: cut where the picture is drawn, before its effects
         mask = self.clip_mask(c, t)
@@ -695,12 +697,20 @@ class GLRenderer(render.Renderer):
             elif effects:
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
-                    gl.draw(lay, tex, straight, rect, world, corners=corners)
+                    self.gl_body(lay, tex, straight, rect, world, worlds, corners)
                     out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp, ppu)
                     gl.matte = matte and matte[0].tex
                     gl.draw_layer(tgt, out, opacity, mask, t, disp, inv, blend)
                     if out is not lay:
                         gl.release(out)
+                finally:
+                    gl.release(lay)
+            elif worlds:                                 # 動態模糊: the samples averaged, then put on as one picture
+                lay = gl.layer(tgt.w, tgt.h)
+                try:
+                    self.gl_body(lay, tex, straight, rect, world, worlds, corners)
+                    gl.matte = matte and matte[0].tex
+                    gl.draw_layer(tgt, lay, opacity, mask, t, disp, inv, blend)
                 finally:
                     gl.release(lay)
             else:
@@ -714,6 +724,15 @@ class GLRenderer(render.Renderer):
                 gl.release(held)
         if self.matte_preview and self.matte_preview.get("clip") == c["id"]:
             self.gl_matte_ghost(tgt, c.get("mask"), t, disp, world, fps, self.matte_preview.get("opacity", 0.4))
+
+    def gl_body(self, dst, tex, straight, rect, world, worlds, corners):
+        """The clip's picture onto the (cleared) layer dst: once through world, or (動態模糊) once
+        through each of worlds, added at 1 / n each - their average."""
+        if not worlds:
+            self.gl.draw(dst, tex, straight, rect, world, corners=corners)
+            return
+        for w in worlds:
+            self.gl.draw(dst, tex, straight, rect, w, 1.0 / len(worlds), blend=BLEND_INDEX["add"], corners=corners)
 
     def gl_matte(self, mask, t, disp, world, fps):
         """(layer, give it back after) with a compound mask's picture (see render.matte_image),

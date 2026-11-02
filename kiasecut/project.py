@@ -650,6 +650,26 @@ def is_static(c):
     return c.get("type") == "compound" and bool((c.get("compound") or {}).get("static"))
 
 
+BLUR_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "pivot_x", "pivot_y", "anchor_x", "anchor_y")
+
+
+def blur_times(c, t, fps):
+    """動態模糊 (clip["motion_blur"] {shutter: degrees, samples}): the clip times its picture is
+    drawn at and averaged - spread over the shutter (180°: half a frame) round t, as After Effects
+    does - or None when it is off or nothing of its place moves then."""
+    mb = c.get("motion_blur")
+    tf = c.get("transform") or {}
+    if not mb or not any(curves.is_animated(tf.get(k)) for k in BLUR_FIELDS):
+        return None
+    n = max(2, min(64, int(mb.get("samples", 8))))
+    span = max(0.0, min(720.0, float(mb.get("shutter", 180.0)))) / 360 * 1_000_000 / max(fps, 1e-6)
+    if span <= 0:
+        return None
+    times = [t + (i / (n - 1) - 0.5) * span for i in range(n)]
+    places = {tuple(round(curves.value(tf.get(k, 0.0), u), 6) for k in BLUR_FIELDS) for u in times}
+    return times if len(places) > 1 else None
+
+
 def compound_holders(c):
     """The dicts of clip c that name a compound by its "compound_id": the clip itself (a
     compound clip), its compound mask, its effects' compound sources."""

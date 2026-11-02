@@ -457,6 +457,8 @@ class MainWindow(QMainWindow):
         ins.liveCancelled.connect(self.rebuild)
         ins.speedChosen.connect(lambda ids, v: self.apply_each("速度", edit.set_speed, ids, v))
         ins.freezeChosen.connect(self.on_freeze)
+        ins.motionBlurChosen.connect(lambda ids, on, shutter, samples: self.apply_each(
+            "動態模糊" if on else "取消動態模糊", edit.set_motion_blur, ids, on, shutter, samples))
         ins.normalizeChosen.connect(lambda ids, db: self.apply_each("標準化" if db is not None else "取消標準化",
                                                                     edit.set_normalize, ids, db))
         ins.audioStreamChosen.connect(lambda ids, n: self.apply_each("音軌", edit.set_audio_stream, ids, n))

@@ -12,18 +12,18 @@
 // @param seed float 0 0 100 "種子"
 // @param gone_look menu 黑色 "黑色|透明|白色" "消失的分塊"
 // @panel 分塊種類（比例）
-// @param w_keep float 0.15 0 1 "保留原樣"
-// @param w_color float 0.15 0 1 "只剩色彩"
-// @param w_snow float 0.1 0 1 "混沌：雜點"
+// @param w_keep float 0.02 0 1 "保留原樣"
+// @param w_color float 0.05 0 1 "只剩色彩"
+// @param w_snow float 0.13 0 1 "混沌：雜點"
 // @param w_streak float 0.05 0 1 "混沌：直條紋"
-// @param w_dither float 0.1 0 1 "混沌：抖動殘影"
-// @param w_random float 0.1 0 1 "隨機色彩（輪廓還在）"
-// @param w_vx float 0.07 0 1 "只剩 X（往下拉成直條）"
-// @param w_vy float 0.07 0 1 "只剩 Y（往右拉成橫條）"
-// @param w_cutx float 0.05 0 1 "X 走到一半斷掉"
-// @param w_cuty float 0.05 0 1 "Y 走到一半斷掉"
-// @param w_cutxy float 0.05 0 1 "X、Y 都走到一半斷掉"
-// @param w_gone float 0.06 0 1 "消失"
+// @param w_dither float 0.13 0 1 "混沌：抖動殘影"
+// @param w_random float 0.25 0 1 "隨機色彩（輪廓還在）"
+// @param w_vx float 0.06 0 1 "只剩 X（往下拉成直條）"
+// @param w_vy float 0.06 0 1 "只剩 Y（往右拉成橫條）"
+// @param w_cutx float 0.03 0 1 "X 走到一半斷掉"
+// @param w_cuty float 0.03 0 1 "Y 走到一半斷掉"
+// @param w_cutxy float 0.02 0 1 "X、Y 都走到一半斷掉"
+// @param w_gone float 0.1 0 1 "消失"
 
 // The picture is cut into blocks of one fixed size (blk high, aspect times as wide - the rows
 // lie flat; `trend` makes the blocks along a row fail and fail alike, as a run of memory does).
@@ -32,7 +32,7 @@
 // tend to fail together, as one chip) and becomes one of the kinds below, by the weights:
 //   keep      as it was
 //   color     only its colour: the block's average, the outline gone
-//   snow      dark blue with bright specks
+//   snow      dark blue with bright specks, more of them where the picture is bright (the outline shows a little)
 //   streak    columns of colour that repeat down the block
 //   dither    the picture from elsewhere cut to a few bits
 //   random    the colours random (a hue, and a noise tint) but the outline (the brightness) stays
@@ -114,8 +114,10 @@ vec4 effect(vec2 uv) {
         vec3 col;
         if (kind == 2) {                                    // snow: dark blue, bright specks of every colour
             vec3 n = vec3(hp(t, 52.0), hp(t, 53.0), hp(t, 54.0));
-            col = step(vec3(0.8 + 0.12 * h1(id, 55.0)), n);
-            if (col == vec3(0.0)) col = vec3(0.05, 0.08, 0.28) * (0.4 + 1.2 * n.x);
+            vec4 u = unpremultiply(at(px));                 // the outline: bright places get more, brighter specks
+            float lum = dot(u.rgb, vec3(0.299, 0.587, 0.114));
+            col = step(vec3(0.8 + 0.12 * h1(id, 55.0) - 0.22 * lum), n);
+            if (col == vec3(0.0)) col = vec3(0.05, 0.08, 0.28) * (0.4 + 1.2 * n.x) * (0.45 + 1.4 * lum);
         } else if (kind == 3) {                             // streaks: columns that repeat down the block
             float per = 1.0 + floor(h1(id, 56.0) * 6.0);
             float cx = floor(q.x / per);
@@ -138,8 +140,13 @@ vec4 effect(vec2 uv) {
         vec3 base = hue_turn(vec3(1.0, 0.25, 0.1), 6.2831853 * h1(own, 70.0));
         vec2 t = px + vec2(tick * 17.0, tick * 31.0);
         vec3 noise = vec3(hp(t, 71.0), hp(t, 72.0), hp(t, 73.0));
-        vec3 tint = mix(base, noise * 1.4, 0.55);
-        return premultiply(vec4(clamp(tint * (0.15 + 1.5 * lum), 0.0, 1.0), c.a));
+        vec3 tint = mix(base, noise * 1.4, 0.3);
+        // the outline: the brightness with its contrast raised, and the edges drawn over it
+        float l2 = dot(unpremultiply(at(px + vec2(2.0, 0.0))).rgb, vec3(0.299, 0.587, 0.114));
+        float l3 = dot(unpremultiply(at(px + vec2(0.0, 2.0))).rgb, vec3(0.299, 0.587, 0.114));
+        float edge = clamp((abs(lum - l2) + abs(lum - l3)) * 3.0, 0.0, 1.0);
+        float shade = clamp((lum - 0.5) * 2.2 + 0.5, 0.0, 1.0);
+        return premultiply(vec4(clamp(tint * (0.08 + 1.5 * shade) * (1.0 - 0.7 * edge) + edge * 0.15, 0.0, 1.0), c.a));
     }
 
     if (kind <= 7) {                                        // the vector has only X, or only Y

@@ -488,6 +488,18 @@ class PaintTests(unittest.TestCase):
         self.assertEqual(len(assets.stops_of(assets.at(g, 0))), 3)
         self.assertEqual(len(assets.stops_of(assets.at(assets.make(assets.get("gradient.0"), "", "", 20, 10), 0))), 2)
 
+    def test_stops_and_curve_keys_go_through_set_param(self):
+        p = proj()
+        params = assets.make(assets.get("shape.rect"), "#ff0000", "#0000ff", 1920, 1080)
+        edit.replace_media(p, "c1", assets.item(params, "/a.svg"), params)
+        stops = [[0, [1, 0, 0, 1]], [0.5, [0, 1, 0, 0.5]], [1, [0, 0, 1, 1]]]
+        edit.set_param(p, "c1", "asset", "fill_stops", stops)
+        self.assertEqual(len(edit.find(p, "c1")[1]["asset"]["fill_stops"]), 3)
+        e = edit.put_effect(p, "c1", "builtin:duotone")
+        keys = [[0, 0, 0, 0, 0.3, 0], [1, 1, -0.3, 0, 0, 0]]
+        edit.set_param(p, "c1", "fx:" + e["id"], "ease", keys)
+        self.assertEqual(edit.find(p, "c1")[1]["effects"][0]["params"]["ease"], keys)
+
     def test_old_parameters_still_load(self):
         p = changed(assets.make(assets.get("shape.star"), "#fff", "#000", 1920, 1080))
         self.assertEqual(p["fill_type"], "solid")

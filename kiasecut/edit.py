@@ -1057,7 +1057,7 @@ def _coerce(value):
     """A parameter value as stored: numbers as floats, colours as float lists, choices
     (text, true / false, nothing) as they are (curves.discrete)."""
     if isinstance(value, (list, tuple)):
-        return [float(v) for v in value]
+        return [_coerce(v) if isinstance(v, (list, tuple)) else float(v) for v in value]     # (gradient stops, a curve's keys: lists of lists)
     return value if curves.discrete(value) else float(value)
 
 

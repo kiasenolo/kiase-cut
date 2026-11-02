@@ -131,5 +131,20 @@ class MixPanelTests(unittest.TestCase):
         self.assertEqual(s.value(), 100)
 
 
+class CurveParamTests(unittest.TestCase):
+    def test_duotone_curve_row(self):
+        p = proj()
+        e = edit.put_effect(p, "c1", "builtin:duotone")
+        panel = EffectsPanel()
+        panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        field = panel.widgets[("fx:" + e["id"], "ease")]
+        self.assertEqual(field.v, [0.0, 0.0, 1.0, 1.0])                 # (straight: as before)
+        got = []
+        panel.paramEdited.connect(lambda *a: got.append(a))
+        field.changed.emit([0.9, 0.0, 1.0, 0.1])
+        panel._flush()
+        self.assertEqual(got, [(["c1"], "fx:" + e["id"], "ease", [0.9, 0.0, 1.0, 0.1])])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -29,9 +29,9 @@ TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
 MAX_PASSES = 32
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
-TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu")
+TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve")
 RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "src",
-            "original", "effect", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
+            "original", "effect", "curve_ease", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
 
 
 class FilterError(Exception):
@@ -115,6 +115,10 @@ def _param(rest):
         d = default.lower() in ("1", "true", "yes", "on")
     elif typ == "color":
         d = _color(default)
+    elif typ == "curve":
+        d = [float(x) for x in default.split(",")]
+        if len(d) != 4 or not (0 <= d[0] <= 1 and 0 <= d[2] <= 1):
+            raise ValueError("curve 的預設值要寫成 x1,y1,x2,y2（cubic-bezier 的兩個控制點，x 在 0 - 1）")
     else:
         n = 2 if typ == "vec2" else 3
         d = [float(x) for x in default.split(",")]
@@ -350,7 +354,7 @@ def uniform_value(p, stored, t):
     if p.type == "color":
         v = list(v) + [1.0] * (4 - len(v))
         return tuple(float(x) for x in v[:4])
-    n = 3 if p.type == "vec3" else 2
+    n = 4 if p.type == "curve" else 3 if p.type == "vec3" else 2
     v = list(v) + [0.0] * (n - len(v))
     return tuple(float(x) for x in v[:n])
 
@@ -377,6 +381,19 @@ vec4 original(vec2 uv) { return texture(original_, clamp(uv, 0.0, 1.0)); }
 vec4 extra(vec2 uv) { return texture(extra_, clamp(uv, 0.0, 1.0)); }
 vec4 unpremultiply(vec4 c) { return c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(0.0); }
 vec4 premultiply(vec4 c) { return vec4(c.rgb * c.a, c.a); }
+// a curve parameter (cubic-bezier x1,y1,x2,y2 as in CSS): the y it gives at x, 0 - 1 along it
+float curve_ease(vec4 c, float x) {
+    x = clamp(x, 0.0, 1.0);
+    float lo = 0.0, hi = 1.0, t = x;
+    for (int i = 0; i < 24; i++) {
+        t = 0.5 * (lo + hi);
+        float u = 1.0 - t;
+        float bx = 3.0 * u * u * t * c.x + 3.0 * u * t * t * c.z + t * t * t;
+        if (bx < x) lo = t; else hi = t;
+    }
+    float u = 1.0 - t;
+    return 3.0 * u * u * t * c.y + 3.0 * u * t * t * c.w + t * t * t;
+}
 float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 // the frame as two small numbers (the frame itself is too big for a hash to stay fine: past ~20000 the float
 // loses its fraction and noise made from it stops changing): .x the frame within a block of 1024, .y the block
@@ -431,7 +448,7 @@ out vec2 uv_;
 void main() { uv_ = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }
 """
 GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "vec2": "vec2", "vec3": "vec3",
-              "menu": "int"}
+              "menu": "int", "curve": "vec4"}
 
 
 def shader_source(d, sampled=()):

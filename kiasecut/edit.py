@@ -2143,7 +2143,7 @@ def replace_effects(proj, clip_id, whats):
     return [put_effect(proj, clip_id, w) for w in whats]
 
 
-_FITS = {"float": "number", "int": "number", "bool": "bool", "menu": "choice", "color": 4, "vec2": 2, "vec3": 3}
+_FITS = {"float": "number", "int": "number", "bool": "bool", "menu": "choice", "color": 4, "vec2": 2, "vec3": 3, "curve": 4}
 
 
 def _value_kind(v):

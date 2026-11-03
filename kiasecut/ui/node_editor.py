@@ -471,7 +471,11 @@ class NodeItem(QGraphicsItem):
         if self.sizing:
             at, w0 = self.sizing
             self.prepareGeometryChange()
-            self.w = max(MIN_WIDTH, round(w0 + e.scenePos().x() - at))
+            w = w0 + e.scenePos().x() - at
+            for view in self.scene().views():            # (the right edge lands on the grid, as a dragged node does)
+                if view.snapping(e.modifiers()):
+                    w = round((self.pos().x() + w) / GRID) * GRID - self.pos().x()
+            self.w = max(MIN_WIDTH, round(w))
             self.update()
             for view in self.scene().views():
                 view.reroute()
@@ -623,8 +627,13 @@ class FrameItem(QGraphicsItem):
         if self.size:
             at, w0, h0 = self.size
             d = e.scenePos() - at
+            w, h = w0 + d.x(), h0 + d.y()
+            for view in self.scene().views():            # (the far corner lands on the grid)
+                if view.snapping(e.modifiers()):
+                    w = round((self.pos().x() + w) / GRID) * GRID - self.pos().x()
+                    h = round((self.pos().y() + h) / GRID) * GRID - self.pos().y()
             self.prepareGeometryChange()
-            self.w, self.h = max(60.0, w0 + d.x()), max(40.0, h0 + d.y())
+            self.w, self.h = max(60.0, w), max(40.0, h)
             self.update()
             return
         super().mouseMoveEvent(e)
@@ -716,7 +725,10 @@ class GraphView(QGraphicsView):
         self.press_at = {}
         self.panning = None                      # the point of a middle-button drag moving the view
         self.snap = True                         # 吸附: dragged nodes land on the grid (Ctrl while dragging: the other way)
-        self.grabbed = None                      # the item the left button went down on
+        self.grabbed = None                      # the id of the node the left button went down on
+        self.swallow = False                     # the release after the click that put carried nodes down
+        self.carrying = None                     # nodes just made, stuck to the pointer till a click: {ids, off, remove}
+        self.viewport().setMouseTracking(True)         # (carried nodes follow the pointer with no button down)
         self.setAcceptDrops(True)
 
     # -- media dragged in (the library's pictures / videos / compounds, or files): source nodes
@@ -768,7 +780,68 @@ class GraphView(QGraphicsView):
         return None
 
     # -- mouse ---------------------------------------------------------------------------------------
+    def carry(self, ids, remove):
+        """Blender's grab: nodes just made (added, pasted, duplicated) follow the pointer till a click puts them down (Esc or the
+        right button: pasted / added ones are taken back, duplicates stay where they were made)."""
+        ids = [i for i in ids if i in self.items_by_id]
+        if not ids:
+            return
+        for i, it in self.items_by_id.items():
+            it.setSelected(i in ids)
+        first = self.items_by_id[ids[0]]
+        self.carrying = {"ids": ids, "remove": remove, "start": {i: self.items_by_id[i].pos() for i in ids},
+                         "off": QPointF(first.boundingRect().width() / 2 - SOCKET_R, HEAD / 2)}
+        self.press_at = {i: (p.x(), p.y()) for i, p in self.carrying["start"].items()}
+        self.setFocus()
+        self._carry_to(self.mapToScene(self.mapFromGlobal(QCursor.pos())), False)
+
+    def _carry_to(self, pos, ctrl):
+        c = self.carrying
+        first = self.items_by_id.get(c["ids"][0])
+        if first is None:
+            return
+        want = pos - c["off"]
+        if self.snap != ctrl:
+            want = QPointF(round(want.x() / GRID) * GRID, round(want.y() / GRID) * GRID)
+        d = want - first.pos()
+        for i in c["ids"]:
+            it = self.items_by_id.get(i)
+            if it is not None:
+                it.setPos(it.pos() + d)
+        self._hover_link()
+
+    def _put_down(self, cancel):
+        c, self.carrying = self.carrying, None
+        for ln, *_ in self.link_items:
+            ln.setPen(QPen(QColor("#d0d0d8"), 2))
+        if cancel and c["remove"]:
+            self.press_at = {}
+            self.over = None
+            self.editor.removeRequested.emit(self.editor.eid, c["ids"])
+            return
+        over, self.over = self.over, None
+        lone = self._lone_node() if over and not cancel else None
+        moved = {i: (self.items_by_id[i].pos().x(), self.items_by_id[i].pos().y()) for i in c["ids"] if i in self.items_by_id
+                 and self.press_at.get(i) not in (None, (self.items_by_id[i].pos().x(), self.items_by_id[i].pos().y()))}
+        self.press_at = {}
+        if cancel:
+            for i, p in c["start"].items():
+                if i in self.items_by_id:
+                    self.items_by_id[i].setPos(p)
+        elif over and lone and list(moved) == [lone[0]]:
+            _ln, a, b, sock, out = over
+            x, y = moved[lone[0]]
+            self.editor.insertRequested.emit(self.editor.eid, lone[0], x, y, a, b, sock, out)
+        elif moved:
+            self.editor.moveRequested.emit(self.editor.eid, moved)
+        self.editor.selection_changed()
+
     def mousePressEvent(self, e):
+        if self.carrying:                                  # (the click that puts the nodes down; the release after it is not a drag)
+            self._put_down(e.button() != Qt.LeftButton)
+            self.swallow = True
+            e.accept()
+            return
         pos = self.mapToScene(e.position().toPoint())
         box = self.editor.edit_proxy                    # (a number being typed: pressing anywhere else keeps it and closes the box)
         if box is not None and not box.sceneBoundingRect().contains(pos) and self.editor.edit_finish is not None:
@@ -835,6 +908,9 @@ class GraphView(QGraphicsView):
         ln.route(self.items_by_id[src].output_pos(out), pos)
 
     def mouseMoveEvent(self, e):
+        if self.carrying:
+            self._carry_to(self.mapToScene(e.position().toPoint()), bool(e.modifiers() & Qt.ControlModifier))
+            return
         if self.panning is not None:
             d = e.position() - self.panning
             self.panning = e.position()
@@ -860,6 +936,10 @@ class GraphView(QGraphicsView):
         if e.buttons() & Qt.LeftButton:
             self._snap_grabbed(bool(e.modifiers() & Qt.ControlModifier))
             self._hover_link()
+
+    def snapping(self, mods):
+        """Whether a move or resize with these modifiers lands on the grid (the snap button, Ctrl does the opposite)."""
+        return self.snap != bool(mods & Qt.ControlModifier)
 
     def _snap_grabbed(self, ctrl):
         """Blender's grid snapping: the node being dragged lands on the grid, the rest of the selection moving with it (the
@@ -932,6 +1012,10 @@ class GraphView(QGraphicsView):
             self.over = over
 
     def mouseReleaseEvent(self, e):
+        if self.swallow:
+            self.swallow = False
+            e.accept()
+            return
         if self.panning is not None and e.button() == Qt.MiddleButton:
             self.panning = None
             self.unsetCursor()
@@ -1063,6 +1147,10 @@ class GraphView(QGraphicsView):
 
     def keyPressEvent(self, e):
         key, mods = e.key(), e.modifiers()
+        if self.carrying:
+            if key in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter):
+                self._put_down(key == Qt.Key_Escape)
+            return
         if key == Qt.Key_A and mods == Qt.NoModifier:
             for it in self.items_by_id.values():
                 it.setSelected(True)
@@ -1304,6 +1392,7 @@ class NodeEditor(QWidget):
         self.edit_proxy = None
         v.items_by_id, v.link_items = {}, []
         v.over = v.grabbed = None                          # (they pointed at items the clear just deleted)
+        hold = v.carrying
         nodes = self.graph["nodes"]
         if self.level and (nodes.get(self.level) or {}).get("type") != ng.GROUP:
             self.level = ""
@@ -1341,6 +1430,10 @@ class NodeEditor(QWidget):
         sc.setSceneRect(r.adjusted(-1500, -1500, 1500, 1500))
         if fit:
             v.fit()
+        if hold:                                            # (nodes held by the pointer stay held)
+            v.carry([i for i in hold["ids"]], hold["remove"])
+            if v.carrying:
+                v.carrying["start"] = {i: p for i, p in hold["start"].items() if i in v.items_by_id}
 
     # -- the fields of the nodes -------------------------------------------------------------------------
     class Values:
@@ -1543,6 +1636,11 @@ class NodeEditor(QWidget):
         if one != self._selected:
             self._selected = one
             self.nodeSelected.emit(self.eid or "", one)
+
+    def carry(self, ids, remove=True):
+        """Nodes made now (ids) are stuck to the pointer till a click."""
+        self.view.carry(list(ids), remove)
+        self.selection_changed()
 
     def select(self, nid):
         for i, it in self.view.items_by_id.items():

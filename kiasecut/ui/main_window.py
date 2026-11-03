@@ -5373,7 +5373,7 @@ class MainWindow(QMainWindow):
         if cid:
             made = []
             if self.apply("新增節點", lambda lvl: made.append(edit.add_graph_node(lvl, cid, eid, node, x, y))) is not None and made:
-                self.nodes.select(made[0])
+                self.nodes.carry(made)                         # (stuck to the pointer till a click, as Blender's)
 
     def on_node_remove(self, eid, ids):
         cid = self.node_clip()
@@ -5423,7 +5423,7 @@ class MainWindow(QMainWindow):
             if ins:
                 edit.connect_graph(lvl, cid, eid, src, nid, ins[0], out)
         if self.apply("新增節點", do) is not None and made:
-            self.nodes.select(made[0])
+            self.nodes.carry(made)
 
     def on_node_media(self, eid, ids, paths, x, y):
         """Pictures, videos and compounds dragged into the node editor: a source node each, showing it."""
@@ -5532,7 +5532,7 @@ class MainWindow(QMainWindow):
         if cid:
             made = []
             if self.apply("貼上節點", lambda lvl: made.extend(edit.paste_graph_nodes(lvl, cid, eid, data, x, y, self.nodes.level or None))) is not None and made:
-                self.nodes.select(made[0])
+                self.nodes.carry(made)
 
     def on_node_frame(self, eid, nid, change):
         cid = self.node_clip()
@@ -5554,7 +5554,7 @@ class MainWindow(QMainWindow):
         if cid:
             made = []
             if self.apply("複製節點", lambda lvl: made.extend(edit.duplicate_graph_nodes(lvl, cid, eid, ids))) is not None and made:
-                self.nodes.select(made[0])
+                self.nodes.carry(made, remove=False)
 
     def on_node_dissolve(self, eid, ids):
         cid = self.node_clip()

@@ -676,6 +676,7 @@ class NodeEditorTests(unittest.TestCase):
         it = ed.view.items_by_id["output"]
         w0 = it.w
         v = ed.view
+        v.snap = False
         a = it.mapToScene(QPointF(w0 - 3, 40))
         self.drag(ed, a, a + QPointF(60, 0))
         self.assertEqual(len(got), 1)
@@ -684,6 +685,42 @@ class NodeEditorTests(unittest.TestCase):
         b = it.mapToScene(QPointF(it.w - 3, 40))
         self.drag(ed, b, b - QPointF(500, 0))
         self.assertEqual(it.w, 140.0)                            # (narrowest)
+
+    def test_widening_snaps_the_right_edge_to_the_grid(self):
+        from kiasecut.ui import node_editor
+        ed = self.make()
+        got = []
+        ed.widthEdited.connect(lambda eid, nid, w: got.append((nid, w)))
+        it = ed.view.items_by_id["output"]
+        a = it.mapToScene(QPointF(it.w - 3, 40))
+        self.drag(ed, a, a + QPointF(37, 0))
+        self.assertEqual((it.pos().x() + it.w) % node_editor.GRID, 0)
+        self.assertEqual(got[-1], ("output", it.w))
+
+    def test_new_nodes_stick_to_the_pointer_till_a_click(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 150)
+        ed = self.make(build)
+        v = ed.view
+        moved, gone = [], []
+        ed.moveRequested.connect(lambda eid, m: moved.append(m))
+        ed.removeRequested.connect(lambda eid, ids: gone.append(ids))
+        ed.carry(["math1"])
+        self.assertIsNotNone(v.carrying)
+        at = v.items_by_id["math1"].pos()
+        v._carry_to(QPointF(500, 400), False)                        # (the pointer moves, no button: the nodes follow)
+        self.assertNotEqual(v.items_by_id["math1"].pos(), at)
+        self.assertEqual(v.items_by_id["math1"].pos().x() % 20, 0)   # (and snap to the grid)
+        QTest.mouseClick(v.viewport(), Qt.LeftButton, Qt.NoModifier, QPoint(200, 160))
+        self.assertIsNone(v.carrying)
+        self.assertEqual(list(moved[-1]), ["math1"])                 # (put down: one move)
+        ed.carry(["math1"])                                          # Esc takes an added node back
+        QTest.keyClick(v, Qt.Key_Escape)
+        self.assertEqual(gone, [["math1"]])
+        ed.carry(["math1"], remove=False)                            # (a duplicate stays where it was made)
+        QTest.keyClick(v, Qt.Key_Escape)
+        self.assertEqual(gone, [["math1"]])
+        self.assertIsNone(v.carrying)
 
     def test_width_is_kept(self):
         def g(e):

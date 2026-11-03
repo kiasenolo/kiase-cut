@@ -41,6 +41,20 @@ class NodeEditorTests(unittest.TestCase):
         APP.processEvents()
         return ed
 
+    def test_string_node_of_several_lines_opens_all_of_them(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.STRING, "value": "one\ntwo\nthree"}, 0, 150, base="s")
+            ng.add_node(e["graph"], {"type": ng.STRING, "value": "single"}, 0, 300, base="t")
+        ed = self.make(build)
+        rows = lambda nid: {r["kind"]: r for r in ed.view.items_by_id[nid].rows}
+        self.assertEqual(rows("s1")["string"]["h"], 22.0)                       # (shut: the first line, the others after a ⏎)
+        self.assertEqual(rows("s1")["panel"]["label"], "顯示全部行")
+        self.assertNotIn("panel", rows("t1"))                                    # (one line: nothing to open)
+        ed.panel_open[("s1", "顯示全部行")] = True
+        ed.rebuild()
+        APP.processEvents()
+        self.assertEqual(rows("s1")["string"]["h"], 66.0)                        # (open: a line each)
+
     def test_shows_nothing_without_a_node_effect(self):
         ed = NodeEditor()
         ed.show_clip({"id": "c", "type": "image", "effects": []})

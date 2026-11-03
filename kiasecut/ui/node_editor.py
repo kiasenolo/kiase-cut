@@ -38,6 +38,8 @@ PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / g
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
 HEADS = {ng.STRING: "#a8473f", ng.FONT: "#a8473f", ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
          "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
+STRING_LINES = "顯示全部行"                    # (the row of a string node of several lines that opens all of them)
+MAX_LINES = 12                                  # (as many lines of a string as its box shows; the rest are in the edit box)
 GHOST_ITEM = "\0newitem"                       # the empty input of a Menu Switch: drag a link into it to make an option
 GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸出: drag a link into it to make a group output
 PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
@@ -178,7 +180,11 @@ class NodeItem(QGraphicsItem):
                     for p in (q for q in d.params if q.panel == name and shown(q.name) and q.name not in paired):
                         add("param", p.label, socket(p), p)
         elif node["type"] == ng.STRING:                                  # (Blender's String constant: its output above, the words here)
-            add("string", "")
+            lines = str(node.get("value", "")).split("\n")
+            opened = len(lines) > 1 and self.editor.panel_open.get((self.nid, STRING_LINES), False)
+            add("string", "", h=ROW * min(len(lines), MAX_LINES) if opened else ROW)          # (a string of several lines: its first, or all of them)
+            if len(lines) > 1:
+                add("panel", STRING_LINES, panel=opened)
         elif node["type"] == ng.FONT:                                    # (Blender's Font constant: its output above, the font here)
             add("fontvalue", "")
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
@@ -234,7 +240,7 @@ class NodeItem(QGraphicsItem):
         if r["kind"] == "plot":
             return QRectF(10, r["y"] + 2, self.w - 20, r["h"] - 4)
         if r["kind"] in ("string", "fontvalue"):                   # (the whole row: it has no label)
-            return QRectF(10, r["y"] + 3, self.w - 20, ROW - 6)
+            return QRectF(10, r["y"] + 3, self.w - 20, r["h"] - 6)
         x0 = self.w * LABEL_W
         w = (self.w - 10 - x0) / cells
         return QRectF(x0 + cell * w + (2 if cell else 0), r["y"] + 3, w - (2 if cells > 1 and cell < cells - 1 else 0), ROW - 6)
@@ -356,6 +362,12 @@ class NodeItem(QGraphicsItem):
             self._box(p, box, bg)
             p.setPen(text)
             src = self.editor.sources.get(self.nid) or {}
+            if kind == "string" and r["h"] > ROW:                  # (all the lines, one under the other)
+                lines = str(self.node.get("value", "")).split("\n")[:MAX_LINES]
+                for i, line in enumerate(lines):
+                    p.drawText(QRectF(box.left() + 6, r["y"] + 3 + i * ROW, box.width() - 12, ROW - 6), Qt.AlignVCenter | Qt.AlignLeft,
+                               p.fontMetrics().elidedText(line, Qt.ElideRight, int(box.width() - 12)))
+                return
             shown = (src.get("content", ng.TEXT_CONTENT) or "").replace("\n", " ⏎ ") if kind == "text" else \
                 self.editor.font_name(src.get("font_path")) if kind == "font" else self.editor.font_name(self.node.get("value")) if kind == "fontvalue" else \
                 str(self.node.get("value", "")).replace("\n", " ⏎ ")

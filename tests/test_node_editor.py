@@ -55,6 +55,21 @@ class NodeEditorTests(unittest.TestCase):
         APP.processEvents()
         self.assertEqual(rows("s1")["string"]["h"], 66.0)                        # (open: a line each)
 
+    def test_text_node_of_several_lines_opens_all_of_them(self):
+        def build(e):
+            nid = ng.add_node(e["graph"], {"type": ng.SOURCE, "kind": "text"}, 0, 150, base="x")
+            e.setdefault("sources", {})[nid] = {"kind": "text", "content": "a\nb\nc\nd", "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        rows = lambda: {r["kind"]: r for r in ed.view.items_by_id["x1"].rows}
+        self.assertEqual(rows()["text"]["h"], 22.0)
+        self.assertIn("顯示全部行", [r["label"] for r in ed.view.items_by_id["x1"].rows if r["kind"] == "panel"])
+        ed.panel_open[("x1", "顯示全部行")] = True
+        ed.rebuild()
+        APP.processEvents()
+        self.assertEqual(rows()["text"]["h"], 88.0)
+        self.assertGreater(ed.view.items_by_id["x1"].field_rect(rows()["text"]).height(), 80)
+
     def test_shows_nothing_without_a_node_effect(self):
         ed = NodeEditor()
         ed.show_clip({"id": "c", "type": "image", "effects": []})

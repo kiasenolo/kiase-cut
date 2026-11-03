@@ -160,7 +160,11 @@ class NodeItem(QGraphicsItem):
                     add("image", "（拉一條線進來新增選項）", GHOST_ITEM)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
                 if ng.is_text(node):                                   # (a text: its words - or a string node's - and font first)
-                    add("text", "文字", ng.TEXT_SOCKET)
+                    lines = str((self.editor.sources.get(self.nid) or {}).get("content", ng.TEXT_CONTENT)).split("\n")
+                    opened = len(lines) > 1 and ng.TEXT_SOCKET not in self.linked and self.editor.panel_open.get((self.nid, STRING_LINES), False)
+                    add("text", "文字", ng.TEXT_SOCKET, h=ROW * min(len(lines), MAX_LINES) if opened else ROW)
+                    if len(lines) > 1 and ng.TEXT_SOCKET not in self.linked:
+                        add("panel", STRING_LINES, panel=opened)
                     add("font", "字體", ng.FONT_SOCKET)
                 else:
                     for _part, sock, label in ng.ASSET_PAINTS:
@@ -243,7 +247,8 @@ class NodeItem(QGraphicsItem):
             return QRectF(10, r["y"] + 3, self.w - 20, r["h"] - 6)
         x0 = self.w * LABEL_W
         w = (self.w - 10 - x0) / cells
-        return QRectF(x0 + cell * w + (2 if cell else 0), r["y"] + 3, w - (2 if cells > 1 and cell < cells - 1 else 0), ROW - 6)
+        return QRectF(x0 + cell * w + (2 if cell else 0), r["y"] + 3, w - (2 if cells > 1 and cell < cells - 1 else 0),
+                      (r["h"] if r["kind"] == "text" else ROW) - 6)
 
     def has_field(self, r):
         if r["kind"] == "param":
@@ -362,8 +367,8 @@ class NodeItem(QGraphicsItem):
             self._box(p, box, bg)
             p.setPen(text)
             src = self.editor.sources.get(self.nid) or {}
-            if kind == "string" and r["h"] > ROW:                  # (all the lines, one under the other)
-                lines = str(self.node.get("value", "")).split("\n")[:MAX_LINES]
+            if kind in ("string", "text") and r["h"] > ROW:         # (all the lines, one under the other)
+                lines = str(self.node.get("value", "") if kind == "string" else src.get("content", ng.TEXT_CONTENT)).split("\n")[:MAX_LINES]
                 for i, line in enumerate(lines):
                     p.drawText(QRectF(box.left() + 6, r["y"] + 3 + i * ROW, box.width() - 12, ROW - 6), Qt.AlignVCenter | Qt.AlignLeft,
                                p.fontMetrics().elidedText(line, Qt.ElideRight, int(box.width() - 12)))

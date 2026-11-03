@@ -66,6 +66,28 @@ class GraphEditTests(unittest.TestCase):
         self.assertIsNot(copy["graph"], self.e["graph"])
 
 
+class GraphPresetTests(unittest.TestCase):
+    def test_saved_as_a_custom_effect_and_applied_again(self):
+        from kiasecut import userlib
+        p = proj()
+        e = edit.add_effect(p, "c1", fx.GRAPH)
+        m = edit.add_graph_node(p, "c1", e["id"], {"type": "filter", "ref": "builtin:nodes/mix"}, 30, 40)
+        s = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "image"})
+        edit.connect_graph(p, "c1", e["id"], s, m, "b")
+        edit.set_param(p, "c1", "fx:" + e["id"], m + ".fac", 0.4)
+        with tempfile.TemporaryDirectory() as d:
+            path = userlib.save_preset(d, "mine", [e])
+            loaded = userlib.load_preset(path)
+        self.assertEqual(len(loaded), 1)
+        got = loaded[0]
+        self.assertEqual(got["graph"], e["graph"])
+        self.assertEqual(got["params"][m + ".fac"], 0.4)
+        self.assertIn(s, got["sources"])
+        copy = edit.put_effect(p, "c2", got)
+        self.assertNotEqual(copy["id"], e["id"])
+        self.assertIsNone(ng.check(copy["graph"]))
+
+
 class GraphPanelTests(unittest.TestCase):
     def test_form_has_the_nodes_parameters_and_sources(self):
         from kiasecut.ui.effects_panel import EffectsPanel

@@ -31,6 +31,8 @@ vec4 effect(vec2 uv) {
 | `// @levels 數字… [選單參數]` | 搭配 `@passes`：第 i 次繪製的圖是畫布縮小 2^數字 倍（取整數、不會比預覽的圖大；`2f` 的 `f` 表示這一次不再因選單縮小），最後可以接一個選單參數的名字，選單選第幾個就再多縮小 2^幾 倍（像 Glare 的品質）。沒寫到的繪製維持原本大小。這些縮小的圖用 32 位元浮點數存，用來做縮小再放大的金字塔（Bloom） |
 | `// @extras 編號或 -…` | 搭配 `@passes`：每一次繪製除了 `src()`（上一次）以外，還可以用 `extra(uv)` 讀前面某一次繪製的結果（`-` 表示不讀）。`pass_px`、`src_px`、`extra_px`（`vec2`）是這一次、上一次、extra 那一次的圖的像素大小 |
 | `// @param 名稱 型別 預設值 [最小 最大] ["顯示名稱"]` | 宣告一個參數，見下面（`menu` 是 `// @param 名稱 menu 預設選項 "選項1\|選項2\|…" ["顯示名稱"]`） |
+| `// @input 名稱 ["顯示名稱"]` | 多一張可以讀的圖（節點編輯器裡多一個輸入插槽）：shader 裡用 `input_名稱(uv)` 讀（預乘透明度，和 `src()` 一樣）；沒接圖就是全透明。可以寫好幾行 |
+| `// @source 名稱` | 節點編輯器裡，主要那張圖（`src()`）的插槽叫什麼（預設「圖像」） |
 | `// @panel 名稱 [closed]` | 之後的參數放進一個可以摺疊的面板（像 Blender 節點的面板）；`closed` 是一開始收起來；`// @panel -` 回到最上層 |
 | `// @enable 參數 條件` | 條件不成立時，這個參數在面板上變灰（用不上），見下面「用不上的參數」 |
 
@@ -142,3 +144,23 @@ vec4 effect(vec2 uv) {
   Simple Star 和 Ghosts 的 Iterations（Simple Star 還有 Fade）在匯出時就固定了。
 - `#define LINEARIZE 1`：照 Blender 的方式在線性光裡運算（預設）；`FLIP_Y`、`COMPOSITE_OVER_SCREEN` 同樣在 `#define` 區。
 - 限制：決定結構的選項（Interpolation、節點自己的類型選單等）若沒有接到群組的 Menu 輸入，在匯出時就固定了；Switch / Index Switch 若接到群組輸入（參數）或計算出來的值，匯出後仍可切換；`String to Image` 不支援（文字請用編輯器的文字片段）。
+
+## 當成節點用
+
+每個濾鏡（內建的、Library 裡的）在「節點」面板都是一個節點：`src()` 是第一個輸入插槽，`@input` 宣告的圖是
+其他輸入插槽，`float` 和 `color` 參數也有插槽（接上圖，就是「使用遮罩」：每個像素讀那張圖）。
+`kiasecut/filters/nodes/` 裡是專門為節點寫的（混合、數學、分離／合併通道、設定透明度、變換、圖片來源），
+寫法和一般濾鏡一模一樣，可以當範例：
+
+```glsl
+// @filter 混合
+// @input b "B"
+// @param fac float 1 0 1 "係數"
+vec4 effect(vec2 uv) {
+    vec4 a = unpremultiply(src(uv)), b = unpremultiply(input_b(uv));
+    ...
+}
+```
+
+節點圖本身是一個效果（新增效果 > 節點效果），存在片段上；用「存成自定效果」存進 Library 的「效果預設」，
+圖、設定、圖片來源都一起存。每個節點畫一次（一個 shader pass），所以 `@passes`、`@levels` 的濾鏡也能當節點。

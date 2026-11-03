@@ -77,6 +77,7 @@ class NodeItem(QGraphicsItem):
         body.addRoundedRect(QRectF(0, 0, WIDTH, self.h), 6, 6)
         p.fillPath(body, base)
         head = QPainterPath()
+        head.setFillRule(Qt.WindingFill)
         head.addRoundedRect(QRectF(0, 0, WIDTH, HEAD), 6, 6)
         head.addRect(QRectF(0, HEAD / 2, WIDTH, HEAD / 2))
         muted = bool(self.node.get("mute"))
@@ -251,6 +252,7 @@ class NodeEditor(QWidget):
     muteRequested = Signal(str, list, bool)                 # effect id, node ids, on
     nodeSelected = Signal(str, str)                         # effect id, the one node selected ("" none)
     effectChosen = Signal(str)                              # effect id: another node effect of the clip
+    saveRequested = Signal(str)                             # effect id: keep it as a 效果預設 (a custom effect)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -273,6 +275,10 @@ class NodeEditor(QWidget):
         fit = QPushButton("全部顯示 (Home)")
         fit.clicked.connect(lambda: self.view.fit())
         bar.addWidget(fit)
+        save = QPushButton("存成自定效果")
+        save.setToolTip("把這個節點效果（節點、設定、圖片）存進 Library 的「效果預設」，之後可以套用到別的片段")
+        save.clicked.connect(lambda: self.eid and self.saveRequested.emit(self.eid))
+        bar.addWidget(save)
         bar.addStretch()
         lay.addLayout(bar)
         self.note = QLabel("選取有節點效果的片段（效果面板 → 新增效果 → 節點效果）")

@@ -453,6 +453,7 @@ class MainWindow(QMainWindow):
         nd.moveRequested.connect(self.on_node_move)
         nd.muteRequested.connect(self.on_node_mute)
         nd.nodeSelected.connect(self.on_node_selected)
+        nd.saveRequested.connect(self.save_node_preset)
         ef.nodesRequested.connect(self.open_node_editor)
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.browseRequested.connect(self.browse_effect)
@@ -5234,18 +5235,24 @@ class MainWindow(QMainWindow):
             return c
         self.apply("新增濾鏡片段", fn, select=lambda c: c["id"])
 
-    def save_effect_preset(self, folder):
-        """存選取片段的效果: the selected clip's effects, as they are, as a 效果預設 in the Library."""
-        c = next((k for k in self.timeline.selected_clips_primary_first() if k.get("effects")), None)
-        if c is None:
-            self.statusBar().showMessage("先在時間軸選一個有效果的片段", 5000)
+    def save_effect_preset(self, folder, effects=None):
+        """存選取片段的效果: the selected clip's effects, as they are, as a 效果預設 in the Library (effects: these
+        instead - a node effect saved from the node editor)."""
+        if effects is None:
+            c = next((k for k in self.timeline.selected_clips_primary_first() if k.get("effects")), None)
+            if c is None:
+                self.statusBar().showMessage("先在時間軸選一個有效果的片段", 5000)
+                return
+            effects = c["effects"]
+        if not self.ulib:
+            self.statusBar().showMessage("先開啟專案，Library 才找得到", 5000)
             return
         name, ok = QInputDialog.getText(self, "存成效果預設", "名稱", text="我的效果")
         if not ok or not name.strip():
             return
         base = library.folder_dir(self.ulib.proj("presets"), self.ulib.mirror("presets"), folder)
         try:
-            userlib.save_preset(base, name.strip(), c["effects"], self.ulib.root)
+            userlib.save_preset(base, name.strip(), effects, self.ulib.root)
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "存成效果預設", str(exc))
             return
@@ -5254,6 +5261,15 @@ class MainWindow(QMainWindow):
         self.panels.show("userlib")
         self.ulpanel.show_category("presets")
         self.statusBar().showMessage(f"已存到 Library > 效果預設：{name.strip()}", 4000)
+
+    def save_node_preset(self, eid):
+        """存成自定效果 in the node editor: this node effect (graph, settings, pictures) as a 效果預設."""
+        cid = self.node_clip()
+        if not cid:
+            return
+        e = next((x for x in edit.find(self.container(), cid)[1].get("effects") or [] if x["id"] == eid), None)
+        if e is not None:
+            self.save_effect_preset("", [e])
 
     def apply_filter_to_selected(self, ref):
         ids = [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]

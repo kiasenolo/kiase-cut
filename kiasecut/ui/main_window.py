@@ -457,6 +457,7 @@ class MainWindow(QMainWindow):
         nd.disconnectManyRequested.connect(self.on_node_cut)
         nd.insertRequested.connect(self.on_node_insert)
         nd.addLinkedRequested.connect(self.on_node_add_linked)
+        nd.addFeedingRequested.connect(self.on_node_add_feeding)
         nd.duplicateRequested.connect(self.on_node_duplicate)
         nd.rerouteRequested.connect(self.on_node_reroute)
         nd.mediaDropped.connect(self.on_node_media)
@@ -5445,6 +5446,17 @@ class MainWindow(QMainWindow):
             if ins:
                 edit.connect_graph(lvl, cid, eid, src, nid, ins[0], out)
         self.apply("新增節點", do)
+        if made:
+            self.nodes.carry(made)
+
+    def on_node_add_feeding(self, eid, node, x, y, dst, socket):
+        """A node added where a link dragged out of an input was let go: its output goes into that input, a constant keeping
+        the value the input had."""
+        cid = self.node_clip()
+        if not cid:
+            return
+        made = []
+        self.apply("新增節點", lambda lvl: made.append(edit.add_graph_node_feeding(lvl, cid, eid, node, x, y, dst, socket)))
         if made:
             self.nodes.carry(made)
 

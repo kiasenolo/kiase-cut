@@ -2264,6 +2264,24 @@ def rename_graph_group(proj, clip_id, effect_id, gid, label):
     node["label"] = label.strip() or "群組"
 
 
+def add_graph_node_feeding(proj, clip_id, effect_id, node, x, y, dst, socket):
+    """A node added where a link dragged out of input `socket` of node dst was let go: its output goes into that input. A
+    constant (数值, 顏色...) starts at the value the input held; a 參數輸入 node makes the input's value a parameter of the
+    effect (for what only those can feed). Returns the new node's id."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    value = nodegraph.socket_value(g, e["params"], dst, socket)
+    nid = add_graph_node(proj, clip_id, effect_id, node, x, y)
+    if node["type"] == nodegraph.PARAMS:
+        expose_graph_param(proj, clip_id, effect_id, nid, dst, socket)
+        return nid
+    connect_graph(proj, clip_id, effect_id, nid, dst, socket)
+    if node["type"] == nodegraph.FILTER and value is not None:
+        for k, v in nodegraph.constant_params(node["ref"], value).items():
+            e["params"][nodegraph.param_key(nid, k)] = v
+    return nid
+
+
 def connect_graph(proj, clip_id, effect_id, src, dst, socket, out=None):
     _, c = find(proj, clip_id)
     _, g = _graph(c, effect_id)

@@ -258,6 +258,19 @@ class NodeEditorTests(unittest.TestCase):
         QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, pb)
         self.assertFalse(wrapdrag.hider().hidden)
 
+    def test_a_link_dragged_out_of_an_input_and_let_go_in_the_empty_asks_for_a_node(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        asked = []
+        ed.add_menu = lambda pos, gpos, link=None, feed=None: asked.append(feed)
+        it = ed.view.items_by_id["math1"]
+        a = it.input_pos("b")
+        self.assertEqual(ed.view.socket_at(a), ("in", "math1", "b"))
+        self.drag(ed, a, a + QPointF(-250, 120))                          # (the empty)
+        self.assertEqual(asked, [("math1", "b")])
+
     def test_tick_flips_and_menu_choices_are_asked_for(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)

@@ -156,6 +156,30 @@ class GraphEditTests(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertIn("math1", got[0]["graph"]["nodes"])
 
+    def test_a_node_made_from_an_input_feeds_it_and_a_constant_keeps_its_value(self):
+        m = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"}, 100, 0)
+        self.e["params"][m + ".value"] = 3.5
+        n = edit.add_graph_node_feeding(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/value"}, 0, 0, m, "b")
+        self.assertIn({"from": n, "to": m, "socket": "b"}, self.e["graph"]["links"])
+        self.assertEqual(self.e["params"][n + ".value"], 3.5)                     # (what the box held)
+        k = edit.add_graph_node_feeding(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/integer"}, 0, 0, m, "b")
+        self.assertEqual(self.e["params"][k + ".value"], 4)                       # (an integer: rounded)
+        self.assertEqual(ng.constant_params("builtin:nodes/rgb", [0.2, 0.4, 0.6, 1.0]), {"color": [0.2, 0.4, 0.6, 1.0]})
+        self.assertEqual(ng.constant_params("builtin:nodes/integer_vector", [1.2, 2.0, 3.6]), {"x": 1, "y": 2, "z": 4})
+        self.assertEqual(ng.constant_params("builtin:nodes/rgb", 0.5), {})        # (does not fit: its own default)
+
+    def test_what_only_the_effects_parameters_feed_is_fed_by_a_parameter_node(self):
+        nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect"}})
+        g = self.e["graph"]
+        self.assertFalse(ng.takes_picture(g, nid, "param:radius"))
+        self.e["params"][nid + ".radius"] = 33.0
+        pn = edit.add_graph_node_feeding(self.p, "c1", self.e["id"], {"type": "params"}, 0, 0, nid, "param:radius")
+        self.assertEqual(g["nodes"][pn]["type"], "params")
+        self.assertEqual([x["name"] for x in g.get("exposed", [])], ["radius"])
+        self.assertEqual(self.e["params"][ng.expose_key("radius")], 33.0)          # (it keeps the value)
+        m = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"}, 100, 0)
+        self.assertTrue(ng.takes_picture(g, m, "b"))
+
     def test_built_in_shape_node_edits(self):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.arrow"}})
         self.assertTrue(ng.is_asset(self.e["graph"]["nodes"][nid]))

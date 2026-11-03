@@ -3,7 +3,9 @@ boxes with sockets, links between them. It only shows and asks: every change is 
 makes an edit of (and an undo step), and the graph it gets back is drawn again.
 
 Left drag on a socket makes a link (dropped on a socket of another node: linked; a linked input picked up and
-dropped on nothing: unlinked), on a node moves it, on the empty part selects with a box. Wheel zooms, the
+dropped on nothing: unlinked; a free input dragged out and let go on nothing asks for a node to feed it, as Blender's
+link drag search does - a constant (數值, 顏色...) starts at the value the input held, and what only the effect's own
+parameters can feed gets a 參數輸入 node that makes the value a parameter), on a node moves it, on the empty part selects with a box. Wheel zooms, the
 middle button drags the view (middledrag.py), Shift+A (or the right button) adds a node where the pointer
 is, X / Delete removes the selected ones, M mutes them (the picture goes through unchanged), Home shows
 everything. Every parameter of a node has its field in the node as in Blender's compositor (drag a number to
@@ -1155,6 +1157,8 @@ class GraphView(QGraphicsView):
             hit = self.socket_at(pos)
             if hit and hit[0] == "out" and hit[1] != nid:     # (as if dragged from that output to this input)
                 self.editor.drop_link(hit[1], hit[2], None, ("in", nid, sock), pos, e.globalPosition().toPoint())
+            elif hit is None:                                 # let go in the empty (Blender's link drag search): a node to feed it
+                self.editor.feed_menu(nid, sock, pos, e.globalPosition().toPoint())
             return
         if self.rubber:
             ln, src, old, out = self.rubber
@@ -1366,6 +1370,7 @@ class NodeEditor(QWidget):
     disconnectManyRequested = Signal(str, list)             # effect id, [(to node, socket)]: links cut with Ctrl + right drag
     insertRequested = Signal(str, str, float, float, str, str, str, str)   # effect id, node, x, y, then the link it was dropped on
     addLinkedRequested = Signal(str, dict, float, float, str, str)         # effect id, node, x, y, node and output to link into it
+    addFeedingRequested = Signal(str, dict, float, float, str, str)        # effect id, node, x, y, node and input its output goes into
     rerouteRequested = Signal(str, list)                    # effect id, [(x, y, from, to, socket, output)]: bends to put in links
     mediaDropped = Signal(str, list, list, float, float)    # effect id, library item ids, file paths, x, y: dragged in as source nodes
     thumbsToggled = Signal(bool)                            # the 縮圖 button: the preview sends every node's picture
@@ -2146,16 +2151,41 @@ class NodeEditor(QWidget):
         menu.addAction("刪除這個參數", lambda: self.removeExposedRequested.emit(self.eid, name))
         self.popup(menu, global_pos)
 
-    def add_menu(self, scene_pos, global_pos, link=None):
+    def feed_menu(self, nid, sock, scene_pos, global_pos):
+        """A link dragged out of input `sock` of node nid was let go in the empty: the nodes that can feed it, as Blender's link
+        drag search - a constant starts at the value the input held. What only the effect's own parameters feed (a shape's
+        or a text's values) offers just 參數輸入, which makes that value a parameter."""
+        node = self.graph["nodes"].get(nid)
+        if not self.eid or node is None or nid in (PORT_IN, PORT_OUT) or sock in (GHOST, GHOST_ITEM, GHOST_IN):
+            return
+        if ng.takes_picture(self.graph, nid, sock) and sock not in ng.WORDS.values():
+            self.add_menu(scene_pos, global_pos, feed=(nid, sock))
+            return
+        if sock in ng.WORDS.values():
+            kind = next(t for t, s_ in ng.WORDS.items() if s_ == sock)
+            options = [("字串" if kind == ng.STRING else "字體", {"type": kind})]
+        elif ng.param_of(self.graph, nid, sock) is not None:
+            options = [("參數輸入（效果自己的參數）", {"type": ng.PARAMS})]
+        else:
+            return
+        menu = QMenu(self)
+        for name, n in options:
+            menu.addAction(name, lambda _=False, n=n: self.addFeedingRequested.emit(
+                self.eid, dict(n, **({"group": self.level} if self.level else {})), scene_pos.x(), scene_pos.y(), nid, sock))
+        menu.exec(global_pos)
+
+    def add_menu(self, scene_pos, global_pos, link=None, feed=None):
         """The menu of nodes to add at scene_pos; link (node id, output): a link let go in the empty - the new
-        node takes it."""
+        node takes it; feed (node id, input): a link dragged out of that input - the new node's output goes into it."""
         if not self.eid:
             return
 
         def ask(node):
             if self.level:
                 node = dict(node, group=self.level)
-            if link:
+            if feed:
+                self.addFeedingRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y(), feed[0], feed[1])
+            elif link:
                 self.addLinkedRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y(), link[0], link[1])
             else:
                 self.addRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y())
@@ -2192,6 +2222,8 @@ class NodeEditor(QWidget):
                     target.addAction(name, lambda _=False, n=n: ask(n))
                     entries.append((path, name, n))
                 elif it[0] == "node":
+                    if feed and it[2].get("type") in (ng.VIEWER, ng.PARAMS, ng.STRING, ng.FONT):
+                        continue                              # (these feed nothing a picture input takes)
                     target.addAction(it[1], lambda _=False, n=it[2]: ask(dict(n)))
                     entries.append((path, it[1], it[2]))
                 else:

@@ -859,6 +859,55 @@ def param_of(graph, nid, socket):
     return next((p for p in fx.for_node(node).params if p.name == socket[len(PARAM):]), None)
 
 
+def takes_picture(graph, nid, socket):
+    """Whether a picture (a constant node's, say) can be linked into `socket` of node nid: false for a parameter that only
+    the effect's own parameters feed (a shape's or a text's values, a vector...)."""
+    node = graph["nodes"].get(nid)
+    if node is None:
+        return False
+    if socket in WORDS.values():
+        return is_text(node)
+    p = param_of(graph, nid, socket)
+    if p is None:
+        return True
+    return not (is_asset(node) or is_text(node)) and p.type in fx.SOURCE_TYPES + CONTROL_TYPES
+
+
+def socket_value(graph, params, nid, socket):
+    """The value of the number / colour / switch `socket` of filter node nid stands for - its field's (None: it has none)."""
+    node = graph["nodes"].get(nid)
+    if node is None or node["type"] != FILTER:
+        return None
+    name = socket[len(PARAM):] if socket.startswith(PARAM) else fx.for_node(node).input_param.get(socket)
+    p = param_of(graph, nid, PARAM + name) if name else None
+    if p is None:
+        return None
+    v = params.get(param_key(nid, name), p.default)
+    return curves.value(v, 0) if curves.is_animated(v) else v
+
+
+def constant_params(ref, value):
+    """{parameter: value} a constant node `ref` (builtin:nodes/value, rgb, ...) starts with so that it gives `value` - what
+    the socket it is made for held (Blender: a Value node made from a socket keeps the socket's value). {} when it does
+    not fit."""
+    name = ref.rpartition("/")[2]
+    nums = isinstance(value, (int, float)) and not isinstance(value, bool)
+    vec = isinstance(value, (list, tuple)) and len(value) >= 3 and all(isinstance(x, (int, float)) for x in value)
+    if name == "value" and (nums or isinstance(value, bool)):
+        return {"value": float(value)}
+    if name == "integer" and (nums or isinstance(value, bool)):
+        return {"value": int(round(float(value)))}
+    if name == "boolean" and (nums or isinstance(value, bool)):
+        return {"value": bool(value)}
+    if name == "rgb" and vec:
+        return {"color": [float(x) for x in value[:3]] + [float(value[3]) if len(value) > 3 else 1.0]}
+    if name == "vector" and vec:
+        return {"vector": [float(x) for x in value[:3]]}
+    if name == "integer_vector" and vec:
+        return dict(zip("xyz", (int(round(float(x))) for x in value[:3])))
+    return {}
+
+
 def connect(graph, src, dst, socket, out=None):
     """Link node src's picture (or its exposed parameter out) into socket of node dst (replacing what was
     there); GraphError when it would make a loop, the socket does not exist or the kinds do not fit."""

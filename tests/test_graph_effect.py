@@ -195,9 +195,12 @@ class ExposedParamTests(unittest.TestCase):
         with self.assertRaises(edit.EditError):
             edit.connect_graph(self.p, "c1", self.eid, self.n, m2, "src", a)               # (a parameter is no picture)
 
-    def test_a_picture_cannot_feed_a_tick_or_a_menu(self):
+    def test_a_picture_feeds_a_tick_or_a_menu_as_a_number_but_not_a_curve(self):
+        edit.connect_graph(self.p, "c1", self.eid, "input", self.m, "param:clamp_on")       # (read as a number: above 0.5 is true)
+        edit.connect_graph(self.p, "c1", self.eid, "input", self.m, "param:op")             # (and as the index of a menu's choice)
+        h = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:blender_color_ramp"})
         with self.assertRaises(edit.EditError):
-            edit.connect_graph(self.p, "c1", self.eid, "input", self.m, "param:clamp_on")
+            edit.connect_graph(self.p, "c1", self.eid, "input", h, "param:ramp")             # (a gradient takes none)
 
     def test_removing_a_parameter_unbinds_it(self):
         a = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")

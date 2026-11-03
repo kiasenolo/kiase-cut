@@ -22,7 +22,7 @@ import copy
 from . import curves, fx
 
 US = 1_000_000
-INPUT, OUTPUT, SOURCE, FILTER, PARAMS = "input", "output", "source", "filter", "params"
+INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE = "input", "output", "source", "filter", "params", "reroute"
 SOURCE_KINDS = ("image", "video", "compound", "track", "shape")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
@@ -146,6 +146,8 @@ def sockets(node):
     """[(socket, label)] a node takes pictures in at."""
     if node["type"] == OUTPUT:
         return [("src", "結果")]
+    if node["type"] == REROUTE:
+        return [("src", "")]
     if node["type"] != FILTER:
         return []
     d = fx.get(node["ref"])
@@ -156,7 +158,7 @@ def sockets(node):
 def title(node):
     if node["type"] == FILTER:
         return fx.get(node["ref"]).name
-    return {PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
+    return {REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
 
@@ -502,6 +504,10 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         node = nodes[n]
         kind = node["type"]
         if kind == PARAMS:
+            continue
+        if kind == REROUTE:                                   # (a bend in a link: the picture goes on)
+            alias(n, feed.get((n, "src")))
+            done_with(n)
             continue
         if kind == INPUT:
             put(n, src_tex, None)

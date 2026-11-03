@@ -2139,7 +2139,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
             raise EditError("來源節點要是圖片、影片、複合片段、軌道或形狀")
         shape = node.get("shape")
         node = {"type": nodegraph.SOURCE, "kind": node["kind"]}
-    elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS):
+    elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS, nodegraph.REROUTE):
         node = {"type": node["type"]}
     else:
         raise EditError("不能新增這種節點")
@@ -2207,6 +2207,13 @@ def insert_graph_node(proj, clip_id, effect_id, nid, src, dst, socket, out=None)
         nodegraph.insert_on_link(g, nid, src, dst, socket, out or None)
     except nodegraph.GraphError as exc:
         raise EditError(str(exc)) from exc
+
+
+def add_graph_reroutes(proj, clip_id, effect_id, spots):
+    """Bends put in links (Shift + right drag across them): spots [(x, y, from node, to node, socket, output)]."""
+    for x, y, src, dst, socket, out in spots:
+        nid = add_graph_node(proj, clip_id, effect_id, {"type": nodegraph.REROUTE}, x, y)
+        insert_graph_node(proj, clip_id, effect_id, nid, src, dst, socket, out)
 
 
 def dissolve_graph_node(proj, clip_id, effect_id, nid):

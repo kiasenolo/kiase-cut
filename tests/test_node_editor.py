@@ -236,6 +236,24 @@ class NodeEditorTests(unittest.TestCase):
         QTest.mouseRelease(v.viewport(), Qt.RightButton, Qt.ControlModifier, p1)
         self.assertEqual(got, [("e1", [("output", "src")])])
 
+    def test_shift_right_drag_puts_bends_in_links(self):
+        ed = self.make()
+        got = []
+        ed.rerouteRequested.connect(lambda *a: got.append(a))
+        a = ed.view.items_by_id["input"].output_pos()
+        b = ed.view.items_by_id["output"].input_pos("src")
+        mid = (a + b) / 2
+        v = ed.view
+        p0, p1 = v.mapFromScene(mid + QPointF(0, -40)), v.mapFromScene(mid + QPointF(0, 40))
+        QTest.mousePress(v.viewport(), Qt.RightButton, Qt.ShiftModifier, p0)
+        QTest.mouseMove(v.viewport(), v.mapFromScene(mid))
+        QTest.mouseMove(v.viewport(), p1)
+        QTest.mouseRelease(v.viewport(), Qt.RightButton, Qt.ShiftModifier, p1)
+        self.assertEqual(len(got), 1)
+        (x, y, src, dst, sock, out), = got[0][1]
+        self.assertEqual((src, dst, sock, out), ("input", "output", "src", ""))
+        self.assertAlmostEqual(x + 15, mid.x(), delta=6)
+
     def test_node_dropped_on_a_link_is_inserted(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, -60, 160)

@@ -330,6 +330,54 @@ class NodeItem(QGraphicsItem):
             super().mouseDoubleClickEvent(e)
 
 
+class RerouteItem(QGraphicsItem):
+    """A bend in a link: a small knob taking a picture in and passing it on."""
+    W, H = 30.0, 24.0
+
+    def __init__(self, nid, node, editor):
+        super().__init__()
+        self.nid, self.node, self.editor = nid, node, editor
+        self.has_out, self.rows, self.linked, self.drag = True, [], set(), None
+        self.title = ""
+        self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
+        self.setPos(node.get("x", 0.0), node.get("y", 0.0))
+        self.setZValue(1)
+
+    def boundingRect(self):
+        return QRectF(-SOCKET_R - 1, -1, self.W + SOCKET_R * 2 + 2, self.H + 2)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionHasChanged and self.scene() is not None:
+            for view in self.scene().views():
+                view.reroute()
+        return super().itemChange(change, value)
+
+    def row_of(self, socket):
+        return {} if socket == "src" else None
+
+    def input_pos(self, socket="src"):
+        return self.mapToScene(QPointF(0, self.H / 2))
+
+    def output_pos(self, out=""):
+        return self.mapToScene(QPointF(self.W, self.H / 2))
+
+    def outputs(self):
+        return [("", self.output_pos())]
+
+    def sockets(self):
+        return [("src", self.input_pos())]
+
+    def paint(self, p, option, widget=None):
+        p.setRenderHint(QPainter.Antialiasing)
+        body = QPainterPath()
+        body.addRoundedRect(QRectF(0, 0, self.W, self.H), self.H / 2, self.H / 2)
+        p.fillPath(body, QColor("#4a4a50"))
+        p.setPen(QPen(QColor("#f0a030") if self.isSelected() else QColor(0, 0, 0, 120), 2 if self.isSelected() else 1))
+        p.drawPath(body)
+        NodeItem._socket(p, QPointF(0, self.H / 2), SOCKET_COLORS["image"])
+        NodeItem._socket(p, QPointF(self.W, self.H / 2), SOCKET_COLORS["image"])
+
+
 def fm_elide(p, text, width):
     return p.fontMetrics().elidedText(text, Qt.ElideRight, int(width))
 
@@ -397,12 +445,14 @@ class GraphView(QGraphicsView):
                     return
             self.press_at = {i: (it.pos().x(), it.pos().y()) for i, it in self.items_by_id.items()}
         elif e.button() == Qt.RightButton:
-            if e.modifiers() & Qt.ControlModifier:      # Ctrl + right button: drag across links to cut them
+            if e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier):
+                # Ctrl + right button: drag across links to cut them; Shift + right button: to put a bend (繞線) in each
                 line = QGraphicsPathItem()
-                line.setPen(QPen(QColor("#e0605a"), 2, Qt.DashLine))
+                reroute = bool(e.modifiers() & Qt.ShiftModifier) and not e.modifiers() & Qt.ControlModifier
+                line.setPen(QPen(QColor("#5fbf6a" if reroute else "#e0605a"), 2, Qt.DashLine))
                 line.setZValue(20)
                 self.scene().addItem(line)
-                self.cut = (line, [pos])
+                self.cut = (line, [pos], reroute)
                 return
             hit = self.socket_at(pos)
             if hit and hit[0] == "out" and hit[2] not in ("", GHOST):
@@ -487,7 +537,7 @@ class GraphView(QGraphicsView):
                 ed.add_menu(pos, e.globalPosition().toPoint(), (src, out))
             return
         if self.cut:
-            line, pts = self.cut
+            line, pts, reroute = self.cut
             self.cut = None
             self.scene().removeItem(line)
             path = QPainterPath(pts[0])
@@ -496,6 +546,20 @@ class GraphView(QGraphicsView):
             stroke = QPainterPathStroker()
             stroke.setWidth(3)
             hit = stroke.createStroke(path)
+            if reroute:
+                spots = []
+                for ln, a, b, sock, out in self.link_items:
+                    if not ln.path().intersects(hit):
+                        continue
+                    near = [ln.path().pointAtPercent(i / 80) for i in range(81)]
+                    near = [q for q in near if hit.contains(q)]
+                    if near:
+                        x = sum(q.x() for q in near) / len(near) - RerouteItem.W / 2
+                        y = sum(q.y() for q in near) / len(near) - RerouteItem.H / 2
+                        spots.append((x, y, a, b, sock, out))
+                if spots:
+                    self.editor.rerouteRequested.emit(self.editor.eid, spots)
+                return
             cut = [(b, sock) for ln, a, b, sock, out in self.link_items if ln.path().intersects(hit)]
             if cut:
                 self.editor.disconnectManyRequested.emit(self.editor.eid, cut)
@@ -578,6 +642,7 @@ class NodeEditor(QWidget):
     disconnectManyRequested = Signal(str, list)             # effect id, [(to node, socket)]: links cut with Ctrl + right drag
     insertRequested = Signal(str, str, float, float, str, str, str, str)   # effect id, node, x, y, then the link it was dropped on
     addLinkedRequested = Signal(str, dict, float, float, str, str)         # effect id, node, x, y, node and output to link into it
+    rerouteRequested = Signal(str, list)                    # effect id, [(x, y, from, to, socket, output)]: bends to put in links
     duplicateRequested = Signal(str, list)                  # effect id, node ids
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
     removeExposedRequested = Signal(str, str)               # effect id, parameter name
@@ -676,7 +741,7 @@ class NodeEditor(QWidget):
         self.edit_proxy = None
         v.items_by_id, v.link_items = {}, []
         for nid, node in self.graph["nodes"].items():
-            it = NodeItem(nid, node, self)
+            it = (RerouteItem if node["type"] == ng.REROUTE else NodeItem)(nid, node, self)
             sc.addItem(it)
             v.items_by_id[nid] = it
             it.setSelected(nid in keep)
@@ -872,7 +937,7 @@ class NodeEditor(QWidget):
                 self.addRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y())
         menu = QMenu(self)
         inp = menu.addMenu("輸入")
-        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
+        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("繞線點", {"type": ng.REROUTE}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
                            ("影片", {"type": ng.SOURCE, "kind": "video"}), ("複合片段", {"type": ng.SOURCE, "kind": "compound"}),
                            ("時間線（軌道）", {"type": ng.SOURCE, "kind": "track"})):
             inp.addAction(text, lambda _=False, n=node: ask(n))

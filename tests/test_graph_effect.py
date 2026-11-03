@@ -144,6 +144,20 @@ class ExposedParamTests(unittest.TestCase):
         for r in (render.Renderer(), glrender.GLRenderer()):
             self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), RED, type(r).__name__)
 
+    def test_reroute_keeps_the_picture_going(self):
+        edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
+        edit.add_graph_reroutes(self.p, "c1", self.eid, [(10, 10, "input", "output", "src", "")])
+        kinds = [n["type"] for n in self.e["graph"]["nodes"].values()]
+        self.assertEqual(kinds.count("reroute"), 1)
+        self.assertIsNone(ng.check(self.e["graph"]))
+        if HAVE_GL:
+            from kiasecut import glrender
+            s = Scene(tempfile.mkdtemp())
+            v = s.view()
+            v["tracks"][0]["clips"][0]["effects"] = [self.e]
+            for r in (render.Renderer(), glrender.GLRenderer()):
+                self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), RED, type(r).__name__)
+
     def test_insert_dissolve_duplicate(self):
         edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
         edit.insert_graph_node(self.p, "c1", self.eid, self.m, "input", "output", "src")

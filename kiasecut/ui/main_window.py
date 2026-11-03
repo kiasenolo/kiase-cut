@@ -455,6 +455,7 @@ class MainWindow(QMainWindow):
         nd.insertRequested.connect(self.on_node_insert)
         nd.addLinkedRequested.connect(self.on_node_add_linked)
         nd.duplicateRequested.connect(self.on_node_duplicate)
+        nd.rerouteRequested.connect(self.on_node_reroute)
         nd.dissolveRequested.connect(self.on_node_dissolve)
         nd.disconnectRequested.connect(self.on_node_disconnect)
         nd.moveRequested.connect(self.on_node_move)
@@ -5396,6 +5397,11 @@ class MainWindow(QMainWindow):
                 edit.connect_graph(lvl, cid, eid, src, nid, ins[0], out)
         if self.apply("新增節點", do) is not None and made:
             self.nodes.select(made[0])
+
+    def on_node_reroute(self, eid, spots):
+        cid = self.node_clip()
+        if cid:
+            self.apply("新增繞線點", lambda lvl: edit.add_graph_reroutes(lvl, cid, eid, spots))
 
     def on_node_duplicate(self, eid, ids):
         cid = self.node_clip()

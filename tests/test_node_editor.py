@@ -637,6 +637,25 @@ class NodeEditorTests(unittest.TestCase):
         ed = self.make(g)
         self.assertEqual(ed.view.items_by_id["output"].w, 300.0)
 
+    def test_rows_follow_the_operation(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+
+        def sockets():
+            return [r["socket"] for r in ed.view.items_by_id["math1"].rows if r["socket"]]
+        self.assertIn("b", sockets())                                  # (相加: A and B)
+        self.assertNotIn("c", sockets())
+        self.assertNotIn("param:value3", sockets())
+        ed.params["math1.op"] = 4                                      # 乘加: C too
+        ed.show_clip(clip_with(lambda e: None) | {"effects": [{"id": ed.eid, "filter": fx.GRAPH, "params": ed.params, "graph": ed.graph}]})
+        self.assertIn("c", sockets())
+        ed.params["math1.op"] = 9                                      # 絕對值: A alone
+        ed.show_clip({"id": "c1", "type": "image", "effects": [{"id": ed.eid, "filter": fx.GRAPH, "params": ed.params, "graph": ed.graph}]})
+        self.assertNotIn("b", sockets())
+        self.assertNotIn("param:value", sockets())
+
     def test_a_selects_all(self):
         ed = self.make()
         QTest.keyClick(ed.view, Qt.Key_A)

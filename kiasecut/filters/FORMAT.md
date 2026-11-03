@@ -35,6 +35,7 @@ vec4 effect(vec2 uv) {
 | `// @output 名稱 ["顯示名稱"]` | 節點編輯器裡多一個輸出（可以寫好幾行；有寫就取代原本唯一的「圖像」輸出）：每個被接出去的輸出各畫一次，shader 裡 `output_index` 是它的順序（0 起算），用它決定這次輸出哪一張圖。範例：`nodes/separate_color.glsl`（分離色彩）。Blender 轉 KiaseCut 的外掛（`tools/converters/compositor_to_hyprshade.py`）會把 Group Output 的每個輸出都寫成 `@output`（原本選的那個排第一，所以當一般濾鏡用時結果不變） |
 | `// @source 名稱` | 節點編輯器裡，主要那張圖（`src()`）的插槽叫什麼（預設「圖像」） |
 | `// @panel 名稱 [closed]` | 之後的參數放進一個可以摺疊的面板（像 Blender 節點的面板）；`closed` 是一開始收起來；`// @panel -` 回到最上層 |
+| `// @show 參數或輸入 條件` | 節點上只在條件成立時才顯示這一列（參數或 `@input` 的插槽），條件寫法和 `@enable` 一樣；用不上的運算就不佔位置（像 Blender 的「數學」）。參數在面板上同時也會變灰 |
 | `// @enable 參數 條件` | 條件不成立時，這個參數在面板上變灰（用不上），見下面「用不上的參數」 |
 
 ### 參數

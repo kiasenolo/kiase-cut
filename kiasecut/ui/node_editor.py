@@ -130,10 +130,13 @@ class NodeItem(QGraphicsItem):
         elif node["type"] == ng.FILTER or ng.is_asset(node):         # (a built-in shape: its fields, no sockets)
             d = ng.node_def(node)
             socket = lambda p: ng.PARAM + p.name if ng.has_socket(p) else None
+            named = self.editor.node_values(self.nid).named
+            shown = lambda name: fx.shown(d, name, named)            # (@show: only the rows the settings use)
             if node["type"] == ng.FILTER:
                 add("image", d.src_label, "src")
                 for name, label in d.inputs:
-                    add("image", label, name)
+                    if shown(name):
+                        add("image", label, name)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
                 for _part, sock, label in ng.ASSET_PAINTS:
                     add("image", label, sock)
@@ -142,13 +145,13 @@ class NodeItem(QGraphicsItem):
                 if opened:
                     for p in ng.place_params():
                         add("param", p.label, socket(p), p)
-            for p in (q for q in d.params if q.panel is None):
+            for p in (q for q in d.params if q.panel is None and shown(q.name)):
                 add("param", p.label, socket(p), p)
             for name, closed in d.panels:
                 opened = self.editor.panel_open.get((self.nid, name), not closed)
                 add("panel", name, panel=opened)
                 if opened:
-                    for p in (q for q in d.params if q.panel == name):
+                    for p in (q for q in d.params if q.panel == name and shown(q.name)):
                         add("param", p.label, socket(p), p)
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
@@ -1138,13 +1141,24 @@ class NodeEditor(QWidget):
             self.level = ""
         self.eid = e["id"]
         self.params, self.sources, self.t = e["params"], e.get("sources") or {}, t
-        sig = json.dumps(e["graph"], sort_keys=True)
+        sig = json.dumps(e["graph"], sort_keys=True) + self.shown_sig(e)
         if sig != self._sig:
             self._sig = sig
             self.graph = e["graph"]
             self.rebuild(first)
         else:
             self.view.viewport().update()                   # (the values only)
+
+    def shown_sig(self, e):
+        """Which rows of the nodes (@show) the settings hide: when it changes, the boxes are laid out again."""
+        out = []
+        for nid, node in e["graph"]["nodes"].items():
+            if node.get("type") == ng.FILTER:
+                d = ng.node_def(node)
+                if d.input_show or any(p.show for p in d.params):
+                    named = fx.named(d, {p.name: curves.value(e["params"].get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params})
+                    out.append((nid, [n for n in [x for x, _ in d.inputs] + [p.name for p in d.params] if not fx.shown(d, n, named)]))
+        return json.dumps(out)
 
     def rebuild(self, fit=False):
         v = self.view

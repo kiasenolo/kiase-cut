@@ -45,6 +45,7 @@ class Param:
         self.items = list(items)                 # a menu's choices, in order (the shader gets the index)
         self.panel = None                        # the @panel it is in (None: the effect's own rows)
         self.enable = []                         # @enable conditions: (other param, negate, values or None)
+        self.show = []                           # @show conditions (the same): a node shows the row only while they hold
 
     def __repr__(self):
         return f"Param({self.name}, {self.type}, {self.default})"
@@ -64,6 +65,7 @@ class FilterDef:
         self.passes, self.error = passes, error
         self.src_label = "圖像"                  # @source: what the main picture socket is called
         self.outputs = []                        # @output: [(name, label)] pictures a node gives (output_index tells which is drawn); none: one
+        self.input_show = {}                     # @show on an @input: {name: conditions}
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
 
     def key(self):
@@ -162,7 +164,7 @@ def _menu_param(name, default, extra):
 ENABLE = re.compile(r"^(\w+)\s+(?:(!?)(\w+)|(\w+)\s*(==|!=)\s*(.+))$")
 
 
-def _enable(rest, params):
+def _enable(rest, params, inputs=(), show=None):
     """`// @enable target cond`: cond is `flag`, `!flag` (a bool parameter) or `other == A|B`,
     `other != A` (a menu's choices, or numbers)."""
     m = ENABLE.match(rest.strip())
@@ -170,21 +172,38 @@ def _enable(rest, params):
         raise ValueError("@enable 要寫成：參數 條件（例如 size type == Bloom|Fog Glow，或 maximum clamp_on）")
     target, neg, flag, other, op, vals = m.groups()
     by = {p.name: p for p in params}
-    if target not in by:
-        raise ValueError(f"@enable：沒有叫「{target}」的參數")
+    word = "@show" if show is not None else "@enable"
     name = flag or other
-    if name not in by:
-        raise ValueError(f"@enable：沒有叫「{name}」的參數")
-    if flag:
-        by[target].enable.append((name, bool(neg), None))
+    if target in by:
+        into = by[target].show if show is not None else by[target].enable
+    elif show is not None and target in inputs:
+        into = show.setdefault(target, [])
     else:
-        by[target].enable.append((name, op == "!=", [v.strip() for v in vals.split("|")]))
+        raise ValueError(f"{word}：沒有叫「{target}」的參數")
+    if name not in by:
+        raise ValueError(f"{word}：沒有叫「{name}」的參數")
+    if flag:
+        into.append((name, bool(neg), None))
+    else:
+        into.append((name, op == "!=", [v.strip() for v in vals.split("|")]))
 
 
 def enabled(p, values):
     """Whether parameter p does anything with the effect's other values {name: value} (its
     @enable conditions; a menu's value is its choice's name, or its number)."""
-    for other, negate, want in p.enable:
+    return _holds(p.enable + p.show, values)
+
+
+def shown(d, name, values):
+    """Whether a node of filter d shows the row of input or parameter `name` (its @show conditions, as enabled())."""
+    conds = d.input_show.get(name)
+    if conds is None:
+        conds = next((p.show for p in d.params if p.name == name), [])
+    return _holds(conds, values)
+
+
+def _holds(conds, values):
+    for other, negate, want in conds:
         v = values.get(other)
         if want is None:
             ok = bool(v)
@@ -249,8 +268,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                 if not words or not IDENT.match(words[0]) or any(words[0] == n for n, _ in outputs):
                     raise ValueError("@output 要寫：名稱（英文、數字、底線，不重複）[\"顯示名稱\"]")
                 outputs.append((words[0], words[1] if len(words) > 1 else words[0]))
-            elif key == "enable":                         # (read once every @param is known)
-                enables.append((line, rest))
+            elif key in ("enable", "show"):               # (read once every @param is known)
+                enables.append((line, rest, key == "show"))
             elif key in ("filter", "category", "description"):
                 head[key] = rest
             elif key == "passes":
@@ -265,9 +284,10 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head["precise"] = rest.lower() == "float"
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
-    for line, rest in enables:
+    input_show = {}
+    for line, rest, show in enables:
         try:
-            _enable(rest, params)
+            _enable(rest, params, [n for n, _ in inputs], input_show if show else None)
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
     levels, level_param, fixed = [], None, []
@@ -290,6 +310,7 @@ def parse(text, ref, fallback_name="濾鏡"):
                   head.get("description", ""), n, error, head.get("precise", False), panels, levels, level_param,
                   head.get("extras", []), fixed)
     d.inputs = inputs
+    d.input_show = input_show
     d.outputs = outputs
     d.src_label = head.get("source") or d.src_label
     return d

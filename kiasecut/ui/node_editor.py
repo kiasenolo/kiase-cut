@@ -36,13 +36,13 @@ HIT_R = 9.0
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / gradient parameter's picture in a node
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
-HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
+HEADS = {ng.STRING: "#a8473f", ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
          "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
 GHOST_ITEM = "\0newitem"                       # the empty input of a Menu Switch: drag a link into it to make an option
 GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸出: drag a link into it to make a group output
 PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
-SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0"}
+SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0", "string": "#70b870"}
 GHOST = "\0ghost"                              # the empty socket of a 參數輸入 node: drag out of it to make a parameter
 
 
@@ -157,8 +157,8 @@ class NodeItem(QGraphicsItem):
                 if ng.is_dynamic(node):                            # (Blender's empty socket: a link let go on it makes an option)
                     add("image", "（拉一條線進來新增選項）", GHOST_ITEM)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
-                if ng.is_text(node):                                   # (a text: its words and font first)
-                    add("text", "文字")
+                if ng.is_text(node):                                   # (a text: its words - or a string node's - and font first)
+                    add("text", "文字", ng.TEXT_SOCKET)
                     add("font", "字體")
                 else:
                     for _part, sock, label in ng.ASSET_PAINTS:
@@ -177,6 +177,8 @@ class NodeItem(QGraphicsItem):
                 if opened:
                     for p in (q for q in d.params if q.panel == name and shown(q.name) and q.name not in paired):
                         add("param", p.label, socket(p), p)
+        elif node["type"] == ng.STRING:                                  # (Blender's String constant: its output above, the words here)
+            add("string", "")
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
             add("shapecolor", "顏色")
@@ -214,7 +216,7 @@ class NodeItem(QGraphicsItem):
 
     def sockets(self):
         """[(socket name, scene point)] of the sockets a link can end at."""
-        return [(r["socket"], self.input_pos(r["socket"])) for r in self.rows if r["socket"] and r["kind"] in ("image", "param")]
+        return [(r["socket"], self.input_pos(r["socket"])) for r in self.rows if r["socket"] and r["kind"] in ("image", "param", "text")]
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene() is not None:
@@ -229,6 +231,8 @@ class NodeItem(QGraphicsItem):
     def field_rect(self, r, cell=0, cells=1):
         if r["kind"] == "plot":
             return QRectF(10, r["y"] + 2, self.w - 20, r["h"] - 4)
+        if r["kind"] == "string":                                  # (the whole row: it has no label)
+            return QRectF(10, r["y"] + 3, self.w - 20, ROW - 6)
         x0 = self.w * LABEL_W
         w = (self.w - 10 - x0) / cells
         return QRectF(x0 + cell * w + (2 if cell else 0), r["y"] + 3, w - (2 if cells > 1 and cell < cells - 1 else 0), ROW - 6)
@@ -236,7 +240,9 @@ class NodeItem(QGraphicsItem):
     def has_field(self, r):
         if r["kind"] == "param":
             return not (r["socket"] and r["socket"] in self.linked) and r["p"].type not in ("curve", "gradient")
-        return r["kind"] in ("shape", "shapecolor", "plot", "text", "font")
+        if r["kind"] == "text":
+            return r["socket"] not in self.linked                 # (a string node's words replace the box)
+        return r["kind"] in ("shape", "shapecolor", "plot", "font", "string")
 
     def field_at(self, pos):
         """(row, cell) of the field under pos (item coordinates), or the panel header row, else None."""
@@ -291,7 +297,7 @@ class NodeItem(QGraphicsItem):
             p.setPen(text)
             if kind == "out":
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
-                self._socket(p, QPointF(self.w, y + ROW / 2), SOCKET_COLORS["image"])
+                self._socket(p, QPointF(self.w, y + ROW / 2), SOCKET_COLORS["string" if self.node["type"] == ng.STRING else "image"])
                 continue
             if kind in ("expose", "ghost"):
                 ghost = kind == "ghost"
@@ -323,7 +329,7 @@ class NodeItem(QGraphicsItem):
                 p.setBrush(Qt.NoBrush)
                 p.drawEllipse(QPointF(0, y + ROW / 2), SOCKET_R, SOCKET_R)
             elif r["socket"]:
-                self._socket(p, QPointF(0, y + ROW / 2), SOCKET_COLORS["image"] if kind == "image" else
+                self._socket(p, QPointF(0, y + ROW / 2), SOCKET_COLORS["image"] if kind == "image" else SOCKET_COLORS["string"] if kind == "text" else
                              SOCKET_COLORS.get(r["p"].type if r["p"].type in ("float", "color") else "other"))
             if not self.has_field(r):
                 continue
@@ -343,13 +349,13 @@ class NodeItem(QGraphicsItem):
             box = self.field_rect(r)
             self._box(p, box, QColor.fromRgbF(*(list(vals.color) + [1.0] * 4)[:3]))
             return
-        if kind in ("text", "font"):                        # (the words, one line of them; the font's name)
+        if kind in ("text", "font", "string"):                # (the words, one line of them; the font's name)
             box = self.field_rect(r)
             self._box(p, box, bg)
             p.setPen(text)
             src = self.editor.sources.get(self.nid) or {}
             shown = (src.get("content", ng.TEXT_CONTENT) or "").replace("\n", " ⏎ ") if kind == "text" else \
-                self.editor.font_name(src.get("font_path"))
+                self.editor.font_name(src.get("font_path")) if kind == "font" else str(self.node.get("value", "")).replace("\n", " ⏎ ")
             p.drawText(box.adjusted(6, 0, -6, 0), Qt.AlignVCenter | Qt.AlignLeft,
                        p.fontMetrics().elidedText(shown, Qt.ElideRight, int(box.width() - 12)))
             return
@@ -1298,6 +1304,7 @@ class NodeEditor(QWidget):
     paramLive = Signal(str, str, str, object)               # effect id, group ("fx:<id>" / "fxsrc:<id>:<node>"), key, value: still being changed
     placeEdited = Signal(str, str, str, object)             # effect id, node id, where it sits (cx / cy / w / h / rotation), value
     shapeEdited = Signal(str, str, object, object)          # effect id, shape node, shape id or None, colour or None
+    stringEdited = Signal(str, str, str)                    # effect id, string node, its new words
     textEdited = Signal(str, str, object, object)           # effect id, text node, its words or None, its font file or None
 
     def __init__(self, parent=None):
@@ -1587,6 +1594,12 @@ class NodeEditor(QWidget):
         if kind == "font":
             self._choose_font(nid)
             return
+        if kind == "string":
+            old = str(self.graph["nodes"][nid].get("value", ""))
+            got = self.ask_text("字串", old, True)
+            if got is not None and got != old:
+                self.stringEdited.emit(self.eid, nid, got)
+            return
         q = row["p"]
         key = ng.param_key(nid, q.name)
         v = self.node_values(nid).get(q.name)
@@ -1841,7 +1854,7 @@ class NodeEditor(QWidget):
                 self.connectRequested.emit(self.eid, src, into[1], into[2], out)
         elif hit is None and old:
             self.disconnectRequested.emit(self.eid, old[0], old[1])
-        elif hit is None and not ng.gives_params(self.node_of(src), out) and self.node_of(src)["type"] not in (ng.PARAMS, "groupin"):   # a link let go in the empty: add a node there to take it
+        elif hit is None and not ng.gives_params(self.node_of(src), out) and self.node_of(src)["type"] not in (ng.PARAMS, "groupin", ng.STRING):   # a link let go in the empty: add a node there to take it
             self.add_menu(pos, gpos, (src, out))
 
     def unplug(self, member, socket, output):

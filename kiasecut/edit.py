@@ -2149,6 +2149,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.SOURCE, "kind": node["kind"], **({"asset": asset} if asset else {})}
     elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS, nodegraph.REROUTE, nodegraph.VIEWER):
         node = {"type": node["type"]}
+    elif node["type"] == nodegraph.STRING:                 # (Blender's String constant: words for a text node)
+        node = {"type": nodegraph.STRING, "value": str(node.get("value", "文字"))}
     elif node["type"] == nodegraph.FRAME:
         node = nodegraph.frame_defaults(node)
     else:
@@ -2675,6 +2677,15 @@ def set_effect_shape(proj, clip_id, effect_id, nid, shape=None, color=None):
     if color is not None:
         src["color"] = [float(x) for x in color][:4]
     return src
+
+
+def set_graph_string(proj, clip_id, effect_id, nid, value):
+    """The words of a string node."""
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    if (g["nodes"].get(nid) or {}).get("type") != nodegraph.STRING:
+        raise EditError("這不是字串節點")
+    g["nodes"][nid]["value"] = str(value)
 
 
 def set_effect_text(proj, clip_id, effect_id, nid, content=None, font_path=None):

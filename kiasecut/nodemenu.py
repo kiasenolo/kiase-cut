@@ -22,7 +22,7 @@ def menu(label, items):
 
 
 INPUT = [
-    menu("常數", ["nodes/boolean", "nodes/rgb", "nodes/integer", "nodes/integer_vector", "nodes/menu", "nodes/value", "nodes/vector"]),
+    menu("常數", ["nodes/boolean", "nodes/rgb", "nodes/integer", "nodes/integer_vector", "nodes/menu", node("字串", type=ng.STRING), "nodes/value", "nodes/vector"]),
     SEP,
     node("輸入（片段的畫面）", type=ng.INPUT), node("參數輸入（效果自己的參數）", type=ng.PARAMS),
     node("圖片", type=ng.SOURCE, kind="image"), node("影片", type=ng.SOURCE, kind="video"),

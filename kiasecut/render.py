@@ -175,7 +175,7 @@ class Renderer:
         `unit` render px per canvas px, as big as they come out (the source's w / h are what they take up)."""
         node = e["graph"]["nodes"][nid]
         bound = nodegraph.binds(e["graph"])
-        spec = textvars.spec_at(nodegraph.text_of(node, nid, e["params"], t, bound, src), t, TEXT_FIELDS, fps)
+        spec = textvars.spec_at(nodegraph.text_of(node, nid, e["params"], t, bound, src, e["graph"]), t, TEXT_FIELDS, fps)
         src = nodegraph.placed_by(src, e["params"], bound, nid, t)
         H = self.canvas_h
         em_unit = (spec.get("size") or 1.0) * textlayout.PX_PER_FONT_UNIT * H / 1080

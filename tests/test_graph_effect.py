@@ -78,6 +78,31 @@ class GraphEditTests(unittest.TestCase):
         edit.remove_graph_node(self.p, "c1", self.e["id"], nid)
         self.assertFalse([k for k in self.e["params"] if k.startswith(nid + ".")])
 
+    def test_string_node_feeds_a_text_node(self):
+        t = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "text"})
+        a = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "string", "value": "多個文字"})
+        b = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "string"})
+        g = self.e["graph"]
+        self.assertEqual((g["nodes"][a]["value"], g["nodes"][b]["value"], ng.title(g["nodes"][a])), ("多個文字", "文字", "字串"))
+        self.assertEqual(ng.outputs(g["nodes"][a]), [("", "字串")])
+        self.assertIn(("content", "文字"), ng.sockets(g["nodes"][t]))
+        edit.connect_graph(self.p, "c1", self.e["id"], a, t, "content")
+        spec = lambda: ng.text_of(g["nodes"][t], t, self.e["params"], 0, None, self.e["sources"][t], g)
+        self.assertEqual(spec()["content"], "多個文字")
+        edit.connect_graph(self.p, "c1", self.e["id"], b, t, "content")                 # (a socket takes one link: the new one replaces it)
+        self.assertEqual([l["from"] for l in g["links"] if l["to"] == t], [b])
+        edit.set_graph_string(self.p, "c1", self.e["id"], b, "line 1\nline 2")
+        self.assertEqual(spec()["content"], "line 1\nline 2")
+        edit.remove_graph_node(self.p, "c1", self.e["id"], b)
+        self.assertEqual(spec()["content"], ng.TEXT_CONTENT)                            # (unlinked: the node's own words again)
+        with self.assertRaises(edit.EditError):                                        # (words are no picture, a picture no words)
+            edit.connect_graph(self.p, "c1", self.e["id"], a, "output", "src")
+        math = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
+        with self.assertRaises(edit.EditError):
+            edit.connect_graph(self.p, "c1", self.e["id"], math, t, "content")
+        with self.assertRaises(edit.EditError):
+            edit.set_graph_string(self.p, "c1", self.e["id"], math, "x")
+
     def test_connect_errors_and_output_stays(self):
         a = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
         b = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/mix"})
@@ -488,6 +513,19 @@ class GraphRenderTests(unittest.TestCase):
         eff["sources"][nid].update(cx=2.0)                                                  # (moved out of the picture)
         for r in self.renderers:
             self.assertEqual(rgb(r.render(view, 0, W, H), W // 2, H // 2), BLACK, type(r).__name__)
+
+    def test_a_string_node_gives_the_text_node_its_words(self):
+        view, eff, nid = self.text_view()
+        g = eff["graph"]
+        eff["sources"][nid]["content"] = " "                                                # (nothing to see of its own words)
+        for r in self.renderers:
+            self.assertEqual(rgb(r.render(view, 0, W, H), W // 2, H // 2), BLACK, type(r).__name__)
+        sid = ng.add_node(g, {"type": ng.STRING, "value": "█"}, 0, 0)
+        ng.connect(g, sid, nid, ng.TEXT_SOCKET)
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            self.assertEqual(rgb(img, W // 2, H // 2), WHITE, type(r).__name__)
 
     def test_text_node_with_shadow_background_and_outline_renders(self):
         view, eff, nid = self.text_view(shadow_on=True, bg_on=True, bg_color=[1.0, 0.0, 0.0, 1.0], stroke_on=True,

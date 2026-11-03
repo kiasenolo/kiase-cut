@@ -27,6 +27,7 @@ from . import assets, curves, dynamic, fx
 
 US = 1_000_000
 INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output", "source", "filter", "params", "reroute", "frame", "group"
+STRING = "string"                                           # 字串: Blender's String constant - words that feed a text node (never a picture)
 VIEWER = "viewer"                                           # 預覽: what the editor's preview shows (never exported)
 SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
@@ -273,6 +274,7 @@ TEXT_ALIGNS = (("靠左", "left"), ("置中", "center"), ("靠右", "right"), ("
 TEXT_VALIGNS = (("上", "top"), ("中", "middle"), ("下", "bottom"))
 TEXT_STROKE_ALIGNS = (("內側", "inside"), ("居中", "center"), ("外側", "outside"))
 TEXT_CONTENT = "輸入文字"
+TEXT_SOCKET = "content"                                     # (where a string node is linked into a text node)
 # name, type, label, default, lo, hi (menus: the choices instead), panel
 TEXT_FIELDS = (
     ("size", "float", "字號", 7.95, 0.0, 200.0, None),
@@ -339,10 +341,20 @@ def text_place_params():
     return [q for q in place_params() if q.name in ("cx", "cy", "rotation")]
 
 
-def text_of(node, nid, params, t, bound=None, src=None):
-    """The text spec (textlayout.render) of text node nid at clip time t: the source's words and font, the fields from the
-    effect's params (bound: binds(graph), the parameters fed by the effect's own)."""
-    out = {"content": (src or {}).get("content", TEXT_CONTENT), "font_path": (src or {}).get("font_path")}
+def string_into(graph, nid):
+    """The words of the string node linked into text node nid (None: there is no such link)."""
+    for l in (graph or {}).get("links") or []:
+        if l["to"] == nid and l["socket"] == TEXT_SOCKET and (graph["nodes"].get(l["from"]) or {}).get("type") == STRING:
+            return str(graph["nodes"][l["from"]].get("value", ""))
+    return None
+
+
+def text_of(node, nid, params, t, bound=None, src=None, graph=None):
+    """The text spec (textlayout.render) of text node nid at clip time t: the words (a linked string node's, else the
+    source's) and the source's font, the fields from the effect's params (bound: binds(graph), the parameters fed by the
+    effect's own)."""
+    words = string_into(graph, nid)
+    out = {"content": (src or {}).get("content", TEXT_CONTENT) if words is None else words, "font_path": (src or {}).get("font_path")}
     for k in ("vars", "styles"):
         if (src or {}).get(k):
             out[k] = (src or {})[k]
@@ -471,8 +483,8 @@ def sockets(node):
     if is_asset(node):                                   # (a built-in shape: pictures to paint its fill and outline with, then every value)
         return ([(sock, label) for _p, sock, label in ASSET_PAINTS] +
                 [(PARAM + q.name, q.label) for q in asset_def(node).params + place_params() if has_socket(q)])
-    if is_text(node):                                    # (a text: every value)
-        return [(PARAM + q.name, q.label) for q in text_def(node).params + text_place_params() if has_socket(q)]
+    if is_text(node):                                    # (a text: its words from a string node, then every value)
+        return [(TEXT_SOCKET, "文字")] + [(PARAM + q.name, q.label) for q in text_def(node).params + text_place_params() if has_socket(q)]
     if node["type"] != FILTER:
         return []
     d = fx.for_node(node)
@@ -488,6 +500,8 @@ def outputs(node):
             return list(d.outputs)
     if node["type"] == GROUP:
         return [(o["name"], o["label"]) for o in node.get("outputs") or []]
+    if node["type"] == STRING:
+        return [("", "字串")]
     return [("", "圖像")]
 
 
@@ -498,7 +512,7 @@ def title(node):
         return node.get("label") or "群組"
     if is_asset(node):
         return asset_def(node).name
-    return {"groupin": "群組輸入", "groupout": "群組輸出", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀", "text": "文字",
+    return {"groupin": "群組輸入", "groupout": "群組輸出", STRING: "字串", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀", "text": "文字",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
 
@@ -839,6 +853,12 @@ def connect(graph, src, dst, socket, out=None):
         raise GraphError("找不到這個節點")
     if socket not in [s for s, _ in sockets(nodes[dst])]:
         raise GraphError("這個節點沒有這個輸入")
+    if nodes[src]["type"] == STRING or socket == TEXT_SOCKET:      # (words go from a string node to a text node's 文字 and nowhere else)
+        if nodes[src]["type"] != STRING or socket != TEXT_SOCKET or not is_text(nodes[dst]):
+            raise GraphError("字串只能接到文字節點的「文字」")
+        graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
+        graph["links"].append({"from": src, "to": dst, "socket": socket})
+        return
     p = param_of(graph, dst, socket)
     if gives_params(nodes[src], out):
         x = next((x for x in exposed(graph) if x["name"] == out), None)
@@ -1137,7 +1157,8 @@ def viewed(graph):
     for vid, n in nodes.items():
         if n["type"] == VIEWER:
             for l in graph.get("links") or []:
-                if l["to"] == vid and l["socket"] == "src" and l["from"] in nodes and not gives_params(nodes[l["from"]], l.get("out")):
+                if l["to"] == vid and l["socket"] == "src" and l["from"] in nodes and not gives_params(nodes[l["from"]], l.get("out")) \
+                        and nodes[l["from"]]["type"] != STRING:
                     found = (l["from"], l.get("out") or "")
     return found
 
@@ -1262,7 +1283,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     if out is None:
         return None, None
     feed = {(l["to"], l["socket"]): (l["from"], l.get("out") or "") for l in links if l["from"] in nodes and l["to"] in nodes
-            and not gives_params(nodes[l["from"]], l.get("out"))}        # (the node and the output it gives)
+            and not gives_params(nodes[l["from"]], l.get("out")) and nodes[l["from"]]["type"] != STRING}        # (the node and the output it gives; words are no picture)
     view = viewed(graph) if viewer else None
     if view and (view[0] not in nodes or nodes[view[0]]["type"] in (PARAMS, FRAME, OUTPUT, VIEWER)):
         view = None

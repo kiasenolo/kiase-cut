@@ -296,6 +296,22 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, ghost, ed.view.items_by_id["math1"].input_pos("param:value"))
         self.assertEqual(got, [("e1", "params1", "math1", "param:value")])
 
+    def test_input_node_has_an_empty_socket_that_makes_a_parameter(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got, links = [], []
+        ed.exposeRequested.connect(lambda *a: got.append(a))
+        ed.connectRequested.connect(lambda *a: links.append(a))
+        inp = ed.view.items_by_id["input"]
+        self.assertEqual([o for o, _ in inp.outputs()], ["", "\0ghost"])             # the picture, then the empty one
+        ghost = next(at for out, at in inp.outputs() if out == "\0ghost")
+        self.drag(ed, ghost, ed.view.items_by_id["math1"].input_pos("param:value"))
+        self.assertEqual(got, [("e1", "input", "math1", "param:value")])
+        self.drag(ed, inp.output_pos(""), ed.view.items_by_id["math1"].input_pos("src"))       # (the picture still links)
+        self.assertEqual(links, [("e1", "input", "math1", "src", "")])
+
     def test_free_input_dragged_to_an_output_links_and_makes_a_parameter(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 150)

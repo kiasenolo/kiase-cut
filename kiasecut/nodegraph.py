@@ -250,11 +250,17 @@ def exposed(graph):
     return graph.get("exposed") or []
 
 
+def gives_params(node, out=""):
+    """Whether the link leaving `node` at output `out` is an effect parameter: from a 參數輸入, or from the named rows of the 輸入
+    (Blender's Group Input: the picture and the parameters on one node)."""
+    return node["type"] == PARAMS or (node["type"] == INPUT and bool(out))
+
+
 def binds(graph):
     """{(node id, socket): exposed parameter name} of the parameters bound to the effect's own."""
     graph = flatten(graph)
     return {(l["to"], l["socket"]): l["out"] for l in graph["links"]
-            if l.get("out") and graph["nodes"].get(l["from"], {}).get("type") == PARAMS}
+            if l.get("out") and l["from"] in graph["nodes"] and gives_params(graph["nodes"][l["from"]], l["out"])}
 
 
 def sockets(node):
@@ -635,7 +641,7 @@ def connect(graph, src, dst, socket, out=None):
     if socket not in [s for s, _ in sockets(nodes[dst])]:
         raise GraphError("這個節點沒有這個輸入")
     p = param_of(graph, dst, socket)
-    if nodes[src]["type"] == PARAMS:
+    if gives_params(nodes[src], out):
         x = next((x for x in exposed(graph) if x["name"] == out), None)
         if x is None or p is None:
             raise GraphError("參數只能接到節點的參數插槽")
@@ -662,7 +668,7 @@ def expose(graph, params, src, dst, socket, sources=None):
     參數輸入 node): it starts at the value the parameter had and takes its name, range and choices. Returns its
     name. (params: the effect's e["params"].)"""
     p = param_of(graph, dst, socket)
-    if p is None or graph["nodes"].get(src, {}).get("type") != PARAMS:
+    if p is None or graph["nodes"].get(src, {}).get("type") not in (PARAMS, INPUT):
         raise GraphError("參數只能接到節點的參數插槽")
     names = {x["name"] for x in exposed(graph)}
     name, n = p.name, 1
@@ -907,7 +913,7 @@ def viewed(graph):
     for vid, n in nodes.items():
         if n["type"] == VIEWER:
             for l in graph.get("links") or []:
-                if l["to"] == vid and l["socket"] == "src" and l["from"] in nodes and nodes[l["from"]]["type"] != PARAMS:
+                if l["to"] == vid and l["socket"] == "src" and l["from"] in nodes and not gives_params(nodes[l["from"]], l.get("out")):
                     found = (l["from"], l.get("out") or "")
     return found
 
@@ -1032,7 +1038,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     if out is None:
         return None, None
     feed = {(l["to"], l["socket"]): (l["from"], l.get("out") or "") for l in links if l["from"] in nodes and l["to"] in nodes
-            and nodes[l["from"]]["type"] != PARAMS}                       # (the node and the output it gives)
+            and not gives_params(nodes[l["from"]], l.get("out"))}        # (the node and the output it gives)
     view = viewed(graph) if viewer else None
     if view and (view[0] not in nodes or nodes[view[0]]["type"] in (PARAMS, FRAME, OUTPUT, VIEWER)):
         view = None

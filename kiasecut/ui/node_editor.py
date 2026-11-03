@@ -112,7 +112,9 @@ class NodeItem(QGraphicsItem):
             if kind == "param" and p is not None and p.type in ("curve", "gradient"):     # (its picture, under the label)
                 rows.append({"y": y, "kind": "plot", "socket": None, "label": "", "p": p, "panel": None, "h": PLOT_H[p.type]})
                 y += PLOT_H[p.type]
-        if node["type"] == ng.PARAMS:
+        if node["type"] in (ng.PARAMS, ng.INPUT):
+            if node["type"] == ng.INPUT:                       # (Blender's Group Input: the picture, then the parameters)
+                add("out", "圖像", p="")
             for x in ng.exposed(self.editor.graph):
                 add("expose", x["label"], p=x)
             add("ghost", "（拉出一條線來新增參數）")
@@ -188,17 +190,18 @@ class NodeItem(QGraphicsItem):
         return self.mapToScene(QPointF(0, r["y"] + ROW / 2 if r else HEAD))
 
     def output_pos(self, out=""):
-        if self.node["type"] == ng.PARAMS:
-            r = next((r for r in self.rows if r["kind"] in ("expose", "ghost") and (r["p"]["name"] if r["p"] else GHOST) == out), None)
+        if self.node["type"] in (ng.PARAMS, ng.INPUT):
+            r = next((r for r in self.rows if (r["kind"] in ("expose", "ghost") and (r["p"]["name"] if r["p"] else GHOST) == out)
+                      or (r["kind"] == "out" and out == "")), None)
         else:
             r = next((r for r in self.rows if (r["kind"] == "out" and (r["p"] or "") == out) or (r["kind"] == "ghost" and out == GHOST)), None)
         return self.mapToScene(QPointF(self.w, (r["y"] if r else HEAD + PAD) + ROW / 2))
 
     def outputs(self):
         """[(output name, scene point)]: one for a picture, one for each parameter (and the empty one) of a 參數輸入."""
-        if self.node["type"] == ng.PARAMS:
-            return [((r["p"]["name"] if r["p"] else GHOST), self.output_pos(r["p"]["name"] if r["p"] else GHOST))
-                    for r in self.rows if r["kind"] in ("expose", "ghost")]
+        if self.node["type"] in (ng.PARAMS, ng.INPUT):
+            return [(name, self.output_pos(name)) for name in
+                    (("" if r["kind"] == "out" else r["p"]["name"] if r["p"] else GHOST) for r in self.rows if r["kind"] in ("expose", "ghost", "out"))]
         return [((r["p"] or "") if r["kind"] == "out" else GHOST, self.output_pos((r["p"] or "") if r["kind"] == "out" else GHOST))
                 for r in self.rows if r["kind"] in ("out", "ghost")]
 
@@ -815,7 +818,7 @@ class GraphView(QGraphicsView):
                 self.cut = (line, [pos], reroute)
                 return
             hit = self.socket_at(pos)
-            if hit and hit[0] == "out" and hit[2] not in ("", GHOST) and self.editor.node_of(hit[1])["type"] == ng.PARAMS:
+            if hit and hit[0] == "out" and hit[2] not in ("", GHOST) and self.editor.node_of(hit[1])["type"] in (ng.PARAMS, ng.INPUT):
                 self.editor.parameter_menu(hit[1], hit[2], e.globalPosition().toPoint())
                 return
             self.editor.add_menu(pos, e.globalPosition().toPoint())
@@ -1615,7 +1618,7 @@ class NodeEditor(QWidget):
             if hit is None:
                 self.unplug("", "", old[1])
             return
-        if into and self.node_of(src)["type"] == ng.PARAMS:        # (onto a number input of a node: its parameter takes it)
+        if into and ng.gives_params(self.node_of(src), out):       # (onto a number input of a node: its parameter takes it)
             it = self.view.items_by_id.get(into[1])
             r = it.row_of(into[2]) if it is not None else None
             if r is not None and r["kind"] == "param" and r["p"] is not None and not r["socket"].startswith(ng.PARAM):
@@ -1627,7 +1630,7 @@ class NodeEditor(QWidget):
                 self.connectRequested.emit(self.eid, src, into[1], into[2], out)
         elif hit is None and old:
             self.disconnectRequested.emit(self.eid, old[0], old[1])
-        elif hit is None and self.node_of(src)["type"] not in (ng.PARAMS, "groupin"):   # a link let go in the empty: add a node there to take it
+        elif hit is None and not ng.gives_params(self.node_of(src), out) and self.node_of(src)["type"] not in (ng.PARAMS, "groupin"):   # a link let go in the empty: add a node there to take it
             self.add_menu(pos, gpos, (src, out))
 
     def unplug(self, member, socket, output):

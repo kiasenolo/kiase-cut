@@ -150,6 +150,13 @@ class ExposedParamTests(unittest.TestCase):
         kinds = {x["name"]: x["type"] for x in self.e["graph"]["exposed"]}
         self.assertEqual((kinds[c], kinds[d]), ("bool", "menu"))
 
+    def test_the_input_node_can_hold_the_parameters_too(self):
+        a = edit.expose_graph_param(self.p, "c1", self.eid, "input", self.m, "param:value")
+        g = self.e["graph"]
+        self.assertEqual(ng.binds(g), {(self.m, "param:value"): a})
+        self.assertEqual(ng.viewed(g), None)
+        self.assertTrue(any(l["from"] == "input" and l.get("out") == a for l in g["links"]))
+
     def test_existing_parameter_to_another_node_of_the_same_kind_only(self):
         a = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
         m2 = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/math"})

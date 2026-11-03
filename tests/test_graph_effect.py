@@ -624,6 +624,72 @@ class GraphRenderTests(unittest.TestCase):
         self.assertGreater(rgb(changed, W // 2, H // 2)[2], 200)
         self.assertEqual(ran.count("模糊"), 2, ran)
 
+    def test_nodes_that_read_the_clip_are_kept_while_its_picture_is_the_same(self):
+        """On the GPU the blur of the clip itself is drawn once while the clip's picture, its place and the settings stay the same -
+        frames of any time - and again when one changes; a video's frame (it may change without a new picture) and a picture that
+        another effect made are never kept."""
+        if not HAVE_GL:
+            self.skipTest("no OpenGL")
+        from PySide6.QtGui import QImage
+        from kiasecut import glrender
+        frame = QImage(160, 90, QImage.Format_ARGB32_Premultiplied)
+        frame.fill(0xFFFF0000)
+
+        def counting(r):
+            ran = []
+            real = r.gl.fx.run_outputs
+
+            def counted(d, *a, **k):
+                ran.append(d.name)
+                return real(d, *a, **k)
+            r.gl.fx.run_outputs = counted
+            return ran
+
+        def build(e):
+            g = e["graph"]
+            b = ng.add_node(g, {"type": "filter", "ref": "builtin:blur"})
+            ng.connect(g, "input", b, "src")
+            ng.connect(g, b, "output", "src")
+            e["params"].update(ng.default_params(g))
+
+        r = glrender.GLRenderer()
+        ran = counting(r)
+        v = self.view(build)
+        clip = v["tracks"][0]["clips"][0]
+        first = r.render(v, 0, W, H)
+        self.assertEqual(r.errors, [])
+        self.assertEqual(ran.count("模糊"), 1, ran)
+        for t in (0, 20, 40):
+            self.assertEqual(r.render(v, t, W, H), first)
+        self.assertEqual(ran.count("模糊"), 1, ran)                              # (the other frames drew no blur)
+        clip["media"]["path"] = self.s.blue                                    # (another picture)
+        blue = r.render(v, 0, W, H)
+        self.assertEqual(ran.count("模糊"), 2, ran)
+        self.assertGreater(rgb(blue, W // 2, H // 2)[2], 200)
+        self.assertEqual(rgb(blue, W // 2, H // 2)[0], 0)
+        clip["transform"]["scale"] = 0.5                                       # (placed another way)
+        r.render(v, 0, W, H)
+        self.assertEqual(ran.count("模糊"), 3, ran)
+        r.render(v, 20, W, H)
+        self.assertEqual(ran.count("模糊"), 3, ran)
+
+        clip["type"] = "video"                                                 # a video: its frames are never said to be the same
+        r = glrender.GLRenderer(video_frame=lambda path, us, w, h: frame)
+        ran = counting(r)
+        for t in (0, 0, 20):
+            r.render(v, t, W, H)
+        self.assertEqual(r.errors, [])
+        self.assertEqual(ran.count("模糊"), 3, ran)
+
+        clip["type"] = "image"
+        v["tracks"][0]["clips"][0]["effects"].insert(0, fx.new_effect("builtin:invert", "e0"))      # after another effect: not the clip's picture
+        r = glrender.GLRenderer()
+        ran = counting(r)
+        for t in (0, 0, 20):
+            r.render(v, t, W, H)
+        self.assertEqual(r.errors, [])
+        self.assertEqual(ran.count("模糊"), 3, ran)
+
     def test_filter_node_chain_and_mix_amount(self):
         def build(e):
             g = e["graph"]

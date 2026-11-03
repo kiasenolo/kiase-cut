@@ -74,12 +74,12 @@ class CacheTests(unittest.TestCase):
         ng.connect(g, prev, "output", "src")
         return g, ids
 
-    def go(self, g, params=None, rgba=(255, 0, 0, 255), t=0, tap=None, stamp=None, picture=None, cache="own", scope="e1"):
+    def go(self, g, params=None, rgba=(255, 0, 0, 255), t=0, tap=None, stamp=None, picture=None, cache="own", scope="e1", input_stamp=None):
         cache = self.cache if cache == "own" else cache
         with self.eng.ctx:
             src = self.eng.ctx.texture((W, H), 4, np.tile(np.array(rgba, np.uint8), (H, W, 1)).tobytes())
             tex, owner = ng.evaluate(self.eng, g, params or {}, src, W, H, self.pool.alloc, self.pool.free, t=t, tap=tap, stamp=stamp,
-                                     picture=picture, cache=cache, scope=scope)
+                                     picture=picture, cache=cache, scope=scope, input_stamp=input_stamp)
             out = ng.read_rgba8(tex).copy()
             if owner is not None:
                 self.pool.free(owner)
@@ -125,6 +125,25 @@ class CacheTests(unittest.TestCase):
         self.go(g2, params, rgba=(255, 0, 0, 255))
         self.go(g2, params, rgba=(0, 0, 255, 255))
         self.assertEqual(self.draws, ["Gen", "Read", "Read"])              # (the others read the generator's picture only: kept too)
+
+    def test_nodes_that_read_the_clip_are_kept_while_its_stamp_is_the_same(self):
+        g, (a, b) = self.chain("read", "read")
+        params = {a + ".k": 0.5, b + ".k": 0.5}
+        first = self.go(g, params, input_stamp="clip 1")
+        self.assertEqual(self.draws, ["Read", "Read"])
+        again = self.go(g, params, input_stamp="clip 1")
+        self.assertEqual(self.draws, ["Read", "Read"])                     # (both kept: the clip's picture is said to be the same)
+        self.assertTrue(np.array_equal(first, again))
+        self.assertEqual(len(self.cache.items), 2)
+        blue = self.go(g, params, rgba=(0, 0, 255, 255), input_stamp="clip 2")
+        self.assertEqual(self.draws, ["Read"] * 4)                         # (another picture: both again)
+        self.assertEqual(int(blue[0, 0, 0]), 0)                            # (and it shows the new picture)
+        self.assertGreater(int(blue[0, 0, 2]), 50)
+        self.go(g, {a + ".k": 0.5, b + ".k": 0.25}, rgba=(0, 0, 255, 255), input_stamp="clip 2")
+        self.assertEqual(self.draws, ["Read"] * 5)                         # (the second one's setting: the first is kept)
+        self.go(g, {a + ".k": 0.5, b + ".k": 0.25}, rgba=(0, 0, 255, 255))
+        self.assertEqual(self.draws, ["Read"] * 7)                         # (no stamp: the clip may be anything - both again, none kept)
+        self.assertEqual(len(self.cache.items), 0)
 
     def test_the_time_matters_to_a_filter_that_reads_it(self):
         g, _ = self.chain("timed")

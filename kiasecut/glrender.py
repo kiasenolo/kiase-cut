@@ -182,6 +182,18 @@ def rect_uv(r):
     return QTransform(1 / r.width(), 0, 0, 1 / r.height(), -r.left() / r.width(), -r.top() / r.height())
 
 
+def looks_of(kind, made_of, rect, world, corners):
+    """What the picture GL.draw puts on a clip's own layer (rect, world, corners as it takes them) is, as something that
+    is the same while the layer is: None when made_of, the cacheKey of the QImage it is drawn from, is not known (a video's
+    frame, a compound, a visualizer: pictures that may change without a new key). The key is what GL.picture keeps the
+    texture by, so it says the same about the layer as about the texture."""
+    if made_of is None:
+        return None
+    return (kind, made_of, (rect.x(), rect.y(), rect.width(), rect.height()),
+            (world.m11(), world.m12(), world.m13(), world.m21(), world.m22(), world.m23(), world.m31(), world.m32(), world.m33()),
+            corners and (tuple(corners[0]), tuple(float(r) for r in corners[1])))
+
+
 def mask_frame(mask, t, disp):
     """Clip space (centre origin, y down) -> mask space (centre origin, y up), as render.coverage."""
     v = lambda k, d: curves.value(mask.get(k, d), t)
@@ -602,6 +614,7 @@ class GLRenderer(render.Renderer):
         kind = c["type"]
         held = None                                     # a layer to give back when done
         shape = None                                    # (texture, straight) 套用至背景 covers, when not tex's
+        made_of = None                                  # the cacheKey of the picture tex was made from, when it is one that stays (see looks_of)
         if kind == "text":
             tx = c["text"]
             size = tx.get("size", 5.0)
@@ -619,6 +632,7 @@ class GLRenderer(render.Renderer):
             pic = self.text(spec, rs, H)
             bw, bh = pic.width() / rs * k_size, pic.height() / rs * k_size
             tex, straight = gl.picture(pic)
+            made_of = pic.cacheKey()
             rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             disp = self.text_disp(spec, H, (bw, bh), k_size)
         elif kind in ("image", "video"):
@@ -628,7 +642,9 @@ class GLRenderer(render.Renderer):
             rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             if c.get("asset"):                       # drawn from its parameters at t
                 q = assets.at(c["asset"], t)
-                tex, straight = gl.picture(self.asset(q, tw, th), mipmap=True)
+                pic = self.asset(q, tw, th)
+                tex, straight = gl.picture(pic, mipmap=True)
+                made_of = pic.cacheKey()
                 rect = render.asset_rect(q, bw, bh)
                 if backdrop:                             # where it is, not its colours' alpha
                     shape = gl.picture(self.asset(assets.cover(q), tw, th), mipmap=True)
@@ -636,8 +652,9 @@ class GLRenderer(render.Renderer):
                 tex, straight = gl.picture(self.viz_picture(c, t, tw, th))
             elif kind == "image":
                 pl = c.get("place") or {}
-                tex, straight = gl.picture(self.image(m["path"], tw * pl.get("w", 1.0), th * pl.get("h", 1.0)),
-                                           mipmap=True)
+                pic = self.image(m["path"], tw * pl.get("w", 1.0), th * pl.get("h", 1.0))
+                tex, straight = gl.picture(pic, mipmap=True)
+                made_of = pic.cacheKey()
             else:
                 pic = self.video_frame(m["path"], project.source_time(c, t),
                                        max(1, round(tw)), max(1, round(th))) if self.video_frame else None
@@ -733,7 +750,8 @@ class GLRenderer(render.Renderer):
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
                     gl.draw(lay, tex, straight, rect, world, corners=corners)
-                    out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp, ppu)
+                    out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp, ppu,
+                                          looks_of(kind, made_of, rect, world, corners))
                     gl.matte = matte and matte[0].tex
                     gl.draw_layer(tgt, out, opacity, mask, t, disp, inv, blend)
                     if out is not lay:
@@ -821,9 +839,10 @@ class GLRenderer(render.Renderer):
         self.gl_stills[key] = lay
         return lay
 
-    def gl_effects(self, effects, lay, t, duration, fps, world, disp, ppu):
+    def gl_effects(self, effects, lay, t, duration, fps, world, disp, ppu, look=None):
         """Run a chain of effects over layer lay (ppu of its px per canvas px); returns the layer
-        with the result (lay itself when nothing ran, else a new one the caller gives back)."""
+        with the result (lay itself when nothing ran, else a new one the caller gives back).
+        look: what lay's picture is (looks_of), when it can be told."""
         gl = self.gl
         inv, _ = world.inverted()
         cur = lay
@@ -833,7 +852,7 @@ class GLRenderer(render.Renderer):
                 continue
             d = fx.get(e["filter"])
             if e["filter"] == fx.GRAPH:                                  # a node graph (nodegraph.py)
-                res = self.gl_graph(e, cur, t, duration, fps, world, disp, ppu)
+                res = self.gl_graph(e, cur, t, duration, fps, world, disp, ppu, look if cur is lay else None)    # (after another effect it is not lay's picture any more)
                 if res is None:
                     continue
                 nxt = gl.layer(cur.w, cur.h)
@@ -870,9 +889,10 @@ class GLRenderer(render.Renderer):
             cur = nxt
         return cur
 
-    def gl_graph(self, e, cur, t, duration, fps, world, disp, ppu):
+    def gl_graph(self, e, cur, t, duration, fps, world, disp, ppu, look=None):
         """Effect e (a node graph) over layer cur: (the result's texture, a function that gives it back), or
-        None when it cannot run."""
+        None when it cannot run. look: what cur's picture is (looks_of), when it can be told: the nodes that read
+        it are kept between frames while it is the same."""
         gl = self.gl
         sources = e.get("sources") or {}
 
@@ -904,7 +924,8 @@ class GLRenderer(render.Renderer):
         try:
             tex, owner = nodegraph.evaluate(gl.fx, e["graph"], e["params"], cur.tex, cur.w, cur.h, lambda w, h: gl.layer(w, h, dtype="f2"), gl.release,
                                             t=t, duration=duration, fps=fps, unit=ppu, picture=picture, errors=errors,
-                                            viewer=self.editing, tap=self.thumb_tap(e), stamp=stamp, cache=self.graph_cache, scope=e["id"])
+                                            viewer=self.editing, tap=self.thumb_tap(e), stamp=stamp, cache=self.graph_cache, scope=e["id"],
+                                            input_stamp=look)
         except nodegraph.GraphError as exc:
             self.errors.append(f"節點效果：{exc}")
             return None

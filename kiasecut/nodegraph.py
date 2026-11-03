@@ -1010,7 +1010,7 @@ class Cache:
 
 
 def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False, tap=None,
-             stamp=None, cache=None, scope=None):
+             stamp=None, cache=None, scope=None, input_stamp=None):
     """Work out graph's output (params: the effect's e["params"]) for the w x h texture src_tex (the effect's input)
     at clip time t.
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
@@ -1020,8 +1020,9 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     signature is None unless there is a cache).
     cache (a Cache), scope (the effect's id) and stamp(node id[, paint, linked]) -> something hashable that says what a source's
     picture is (the same stamp: the same picture; None: it may be a different one every time, as a video's) keep the pictures of
-    the costly nodes that do not read the picture the effect was given (the clip) from one evaluation to the next: a node whose
-    picture is kept, or that only nodes with kept pictures need, is not drawn.
+    the costly nodes from one evaluation to the next: a node whose picture is kept, or that only nodes with kept pictures need, is
+    not drawn. The nodes that read the picture the effect was given (the clip) are kept only with input_stamp, which says what
+    that picture is in the same way (None: it may be a different one every time).
     Returns (texture, owner): owner is the object to give back to free when done with it (None: the
     texture is src_tex itself, or the cache's); (None, None) when the graph has no output. Node errors go to errors."""
     errors = errors if errors is not None else []
@@ -1070,7 +1071,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     if cache is not None:
         cache.begin(free)
         for n in order:
-            _sign(n, nodes[n], feed, sigs, values, w, h, unit, time, prog, frame, stamp, final)
+            _sign(n, nodes[n], feed, sigs, values, w, h, unit, time, prog, frame, stamp, input_stamp)
 
     def cached(f):
         node = nodes[f[0]]
@@ -1239,11 +1240,14 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     return tex, owner
 
 
-def _sign(n, node, feed, sigs, values, w, h, unit, time, prog, frame, stamp, final):
+def _sign(n, node, feed, sigs, values, w, h, unit, time, prog, frame, stamp, input_stamp):
     """Set sigs[(n, output)] for node n: a digest of everything its picture depends on, or None when something it reads
-    changes whatever the settings say (the picture the effect was given, a source with no stamp)."""
+    changes whatever the settings say (the picture the effect was given without an input_stamp, a source with no stamp)."""
     kind = node["type"]
-    if kind == REROUTE:
+    if kind == INPUT:
+        if input_stamp is not None:
+            sigs[(n, "")] = _digest("input", w, h, input_stamp)
+    elif kind == REROUTE:
         f = feed.get((n, "src"))
         sigs[(n, "")] = sigs.get(f) if f is not None else _digest("blank", w, h)
     elif kind == SOURCE:

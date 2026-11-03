@@ -42,9 +42,12 @@ class AssetTests(unittest.TestCase):
             info = library.probe(path)
             self.assertEqual(info["kind"], "image", a.key)
             self.assertEqual((info["width"], info["height"]), (p["w"], p["h"]), a.key)
-            if a.cat != "shape":                            # fills the canvas
+            if a.cat not in ("shape", "empty"):             # fills the canvas
                 self.assertEqual((p["w"], p["h"]), (1920, 1080), a.key)
             img = svgimage.raster(path, 64)
+            if a.cat == "empty":                            # nothing to see in the file
+                self.assertEqual(sum(img.pixelColor(x, y).alpha() for x in range(0, 64, 4) for y in range(0, img.height(), 2)), 0)
+                continue
             self.assertGreater(sum(img.pixelColor(x, y).alpha() for x in range(0, 64, 4)
                                    for y in range(0, img.height(), 2)), 0, a.key)
             for fill, align in ((True, "inside"), (False, "inside"), (True, "outside")):     # outlines too
@@ -251,6 +254,25 @@ class AssetTests(unittest.TestCase):
         b = r.render(p, round(fps), 64, 36).pixelColor(32, 18)
         self.assertEqual((a.red(), a.blue()), (255, 0))
         self.assertEqual((b.red(), b.blue()), (0, 255))
+        self.assertFalse(r.errors)
+
+    def test_empties_show_only_while_editing(self):
+        from kiasecut import render
+        keys = [a.key for a in assets.ASSETS if a.cat == "empty"]
+        self.assertGreaterEqual(len(keys), 3)
+        full = assets.make(assets.get("empty.full"), "", "", 1920, 1080)
+        self.assertEqual((full["w"], full["h"]), (1920, 1080))
+        small = assets.make(assets.get("empty.small"), "", "", 1920, 1080)
+        self.assertEqual((small["w"], small["h"]), (100, 100))
+        p = proj()
+        p["tracks"][0]["clips"] = p["tracks"][0]["clips"][:1]
+        edit.replace_media(p, "c1", assets.item(full, "/nowhere.svg"), full)
+        r = render.Renderer()
+        dark = r.render(p, 0, 64, 36).pixelColor(32, 18)
+        self.assertEqual((dark.red(), dark.green(), dark.blue()), (0, 0, 0))     # nothing in the output
+        p["editing"] = True
+        seen = r.render(p, 0, 64, 36)
+        self.assertGreater(max(seen.pixelColor(x, y).red() for x in range(64) for y in range(36)), 40)   # its frame in the preview
         self.assertFalse(r.errors)
 
     def test_export_static_asset(self):

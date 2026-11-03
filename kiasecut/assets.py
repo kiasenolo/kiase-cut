@@ -43,7 +43,7 @@ from . import curves, textures
 
 FOLDER = ".內建素材"
 PREFIX = "asset:"
-CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎形狀")]
+CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎形狀"), ("empty", "空物體")]
 DEFAULT_COLORS = ("#ffffff", "#000000")
 SHAPE_PX = 400                             # a new shape's size on a 1080-high canvas
 
@@ -131,10 +131,11 @@ FIELDS = {                                 # what each family has besides w, h a
     "arrow": STROKE,
     "parallelogram": ("skew",) + STROKE,
     "line": (),
+    "empty": (),
     "grid": ("gcols", "grows", "gratio", "gline", "gleft", "gright", "gtop", "gbottom"),
 }
 NAMES = {"solid": "純色", "gradient": "漸變", "rect": "矩形", "ellipse": "橢圓", "polygon": "多邊形",
-         "star": "星形", "heart": "心形", "arrow": "箭頭", "parallelogram": "平行四邊形", "line": "線條", "grid": "網格"}
+         "star": "星形", "heart": "心形", "arrow": "箭頭", "parallelogram": "平行四邊形", "line": "線條", "grid": "網格", "empty": "空物體"}
 
 
 class Asset:
@@ -165,6 +166,11 @@ _GRADIENTS = [("日落", "#ff5f6d", "#ffc371", "linear", 30), ("海洋", "#2193b
 _CUSTOM_GRADIENTS = [("橫向漸變", "linear", 0), ("直向漸變", "linear", 90), ("斜向漸變", "linear", 30),
                      ("放射漸變", "radial", 0)]
 S = SHAPE_PX
+EMPTY_COLOR = "#ff9800"                    # (what an empty is drawn in while editing)
+# invisible layers to parent, anchor or hold effects on; sizes in px of a 1080-high canvas (full: the canvas)
+_EMPTIES = [("small", "空物體 小", {"w": 100, "h": 100}), ("medium", "空物體 中", {"w": 400, "h": 400}),
+            ("large", "空物體 大", {"w": 800, "h": 800}), ("wide", "空物體 橫幅", {"w": 1200, "h": 300}),
+            ("tall", "空物體 直幅", {"w": 300, "h": 1200}), ("full", "空物體 滿版", {})]
 _SHAPES = [("rect", "矩形", "rect", {}), ("roundrect", "圓角矩形", "rect", {"radius": 64}),
            ("circle", "圓形", "ellipse", {}), ("triangle", "三角形", "polygon", {"sides": 3}),
            ("diamond", "菱形", "polygon", {"sides": 4}), ("pentagon", "五邊形", "polygon", {"sides": 5}),
@@ -184,7 +190,8 @@ ASSETS = ([Asset(f"solid.{i}", "solid", name, "solid", (c, c)) for i, (name, c) 
              for i, (name, a, b, g, ang) in enumerate(_GRADIENTS)]
           + [Asset(f"gradient.custom.{i}", "gradient", name, "gradient", gtype=g, angle=ang)
              for i, (name, g, ang) in enumerate(_CUSTOM_GRADIENTS)]
-          + [Asset(f"shape.{k}", "shape", name, fam, **p) for k, name, fam, p in _SHAPES])
+          + [Asset(f"shape.{k}", "shape", name, fam, **p) for k, name, fam, p in _SHAPES]
+          + [Asset(f"empty.{k}", "empty", name, "empty", (EMPTY_COLOR, EMPTY_COLOR), **p) for k, name, p in _EMPTIES])
 _BY_KEY = {a.key: a for a in ASSETS}
 
 
@@ -304,7 +311,9 @@ def make(a, c1, c2, canvas_w, canvas_h):
         p.update(w=S, h=S)
     for f, v in a.params.items():
         p[f] = v
-    if a.cat == "shape":
+    if a.cat == "empty" and not a.params:                  # (滿版)
+        p.update(w=int(canvas_w), h=int(canvas_h))
+    elif a.cat in ("shape", "empty"):
         for f in ("w", "h", "radius", "stroke", "gline"):
             if f in p:
                 p[f] = max(1, round(p[f] * k)) if f in ("w", "h") else round(p[f] * k)
@@ -736,9 +745,21 @@ def cover(p):
     return q
 
 
-def svg(p):
-    """The SVG text of asset parameters p as at() gives them."""
+def _empty(w, h):
+    """An empty as the editor's preview shows it: its frame (dashed) and axes through the middle."""
+    s = max(2.0, min(w, h) / 120)
+    line = f'stroke="{EMPTY_COLOR}" stroke-width="{s:g}" fill="none"'
+    return _svg(w, h, f'<rect x="{s / 2:g}" y="{s / 2:g}" width="{max(w - s, 1):g}" height="{max(h - s, 1):g}" {line} '
+                      f'stroke-dasharray="{4 * s:g} {3 * s:g}"/>'
+                      f'<path d="M0 {h / 2:g}H{w:g}M{w / 2:g} 0V{h:g}" {line}/>')
+
+
+def svg(p, editing=False):
+    """The SVG text of asset parameters p as at() gives them (editing: the editor's preview, which
+    also shows an empty - nothing otherwise)."""
     w, h = p["w"], p["h"]
+    if p["family"] == "empty":
+        return _empty(w, h) if editing else _svg(w, h, "")
     if p["family"] == "solid":
         return _svg(w, h, f'<rect width="{w}" height="{h}" {_fill(p["color"])}/>')
     if p["family"] == "gradient":

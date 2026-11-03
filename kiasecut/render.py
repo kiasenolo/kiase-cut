@@ -145,7 +145,7 @@ class Renderer:
         """A built-in asset with parameters p (assets.at) drawn for about w x h px: at the next
         power of two at or above it, so it stays sharp (as SVG files are)."""
         side = 2 ** max(6, math.ceil(math.log2(max(w, h, 1))))
-        text = assets.svg(p)
+        text = assets.svg(p, self.editing)
         key = ("asset", text, side)
         im = self.images.get(key)
         if im is None:

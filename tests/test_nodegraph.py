@@ -469,6 +469,46 @@ class RunTest(unittest.TestCase):
             self.assertEqual(errors, [], ref)
             self.close(out, (255, 0, 0, 255))
 
+    def test_blackbody_normalize_and_image_info(self):
+        """Blackbody (Blender's fit, values from Blender 5.2), Normalize ((v - min) / (max - min) of the luminance, over a picture whose
+        size is not a power of two) and Image Info (the size as a vector)."""
+        self.W, self.H = 37, 23
+        g = ng.new_graph()
+        b = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/blackbody"})
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/vector_math"})
+        ng.connect(g, b, m, "src")
+        ng.connect(g, m, "output", "src")
+        blank = self.solid([0, 0, 0, 0])
+        for temp, want in ((500, (5.41329, 0, 0)), (900, (4.98396, 0, 0)), (1500, (3.26431, 0.43405, 0)), (2500, (2.06763, 0.76932, 0.13943)),
+                           (6500, (1.04255, 0.98405, 1.03527)), (10000, (0.87138, 0.99492, 1.43051)), (20000, (0.8263, 0.99451, 1.56631))):
+            out, errors, _ = self.run_graph(g, blank, params={b + ".temperature": float(temp), m + ".op": "縮放", m + ".vec_scale": 0.1})
+            self.assertEqual(errors, [], temp)
+            self.close(out, tuple(int(round(c * 25.5)) for c in want) + (255,), 2)
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/normalize"})
+        ng.connect(g, "input", n, "src")
+        ng.connect(g, n, "output", "src")
+        rng = np.random.default_rng(5)
+        rgba = np.dstack([rng.integers(0, 256, (self.H, self.W, 3)), np.full((self.H, self.W), 255)]).astype(np.uint8)
+        out, errors, _ = self.run_graph(g, rgba)
+        self.assertEqual(errors, [])
+        lum = rgba[..., :3].astype(float) @ [0.2126, 0.7152, 0.0722]
+        want = (lum - lum.min()) / (lum.max() - lum.min()) * 255
+        self.assertLess(np.abs(out[..., 0].astype(float) - want).max(), 2.5)
+        out, _, _ = self.run_graph(g, self.solid([100, 100, 100, 255]))
+        self.close(out, (0, 0, 0, 255))                                      # (nothing to stretch: 0)
+        for k, (name, want) in enumerate((("dimensions", (37, 23, 0)), ("resolution", (37, 23, 0)), ("location", (0, 0, 0)),
+                                          ("rotation", (0, 0, 0)), ("scale", (1, 1, 0)))):
+            g = ng.new_graph()
+            n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/image_info"})
+            m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/vector_math"})
+            ng.connect(g, "input", n, "src")
+            ng.connect(g, n, m, "src", name)
+            ng.connect(g, m, "output", "src")
+            out, errors, _ = self.run_graph(g, blank, params={m + ".op": "縮放", m + ".vec_scale": 0.005})
+            self.assertEqual(errors, [], name)
+            self.close(out, tuple(int(round(c * 1.275)) for c in want) + (255,), 2)
+
     def test_mix_blend_modes(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="s")

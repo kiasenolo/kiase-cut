@@ -133,9 +133,9 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual((eid, key), ("e1", "math1.value"))
         self.assertGreater(value, 0.5)                                  # (dragged right: more)
         it = ed.view.items_by_id["math1"]
-        row = next(r for r in it.rows if r["socket"] == "param:value")
+        row = next(r for r in it.rows if r["kind"] == "param" and r["p"].name == "value")
         self.assertTrue(it.has_field(row))
-        it.linked.add("param:value")
+        it.linked.add("b")                                                 # (B is one socket: its number box and its picture)
         self.assertFalse(it.has_field(row))
 
     def test_wheel_zooms_ctrl_and_shift_scroll(self):
@@ -170,7 +170,7 @@ class NodeEditorTests(unittest.TestCase):
         got = []
         ed.paramEdited.connect(lambda *a: got.append(a))
         it = ed.view.items_by_id["math1"]
-        row = next(r for r in it.rows if r["socket"] == "param:value")
+        row = next(r for r in it.rows if r["kind"] == "param" and r["p"].name == "value")
         ed.field_clicked(it, row, 0, QPointF(0, 0))                     # the box opens
         self.assertIsNotNone(ed.edit_proxy)
         ed.edit_proxy.widget().setText("0.9")

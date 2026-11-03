@@ -65,6 +65,7 @@ class FilterDef:
         self.passes, self.error = passes, error
         self.src_label = "圖像"                  # @source: what the main picture socket is called
         self.outputs = []                        # @output: [(name, label)] pictures a node gives (output_index tells which is drawn); none: one
+        self.input_param = {}                    # @input name "Label" param: the number box of that parameter sits on the input's row, hidden while a link feeds it
         self.input_show = {}                     # @show on an @input: {name: conditions}
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
 
@@ -239,6 +240,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     head = {}
     params, error = [], None
     panels, panel, enables, inputs, outputs = [], None, [], [], []
+    input_param = {}
     for line in text.splitlines():
         m = HEADER.match(line)
         if not m:
@@ -263,6 +265,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                 if not words or not IDENT.match(words[0]) or words[0] in RESERVED or any(words[0] == n for n, _ in inputs):
                     raise ValueError("@input 要寫：名稱（英文、數字、底線，不重複）[\"顯示名稱\"]")
                 inputs.append((words[0], words[1] if len(words) > 1 else words[0]))
+                if len(words) > 2:
+                    input_param[words[0]] = words[2]
             elif key == "output":                         # a picture more than one a node gives: drawn again with output_index = its place
                 words = shlex.split(rest)
                 if not words or not IDENT.match(words[0]) or any(words[0] == n for n, _ in outputs):
@@ -311,6 +315,10 @@ def parse(text, ref, fallback_name="濾鏡"):
                   head.get("extras", []), fixed)
     d.inputs = inputs
     d.input_show = input_show
+    d.input_param = input_param
+    for iname, pname in input_param.items():
+        if not any(q.name == pname and q.type in ("float", "int") for q in params):
+            d.error = d.error or f"@input {iname}：「{pname}」不是數字參數"
     d.outputs = outputs
     d.src_label = head.get("source") or d.src_label
     return d
@@ -646,7 +654,8 @@ def shader_source(d, sampled=()):
                      for p in d.params if p.name not in sampled)
     kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
     for name, _label in d.inputs:
-        decl += (f"\nuniform sampler2D inp_{name}_;\n"
+        decl += (f"\nuniform sampler2D inp_{name}_;\nuniform bool inp_{name}_on_;\n"
+                 f"bool has_input_{name}() {{ return inp_{name}_on_; }}\n"
                  f"vec4 input_{name}(vec2 uv) {{ return texture(inp_{name}_, clamp(uv, 0.0, 1.0)); }}")
     return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + EPILOGUE
 
@@ -831,6 +840,8 @@ class Engine:
             tex.use(8 + k)
             if "inp_" + name + "_" in prog:
                 prog["inp_" + name + "_"].value = 8 + k
+            if "inp_" + name + "_on_" in prog:
+                prog["inp_" + name + "_on_"].value = (inputs or {}).get(name) is not None
         if "output_index" in prog:
             prog["output_index"].value = int(output)
         self.ctx.disable(self.mgl.BLEND)

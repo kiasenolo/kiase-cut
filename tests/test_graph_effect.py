@@ -183,10 +183,11 @@ class ExposedParamTests(unittest.TestCase):
         v = s.view()
         v["tracks"][0]["clips"][0]["effects"] = [self.e]
         for r in (render.Renderer(), glrender.GLRenderer()):
-            self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), BLACK, type(r).__name__)      # red x 0
+            self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), BLACK, type(r).__name__)      # red x 0 (a float: its brightness)
         self.e["params"]["expose." + a] = 1.0
         for r in (render.Renderer(), glrender.GLRenderer()):
-            self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), RED, type(r).__name__)
+            got = rgb(r.render(v, 0, W, H), 12, 18)
+            self.assertTrue(all(abs(c - 54) <= 2 for c in got), f"{type(r).__name__}: {got}")    # red x 1: its brightness, grey
 
     def test_reroute_keeps_the_picture_going(self):
         edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")

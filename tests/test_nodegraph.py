@@ -128,7 +128,7 @@ class RunTest(unittest.TestCase):
         ng.connect(g, c, "output", "src")
         out, errors, _ = self.run_graph(g, self.solid([200, 100, 0, 255]), params={c + ".op": "相乘", c + ".value": 0.5})
         self.assertEqual(errors, [])
-        self.assertTrue(abs(int(out[0, 0, 0]) - 100) <= 2 and abs(int(out[0, 0, 1]) - 50) <= 2)
+        self.close(out, (57, 57, 57, 255))                    # a float node: the brightness (0.447) x 0.5, as a grey
 
     def node(self, ref, **vals):
         g = ng.new_graph()
@@ -150,21 +150,30 @@ class RunTest(unittest.TestCase):
         out, errors, _ = self.run_graph(g, self.solid([128, 64, 0, 255]),
                                         params={a + ".op": "相減", a + ".value": 1.0, b + ".op": "相加", b + ".value": 1.0})
         self.assertEqual(errors, [])
-        self.close(out, (128, 64, 0, 255))                    # 0.5 - 1 = -0.5 and back: an 8-bit step would have lost it
+        self.close(out, (73, 73, 73, 255))                    # 0.286 - 1 = -0.714 and back: an 8-bit step would have lost it
+
+    def test_a_linked_number_input_ignores_its_box(self):
+        g = ng.new_graph()
+        c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
+        ng.connect(g, "input", c, "src")
+        ng.connect(g, c, "output", "src")
+        clear = self.solid([0, 0, 0, 0])
+        out, _, _ = self.run_graph(g, clear, params={c + ".op": "相加", c + ".value": 0.5})
+        self.close(out, (128, 128, 128, 255))                    # B not linked: its box (0.5)
+        ng.connect(g, "input", c, "b")
+        out, _, _ = self.run_graph(g, clear, params={c + ".op": "相加", c + ".value": 0.5})
+        self.close(out, (0, 0, 0, 255))                          # linked: the clear picture is 0, not the box
 
     def test_math_operations(self):
-        for op, value, want in (("次方", 2.0, (64, 16, 0)), ("平方根", 0.0, (180, 128, 0)), ("大於", 0.3, (255, 0, 0)),
-                                ("四捨五入", 0.0, (255, 0, 0)), ("相除", 2.0, (64, 32, 0)), ("最大", 0.6, (153, 153, 153)),
-                                ("迴繞", 0.25, (0, 0, 0))):
+        for op, value, want in (("次方", 2.0, (21,) * 3), ("平方根", 0.0, (136,) * 3), ("大於", 0.2, (255,) * 3),
+                                ("四捨五入", 0.0, (0,) * 3), ("相除", 2.0, (36,) * 3), ("最大", 0.6, (153,) * 3),
+                                ("迴繞", 0.25, (9,) * 3)):             # (the input's brightness is 0.286)
             g, n, p = self.node("math", op=op, value=value)
             if op == "迴繞":
                 p[n + ".value3"] = 0.0                           # wrap(a, max = 0.25, min = 0)
             out, errors, _ = self.run_graph(g, self.solid([128, 64, 0, 255]), params={n + "." + k.split(".")[1]: v for k, v in p.items()})
             self.assertEqual(errors, [], op)
-            if op == "迴繞":
-                self.close(out, (0, 0, 0, 255), 4)
-                continue
-            self.close(out, want + (255,), 3)
+            self.close(out, want + (255,), 4)
 
     def test_vector_math_two_outputs(self):
         g = ng.new_graph()

@@ -1,9 +1,9 @@
 // @filter 數學
 // @category 轉換器
-// @description 節點用：照 Blender 的「數學」節點：圖像的每個顏色通道當數值 A，和 B、C（沒接圖就用下面的數值）做運算，透明度不變。三角函數的角度是弧度
+// @description 節點用：照 Blender 的「數學」節點：輸入都是數值（圖進來就是黑白的明度，透明處是 0），A、B、C 做運算，結果是黑白的圖。B、C 沒接線就用欄位裡的數字。三角函數的角度是弧度；顏色的運算請用「混合」節點
 // @source A
-// @input b "B"
-// @input c "C"
+// @input b "B" value
+// @input c "C" value3
 // @param op menu 相加 "相加|相減|相乘|相除|乘加|次方|對數|平方根|平方根倒數|絕對值|指數|最小|最大|小於|大於|正負號|比較|平滑最小|平滑最大|四捨五入|向下取整|向上取整|截斷|小數部分|截斷取餘|向下取餘|迴繞|對齊|來回|正弦|餘弦|正切|反正弦|反餘弦|反正切|反正切2|雙曲正弦|雙曲餘弦|雙曲正切|轉弧度|轉角度" "運算"
 // @param value float 0.5 -1000 1000 "B 的數值"
 // @param value3 float 0.5 -1000 1000 "C 的數值"
@@ -81,9 +81,13 @@ vec3 calc(vec3 a, vec3 b, vec3 c) {
     return degrees(a);
 }
 
+float bright(vec4 c) { return dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)); }     // (a float input: the picture's brightness over black)
+
 vec4 effect(vec2 uv) {
-    vec4 a = unpremultiply(src(uv)), b = unpremultiply(input_b(uv)), c = unpremultiply(input_c(uv));
-    vec3 r = calc(a.rgb, b.a > 0.0 ? b.rgb : vec3(value), c.a > 0.0 ? c.rgb : vec3(value3));
+    float a = bright(src(uv));
+    float b = has_input_b() ? bright(input_b(uv)) : value;
+    float c = has_input_c() ? bright(input_c(uv)) : value3;
+    float r = calc(vec3(a), vec3(b), vec3(c)).x;
     if (clamp_on) r = clamp(r, 0.0, 1.0);
-    return premultiply(vec4(r, a.a));
+    return vec4(vec3(r), 1.0);
 }

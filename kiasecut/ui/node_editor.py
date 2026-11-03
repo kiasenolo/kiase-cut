@@ -81,6 +81,9 @@ class NodeItem(QGraphicsItem):
         self.has_out = node["type"] != "groupout" and ng.has_output(node)
         self.rows = []
         self.linked = {l["socket"] for l in editor.graph["links"] if l["to"] == nid}
+        if node["type"] == ng.FILTER:                       # (a number input is fed through its parameter too)
+            d = ng.node_def(node)
+            self.linked |= {n for n, p in d.input_param.items() if ng.PARAM + p in self.linked}
         self.drag = None                                    # a field being dragged: {...}
         self.w = max(MIN_WIDTH, float(node.get("width", WIDTH)))
         self.sizing = None                                  # while widened: (scene x at the press, width then)
@@ -138,7 +141,11 @@ class NodeItem(QGraphicsItem):
                 add("image", d.src_label, "src")
                 for name, label in d.inputs:
                     if shown(name):
-                        add("image", label, name)
+                        pair = next((q for q in d.params if q.name == d.input_param.get(name)), None)
+                        if pair is not None:                       # (a number input: its box on the row, gone while a link feeds it)
+                            add("param", label, name, pair)
+                        else:
+                            add("image", label, name)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
                 for _part, sock, label in ng.ASSET_PAINTS:
                     add("image", label, sock)
@@ -147,13 +154,14 @@ class NodeItem(QGraphicsItem):
                 if opened:
                     for p in ng.place_params():
                         add("param", p.label, socket(p), p)
-            for p in (q for q in d.params if q.panel is None and shown(q.name)):
+            paired = set(d.input_param.values())
+            for p in (q for q in d.params if q.panel is None and shown(q.name) and q.name not in paired):
                 add("param", p.label, socket(p), p)
             for name, closed in d.panels:
                 opened = self.editor.panel_open.get((self.nid, name), not closed)
                 add("panel", name, panel=opened)
                 if opened:
-                    for p in (q for q in d.params if q.panel == name and shown(q.name)):
+                    for p in (q for q in d.params if q.panel == name and shown(q.name) and q.name not in paired):
                         add("param", p.label, socket(p), p)
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
@@ -164,7 +172,11 @@ class NodeItem(QGraphicsItem):
         self.h = y + PAD
 
     def row_of(self, socket):
-        return next((r for r in self.rows if r["socket"] == socket), None)
+        r = next((r for r in self.rows if r["socket"] == socket), None)
+        if r is None and socket.startswith(ng.PARAM):             # (a number input's box: a link of its parameter ends on the row of the input)
+            r = next((r for r in self.rows if r["kind"] == "param" and r["p"] is not None and r["socket"]
+                      and not r["socket"].startswith(ng.PARAM) and ng.PARAM + r["p"].name == socket), None)
+        return r
 
     def input_pos(self, socket):
         r = self.row_of(socket)
@@ -1518,6 +1530,11 @@ class NodeEditor(QWidget):
             if hit is None:
                 self.unplug("", "", old[1])
             return
+        if into and self.node_of(src)["type"] == ng.PARAMS:        # (onto a number input of a node: its parameter takes it)
+            it = self.view.items_by_id.get(into[1])
+            r = it.row_of(into[2]) if it is not None else None
+            if r is not None and r["kind"] == "param" and r["p"] is not None and not r["socket"].startswith(ng.PARAM):
+                into = (into[0], into[1], ng.PARAM + r["p"].name)
         if into:
             if out == GHOST:
                 self.exposeRequested.emit(self.eid, src, into[1], into[2])

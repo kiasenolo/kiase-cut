@@ -509,6 +509,40 @@ class RunTest(unittest.TestCase):
             self.assertEqual(errors, [], name)
             self.close(out, tuple(int(round(c * 1.275)) for c in want) + (255,), 2)
 
+    def test_filter_node_kernels(self):
+        """The Filter node against the kernels of Blender 5.2 (the reference here is numpy, the same kernels Blender gave on random pictures)."""
+        rng = np.random.default_rng(11)
+        rgba = rng.integers(0, 256, (self.H, self.W, 4)).astype(np.uint8)
+        rgba[..., :3] = np.minimum(rgba[..., :3], rgba[..., 3:])                    # (premultiplied: colour never above the alpha)
+        a = rgba.astype(float) / 255.0
+
+        def conv(k):
+            p = np.pad(a, ((1, 1), (1, 1), (0, 0)), mode="edge")
+            return sum(k[j][i] * p[j:j + self.H, i:i + self.W] for j in range(3) for i in range(3))
+        k = np.array
+        lap = k([[-1, -1, -1], [-1, 8, -1], [-1, -1, -1]]) / 8.0
+
+        def edge(k1, k2):
+            r = np.sqrt(conv(k1) ** 2 + conv(k2) ** 2)
+            r[..., 3] = a[..., 3]
+            return r
+        sob, pre = k([[1, 2, 1], [0, 0, 0], [-1, -2, -1]]), k([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
+        kir = k([[2, 2, 2], [3, 3, 3], [-5, -5, -5]])
+        want = {"柔化": conv(k([[1, 2, 1], [2, 4, 2], [1, 2, 1]]) / 16.0), "方塊銳利化": conv(k([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])),
+                "菱形銳利化": conv(k([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])), "拉普拉斯": edge(lap, lap), "索伯": edge(sob, sob.T),
+                "普魯伊特": edge(pre, pre.T), "基爾希": edge(kir, k([[-5, 3, 2]] * 3)), "陰影": conv(k([[-1, -2, -1], [0, 1, 0], [1, 2, 1]]))}
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/filter"})
+        ng.connect(g, "input", n, "src")
+        ng.connect(g, n, "output", "src")
+        for kind, ref in want.items():
+            out, errors, _ = self.run_graph(g, rgba, params={n + ".kind": kind})
+            self.assertEqual(errors, [], kind)
+            self.assertLess(np.abs(out.astype(float) - np.clip(np.maximum(ref, 0), 0, 1) * 255).max(), 2.5, kind)
+        out, _, _ = self.run_graph(g, rgba, params={n + ".kind": "方塊銳利化", n + ".fac": 0.5})
+        mixed = np.clip(np.maximum(0.5 * a + 0.5 * want["方塊銳利化"], 0), 0, 1) * 255
+        self.assertLess(np.abs(out.astype(float) - mixed).max(), 2.5)
+
     def test_mix_blend_modes(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="s")

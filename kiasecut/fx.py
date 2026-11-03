@@ -70,6 +70,7 @@ class FilterDef:
         self.skips = []                          # @skip: (first pass, last pass, conditions): not drawn while the conditions hold
         self.input_param = {}                    # @input name "Label" param: the number box of that parameter sits on the input's row, hidden while a link feeds it
         self.input_show = {}                     # @show on an @input: {name: conditions}
+        self.dynamic = None                      # @dynamic: the name of the generator that makes this filter's text from a node's items (dynamic.py)
         self.input_use = {}                      # @use: {input or "src": conditions}: the picture is read only while they hold (else it is not worked out at all)
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
 
@@ -305,6 +306,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                 enables.append((line, rest, key))
             elif key in ("filter", "category", "description"):
                 head[key] = rest
+            elif key == "dynamic":
+                head["dynamic"] = rest.strip()
             elif key == "passes":
                 head["passes"] = max(1, min(MAX_PASSES, int(rest)))
             elif key == "levels":                         # (read once every @param is known)
@@ -355,6 +358,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     d.inputs = inputs
     d.input_show = input_show
     d.input_use = input_use
+    d.dynamic = head.get("dynamic")
     d.input_param = input_param
     for iname, pname in input_param.items():
         if not any(q.name == pname and q.type in ("float", "int") for q in params):
@@ -400,6 +404,26 @@ def get(ref):
         name = ref[len(BUILTIN):]
         return _file_def(os.path.join(PKG, name + ".glsl"), ref, name)
     return _file_def(ref, ref, os.path.splitext(os.path.basename(ref))[0])
+
+
+_special = {}
+
+
+def for_node(node):
+    """FilterDef of a filter node: its file's, or - for a filter that says @dynamic - one made from the node's own items
+    (the Menu Switch's options, named and counted by the user): the generator of dynamic.py writes the filter text."""
+    d = get(node["ref"])
+    if not d.dynamic:
+        return d
+    from . import dynamic
+    items = dynamic.items_of(node, d.dynamic)
+    key = (node["ref"], d.dynamic, tuple(items))
+    got = _special.get(key)
+    if got is None:
+        if len(_special) > 256:
+            _special.clear()
+        got = _special[key] = parse(dynamic.generate(d.dynamic, items), node["ref"], d.name)
+    return got
 
 
 def def_of(e):

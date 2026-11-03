@@ -162,8 +162,40 @@ class RunTest(unittest.TestCase):
             out, errors, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), pics, params={m + ".choice": choice})
             self.assertEqual(errors, [], choice)
             self.close(out, want)
-        out, _, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), pics, params={m + ".choice": "選項 5"})
-        self.close(out, (0, 0, 0, 0))                              # (past the three options: nothing)
+
+    def test_menu_switch_has_options_of_its_own(self):
+        g = ng.new_graph()
+        a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")
+        b = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="b")
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/menu_switch"})
+        params = ng.default_params(g)
+        ng.connect(g, "input", m, "src")
+        ng.connect(g, m, "output", "src")
+        sock = ng.add_item(g, params, m, "貓")                      # a fourth option, named
+        ng.add_item(g, params, m, "狗")
+        ng.connect(g, a, m, sock)
+        names = [n for _s, n in ng.sockets(g["nodes"][m]) if n not in ("選單",)]
+        self.assertEqual(names, ["選項 1", "選項 2", "選項 3", "貓", "狗"])
+        red = self.solid([255, 0, 0, 255])
+        out, errors, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), {a: red}, params={m + ".choice": "貓"})
+        self.assertEqual(errors, [])
+        self.close(out, (255, 0, 0, 255))
+        ng.rename_item(g, params, m, sock, "鳥")                    # a new name: the link and a stored choice go with it
+        params[m + ".choice"] = "鳥"
+        out, _, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), {a: red}, params=params)
+        self.close(out, (255, 0, 0, 255))
+        ng.move_item(g, params, m, sock, -3)
+        ng.move_item(g, params, m, sock, -1)                        # (first now: the main socket, the link kept)
+        self.assertEqual(g["nodes"][m]["items"][0]["name"], "鳥")
+        out, _, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), {a: red}, params=params)
+        self.close(out, (255, 0, 0, 255))
+        ng.remove_item(g, params, m, next(i["sock"] for i in g["nodes"][m]["items"] if i["name"] == "鳥"))
+        self.assertEqual(params[m + ".choice"], g["nodes"][m]["items"][0]["name"])   # (the choice of a removed option: the first)
+        while len(g["nodes"][m]["items"]) > 2:
+            ng.remove_item(g, params, m, g["nodes"][m]["items"][-1]["sock"])
+        with self.assertRaises(ng.GraphError):
+            ng.remove_item(g, params, m, "src")                     # (never fewer than two)
+
 
     def test_missing_source_is_transparent(self):
         g = ng.new_graph()

@@ -450,6 +450,7 @@ class MainWindow(QMainWindow):
         nd.removeRequested.connect(self.on_node_remove)
         nd.connectRequested.connect(self.on_node_connect)
         nd.exposeRequested.connect(self.on_node_expose)
+        nd.itemRequested.connect(self.on_node_item)
         nd.removeExposedRequested.connect(self.on_node_remove_exposed)
         nd.disconnectManyRequested.connect(self.on_node_cut)
         nd.insertRequested.connect(self.on_node_insert)
@@ -5390,6 +5391,12 @@ class MainWindow(QMainWindow):
         cid = self.node_clip()
         if cid:
             self.apply("新增效果參數", lambda lvl: edit.expose_graph_param(lvl, cid, eid, src, dst, socket))
+
+    def on_node_item(self, eid, nid, action, sock, name, src, out):
+        cid = self.node_clip()
+        if cid:
+            label = {"add": "新增選項", "rename": "重新命名選項", "remove": "刪除選項"}.get(action, "移動選項")
+            self.apply(label, lambda lvl: edit.node_item(lvl, cid, eid, nid, action, sock, name, src, out))
 
     def on_node_remove_exposed(self, eid, name):
         cid = self.node_clip()

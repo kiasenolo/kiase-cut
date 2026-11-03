@@ -23,7 +23,7 @@ import hashlib
 import math
 import re
 
-from . import assets, curves, fx
+from . import assets, curves, dynamic, fx
 
 US = 1_000_000
 INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output", "source", "filter", "params", "reroute", "frame", "group"
@@ -72,6 +72,8 @@ def add_node(graph, node, x=0.0, y=0.0, base=None):
         raise GraphError("只能有一個輸出節點")
     nid = new_node_id(graph, base or (node.get("ref") or node["type"]).rsplit("/", 1)[-1].replace(":", "_"))
     graph["nodes"][nid] = {**node, "x": float(x), "y": float(y)}
+    if node["type"] == FILTER and fx.get(node["ref"]).dynamic and not node.get("items"):
+        graph["nodes"][nid]["items"] = dynamic.default_items(fx.get(node["ref"]).dynamic)      # (a Menu Switch starts with three options)
     return nid
 
 
@@ -79,12 +81,112 @@ def param_key(nid, name):
     return f"{nid}.{name}"
 
 
+# -- nodes with items of their own (Menu Switch): node["items"] = [{"sock", "name"}], see dynamic.py ------------------------
+def is_dynamic(node):
+    return node["type"] == FILTER and bool(fx.get(node["ref"]).dynamic)
+
+
+def _items(node):
+    if not node.get("items"):
+        node["items"] = dynamic.default_items(fx.get(node["ref"]).dynamic)
+    return node["items"]
+
+
+def _swap_sockets(graph, nid, a, b):
+    """Links into socket a of node nid go to b and the other way round."""
+    for l in graph["links"]:
+        if l["to"] == nid and l["socket"] in (a, b):
+            l["socket"] = b if l["socket"] == a else a
+
+
+def _settle_items(graph, params, nid, old_names):
+    """After the items of node nid changed: the first one is on "src", names stay clean and unique, the choice (and an effect
+    parameter bound to it) follows the names (old_names: the names before, by item)."""
+    node = graph["nodes"][nid]
+    items = node["items"]
+    if items and items[0]["sock"] != "src":
+        first = items[0]["sock"]
+        for it in items:
+            if it["sock"] == "src":
+                it["sock"] = first
+        items[0]["sock"] = "src"
+        _swap_sockets(graph, nid, first, "src")
+    names = dynamic.unique(it["name"] for it in items)
+    for it, n in zip(items, names):
+        it["name"] = n
+    key = param_key(nid, "choice")
+    now = {id(it): it["name"] for it in items}
+    was = params.get(key)
+    if isinstance(was, str):                                    # (the choice follows its option's new name; a removed one: the first)
+        sock = next((s for s, n in old_names.items() if n == was), None)
+        params[key] = now.get(sock, items[0]["name"]) if sock else (was if was in now.values() else items[0]["name"])
+    for l in graph["links"]:                                     # (an effect parameter bound to the choice has the same options)
+        if l["to"] == nid and l["socket"] == PARAM + "choice" and l.get("out"):
+            x = next((x for x in exposed(graph) if x["name"] == l["out"]), None)
+            if x is not None:
+                x["items"] = list(now.values())
+                x["default"] = items[0]["name"]
+                pk = expose_key(x["name"])
+                v = params.get(pk)
+                sock = next((s for s, n in old_names.items() if n == v), None)
+                params[pk] = now.get(sock, items[0]["name"]) if sock else (v if v in x["items"] else items[0]["name"])
+
+
+def add_item(graph, params, nid, name=None):
+    """A new option at the end of node nid's items; returns its socket."""
+    node = graph["nodes"][nid]
+    if not is_dynamic(node):
+        raise GraphError("這個節點沒有選項")
+    items = _items(node)
+    old = {id(it): it["name"] for it in items}
+    node["next_item"] = max(node.get("next_item", 0), len(items) + 1, *(int(it["sock"][1:]) for it in items if it["sock"] != "src")) + 1
+    sock = f"i{node['next_item']}"
+    items.append({"sock": sock, "name": name or f"選項 {len(items) + 1}"})
+    _settle_items(graph, params, nid, old)
+    return sock
+
+
+def rename_item(graph, params, nid, sock, name):
+    node = graph["nodes"][nid]
+    items = _items(node)
+    old = {id(it): it["name"] for it in items}
+    it = next((i for i in items if i["sock"] == sock), None)
+    if it is None:
+        raise GraphError("找不到這個選項")
+    it["name"] = name
+    _settle_items(graph, params, nid, old)
+
+
+def remove_item(graph, params, nid, sock):
+    node = graph["nodes"][nid]
+    items = _items(node)
+    if len(items) <= 2:
+        raise GraphError("選單切換至少要有兩個選項")
+    old = {id(it): it["name"] for it in items}
+    if not any(it["sock"] == sock for it in items):
+        raise GraphError("找不到這個選項")
+    node["items"] = [it for it in items if it["sock"] != sock]
+    graph["links"] = [l for l in graph["links"] if not (l["to"] == nid and l["socket"] == sock)]
+    _settle_items(graph, params, nid, old)
+
+
+def move_item(graph, params, nid, sock, delta):
+    node = graph["nodes"][nid]
+    items = _items(node)
+    old = {id(it): it["name"] for it in items}
+    i = next((k for k, it in enumerate(items) if it["sock"] == sock), None)
+    if i is None or not 0 <= i + delta < len(items):
+        return
+    items[i], items[i + delta] = items[i + delta], items[i]
+    _settle_items(graph, params, nid, old)
+
+
 def default_params(graph):
     """{"<node>.<param>": default} of every filter node of the graph, and of the effect's own parameters."""
     out = {expose_key(x["name"]): copy.deepcopy(x["default"]) for x in exposed(graph)}
     for nid, n in graph["nodes"].items():
         if n["type"] == FILTER:
-            out.update({param_key(nid, k): v for k, v in fx.default_params(fx.get(n["ref"])).items()})
+            out.update({param_key(nid, k): v for k, v in fx.default_params(fx.for_node(n)).items()})
         elif is_asset(n):
             out.update({param_key(nid, k): v for k, v in fx.default_params(asset_def(n)).items()})
     return out
@@ -278,7 +380,7 @@ def sockets(node):
                 [(PARAM + q.name, q.label) for q in asset_def(node).params + place_params() if has_socket(q)])
     if node["type"] != FILTER:
         return []
-    d = fx.get(node["ref"])
+    d = fx.for_node(node)
     return ([("src", d.src_label)] + [(n, lab) for n, lab in d.inputs] +
             [(PARAM + p.name, p.label) for p in d.params if has_socket(p)])
 
@@ -286,7 +388,7 @@ def sockets(node):
 def outputs(node):
     """[(output name, label)] a node gives pictures at: one unnamed ("") for most, the @output ones of a filter."""
     if node["type"] == FILTER:
-        d = fx.get(node["ref"])
+        d = fx.for_node(node)
         if d.outputs:
             return list(d.outputs)
     if node["type"] == GROUP:
@@ -296,7 +398,7 @@ def outputs(node):
 
 def title(node):
     if node["type"] == FILTER:
-        return fx.get(node["ref"]).name
+        return fx.for_node(node).name
     if node["type"] == GROUP:
         return node.get("label") or "群組"
     if is_asset(node):
@@ -518,7 +620,7 @@ _defs = {}
 def node_def(node):
     """FilterDef whose parameters node has: a filter's, or a shape made from a built-in one; else None."""
     if node["type"] == FILTER:
-        return fx.get(node["ref"])
+        return fx.for_node(node)
     return asset_def(node) if is_asset(node) else None
 
 
@@ -629,7 +731,7 @@ def param_of(graph, nid, socket):
         return next((p for p in asset_def(node).params + place_params() if p.name == socket[len(PARAM):]), None)
     if node["type"] != FILTER:
         return None
-    return next((p for p in fx.get(node["ref"]).params if p.name == socket[len(PARAM):]), None)
+    return next((p for p in fx.for_node(node).params if p.name == socket[len(PARAM):]), None)
 
 
 def connect(graph, src, dst, socket, out=None):
@@ -814,7 +916,7 @@ def check(graph):
         return "節點連成了迴圈"
     for n in nodes.values():
         if n["type"] == FILTER:
-            d = fx.get(n["ref"])
+            d = fx.for_node(n)
             if d.error:
                 return f"{d.name}：{d.error}"
     return None
@@ -1075,7 +1177,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     for (to, sock) in list(feed):                             # (@use: a picture the settings do not read is not worked out - Blender's lazy Switch)
         node = nodes[to]
         if node["type"] == FILTER and not node.get("mute"):
-            d = fx.get(node["ref"])
+            d = fx.for_node(node)
             conds = d.input_use.get(sock)
             if conds is not None and not fx._holds(conds, fx.named(d, values(to, d))):
                 del feed[(to, sock)]
@@ -1091,7 +1193,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         node = nodes[f[0]]
         if cache is None or sigs.get(f) is None or node["type"] != FILTER or node.get("mute"):
             return False
-        d = fx.get(node["ref"])
+        d = fx.for_node(node)
         return not d.error and (traits(d)[2] or f == final)
 
     hits, miss, needed = {}, set(), set()
@@ -1215,7 +1317,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                     free(where)
             put(n, dest.tex, dest)
         else:
-            d = fx.get(node["ref"])
+            d = fx.for_node(node)
             main = feed.get((n, "src"))
             names = [o for o, _ in outputs(node)]
             if node.get("mute") or d.error:
@@ -1281,7 +1383,7 @@ def _sign(n, node, feed, sigs, values, w, h, unit, time, prog, frame, stamp, inp
                 parts.append((part, mask, s))
         sigs[(n, "")] = _digest(*parts)
     elif kind == FILTER:
-        d = fx.get(node["ref"])
+        d = fx.for_node(node)
         names = [o for o, _ in outputs(node)]
         main = feed.get((n, "src"))
         if node.get("mute") or d.error:                       # (the picture it is given goes on)

@@ -2259,6 +2259,31 @@ def connect_graph(proj, clip_id, effect_id, src, dst, socket, out=None):
         raise EditError(str(exc)) from exc
 
 
+def node_item(proj, clip_id, effect_id, nid, action, sock="", name="", src="", out=""):
+    """A node with options of its own (Menu Switch): action "add" (a new option at the end, named `name`; src: a node whose picture
+    goes into it - the link let go on the empty socket), "rename" (option `sock`), "remove", "up" or "down". Returns the socket."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    if nid not in g["nodes"]:
+        raise EditError("找不到這個節點")
+    try:
+        if action == "add":
+            sock = nodegraph.add_item(g, e["params"], nid, name or None)
+            if src:
+                nodegraph.connect(g, src, nid, sock, out or None)
+        elif action == "rename":
+            nodegraph.rename_item(g, e["params"], nid, sock, name)
+        elif action == "remove":
+            nodegraph.remove_item(g, e["params"], nid, sock)
+        elif action in ("up", "down"):
+            nodegraph.move_item(g, e["params"], nid, sock, -1 if action == "up" else 1)
+        else:
+            raise EditError("不知道這個動作")
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+    return sock
+
+
 def expose_graph_param(proj, clip_id, effect_id, src, dst, socket):
     """Drag out of a 參數輸入 node's empty socket onto a parameter: it becomes a parameter of the effect (the 效果
     panel shows it) and is bound to that one. Returns its name."""

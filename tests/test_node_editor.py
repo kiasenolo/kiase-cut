@@ -312,6 +312,28 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, inp.output_pos(""), ed.view.items_by_id["math1"].input_pos("src"))       # (the picture still links)
         self.assertEqual(links, [("e1", "input", "math1", "src", "")])
 
+    def test_menu_switch_empty_socket_makes_an_option_and_the_menu_edits_them(self):
+        from kiasecut.ui import node_editor
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/menu_switch"}, 300, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        v = ed.view
+        got = []
+        ed.itemRequested.connect(lambda *a: got.append(a))
+        it = v.items_by_id["menu_switch1"]
+        self.assertEqual([r["label"] for r in it.rows if r["kind"] == "image"],
+                         ["選項 1", "選項 2", "選項 3", "（拉一條線進來新增選項）"])
+        self.drag(ed, v.items_by_id["input"].output_pos(""), it.input_pos(node_editor.GHOST_ITEM))
+        self.assertEqual(got, [("e1", "menu_switch1", "add", "", "", "input", "")])
+        self.assertEqual(v.option_at(it.mapToScene(30, next(r["y"] for r in it.rows if r["socket"] == "i2") + 5)),
+                         ("menu_switch1", "i2"))
+        self.assertIsNone(v.option_at(it.mapToScene(30, next(r["y"] for r in it.rows if r["socket"] == node_editor.GHOST_ITEM) + 5)))
+        ed.popup = lambda menu, pos: popped.append([a.text() for a in menu.actions() if a.text()])
+        popped = []
+        ed.option_menu("menu_switch1", "i2", QPoint(0, 0))
+        self.assertEqual(popped, [["重新命名選項…", "往上移", "往下移", "刪除選項"]])
+
     def test_free_input_dragged_to_an_output_links_and_makes_a_parameter(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 150)

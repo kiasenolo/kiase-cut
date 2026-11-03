@@ -38,6 +38,7 @@ PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / g
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
 HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
          "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
+GHOST_ITEM = "\0newitem"                       # the empty input of a Menu Switch: drag a link into it to make an option
 GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸出: drag a link into it to make a group output
 PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
@@ -153,6 +154,8 @@ class NodeItem(QGraphicsItem):
                             add("param", label, name, pair)
                         else:
                             add("image", label, name)
+                if ng.is_dynamic(node):                            # (Blender's empty socket: a link let go on it makes an option)
+                    add("image", "（拉一條線進來新增選項）", GHOST_ITEM)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
                 for _part, sock, label in ng.ASSET_PAINTS:
                     add("image", label, sock)
@@ -305,12 +308,17 @@ class NodeItem(QGraphicsItem):
             if kind == "thumb":
                 self._thumb(p, QRectF(10, y + 2, self.w - 20, r["h"] - 4), self.editor.thumb_image(self.nid, r["p"]))
                 continue
-            dim = kind == "param" and not vals.enabled(r["p"])
+            ghost = r["socket"] == GHOST_ITEM
+            dim = ghost or (kind == "param" and not vals.enabled(r["p"]))
             p.setPen(QColor(text.red(), text.green(), text.blue(), 110 if dim else 255))
             linked = r["socket"] and r["socket"] in self.linked
             p.drawText(QRectF(10, y, self.w * LABEL_W - 6, ROW) if self.has_field(r) else row, Qt.AlignVCenter | Qt.AlignLeft,
                        fm_elide(p, r["label"], self.w * LABEL_W - 8 if self.has_field(r) else self.w - 20))
-            if r["socket"]:
+            if ghost:
+                p.setPen(QPen(QColor("#a0a0a8"), 1, Qt.DashLine))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(QPointF(0, y + ROW / 2), SOCKET_R, SOCKET_R)
+            elif r["socket"]:
                 self._socket(p, QPointF(0, y + ROW / 2), SOCKET_COLORS["image"] if kind == "image" else
                              SOCKET_COLORS.get(r["p"].type if r["p"].type in ("float", "color") else "other"))
             if not self.has_field(r):
@@ -890,6 +898,10 @@ class GraphView(QGraphicsView):
                 self.scene().addItem(line)
                 self.cut = (line, [pos], reroute)
                 return
+            row = self.option_at(pos)
+            if row is not None:
+                self.editor.option_menu(row[0], row[1], e.globalPosition().toPoint())
+                return
             hit = self.socket_at(pos)
             if hit and hit[0] == "out" and hit[2] not in ("", GHOST) and self.editor.node_of(hit[1])["type"] in (ng.PARAMS, ng.INPUT):
                 self.editor.parameter_menu(hit[1], hit[2], e.globalPosition().toPoint())
@@ -897,6 +909,17 @@ class GraphView(QGraphicsView):
             self.editor.add_menu(pos, e.globalPosition().toPoint())
             return
         super().mousePressEvent(e)
+
+    def option_at(self, pos):
+        """(node id, option socket) when pos is over an option row of a node with options (Menu Switch), else None."""
+        for nid, it in self.items_by_id.items():
+            if isinstance(it, NodeItem) and ng.is_dynamic(it.node) and it.sceneBoundingRect().contains(pos):
+                y = it.mapFromScene(pos).y()
+                r = next((r for r in it.rows if r["y"] <= y < r["y"] + r["h"] and r["kind"] == "image"
+                          and r["socket"] and r["socket"] != GHOST_ITEM), None)
+                if r is not None:
+                    return nid, r["socket"]
+        return None
 
     def reroute(self):
         """Draw the links again (a node moved)."""
@@ -1251,6 +1274,7 @@ class NodeEditor(QWidget):
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
     removeExposedRequested = Signal(str, str)               # effect id, parameter name
     disconnectRequested = Signal(str, str, str)             # effect id, to node, socket
+    itemRequested = Signal(str, str, str, str, str, str, str)   # effect id, node, action (add / rename / remove / up / down), option socket, name, node to link into the new option, its output
     moveRequested = Signal(str, dict)                       # effect id, {node id: (x, y)}
     muteRequested = Signal(str, list, bool)                 # effect id, node ids, on
     nodeSelected = Signal(str, str)                         # effect id, the one node selected ("" none)
@@ -1666,6 +1690,29 @@ class NodeEditor(QWidget):
         if ids and self.eid:
             self.muteRequested.emit(self.eid, ids, not all(self.graph["nodes"][i].get("mute") for i in ids))
 
+    def option_menu(self, nid, sock, pos):
+        """Right click on an option of a Menu Switch: rename, delete, move."""
+        node = self.graph["nodes"][nid]
+        items = [i for i in node.get("items") or []]
+        at = next((k for k, i in enumerate(items) if i["sock"] == sock), None)
+        if at is None or not self.eid:
+            return
+        menu = QMenu(self)
+        menu.addAction("重新命名選項…", lambda: self._rename_option(nid, sock, items[at]["name"]))
+        up = menu.addAction("往上移", lambda: self.itemRequested.emit(self.eid, nid, "up", sock, "", "", ""))
+        up.setEnabled(at > 0)
+        down = menu.addAction("往下移", lambda: self.itemRequested.emit(self.eid, nid, "down", sock, "", "", ""))
+        down.setEnabled(at < len(items) - 1)
+        menu.addSeparator()
+        rm = menu.addAction("刪除選項", lambda: self.itemRequested.emit(self.eid, nid, "remove", sock, "", "", ""))
+        rm.setEnabled(len(items) > 2)
+        self.popup(menu, pos)
+
+    def _rename_option(self, nid, sock, old):
+        got = self.ask_text("選項名稱", old)
+        if got is not None and got.strip() and got != old:
+            self.itemRequested.emit(self.eid, nid, "rename", sock, got, "", "")
+
     def popup(self, menu, pos):
         menu.exec(pos)
 
@@ -1719,6 +1766,10 @@ class NodeEditor(QWidget):
                 self.groupPortRequested.emit(self.eid, gid, into[1], into[2], None, name, *(old or ("", "")))
             elif hit is None and old:
                 self.unplug(old[0], old[1], None)
+            return
+        if into and into[2] == GHOST_ITEM:                  # onto the empty socket of a Menu Switch: a new option with the link in it
+            if src != into[1] and not (self.node_of(src)["type"] in (ng.PARAMS,) or ng.gives_params(self.node_of(src), out)):
+                self.itemRequested.emit(self.eid, into[1], "add", "", "", src, out)
             return
         if into and into[1] == PORT_OUT:                    # onto a group output
             name = "" if into[2] == GHOST_IN else into[2]

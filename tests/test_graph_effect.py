@@ -127,6 +127,19 @@ class GraphEditTests(unittest.TestCase):
         MainWindow.on_node_paste(h, eid, ng.pack(self.e["graph"], [nid]), 5.0, 5.0)
         self.assertEqual(len(carried), 3)
 
+    def test_node_item_edits(self):
+        m = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/menu_switch"})
+        sock = edit.node_item(self.p, "c1", self.e["id"], m, "add", name="貓", src="input")
+        g = self.e["graph"]
+        self.assertEqual([i["name"] for i in g["nodes"][m]["items"]], ["選項 1", "選項 2", "選項 3", "貓"])
+        self.assertTrue(any(l["to"] == m and l["socket"] == sock for l in g["links"]))
+        edit.node_item(self.p, "c1", self.e["id"], m, "rename", sock, "狗")
+        self.assertEqual(g["nodes"][m]["items"][-1]["name"], "狗")
+        edit.node_item(self.p, "c1", self.e["id"], m, "remove", sock)
+        self.assertFalse(any(l["to"] == m and l["socket"] == sock for l in g["links"]))
+        with self.assertRaises(edit.EditError):
+            edit.node_item(self.p, "c1", self.e["id"], m, "nonsense")
+
     def test_copied_effect_keeps_its_graph(self):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
         copy = edit.put_effect(self.p, "c1", self.e)

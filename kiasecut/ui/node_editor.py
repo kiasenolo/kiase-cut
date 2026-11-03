@@ -15,7 +15,7 @@ import glob
 import json
 import os
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget)
@@ -522,9 +522,30 @@ class GraphView(QGraphicsView):
         if 0.2 <= s <= 3.0:
             self.scale(k, k)
 
+    def event(self, e):
+        # the keys this editor uses are its own while it has the focus: the window's clip shortcuts (Ctrl+X cut,
+        # Delete, M, Home...) would take them first otherwise
+        if e.type() == QEvent.ShortcutOverride and self.claims(e.key(), e.modifiers()):
+            e.accept()
+            return True
+        return super().event(e)
+
+    @staticmethod
+    def claims(key, mods):
+        mods &= ~Qt.KeypadModifier
+        if key in (Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_Home, Qt.Key_M, Qt.Key_X):
+            return mods in (Qt.NoModifier, Qt.ControlModifier) if key == Qt.Key_X else mods == Qt.NoModifier
+        if key in (Qt.Key_A, Qt.Key_D):
+            return mods == Qt.ShiftModifier or (key == Qt.Key_A and mods == Qt.NoModifier)
+        return False
+
     def keyPressEvent(self, e):
         key, mods = e.key(), e.modifiers()
-        if key == Qt.Key_X and mods & Qt.ControlModifier:
+        if key == Qt.Key_A and mods == Qt.NoModifier:
+            for it in self.items_by_id.values():
+                it.setSelected(True)
+            self.editor.selection_changed()
+        elif key == Qt.Key_X and mods & Qt.ControlModifier:
             self.editor.dissolve_selected()
         elif key in (Qt.Key_X, Qt.Key_Delete):
             self.editor.remove_selected()

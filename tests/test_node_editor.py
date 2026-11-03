@@ -262,6 +262,27 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, out, out + QPointF(40, 220))
         self.assertEqual(asked, [("input", "")])
 
+    def test_window_shortcuts_do_not_take_the_editors_keys(self):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+        ed = self.make()
+        for key, mods in ((Qt.Key_X, Qt.ControlModifier), (Qt.Key_X, Qt.NoModifier), (Qt.Key_Delete, Qt.NoModifier),
+                          (Qt.Key_M, Qt.NoModifier), (Qt.Key_Home, Qt.NoModifier), (Qt.Key_A, Qt.ShiftModifier),
+                          (Qt.Key_D, Qt.ShiftModifier), (Qt.Key_A, Qt.NoModifier)):
+            e = QKeyEvent(QEvent.ShortcutOverride, key, mods)
+            e.ignore()
+            ed.view.event(e)
+            self.assertTrue(e.isAccepted(), (key, mods))
+        e = QKeyEvent(QEvent.ShortcutOverride, Qt.Key_Z, Qt.ControlModifier)       # (undo stays the window's)
+        e.ignore()
+        ed.view.event(e)
+        self.assertFalse(e.isAccepted())
+
+    def test_a_selects_all(self):
+        ed = self.make()
+        QTest.keyClick(ed.view, Qt.Key_A)
+        self.assertEqual(set(ed.selected()), {"input", "output"})
+
     def test_redraws_only_when_the_graph_changed(self):
         ed = self.make()
         item = ed.view.items_by_id["input"]

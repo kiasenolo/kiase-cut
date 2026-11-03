@@ -194,7 +194,7 @@ vec3 ghosts(vec2 uv, vec2 R, float q) {
         for (int i = 0; i < ns; i++) {          // (each term turned differently: their noise averages out)
             vec2 rq = r2(i, jr, rot + 0.618034 * float(t));
             float rr = sqrt(-2.0 * log(max(1.0 - rq.x, 1e-4)));
-            vec2 o = rr * vec2(cos(6.2831853 * rq.y), sin(6.2831853 * rq.y)) * (16.0 / 3.0) * q / R;
+            vec2 o = rr * vec2(cos(6.2831853 * rq.y), sin(6.2831853 * rq.y)) * (16.0 / 3.0) / R;     // (the same width in canvas px at every quality)
             if (wsm > 0.0) acc += wsm * H(cs + o);
             if (wbg > 0.0) acc += wbg * H(cb + 2.0 * o);
         }
@@ -352,9 +352,31 @@ float grain_sigma() {
     return 0.0;
 }
 
+// the highlights of the picture 品質 reduces (Blender's: 中 the 2 x 2 block's mean, 低 four taps over the 4 x 4 block, in linear light), at the reduced pixel whose centre is uv
+vec3 reduced_highlights(vec2 uv) {
+    vec3 c = linear(original(uv)).rgb;
+    if (quality == 2) {
+        vec2 o = 1.0 / resolution;
+        c = 0.25 * (linear(original(uv + o * vec2(-1.0, -1.0))).rgb + linear(original(uv + o * vec2(1.0, -1.0))).rgb
+                  + linear(original(uv + o * vec2(-1.0, 1.0))).rgb + linear(original(uv + o * vec2(1.0, 1.0))).rgb);
+    }
+    return max(highlights(c), vec3(0.0));
+}
+// the same, read at any uv by bilinear interpolation of the reduced picture (the Highlights output of 中 / 低)
+vec3 reduced_highlights_at(vec2 uv) {
+    vec2 g = floor(resolution / exp2(float(quality)));
+    vec2 f = uv * g - 0.5;
+    vec2 i0 = floor(f), fr = f - i0;
+    vec3 a = reduced_highlights((clamp(i0, vec2(0.0), g - 1.0) + 0.5) / g);
+    vec3 b = reduced_highlights((clamp(i0 + vec2(1.0, 0.0), vec2(0.0), g - 1.0) + 0.5) / g);
+    vec3 c = reduced_highlights((clamp(i0 + vec2(0.0, 1.0), vec2(0.0), g - 1.0) + 0.5) / g);
+    vec3 d = reduced_highlights((clamp(i0 + vec2(1.0), vec2(0.0), g - 1.0) + 0.5) / g);
+    return mix(mix(a, b, fr.x), mix(c, d, fr.x), fr.y);
+}
+
 vec4 effect(vec2 uv) {
     if (pass_index == 0)
-        return vec4(max(highlights(linear(src(uv)).rgb), vec3(0.0)), 1.0);
+        return vec4(reduced_highlights(uv), 1.0);
     if (pass_index == 5 && type == 5) return sun_occupancy(uv);
     if (pass_index < 24) {                                     // (Bloom's chain; the other types leave it empty)
         if (type != 0) return vec4(0.0);
@@ -375,7 +397,7 @@ vec4 effect(vec2 uv) {
         return vec4(g, 1.0);
     }
     if (output_index == 2) {                                   // pass 25, 亮部: what glows, alone (Blender's Highlights output)
-        vec3 h = max(highlights(linear(original(uv)).rgb), vec3(0.0));
+        vec3 h = quality == 0 ? max(highlights(linear(original(uv)).rgb), vec3(0.0)) : reduced_highlights_at(uv);    // (品質 中 / 低: the reduced picture's, as Blender gives it)
         float ha = clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0);
         return ha > 0.0 ? vec4(lin_to_srgb(h / ha) * ha, ha) : vec4(0.0);
     }

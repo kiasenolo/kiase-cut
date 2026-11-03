@@ -95,6 +95,12 @@ AI來了也沒輒 claude直接說 沒辦法 但可以嘗試換軟體或者直接
 反正 雖然 我不是專業剪片的 我自己剪出來的東西也沒多好  
 但我還是希望 生出一個這樣的東西 讓市場多一種選擇  
 
+## 哦對了
+雖然東西是全AI生的 但是在效果器那邊 可以看到有個分類叫做KILO的  
+裡面的效果都是我之前用blender自己做的  
+然後把它轉出來 給kiaseCut用的  
+你可以在VFX聞到我的臭味 不是一個很好的體驗 但是無所謂  
+
 # KiaseCut
 
 A small Jianying (剪映)-style video editor on top of the MLT engine. Goal: edit — and

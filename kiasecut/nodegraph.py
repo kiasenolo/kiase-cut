@@ -1072,6 +1072,14 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                                  for p in d.params}
         return got
 
+    for (to, sock) in list(feed):                             # (@use: a picture the settings do not read is not worked out - Blender's lazy Switch)
+        node = nodes[to]
+        if node["type"] == FILTER and not node.get("mute"):
+            d = fx.get(node["ref"])
+            conds = d.input_use.get(sock)
+            if conds is not None and not fx._holds(conds, fx.named(d, values(to, d))):
+                del feed[(to, sock)]
+
     # what each picture depends on (None: something that changes whatever is set), and which are kept from before
     sigs = {}
     if cache is not None:

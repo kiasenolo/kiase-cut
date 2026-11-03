@@ -127,6 +127,44 @@ class RunTest(unittest.TestCase):
         out, _, _ = self.run_graph(g, self.solid([255, 0, 0, 255]), {s: half})
         self.assertTrue(abs(int(out[0, 0, 0]) - 127) <= 2 and abs(int(out[0, 0, 2]) - 128) <= 2 and out[0, 0, 3] == 255)
 
+    def test_switch_and_menu_switch_pick_one_and_leave_the_rest_unworked(self):
+        asked = []
+
+        class Seen(dict):
+            def get(self, k, d=None):
+                asked.append(k)
+                return dict.get(self, k, d)
+        g = ng.new_graph()
+        a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")
+        b = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="b")
+        sw = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/switch"})
+        ng.connect(g, "input", sw, "src")
+        ng.connect(g, b, sw, "yes")
+        ng.connect(g, sw, "output", "src")
+        blue = self.solid([0, 0, 255, 255])
+        red = self.solid([255, 0, 0, 255])
+        out, errors, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), Seen({b: blue}), params={sw + ".use_true": False})
+        self.assertEqual(errors, [])
+        self.close(out, (0, 255, 0, 255))                          # (false: the picture in)
+        self.assertNotIn(b, asked)                                 # (and the other one is not even looked at)
+        out, _, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), {b: blue}, params={sw + ".use_true": True})
+        self.close(out, (0, 0, 255, 255))
+        g = ng.new_graph()
+        a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")
+        b = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="b")
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/menu_switch"})
+        ng.connect(g, "input", m, "src")
+        ng.connect(g, a, m, "i2")
+        ng.connect(g, b, m, "i3")
+        ng.connect(g, m, "output", "src")
+        pics = {a: red, b: blue}
+        for choice, want in (("選項 1", (0, 255, 0, 255)), ("選項 2", (255, 0, 0, 255)), ("選項 3", (0, 0, 255, 255))):
+            out, errors, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), pics, params={m + ".choice": choice})
+            self.assertEqual(errors, [], choice)
+            self.close(out, want)
+        out, _, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), pics, params={m + ".choice": "選項 5"})
+        self.close(out, (0, 0, 0, 0))                              # (past the three options: nothing)
+
     def test_missing_source_is_transparent(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "video"}, base="s")

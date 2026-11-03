@@ -70,6 +70,7 @@ class FilterDef:
         self.skips = []                          # @skip: (first pass, last pass, conditions): not drawn while the conditions hold
         self.input_param = {}                    # @input name "Label" param: the number box of that parameter sits on the input's row, hidden while a link feeds it
         self.input_show = {}                     # @show on an @input: {name: conditions}
+        self.input_use = {}                      # @use: {input or "src": conditions}: the picture is read only while they hold (else it is not worked out at all)
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
 
     def key(self):
@@ -176,7 +177,7 @@ def _enable(rest, params, inputs=(), show=None):
         raise ValueError("@enable 要寫成：參數 條件（例如 size type == Bloom|Fog Glow，或 maximum clamp_on）")
     target, neg, flag, other, op, vals = m.groups()
     by = {p.name: p for p in params}
-    word = "@show" if show is not None else "@enable"
+    word = "@enable" if show is None else "@show" if "src" not in inputs else "@use"
     name = flag or other
     if target in by:
         into = by[target].show if show is not None else by[target].enable
@@ -300,8 +301,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                 alone += shlex.split(rest)
             elif key == "skip":                           # (read once every @param is known)
                 skips.append((line, rest))
-            elif key in ("enable", "show"):               # (read once every @param is known)
-                enables.append((line, rest, key == "show"))
+            elif key in ("enable", "show", "use"):         # (read once every @param is known)
+                enables.append((line, rest, key))
             elif key in ("filter", "category", "description"):
                 head[key] = rest
             elif key == "passes":
@@ -316,10 +317,11 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head["precise"] = rest.lower() == "float"
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
-    input_show = {}
-    for line, rest, show in enables:
+    input_show, input_use = {}, {}
+    for line, rest, kind in enables:
         try:
-            _enable(rest, params, [n for n, _ in inputs], input_show if show else None)
+            _enable(rest, params, [n for n, _ in inputs] + (["src"] if kind == "use" else []),
+                    input_show if kind == "show" else input_use if kind == "use" else None)
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
     skipped = []
@@ -352,6 +354,7 @@ def parse(text, ref, fallback_name="濾鏡"):
                   head.get("extras", []), fixed)
     d.inputs = inputs
     d.input_show = input_show
+    d.input_use = input_use
     d.input_param = input_param
     for iname, pname in input_param.items():
         if not any(q.name == pname and q.type in ("float", "int") for q in params):

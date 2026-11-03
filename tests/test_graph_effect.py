@@ -464,7 +464,7 @@ class GraphMediaDropTests(unittest.TestCase):
         Image.new("RGB", (40, 20), (255, 0, 0)).save(png)
         p = proj()
         e = edit.add_effect(p, "c1", fx.GRAPH)
-        host = types.SimpleNamespace(proj=p, node_clip=lambda: "c1", nodes=types.SimpleNamespace(select=lambda n: None),
+        host = types.SimpleNamespace(proj=p, node_clip=lambda: "c1", nodes=types.SimpleNamespace(select=lambda n: None, level=""),
                                      statusBar=lambda: types.SimpleNamespace(showMessage=lambda *a: None),
                                      apply=lambda _n, fn, *a: fn(p, *a) or True)
         host._node_media = MainWindow._node_media

@@ -460,6 +460,11 @@ class MainWindow(QMainWindow):
         nd.frameEdited.connect(self.on_node_frame)
         nd.pasteRequested.connect(self.on_node_paste)
         nd.viewerRequested.connect(self.on_node_viewer)
+        nd.groupRequested.connect(self.on_node_group)
+        nd.ungroupRequested.connect(self.on_node_ungroup)
+        nd.groupRenamed.connect(self.on_node_group_renamed)
+        nd.groupPortRequested.connect(self.on_node_group_port)
+        nd.groupUnplugRequested.connect(self.on_node_group_unplug)
         nd.thumbsToggled.connect(lambda _on: self.proj is not None and self.rebuild())
         nd.dissolveRequested.connect(self.on_node_dissolve)
         nd.disconnectRequested.connect(self.on_node_disconnect)
@@ -5446,10 +5451,11 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("節點編輯器只收圖片、影片和複合片段", 4000)
             return
         made = []
+        level = self.nodes.level
 
         def do(lvl):
             for i, (kind, media) in enumerate(found):
-                nid = edit.add_graph_node(lvl, cid, eid, {"type": nodegraph.SOURCE, "kind": kind}, x + 40 * i, y + 40 * i)
+                nid = edit.add_graph_node(lvl, cid, eid, {"type": nodegraph.SOURCE, "kind": kind, **({"group": level} if level else {})}, x + 40 * i, y + 40 * i)
                 edit.set_effect_source_media(lvl, cid, eid, nid, **media)
                 made.append(nid)
         if self.apply("拖入節點", do) is not None and made:
@@ -5461,6 +5467,39 @@ class MainWindow(QMainWindow):
             return {"image": (path, info.get("width"), info.get("height"))}
         return {"video": (path, info.get("width"), info.get("height"), info.get("duration_us"))}
 
+    def on_node_group(self, eid, ids):
+        cid = self.node_clip()
+        if cid:
+            made = []
+            if self.apply("群組節點", lambda lvl: made.append(edit.group_graph_nodes(lvl, cid, eid, ids))) is not None and made:
+                self.nodes.select(made[0])
+
+    def on_node_ungroup(self, eid, gid):
+        cid = self.node_clip()
+        if cid:
+            self.apply("拆開群組", lambda lvl: edit.ungroup_graph(lvl, cid, eid, gid))
+
+    def on_node_group_renamed(self, eid, gid, label):
+        cid = self.node_clip()
+        if cid:
+            self.apply("群組名稱", lambda lvl: edit.rename_graph_group(lvl, cid, eid, gid, label))
+
+    def on_node_group_port(self, eid, gid, member, socket, out, name, old_member, old_socket):
+        cid = self.node_clip()
+        if not cid:
+            return
+
+        def do(lvl):
+            if old_member:
+                edit.group_unplug(lvl, cid, eid, gid, old_member, old_socket)
+            edit.group_port(lvl, cid, eid, gid, member, socket=socket or None, out=out, name=name or None)
+        self.apply("群組的連線", do)
+
+    def on_node_group_unplug(self, eid, gid, member, socket, output):
+        cid = self.node_clip()
+        if cid:
+            self.apply("群組的連線", lambda lvl: edit.group_unplug(lvl, cid, eid, gid, member or None, socket or None, output))
+
     def on_node_viewer(self, eid, nid, out):
         cid = self.node_clip()
         if cid:
@@ -5470,7 +5509,7 @@ class MainWindow(QMainWindow):
         cid = self.node_clip()
         if cid:
             made = []
-            if self.apply("貼上節點", lambda lvl: made.extend(edit.paste_graph_nodes(lvl, cid, eid, data, x, y))) is not None and made:
+            if self.apply("貼上節點", lambda lvl: made.extend(edit.paste_graph_nodes(lvl, cid, eid, data, x, y, self.nodes.level or None))) is not None and made:
                 self.nodes.select(made[0])
 
     def on_node_frame(self, eid, nid, change):

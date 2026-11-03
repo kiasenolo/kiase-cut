@@ -28,7 +28,10 @@ HIT_R = 9.0
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / gradient parameter's picture in a node
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
-HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f"}
+HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
+         "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
+GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸出: drag a link into it to make a group output
+PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
 SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0"}
 GHOST = "\0ghost"                              # the empty socket of a 參數輸入 node: drag out of it to make a parameter
@@ -61,12 +64,15 @@ class NodeItem(QGraphicsItem):
     def __init__(self, nid, node, editor):
         super().__init__()
         self.nid, self.node, self.editor = nid, node, editor
-        self.has_out = ng.has_output(node)
+        self.has_out = node["type"] != "groupout" and ng.has_output(node)
         self.rows = []
         self.linked = {l["socket"] for l in editor.graph["links"] if l["to"] == nid}
         self.drag = None                                    # a field being dragged: {...}
         self._layout()
-        self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
+        if node["type"] in ("groupin", "groupout"):          # (drawn from the group, not nodes of the graph)
+            self.setFlags(QGraphicsItem.ItemSendsGeometryChanges)
+        else:
+            self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
         self.setPos(node.get("x", 0.0), node.get("y", 0.0))
         self.setZValue(1)
         self.title = ng.title(node)
@@ -86,6 +92,19 @@ class NodeItem(QGraphicsItem):
             for x in ng.exposed(self.editor.graph):
                 add("expose", x["label"], p=x)
             add("ghost", "（拉出一條線來新增參數）")
+        elif node["type"] == "groupin":
+            for i in node["items"]:
+                add("out", i["label"], p=i["name"])
+            add("ghost", "（拉出一條線來新增輸入）")
+        elif node["type"] == "groupout":
+            for i in node["items"]:
+                add("image", i["label"], i["name"])
+            add("image", "（拉一條線進來新增輸出）", GHOST_IN)
+        elif node["type"] == ng.GROUP:
+            for name, label in ng.sockets(node):
+                add("image", label, name)
+            for name, label in ng.outputs(node):
+                add("out", label, p=name)
         elif self.has_out:
             for name, label in ng.outputs(node):
                 add("out", label, p=name)
@@ -107,7 +126,7 @@ class NodeItem(QGraphicsItem):
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
             add("shapecolor", "顏色")
-        if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.PARAMS):
+        if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.PARAMS, ng.GROUP, "groupin", "groupout"):
             for name, _label in ng.outputs(node):
                 add("thumb", "", p=name, h=THUMB_H)
         self.h = y + PAD
@@ -123,7 +142,7 @@ class NodeItem(QGraphicsItem):
         if self.node["type"] == ng.PARAMS:
             r = next((r for r in self.rows if r["kind"] in ("expose", "ghost") and (r["p"]["name"] if r["p"] else GHOST) == out), None)
         else:
-            r = next((r for r in self.rows if r["kind"] == "out" and (r["p"] or "") == out), None)
+            r = next((r for r in self.rows if (r["kind"] == "out" and (r["p"] or "") == out) or (r["kind"] == "ghost" and out == GHOST)), None)
         return self.mapToScene(QPointF(WIDTH, (r["y"] if r else HEAD + PAD) + ROW / 2))
 
     def outputs(self):
@@ -131,7 +150,8 @@ class NodeItem(QGraphicsItem):
         if self.node["type"] == ng.PARAMS:
             return [((r["p"]["name"] if r["p"] else GHOST), self.output_pos(r["p"]["name"] if r["p"] else GHOST))
                     for r in self.rows if r["kind"] in ("expose", "ghost")]
-        return [(r["p"] or "", self.output_pos(r["p"] or "")) for r in self.rows if r["kind"] == "out"]
+        return [((r["p"] or "") if r["kind"] == "out" else GHOST, self.output_pos((r["p"] or "") if r["kind"] == "out" else GHOST))
+                for r in self.rows if r["kind"] in ("out", "ghost")]
 
     def sockets(self):
         """[(socket name, scene point)] of the sockets a link can end at."""
@@ -392,6 +412,12 @@ class NodeItem(QGraphicsItem):
         self.editor.field_clicked(self, d["row"], d["cell"], e.screenPos())
 
     def mouseDoubleClickEvent(self, e):
+        if self.node["type"] == ng.GROUP:                    # the head: a new name; anywhere else: look inside
+            if e.pos().y() < HEAD:
+                self.editor.rename_group(self.nid)
+            else:
+                self.editor.enter(self.nid)
+            return
         if self.field_at(e.pos()) is None:
             super().mouseDoubleClickEvent(e)
 
@@ -580,6 +606,7 @@ class GraphView(QGraphicsView):
         self.setFocusPolicy(Qt.StrongFocus)
         self.items_by_id = {}
         self.link_items = []                     # [(Link, from node, to node, socket, output name)]
+        self.pseudo_links = []                   # [(from, to, socket, output)] the links to and from a group's own sockets, inside it
         self.rubber = None                       # a link being dragged: (Link, source node, old (dst, socket) or None, output name)
         self.cut = None                          # a Ctrl + right button cut: (the line, its points)
         self.over = None                         # the link a dragged node is over (it will go through the node)
@@ -649,7 +676,7 @@ class GraphView(QGraphicsView):
                 kind, nid, sock = hit
                 old, out = None, sock if kind == "out" else ""
                 if kind == "in":
-                    link = next((l for l in self.editor.graph["links"] if l["to"] == nid and l["socket"] == sock), None)
+                    link = self.editor.link_at(nid, sock)
                     if link is not None:                # a linked input is picked up: the link comes with the pointer
                         old, nid, out, kind = (nid, sock), link["from"], link.get("out") or "", "out"
                 if kind == "out":
@@ -670,7 +697,7 @@ class GraphView(QGraphicsView):
                 self.cut = (line, [pos], reroute)
                 return
             hit = self.socket_at(pos)
-            if hit and hit[0] == "out" and hit[2] not in ("", GHOST) and self.editor.graph["nodes"][hit[1]]["type"] == ng.PARAMS:
+            if hit and hit[0] == "out" and hit[2] not in ("", GHOST) and self.editor.node_of(hit[1])["type"] == ng.PARAMS:
                 self.editor.parameter_menu(hit[1], hit[2], e.globalPosition().toPoint())
                 return
             self.editor.add_menu(pos, e.globalPosition().toPoint())
@@ -723,7 +750,7 @@ class GraphView(QGraphicsView):
         if lone:
             box = lone[1].sceneBoundingRect().adjusted(8, 8, -8, -8)
             for ln, a, b, sock, out in self.link_items:
-                if ln.path().intersects(box):
+                if ln.path().intersects(box) and a not in (PORT_IN, PORT_OUT) and b not in (PORT_IN, PORT_OUT):
                     over = (ln, a, b, sock, out)
                     break
         if over != self.over:
@@ -739,17 +766,7 @@ class GraphView(QGraphicsView):
             ln, src, old, out = self.rubber
             self.rubber = None
             self.scene().removeItem(ln)
-            hit = self.socket_at(pos)
-            ed = self.editor
-            if hit and hit[0] == "in" and hit[1] != src:
-                if out == GHOST:
-                    ed.exposeRequested.emit(ed.eid, src, hit[1], hit[2])
-                elif old != (hit[1], hit[2]):
-                    ed.connectRequested.emit(ed.eid, src, hit[1], hit[2], out)
-            elif hit is None and old:
-                ed.disconnectRequested.emit(ed.eid, old[0], old[1])
-            elif hit is None and self.editor.graph["nodes"][src]["type"] != ng.PARAMS:   # a link let go in the empty: add a node there to take it
-                ed.add_menu(pos, e.globalPosition().toPoint(), (src, out))
+            self.editor.drop_link(src, out, old, self.socket_at(pos), pos, e.globalPosition().toPoint())
             return
         if self.cut:
             line, pts, reroute = self.cut
@@ -775,7 +792,12 @@ class GraphView(QGraphicsView):
                 if spots:
                     self.editor.rerouteRequested.emit(self.editor.eid, spots)
                 return
-            cut = [(b, sock) for ln, a, b, sock, out in self.link_items if ln.path().intersects(hit)]
+            cut = [(b, sock) for ln, a, b, sock, out in self.link_items if ln.path().intersects(hit) and a != PORT_IN and b != PORT_OUT]
+            for ln, a, b, sock, out in self.link_items:         # (the links to and from the group's own sockets)
+                if ln.path().intersects(hit) and a == PORT_IN:
+                    self.editor.unplug(b, sock, None)
+                elif ln.path().intersects(hit) and b == PORT_OUT:
+                    self.editor.unplug("", "", sock)
             if cut:
                 self.editor.disconnectManyRequested.emit(self.editor.eid, cut)
             return
@@ -801,6 +823,9 @@ class GraphView(QGraphicsView):
         if 0.2 <= s <= 3.0:
             self.scale(k, k)
 
+    def focusNextPrevChild(self, forward):
+        return False                                       # (Tab goes into a group, not to the next widget)
+
     def event(self, e):
         # the keys this editor uses are its own while it has the focus: the window's clip shortcuts (Ctrl+X cut,
         # Delete, M, Home...) would take them first otherwise
@@ -816,6 +841,10 @@ class GraphView(QGraphicsView):
             return mods in (Qt.NoModifier, Qt.ControlModifier) if key == Qt.Key_X else mods == Qt.NoModifier
         if key in (Qt.Key_J, Qt.Key_C, Qt.Key_V):
             return mods == Qt.ControlModifier
+        if key == Qt.Key_G:
+            return mods in (Qt.ControlModifier, Qt.ControlModifier | Qt.AltModifier)
+        if key == Qt.Key_Tab:
+            return mods == Qt.NoModifier
         if key in (Qt.Key_A, Qt.Key_D):
             return mods == Qt.ShiftModifier or (key == Qt.Key_A and mods == Qt.NoModifier)
         return False
@@ -838,6 +867,12 @@ class GraphView(QGraphicsView):
             self.editor.copy_selected()
         elif key == Qt.Key_V and mods == Qt.ControlModifier:
             self.editor.paste_here()
+        elif key == Qt.Key_G and mods == Qt.ControlModifier:
+            self.editor.group_selected()
+        elif key == Qt.Key_G and mods == Qt.ControlModifier | Qt.AltModifier:
+            self.editor.ungroup_selected()
+        elif key == Qt.Key_Tab and mods == Qt.NoModifier:
+            self.editor.tab()
         elif key == Qt.Key_J and mods == Qt.ControlModifier:
             self.editor.frame_selected()
         elif key == Qt.Key_Home:
@@ -871,6 +906,11 @@ class NodeEditor(QWidget):
     rerouteRequested = Signal(str, list)                    # effect id, [(x, y, from, to, socket, output)]: bends to put in links
     mediaDropped = Signal(str, list, list, float, float)    # effect id, library item ids, file paths, x, y: dragged in as source nodes
     thumbsToggled = Signal(bool)                            # the 縮圖 button: the preview sends every node's picture
+    groupRequested = Signal(str, list)                      # effect id, node ids: box them up (Ctrl+G)
+    ungroupRequested = Signal(str, str)                     # effect id, group id: take it apart
+    groupRenamed = Signal(str, str, str)                    # effect id, group id, the new name
+    groupPortRequested = Signal(str, str, str, str, object, str, str, str)   # effect id, group, member, socket, member output (None: an input), socket name ("": new), old member, old socket
+    groupUnplugRequested = Signal(str, str, str, str, object)  # effect id, group, member, socket, group output name (None: an input)
     viewerRequested = Signal(str, str, str)                 # effect id, node, output ("" node: the effect's output again)
     pasteRequested = Signal(str, dict, float, float)        # effect id, nodegraph.pack, x, y: nodes pasted
     frameEdited = Signal(str, str, dict)                    # effect id, frame id, what changed (label / text / color / w / h)
@@ -914,6 +954,19 @@ class NodeEditor(QWidget):
         save.setToolTip("把這個節點效果（節點、設定、圖片）存進 Library 的「效果預設」，之後可以套用到別的片段")
         save.clicked.connect(lambda: self.eid and self.saveRequested.emit(self.eid))
         bar.addWidget(save)
+        self.level = ""                                     # the group being looked into ("": the effect's own level)
+        self.pseudo = {}                                    # the 群組輸入 / 群組輸出 boxes shown inside a group
+        self.here = QLabel("")
+        bar.addWidget(self.here)
+        leave = QPushButton("離開群組 (Tab)")
+        leave.clicked.connect(lambda: self.leave())
+        leave.hide()
+        self.leave_btn = leave
+        bar.addWidget(leave)
+        group = QPushButton("群組 (Ctrl+G)")
+        group.setToolTip("把選取的節點包成一個群組節點；雙擊群組（或選取後按 Tab）進去看，Ctrl+Alt+G 拆開")
+        group.clicked.connect(self.group_selected)
+        bar.addWidget(group)
         self.show_thumbs = False
         self.thumbs = {}                                    # {node id: {output: QImage}} of the last frame drawn
         thumb = QPushButton("縮圖")
@@ -965,6 +1018,8 @@ class NodeEditor(QWidget):
         self.note.hide()
         self.view.show()
         first = self.eid != e["id"]
+        if first:
+            self.level = ""
         self.eid = e["id"]
         self.params, self.sources, self.t = e["params"], e.get("sources") or {}, t
         sig = json.dumps(e["graph"], sort_keys=True)
@@ -982,20 +1037,39 @@ class NodeEditor(QWidget):
         sc.clear()
         self.edit_proxy = None
         v.items_by_id, v.link_items = {}, []
-        for nid, node in self.graph["nodes"].items():
+        nodes = self.graph["nodes"]
+        if self.level and (nodes.get(self.level) or {}).get("type") != ng.GROUP:
+            self.level = ""
+        here = {nid: node for nid, node in nodes.items() if (node.get("group") or "") == self.level}
+        links = [(l["from"], l["to"], l["socket"], l.get("out") or "") for l in self.graph["links"]
+                 if l["from"] in here and l["to"] in here]
+        self.pseudo = {}
+        if self.level:                                      # inside a group: its own sockets at the sides
+            g = nodes[self.level]
+            xs = [n.get("x", 0.0) for n in here.values()] or [0.0]
+            ys = [n.get("y", 0.0) for n in here.values()] or [0.0]
+            self.pseudo = {PORT_IN: {"type": "groupin", "x": min(xs) - 300, "y": min(ys),
+                                     "items": [{"name": i["name"], "label": i["label"]} for i in g.get("inputs") or []]},
+                           PORT_OUT: {"type": "groupout", "x": max(xs) + 340, "y": min(ys),
+                                      "items": [{"name": o["name"], "label": o["label"]} for o in g.get("outputs") or []]}}
+            links += [(PORT_IN, m, sk, i["name"]) for i in g.get("inputs") or [] for m, sk in i.get("to") or [] if m in here]
+            links += [(o["from"], PORT_OUT, o["name"], o.get("out") or "") for o in g.get("outputs") or [] if o["from"] in here]
+        v.pseudo_links = [l for l in links if PORT_IN in l[:1] or PORT_OUT in l[1:2]]
+        for nid, node in list(here.items()) + list(self.pseudo.items()):
             it = {ng.REROUTE: RerouteItem, ng.FRAME: FrameItem}.get(node["type"], NodeItem)(nid, node, self)
             sc.addItem(it)
             v.items_by_id[nid] = it
             it.setSelected(nid in keep)
-        for l in self.graph["links"]:
-            a, b = v.items_by_id.get(l["from"]), v.items_by_id.get(l["to"])
-            out = l.get("out") or ""
-            if a is None or b is None or b.row_of(l["socket"]) is None or out not in [o for o, _ in a.outputs()]:
+        for a_id, b_id, socket, out in links:
+            a, b = v.items_by_id.get(a_id), v.items_by_id.get(b_id)
+            if a is None or b is None or b.row_of(socket) is None or out not in [o for o, _ in a.outputs()]:
                 continue
             ln = Link()
-            ln.route(a.output_pos(out), b.input_pos(l["socket"]))
+            ln.route(a.output_pos(out), b.input_pos(socket))
             sc.addItem(ln)
-            v.link_items.append((ln, l["from"], l["to"], l["socket"], out))
+            v.link_items.append((ln, a_id, b_id, socket, out))
+        self.here.setText(("位置：根 › " + (nodes[self.level].get("label") or "群組")) if self.level else "")
+        self.leave_btn.setVisible(bool(self.level))
         r = sc.itemsBoundingRect()
         sc.setSceneRect(r.adjusted(-1500, -1500, 1500, 1500))
         if fit:
@@ -1202,6 +1276,89 @@ class NodeEditor(QWidget):
             colors.addAction(names[key], lambda _=False, k=key: self.frameEdited.emit(self.eid, item.nid, {"color": k}))
         self.popup(menu, pos.toPoint() if hasattr(pos, "toPoint") else pos)
 
+    # -- groups ---------------------------------------------------------------------------------------
+    def node_of(self, nid):
+        return self.graph["nodes"].get(nid) or self.pseudo[nid]
+
+    def link_at(self, nid, socket):
+        """The link into socket of nid, as {"from", "out"} (None: there is none) - one from the group's own input too."""
+        for l in self.graph["links"]:
+            if l["to"] == nid and l["socket"] == socket and l["from"] in self.view.items_by_id:
+                return l
+        for a, b, sk, out in self.view.pseudo_links:
+            if b == nid and sk == socket and a == PORT_IN:
+                return {"from": a, "out": out}
+        return None
+
+    def drop_link(self, src, out, old, hit, pos, gpos):
+        """A link dragged from output out of src let go at hit (None: in the empty); old: (node, socket) it was
+        picked up from."""
+        gid = self.level
+        into = hit if hit and hit[0] == "in" and hit[1] != src else None
+        if src == PORT_IN:                                  # from a group input: onto a member's socket
+            name = "" if out == GHOST else out
+            if into and into[1] != PORT_OUT:
+                self.groupPortRequested.emit(self.eid, gid, into[1], into[2], None, name, *(old or ("", "")))
+            elif hit is None and old:
+                self.unplug(old[0], old[1], None)
+            return
+        if into and into[1] == PORT_OUT:                    # onto a group output
+            name = "" if into[2] == GHOST_IN else into[2]
+            self.groupPortRequested.emit(self.eid, gid, src, "", out, name, "", "")
+            return
+        if old and old[0] == PORT_OUT:                      # a group output picked up and let go elsewhere
+            if hit is None:
+                self.unplug("", "", old[1])
+            return
+        if into:
+            if out == GHOST:
+                self.exposeRequested.emit(self.eid, src, into[1], into[2])
+            elif old != (into[1], into[2]):
+                self.connectRequested.emit(self.eid, src, into[1], into[2], out)
+        elif hit is None and old:
+            self.disconnectRequested.emit(self.eid, old[0], old[1])
+        elif hit is None and self.node_of(src)["type"] not in (ng.PARAMS, "groupin"):   # a link let go in the empty: add a node there to take it
+            self.add_menu(pos, gpos, (src, out))
+
+    def unplug(self, member, socket, output):
+        if self.level and self.eid:
+            self.groupUnplugRequested.emit(self.eid, self.level, member, socket, output)
+
+    def enter(self, gid):
+        if (self.graph["nodes"].get(gid) or {}).get("type") == ng.GROUP:
+            self.level = gid
+            self.rebuild(True)
+
+    def leave(self):
+        if self.level:
+            parent = self.graph["nodes"][self.level].get("group") or ""
+            self.level = parent
+            self.rebuild(True)
+
+    def group_selected(self):
+        ids = [i for i in self.selected() if self.graph["nodes"][i]["type"] not in (ng.OUTPUT, ng.FRAME)]
+        if ids and self.eid:
+            self.groupRequested.emit(self.eid, ids)
+
+    def ungroup_selected(self):
+        for i in self.selected():
+            if self.graph["nodes"][i]["type"] == ng.GROUP:
+                self.ungroupRequested.emit(self.eid, i)
+
+    def tab(self):
+        """Tab: into the selected group, else out of the one looked into."""
+        one = [i for i in self.selected() if self.graph["nodes"][i]["type"] == ng.GROUP]
+        if len(one) == 1:
+            self.enter(one[0])
+        else:
+            self.leave()
+
+    def rename_group(self, gid):
+        node = self.graph["nodes"].get(gid)
+        got = self.ask_text("群組名稱", node.get("label", "")) if node else None
+        if got and got != node.get("label"):
+            self.groupRenamed.emit(self.eid, gid, got)
+
     def set_show_thumbs(self, on):
         self.show_thumbs = bool(on)
         self.thumbsToggled.emit(self.show_thumbs)
@@ -1330,7 +1487,7 @@ class NodeEditor(QWidget):
         for it in items[1:]:
             r = r.united(it.sceneBoundingRect())
         r = r.adjusted(-24, -FrameItem.BAR - 16, 24, 24)
-        self.addRequested.emit(self.eid, {"type": ng.FRAME, "w": r.width(), "h": r.height()}, r.x(), r.y())
+        self.addRequested.emit(self.eid, {"type": ng.FRAME, "w": r.width(), "h": r.height(), **({"group": self.level} if self.level else {})}, r.x(), r.y())
 
     def duplicate_selected(self):
         ids = [i for i in self.selected() if self.graph["nodes"][i]["type"] != ng.OUTPUT]
@@ -1354,6 +1511,8 @@ class NodeEditor(QWidget):
             return
 
         def ask(node):
+            if self.level:
+                node = dict(node, group=self.level)
             if link:
                 self.addLinkedRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y(), link[0], link[1])
             else:

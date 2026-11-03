@@ -2271,7 +2271,8 @@ def insert_graph_node(proj, clip_id, effect_id, nid, src, dst, socket, out=None)
 def add_graph_reroutes(proj, clip_id, effect_id, spots):
     """Bends put in links (Shift + right drag across them): spots [(x, y, from node, to node, socket, output)]."""
     for x, y, src, dst, socket, out in spots:
-        nid = add_graph_node(proj, clip_id, effect_id, {"type": nodegraph.REROUTE}, x, y)
+        grp = (_graph(find(proj, clip_id)[1], effect_id)[1]["nodes"].get(dst) or {}).get("group")
+        nid = add_graph_node(proj, clip_id, effect_id, {"type": nodegraph.REROUTE, **({"group": grp} if grp else {})}, x, y)
         insert_graph_node(proj, clip_id, effect_id, nid, src, dst, socket, out)
 
 

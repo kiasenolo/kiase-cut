@@ -24,6 +24,14 @@ def clip_with(graph_fn=None):
     return {"id": "c1", "type": "image", "effects": [e]}
 
 
+def fx_ghost():
+    from kiasecut.ui.node_editor import GHOST
+    return GHOST
+
+
+NEW_SOCKET = "\0newsocket"
+
+
 class NodeEditorTests(unittest.TestCase):
     def make(self, graph_fn=None):
         ed = NodeEditor()
@@ -402,6 +410,71 @@ class NodeEditorTests(unittest.TestCase):
         ed.set_thumbs({"e1": {made[0]: {"c1": (2, 2, bytes([255]) * 16)}}})
         self.assertEqual(ed.thumb_image(made[0], "c1").width(), 2)
         self.assertIsNone(ed.thumb_image(made[0], "a"))
+
+    def grouped(self):
+        made = {}
+
+        def add(e):
+            g = e["graph"]
+            made["a"] = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/math"}, 100, 0)
+            ng.connect(g, "input", made["a"], "src")
+            ng.connect(g, made["a"], "output", "src")
+            made["g"] = ng.make_group(g, [made["a"]])
+            e["params"].update(ng.default_params(g))
+        return self.make(add), made
+
+    def test_group_is_a_box_and_tab_goes_inside(self):
+        ed, m = self.grouped()
+        self.assertEqual(set(ed.view.items_by_id), {"input", "output", m["g"]})
+        box = ed.view.items_by_id[m["g"]]
+        self.assertEqual([r["socket"] for r in box.rows if r["kind"] == "image"], ["in1"])
+        self.assertEqual([o for o, _ in box.outputs()], ["out1"])
+        self.assertEqual(len(ed.view.link_items), 2)
+        ed.select(m["g"])
+        ed.tab()
+        self.assertEqual(ed.level, m["g"])
+        self.assertEqual(set(ed.view.items_by_id), {m["a"], "\0gin", "\0gout"})
+        self.assertEqual({(a, b) for _ln, a, b, _s, _o in ed.view.link_items}, {("\0gin", m["a"]), (m["a"], "\0gout")})
+        ed.tab()                                                      # nothing selected: out again
+        self.assertEqual(ed.level, "")
+
+    def test_links_to_a_groups_own_sockets_ask_for_group_ports(self):
+        ed, m = self.grouped()
+        asked, unplugged = [], []
+        ed.groupPortRequested.connect(lambda *a: asked.append(a[1:]))
+        ed.groupUnplugRequested.connect(lambda *a: unplugged.append(a[1:]))
+        ed.enter(m["g"])
+        v = ed.view
+        # a new group input: drag out of the empty socket of 群組輸入 onto the member's main picture socket
+        ghost = v.items_by_id["\0gin"].output_pos(fx_ghost())
+        ed.drop_link("\0gin", fx_ghost(), None, ("in", m["a"], "src"), ghost, QPoint(0, 0))
+        self.assertEqual(asked[-1], (m["g"], m["a"], "src", None, "", "", ""))
+        # a member's output onto the empty socket of 群組輸出: a new group output
+        ed.drop_link(m["a"], "", None, ("in", "\0gout", NEW_SOCKET), ghost, QPoint(0, 0))
+        self.assertEqual(asked[-1], (m["g"], m["a"], "", "", "", "", ""))
+        # onto an existing one: that output
+        ed.drop_link(m["a"], "", None, ("in", "\0gout", "out1"), ghost, QPoint(0, 0))
+        self.assertEqual(asked[-1][4], "out1")
+        # a link of the group's input let go in the empty: unplugged
+        ed.drop_link("\0gin", "in1", (m["a"], "src"), None, ghost, QPoint(0, 0))
+        self.assertEqual(unplugged[-1], (m["g"], m["a"], "src", None))
+
+    def test_ctrl_g_and_ctrl_alt_g(self):
+        ed = self.make()
+        asked = []
+        ed.groupRequested.connect(lambda *a: asked.append(("g",) + a[1:]))
+        ed.ungroupRequested.connect(lambda *a: asked.append(("u",) + a[1:]))
+        ed.select("input")
+        QTest.keyClick(ed.view, Qt.Key_G, Qt.ControlModifier)
+        self.assertEqual(asked[-1], ("g", ["input"]))
+        ed2, m = self.grouped()
+        ung = []
+        ed2.ungroupRequested.connect(lambda *a: ung.append(a[1:]))
+        ed2.select(m["g"])
+        QTest.keyClick(ed2.view, Qt.Key_G, Qt.ControlModifier | Qt.AltModifier)
+        self.assertEqual(ung, [(m["g"],)])
+        self.assertTrue(ed.view.claims(Qt.Key_Tab, Qt.NoModifier))
+        self.assertTrue(ed.view.claims(Qt.Key_G, Qt.ControlModifier))
 
     def test_shift_right_drag_puts_bends_in_links(self):
         ed = self.make()

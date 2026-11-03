@@ -1251,13 +1251,16 @@ def _sign(n, node, feed, sigs, values, w, h, unit, time, prog, frame, stamp, fin
             return
         asset = is_asset(node)
         linked = frozenset(part for part, sock, _l in ASSET_PAINTS if (n, sock) in feed) if asset else frozenset()
-        parts = [("source", node.get("kind")), stamp(n, None, linked) if asset else stamp(n), w, h, unit]
+        what = stamp(n, None, linked) if asset else stamp(n)
+        if what is None:                                      # (a picture that may be another every time: nothing kept from it)
+            return
+        parts = [("source", node.get("kind")), what, w, h, unit]
         for part, sock, _label in ASSET_PAINTS:
             if part in linked:
-                s = sigs.get(feed[(n, sock)])
-                if s is None:
+                s, mask = sigs.get(feed[(n, sock)]), stamp(n, part, linked)
+                if s is None or mask is None:
                     return
-                parts.append((part, stamp(n, part, linked), s))
+                parts.append((part, mask, s))
         sigs[(n, "")] = _digest(*parts)
     elif kind == FILTER:
         d = fx.get(node["ref"])

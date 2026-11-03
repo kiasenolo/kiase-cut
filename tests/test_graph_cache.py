@@ -242,6 +242,10 @@ class CacheTests(unittest.TestCase):
         self.go(g, params, picture=picture)
         self.assertEqual(self.draws.count("Read"), 2)                      # (no stamp: drawn every time)
         self.draws.clear()
+        for _ in range(2):                                                 # (a stamp that says "not known" for this source is the same)
+            self.go(g, params, picture=picture, stamp=lambda nid, *rest: None)
+        self.assertEqual(self.draws.count("Read"), 2)
+        self.draws.clear()
         stamp = lambda nid, *rest: ("same", shown["v"])  # noqa: E731
         self.go(g, params, picture=picture, stamp=stamp)
         self.go(g, params, picture=picture, stamp=stamp)

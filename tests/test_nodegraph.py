@@ -122,11 +122,12 @@ class RunTest(unittest.TestCase):
         ng.connect(g, s, m, "b")
         ng.connect(g, m, "output", "src")
         blue = self.solid([0, 0, 255, 255])
-        out, errors, _ = self.run_graph(g, self.solid([255, 0, 0, 255]), {s: blue})
+        over = {ng.param_key(m, "use_alpha"): True}            # (off is Blender's Mix; on lays B over A by B's alpha)
+        out, errors, _ = self.run_graph(g, self.solid([255, 0, 0, 255]), {s: blue}, params=over)
         self.assertEqual(errors, [])
         self.assertTrue((np.abs(out.astype(int) - blue) <= 1).all())
         half = self.solid([0, 0, 128, 128])                    # premultiplied half-blue over red
-        out, _, _ = self.run_graph(g, self.solid([255, 0, 0, 255]), {s: half})
+        out, _, _ = self.run_graph(g, self.solid([255, 0, 0, 255]), {s: half}, params=over)
         self.assertTrue(abs(int(out[0, 0, 0]) - 127) <= 2 and abs(int(out[0, 0, 2]) - 128) <= 2 and out[0, 0, 3] == 255)
 
     def test_switch_and_menu_switch_pick_one_and_leave_the_rest_unworked(self):

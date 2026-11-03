@@ -590,6 +590,7 @@ class GraphRenderTests(unittest.TestCase):
             ng.connect(g, s, m, "b")
             ng.connect(g, m, "output", "src")
             e["params"].update(ng.default_params(g))
+            e["params"][ng.param_key(m, "use_alpha")] = True     # (B laid over the input by its alpha)
             self.source(e, s, self.s.blue)
         self.check(self.view(build), BLUE, BLUE)
 
@@ -607,6 +608,7 @@ class GraphRenderTests(unittest.TestCase):
             ng.connect(g, n, m, "b")
             ng.connect(g, m, "output", "src")
             e["params"].update(ng.default_params(g))
+            e["params"][ng.param_key(m, "use_alpha")] = True     # (B laid over the input by its alpha)
             e.setdefault("sources", {})[n] = {"kind": "shape", "shape": shape, "color": [0, 0, 1, 1],
                                               "cx": 0.0, "cy": 0.0, "w": 0.5, "h": 0.5, "rotation": 0.0}
         for shape, corner in (("rectangle", True), ("ellipse", False)):

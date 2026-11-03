@@ -9,7 +9,7 @@
 // @param blend menu 混合 "混合|變暗|相乘|加深顏色|變亮|濾色|加亮顏色|相加|疊加|柔光|線性光|差異|排除|相減|相除|色相|飽和度|顏色|明度" "混合模式"
 // @param fac float 1 -5 5 "係數"
 // @param clamp_fac bool true "限制係數"
-// @param use_alpha bool true "使用 B 的透明度"
+// @param use_alpha bool false "使用 B 的透明度"
 // @param clamp_on bool false "限制結果"
 // @enable factor_mode data_type == 向量
 // @enable blend data_type == 顏色

@@ -294,6 +294,36 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(edits[-1][0], fid)
         self.assertGreater(edits[-1][1]["w"], 300)
 
+    def test_align_and_arrange(self):
+        def add(e):
+            g = e["graph"]
+            made.append(ng.add_node(g, {"type": "reroute"}, 100, 60))
+            g["nodes"]["input"]["x"], g["nodes"]["input"]["y"] = 0.0, 0.0
+        made = []
+        ed = self.make(add)
+        rid = made[0]
+        moves = []
+        ed.moveRequested.connect(lambda eid, m: moves.append(m))
+        ed.select("input")
+        ed.view.items_by_id[rid].setSelected(True)
+        ed.align("left")
+        self.assertAlmostEqual(moves[-1][rid][0], 0.0, delta=0.5)
+        ed.arrange()
+        xs = [moves[-1][i][0] for i in moves[-1]]
+        self.assertTrue(xs)
+        self.assertEqual(ng.depths(ed.graph)["output"], 1)
+
+    def test_copy_paste(self):
+        ed = self.make()
+        got = []
+        ed.pasteRequested.connect(lambda *a: got.append(a))
+        ed.select("input")
+        ed.copy_selected()
+        ed.paste_here(QPointF(10, 20))
+        eid, pack, x, y = got[0]
+        self.assertEqual(list(pack["nodes"]), ["input"])
+        self.assertEqual((x, y), (10, 20))
+
     def test_shift_right_drag_puts_bends_in_links(self):
         ed = self.make()
         got = []

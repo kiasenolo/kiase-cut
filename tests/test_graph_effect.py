@@ -173,6 +173,18 @@ class ExposedParamTests(unittest.TestCase):
             for r in (render.Renderer(), glrender.GLRenderer()):
                 self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), RED, type(r).__name__)
 
+    def test_paste_into_another_effect(self):
+        m = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/math"}, 100, 50)
+        key = [k for k in self.e["params"] if k.startswith(m + ".")][0]
+        self.e["params"][key] = 0.25
+        pack = ng.pack(self.e["graph"], [m, "output"], self.e["params"], self.e.get("sources"))
+        self.assertEqual(list(pack["nodes"]), [m])
+        other = edit.add_effect(self.p, "c1", fx.GRAPH)
+        made = edit.paste_graph_nodes(self.p, "c1", other["id"], pack, 7, 9)
+        self.assertEqual(len(made), 1)
+        self.assertEqual(other["params"][made[0] + key[len(m):]], 0.25)
+        self.assertEqual((other["graph"]["nodes"][made[0]]["x"], other["graph"]["nodes"][made[0]]["y"]), (7.0, 9.0))
+
     def test_insert_dissolve_duplicate(self):
         edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
         edit.insert_graph_node(self.p, "c1", self.eid, self.m, "input", "output", "src")

@@ -742,7 +742,7 @@ class GraphView(QGraphicsView):
         mods &= ~Qt.KeypadModifier
         if key in (Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_Home, Qt.Key_M, Qt.Key_X):
             return mods in (Qt.NoModifier, Qt.ControlModifier) if key == Qt.Key_X else mods == Qt.NoModifier
-        if key == Qt.Key_J:
+        if key in (Qt.Key_J, Qt.Key_C, Qt.Key_V):
             return mods == Qt.ControlModifier
         if key in (Qt.Key_A, Qt.Key_D):
             return mods == Qt.ShiftModifier or (key == Qt.Key_A and mods == Qt.NoModifier)
@@ -762,6 +762,10 @@ class GraphView(QGraphicsView):
             self.editor.mute_selected()
         elif key == Qt.Key_D and mods & Qt.ShiftModifier:
             self.editor.duplicate_selected()
+        elif key == Qt.Key_C and mods == Qt.ControlModifier:
+            self.editor.copy_selected()
+        elif key == Qt.Key_V and mods == Qt.ControlModifier:
+            self.editor.paste_here()
         elif key == Qt.Key_J and mods == Qt.ControlModifier:
             self.editor.frame_selected()
         elif key == Qt.Key_Home:
@@ -781,6 +785,9 @@ class GraphView(QGraphicsView):
                 self.centerOn(r.center())
 
 
+CLIPBOARD = {"pack": None}                      # nodes copied (Ctrl+C), for any node effect to paste
+
+
 class NodeEditor(QWidget):
     addRequested = Signal(str, dict, float, float)          # effect id, node ({"type", "ref" / "kind"}), x, y
     removeRequested = Signal(str, list)                     # effect id, node ids
@@ -791,6 +798,7 @@ class NodeEditor(QWidget):
     addLinkedRequested = Signal(str, dict, float, float, str, str)         # effect id, node, x, y, node and output to link into it
     rerouteRequested = Signal(str, list)                    # effect id, [(x, y, from, to, socket, output)]: bends to put in links
     mediaDropped = Signal(str, list, list, float, float)    # effect id, library item ids, file paths, x, y: dragged in as source nodes
+    pasteRequested = Signal(str, dict, float, float)        # effect id, nodegraph.pack, x, y: nodes pasted
     frameEdited = Signal(str, str, dict)                    # effect id, frame id, what changed (label / text / color / w / h)
     duplicateRequested = Signal(str, list)                  # effect id, node ids
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
@@ -832,6 +840,10 @@ class NodeEditor(QWidget):
         save.setToolTip("把這個節點效果（節點、設定、圖片）存進 Library 的「效果預設」，之後可以套用到別的片段")
         save.clicked.connect(lambda: self.eid and self.saveRequested.emit(self.eid))
         bar.addWidget(save)
+        tidy = QPushButton("整理 ▾")
+        tidy.setToolTip("對齊、均分、自動排列選取的節點")
+        tidy.clicked.connect(lambda: self.tidy_menu(tidy.mapToGlobal(tidy.rect().bottomLeft())))
+        bar.addWidget(tidy)
         bar.addStretch()
         lay.addLayout(bar)
         self.note = QLabel("選取有節點效果的片段（效果面板 → 新增效果 → 節點效果）")
@@ -1082,6 +1094,92 @@ class NodeEditor(QWidget):
         for key in ng.FRAME_COLORS:
             colors.addAction(names[key], lambda _=False, k=key: self.frameEdited.emit(self.eid, item.nid, {"color": k}))
         self.popup(menu, pos.toPoint() if hasattr(pos, "toPoint") else pos)
+
+    def copy_selected(self):
+        ids = self.selected()
+        pack = ng.pack(self.graph, ids, self.params, self.sources)
+        if pack["nodes"]:
+            CLIPBOARD["pack"] = pack
+
+    def paste_here(self, at=None):
+        pack = CLIPBOARD["pack"]
+        if not (pack and self.eid):
+            return
+        if at is None:
+            at = self.view.mapToScene(self.view.mapFromGlobal(self.view.cursor().pos()))
+            if not self.view.viewport().rect().contains(self.view.mapFromGlobal(self.view.cursor().pos())):
+                at = self.view.mapToScene(self.view.viewport().rect().center())
+        self.pasteRequested.emit(self.eid, pack, at.x(), at.y())
+
+    def _moves(self, new):
+        """Ask for the positions new {node id: (x, y)} (those that changed)."""
+        new = {i: p for i, p in new.items() if (round(p[0], 3), round(p[1], 3)) != (round(self.graph["nodes"][i].get("x", 0.0), 3), round(self.graph["nodes"][i].get("y", 0.0), 3))}
+        if new and self.eid:
+            self.moveRequested.emit(self.eid, new)
+
+    def align(self, how):
+        """how: left / right / top / bottom / hcenter / vcenter / hspread / vspread of the selected nodes."""
+        its = {i: self.view.items_by_id[i] for i in self.selected() if self.graph["nodes"][i]["type"] != ng.FRAME}
+        if len(its) < 2:
+            return
+        box = {i: it.sceneBoundingRect() for i, it in its.items()}
+        new = {}
+        left, right = min(r.left() for r in box.values()), max(r.right() for r in box.values())
+        top, bottom = min(r.top() for r in box.values()), max(r.bottom() for r in box.values())
+        for i, r in box.items():
+            p = its[i].pos()
+            dx = dy = 0.0
+            if how == "left":
+                dx = left - r.left()
+            elif how == "right":
+                dx = right - r.right()
+            elif how == "top":
+                dy = top - r.top()
+            elif how == "bottom":
+                dy = bottom - r.bottom()
+            elif how == "hcenter":
+                dx = (left + right) / 2 - r.center().x()
+            elif how == "vcenter":
+                dy = (top + bottom) / 2 - r.center().y()
+            new[i] = (p.x() + dx, p.y() + dy)
+        if how in ("hspread", "vspread"):
+            h = how == "hspread"
+            order = sorted(box, key=lambda i: box[i].left() if h else box[i].top())
+            total = sum(box[i].width() if h else box[i].height() for i in order)
+            gap = ((right - left) if h else (bottom - top)) - total
+            gap /= len(order) - 1
+            at = left if h else top
+            for i in order:
+                r, p = box[i], its[i].pos()
+                new[i] = (p.x() + (at - r.left()), p.y()) if h else (p.x(), p.y() + (at - r.top()))
+                at += (r.width() if h else r.height()) + gap
+        self._moves(new)
+
+    def arrange(self):
+        """Every node in a column by how far it is from the start, left to right, tidy rows in each."""
+        cols = {}
+        for i, d in ng.depths(self.graph).items():
+            if self.graph["nodes"][i]["type"] != ng.FRAME and i in self.view.items_by_id:
+                cols.setdefault(d, []).append(i)
+        new, x = {}, 0.0
+        for d in sorted(cols):
+            y, width = 0.0, 0.0
+            for i in sorted(cols[d], key=lambda i: (self.graph["nodes"][i].get("y", 0.0), i)):
+                r = self.view.items_by_id[i].sceneBoundingRect()
+                new[i] = (x + (self.view.items_by_id[i].pos().x() - r.left()), y + (self.view.items_by_id[i].pos().y() - r.top()))
+                y += r.height() + 30
+                width = max(width, r.width())
+            x += width + 80
+        self._moves(new)
+
+    def tidy_menu(self, pos):
+        menu = QMenu(self)
+        for key, text in (("left", "靠左對齊"), ("right", "靠右對齊"), ("top", "靠上對齊"), ("bottom", "靠下對齊"),
+                          ("hcenter", "水平置中"), ("vcenter", "垂直置中"), ("hspread", "水平均分"), ("vspread", "垂直均分")):
+            menu.addAction(text, lambda _=False, k=key: self.align(k))
+        menu.addSeparator()
+        menu.addAction("自動排列（全部）", self.arrange)
+        self.popup(menu, pos)
 
     def frame_selected(self):
         """Ctrl+J: a frame around the selected nodes."""

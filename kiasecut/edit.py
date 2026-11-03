@@ -2245,6 +2245,23 @@ def duplicate_graph_nodes(proj, clip_id, effect_id, ids, dx=40.0, dy=40.0):
     return list(made.values())
 
 
+def paste_graph_nodes(proj, clip_id, effect_id, data, x=0.0, y=0.0):
+    """Nodes copied from a node effect (nodegraph.pack) put in this one; returns the new ids."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    for n in data["nodes"].values():
+        if n["type"] == nodegraph.FILTER:
+            fx.get(n["ref"])
+    made = nodegraph.paste(g, data, x, y)
+    for old, new in made.items():
+        for k, v in data["params"].items():
+            if k.startswith(old + "."):
+                e["params"][new + k[len(old):]] = copy.deepcopy(v)
+        if old in data["sources"]:
+            e.setdefault("sources", {})[new] = copy.deepcopy(data["sources"][old])
+    return list(made.values())
+
+
 def disconnect_graph(proj, clip_id, effect_id, dst, socket):
     _, c = find(proj, clip_id)
     nodegraph.disconnect(_graph(c, effect_id)[1], dst, socket)

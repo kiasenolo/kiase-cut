@@ -458,6 +458,7 @@ class MainWindow(QMainWindow):
         nd.rerouteRequested.connect(self.on_node_reroute)
         nd.mediaDropped.connect(self.on_node_media)
         nd.frameEdited.connect(self.on_node_frame)
+        nd.pasteRequested.connect(self.on_node_paste)
         nd.dissolveRequested.connect(self.on_node_dissolve)
         nd.disconnectRequested.connect(self.on_node_disconnect)
         nd.moveRequested.connect(self.on_node_move)
@@ -5453,6 +5454,13 @@ class MainWindow(QMainWindow):
         if kind == "image":
             return {"image": (path, info.get("width"), info.get("height"))}
         return {"video": (path, info.get("width"), info.get("height"), info.get("duration_us"))}
+
+    def on_node_paste(self, eid, data, x, y):
+        cid = self.node_clip()
+        if cid:
+            made = []
+            if self.apply("貼上節點", lambda lvl: made.extend(edit.paste_graph_nodes(lvl, cid, eid, data, x, y))) is not None and made:
+                self.nodes.select(made[0])
 
     def on_node_frame(self, eid, nid, change):
         cid = self.node_clip()

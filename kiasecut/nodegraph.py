@@ -379,6 +379,57 @@ def duplicate(graph, ids, dx=40.0, dy=40.0):
     return made
 
 
+def pack(graph, ids, params=None, sources=None):
+    """What copying nodes ids takes along (to paste in this or another graph): the nodes, the links among them,
+    their settings and pictures."""
+    ids = [i for i in ids if i in graph["nodes"] and graph["nodes"][i]["type"] != OUTPUT]
+    out = {"nodes": {i: copy.deepcopy(graph["nodes"][i]) for i in ids},
+           "links": [copy.deepcopy(l) for l in graph["links"] if l["from"] in ids and l["to"] in ids],
+           "params": {}, "sources": {i: copy.deepcopy(sources[i]) for i in ids if i in (sources or {})}}
+    for k, v in (params or {}).items():
+        if k.partition(".")[0] in ids:
+            out["params"][k] = copy.deepcopy(v)
+    return out
+
+
+def paste(graph, data, x=0.0, y=0.0):
+    """Put a pack (see pack) in the graph with its top left corner at (x, y); returns {old id: new id}. The
+    caller copies params and sources under the new ids."""
+    nodes = data["nodes"]
+    if not nodes:
+        return {}
+    x0 = min(n.get("x", 0.0) for n in nodes.values())
+    y0 = min(n.get("y", 0.0) for n in nodes.values())
+    made = {}
+    for i, n in nodes.items():
+        node = copy.deepcopy(n)
+        node["x"], node["y"] = node.get("x", 0.0) - x0 + x, node.get("y", 0.0) - y0 + y
+        made[i] = add_node(graph, node, node["x"], node["y"], base=i.rstrip("0123456789") or "node")
+    for l in data["links"]:
+        if l["from"] in made and l["to"] in made:
+            graph["links"].append({**copy.deepcopy(l), "from": made[l["from"]], "to": made[l["to"]]})
+    return made
+
+
+def depths(graph):
+    """{node id: column} - how many nodes a picture passes before it (0: nothing feeds it)."""
+    ins = {}
+    for l in graph["links"]:
+        ins.setdefault(l["to"], []).append(l["from"])
+    out = {}
+
+    def depth(n, seen=()):
+        if n in out:
+            return out[n]
+        if n in seen:
+            return 0
+        out[n] = 1 + max((depth(f, seen + (n,)) for f in ins.get(n, [])), default=-1)
+        return out[n]
+    for n in graph["nodes"]:
+        depth(n)
+    return out
+
+
 def disconnect(graph, dst, socket):
     graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
 

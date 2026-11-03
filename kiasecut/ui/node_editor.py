@@ -30,7 +30,7 @@ HIT_R = 9.0
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / gradient parameter's picture in a node
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
-HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
+HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
          "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
 GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸出: drag a link into it to make a group output
 PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
@@ -125,6 +125,8 @@ class NodeItem(QGraphicsItem):
                 add("out", label, p=name)
         if node["type"] == ng.OUTPUT:
             add("image", "結果", "src")
+        elif node["type"] == ng.VIEWER:
+            add("image", "圖像", "src")
         elif node["type"] == ng.FILTER or ng.is_asset(node):         # (a built-in shape: its fields, no sockets)
             d = ng.node_def(node)
             socket = lambda p: ng.PARAM + p.name if ng.has_socket(p) else None
@@ -151,7 +153,7 @@ class NodeItem(QGraphicsItem):
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
             add("shapecolor", "顏色")
-        if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.PARAMS, ng.GROUP, "groupin", "groupout"):
+        if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.VIEWER, ng.PARAMS, ng.GROUP, "groupin", "groupout"):
             for name, _label in ng.outputs(node):
                 add("thumb", "", p=name, h=THUMB_H)
         self.h = y + PAD
@@ -243,10 +245,10 @@ class NodeItem(QGraphicsItem):
         p.setPen(QColor("white") if not muted else QColor(255, 255, 255, 110))
         p.drawText(QRectF(8, 0, self.w - 16, HEAD), Qt.AlignVCenter | Qt.AlignLeft,
                    self.title + ("（停用）" if muted else ""))
-        viewed = self.editor.graph.get("viewer") or {}
-        if viewed.get("node") == self.nid:                  # the node the preview shows (Ctrl + Shift + click)
+        viewed = ng.viewed(self.editor.graph)
+        if viewed and viewed[0] == self.nid:                # the node a 預覽 node shows (Ctrl + Shift + click)
             p.setPen(QColor("#ffe27a"))
-            tag = "◉ 預覽" + (f"：{dict(ng.outputs(self.node)).get(viewed.get('out') or '', '')}" if len(ng.outputs(self.node)) > 1 else "")
+            tag = "◉ 預覽" + (f"：{dict(ng.outputs(self.node)).get(viewed[1], '')}" if len(ng.outputs(self.node)) > 1 else "")
             p.drawText(QRectF(8, 0, self.w - 16, HEAD), Qt.AlignVCenter | Qt.AlignRight, tag)
         f.setBold(False)
         p.setFont(f)
@@ -1518,12 +1520,12 @@ class NodeEditor(QWidget):
     def view_node(self, nid):
         """Ctrl + Shift + click on node nid: step the preview along nid's outputs (then off)."""
         node = self.graph["nodes"][nid]
-        if node["type"] in (ng.PARAMS, ng.OUTPUT) or not self.eid:
+        if node["type"] in (ng.PARAMS, ng.OUTPUT, ng.VIEWER) or not self.eid:
             return
         names = [o for o, _ in ng.outputs(node)]
-        now = self.graph.get("viewer") or {}
-        if now.get("node") == nid:
-            k = names.index(now.get("out") or "") + 1 if (now.get("out") or "") in names else 0
+        now = ng.viewed(self.graph)
+        if now and now[0] == nid:
+            k = names.index(now[1]) + 1 if now[1] in names else 0
         else:
             k = 0
         if k >= len(names):
@@ -1666,7 +1668,7 @@ class NodeEditor(QWidget):
         groups = []                                       # the category submenus (hidden while searching)
         inp = menu.addMenu("輸入")
         groups.append(inp.menuAction())
-        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("繞線點", {"type": ng.REROUTE}), ("框架／註解", {"type": ng.FRAME}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
+        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("預覽（編輯器的預覽看這裡）", {"type": ng.VIEWER}), ("繞線點", {"type": ng.REROUTE}), ("框架／註解", {"type": ng.FRAME}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
                            ("影片", {"type": ng.SOURCE, "kind": "video"}), ("複合片段", {"type": ng.SOURCE, "kind": "compound"}),
                            ("時間線（軌道）", {"type": ng.SOURCE, "kind": "track"})):
             inp.addAction(text, lambda _=False, n=node: ask(n))

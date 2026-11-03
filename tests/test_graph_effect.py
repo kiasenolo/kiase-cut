@@ -253,11 +253,19 @@ class ExposedParamTests(unittest.TestCase):
     def test_viewer_edit(self):
         sep = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/separate_color"})
         edit.set_graph_viewer(self.p, "c1", self.eid, sep, "a")
-        self.assertEqual(self.e["graph"]["viewer"], {"node": sep, "out": "a"})
+        self.assertEqual(ng.viewed(self.e["graph"]), (sep, "a"))             # (a 預覽 node was made and linked)
+        vid = next(i for i, n in self.e["graph"]["nodes"].items() if n["type"] == ng.VIEWER)
+        edit.set_graph_viewer(self.p, "c1", self.eid, sep, "c2")
+        self.assertEqual(ng.viewed(self.e["graph"]), (sep, "c2"))            # (the same node, linked again)
+        self.assertEqual([i for i, n in self.e["graph"]["nodes"].items() if n["type"] == ng.VIEWER], [vid])
         with self.assertRaises(edit.EditError):
             edit.set_graph_viewer(self.p, "c1", self.eid, sep, "nope")
+        self.assertIsNone(ng.check(self.e["graph"]))
         edit.remove_graph_node(self.p, "c1", self.eid, sep)
-        self.assertNotIn("viewer", self.e["graph"])
+        self.assertIsNone(ng.viewed(self.e["graph"]))
+        edit.set_graph_viewer(self.p, "c1", self.eid, "input", "")
+        edit.set_graph_viewer(self.p, "c1", self.eid, None)
+        self.assertIsNone(ng.viewed(self.e["graph"]))
 
     def test_insert_dissolve_duplicate(self):
         edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
@@ -462,7 +470,8 @@ class GraphRenderTests(unittest.TestCase):
             sep = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/separate_color"}, base="sep")
             ng.connect(g, "input", sep, "src")
             ng.connect(g, "input", "output", "src")
-            g["viewer"] = {"node": sep, "out": "c2"}
+            v = ng.add_node(g, {"type": ng.VIEWER}, base="viewer")
+            ng.connect(g, sep, v, "src", "c2")
             e["params"].update(ng.default_params(g))
         v = self.view(f)
         self.check(v, RED, RED)                                # an export: the output

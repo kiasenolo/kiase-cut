@@ -23,6 +23,7 @@ from . import assets, curves, fx
 
 US = 1_000_000
 INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output", "source", "filter", "params", "reroute", "frame", "group"
+VIEWER = "viewer"                                           # 預覽: what the editor's preview shows (never exported)
 SOURCE_KINDS = ("image", "video", "compound", "track", "shape")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
@@ -191,8 +192,6 @@ def remove_node(graph, nid):
         for m in members(graph, nid):
             remove_node(graph, m)
     graph["nodes"].pop(nid, None)
-    if (graph.get("viewer") or {}).get("node") == nid:
-        graph.pop("viewer")
     graph["links"] = [l for l in graph["links"] if nid not in (l["from"], l["to"])]
     prune_groups(graph)
 
@@ -258,6 +257,8 @@ def sockets(node):
     """[(socket, label)] a node takes pictures in at."""
     if node["type"] == OUTPUT:
         return [("src", "結果")]
+    if node["type"] == VIEWER:
+        return [("src", "圖像")]
     if node["type"] == REROUTE:
         return [("src", "")]
     if node["type"] == GROUP:
@@ -290,7 +291,7 @@ def title(node):
         return node.get("label") or "群組"
     if is_asset(node):
         return asset_def(node).name
-    return {"groupin": "群組輸入", "groupout": "群組輸出", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
+    return {"groupin": "群組輸入", "groupout": "群組輸出", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
 
@@ -606,7 +607,7 @@ def shape_image(src, size=512):
 def has_output(node):
     if node["type"] == GROUP:
         return bool(node.get("outputs"))
-    return node["type"] not in (OUTPUT, FRAME)
+    return node["type"] not in (OUTPUT, FRAME, VIEWER)
 
 
 def param_of(graph, nid, socket):
@@ -861,12 +862,24 @@ class Pool:
         self.spare = []
 
 
+def viewed(graph):
+    """(node id, output) the graph's last 預覽 node takes its picture from, or None."""
+    nodes = graph.get("nodes") or {}
+    found = None
+    for vid, n in nodes.items():
+        if n["type"] == VIEWER:
+            for l in graph.get("links") or []:
+                if l["to"] == vid and l["socket"] == "src" and l["from"] in nodes and nodes[l["from"]]["type"] != PARAMS:
+                    found = (l["from"], l.get("out") or "")
+    return found
+
+
 def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False, tap=None):
     """Work out graph's output (params: the effect's e["params"]) for the w x h texture src_tex (the effect's input)
     at clip time t.
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
     (texture, 3 x 3 map, done) of a source node's picture (see Engine.run_tex's sources) or None.
-    viewer: show the node graph["viewer"] names instead of the output (the editor's preview, not an export).
+    viewer: show the picture a 預覽 node takes instead of the output (the editor's preview, not an export).
     tap(node id, output, texture): told every picture a node gives (the editor's thumbnails, see thumb_tap).
     Returns (texture, owner): owner is the object to give back to free when done with it (None: the
     texture is src_tex itself); (None, None) when the graph has no output. Node errors go to errors."""
@@ -878,8 +891,9 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         return None, None
     feed = {(l["to"], l["socket"]): (l["from"], l.get("out") or "") for l in links if l["from"] in nodes and l["to"] in nodes
             and nodes[l["from"]]["type"] != PARAMS}                       # (the node and the output it gives)
-    view = (graph.get("viewer") or {}) if viewer else {}
-    view = (view["node"], view.get("out") or "") if view.get("node") in nodes and nodes[view["node"]]["type"] not in (PARAMS, FRAME, OUTPUT) else None
+    view = viewed(graph) if viewer else None
+    if view and (view[0] not in nodes or nodes[view[0]]["type"] in (PARAMS, FRAME, OUTPUT, VIEWER)):
+        view = None
     bound = binds(graph)
     order, state = [], {}
 
@@ -942,7 +956,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     for n in order:
         node = nodes[n]
         kind = node["type"]
-        if kind in (PARAMS, FRAME):
+        if kind in (PARAMS, FRAME, VIEWER):
             continue
         if kind == REROUTE:                                   # (a bend in a link: the picture goes on)
             alias(n, feed.get((n, "src")))

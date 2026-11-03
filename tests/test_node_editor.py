@@ -426,10 +426,11 @@ class NodeEditorTests(unittest.TestCase):
         mods = Qt.ControlModifier | Qt.ShiftModifier
         QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, mods, at)
         self.assertEqual(asked[-1], (sep, "c1"))
-        ed.graph["viewer"] = {"node": sep, "out": "c3"}
+        ed.graph["nodes"]["v"] = {"type": ng.VIEWER, "x": 0.0, "y": 0.0}
+        ed.graph["links"].append({"from": sep, "to": "v", "socket": "src", "out": "c3"})
         QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, mods, at)
         self.assertEqual(asked[-1], (sep, "a"))
-        ed.graph["viewer"] = {"node": sep, "out": "a"}
+        ed.graph["links"][-1]["out"] = "a"
         QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, mods, at)
         self.assertEqual(asked[-1], ("", ""))
 

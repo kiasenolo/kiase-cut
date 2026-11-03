@@ -2147,7 +2147,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
                 raise EditError("這不是內建形狀")
             asset = {"key": preset.key, "family": preset.family}
         node = {"type": nodegraph.SOURCE, "kind": node["kind"], **({"asset": asset} if asset else {})}
-    elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS, nodegraph.REROUTE):
+    elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS, nodegraph.REROUTE, nodegraph.VIEWER):
         node = {"type": node["type"]}
     elif node["type"] == nodegraph.FRAME:
         node = nodegraph.frame_defaults(node)
@@ -2382,19 +2382,30 @@ def set_graph_node_width(proj, clip_id, effect_id, nid, width):
 
 
 def set_graph_viewer(proj, clip_id, effect_id, nid, out=""):
-    """The node the editor's preview shows the picture of (Ctrl+Shift+click), and which of its outputs; None: the
-    effect's output again. Exports never use it."""
+    """Point the editor's preview at node nid's output (Ctrl+Shift+click): the graph's 預覽 node (made when
+    there is none, beside the node) takes its picture from there. nid None: the preview node lets go. Exports
+    never use it."""
     _, c = find(proj, clip_id)
     g = _graph(c, effect_id)[1]
+    viewers = [i for i, n in g["nodes"].items() if n["type"] == nodegraph.VIEWER]
     if nid is None:
-        g.pop("viewer", None)
+        g["links"] = [l for l in g["links"] if l["to"] not in viewers]
         return
     node = g["nodes"].get(nid)
-    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT, nodegraph.GROUP):
+    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT, nodegraph.GROUP, nodegraph.VIEWER):
         raise EditError("這個節點沒有圖可以預覽")
     if out not in [o for o, _ in nodegraph.outputs(node)]:
         raise EditError("這個節點沒有這個輸出")
-    g["viewer"] = {"node": nid, "out": out}
+    if viewers:
+        vid = viewers[-1]
+    else:
+        vid = nodegraph.add_node(g, {"type": nodegraph.VIEWER, **({"group": node["group"]} if node.get("group") else {})},
+                                 node.get("x", 0.0) + float(node.get("width", 210.0)) + 60.0, node.get("y", 0.0))
+    g["links"] = [l for l in g["links"] if l["to"] != vid]
+    try:
+        nodegraph.connect(g, nid, vid, "src", out or None)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
 
 
 def mute_graph_node(proj, clip_id, effect_id, nid, on):

@@ -240,6 +240,24 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, at, at + QPointF(0, 20))                          # down: less
         self.assertAlmostEqual(got[-1][2], 0.5, 4)
 
+    def test_number_scrub_is_endless_and_gives_the_pointer_back(self):
+        from kiasecut.ui import wrapdrag
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        at = self.row_pos(ed, "math1", "value")
+        it = ed.view.items_by_id["math1"]
+        v = ed.view
+        pa, pb = v.mapFromScene(at), v.mapFromScene(at + QPointF(0, -20))
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, pa)
+        self.assertIsNotNone(it.drag["wrap"])                           # (the drag goes by wrapdrag.py: no edge stops it)
+        QTest.mouseMove(v.viewport(), pb)
+        self.assertTrue(it.drag["wrap"].on)
+        self.assertTrue(wrapdrag.hider().hidden)                        # (the pointer hidden while the number moves)
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, pb)
+        self.assertFalse(wrapdrag.hider().hidden)
+
     def test_tick_flips_and_menu_choices_are_asked_for(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)

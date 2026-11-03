@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, Q
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from .wheel import pinch as wheel_pinch
+from .wrapdrag import WrapDrag
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 UNBOUNDED = 1e6                                            # (a number with no limit still stays finite)
@@ -75,6 +76,16 @@ def number_text(p, v):
     if p.type == "int":
         return str(int(round(float(v))))
     return f"{float(v):.3f}".rstrip("0").rstrip(".") if abs(float(v)) < 1000 else f"{float(v):.1f}"
+
+
+class _ScreenMove:
+    """A node's mouse event as wrapdrag.py reads one (where the pointer is on the screen)."""
+
+    def __init__(self, e):
+        self.e = e
+
+    def globalPosition(self):
+        return QPointF(self.e.screenPos())
 
 
 class NodeItem(QGraphicsItem):
@@ -548,7 +559,15 @@ class NodeItem(QGraphicsItem):
             self.setSelected(True)
         r, cell = hit
         self.drag = {"row": r, "cell": cell, "x0": e.pos().x(), "y0": e.pos().y(), "axis": None, "moved": False,
-                     "v0": self.editor.field_number(self.nid, r, cell)}
+                     "v0": self.editor.field_number(self.nid, r, cell), "wrap": None}
+        views = self.scene().views()
+        if views:                                          # (endless, wrapdrag.py: the pointer jumps across the window's edge and the drag goes on)
+            vp = views[0].viewport()
+            wrap = WrapDrag(vp)
+            wrap.start()
+            self.drag["wrap"] = wrap
+            self.drag["at"] = QPointF(vp.mapFromGlobal(e.screenPos()))
+            self.drag["k"] = views[0].transform().m11() or 1.0
         e.accept()
 
     def mouseMoveEvent(self, e):
@@ -572,11 +591,18 @@ class NodeItem(QGraphicsItem):
         q = r["p"] if r["kind"] == "param" else None
         if q is None or q.type not in ("float", "int", "vec2", "vec3") or d["v0"] is None:
             return
-        dx, dy = e.pos().x() - d["x0"], d["y0"] - e.pos().y()
+        wrap = d["wrap"]
+        if wrap is not None:                               # (where the drag is counting every jump, as scene px)
+            now = wrap.pos(_ScreenMove(e))
+            dx, dy = (now.x() - d["at"].x()) / d["k"], (d["at"].y() - now.y()) / d["k"]
+        else:
+            dx, dy = e.pos().x() - d["x0"], d["y0"] - e.pos().y()
         if d["axis"] is None:                              # (the way it first moves: up / down as the number boxes of the panels, or sideways)
             if max(abs(dx), abs(dy)) < 3:
                 return
             d["axis"] = "y" if abs(dy) >= abs(dx) else "x"
+            if wrap is not None:
+                wrap.axes = d["axis"]
         d["moved"] = True
         from .effects_panel import step_for
         k = 0.1 if e.modifiers() & Qt.ShiftModifier else 10 if e.modifiers() & Qt.ControlModifier else 1
@@ -596,6 +622,8 @@ class NodeItem(QGraphicsItem):
         if d is None:
             super().mouseReleaseEvent(e)
             return
+        if d["wrap"] is not None:
+            d["wrap"].stop(d["at"])                        # (the pointer back on the field, as in Blender)
         if d["moved"]:
             self.editor.commit_scrub()
             return

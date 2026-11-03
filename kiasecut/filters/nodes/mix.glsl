@@ -30,13 +30,13 @@ vec3 blend_color(vec3 a, vec3 b, float f) {
     float fm = 1.0 - f;
     vec3 r = a;
     if (blend == 0) return fm * a + f * b;
-    if (blend == 1) return min(a, f * b);
+    if (blend == 1) return fm * a + f * min(a, b);
     if (blend == 2) return a * (fm + f * b);
     if (blend == 3) {
         vec3 t = fm + f * b;
         return mix(max(1.0 - (1.0 - a) / max(t, vec3(1e-6)), 0.0), vec3(0.0), lessThanEqual(t, vec3(0.0)));
     }
-    if (blend == 4) return max(a, f * b);
+    if (blend == 4) return fm * a + f * max(a, b);
     if (blend == 5) return 1.0 - (fm + f * (1.0 - b)) * (1.0 - a);
     if (blend == 6) {
         vec3 t = 1.0 - f * b;

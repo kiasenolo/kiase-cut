@@ -350,7 +350,7 @@ class NodeEditorTests(unittest.TestCase):
         self.assertIn("混合", top["色彩"])
         self.assertIn("向量數學", top["向量"])
         self.assertIn("數學", top["轉換器"])
-        self.assertIn("時間", top["輸入"])
+        self.assertIn("場景時間", top["輸入"])
         self.assertNotIn("混合", top["內建／效果"])
         self.assertTrue(any("模糊" in k for sub in top["內建／效果"].values() for k in sub))
         self.assertNotIn("圖片來源", {k for sub in top.values() if sub for k in sub})

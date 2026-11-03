@@ -484,22 +484,21 @@ class GraphRenderTests(unittest.TestCase):
             def f(e):
                 g = e["graph"]
                 c = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/coordinate"}, base="c")
-                ng.connect(g, c, "output", "src")
+                ng.connect(g, c, "output", "src", "normalized")
                 e["params"].update(ng.default_params(g))
-                e["params"][c + ".mode"] = mode
             return f
         for r in self.renderers:
             img = r.render(self.view(build(1)), 0, W, H)
             left, right = rgb(img, 12, 18), rgb(img, 52, 18)
-            self.assertLess(left[0], 90, type(r).__name__)
+            self.assertLess(left[0], 90, type(r).__name__)                # X: 0 at the left, 1 at the right
             self.assertGreater(right[0], 165, type(r).__name__)
-            self.assertEqual(left[0], left[1])
+            self.assertAlmostEqual(left[1], 128, delta=12, msg=type(r).__name__)    # Y: up, 0.5 in the middle row
 
     def test_time_node_follows_the_clip(self):
         def f(e):
             g = e["graph"]
             c = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/time"}, base="t")
-            ng.connect(g, c, "output", "src")
+            ng.connect(g, c, "output", "src", "progress")
             e["params"].update(ng.default_params(g))
         v = self.view(f)
         for r in self.renderers:

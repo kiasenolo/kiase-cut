@@ -59,6 +59,31 @@ class BuiltinFilterTests(unittest.TestCase):
         for n in ("Glare", "Lens Distortion", "Vignette", "Sensor Noise"):
             self.assertIn("[Blender] " + n, names)
 
+    def test_glare_gives_the_light_and_the_highlights_alone(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:blender_glare")
+        self.assertEqual([n for n, _ in d.outputs], ["image", "glare", "highlights"])
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        h, w = 64, 128
+        rgba = np.zeros((h, w, 4), np.uint8)
+        rgba[..., 3] = 255
+        rgba[20:30, 50:60, :3] = 255
+        with eng.ctx:
+            (ta, _), _, _ = eng._targets(w, h)
+            ta.write(rgba.tobytes())
+            outs = [np.frombuffer(eng.run_tex(d, vals, ta, w, h, output=i).read(), np.uint8).reshape(h, w, 4) for i in range(3)]
+        image, glare, high = outs
+        self.assertEqual(tuple(glare[5, 5]), (0, 0, 0, 0))                # (no light far away: clear)
+        self.assertGreater(glare[25, 55, 3], 0)
+        self.assertGreater(glare[25, 70, 3], 0)                           # (the light spreads past the bright square)
+        self.assertGreater(high[25, 55, 3], 0)
+        self.assertEqual(high[25, 70, 3], 0)                              # (the highlights stay on it)
+        self.assertGreater(image[25, 70, 0], 0)
+
     def test_white_noise_is_random_per_point(self):
         import numpy as np
         try:

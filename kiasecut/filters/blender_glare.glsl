@@ -1,6 +1,9 @@
 // @filter [Blender] Glare
 // @category Blender
 // @description Blender 合成器的 Glare：亮部的光暈、鬼影、光芒、霧光、星芒、光束（在線性光裡運算）
+// @output image "圖像"
+// @output glare "光"
+// @output highlights "亮部"
 // @passes 26
 // @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 quality
 // @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 -
@@ -348,6 +351,16 @@ vec4 effect(vec2 uv) {
         g = acc / wsum;
     } else {
         g = src(uv).rgb;
+    }
+
+    if (output_index == 2) {                                   // 亮部: what glows, alone (Blender's Highlights output)
+        vec3 h = max(highlights(linear(original(uv)).rgb), vec3(0.0));
+        float ha = clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0);
+        return ha > 0.0 ? vec4(lin_to_srgb(h / ha) * ha, ha) : vec4(0.0);
+    }
+    if (output_index == 1) {                                   // 光: the light alone (Blender's Glare output)
+        float ga = clamp(max(g.r, max(g.g, g.b)), 0.0, 1.0);
+        return ga > 0.0 ? vec4(lin_to_srgb(g / ga) * ga, ga) : vec4(0.0);
     }
 
     // the light is added to the picture (premultiplied, linear); where it is brighter than the

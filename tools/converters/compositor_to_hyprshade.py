@@ -353,6 +353,7 @@ class Converter:
         self.uses_input = False
         self.multipass = False    # KiaseCut: a Glare Bloom may use passes of its own (the filter format's @levels)
         self.bloom = None         # (ctx id, node name, quality factor) of the Bloom node that does
+        self.outputs = []         # KiaseCut: [(socket name, expression)] when the Group Output has more than one (the filter format's @output)
 
     # -- infrastructure -----------------------------------------------------
     def new_ctx(self, tree, parent=None, pnode=None):
@@ -646,6 +647,11 @@ class Converter:
                 if norm(s.name) in ("image", "result"):
                     break
         final = self.inp(self.root, out, key, "vec4")
+        if self.multipass:                           # KiaseCut: the group's other outputs are @output pictures (the chosen one first)
+            others = [j for j, s in enumerate(out.inputs) if s.type != "CUSTOM" and j != key]
+            if others:
+                self.outputs = [(out.inputs[key].name, final)] + [(out.inputs[j].name, self.inp(self.root, out, j, "vec4"))
+                                                                  for j in others]
         return self.assemble(final)
 
     def assemble(self, final):
@@ -2692,6 +2698,18 @@ def to_kiasecut(code, conv, name):
                   "are the #define lines below." % name)
     top = ["// @filter %s" % re.sub(r"\s+", " ", str(name)), "// @category Blender", "// @description " + desc]
     effect = KC_EFFECT
+    expr = final.group(1)
+    if conv.outputs:                                 # one @output per Group Output socket; the shader draws the one output_index names
+        names = []
+        for k, (label, _e) in enumerate(conv.outputs):
+            ident = re.sub(r"\W+", "_", str(label)).strip("_").lower() or "out"
+            ident = ("o_" + ident) if not re.match(r"[A-Za-z]", ident) else ident
+            while ident in names:
+                ident += str(k)
+            names.append(ident)
+            top.append('// @output %s "%s"' % (ident, re.sub(r"\s+", " ", str(label)).replace('"', "'")))
+        expr = "(" + "".join("output_index == %d ? (%s) : " % (k, e) for k, (_l, e) in enumerate(conv.outputs[1:], 1)) \
+            + "(%s))" % conv.outputs[0][1]
     if conv.bloom:                                   # Blender's Bloom chain: passes of its own
         s_ = {1: 0, 2: 1, 4: 2}[conv.bloom[2]]
         levels = ["0f"] + [str(k + s_) for k in range(0, 12)] + [str(k + s_) for k in range(10, -1, -1)]
@@ -2705,7 +2723,7 @@ def to_kiasecut(code, conv, name):
     if marker not in lib:
         raise RuntimeError("unexpected shader layout")
     lib = lib.replace(marker, (body + "\n\n" if body else "") + marker, 1)
-    return "\n".join(top) + "\n" + lib + "\n" + effect % final.group(1)
+    return "\n".join(top) + "\n" + lib + "\n" + effect % expr
 
 
 def slangp_for(name):

@@ -172,6 +172,21 @@ class AddonExportTest(unittest.TestCase):
         out = eng.run(d, vals, rgba)
         self.assertEqual(tuple(out[3, 3]), (200, 100, 40, 255))        # exposure +1 stop
 
+    def test_group_outputs_become_at_output_pictures(self):
+        g = self.group()
+        g.interface.new_socket("Mask", in_out="OUTPUT", socket_type="NodeSocketFloat")
+        go = next(n for n in g.nodes if n.bl_idname == "NodeGroupOutput")
+        sep = g.nodes.new("CompositorNodeSeparateColor")
+        gi = next(n for n in g.nodes if n.bl_idname == "NodeGroupInput")
+        g.links.new(gi.outputs[0], sep.inputs[0])
+        g.links.new(sep.outputs[0], go.inputs[1])
+        code, _ = self.addon.convert_tree(g, {"linearize": False}, "KIASECUT")
+        d = fx.parse(code, "x")
+        self.assertIsNone(d.error)
+        self.assertEqual(d.outputs, [("image", "Image"), ("mask", "Mask")])      # the chosen one (Image) first
+        code, _ = self.addon.convert_tree(self.group(), {"linearize": False}, "KIASECUT")
+        self.assertEqual(fx.parse(code, "x").outputs, [])                        # one output: as before
+
     def test_every_format_still_works(self):
         for g in (self.group(), self.menu_group()):
             for fmt in ("HYPRSHADE", "HLSL", "SHADERGLASS", "KIASECUT"):

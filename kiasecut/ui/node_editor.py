@@ -15,9 +15,10 @@ import glob
 import json
 import os
 
+import shiboken6
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
-from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, fx, nodegraph as ng
@@ -1010,7 +1011,39 @@ class GraphView(QGraphicsView):
 CLIPBOARD = {"pack": None}                      # nodes copied (Ctrl+C), for any node effect to paste
 
 
+class EditorFrame(QFrame):
+    """A small editor (curve / gradient) over the window, closed by a click outside it or Esc. It is a child of the
+    window, not a popup of its own, so what it opens - the colour picker - is not cut off by its edges."""
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.setAutoFillBackground(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+    def arm(self):
+        QApplication.instance().installEventFilter(self)
+
+    def close_editor(self):
+        QApplication.instance().removeEventFilter(self)
+        self.hide()
+        self.deleteLater()
+
+    def eventFilter(self, obj, e):
+        from .inplace import Overlay
+        if e.type() == QEvent.MouseButtonPress and isinstance(obj, QWidget):
+            w = obj
+            while w is not None and w is not self and not isinstance(w, Overlay):
+                w = w.parentWidget()
+            if w is None and self.isVisible():                 # (outside it and outside what it opened)
+                self.close_editor()
+        elif e.type() == QEvent.KeyPress and e.key() == Qt.Key_Escape and self.isVisible() and not QApplication.activePopupWidget():
+            self.close_editor()
+            return True
+        return False
+
+
 class NodeEditor(QWidget):
+    _popup_editor = None
     addRequested = Signal(str, dict, float, float)          # effect id, node ({"type", "ref" / "kind"}), x, y
     removeRequested = Signal(str, list)                     # effect id, node ids
     connectRequested = Signal(str, str, str, str, str)      # effect id, from node, to node, socket, the output (a parameter's name; "": picture)
@@ -1334,7 +1367,9 @@ class NodeEditor(QWidget):
         from PySide6.QtWidgets import QFrame
         from .curvefield import CurveField
         from .gradientbar import GradientEditor
-        frame = QFrame(self, Qt.Popup)
+        if self._popup_editor is not None and shiboken6.isValid(self._popup_editor):
+            self._popup_editor.close_editor()
+        frame = EditorFrame(self.window())
         frame.setFrameShape(QFrame.StyledPanel)
         lay = QVBoxLayout(frame)
         lay.setContentsMargins(6, 6, 6, 6)
@@ -1348,8 +1383,13 @@ class NodeEditor(QWidget):
             frame.setMinimumWidth(360)
         w.changed.connect(done)
         lay.addWidget(w)
-        frame.move(pos)
+        frame.adjustSize()
+        win = self.window()
+        at = win.mapFromGlobal(pos)
+        frame.move(max(0, min(at.x(), win.width() - frame.width())), max(0, min(at.y(), win.height() - frame.height())))
         frame.show()
+        frame.raise_()
+        frame.arm()
         self._popup_editor = frame
 
     def _pick(self, nid, colour, done, item, row, live=None):

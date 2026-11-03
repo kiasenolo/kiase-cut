@@ -594,6 +594,34 @@ class RunTest(unittest.TestCase):
                                  if i * i + j * j <= 9 and 0 <= y + j < 23 and 0 <= x + i < 37)
         near(got, want)
 
+    def test_float_curve_and_vector_curves(self):
+        """Float Curve / Vector Curves: a straight line leaves the values alone (also beyond 0 - 1 / -1 - 1, the ends' slope goes on), a
+        curve moves them, the factor mixes."""
+        g = ng.new_graph()
+        f = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/float_curve"})
+        ng.connect(g, "input", f, "src")
+        ng.connect(g, f, "output", "src")
+        grey = lambda v: self.solid([v, v, v, 255])
+        for v in (0, 64, 128, 255):
+            out, errors, _ = self.run_graph(g, grey(v))
+            self.assertEqual(errors, [])
+            self.close(out, (v, v, v, 255), 2)
+        flat = {f + ".curve": [[0.0, 0.5, 0.0, 0.0, 0.0, 0.0], [1.0, 0.5, 0.0, 0.0, 0.0, 0.0]]}         # (two keys at y = 0.5)
+        out, _, _ = self.run_graph(g, grey(51), params=flat)
+        self.close(out, (128, 128, 128, 255), 2)
+        out, _, _ = self.run_graph(g, grey(51), params={**flat, f + ".fac": 0.5})
+        self.close(out, (90, 90, 90, 255), 2)                                       # (halfway between 0.2 and 0.5)
+        g = ng.new_graph()
+        v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/vector_curves"})
+        ng.connect(g, "input", v, "src")
+        ng.connect(g, v, "output", "src")
+        out, errors, _ = self.run_graph(g, self.solid([64, 128, 192, 255]))
+        self.assertEqual(errors, [])
+        self.close(out, (64, 128, 192, 255), 2)
+        mid = [[0.0, 0.5, 0.0, 0.0, 0.0, 0.0], [1.0, 0.5, 0.0, 0.0, 0.0, 0.0]]                           # (every x gives 0.5 = 0 on the -1 - 1 side)
+        out, _, _ = self.run_graph(g, self.solid([64, 128, 192, 255]), params={v + ".curve_y": mid})
+        self.close(out, (64, 0, 192, 255), 2)
+
     def test_mix_blend_modes(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="s")

@@ -501,6 +501,25 @@ class BuiltinFilterTests(unittest.TestCase):
         self.assertGreater(disc[20, 24], 0)                                            # a radial kernel: on the radius ...
         self.assertEqual(disc[24, 24], 0)                                              # ... but not in the corner of the box
 
+    def test_oil_paint_keeps_edges(self):
+        """Kuwahara (as Blender's node): a flat picture stays as it is, and a hard edge stays hard (each pixel takes the
+        side it is on), classic and anisotropic."""
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        d = fx.get("builtin:oil_paint")
+        base = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        flat = np.full((32, 32, 4), (90, 120, 200, 255), np.uint8)
+        edge = flat.copy()
+        edge[:, :16, :3] = 20
+        edge[:, 16:, :3] = 230
+        for kind in (0, 1):
+            with self.subTest(kind=kind):
+                v = {**base, "kind": kind, "size": 4.0}
+                self.assertTrue((np.abs(self.eng.run(d, v, flat).astype(int) - flat) <= 1).all())
+                out = self.eng.run(d, v, edge).astype(int)
+                self.assertTrue((np.abs(out[:, :16] - edge[:, :16]) <= 2).all(), out[10, 12:20])
+                self.assertTrue((np.abs(out[:, 16:] - edge[:, 16:]) <= 2).all(), out[10, 12:20])
+
     def test_seed_uses_subsecond_timestamp(self):
         ref = "builtin:light_leak"
         with patch("kiasecut.fx.time.time_ns", side_effect=(1_234_567_890_123, 1_234_567_890_456)):

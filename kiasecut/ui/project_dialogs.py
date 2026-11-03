@@ -1,7 +1,10 @@
 """New project and project information dialogs (the project is a folder, as in FL Studio)."""
 import os
 
-from PySide6.QtCore import Qt, Signal
+from math import gcd
+
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (QWidget, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
                                QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout)
 
@@ -11,6 +14,35 @@ PRESETS = (("1920 × 1080 橫式", 1920, 1080), ("3840 × 2160 橫式（4K）", 
            ("1280 × 720 橫式", 1280, 720), ("1080 × 1920 直式", 1080, 1920),
            ("1080 × 1080 方形", 1080, 1080), ("2560 × 1440 橫式", 2560, 1440))
 FPS = (24, 25, 30, 50, 60)
+
+
+class RatioPreview(QWidget):
+    """The shape of the canvas: a box with the chosen proportions, its size and ratio written in it."""
+
+    def __init__(self, size=(1920, 1080)):
+        super().__init__()
+        self._size = size
+        self.setFixedSize(190, 190)
+
+    def set_size(self, w, h):
+        self._size = (max(1, w), max(1, h))
+        self.update()
+
+    def paintEvent(self, _e):
+        w, h = self._size
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        box = 170.0
+        k = box / max(w, h)
+        bw, bh = max(8.0, w * k), max(8.0, h * k)
+        r = QRectF((self.width() - bw) / 2, (self.height() - bh) / 2, bw, bh)
+        p.setPen(QPen(QColor("#6a6a72"), 1))
+        p.setBrush(QColor("#26262b"))
+        p.drawRect(r)
+        g = gcd(w, h)
+        ratio = f"{w // g}:{h // g}" if max(w, h) // g <= 64 else f"{w / h:.3f}:1"
+        p.setPen(QColor("#d0d0d6"))
+        p.drawText(r, Qt.AlignCenter, f"{w} × {h}\n{ratio}")
 
 
 class CompoundSizeDialog(QDialog):
@@ -50,9 +82,20 @@ class CompoundSizeDialog(QDialog):
         bb.button(QDialogButtonBox.Cancel).setText("取消")
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
+        self.ratio = RatioPreview((width, height))
+        for sb in (self.cw, self.ch):
+            sb.valueChanged.connect(self._preview)
+        self.preset.currentIndexChanged.connect(lambda _i: self._preview())
+        self._preview()
+        top = QHBoxLayout()
+        top.addLayout(form, 1)
+        top.addWidget(self.ratio, 0, Qt.AlignTop)
         lay = QVBoxLayout(self)
-        lay.addLayout(form)
+        lay.addLayout(top)
         lay.addWidget(bb)
+
+    def _preview(self):
+        self.ratio.set_size(*(self.preset.currentData() or (self.cw.value(), self.ch.value())))
 
     def result(self):
         """(name, (width, height))."""
@@ -68,7 +111,7 @@ class NewProjectDialog(QDialog):
     def __init__(self, parent, location, name="新專案", fixed_format=None, title="新專案", place=True):
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumWidth(520)
+        self.setMinimumWidth(720)
         form = QFormLayout()
         self.place = place
         self.name = QLineEdit(name)
@@ -121,12 +164,26 @@ class NewProjectDialog(QDialog):
         self.buttons.rejected.connect(self.reject)
         self.buttons.button(QDialogButtonBox.Ok).setText("建立專案" if place else "開始")
         self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
+        self.ratio = RatioPreview()
+        if fixed_format:
+            self.ratio.set_size(fixed_format[0], fixed_format[1])
+        else:
+            for sb in (self.cw, self.ch):
+                sb.valueChanged.connect(self._preview)
+            self.preset.currentIndexChanged.connect(lambda _i: self._preview())
+            self._preview()
+        top = QHBoxLayout()
+        top.addLayout(form, 1)
+        top.addWidget(self.ratio, 0, Qt.AlignTop)
         lay = QVBoxLayout(self)
-        lay.addLayout(form)
+        lay.addLayout(top)
         lay.addWidget(self.buttons)
         self.name.textChanged.connect(self._check)
         self.location.textChanged.connect(self._check)
         self._check()
+
+    def _preview(self):
+        self.ratio.set_size(*(self.preset.currentData() or (self.cw.value(), self.ch.value())))
 
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "選擇存放位置", self.location.text() or "")

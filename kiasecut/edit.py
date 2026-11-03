@@ -2293,6 +2293,22 @@ def set_graph_frame(proj, clip_id, effect_id, nid, label=None, text=None, color=
         node["h"] = max(40.0, float(h))
 
 
+def set_graph_viewer(proj, clip_id, effect_id, nid, out=""):
+    """The node the editor's preview shows the picture of (Ctrl+Shift+click), and which of its outputs; None: the
+    effect's output again. Exports never use it."""
+    _, c = find(proj, clip_id)
+    g = _graph(c, effect_id)[1]
+    if nid is None:
+        g.pop("viewer", None)
+        return
+    node = g["nodes"].get(nid)
+    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT):
+        raise EditError("這個節點沒有圖可以預覽")
+    if out not in [o for o, _ in nodegraph.outputs(node)]:
+        raise EditError("這個節點沒有這個輸出")
+    g["viewer"] = {"node": nid, "out": out}
+
+
 def mute_graph_node(proj, clip_id, effect_id, nid, on):
     """Mute a filter node: the picture goes through it unchanged."""
     _, c = find(proj, clip_id)

@@ -324,6 +324,38 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(list(pack["nodes"]), ["input"])
         self.assertEqual((x, y), (10, 20))
 
+    def test_ctrl_shift_click_steps_the_preview_along_the_outputs(self):
+        def add(e):
+            made.append(ng.add_node(e["graph"], {"type": "filter", "ref": "builtin:nodes/separate_color"}, 200, 40))
+            e["params"].update(ng.default_params(e["graph"]))
+        made = []
+        ed = self.make(add)
+        sep = made[0]
+        asked = []
+        ed.viewerRequested.connect(lambda *a: asked.append(a[1:]))
+        self.assertEqual([o for o, _ in ng.outputs(ed.graph["nodes"][sep])], ["c1", "c2", "c3", "a"])
+        it = ed.view.items_by_id[sep]
+        self.assertEqual([o for o, _ in it.outputs()], ["c1", "c2", "c3", "a"])
+        at = ed.view.mapFromScene(it.mapToScene(QPointF(60, 60)))
+        mods = Qt.ControlModifier | Qt.ShiftModifier
+        QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, mods, at)
+        self.assertEqual(asked[-1], (sep, "c1"))
+        ed.graph["viewer"] = {"node": sep, "out": "c3"}
+        QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, mods, at)
+        self.assertEqual(asked[-1], (sep, "a"))
+        ed.graph["viewer"] = {"node": sep, "out": "a"}
+        QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, mods, at)
+        self.assertEqual(asked[-1], ("", ""))
+
+    def test_link_from_a_named_output_keeps_its_name(self):
+        def add(e):
+            made.append(ng.add_node(e["graph"], {"type": "filter", "ref": "builtin:nodes/separate_color"}, 200, 40))
+            ng.connect(e["graph"], made[0], "output", "src", "c3")
+            e["params"].update(ng.default_params(e["graph"]))
+        made = []
+        ed = self.make(add)
+        self.assertEqual([l[4] for l in ed.view.link_items if l[1] == made[0]], ["c3"])
+
     def test_shift_right_drag_puts_bends_in_links(self):
         ed = self.make()
         got = []

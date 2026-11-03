@@ -185,6 +185,15 @@ class ExposedParamTests(unittest.TestCase):
         self.assertEqual(other["params"][made[0] + key[len(m):]], 0.25)
         self.assertEqual((other["graph"]["nodes"][made[0]]["x"], other["graph"]["nodes"][made[0]]["y"]), (7.0, 9.0))
 
+    def test_viewer_edit(self):
+        sep = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/separate_color"})
+        edit.set_graph_viewer(self.p, "c1", self.eid, sep, "a")
+        self.assertEqual(self.e["graph"]["viewer"], {"node": sep, "out": "a"})
+        with self.assertRaises(edit.EditError):
+            edit.set_graph_viewer(self.p, "c1", self.eid, sep, "nope")
+        edit.remove_graph_node(self.p, "c1", self.eid, sep)
+        self.assertNotIn("viewer", self.e["graph"])
+
     def test_insert_dissolve_duplicate(self):
         edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
         edit.insert_graph_node(self.p, "c1", self.eid, self.m, "input", "output", "src")
@@ -277,6 +286,32 @@ class GraphRenderTests(unittest.TestCase):
             got = (rgb(img, 12, 18), rgb(img, 52, 18))
             for g, want in zip(got, (left, right)):
                 self.assertTrue(all(abs(a - b) <= 3 for a, b in zip(g, want)), f"{type(r).__name__}: {got} != {(left, right)}")
+
+    def test_separate_color_gives_a_picture_per_output(self):
+        def build(out):
+            def f(e):
+                g = e["graph"]
+                sep = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/separate_color"}, base="sep")
+                ng.connect(g, "input", sep, "src")
+                ng.connect(g, sep, "output", "src", out)
+                e["params"].update(ng.default_params(g))
+            return f
+        self.check(self.view(build("c1")), WHITE, WHITE)       # the red channel of a red clip
+        self.check(self.view(build("c2")), BLACK, BLACK)       # its green
+        self.check(self.view(build("a")), WHITE, WHITE)        # its alpha
+
+    def test_viewer_shows_a_node_in_the_editor_only(self):
+        def f(e):
+            g = e["graph"]
+            sep = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/separate_color"}, base="sep")
+            ng.connect(g, "input", sep, "src")
+            ng.connect(g, "input", "output", "src")
+            g["viewer"] = {"node": sep, "out": "c2"}
+            e["params"].update(ng.default_params(g))
+        v = self.view(f)
+        self.check(v, RED, RED)                                # an export: the output
+        v["editing"] = True
+        self.check(v, BLACK, BLACK)                            # the editor's preview: the green channel picture
 
     def test_empty_graph_changes_nothing(self):
         self.check(self.view(lambda e: None), RED, RED)

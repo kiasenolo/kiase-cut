@@ -82,7 +82,8 @@ class NodeItem(QGraphicsItem):
                 add("expose", x["label"], p=x)
             add("ghost", "（拉出一條線來新增參數）")
         elif self.has_out:
-            add("out", "圖像")
+            for name, label in ng.outputs(node):
+                add("out", label, p=name)
         if node["type"] == ng.OUTPUT:
             add("image", "結果", "src")
         elif node["type"] == ng.FILTER:
@@ -111,8 +112,10 @@ class NodeItem(QGraphicsItem):
         return self.mapToScene(QPointF(0, r["y"] + ROW / 2 if r else HEAD))
 
     def output_pos(self, out=""):
-        r = next((r for r in self.rows if r["kind"] == "out"), None) if not out else \
-            next((r for r in self.rows if r["kind"] in ("expose", "ghost") and (r["p"]["name"] if r["p"] else GHOST) == out), None)
+        if self.node["type"] == ng.PARAMS:
+            r = next((r for r in self.rows if r["kind"] in ("expose", "ghost") and (r["p"]["name"] if r["p"] else GHOST) == out), None)
+        else:
+            r = next((r for r in self.rows if r["kind"] == "out" and (r["p"] or "") == out), None)
         return self.mapToScene(QPointF(WIDTH, (r["y"] if r else HEAD + PAD) + ROW / 2))
 
     def outputs(self):
@@ -120,7 +123,7 @@ class NodeItem(QGraphicsItem):
         if self.node["type"] == ng.PARAMS:
             return [((r["p"]["name"] if r["p"] else GHOST), self.output_pos(r["p"]["name"] if r["p"] else GHOST))
                     for r in self.rows if r["kind"] in ("expose", "ghost")]
-        return [("", self.output_pos())] if self.has_out else []
+        return [(r["p"] or "", self.output_pos(r["p"] or "")) for r in self.rows if r["kind"] == "out"]
 
     def sockets(self):
         """[(socket name, scene point)] of the sockets a link can end at."""
@@ -185,6 +188,11 @@ class NodeItem(QGraphicsItem):
         p.setPen(QColor("white") if not muted else QColor(255, 255, 255, 110))
         p.drawText(QRectF(8, 0, WIDTH - 16, HEAD), Qt.AlignVCenter | Qt.AlignLeft,
                    self.title + ("（停用）" if muted else ""))
+        viewed = self.editor.graph.get("viewer") or {}
+        if viewed.get("node") == self.nid:                  # the node the preview shows (Ctrl + Shift + click)
+            p.setPen(QColor("#ffe27a"))
+            tag = "◉ 預覽" + (f"：{dict(ng.outputs(self.node)).get(viewed.get('out') or '', '')}" if len(ng.outputs(self.node)) > 1 else "")
+            p.drawText(QRectF(8, 0, WIDTH - 16, HEAD), Qt.AlignVCenter | Qt.AlignRight, tag)
         f.setBold(False)
         p.setFont(f)
         vals = self.editor.node_values(self.nid)
@@ -571,6 +579,12 @@ class GraphView(QGraphicsView):
     # -- mouse ---------------------------------------------------------------------------------------
     def mousePressEvent(self, e):
         pos = self.mapToScene(e.position().toPoint())
+        if e.button() == Qt.LeftButton and e.modifiers() & Qt.ControlModifier and e.modifiers() & Qt.ShiftModifier:
+            # Ctrl + Shift + click: the preview shows this node; again: its next output, and after the last, the effect's
+            for nid, it in self.items_by_id.items():
+                if it.sceneBoundingRect().contains(pos) and not isinstance(it, FrameItem):
+                    self.editor.view_node(nid)
+                    return
         if e.button() == Qt.LeftButton:
             hit = self.socket_at(pos)
             if hit:
@@ -598,7 +612,7 @@ class GraphView(QGraphicsView):
                 self.cut = (line, [pos], reroute)
                 return
             hit = self.socket_at(pos)
-            if hit and hit[0] == "out" and hit[2] not in ("", GHOST):
+            if hit and hit[0] == "out" and hit[2] not in ("", GHOST) and self.editor.graph["nodes"][hit[1]]["type"] == ng.PARAMS:
                 self.editor.parameter_menu(hit[1], hit[2], e.globalPosition().toPoint())
                 return
             self.editor.add_menu(pos, e.globalPosition().toPoint())
@@ -676,7 +690,7 @@ class GraphView(QGraphicsView):
                     ed.connectRequested.emit(ed.eid, src, hit[1], hit[2], out)
             elif hit is None and old:
                 ed.disconnectRequested.emit(ed.eid, old[0], old[1])
-            elif hit is None and out == "":                      # a link let go in the empty: add a node there to take it
+            elif hit is None and self.editor.graph["nodes"][src]["type"] != ng.PARAMS:   # a link let go in the empty: add a node there to take it
                 ed.add_menu(pos, e.globalPosition().toPoint(), (src, out))
             return
         if self.cut:
@@ -798,6 +812,7 @@ class NodeEditor(QWidget):
     addLinkedRequested = Signal(str, dict, float, float, str, str)         # effect id, node, x, y, node and output to link into it
     rerouteRequested = Signal(str, list)                    # effect id, [(x, y, from, to, socket, output)]: bends to put in links
     mediaDropped = Signal(str, list, list, float, float)    # effect id, library item ids, file paths, x, y: dragged in as source nodes
+    viewerRequested = Signal(str, str, str)                 # effect id, node, output ("" node: the effect's output again)
     pasteRequested = Signal(str, dict, float, float)        # effect id, nodegraph.pack, x, y: nodes pasted
     frameEdited = Signal(str, str, dict)                    # effect id, frame id, what changed (label / text / color / w / h)
     duplicateRequested = Signal(str, list)                  # effect id, node ids
@@ -1094,6 +1109,22 @@ class NodeEditor(QWidget):
         for key in ng.FRAME_COLORS:
             colors.addAction(names[key], lambda _=False, k=key: self.frameEdited.emit(self.eid, item.nid, {"color": k}))
         self.popup(menu, pos.toPoint() if hasattr(pos, "toPoint") else pos)
+
+    def view_node(self, nid):
+        """Ctrl + Shift + click on node nid: step the preview along nid's outputs (then off)."""
+        node = self.graph["nodes"][nid]
+        if node["type"] in (ng.PARAMS, ng.OUTPUT) or not self.eid:
+            return
+        names = [o for o, _ in ng.outputs(node)]
+        now = self.graph.get("viewer") or {}
+        if now.get("node") == nid:
+            k = names.index(now.get("out") or "") + 1 if (now.get("out") or "") in names else 0
+        else:
+            k = 0
+        if k >= len(names):
+            self.viewerRequested.emit(self.eid, "", "")
+        else:
+            self.viewerRequested.emit(self.eid, nid, names[k])
 
     def copy_selected(self):
         ids = self.selected()

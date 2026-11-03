@@ -30,7 +30,7 @@ BUILTIN = "builtin:"
 MAX_PASSES = 32
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve", "gradient")
-RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "src",
+RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "output_index", "src",
             "original", "effect", "curve_ease", "gradient_eval", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
 
 
@@ -63,6 +63,7 @@ class FilterDef:
         self.params, self.category, self.description = list(params), category, description
         self.passes, self.error = passes, error
         self.src_label = "圖像"                  # @source: what the main picture socket is called
+        self.outputs = []                        # @output: [(name, label)] pictures a node gives (output_index tells which is drawn); none: one
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
 
     def key(self):
@@ -218,7 +219,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     `error` set (the panel shows it) so that one bad file never breaks the program."""
     head = {}
     params, error = [], None
-    panels, panel, enables, inputs = [], None, [], []
+    panels, panel, enables, inputs, outputs = [], None, [], [], []
     for line in text.splitlines():
         m = HEADER.match(line)
         if not m:
@@ -243,6 +244,11 @@ def parse(text, ref, fallback_name="濾鏡"):
                 if not words or not IDENT.match(words[0]) or words[0] in RESERVED or any(words[0] == n for n, _ in inputs):
                     raise ValueError("@input 要寫：名稱（英文、數字、底線，不重複）[\"顯示名稱\"]")
                 inputs.append((words[0], words[1] if len(words) > 1 else words[0]))
+            elif key == "output":                         # a picture more than one a node gives: drawn again with output_index = its place
+                words = shlex.split(rest)
+                if not words or not IDENT.match(words[0]) or any(words[0] == n for n, _ in outputs):
+                    raise ValueError("@output 要寫：名稱（英文、數字、底線，不重複）[\"顯示名稱\"]")
+                outputs.append((words[0], words[1] if len(words) > 1 else words[0]))
             elif key == "enable":                         # (read once every @param is known)
                 enables.append((line, rest))
             elif key in ("filter", "category", "description"):
@@ -284,6 +290,7 @@ def parse(text, ref, fallback_name="濾鏡"):
                   head.get("description", ""), n, error, head.get("precise", False), panels, levels, level_param,
                   head.get("extras", []), fixed)
     d.inputs = inputs
+    d.outputs = outputs
     d.src_label = head.get("source") or d.src_label
     return d
 
@@ -466,6 +473,7 @@ uniform float progress;
 uniform int frame;
 uniform float scale;
 uniform int pass_index;
+uniform int output_index;
 uniform sampler2D extra_;
 uniform vec2 pass_px;
 uniform vec2 src_px;
@@ -751,7 +759,7 @@ class Engine:
         return np.frombuffer(data, np.uint8).reshape(h, w, 4)
 
     def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None, inputs=None,
-                dest=None):
+                dest=None, output=0):
         """Filter the w x h texture src (premultiplied RGBA) on the card; returns the texture
         holding the result, one of this engine's own (valid until its next run at that size).
         unit: texture px per canvas px. The filter is told the canvas size as its resolution, so
@@ -760,7 +768,8 @@ class Engine:
         picture (premultiplied), map the 3 x 3 matrix (9 numbers, by columns) from src's uv to
         the picture's (both with v = 0 at the top). inputs {@input name: texture} (w x h, premultiplied;
         a missing one reads as transparent); dest (texture, framebuffer) of w x h: the last pass is drawn
-        there instead of into this engine's own targets (so the result outlives the next run)."""
+        there instead of into this engine's own targets (so the result outlives the next run); output: which of the
+        filter's @output pictures is drawn (output_index)."""
         types = {p.name: p.type for p in d.params}
         sources = {n: v for n, v in (sources or {}).items() if types.get(n) in SOURCE_TYPES}
         prog, vao = self._program(d, tuple(sorted(sources)))
@@ -801,6 +810,8 @@ class Engine:
             tex.use(8 + k)
             if "inp_" + name + "_" in prog:
                 prog["inp_" + name + "_"].value = 8 + k
+        if "output_index" in prog:
+            prog["output_index"].value = int(output)
         self.ctx.disable(self.mgl.BLEND)
         read = src
         made = []                                      # each pass's (texture, w, h), for @extras

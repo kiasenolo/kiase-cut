@@ -459,6 +459,7 @@ class MainWindow(QMainWindow):
         nd.mediaDropped.connect(self.on_node_media)
         nd.frameEdited.connect(self.on_node_frame)
         nd.pasteRequested.connect(self.on_node_paste)
+        nd.viewerRequested.connect(self.on_node_viewer)
         nd.dissolveRequested.connect(self.on_node_dissolve)
         nd.disconnectRequested.connect(self.on_node_disconnect)
         nd.moveRequested.connect(self.on_node_move)
@@ -5454,6 +5455,11 @@ class MainWindow(QMainWindow):
         if kind == "image":
             return {"image": (path, info.get("width"), info.get("height"))}
         return {"video": (path, info.get("width"), info.get("height"), info.get("duration_us"))}
+
+    def on_node_viewer(self, eid, nid, out):
+        cid = self.node_clip()
+        if cid:
+            self.apply("預覽節點", lambda lvl: edit.set_graph_viewer(lvl, cid, eid, nid or None, out))
 
     def on_node_paste(self, eid, data, x, y):
         cid = self.node_clip()

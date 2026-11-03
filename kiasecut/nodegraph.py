@@ -83,6 +83,8 @@ def default_params(graph):
 
 def remove_node(graph, nid):
     graph["nodes"].pop(nid, None)
+    if (graph.get("viewer") or {}).get("node") == nid:
+        graph.pop("viewer")
     graph["links"] = [l for l in graph["links"] if nid not in (l["from"], l["to"])]
 
 
@@ -153,6 +155,15 @@ def sockets(node):
     d = fx.get(node["ref"])
     return ([("src", d.src_label)] + [(n, lab) for n, lab in d.inputs] +
             [(PARAM + p.name, p.label) for p in d.params if has_socket(p)])
+
+
+def outputs(node):
+    """[(output name, label)] a node gives pictures at: one unnamed ("") for most, the @output ones of a filter."""
+    if node["type"] == FILTER:
+        d = fx.get(node["ref"])
+        if d.outputs:
+            return list(d.outputs)
+    return [("", "圖像")]
 
 
 def title(node):
@@ -299,7 +310,8 @@ def connect(graph, src, dst, socket, out=None):
         if (x["type"], x.get("items") or []) != (p.type, list(p.items)):
             raise GraphError("參數的種類和這個插槽不一樣")
     else:
-        out = None
+        if out not in [o for o, _ in outputs(nodes[src])]:
+            out = outputs(nodes[src])[0][0]
         if p is not None and p.type not in fx.SOURCE_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):
@@ -490,11 +502,12 @@ class Pool:
         self.spare = []
 
 
-def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None):
+def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False):
     """Work out graph's output (params: the effect's e["params"]) for the w x h texture src_tex (the effect's input)
     at clip time t.
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
     (texture, 3 x 3 map, done) of a source node's picture (see Engine.run_tex's sources) or None.
+    viewer: show the node graph["viewer"] names instead of the output (the editor's preview, not an export).
     Returns (texture, owner): owner is the object to give back to free when done with it (None: the
     texture is src_tex itself); (None, None) when the graph has no output. Node errors go to errors."""
     errors = errors if errors is not None else []
@@ -502,8 +515,10 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     out = next((i for i, n in nodes.items() if n["type"] == OUTPUT), None)
     if out is None:
         return None, None
-    feed = {(l["to"], l["socket"]): l["from"] for l in links if l["from"] in nodes and l["to"] in nodes
-            and nodes[l["from"]]["type"] != PARAMS}
+    feed = {(l["to"], l["socket"]): (l["from"], l.get("out") or "") for l in links if l["from"] in nodes and l["to"] in nodes
+            and nodes[l["from"]]["type"] != PARAMS}                       # (the node and the output it gives)
+    view = (graph.get("viewer") or {}) if viewer else {}
+    view = (view["node"], view.get("out") or "") if view.get("node") in nodes and nodes[view["node"]]["type"] not in (PARAMS, FRAME, OUTPUT) else None
     bound = binds(graph)
     order, state = [], {}
 
@@ -515,17 +530,18 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         state[n] = 1
         for (to, _s), f in feed.items():
             if to == n:
-                visit(f)
+                visit(f[0])
         state[n] = 2
         order.append(n)
 
-    visit(out)
-    users = {n: 0 for n in order}
+    visit(view[0] if view else out)                           # (a viewed node: the picture at it, not the output)
+    users = {}
     for (to, _s), f in feed.items():
-        if to in users and f in users:
-            users[f] += 1
-    if feed.get((out, "src")) in users:
-        users[feed[(out, "src")]] += 1                        # (the caller keeps the result)
+        if to in order and f[0] in order:
+            users[f] = users.get(f, 0) + 1
+    final = view or feed.get((out, "src"))
+    if final is not None:
+        users[final] = users.get(final, 0) + 1                # (the caller keeps the result)
     made = {}                  # node id -> (texture, owner)
     left = {}                  # id(owner) -> uses left of it
     blank = [None]
@@ -535,10 +551,10 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             blank[0] = alloc(w, h)
         return blank[0].tex
 
-    def put(n, tex, owner):
-        made[n] = (tex, owner)
+    def put(n, tex, owner, o=""):
+        made[(n, o)] = (tex, owner)
         if owner is not None:
-            left[id(owner)] = left.get(id(owner), 0) + users.get(n, 0)
+            left[id(owner)] = left.get(id(owner), 0) + users.get((n, o), 0)
 
     def take(n, socket):
         f = feed.get((n, socket))
@@ -553,9 +569,9 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                     if left[id(owner)] <= 0:
                         free(owner)
 
-    def alias(n, f):
+    def alias(n, f, o=""):
         tex, owner = made[f] if f in made else (empty(), None)
-        put(n, tex, owner)
+        put(n, tex, owner, o)
 
     time = t / US
     prog = min(1.0, max(0.0, t / max(1, duration)))
@@ -573,7 +589,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             put(n, src_tex, None)
         elif kind == OUTPUT:
             f = feed.get((n, "src"))
-            made[n] = made[f] if f in made else (src_tex, None)
+            made[(n, "")] = made[f] if f in made else (src_tex, None)
         elif kind == SOURCE:
             pic = picture(n) if picture else None
             dest = alloc(w, h)
@@ -589,12 +605,13 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         else:
             d = fx.get(node["ref"])
             main = feed.get((n, "src"))
+            names = [o for o, _ in outputs(node)]
             if node.get("mute") or d.error:
                 if d.error:
                     errors.append(f"{d.name}：{d.error}")
-                alias(n, main)
+                for o in names:
+                    alias(n, main, o)
             else:
-                dest = alloc(w, h)
                 vals = {p.name: fx.uniform_value(p, params.get(expose_key(bound[(n, PARAM + p.name)]))
                                                  if (n, PARAM + p.name) in bound else params.get(param_key(n, p.name)), t)
                         for p in d.params}
@@ -606,13 +623,17 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                         if p.type == "float":
                             vals[p.name + fx.RANGE_MIN], vals[p.name + fx.RANGE_MAX] = fx.source_range({}, vals[p.name], t)
                 ins = {name: take(n, name) for name, _ in d.inputs}
-                if not _run(eng, d, vals, take(n, "src") or empty(), w, h, dest, time, prog, frame, unit, srcs, ins, errors):
-                    free(dest)
-                    alias(n, main)
-                else:
-                    put(n, dest.tex, dest)
+                for k, o in enumerate(names):
+                    if (n, o) not in users:                           # (an output nothing reads is not drawn)
+                        continue
+                    dest = alloc(w, h)
+                    if not _run(eng, d, vals, take(n, "src") or empty(), w, h, dest, time, prog, frame, unit, srcs, ins, errors, k):
+                        free(dest)
+                        alias(n, main, o)
+                    else:
+                        put(n, dest.tex, dest, o)
         done_with(n)
-    tex, owner = made[out]
+    tex, owner = made[final] if final in made else made.get((out, ""), (src_tex, None))
     if blank[0] is not None:
         if tex is blank[0].tex:                               # (an empty graph: nothing drawn)
             return tex, blank[0]
@@ -620,10 +641,10 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     return tex, owner
 
 
-def _run(eng, d, vals, src, w, h, dest, time, prog, frame, unit, sources, inputs, errors):
+def _run(eng, d, vals, src, w, h, dest, time, prog, frame, unit, sources, inputs, errors, output=0):
     try:
         eng.run_tex(d, vals, src, w, h, time=time, progress=prog, frame=frame, unit=unit, sources=sources,
-                    inputs=inputs, dest=(dest.tex, dest.fbo))
+                    inputs=inputs, dest=(dest.tex, dest.fbo), output=output)
         return True
     except fx.FilterError as exc:
         errors.append(f"節點「{d.name}」：{exc}")

@@ -874,6 +874,26 @@ def takes_picture(graph, nid, socket):
     return not (is_asset(node) or is_text(node)) and p.type in fx.SOURCE_TYPES + CONTROL_TYPES
 
 
+CONSTANTS = {"float": "builtin:nodes/value", "int": "builtin:nodes/integer", "bool": "builtin:nodes/boolean",
+             "color": "builtin:nodes/rgb", "vector": "builtin:nodes/vector"}       # (the constant node for a kind of socket)
+
+
+def socket_kind(graph, nid, socket):
+    """What input `socket` of node nid takes: "float", "int", "bool", "color", "vector" or "menu" (a picture: "color")."""
+    node = graph["nodes"].get(nid)
+    if node is None or node["type"] != FILTER:
+        return "color"
+    d = fx.for_node(node)
+    if ("in", socket) in d.socket_types:
+        kind = d.socket_types[("in", socket)]
+        return "color" if kind == "image" else kind
+    name = socket[len(PARAM):] if socket.startswith(PARAM) else d.input_param.get(socket)
+    p = param_of(graph, nid, PARAM + name) if name else None
+    if p is None:
+        return "color"
+    return "vector" if p.type in ("vec2", "vec3") else p.type if p.type in ("float", "int", "bool", "menu") else "color"
+
+
 def socket_value(graph, params, nid, socket):
     """The value of the number / colour / switch `socket` of filter node nid stands for - its field's (None: it has none)."""
     node = graph["nodes"].get(nid)

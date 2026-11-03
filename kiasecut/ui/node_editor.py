@@ -22,7 +22,7 @@ import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen
-from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
@@ -44,8 +44,8 @@ PLOT_H = {"curve": 190.0, "gradient": 30.0}          # the height of a curve / g
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
 HEADS = {ng.STRING: "#a8473f", ng.FONT: "#a8473f", ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
          "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
-STRING_LINES = "顯示全部行"                    # (the row of a string node of several lines that opens all of them)
-MAX_LINES = 12                                  # (as many lines of a string as its box shows; the rest are in the edit box)
+MAX_LINES = 12                                  # (as many lines of a string as its box can be dragged to show; the rest are in the edit box)
+GRIP = 12.0                                     # (the corner of a words box that drags it taller)
 GHOST_ITEM = "\0newitem"                       # the empty input of a Menu Switch: drag a link into it to make an option
 GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸出: drag a link into it to make a group output
 PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
@@ -119,6 +119,7 @@ class NodeItem(QGraphicsItem):
         self.drag = None                                    # a field being dragged: {...}
         self.w = max(MIN_WIDTH, float(node.get("width", WIDTH)))
         self.sizing = None                                  # while widened: (scene x at the press, width then)
+        self.grip = None                                    # while a words box is dragged taller: {scene y at the press, its lines then}
         self.setAcceptHoverEvents(True)
         self._layout()
         self.inline = []                                    # [(parameter, CurveField)] the curves edited inside the node
@@ -130,6 +131,31 @@ class NodeItem(QGraphicsItem):
         self.setPos(node.get("x", 0.0), node.get("y", 0.0))
         self.setZValue(1)
         self.title = ng.title(node)
+
+    def lines(self):
+        """How many lines tall a words box of the node (a string's, a text's) is drawn (dragged by its corner, as Blender's resizable boxes)."""
+        try:
+            return max(1, min(MAX_LINES, int(self.node.get("lines") or 1)))
+        except (TypeError, ValueError):
+            return 1
+
+    def relayout(self):
+        """The rows again (a box was dragged taller or shorter)."""
+        self.prepareGeometryChange()
+        self.rows.clear()
+        self._layout()
+        self.update()
+        for view in self.scene().views() if self.scene() else ():
+            view.reroute()
+
+    def grip_row(self, pos):
+        """The words row whose corner grip is under pos (item coordinates), or None."""
+        for r in self.rows:
+            if r["kind"] in ("string", "text") and self.has_field(r):
+                box = self.field_rect(r)
+                if QRectF(box.right() - GRIP, box.bottom() - GRIP, GRIP, GRIP).contains(pos):
+                    return r
+        return None
 
     def _layout(self):
         node, rows = self.node, self.rows
@@ -188,11 +214,7 @@ class NodeItem(QGraphicsItem):
                     add("image", "（拉一條線進來新增選項）", GHOST_ITEM)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
                 if ng.is_text(node):                                   # (a text: its words - or a string node's - and font first)
-                    lines = str((self.editor.sources.get(self.nid) or {}).get("content", ng.TEXT_CONTENT)).split("\n")
-                    opened = len(lines) > 1 and ng.TEXT_SOCKET not in self.linked and self.editor.panel_open.get((self.nid, STRING_LINES), False)
-                    add("text", "文字", ng.TEXT_SOCKET, h=ROW * min(len(lines), MAX_LINES) if opened else ROW)
-                    if len(lines) > 1 and ng.TEXT_SOCKET not in self.linked:
-                        add("panel", STRING_LINES, panel=opened)
+                    add("text", "文字", ng.TEXT_SOCKET, h=ROW * self.lines() if ng.TEXT_SOCKET not in self.linked else ROW)
                     add("font", "字體", ng.FONT_SOCKET)
                 else:
                     for _part, sock, label in ng.ASSET_PAINTS:
@@ -212,11 +234,7 @@ class NodeItem(QGraphicsItem):
                     for p in (q for q in d.params if q.panel == name and shown(q.name) and q.name not in paired):
                         add("param", p.label, socket(p), p)
         elif node["type"] == ng.STRING:                                  # (Blender's String constant: its output above, the words here)
-            lines = str(node.get("value", "")).split("\n")
-            opened = len(lines) > 1 and self.editor.panel_open.get((self.nid, STRING_LINES), False)
-            add("string", "", h=ROW * min(len(lines), MAX_LINES) if opened else ROW)          # (a string of several lines: its first, or all of them)
-            if len(lines) > 1:
-                add("panel", STRING_LINES, panel=opened)
+            add("string", "", h=ROW * self.lines())                      # (its box as many lines tall as it was dragged to)
         elif node["type"] == ng.FONT:                                    # (Blender's Font constant: its output above, the font here)
             add("fontvalue", "")
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
@@ -453,6 +471,10 @@ class NodeItem(QGraphicsItem):
         if kind in ("text", "font", "string", "fontvalue"):   # (the words, one line of them; the font's name)
             box = self.field_rect(r)
             self._box(p, box, bg)
+            if kind in ("string", "text"):                           # (the corner that drags it taller)
+                p.setPen(QPen(QColor(255, 255, 255, 170), 1.2))
+                for k in (4, 8):
+                    p.drawLine(QPointF(box.right() - k - 1, box.bottom() - 2), QPointF(box.right() - 2, box.bottom() - k - 1))
             p.setPen(text)
             src = self.editor.sources.get(self.nid) or {}
             if kind in ("string", "text") and r["h"] > ROW:         # (all the lines, one under the other)
@@ -581,10 +603,18 @@ class NodeItem(QGraphicsItem):
         return bool(self.flags() & QGraphicsItem.ItemIsMovable)
 
     def hoverMoveEvent(self, e):
-        self.setCursor(Qt.SizeHorCursor if self.edge_at(e.pos()) else Qt.ArrowCursor)
+        self.setCursor(Qt.SizeHorCursor if self.edge_at(e.pos()) else Qt.SizeVerCursor if self.grip_row(e.pos()) else Qt.ArrowCursor)
         super().hoverMoveEvent(e)
 
     def mousePressEvent(self, e):
+        row = self.grip_row(e.pos()) if e.button() == Qt.LeftButton else None
+        if row is not None:                                # (the corner of a words box: drag it taller or shorter, a line at a time)
+            if not self.isSelected():
+                self.scene().clearSelection()
+                self.setSelected(True)
+            self.grip = {"y0": e.scenePos().y(), "lines": self.lines()}
+            e.accept()
+            return
         if e.button() == Qt.LeftButton and self.edge_at(e.pos()):
             if not self.isSelected():
                 self.scene().clearSelection()
@@ -613,6 +643,12 @@ class NodeItem(QGraphicsItem):
         e.accept()
 
     def mouseMoveEvent(self, e):
+        if self.grip:
+            n = max(1, min(MAX_LINES, round(self.grip["lines"] + (e.scenePos().y() - self.grip["y0"]) / ROW)))
+            if n != self.lines():
+                self.node["lines"] = n
+                self.relayout()
+            return
         if self.sizing:
             at, w0 = self.sizing
             self.prepareGeometryChange()
@@ -655,6 +691,11 @@ class NodeItem(QGraphicsItem):
         self.editor.set_number(self.nid, r, d["cell"], value, final=False)
 
     def mouseReleaseEvent(self, e):
+        grip, self.grip = self.grip, None
+        if grip:
+            if self.lines() != grip["lines"]:
+                self.editor.linesEdited.emit(self.editor.eid, self.nid, self.lines())
+            return
         size, self.sizing = self.sizing, None
         if size:
             if self.w != size[1]:
@@ -1478,6 +1519,32 @@ class GraphView(QGraphicsView):
 CLIPBOARD = {"pack": None}                      # nodes copied (Ctrl+C), for any node effect to paste
 
 
+class WordsEdit(QPlainTextEdit):
+    """The box words are typed in inside a node: Enter keeps them, Shift+Enter starts a new line, Esc puts them back."""
+    confirmed = Signal()
+    cancelled = Signal()
+    lost = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setFrameShape(QFrame.NoFrame)
+        self.document().setDocumentMargin(3)
+        self.setStyleSheet("QPlainTextEdit { padding: 0; }")
+        self.setTabChangesFocus(True)
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Return, Qt.Key_Enter) and not e.modifiers() & Qt.ShiftModifier:
+            self.confirmed.emit()
+        elif e.key() == Qt.Key_Escape:
+            self.cancelled.emit()
+        else:
+            super().keyPressEvent(e)
+
+    def focusOutEvent(self, e):
+        super().focusOutEvent(e)
+        self.lost.emit()
+
+
 class EditorFrame(QFrame):
     """A small editor (curve / gradient) over the window, closed by a click outside it or Esc. It is a child of the
     window, not a popup of its own, so what it opens - the colour picker - is not cut off by its edges."""
@@ -1530,6 +1597,7 @@ class NodeEditor(QWidget):
     viewerRequested = Signal(str, str, str)                 # effect id, node, output ("" node: the effect's output again)
     pasteRequested = Signal(str, dict, float, float)        # effect id, nodegraph.pack, x, y: nodes pasted
     widthEdited = Signal(str, str, float)                   # effect id, node id, its new width
+    linesEdited = Signal(str, str, int)                     # effect id, node id, how many lines tall its words box is
     frameEdited = Signal(str, str, dict)                    # effect id, frame id, what changed (label / text / color / w / h)
     duplicateRequested = Signal(str, list)                  # effect id, node ids
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
@@ -1844,21 +1912,17 @@ class NodeEditor(QWidget):
             return
         if kind == "text":
             old = (self.sources.get(nid) or {}).get("content", ng.TEXT_CONTENT)
-            got = self.ask_text("文字", old, True)
-            if got is not None and got != old:
-                self.textEdited.emit(self.eid, nid, got, None)
+            self._type_words(item, row, old, lambda got: self.textEdited.emit(self.eid, nid, got, None))
             return
         if kind == "font":
-            self._choose_font((self.sources.get(nid) or {}).get("font_path"), lambda path: self.textEdited.emit(self.eid, nid, None, path))
+            self._choose_font(item, row, (self.sources.get(nid) or {}).get("font_path"), lambda path: self.textEdited.emit(self.eid, nid, None, path))
             return
         if kind == "fontvalue":
-            self._choose_font(self.graph["nodes"][nid].get("value"), lambda path: self.fontEdited.emit(self.eid, nid, path))
+            self._choose_font(item, row, self.graph["nodes"][nid].get("value"), lambda path: self.fontEdited.emit(self.eid, nid, path))
             return
         if kind == "string":
             old = str(self.graph["nodes"][nid].get("value", ""))
-            got = self.ask_text("字串", old, True)
-            if got is not None and got != old:
-                self.stringEdited.emit(self.eid, nid, got)
+            self._type_words(item, row, old, lambda got: self.stringEdited.emit(self.eid, nid, got))
             return
         q = row["p"]
         key = ng.param_key(nid, q.name)
@@ -2021,22 +2085,72 @@ class NodeEditor(QWidget):
         hit = next((f["name"] for f in self.fonts if f["path"] == path), None)
         return hit or (os.path.splitext(os.path.basename(path or ""))[0] or "（預設字體）")
 
-    def _choose_font(self, path, done):
-        """A font: one of the installed fonts, or a font file; done(path) hears the choice."""
-        from PySide6.QtWidgets import QFileDialog, QInputDialog
+    def _inline(self, item, row, widget):
+        """Put `widget` over the field of `row` of item, in the node editor itself: returns the proxy and a finish(keep) that
+        takes it away again (a press anywhere else keeps what is typed, as for a number)."""
+        box = item.field_rect(row)
+        widget.setFixedSize(round(box.width()), round(box.height()))        # (as big as the field it covers)
+        proxy = self.view.scene().addWidget(widget)
+        proxy.setZValue(10)
+        proxy.setPos(item.mapToScene(box.topLeft()))
+        self.edit_proxy = proxy
+
+        def finish(keep, then=None):
+            if self.edit_proxy is not proxy:
+                return
+            self.edit_proxy = None
+            QTimer.singleShot(0, lambda: (proxy.scene() and proxy.scene().removeItem(proxy)))
+            if keep and then is not None:
+                then()
+        self.edit_finish = finish
+        return proxy, finish
+
+    def _type_words(self, item, row, old, done):
+        """The words of a string or a text typed in right in the node: Enter keeps them (Shift+Enter makes a new line), Esc
+        or leaving does not, a press elsewhere in the editor does."""
+        from PySide6.QtWidgets import QPlainTextEdit
+        ed = WordsEdit()
+        ed.setPlainText(old)
+        proxy, finish = self._inline(item, row, ed)
+
+        def keep(on):
+            got = ed.toPlainText()
+            finish(on, lambda: done(got) if got != old else None)
+        ed.confirmed.connect(lambda: keep(True))
+        ed.cancelled.connect(lambda: keep(False))
+        ed.lost.connect(lambda: keep(False))
+        self.edit_finish = keep
+        ed.selectAll()
+        ed.setFocus()
+
+    def _choose_font(self, item, row, path, done):
+        """A font, picked from a list right in the node (type to narrow it): one of the installed fonts, or a font file;
+        done(path) hears the choice."""
+        from PySide6.QtWidgets import QCompleter, QFileDialog
         browse = "瀏覽字型檔…"
         names = [f["name"] for f in self.fonts] + [browse]
-        current = next((i for i, f in enumerate(self.fonts) if f["path"] == path), 0)
-        got, ok = QInputDialog.getItem(self, "字體", "字體", names, current, False)
-        if not ok:
-            return
-        if got == browse:
-            got, _ = QFileDialog.getOpenFileName(self, "選擇字型檔", "", "字型 (*.ttf *.otf *.ttc *.otc)")
-            if not got:
-                return
-            done(got.replace("\\", "/"))
-        else:
-            done(next(f["path"] for f in self.fonts if f["name"] == got))
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.addItems(names)
+        combo.setCurrentIndex(next((i for i, f in enumerate(self.fonts) if f["path"] == path), 0))
+        combo.completer().setFilterMode(Qt.MatchContains)
+        combo.completer().setCaseSensitivity(Qt.CaseInsensitive)
+        proxy, finish = self._inline(item, row, combo)
+
+        def chosen(name):
+            if name == browse:
+                finish(False)
+                got, _ = QFileDialog.getOpenFileName(self, "選擇字型檔", "", "字型 (*.ttf *.otf *.ttc *.otc)")
+                if got:
+                    done(got.replace("\\", "/"))
+            elif any(f["name"] == name for f in self.fonts):
+                finish(True, lambda: done(next(f["path"] for f in self.fonts if f["name"] == name)))
+        combo.textActivated.connect(chosen)
+        combo.lineEdit().returnPressed.connect(lambda: chosen(combo.currentText()))
+        combo.lineEdit().selectAll()
+        combo.setFocus()
+        QTimer.singleShot(0, combo.showPopup)
 
     def ask_text(self, title, text, multi=False):
         from PySide6.QtWidgets import QInputDialog
@@ -2321,7 +2435,7 @@ class NodeEditor(QWidget):
         for name, n in options:
             menu.addAction(name, lambda _=False, n=n: self.addFeedingRequested.emit(
                 self.eid, dict(n, **({"group": self.level} if self.level else {})), scene_pos.x(), scene_pos.y(), nid, sock))
-        menu.exec(global_pos)
+        self.popup(menu, global_pos)
 
     def add_menu(self, scene_pos, global_pos, link=None, feed=None):
         """The menu of nodes to add at scene_pos; link (node id, output): a link let go in the empty - the new
@@ -2345,6 +2459,10 @@ class NodeEditor(QWidget):
         box = QWidgetAction(menu)
         box.setDefaultWidget(search)
         menu.addAction(box)
+        constant = ng.CONSTANTS.get(ng.socket_kind(self.graph, feed[0], feed[1])) if feed else None
+        if constant:                                      # (a feeding link: the one constant that fits the input, with the value it holds)
+            menu.addAction("常數（保留目前的值）", lambda: ask({"type": ng.FILTER, "ref": constant}))
+            menu.addSeparator()
         groups = []                                       # the top menus and separators (hidden while searching)
         known = set(fx.builtin_refs()) | set(node_refs())
 

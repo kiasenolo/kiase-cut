@@ -168,6 +168,17 @@ class GraphEditTests(unittest.TestCase):
         self.assertEqual(ng.constant_params("builtin:nodes/integer_vector", [1.2, 2.0, 3.6]), {"x": 1, "y": 2, "z": 4})
         self.assertEqual(ng.constant_params("builtin:nodes/rgb", 0.5), {})        # (does not fit: its own default)
 
+    def test_each_input_has_the_constant_that_fits_it(self):
+        m = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"}, 100, 0)
+        s = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/separate_xyz"}, 100, 100)
+        x = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:mix"}, 100, 200)
+        g = self.e["graph"]
+        self.assertEqual(ng.socket_kind(g, m, "b"), "float")
+        self.assertEqual(ng.socket_kind(g, m, "param:clamp_on"), "bool")
+        self.assertEqual(ng.socket_kind(g, s, "src"), "vector")
+        self.assertEqual(ng.socket_kind(g, x, "b"), "color")                       # (a picture: a colour)
+        self.assertEqual(ng.CONSTANTS[ng.socket_kind(g, s, "src")], "builtin:nodes/vector")
+
     def test_what_only_the_effects_parameters_feed_is_fed_by_a_parameter_node(self):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect"}})
         g = self.e["graph"]

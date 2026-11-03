@@ -41,34 +41,72 @@ class NodeEditorTests(unittest.TestCase):
         APP.processEvents()
         return ed
 
-    def test_string_node_of_several_lines_opens_all_of_them(self):
+    def test_a_words_box_is_as_tall_as_it_was_dragged_to_and_shows_a_line_each(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.STRING, "value": "one\ntwo\nthree"}, 0, 150, base="s")
-            ng.add_node(e["graph"], {"type": ng.STRING, "value": "single"}, 0, 300, base="t")
-        ed = self.make(build)
-        rows = lambda nid: {r["kind"]: r for r in ed.view.items_by_id[nid].rows}
-        self.assertEqual(rows("s1")["string"]["h"], 22.0)                       # (shut: the first line, the others after a ⏎)
-        self.assertEqual(rows("s1")["panel"]["label"], "顯示全部行")
-        self.assertNotIn("panel", rows("t1"))                                    # (one line: nothing to open)
-        ed.panel_open[("s1", "顯示全部行")] = True
-        ed.rebuild()
-        APP.processEvents()
-        self.assertEqual(rows("s1")["string"]["h"], 66.0)                        # (open: a line each)
-
-    def test_text_node_of_several_lines_opens_all_of_them(self):
-        def build(e):
-            nid = ng.add_node(e["graph"], {"type": ng.SOURCE, "kind": "text"}, 0, 150, base="x")
+            nid = ng.add_node(e["graph"], {"type": ng.SOURCE, "kind": "text"}, 0, 400, base="x")
             e.setdefault("sources", {})[nid] = {"kind": "text", "content": "a\nb\nc\nd", "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
             e["params"].update(ng.default_params(e["graph"]))
         ed = self.make(build)
-        rows = lambda: {r["kind"]: r for r in ed.view.items_by_id["x1"].rows}
-        self.assertEqual(rows()["text"]["h"], 22.0)
-        self.assertIn("顯示全部行", [r["label"] for r in ed.view.items_by_id["x1"].rows if r["kind"] == "panel"])
-        ed.panel_open[("x1", "顯示全部行")] = True
+        row = lambda nid, kind: next(r for r in ed.view.items_by_id[nid].rows if r["kind"] == kind)
+        self.assertEqual(row("s1", "string")["h"], 22.0)                         # (one line tall: the lines after a ⏎)
+        self.assertEqual(row("x1", "text")["h"], 22.0)
+        self.assertFalse([r for r in ed.view.items_by_id["s1"].rows if r["kind"] == "panel"])
+        got = []
+        ed.linesEdited.connect(lambda *a: got.append(a))
+        it = ed.view.items_by_id["s1"]
+        r = row("s1", "string")
+        box = it.field_rect(r)
+        grip = it.mapToScene(box.right() - 4, box.bottom() - 4)
+        v = ed.view
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(grip))
+        QTest.mouseMove(v.viewport(), v.mapFromScene(grip + QPointF(0, 2.2 * 22)))
+        self.assertEqual(row("s1", "string")["h"], 66.0)                         # (it follows the drag, a line at a time)
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(grip + QPointF(0, 2.2 * 22)))
+        self.assertEqual(got, [("e1", "s1", 3)])
+        ed.graph["nodes"]["x1"]["lines"] = 4                                      # (as a node that was saved so)
         ed.rebuild()
         APP.processEvents()
-        self.assertEqual(rows()["text"]["h"], 88.0)
-        self.assertGreater(ed.view.items_by_id["x1"].field_rect(rows()["text"]).height(), 80)
+        self.assertEqual(row("x1", "text")["h"], 88.0)
+        self.assertGreater(ed.view.items_by_id["x1"].field_rect(row("x1", "text")).height(), 80)
+
+    def test_words_are_typed_right_in_the_node(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.STRING, "value": "hello"}, 0, 150, base="s")
+        ed = self.make(build)
+        got = []
+        ed.stringEdited.connect(lambda *a: got.append(a))
+        it = ed.view.items_by_id["s1"]
+        r = next(r for r in it.rows if r["kind"] == "string")
+        ed.field_clicked(it, r, 0, QPointF(0, 0))
+        self.assertIsNotNone(ed.edit_proxy)                                       # (a box in the node, not a window)
+        box = ed.edit_proxy.widget()
+        self.assertEqual(box.toPlainText(), "hello")
+        box.setPlainText("你好\n世界")
+        QTest.keyClick(box, Qt.Key_Return)
+        self.assertEqual(got, [("e1", "s1", "你好\n世界")])
+        self.assertIsNone(ed.edit_proxy)
+        ed.field_clicked(it, r, 0, QPointF(0, 0))
+        ed.edit_proxy.widget().setPlainText("nope")
+        QTest.keyClick(ed.edit_proxy.widget(), Qt.Key_Escape)
+        self.assertEqual(len(got), 1)                                             # (Esc: not kept)
+
+    def test_a_font_is_picked_from_a_list_in_the_node(self):
+        from PySide6.QtWidgets import QComboBox
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FONT, "value": ""}, 0, 150, base="f")
+        ed = self.make(build)
+        ed.fonts = [{"name": "甲", "path": "/a.ttf"}, {"name": "乙", "path": "/b.ttf"}]
+        got = []
+        ed.fontEdited.connect(lambda *a: got.append(a))
+        it = ed.view.items_by_id["f1"]
+        r = next(r for r in it.rows if r["kind"] == "fontvalue")
+        ed.field_clicked(it, r, 0, QPointF(0, 0))
+        combo = ed.edit_proxy.widget()
+        self.assertIsInstance(combo, QComboBox)
+        self.assertEqual([combo.itemText(i) for i in range(combo.count())][:2], ["甲", "乙"])
+        combo.textActivated.emit("乙")
+        self.assertEqual(got, [("e1", "f1", "/b.ttf")])
 
     def test_shows_nothing_without_a_node_effect(self):
         ed = NodeEditor()
@@ -185,6 +223,15 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual((comb.socket_type("out", ""), comb.out_label), ("vector", "向量"))
         self.assertEqual(fx.get("builtin:nodes/value").out_label, "數值")
         self.assertEqual(fx.get("builtin:mix").socket_type("out", ""), "image")    # (a picture stays one)
+
+    def test_the_feeding_menu_starts_with_the_constant_that_fits_with_its_value(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+        ed = self.make(build)
+        shown = []
+        ed.popup = lambda menu, pos: shown.append([x.text() for x in menu.actions()])
+        ed.add_menu(QPointF(0, 0), QPoint(0, 0), feed=("math1", "b"))
+        self.assertEqual(shown[-1][1], "常數（保留目前的值）")                    # (after the search box)
 
     def test_picking_up_a_link_and_dropping_it_nowhere_unlinks(self):
         ed = self.make()

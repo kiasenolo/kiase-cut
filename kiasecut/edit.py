@@ -2438,6 +2438,19 @@ def set_graph_node_width(proj, clip_id, effect_id, nid, width):
     node["width"] = max(140.0, float(width))
 
 
+def set_graph_node_lines(proj, clip_id, effect_id, nid, lines):
+    """How many lines tall the words box of a string or text node is drawn."""
+    _, c = find(proj, clip_id)
+    node = _graph(c, effect_id)[1]["nodes"].get(nid)
+    if node is None:
+        raise EditError("沒有這個節點")
+    lines = max(1, min(12, int(lines)))
+    if lines > 1:
+        node["lines"] = lines
+    else:
+        node.pop("lines", None)
+
+
 def set_graph_viewer(proj, clip_id, effect_id, nid, out=""):
     """Point the editor's preview at node nid's output (Ctrl+Shift+click): the graph's 預覽 node (made when
     there is none, beside the node) takes its picture from there. nid None: the preview node lets go. Exports

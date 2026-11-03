@@ -754,7 +754,7 @@ def connect(graph, src, dst, socket, out=None):
             out = outputs(nodes[src])[0][0]
         if p is not None and is_asset(nodes[dst]):
             raise GraphError("形狀的數值只能接效果自己的參數（參數輸入節點）")
-        if p is not None and p.type not in fx.SOURCE_TYPES:
+        if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):
         raise GraphError("節點不能連成迴圈")
@@ -925,6 +925,31 @@ def check(graph):
 def source_nodes(graph):
     """{node id: kind} of the graph's picture / video / compound / track nodes."""
     return {i: n.get("kind") for i, n in graph["nodes"].items() if n["type"] == SOURCE}
+
+
+CONTROL_TYPES = ("bool", "menu")        # parameters a number can set: a picture linked into one is read as a number (Blender's implicit conversions)
+
+
+def _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors):
+    """The value a picture (node f[0]'s output f[1]) says for a tick or a menu: its brightness at the middle (as a number node's
+    picture is a float). True when above 0.5; a menu takes the number as the index of its choice. Worked out small (a number
+    does not care how big its picture is)."""
+    import numpy as np
+    g = {"nodes": {**graph["nodes"], "\0control": {"type": VIEWER}},
+         "links": [l for l in graph["links"] if graph["nodes"][l["to"]]["type"] != VIEWER] +
+                  [{"from": f[0], "to": "\0control", "socket": "src", **({"out": f[1]} if f[1] else {})}]}
+    tex, owner = evaluate(eng, g, params, src_tex, 4, 4, alloc, free, t=t, duration=duration, fps=fps, unit=unit, picture=picture,
+                          errors=errors, viewer=True)
+    if tex is None:
+        return 0.0
+    a = np.frombuffer(tex.read(), np.float16 if tex.dtype == "f2" else np.float32 if tex.dtype == "f4" else np.uint8).reshape(
+        tex.size[1], tex.size[0], 4).astype(np.float64)
+    if tex.dtype == "f1":
+        a /= 255.0
+    if owner is not None:
+        free(owner)
+    r, gg, b = a[tex.size[1] // 2, tex.size[0] // 2, :3]
+    return float(0.2126 * r + 0.7152 * gg + 0.0722 * b)
 
 
 def read_rgba8(tex):
@@ -1145,6 +1170,21 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     if view and (view[0] not in nodes or nodes[view[0]]["type"] in (PARAMS, FRAME, OUTPUT, VIEWER)):
         view = None
     bound = binds(graph)
+    ctrl = {}                                                 # (node, parameter) -> what a picture linked into its tick / menu socket says
+    reach, todo = set(), [view[0] if view else out]
+    while todo:                                               # (only the nodes the result comes from: a control of any other is not read)
+        n = todo.pop()
+        if n not in reach:
+            reach.add(n)
+            todo += [f[0] for (to, _s), f in feed.items() if to == n]
+    for (to, sock), f in list(feed.items()):
+        p = param_of(graph, to, sock) if sock.startswith(PARAM) else None
+        if p is not None and p.type in CONTROL_TYPES:
+            del feed[(to, sock)]                              # (read once, a number: the picture itself is not drawn for it)
+            if to not in reach:
+                continue
+            v = _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
+            ctrl[(to, p.name)] = v > 0.5 if p.type == "bool" else v
     order, state = [], {}
 
     def visit(n):
@@ -1169,7 +1209,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     def values(n, d):
         got = settings.get(n)
         if got is None:
-            got = settings[n] = {p.name: fx.uniform_value(p, params.get(expose_key(bound[(n, PARAM + p.name)]))
+            got = settings[n] = {p.name: fx.uniform_value(p, ctrl[(n, p.name)] if (n, p.name) in ctrl else
+                                                          params.get(expose_key(bound[(n, PARAM + p.name)]))
                                                           if (n, PARAM + p.name) in bound else params.get(param_key(n, p.name)), t)
                                  for p in d.params}
         return got

@@ -163,6 +163,35 @@ class RunTest(unittest.TestCase):
             self.assertEqual(errors, [], choice)
             self.close(out, want)
 
+    def test_a_number_can_set_a_tick_and_choose_a_menu_option(self):
+        g = ng.new_graph()
+        v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/value"})
+        a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")
+        sw = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/switch"})
+        ng.connect(g, "input", sw, "src")
+        ng.connect(g, a, sw, "yes")
+        ng.connect(g, v, sw, "param:use_true")                    # a number into a tick
+        ng.connect(g, sw, "output", "src")
+        red = self.solid([255, 0, 0, 255])
+        green = self.solid([0, 255, 0, 255])
+        out, errors, _ = self.run_graph(g, green, {a: red}, params={v + ".value": 1.0})
+        self.assertEqual(errors, [])
+        self.close(out, (255, 0, 0, 255))                          # (1: true)
+        out, _, _ = self.run_graph(g, green, {a: red}, params={v + ".value": 0.0})
+        self.close(out, (0, 255, 0, 255))                          # (0: false)
+        g = ng.new_graph()
+        v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/value"})
+        a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/menu_switch"})
+        ng.connect(g, "input", m, "src")
+        ng.connect(g, a, m, "i2")
+        ng.connect(g, v, m, "param:choice")                        # a number into a menu: its index
+        ng.connect(g, m, "output", "src")
+        out, _, _ = self.run_graph(g, green, {a: red}, params={v + ".value": 1.0})
+        self.close(out, (255, 0, 0, 255))
+        out, _, _ = self.run_graph(g, green, {a: red}, params={v + ".value": 0.0})
+        self.close(out, (0, 255, 0, 255))
+
     def test_menu_switch_has_options_of_its_own(self):
         g = ng.new_graph()
         a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")

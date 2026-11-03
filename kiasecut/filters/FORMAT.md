@@ -40,6 +40,7 @@ vec4 effect(vec2 uv) {
 | `// @panel 名稱 [closed]` | 之後的參數放進一個可以摺疊的面板（像 Blender 節點的面板）；`closed` 是一開始收起來；`// @panel -` 回到最上層 |
 | `// @show 參數或輸入 條件` | 節點上只在條件成立時才顯示這一列（參數或 `@input` 的插槽），條件寫法和 `@enable` 一樣；用不上的運算就不佔位置（像 Blender 的「數學」）。參數在面板上同時也會變灰 |
 | `// @use 輸入或 src 條件` | 條件不成立時，這張圖不會被運算（節點圖裡就當作沒接），像 Blender 的「切換」只算用到的那一邊；條件寫法和 `@enable` 一樣。範例：`nodes/switch.glsl`、`nodes/menu_switch.glsl` |
+| `// @dynamic 名稱` | 這個濾鏡的插槽和選單選項由節點自己的資料決定（`node["items"]`），不是寫死在檔頭：`kiasecut/dynamic.py` 裡同名的產生器照節點的選項寫出濾鏡文字。範例：`nodes/menu_switch.glsl`（選單切換：選項可以新增、改名、刪除）。檔案本身留著預設的三個選項 |
 | `// @enable 參數 條件` | 條件不成立時，這個參數在面板上變灰（用不上），見下面「用不上的參數」 |
 
 ### 參數

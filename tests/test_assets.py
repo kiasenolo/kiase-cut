@@ -44,9 +44,10 @@ class AssetTests(unittest.TestCase):
             self.assertIsNotNone(a, key)
             p = assets.at(assets.make(a, "#ffffff", "#000000", 200, 200), 0)
             self.assertIn("fade", assets.fields_of(p["family"]), key)
-            self.assertNotIn("feComposite", assets.svg(p), key)
+            self.assertNotIn('id="fade"', assets.svg(p), key)
             p["fade"] = 40
-            self.assertIn("feComposite", assets.svg(p), key)
+            self.assertIn('id="fade"', assets.svg(p), key)
+            self.assertNotIn("Blur", assets.svg(p), key)                       # (no filter: those cost speed)
             self.assertEqual(assets.overflow(p), 0.0, key)                    # (inward: the frame stays the same)
         p = assets.at(assets.make(assets.get("shape.rect"), "#ffffff", "#000000", 200, 200), 0)
         p["fade"] = 40

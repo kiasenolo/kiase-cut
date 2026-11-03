@@ -719,15 +719,20 @@ def _shape(p, w, h):
     if p.get("fill", True) and d:
         put("fill", lambda prop, v, op: f'<path d="{d}" fill-rule="evenodd" {attr("fill", v, op)}/>')
         reach = fade_distance(p)
-        if reach >= 0.5:                           # 邊緣淡出: the fill turns from clear at the edge to full, over `reach`, as a vignette
-            # (the shape's own alpha blurred is its distance from the edge: 0.5 at the edge, 0.98 at 2 sigma inside;
-            # that, stretched to 0 - 1, cuts the fill; the outline above it stays whole)
-            k = 2.1
-            defs += (f'<filter id="fade" filterUnits="userSpaceOnUse" {box}>'
-                     f'<feGaussianBlur in="SourceAlpha" stdDeviation="{reach / 2:.2f}" result="b"/>'
-                     f'<feColorMatrix in="b" type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 {k} {-0.5 * k:.2f}" result="m"/>'
-                     f'<feComposite in="SourceGraphic" in2="m" operator="in"/></filter>')
-            body[:] = ['<g filter="url(#fade)">'] + body + ["</g>"]
+        if reach >= 0.5:                           # 邊緣淡出: the fill turns from clear at the edge to full over `reach`, as a vignette
+            # (no filter: a mask of the shape in white, with dark outlines of growing width over it - each one covers the
+            # band of its depth and thins it by a step, so the mask rises as a smoothstep of the distance from the edge)
+            steps, rest, strokes = 12, 1.0, []
+            for j in range(steps, 0, -1):          # the deepest first
+                t = (j - 0.5) / steps
+                c = t * t * (3.0 - 2.0 * t)        # (what the band should keep)
+                alpha = 1.0 - c / rest
+                rest = c
+                strokes.append(f'<path d="{d}" fill="none" stroke="#000" stroke-linejoin="round" stroke-opacity="{alpha:.3f}" '
+                               f'stroke-width="{2 * reach * j / steps:.2f}"/>')
+            defs += (f'<mask id="fade" maskUnits="userSpaceOnUse" {box}><path d="{d}" fill-rule="evenodd" fill="#fff"/>'
+                     + "".join(strokes) + '</mask>')
+            body[:] = ['<g mask="url(#fade)">'] + body + ["</g>"]
     if stroked(p) and d:
         align, s = p.get("stroke_align", "inside"), p["stroke"]
         line = f'fill="none" stroke-linejoin="{p.get("join", "miter")}" stroke-miterlimit="{MITER_LIMIT}"'

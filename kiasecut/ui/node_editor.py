@@ -21,7 +21,7 @@ import os
 import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
@@ -51,6 +51,14 @@ GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸�
 PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
 SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0", "string": "#70b870", "font": "#b070b0"}
+LINK_COLOR = "#d0d0d8"                           # (a link with no types to colour it)
+
+
+def type_color(t):
+    """The colour of a socket that holds a value of parameter type t."""
+    return SOCKET_COLORS.get(t if t in ("float", "color") else "other")
+
+
 GHOST = "\0ghost"                              # the empty socket of a 參數輸入 node: drag out of it to make a parameter
 
 
@@ -277,6 +285,31 @@ class NodeItem(QGraphicsItem):
         return [((r["p"] or "") if r["kind"] == "out" else GHOST, self.output_pos((r["p"] or "") if r["kind"] == "out" else GHOST))
                 for r in self.rows if r["kind"] in ("out", "ghost")]
 
+    def out_colour(self, out=""):
+        """The colour of the output `out`: Blender's socket types - a picture, a string, a font, or what a parameter holds."""
+        t = self.node["type"]
+        if t in ng.WORDS:
+            return SOCKET_COLORS["string" if t == ng.STRING else "font"]
+        if t in (ng.PARAMS, ng.INPUT):
+            r = next((r for r in self.rows if r["kind"] == "expose" and r["p"] and r["p"]["name"] == out), None)
+            if r is not None:
+                return type_color(r["p"]["type"])
+        return SOCKET_COLORS["image"]
+
+    def in_colour(self, sock):
+        """The colour of input `sock`."""
+        r = self.row_of(sock)
+        if not r:
+            return SOCKET_COLORS["image"]
+        kind = r["kind"]
+        if kind == "text":
+            return SOCKET_COLORS["string"]
+        if kind == "font":
+            return SOCKET_COLORS["font"]
+        if kind == "param" and r["p"] is not None:
+            return type_color(r["p"].type)
+        return SOCKET_COLORS["image"]
+
     def sockets(self):
         """[(socket name, scene point)] of the sockets a link can end at."""
         return [(r["socket"], self.input_pos(r["socket"])) for r in self.rows if r["socket"] and r["kind"] in ("image", "param", "text", "font")]
@@ -361,7 +394,7 @@ class NodeItem(QGraphicsItem):
             p.setPen(text)
             if kind == "out":
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
-                self._socket(p, QPointF(self.w, y + ROW / 2), SOCKET_COLORS["string" if self.node["type"] == ng.STRING else "font" if self.node["type"] == ng.FONT else "image"])
+                self._socket(p, QPointF(self.w, y + ROW / 2), self.out_colour(r["p"] or ""))
                 continue
             if kind in ("expose", "ghost"):
                 ghost = kind == "ghost"
@@ -373,7 +406,7 @@ class NodeItem(QGraphicsItem):
                     p.setBrush(Qt.NoBrush)
                     p.drawEllipse(at, SOCKET_R, SOCKET_R)
                 else:
-                    self._socket(p, at, SOCKET_COLORS.get(r["p"]["type"] if r["p"]["type"] in ("float", "color") else "other"))
+                    self._socket(p, at, type_color(r["p"]["type"]))
                 continue
             if kind == "panel":
                 p.setPen(QColor("#c8c8cc"))
@@ -393,8 +426,7 @@ class NodeItem(QGraphicsItem):
                 p.setBrush(Qt.NoBrush)
                 p.drawEllipse(QPointF(0, y + ROW / 2), SOCKET_R, SOCKET_R)
             elif r["socket"]:
-                self._socket(p, QPointF(0, y + ROW / 2), SOCKET_COLORS["image"] if kind == "image" else SOCKET_COLORS["string"] if kind == "text" else SOCKET_COLORS["font"] if kind == "font" else
-                             SOCKET_COLORS.get(r["p"].type if r["p"].type in ("float", "color") else "other"))
+                self._socket(p, QPointF(0, y + ROW / 2), self.in_colour(r["socket"]))
             if not self.has_field(r):
                 continue
             self._field(p, r, vals, field_bg, text, dim)
@@ -654,6 +686,7 @@ class RerouteItem(QGraphicsItem):
         self.nid, self.node, self.editor = nid, node, editor
         self.has_out, self.rows, self.linked, self.drag = True, [], set(), None
         self.title = ""
+        self.colour = SOCKET_COLORS["image"]               # (of what feeds it: set by the view as it draws the links)
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
         self.setPos(node.get("x", 0.0), node.get("y", 0.0))
         self.setZValue(1)
@@ -669,6 +702,12 @@ class RerouteItem(QGraphicsItem):
 
     def row_of(self, socket):
         return {} if socket == "src" else None
+
+    def out_colour(self, out=""):
+        return self.colour
+
+    def in_colour(self, sock="src"):
+        return self.colour
 
     def input_pos(self, socket="src"):
         return self.mapToScene(QPointF(0, self.H / 2))
@@ -689,8 +728,8 @@ class RerouteItem(QGraphicsItem):
         p.fillPath(body, QColor("#4a4a50"))
         p.setPen(QPen(QColor("#f0a030") if self.isSelected() else QColor(0, 0, 0, 120), 2 if self.isSelected() else 1))
         p.drawPath(body)
-        NodeItem._socket(p, QPointF(0, self.H / 2), SOCKET_COLORS["image"])
-        NodeItem._socket(p, QPointF(self.W, self.H / 2), SOCKET_COLORS["image"])
+        NodeItem._socket(p, QPointF(0, self.H / 2), self.colour)
+        NodeItem._socket(p, QPointF(self.W, self.H / 2), self.colour)
 
 
 class FrameItem(QGraphicsItem):
@@ -809,16 +848,45 @@ def fm_elide(p, text, width):
 
 
 class Link(QGraphicsPathItem):
+    """A link, in the colours of the sockets it joins (Blender's coloured links): from the output's colour to the input's,
+    a gradient when they differ."""
+
     def __init__(self, width=LINK_W):
         super().__init__()
         self.setZValue(0)
-        self.setPen(QPen(QColor("#d0d0d8"), width))
+        self.width, self.cols, self.lit = width, None, False
+        self.ends = (QPointF(), QPointF())
+        self.normal()
+
+    def style(self, a, b):
+        """The colours (hex) at its output end and at its input end."""
+        self.cols = (a, b)
+        self.normal()
+
+    def normal(self):
+        """Its own look (not lit as the link a node is over)."""
+        self.lit = False
+        if self.cols is None:
+            self.setPen(QPen(QColor(LINK_COLOR), self.width))
+            return
+        a, b = self.ends
+        g = QLinearGradient(a, b)
+        g.setColorAt(0, QColor(self.cols[0]))
+        g.setColorAt(1, QColor(self.cols[1]))
+        self.setPen(QPen(QBrush(g), self.width))
+
+    def light(self, width):
+        self.lit = True
+        self.setPen(QPen(QColor("#ffffff"), width))
 
     def route(self, a, b):
         path = QPainterPath(a)
         dx = max(40.0, abs(b.x() - a.x()) * 0.5)
         path.cubicTo(a + QPointF(dx, 0), b - QPointF(dx, 0), b)
         self.setPath(path)
+        self.ends = (a, b)
+        if self.cols is not None and not self.lit:
+            self.normal()
 
 
 class GraphView(QGraphicsView):
@@ -933,7 +1001,7 @@ class GraphView(QGraphicsView):
     def _put_down(self, cancel):
         c, self.carrying = self.carrying, None
         for ln, *_ in self.link_items:
-            ln.setPen(QPen(QColor("#d0d0d8"), LINK_W))
+            ln.normal()
         if cancel and c["remove"]:
             self.press_at = {}
             self.over = None
@@ -1000,6 +1068,7 @@ class GraphView(QGraphicsView):
                     ln = Link(DRAG_W)
                     self.scene().addItem(ln)
                     self.reverse = (ln, nid, sock)
+                    ln.style(*[self.items_by_id[nid].in_colour(sock)] * 2)
                     ln.route(pos, self.items_by_id[nid].input_pos(sock))
                     return
             self.press_at = {i: (it.pos().x(), it.pos().y()) for i, it in self.items_by_id.items()}
@@ -1037,6 +1106,23 @@ class GraphView(QGraphicsView):
                     return nid, r["socket"]
         return None
 
+    def colour_up(self, nid, out="", depth=0):
+        """The colour of what comes out of node nid at `out`: a reroute's is that of what feeds it."""
+        it = self.items_by_id[nid]
+        if not isinstance(it, RerouteItem):
+            return it.out_colour(out)
+        up = next(((a, o) for _l, a, b, _s, o in self.link_items if b == nid), None)
+        return self.colour_up(up[0], up[1], depth + 1) if up and depth < 64 else SOCKET_COLORS["image"]
+
+    def colour_links(self):
+        """Colour the reroutes and the links by their sockets' types."""
+        for nid, it in self.items_by_id.items():
+            if isinstance(it, RerouteItem):
+                it.colour = self.colour_up(nid)
+                it.update()
+        for ln, a, b, sock, out in self.link_items:
+            ln.style(self.colour_up(a, out), self.items_by_id[b].in_colour(sock))
+
     def reroute(self):
         """Draw the links again (a node moved)."""
         for ln, a, b, sock, out in self.link_items:
@@ -1045,6 +1131,8 @@ class GraphView(QGraphicsView):
     def _route_temp(self, pos):
         ln, src, _old, out = self.rubber
         hit = self.snap_to(pos, "in", src)
+        c = self.colour_up(src, out)
+        ln.style(c, self.items_by_id[hit[1]].in_colour(hit[2]) if hit else c)
         ln.route(self.items_by_id[src].output_pos(out), hit[3] if hit else pos)
 
     def snap_to(self, pos, kind, own):
@@ -1100,6 +1188,8 @@ class GraphView(QGraphicsView):
         if self.reverse:
             ln, nid, sock = self.reverse
             hit = self.snap_to(pos, "out", nid)
+            c = self.items_by_id[nid].in_colour(sock)
+            ln.style(self.colour_up(hit[1], hit[2]) if hit else c, c)
             ln.route(hit[3] if hit else pos, self.items_by_id[nid].input_pos(sock))
             return
         if self.cut:
@@ -1183,9 +1273,9 @@ class GraphView(QGraphicsView):
                     break
         if over != self.over:
             for ln, *_ in self.link_items:
-                ln.setPen(QPen(QColor("#d0d0d8"), LINK_W))
+                ln.normal()
             if over:
-                over[0].setPen(QPen(QColor("#ffffff"), DRAG_W))
+                over[0].light(DRAG_W)
             self.over = over
 
     def mouseReleaseEvent(self, e):
@@ -1260,7 +1350,7 @@ class GraphView(QGraphicsView):
                  if self.press_at.get(i) not in (None, (it.pos().x(), it.pos().y()))}
         self.press_at = {}
         for ln, *_ in self.link_items:
-            ln.setPen(QPen(QColor("#d0d0d8"), LINK_W))
+            ln.normal()
         if over and lone and list(moved) == [lone[0]]:
             _ln, a, b, sock, out = over
             x, y = moved[lone[0]]
@@ -1631,6 +1721,7 @@ class NodeEditor(QWidget):
             ln.route(a.output_pos(out), b.input_pos(socket))
             sc.addItem(ln)
             v.link_items.append((ln, a_id, b_id, socket, out))
+        v.colour_links()
         self.here.setText(("位置：根 › " + (nodes[self.level].get("label") or "群組")) if self.level else "")
         self.leave_btn.setVisible(bool(self.level))
         r = sc.itemsBoundingRect()

@@ -138,6 +138,26 @@ class NodeEditorTests(unittest.TestCase):
         QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(a))   # (back on its own socket: it stays)
         self.assertTrue(all(l.isVisible() for l in placed))
 
+    def test_links_are_coloured_by_their_sockets_with_a_gradient_between_types(self):
+        from kiasecut.ui import node_editor as ne
+        def build(e):
+            m = ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 150)
+            r = ng.add_node(e["graph"], {"type": ng.REROUTE}, 150, 150)
+            ng.connect(e["graph"], "input", r, "src")
+            ng.connect(e["graph"], r, m, "b")
+        ed = self.make(build)
+        v = ed.view
+        r = next(i for i in v.items_by_id.values() if isinstance(i, ne.RerouteItem))
+        self.assertEqual(r.colour, ne.SOCKET_COLORS["image"])                    # (a reroute takes what feeds it)
+        cols = {(a, b): ln.cols for ln, a, b, sock, out in v.link_items}
+        self.assertEqual(cols[("input", r.nid)], (ne.SOCKET_COLORS["image"],) * 2)
+        self.assertEqual(cols[(r.nid, "math1")], (ne.SOCKET_COLORS["image"], ne.SOCKET_COLORS["float"]))   # (a picture into a number: from one to the other)
+        ln = next(ln for ln, a, b, *_ in v.link_items if b == "math1")
+        brush = ln.pen().brush()
+        self.assertEqual(brush.style(), Qt.LinearGradientPattern)
+        self.assertEqual(brush.gradient().stops()[0][1].name(), ne.SOCKET_COLORS["image"])
+        self.assertEqual(brush.gradient().stops()[-1][1].name(), ne.SOCKET_COLORS["float"])
+
     def test_picking_up_a_link_and_dropping_it_nowhere_unlinks(self):
         ed = self.make()
         got = []

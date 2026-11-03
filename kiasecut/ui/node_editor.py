@@ -806,7 +806,7 @@ class GraphView(QGraphicsView):
                     ln.route(pos, self.items_by_id[nid].input_pos(sock))
                     return
             self.press_at = {i: (it.pos().x(), it.pos().y()) for i, it in self.items_by_id.items()}
-            self.grabbed = next(((i, it) for i, it in self.items_by_id.items() if it.sceneBoundingRect().contains(pos)), None)
+            self.grabbed = next((i for i, it in self.items_by_id.items() if it.sceneBoundingRect().contains(pos)), None)
         elif e.button() == Qt.RightButton:
             if e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier):
                 # Ctrl + right button: drag across links to cut them; Shift + right button: to put a bend (繞線) in each
@@ -866,8 +866,9 @@ class GraphView(QGraphicsView):
         snap button decides, Ctrl held does the opposite)."""
         if self.grabbed is None or self.snap == ctrl:
             return
-        nid, it = self.grabbed
-        if not it.isSelected() or self.press_at.get(nid) in (None, (it.pos().x(), it.pos().y())):     # (not dragged: a click on a field)
+        nid = self.grabbed
+        it = self.items_by_id.get(nid)                    # (the id, not the item: a rebuilt scene deletes the items under a held reference)
+        if it is None or not it.isSelected() or self.press_at.get(nid) in (None, (it.pos().x(), it.pos().y())):     # (not dragged: a click on a field)
             return
         want = QPointF(round(it.pos().x() / GRID) * GRID, round(it.pos().y() / GRID) * GRID)
         d = want - it.pos()
@@ -983,6 +984,7 @@ class GraphView(QGraphicsView):
             if cut:
                 self.editor.disconnectManyRequested.emit(self.editor.eid, cut)
             return
+        self.grabbed = None
         over, self.over = self.over, None
         lone = self._lone_node() if over else None
         super().mouseReleaseEvent(e)
@@ -1301,6 +1303,7 @@ class NodeEditor(QWidget):
         sc.clear()
         self.edit_proxy = None
         v.items_by_id, v.link_items = {}, []
+        v.over = v.grabbed = None                          # (they pointed at items the clear just deleted)
         nodes = self.graph["nodes"]
         if self.level and (nodes.get(self.level) or {}).get("type") != ng.GROUP:
             self.level = ""

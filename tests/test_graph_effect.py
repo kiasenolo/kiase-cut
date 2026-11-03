@@ -307,3 +307,27 @@ class GraphRenderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GraphMediaDropTests(unittest.TestCase):
+    def test_files_dropped_in_become_source_nodes(self):
+        import types
+        from PIL import Image
+        from kiasecut.ui.main_window import MainWindow
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        png = os.path.join(d, "a.png")
+        Image.new("RGB", (40, 20), (255, 0, 0)).save(png)
+        p = proj()
+        e = edit.add_effect(p, "c1", fx.GRAPH)
+        host = types.SimpleNamespace(proj=p, node_clip=lambda: "c1", nodes=types.SimpleNamespace(select=lambda n: None),
+                                     statusBar=lambda: types.SimpleNamespace(showMessage=lambda *a: None),
+                                     apply=lambda _n, fn, *a: fn(p, *a) or True)
+        host._node_media = MainWindow._node_media
+        MainWindow.on_node_media(host, e["id"], [], [png], 10.0, 20.0)
+        srcs = [(n, v) for n, v in e["graph"]["nodes"].items() if v["type"] == "source"]
+        self.assertEqual(len(srcs), 1)
+        nid, node = srcs[0]
+        self.assertEqual((node["x"], node["y"]), (10.0, 20.0))
+        self.assertEqual(e["sources"][nid]["image"], png)
+        self.assertEqual(e["sources"][nid]["img_w"], 40)

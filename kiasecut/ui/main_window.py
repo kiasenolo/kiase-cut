@@ -456,6 +456,7 @@ class MainWindow(QMainWindow):
         nd.addLinkedRequested.connect(self.on_node_add_linked)
         nd.duplicateRequested.connect(self.on_node_duplicate)
         nd.rerouteRequested.connect(self.on_node_reroute)
+        nd.mediaDropped.connect(self.on_node_media)
         nd.dissolveRequested.connect(self.on_node_dissolve)
         nd.disconnectRequested.connect(self.on_node_disconnect)
         nd.moveRequested.connect(self.on_node_move)
@@ -5397,6 +5398,60 @@ class MainWindow(QMainWindow):
                 edit.connect_graph(lvl, cid, eid, src, nid, ins[0], out)
         if self.apply("新增節點", do) is not None and made:
             self.nodes.select(made[0])
+
+    def on_node_media(self, eid, ids, paths, x, y):
+        """Pictures, videos and compounds dragged into the node editor: a source node each, showing it."""
+        cid = self.node_clip()
+        if not cid:
+            return
+        found = []                                         # [(kind, what set_effect_source_media takes)]
+        for ident in ids:
+            if ident.startswith("cmp:"):
+                comp = self.proj.get("compounds", {}).get(ident[4:])
+                if comp is not None:
+                    found.append(("compound", {"compound": (ident[4:], comp)}))
+                continue
+            try:
+                if ident.startswith("mu"):
+                    key, it = self.ulib.find(ident)
+                    if it is None or key not in ("videos", "images"):
+                        continue
+                    path = it["path"]
+                    kind = "image" if key == "images" else "video"
+                    info = library.probe(path)
+                else:
+                    it = library.item(self.proj, ident)
+                    path, kind = it.get("path"), it.get("kind")
+                    info = it if it.get("width") else library.probe(path)
+            except Exception:
+                continue
+            if kind in ("image", "video") and path:
+                found.append((kind, self._node_media(kind, path, info)))
+        for path in paths:
+            try:
+                info = library.probe(path.replace("\\", "/"))
+            except Exception:
+                continue
+            if info.get("kind") in ("image", "video") and info.get("width"):
+                found.append((info["kind"], self._node_media(info["kind"], path.replace("\\", "/"), info)))
+        if not found:
+            self.statusBar().showMessage("節點編輯器只收圖片、影片和複合片段", 4000)
+            return
+        made = []
+
+        def do(lvl):
+            for i, (kind, media) in enumerate(found):
+                nid = edit.add_graph_node(lvl, cid, eid, {"type": nodegraph.SOURCE, "kind": kind}, x + 40 * i, y + 40 * i)
+                edit.set_effect_source_media(lvl, cid, eid, nid, **media)
+                made.append(nid)
+        if self.apply("拖入節點", do) is not None and made:
+            self.nodes.select(made[-1])
+
+    @staticmethod
+    def _node_media(kind, path, info):
+        if kind == "image":
+            return {"image": (path, info.get("width"), info.get("height"))}
+        return {"video": (path, info.get("width"), info.get("height"), info.get("duration_us"))}
 
     def on_node_reroute(self, eid, spots):
         cid = self.node_clip()

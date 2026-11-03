@@ -6,7 +6,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QDropEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -235,6 +236,22 @@ class NodeEditorTests(unittest.TestCase):
         QTest.mouseMove(v.viewport(), p1)
         QTest.mouseRelease(v.viewport(), Qt.RightButton, Qt.ControlModifier, p1)
         self.assertEqual(got, [("e1", [("output", "src")])])
+
+    def test_media_dragged_in_is_requested_as_source_nodes(self):
+        from kiasecut.ui.timeline import MEDIA_MIME
+        ed = self.make()
+        got = []
+        ed.mediaDropped.connect(lambda *a: got.append(a))
+        v = ed.view
+        md = QMimeData()
+        md.setData(MEDIA_MIME, b"m1,cmp:k1")
+        at = QPointF(v.mapFromScene(QPointF(50, 60)))
+        v.dropEvent(QDropEvent(at, Qt.CopyAction, md, Qt.LeftButton, Qt.NoModifier))
+        self.assertEqual(len(got), 1)
+        eid, ids, paths, x, y = got[0]
+        self.assertEqual((eid, ids, paths), ("e1", ["m1", "cmp:k1"], []))
+        self.assertAlmostEqual(x, 50, delta=2)
+        self.assertAlmostEqual(y, 60, delta=2)
 
     def test_shift_right_drag_puts_bends_in_links(self):
         ed = self.make()

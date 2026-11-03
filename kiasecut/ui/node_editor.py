@@ -412,6 +412,43 @@ class GraphView(QGraphicsView):
         self.cut = None                          # a Ctrl + right button cut: (the line, its points)
         self.over = None                         # the link a dragged node is over (it will go through the node)
         self.press_at = {}
+        self.setAcceptDrops(True)
+
+    # -- media dragged in (the library's pictures / videos / compounds, or files): source nodes
+    @staticmethod
+    def _takes(md):
+        from .timeline import MEDIA_MIME
+        return md.hasFormat(MEDIA_MIME) or md.hasUrls()
+
+    def dragEnterEvent(self, e):
+        if self.editor.eid and self._takes(e.mimeData()):
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+        else:
+            super().dragEnterEvent(e)
+
+    def dragMoveEvent(self, e):
+        if self.editor.eid and self._takes(e.mimeData()):
+            e.setDropAction(Qt.CopyAction)
+            e.accept()
+        else:
+            super().dragMoveEvent(e)
+
+    def dropEvent(self, e):
+        from .timeline import MEDIA_MIME
+        md = e.mimeData()
+        if not (self.editor.eid and self._takes(md)):
+            return super().dropEvent(e)
+        at = self.mapToScene(e.position().toPoint())
+        if md.hasFormat(MEDIA_MIME):
+            ids = [i for i in bytes(md.data(MEDIA_MIME)).decode("utf-8").split(",") if i]
+            paths = []
+        else:
+            ids, paths = [], [u.toLocalFile() for u in md.urls() if u.isLocalFile()]
+        e.setDropAction(Qt.CopyAction)
+        e.accept()
+        if ids or paths:
+            self.editor.mediaDropped.emit(self.editor.eid, ids, paths, at.x(), at.y())
 
     # -- finding sockets -----------------------------------------------------------------------------
     def socket_at(self, pos):
@@ -643,6 +680,7 @@ class NodeEditor(QWidget):
     insertRequested = Signal(str, str, float, float, str, str, str, str)   # effect id, node, x, y, then the link it was dropped on
     addLinkedRequested = Signal(str, dict, float, float, str, str)         # effect id, node, x, y, node and output to link into it
     rerouteRequested = Signal(str, list)                    # effect id, [(x, y, from, to, socket, output)]: bends to put in links
+    mediaDropped = Signal(str, list, list, float, float)    # effect id, library item ids, file paths, x, y: dragged in as source nodes
     duplicateRequested = Signal(str, list)                  # effect id, node ids
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
     removeExposedRequested = Signal(str, str)               # effect id, parameter name

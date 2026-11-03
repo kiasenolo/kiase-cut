@@ -19,7 +19,7 @@ pictures too. Each filter node is drawn once (Engine.run_tex) into a texture of 
 """
 import copy
 
-from . import curves, fx
+from . import assets, curves, fx
 
 US = 1_000_000
 INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output", "source", "filter", "params", "reroute", "frame", "group"
@@ -78,7 +78,79 @@ def default_params(graph):
     for nid, n in graph["nodes"].items():
         if n["type"] == FILTER:
             out.update({param_key(nid, k): v for k, v in fx.default_params(fx.get(n["ref"])).items()})
+        elif is_asset(n):
+            out.update({param_key(nid, k): v for k, v in fx.default_params(asset_def(n)).items()})
     return out
+
+
+# -- shape nodes made from the built-in shapes (assets.py): node["asset"] = {"key": preset, "family": ...} ----------
+ASSET_SKIP = ("w", "h", "stops", "fill_stops", "stroke_stops", "fill_image", "stroke_image")    # (size is the node's frame)
+_asset_defs = {}
+
+
+def is_asset(node):
+    return node.get("type") == SOURCE and node.get("kind") == "shape" and bool((node.get("asset") or {}).get("key"))
+
+
+def asset_groups(family):
+    """([own fields], [fill fields], [stroke fields]) a shape of this family can be edited by."""
+    fields = [f for f in assets.fields_of(family) if f not in ASSET_SKIP]
+    fill = [f for f in fields if f.startswith("fill_")]
+    stroke = [f for f in fields if f.startswith("stroke_") and f != "stroke_on"] + [f for f in ("stroke", "join") if f in fields]
+    stroke = [f for f in fields if f in stroke]
+    main = [f for f in fields if f not in fill and f not in stroke]
+    return main, fill, stroke
+
+
+def asset_def(node):
+    """FilterDef standing for shape node `node`: the shape's fields as parameters (the numbers, colours, choices
+    and switches; the size is the node's frame, set where it sits)."""
+    a = node["asset"]
+    key = (a["key"], a.get("family"))
+    hit = _asset_defs.get(key)
+    if hit is not None:
+        return hit
+    preset = assets.get(a["key"])
+    base = assets.make(preset, "#ffffff", "#000000", 1920, 1080) if preset else {}
+    family = base.get("family") or a.get("family") or "rect"
+    main, fill, stroke = asset_groups(family)
+    params, panels = [], []
+    for names, panel in ((main, None), (fill, "填充"), (stroke, "外框")):
+        if panel and names:
+            panels.append((panel, True))
+        for f in names:
+            info = assets.FIELD_INFO[f]
+            default = base.get(f, assets._DEFAULTS.get(f))
+            if info[1] == "number":
+                q = fx.Param(f, "float", float(default if default is not None else 0.0), info[2], info[3], info[0])
+            elif info[1] == "color":
+                q = fx.Param(f, "color", list(assets.to_rgba(default)), label=info[0])
+            elif info[1] == "toggle":
+                q = fx.Param(f, "bool", bool(default), label=info[0])
+            elif info[1] == "choice":
+                items = [n for n, _ in info[2]]
+                label = next((n for n, v in info[2] if v == default), items[0])
+                q = fx.Param(f, "menu", label, label=info[0], items=items)
+            else:
+                continue
+            q.panel = panel
+            params.append(q)
+    out = fx.FilterDef("asset:" + a["key"], preset.name if preset else "形狀", "", params, "形狀", "", panels=panels)
+    _asset_defs[key] = out
+    return out
+
+
+def asset_of(node, nid, params, t):
+    """The built-in shape's parameters (assets.at) of shape node nid at clip time t, from the effect's params."""
+    a = node["asset"]
+    d = asset_def(node)
+    out = {"key": a["key"], "family": a.get("family") or (assets.get(a["key"]) or assets.ASSETS[0]).family}
+    for q in d.params:
+        v = curves.value(params.get(param_key(nid, q.name)) if param_key(nid, q.name) in params else q.default, t)
+        if q.type == "menu":
+            v = next((val for n, val in assets.FIELD_INFO[q.name][2] if n == v), v)
+        out[q.name] = v
+    return assets.at(out, t)
 
 
 def remove_node(graph, nid):
@@ -180,6 +252,8 @@ def title(node):
         return fx.get(node["ref"]).name
     if node["type"] == GROUP:
         return node.get("label") or "群組"
+    if is_asset(node):
+        return asset_def(node).name
     return {"groupin": "群組輸入", "groupout": "群組輸出", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
@@ -394,6 +468,13 @@ def ordered(graph):
 _defs = {}
 
 
+def node_def(node):
+    """FilterDef whose parameters node has: a filter's, or a shape made from a built-in one; else None."""
+    if node["type"] == FILTER:
+        return fx.get(node["ref"])
+    return asset_def(node) if is_asset(node) else None
+
+
 def virtual_def(e):
     """A FilterDef whose parameters are those of every filter node of effect e's graph, named
     "<node>.<parameter>" and in a panel (@panel) of the node each (so the effects panel, keyframes and the
@@ -402,8 +483,8 @@ def virtual_def(e):
     rows = []
     for nid in ordered(g):
         n = g["nodes"][nid]
-        if n["type"] == FILTER:
-            d = fx.get(n["ref"])
+        d = node_def(n)
+        if d is not None:
             rows.append((nid, n.get("mute"), d))
     bound = binds(g)
     own = exposed(g)

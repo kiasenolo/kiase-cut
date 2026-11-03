@@ -5419,6 +5419,11 @@ class MainWindow(QMainWindow):
             return
         found = []                                         # [(kind, what set_effect_source_media takes)]
         for ident in ids:
+            if ident.startswith(assets.PREFIX):                # a built-in shape (內建素材): a shape node with all its parameters
+                parsed = assets.parse(ident)
+                if parsed and parsed[0].cat == "shape":
+                    found.append(("asset", {"key": parsed[0].key, "colors": parsed[1:3]}))
+                continue
             if ident.startswith("cmp:"):
                 comp = self.proj.get("compounds", {}).get(ident[4:])
                 if comp is not None:
@@ -5448,13 +5453,17 @@ class MainWindow(QMainWindow):
             if info.get("kind") in ("image", "video") and info.get("width"):
                 found.append((info["kind"], self._node_media(info["kind"], path.replace("\\", "/"), info)))
         if not found:
-            self.statusBar().showMessage("節點編輯器只收圖片、影片和複合片段", 4000)
+            self.statusBar().showMessage("節點編輯器只收圖片、影片、複合片段和內建形狀", 4000)
             return
         made = []
         level = self.nodes.level
 
         def do(lvl):
             for i, (kind, media) in enumerate(found):
+                if kind == "asset":
+                    nid = edit.add_graph_node(lvl, cid, eid, {"type": nodegraph.SOURCE, "kind": "shape", "asset": media, **({"group": level} if level else {})}, x + 40 * i, y + 40 * i)
+                    made.append(nid)
+                    continue
                 nid = edit.add_graph_node(lvl, cid, eid, {"type": nodegraph.SOURCE, "kind": kind, **({"group": level} if level else {})}, x + 40 * i, y + 40 * i)
                 edit.set_effect_source_media(lvl, cid, eid, nid, **media)
                 made.append(nid)

@@ -394,8 +394,9 @@ class EffectsPanel(QWidget):
             for nid in nodegraph.ordered(e["graph"]):
                 node = e["graph"]["nodes"][nid]
                 if node["type"] == nodegraph.SOURCE and node.get("kind") and nid in (e.get("sources") or {}):
-                    sec, sl = self._panel(e["id"], f"{nodegraph.title(node)}（{nid}）", False)
-                    sl.addLayout(self._source_row(e["id"], nid, node["kind"]))
+                    asset = nodegraph.is_asset(node)         # (a built-in shape: its fields are in a panel of their own)
+                    sec, sl = self._panel(e["id"], f"{nodegraph.title(node)}的位置（{nid}）" if asset else f"{nodegraph.title(node)}（{nid}）", False)
+                    sl.addLayout(self._source_row(e["id"], nid, node["kind"], asset))
                     lay.addWidget(sec)
         # where the effect works
         row = QHBoxLayout()
@@ -607,13 +608,17 @@ class EffectsPanel(QWidget):
             self.media = media
             self.shape = None                       # (the pickers are built with the form)
 
-    def _source_row(self, eid, name, kind):
+    def _source_row(self, eid, name, kind, asset=False):
         """A colour's or a number's (使用遮罩) source: which picture / video / compound, 編輯位置
         (one clip) and for a video or a compound 編輯區域."""
         row = QHBoxLayout()
         lab = QLabel("　" + dict((k, n) for n, k in SOURCE_NAMES + (("形狀", "shape"),))[kind])
         lab.setMinimumWidth(70)
         row.addWidget(lab)
+        if kind == "shape" and asset:               # (a built-in shape: only where it sits; the rest is its fields)
+            row.addStretch(1)
+            self._edit_buttons(row, eid, name, kind)
+            return row
         if kind == "shape":                         # (drawn, no file: which shape, its colour, then where it sits)
             shape = ComboBox()
             for sid, label in nodegraph.SHAPES:

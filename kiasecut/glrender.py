@@ -876,7 +876,7 @@ class GLRenderer(render.Renderer):
         def picture(nid):
             src = sources.get(nid)
             if src and src.get("kind") == "shape":
-                tex, _straight = gl.picture(nodegraph.shape_image(src))
+                tex, _straight = gl.picture(self.shape_source(e, nid, src, t, disp) or nodegraph.shape_image(src))
                 return tex, render.source_map(src, t, disp, world, cur.w, cur.h), None
             pic = self.gl_matte(src, t, disp, world, fps) if src else None
             if pic is None:

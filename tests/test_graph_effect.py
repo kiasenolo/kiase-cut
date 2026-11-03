@@ -81,6 +81,36 @@ class GraphEditTests(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertIn("math1", got[0]["graph"]["nodes"])
 
+    def test_built_in_shape_node_edits(self):
+        nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.arrow"}})
+        self.assertTrue(ng.is_asset(self.e["graph"]["nodes"][nid]))
+        self.assertIn(nid + ".stroke", self.e["params"])
+        src = self.e["sources"][nid]
+        self.assertAlmostEqual(src["h"] / src["w"], 300 / 480, 3)               # the preset's proportions
+        with self.assertRaises(edit.EditError):
+            edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "shape", "asset": {"key": "solid.0"}})
+        edit.remove_graph_node(self.p, "c1", self.e["id"], nid)
+        self.assertFalse([k for k in self.e["params"] if k.startswith(nid + ".")])
+
+    def test_dropped_built_in_shape(self):
+        """A shape dragged from the 內建素材 tab into the node editor becomes a shape node with its colours."""
+        import types
+        from kiasecut import assets
+        from kiasecut.ui.main_window import MainWindow
+        p, eid = self.p, self.e["id"]
+        picked = []
+        h = types.SimpleNamespace(node_clip=lambda: "c1", apply=lambda _n, fn: fn(p) or True, proj=p,
+                                  nodes=types.SimpleNamespace(level=None, select=picked.append),
+                                  statusBar=lambda: types.SimpleNamespace(showMessage=lambda *a: None))
+        MainWindow.on_node_media(h, eid, [assets.ident("shape.star", "#ff8800", "#00ff00"), assets.ident("solid.0", "#fff", "#000")],
+                                 [], 10, 20)
+        self.assertEqual(len(picked), 1)                                          # (a solid is no shape)
+        nid = picked[0]
+        self.assertEqual(self.e["graph"]["nodes"][nid]["asset"]["key"], "shape.star")
+        self.assertEqual(self.e["params"][nid + ".color"], list(assets.to_rgba("#ff8800")))
+        self.assertEqual(self.e["params"][nid + ".stroke_color"], list(assets.to_rgba("#00ff00")))
+        self.assertEqual(self.e["params"][nid + ".points"], 5.0)
+
     def test_copied_effect_keeps_its_graph(self):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
         copy = edit.put_effect(self.p, "c1", self.e)
@@ -334,6 +364,29 @@ class GraphRenderTests(unittest.TestCase):
         self.check(self.view(build("c1")), WHITE, WHITE)       # the red channel of a red clip
         self.check(self.view(build("c2")), BLACK, BLACK)       # its green
         self.check(self.view(build("a")), WHITE, WHITE)        # its alpha
+
+    def test_built_in_shape_node_draws_with_its_parameters(self):
+        def f(e):
+            e["params"].update(ng.default_params(e["graph"]))
+        proj_ = proj()
+        eff = edit.add_effect(proj_, "c1", fx.GRAPH)
+        nid = edit.add_graph_node(proj_, "c1", eff["id"], {"type": "source", "kind": "shape",
+                                                           "asset": {"key": "shape.rect", "colors": ("#0000ff", "#000000")}}, 0, 0)
+        edit.connect_graph(proj_, "c1", eff["id"], nid, "output", "src")
+        self.assertEqual(eff["params"][nid + ".color"], [0.0, 0.0, 1.0, 1.0])
+        self.assertIn(nid + ".radius", [q.name for q in fx.def_of(eff).params])
+        eff["sources"][nid].update(w=0.5, h=1.0)
+        view = self.s.view()
+        view["tracks"][0]["clips"][0]["effects"] = [eff]
+        self.check(view, BLACK, BLACK)                       # (both test pixels are outside the half-width frame)
+        eff["sources"][nid].update(w=1.0, h=1.0)
+        self.check(view, BLUE, BLUE)
+        edit.set_param(proj_, "c1", "fx:" + eff["id"], nid + ".color", [1.0, 0.0, 0.0, 1.0])
+        self.check(view, RED, RED)
+        edit.set_param(proj_, "c1", "fx:" + eff["id"], nid + ".fill_type", "漸變")
+        for r in self.renderers:
+            r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
 
     def test_viewer_shows_a_node_in_the_editor_only(self):
         def f(e):

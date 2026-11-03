@@ -157,6 +157,19 @@ class Renderer:
             self.images[key] = im
         return im
 
+    def shape_source(self, e, nid, src, t, disp):
+        """The picture of a node effect's shape node made from a built-in shape (assets.py), drawn at the size of its
+        frame on the clip (so corners and outlines keep their thickness), or None for the plain shapes."""
+        node = e["graph"]["nodes"].get(nid)
+        if node is None or not nodegraph.is_asset(node):
+            return None
+        q = nodegraph.asset_of(node, nid, e["params"], t)
+        v = lambda k: curves.value(src.get(k, 1.0), t)
+        q["w"], q["h"] = max(round(v("w") * disp[0], 2), 1), max(round(v("h") * disp[1], 2), 1)
+        if assets.overflow(q) > 0:                       # (the picture is the frame: an outline stays inside it)
+            q["stroke_align"] = "inside"
+        return self.asset(q, q["w"], q["h"])
+
     def image(self, path, w, h):
         """The image at the smallest mip level at least w x h; the painter scales it the rest
         of the way (less than 2x, so bilinear stays clean). Decoding and smooth scaling happen
@@ -802,7 +815,8 @@ class Renderer:
             def picture(nid):
                 src = sources.get(nid)
                 if src and src.get("kind") == "shape":
-                    return upload(image_to_array(nodegraph.shape_image(src))), source_map(src, t, disp, wt, w, h), None
+                    pic = self.shape_source(e, nid, src, t, disp) or nodegraph.shape_image(src)
+                    return upload(image_to_array(pic)), source_map(src, t, disp, wt, w, h), None
                 comp = self.matte_compound(src, t) if src else None
                 if comp is None:
                     return None

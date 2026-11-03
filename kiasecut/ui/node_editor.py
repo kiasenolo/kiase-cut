@@ -20,7 +20,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPainterPathStr
 from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
-from .. import curves, fx, nodegraph as ng
+from .. import assets, curves, fx, nodegraph as ng
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 SOCKET_R = 5.5
@@ -120,19 +120,21 @@ class NodeItem(QGraphicsItem):
                 add("out", label, p=name)
         if node["type"] == ng.OUTPUT:
             add("image", "結果", "src")
-        elif node["type"] == ng.FILTER:
-            d = fx.get(node["ref"])
-            add("image", d.src_label, "src")
-            for name, label in d.inputs:
-                add("image", label, name)
+        elif node["type"] == ng.FILTER or ng.is_asset(node):         # (a built-in shape: its fields, no sockets)
+            d = ng.node_def(node)
+            socket = lambda p: ng.PARAM + p.name if node["type"] == ng.FILTER and ng.has_socket(p) else None
+            if node["type"] == ng.FILTER:
+                add("image", d.src_label, "src")
+                for name, label in d.inputs:
+                    add("image", label, name)
             for p in (q for q in d.params if q.panel is None):
-                add("param", p.label, ng.PARAM + p.name if ng.has_socket(p) else None, p)
+                add("param", p.label, socket(p), p)
             for name, closed in d.panels:
                 opened = self.editor.panel_open.get((self.nid, name), not closed)
                 add("panel", name, panel=opened)
                 if opened:
                     for p in (q for q in d.params if q.panel == name):
-                        add("param", p.label, ng.PARAM + p.name if ng.has_socket(p) else None, p)
+                        add("param", p.label, socket(p), p)
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
             add("shapecolor", "顏色")
@@ -1102,9 +1104,9 @@ class NodeEditor(QWidget):
     def node_values(self, nid):
         node = self.graph["nodes"].get(nid) or {}
         src = self.sources.get(nid) or {}
-        if node.get("type") != ng.FILTER:
+        if node.get("type") != ng.FILTER and not ng.is_asset(node):
             return self.Values({}, None, src.get("shape", "rectangle"), src.get("color") or [1.0, 1.0, 1.0, 1.0])
-        d = fx.get(node["ref"])
+        d = ng.node_def(node)
         vals = {p.name: curves.value(self.params.get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params}
         return self.Values(vals, d, "", [1.0, 1.0, 1.0, 1.0])
 
@@ -1544,10 +1546,11 @@ class NodeEditor(QWidget):
             entries.append(("輸入", text, node))
         shapes = menu.addMenu("形狀")
         groups.append(shapes.menuAction())
-        for sid, name in ng.SHAPES:
-            node = {"type": ng.SOURCE, "kind": "shape", "shape": sid}
-            shapes.addAction(name, lambda _=False, n=node: ask(n))
-            entries.append(("形狀", name, node))
+        for a in assets.ASSETS:                           # the built-in shapes, with all their parameters
+            if a.cat == "shape":
+                node = {"type": ng.SOURCE, "kind": "shape", "asset": {"key": a.key}}
+                shapes.addAction(a.name, lambda _=False, n=node: ask(n))
+                entries.append(("形狀", a.name, node))
         tools = {}                                        # the tool nodes (filters/nodes), by Blender-like category
         for ref in node_refs():
             d = fx.get(ref)

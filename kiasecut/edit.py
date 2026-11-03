@@ -2139,7 +2139,14 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         if node.get("kind") not in nodegraph.SOURCE_KINDS:
             raise EditError("來源節點要是圖片、影片、複合片段、軌道或形狀")
         shape = node.get("shape")
-        node = {"type": nodegraph.SOURCE, "kind": node["kind"]}
+        asset = node.get("asset")                        # {"key": a shape preset of assets.py, "colors": (c1, c2)}
+        colors = (asset or {}).get("colors")
+        if asset:
+            preset = assets.get(asset.get("key", ""))
+            if node["kind"] != "shape" or preset is None or preset.cat != "shape":
+                raise EditError("這不是內建形狀")
+            asset = {"key": preset.key, "family": preset.family}
+        node = {"type": nodegraph.SOURCE, "kind": node["kind"], **({"asset": asset} if asset else {})}
     elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS, nodegraph.REROUTE):
         node = {"type": node["type"]}
     elif node["type"] == nodegraph.FRAME:
@@ -2159,6 +2166,17 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
         if node["kind"] == "shape" and shape:
             set_effect_shape(proj, clip_id, effect_id, nid, shape)
+        if asset:                                        # (its fields: parameters of the effect; its frame keeps the preset's proportions)
+            d = nodegraph.asset_def(node)
+            for q in d.params:
+                e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
+            c1, c2 = colors or ("#ffffff", "#000000")
+            e["params"][nodegraph.param_key(nid, "color")] = assets.to_rgba(c1)
+            if any(q.name == "stroke_color" for q in d.params):
+                e["params"][nodegraph.param_key(nid, "stroke_color")] = assets.to_rgba(c2, (0.0, 0.0, 0.0, 1.0))
+            made = assets.make(assets.get(asset["key"]), "#ffffff", "#000000", 1920, 1080)
+            src = e["sources"][nid]
+            src["h"] = round(min(1.0, src["w"] * made["h"] / max(made["w"], 1)), 4)
     return nid
 
 

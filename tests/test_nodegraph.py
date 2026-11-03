@@ -406,6 +406,38 @@ class RunTest(unittest.TestCase):
         out, _, _ = self.run_graph(g, self.solid([255, 0, 0, 255]), params={n + ".op": "外積", n + ".vector_b": [0.0, 1.0, 0.0]})
         self.close(out, (0, 0, 255, 255))                        # X cross Y = Z
 
+    def test_xyz_nodes_and_vector_rotate(self):
+        """Separate / Combine XYZ and Vector Rotate (the formulas checked against Blender 5.2: Rodrigues, Euler XYZ = Rz Ry Rx, invert = the inverse)."""
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/separate_xyz"})
+        ng.connect(g, "input", n, "src")
+        ng.connect(g, n, "output", "src", "y")
+        out, errors, _ = self.run_graph(g, self.solid([51, 102, 0, 255]))
+        self.assertEqual(errors, [])
+        self.close(out, (102, 102, 102, 255))
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/combine_xyz"})
+        ng.connect(g, n, "output", "src")
+        out, errors, _ = self.run_graph(g, self.solid([0, 0, 0, 0]), params={n + ".x": 0.2, n + ".y": 0.4, n + ".z": 0.6})
+        self.assertEqual(errors, [])
+        self.close(out, (51, 102, 153, 255))
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/vector_rotate"})
+        ng.connect(g, "input", n, "src")
+        ng.connect(g, n, "output", "src")
+        red = self.solid([255, 0, 0, 255])
+
+        def run(**p):
+            out, errors, _ = self.run_graph(g, red, params={n + "." + k: v for k, v in p.items()})
+            self.assertEqual(errors, [])
+            return out
+        self.close(run(kind="Z 軸", angle=90.0), (0, 255, 0, 255))                 # X turned 90 degrees about Z is Y
+        self.close(run(kind="Z 軸", angle=90.0, invert=True), (0, 0, 0, 255))      # ... and the other way is -Y (clamped)
+        self.close(run(kind="Z 軸", angle=90.0, vec_center=(0.5, 0.5, 0.5)), (255, 255, 0, 255))
+        self.close(run(kind="軸與角度", vec_axis=(0.0, 0.0, 5.0), angle=90.0), (0, 255, 0, 255))
+        self.close(run(kind="歐拉 XYZ", vec_rotation=(0.0, 0.0, 90.0)), (0, 255, 0, 255))
+        self.close(run(kind="歐拉 XYZ", vec_rotation=(0.0, 0.0, 90.0), invert=True), (0, 0, 0, 255))
+
     def test_mix_blend_modes(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="s")

@@ -12,7 +12,7 @@
 // and hue interpolations (as Blender's, HSV / HSL always blend linearly; past the last stop the splines
 // hold its colour); the gradient itself is gradient_eval() of the filter engine. The picture,
 // made a float as Blender does (its brightness, Rec. 709 weights), is the Factor at each pixel; the ramp's colour and alpha replace the
-// pixel; where the clip is transparent it stays so, and the ramp's alpha is multiplied in.
+// pixel (Blender's input is a float: the picture's own alpha is not carried over).
 // Blender: https://github.com/blender/blender
 // SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -21,9 +21,10 @@ const int INTERP[5] = int[5](2, 0, 4, 1, 3);
 
 vec4 effect(vec2 uv) {
     vec4 c = src(uv);
-    vec3 s = c.a > 0.0 ? c.rgb / c.a : vec3(0.0);
-    float fac = dot(s, vec3(0.2126, 0.7152, 0.0722));          // (a float input: any picture goes in as its brightness)
+    // (a float input: any picture goes in as its brightness over black - what is clear counts as 0, so a light
+    // picture with clear parts, like Glare's 光, is its light - and what comes out is the ramp's alone, opaque
+    // where the ramp is)
+    float fac = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
     vec4 r = gradient_eval(ramp_p, ramp_c, ramp_n, fac, INTERP[interp], mode, hue);
-    float a = r.a * c.a;
-    return vec4(r.rgb * a, a);
+    return vec4(r.rgb * r.a, r.a);
 }

@@ -261,6 +261,27 @@ class NodeEditorTests(unittest.TestCase):
         self.assertAlmostEqual(x, 50, delta=2)
         self.assertAlmostEqual(y, 60, delta=2)
 
+    def test_add_menu_has_tool_nodes_apart_from_the_effects(self):
+        ed = self.make()
+        menus = []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        ed.add_menu(QPointF(0, 0), QPoint(0, 0))
+
+        def tree(menu):
+            return {a.text(): (tree(a.menu()) if a.menu() else None) for a in menu.actions() if a.text()}
+        top = tree(menus[0])
+        for cat in ("輸入", "形狀", "色彩", "向量", "轉換器", "變換", "內建／效果"):
+            self.assertIn(cat, top)
+        self.assertIn("混合", top["色彩"])
+        self.assertIn("向量數學", top["向量"])
+        self.assertIn("數學", top["轉換器"])
+        self.assertIn("時間", top["輸入"])
+        self.assertNotIn("混合", top["內建／效果"])
+        self.assertTrue(any("模糊" in k for sub in top["內建／效果"].values() for k in sub))
+        self.assertNotIn("圖片來源", {k for sub in top.values() if sub for k in sub})
+        menus[0].search.setText("向量數學")
+        self.assertTrue(any("向量" in a.text() for a in menus[0].found))
+
     def test_add_menu_searches(self):
         ed = self.make()
         asked = []

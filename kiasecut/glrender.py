@@ -885,7 +885,7 @@ class GLRenderer(render.Renderer):
             return pic[0].tex, render.source_map(src, t, disp, world, cur.w, cur.h), give
         errors = []
         try:
-            tex, owner = nodegraph.evaluate(gl.fx, e["graph"], e["params"], cur.tex, cur.w, cur.h, gl.layer, gl.release,
+            tex, owner = nodegraph.evaluate(gl.fx, e["graph"], e["params"], cur.tex, cur.w, cur.h, lambda w, h: gl.layer(w, h, dtype="f2"), gl.release,
                                             t=t, duration=duration, fps=fps, unit=ppu, picture=picture, errors=errors,
                                             viewer=self.editing, tap=self.thumb_tap(e))
         except nodegraph.GraphError as exc:

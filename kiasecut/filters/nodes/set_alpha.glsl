@@ -1,5 +1,5 @@
 // @filter 設定透明度
-// @category 節點
+// @category 色彩
 // @description 節點用：用另一張圖的明度當圖像的透明度（原本的透明度會乘上去）
 // @source 圖像
 // @input alpha_img "透明度"

@@ -1,5 +1,5 @@
 // @filter 合併通道
-// @category 節點
+// @category 轉換器
 // @description 節點用：四張圖的明度分別當紅、綠、藍、透明度（沒接透明度就是不透明）
 // @source 紅
 // @input g "綠"

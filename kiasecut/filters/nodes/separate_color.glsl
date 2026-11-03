@@ -1,5 +1,5 @@
 // @filter 分離色彩
-// @category 節點
+// @category 轉換器
 // @description 節點用：把圖像分成四張灰階圖（紅綠藍或色相／飽和度／明度，加上透明度），各有一個輸出
 // @output c1 "紅／色相"
 // @output c2 "綠／飽和度"

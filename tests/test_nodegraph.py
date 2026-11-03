@@ -53,12 +53,15 @@ class DataTest(unittest.TestCase):
         g = ng.new_graph()
         m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/mix"})
         names = [s for s, _ in ng.sockets(g["nodes"][m])]
-        self.assertEqual(names, ["src", "b", "param:mode", "param:fac"])
+        self.assertEqual(names, ["src", "b", "param:blend", "param:fac", "param:use_alpha", "param:clamp_on"])
         c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
         self.assertIn("param:value", [s for s, _ in ng.sockets(g["nodes"][c])])
 
     def test_node_filters_parse(self):
-        for name in ("picture", "mix", "math", "channel", "combine", "set_alpha", "transform"):
+        import glob
+        names = [os.path.splitext(os.path.basename(f))[0] for f in glob.glob(os.path.join(fx.PKG, "nodes", "*.glsl"))]
+        self.assertTrue({"mix", "math", "vector_math", "map_range", "alpha_over"} <= set(names))
+        for name in names:
             self.assertIsNone(fx.get("builtin:nodes/" + name).error, name)
 
 
@@ -81,7 +84,7 @@ class RunTest(unittest.TestCase):
                 return tex, ng.IDENTITY, None
             errors = []
             tex, owner = ng.evaluate(eng, g, params or {}, src, self.W, self.H, pool.alloc, pool.free, t=t, picture=picture, errors=errors)
-            out = np.frombuffer(tex.read(), np.uint8).reshape(self.H, self.W, 4).copy() if tex is not None else None
+            out = ng.read_rgba8(tex).copy() if tex is not None else None
             if owner is not None:
                 pool.free(owner)
             self.assertEqual(len(pool.spare) + 0, len(pool.spare))
@@ -126,6 +129,80 @@ class RunTest(unittest.TestCase):
         out, errors, _ = self.run_graph(g, self.solid([200, 100, 0, 255]), params={c + ".op": "相乘", c + ".value": 0.5})
         self.assertEqual(errors, [])
         self.assertTrue(abs(int(out[0, 0, 0]) - 100) <= 2 and abs(int(out[0, 0, 1]) - 50) <= 2)
+
+    def node(self, ref, **vals):
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/" + ref})
+        ng.connect(g, "input", n, "src")
+        ng.connect(g, n, "output", "src")
+        return g, n, {n + "." + k: v for k, v in vals.items()}
+
+    def close(self, out, want, tol=2):
+        self.assertTrue(all(abs(int(a) - int(b)) <= tol for a, b in zip(out[0, 0], want)), f"{tuple(out[0, 0])} != {want}")
+
+    def test_nodes_keep_values_outside_0_1_between_them(self):
+        g = ng.new_graph()
+        a = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"}, base="a")
+        b = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"}, base="b")
+        ng.connect(g, "input", a, "src")
+        ng.connect(g, a, b, "src")
+        ng.connect(g, b, "output", "src")
+        out, errors, _ = self.run_graph(g, self.solid([128, 64, 0, 255]),
+                                        params={a + ".op": "相減", a + ".value": 1.0, b + ".op": "相加", b + ".value": 1.0})
+        self.assertEqual(errors, [])
+        self.close(out, (128, 64, 0, 255))                    # 0.5 - 1 = -0.5 and back: an 8-bit step would have lost it
+
+    def test_math_operations(self):
+        for op, value, want in (("次方", 2.0, (64, 16, 0)), ("平方根", 0.0, (180, 128, 0)), ("大於", 0.3, (255, 0, 0)),
+                                ("四捨五入", 0.0, (255, 0, 0)), ("相除", 2.0, (64, 32, 0)), ("最大", 0.6, (153, 153, 153)),
+                                ("迴繞", 0.25, (0, 0, 0))):
+            g, n, p = self.node("math", op=op, value=value)
+            if op == "迴繞":
+                p[n + ".value3"] = 0.0                           # wrap(a, max = 0.25, min = 0)
+            out, errors, _ = self.run_graph(g, self.solid([128, 64, 0, 255]), params={n + "." + k.split(".")[1]: v for k, v in p.items()})
+            self.assertEqual(errors, [], op)
+            if op == "迴繞":
+                self.close(out, (0, 0, 0, 255), 4)
+                continue
+            self.close(out, want + (255,), 3)
+
+    def test_vector_math_two_outputs(self):
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/vector_math"})
+        ng.connect(g, "input", n, "src")
+        ng.connect(g, n, "output", "src", "value")
+        out, errors, _ = self.run_graph(g, self.solid([51, 51, 51, 255]), params={n + ".op": "長度"})
+        self.assertEqual(errors, [])
+        self.close(out, (88, 88, 88, 255))                       # length of (0.2, 0.2, 0.2)
+        ng.connect(g, n, "output", "src", "vector")
+        out, _, _ = self.run_graph(g, self.solid([51, 102, 0, 255]), params={n + ".op": "相加", n + ".vector_b": [0.2, 0.0, 0.5]})
+        self.close(out, (102, 102, 128, 255))
+        out, _, _ = self.run_graph(g, self.solid([255, 0, 0, 255]), params={n + ".op": "外積", n + ".vector_b": [0.0, 1.0, 0.0]})
+        self.close(out, (0, 0, 255, 255))                        # X cross Y = Z
+
+    def test_mix_blend_modes(self):
+        g = ng.new_graph()
+        s = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="s")
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/mix"})
+        ng.connect(g, "input", m, "src")
+        ng.connect(g, s, m, "b")
+        ng.connect(g, m, "output", "src")
+        b = self.solid([128, 128, 128, 255])
+        for blend, want in (("相乘", (64, 32, 0)), ("濾色", (192, 160, 128)), ("相加", (255, 192, 128)), ("差異", (0, 64, 128)),
+                            ("變暗", (128, 64, 0)), ("變亮", (128, 128, 128)), ("相減", (0, 0, 0))):
+            out, errors, _ = self.run_graph(g, self.solid([128, 64, 0, 255]), {s: b}, params={m + ".blend": blend})
+            self.assertEqual(errors, [], blend)
+            self.close(out, want + (255,), 3)
+        out, _, _ = self.run_graph(g, self.solid([128, 64, 0, 255]), {s: b}, params={m + ".blend": "相乘", m + ".fac": 0.5})
+        self.close(out, (96, 48, 0, 255), 3)                     # a * (1 - fac + fac * b)
+
+    def test_map_range_and_gamma(self):
+        g, n, p = self.node("map_range", from_max=2.0, to_max=4.0)
+        out, _, _ = self.run_graph(g, self.solid([128, 64, 0, 255]), params={n + ".to_max": 1.0, n + ".from_max": 0.5})
+        self.close(out, (255, 128, 0, 255), 2)                   # 0.5 of 0 - 0.5 -> 1, clamped
+        g, n, p = self.node("gamma")
+        out, _, _ = self.run_graph(g, self.solid([64, 64, 64, 255]), params={n + ".gamma": 2.0})
+        self.close(out, (128, 128, 128, 255), 2)                 # sqrt(0.25)
 
     def test_channel_then_set_alpha(self):
         g = ng.new_graph()

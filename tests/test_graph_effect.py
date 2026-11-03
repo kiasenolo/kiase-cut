@@ -87,7 +87,7 @@ class ExposedParamTests(unittest.TestCase):
         edit.set_param(self.p, "c1", "fx:" + self.eid, self.m + ".value", 0.8)
         name = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
         x = self.e["graph"]["exposed"][0]
-        self.assertEqual((x["name"], x["type"], x["label"]), (name, "float", "數值"))
+        self.assertEqual((x["name"], x["type"], x["label"]), (name, "float", "B 的數值"))
         self.assertEqual(self.e["params"]["expose." + name], 0.8)             # (it starts at what the parameter had)
         self.assertNotIn(self.m + ".value", self.e["params"])
         names = [q.name for q in fx.def_of(self.e).params]

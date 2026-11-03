@@ -1,5 +1,5 @@
 // @filter 分離通道
-// @category 節點
+// @category 轉換器
 // @description 節點用：取圖像的一個通道（紅、綠、藍、透明度或明度），輸出成不透明的灰階圖
 // @param channel menu 紅 "紅|綠|藍|透明度|明度" "通道"
 

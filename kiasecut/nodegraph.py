@@ -674,6 +674,16 @@ def source_nodes(graph):
     return {i: n.get("kind") for i, n in graph["nodes"].items() if n["type"] == SOURCE}
 
 
+def read_rgba8(tex):
+    """The picture of a node texture as 8-bit RGBA rows (floats - what nodes draw into - are clamped to 0 - 1)."""
+    import numpy as np
+    w, h = tex.size
+    if tex.dtype == "f1":
+        return np.frombuffer(tex.read(), np.uint8).reshape(h, w, 4)
+    a = np.frombuffer(tex.read(), np.float16 if tex.dtype == "f2" else np.float32).reshape(h, w, 4)
+    return (np.clip(a, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+
+
 def thumb_tap(store, size=96):
     """A tap for evaluate that keeps a small RGBA (premultiplied) copy of every node's picture in store:
     {node id: {output: (width, height, bytes)}}."""
@@ -681,7 +691,7 @@ def thumb_tap(store, size=96):
 
     def tap(nid, out, tex):
         w, h = tex.size
-        arr = np.frombuffer(tex.read(), np.uint8).reshape(h, w, 4)
+        arr = read_rgba8(tex)
         k = max(1, w // size)
         small = np.ascontiguousarray(arr[::k, ::k])
         store.setdefault(nid, {})[out] = (small.shape[1], small.shape[0], small.tobytes())
@@ -696,7 +706,7 @@ class Pool:
     class Item:
         def __init__(self, eng, w, h):
             self.w, self.h = w, h
-            self.tex = eng.ctx.texture((w, h), 4)
+            self.tex = eng.ctx.texture((w, h), 4, dtype="f2")        # (16-bit floats: a node can give more than 1 or less than 0)
             self.tex.filter = (eng.mgl.LINEAR, eng.mgl.LINEAR)
             self.tex.repeat_x = self.tex.repeat_y = False
             self.fbo = eng.ctx.framebuffer(color_attachments=[self.tex])

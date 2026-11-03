@@ -813,7 +813,7 @@ class Renderer:
                 tex, owner = nodegraph.evaluate(eng, e["graph"], e["params"], upload(arr), w, h, pool.alloc, pool.free,
                                                 t=t, duration=duration, fps=fps, unit=unit, picture=picture, errors=errors,
                                                 viewer=self.editing, tap=self.thumb_tap(e))
-                out = np.frombuffer(tex.read(), np.uint8).reshape(h, w, 4).copy() if tex is not None else None
+                out = nodegraph.read_rgba8(tex).copy() if tex is not None else None
             except nodegraph.GraphError as exc:
                 self.errors.append(f"節點效果：{exc}")
                 out = None

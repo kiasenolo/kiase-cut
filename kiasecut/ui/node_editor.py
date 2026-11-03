@@ -39,15 +39,25 @@ GHOST = "\0ghost"                              # the empty socket of a 參數輸
 
 def node_refs():
     """Refs of the filters made for graphs (filters/nodes/*.glsl)."""
-    return sorted("builtin:nodes/" + os.path.splitext(os.path.basename(p))[0]
+    refs = sorted("builtin:nodes/" + os.path.splitext(os.path.basename(p))[0]
                   for p in glob.glob(os.path.join(fx.PKG, "nodes", "*.glsl")))
+    return [r for r in refs if r != ng.PICTURE]                  # (the picture node is what source nodes are drawn with)
+
+
+NODE_HEADS = {"輸入": "#a8473f", "色彩": "#8a8a3f", "向量": "#5a5aa8", "轉換器": "#3f6fa8", "變換": "#3f8f9a"}   # the tool nodes, as Blender colours them
+
+
+def is_tool(ref):
+    return ref.startswith("builtin:nodes/")
 
 
 def head_colour(node):
     if node["type"] in HEADS:
         return QColor(HEADS[node["type"]])
     cat = fx.get(node["ref"]).category or ""
-    return QColor(CATEGORY_COLORS[sum(map(ord, cat)) % len(CATEGORY_COLORS)] if cat != "節點" else "#3f6fa8")
+    if is_tool(node["ref"]):
+        return QColor(NODE_HEADS.get(cat, "#3f6fa8"))
+    return QColor(CATEGORY_COLORS[sum(map(ord, cat)) % len(CATEGORY_COLORS)])
 
 
 def number_text(p, v):
@@ -1538,17 +1548,34 @@ class NodeEditor(QWidget):
             node = {"type": ng.SOURCE, "kind": "shape", "shape": sid}
             shapes.addAction(name, lambda _=False, n=node: ask(n))
             entries.append(("形狀", name, node))
-        cats = {}
-        for ref in node_refs() + fx.builtin_refs():
+        tools = {}                                        # the tool nodes (filters/nodes), by Blender-like category
+        for ref in node_refs():
             d = fx.get(ref)
-            cats.setdefault("節點" if ref.startswith("builtin:nodes/") else d.category or "其他", []).append((d.name, ref))
-        for cat in sorted(cats, key=lambda c: (c != "節點", c)):
+            tools.setdefault(d.category or "其他", []).append((d.name, ref))
+        for name, ref in tools.pop("輸入", []):             # (the inputs menu has the time and coordinate nodes too)
+            node = {"type": ng.FILTER, "ref": ref}
+            inp.addAction(name, lambda _=False, n=node: ask(n))
+            entries.append(("輸入", name, node))
+        for cat in [c for c in NODE_HEADS if c in tools] + sorted(c for c in tools if c not in NODE_HEADS):
             sub = menu.addMenu(cat)
             groups.append(sub.menuAction())
-            for name, ref in cats[cat]:
+            for name, ref in tools[cat]:
                 node = {"type": ng.FILTER, "ref": ref}
                 sub.addAction(name, lambda _=False, n=node: ask(n))
                 entries.append((cat, name, node))
+        effects = menu.addMenu("內建／效果")                # every effect of the 效果 list, as a node
+        groups.append(effects.menuAction())
+        cats = {}
+        for ref in fx.builtin_refs():
+            if not is_tool(ref):
+                d = fx.get(ref)
+                cats.setdefault(d.category or "其他", []).append((d.name, ref))
+        for cat in sorted(cats):
+            sub = effects.addMenu(cat)
+            for name, ref in cats[cat]:
+                node = {"type": ng.FILTER, "ref": ref}
+                sub.addAction(name, lambda _=False, n=node: ask(n))
+                entries.append(("內建／效果 ▸ " + cat, name, node))
         if self.user_filters:
             mine = menu.addMenu("我的濾鏡（Library）")
             groups.append(mine.menuAction())

@@ -15,7 +15,13 @@ def clean(name):
 
 
 def default_items(kind):
-    return [{"sock": "src" if i == 0 else f"i{i + 1}", "name": n} for i, n in enumerate(DEFAULT_NAMES)]
+    names = DEFAULT_NAMES[:2] if kind == "index_switch" else DEFAULT_NAMES
+    return [{"sock": "src" if i == 0 else f"i{i + 1}", "name": n} for i, n in enumerate(names)]
+
+
+def renamable(kind):
+    """Whether the user names the items (a Menu Switch's options) or they are only numbered (an Index Switch's)."""
+    return kind != "index_switch"
 
 
 def items_of(node, kind):
@@ -57,4 +63,21 @@ def menu_switch(items):
     return "\n".join(head + body)
 
 
-GENERATORS = {"menu_switch": menu_switch}
+def index_switch(items):
+    """Blender's Index Switch: the index (a whole number) says which input comes out, the inputs are numbered 0, 1, 2 ...;
+    an index with no input gives nothing."""
+    head = ["// @filter 索引切換",
+            "// @category 轉換器",
+            "// @description 節點用：照 Blender 的「索引切換」節點（Index Switch）：用索引（整數）選第幾張圖輸出，從 0 開始；索引超出範圍就什麼都不輸出。沒被選到的圖不會被運算。輸入自己加（把線拉到最下面的空插槽）、刪除（在輸入上按右鍵）。索引可以接一個數字，也可以在效果面板做成參數",
+            "// @dynamic index_switch",
+            '// @source "0"']
+    head += [f'// @input {s} "{k}"' for k, (s, _) in enumerate(items) if k]
+    head += ['// @param index int 0 0 1000 "索引"']
+    head += [f"// @use {s} index == {k}" for k, (s, _) in enumerate(items)]
+    body = ["", "vec4 effect(vec2 uv) {", "    switch (index) {"]
+    body += [f"    case {k}: return {'src(uv)' if s == 'src' else f'input_{s}(uv)'};" for k, (s, _) in enumerate(items)]
+    body += ["    }", "    return vec4(0.0);", "}", ""]
+    return "\n".join(head + body)
+
+
+GENERATORS = {"menu_switch": menu_switch, "index_switch": index_switch}

@@ -333,6 +333,10 @@ class NodeEditorTests(unittest.TestCase):
         popped = []
         ed.option_menu("menu_switch1", "i2", QPoint(0, 0))
         self.assertEqual(popped, [["重新命名選項…", "往上移", "往下移", "刪除選項"]])
+        ed.graph["nodes"]["menu_switch1"]["ref"] = "builtin:nodes/index_switch"            # (an Index Switch's are only numbered)
+        popped.clear()
+        ed.option_menu("menu_switch1", "i2", QPoint(0, 0))
+        self.assertEqual(popped, [["往上移", "往下移", "刪除選項"]])
 
     def test_free_input_dragged_to_an_output_links_and_makes_a_parameter(self):
         def build(e):

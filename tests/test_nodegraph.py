@@ -192,6 +192,28 @@ class RunTest(unittest.TestCase):
         out, _, _ = self.run_graph(g, green, {a: red}, params={v + ".value": 0.0})
         self.close(out, (0, 255, 0, 255))
 
+    def test_index_switch_picks_the_numbered_input_and_a_number_can_be_its_index(self):
+        g = ng.new_graph()
+        v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/value"})
+        a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")
+        b = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="b")
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/index_switch"})
+        params = ng.default_params(g)
+        ng.connect(g, "input", m, "src")
+        ng.connect(g, a, m, "i2")
+        s3 = ng.add_item(g, params, m)
+        ng.connect(g, b, m, s3)
+        ng.connect(g, m, "output", "src")
+        self.assertEqual([lab for s, lab in ng.sockets(g["nodes"][m]) if not s.startswith("param")], ["0", "1", "2"])
+        red, blue, green = self.solid([255, 0, 0, 255]), self.solid([0, 0, 255, 255]), self.solid([0, 255, 0, 255])
+        for index, want in ((0, (0, 255, 0, 255)), (1, (255, 0, 0, 255)), (2, (0, 0, 255, 255)), (3, (0, 0, 0, 0))):
+            out, errors, _ = self.run_graph(g, green, {a: red, b: blue}, params={m + ".index": index})
+            self.assertEqual(errors, [], index)
+            self.close(out, want)
+        ng.connect(g, v, m, "param:index")                         # a number: the index
+        out, _, _ = self.run_graph(g, green, {a: red, b: blue}, params={v + ".value": 2.0})
+        self.close(out, (0, 0, 255, 255))
+
     def test_menu_switch_has_options_of_its_own(self):
         g = ng.new_graph()
         a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")

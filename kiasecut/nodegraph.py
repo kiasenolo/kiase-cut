@@ -927,7 +927,7 @@ def source_nodes(graph):
     return {i: n.get("kind") for i, n in graph["nodes"].items() if n["type"] == SOURCE}
 
 
-CONTROL_TYPES = ("bool", "menu")        # parameters a number can set: a picture linked into one is read as a number (Blender's implicit conversions)
+CONTROL_TYPES = ("bool", "int", "menu")        # parameters a number can set: a picture linked into one is read as a number (Blender's implicit conversions)
 
 
 def _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors):
@@ -1184,7 +1184,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             if to not in reach:
                 continue
             v = _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
-            ctrl[(to, p.name)] = v > 0.5 if p.type == "bool" else v
+            ctrl[(to, p.name)] = v > 0.5 if p.type == "bool" else v         # (a whole number: rounded where it is used)
     order, state = [], {}
 
     def visit(n):

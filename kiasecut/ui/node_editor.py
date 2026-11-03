@@ -23,7 +23,7 @@ from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPaint
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
-from .. import assets, curves, fx, nodegraph as ng
+from .. import assets, curves, dynamic, fx, nodegraph as ng
 from .wheel import pinch as wheel_pinch
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
@@ -1698,7 +1698,8 @@ class NodeEditor(QWidget):
         if at is None or not self.eid:
             return
         menu = QMenu(self)
-        menu.addAction("重新命名選項…", lambda: self._rename_option(nid, sock, items[at]["name"]))
+        if dynamic.renamable(fx.get(node["ref"]).dynamic):
+            menu.addAction("重新命名選項…", lambda: self._rename_option(nid, sock, items[at]["name"]))
         up = menu.addAction("往上移", lambda: self.itemRequested.emit(self.eid, nid, "up", sock, "", "", ""))
         up.setEnabled(at > 0)
         down = menu.addAction("往下移", lambda: self.itemRequested.emit(self.eid, nid, "down", sock, "", "", ""))

@@ -249,6 +249,27 @@ class RunTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.close(out, (255, 128, 0, 255), 3)                   # not linked: the numbers of the boxes
 
+    def test_set_alpha_types_and_its_box(self):
+        g = ng.new_graph()
+        sa = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/set_alpha"})
+        ng.connect(g, "input", sa, "src")
+        ng.connect(g, sa, "output", "src")
+        src = self.solid([200, 100, 0, 128])
+        out, _, _ = self.run_graph(g, src, params={sa + ".type": "套用遮罩", sa + ".alpha": 0.5})
+        self.assertTrue(abs(int(out[0, 0, 3]) - 64) <= 2)                  # applied: 0.5 x 0.5
+        out, _, _ = self.run_graph(g, src, params={sa + ".type": "取代透明度", sa + ".alpha": 1.0})
+        self.assertEqual(int(out[0, 0, 3]), 255)                          # replaced
+
+    def test_transform_samples_and_moves(self):
+        for interp in ("最近點", "雙線性", "雙三次"):
+            g, n, p = self.node("transform", pos_x=0.0)
+            out, errors, _ = self.run_graph(g, self.solid([128, 64, 0, 255]), params={n + ".interp": interp})
+            self.assertEqual(errors, [], interp)
+            self.close(out, (128, 64, 0, 255), 3)
+        g, n, p = self.node("transform")
+        out, _, _ = self.run_graph(g, self.solid([128, 64, 0, 255]), params={n + ".pos_x": 100000.0})
+        self.assertEqual(int(out[0, 0, 3]), 0)                            # moved out of the picture: clear
+
     def test_mute_passes_the_picture_on(self):
         g = ng.new_graph()
         c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math", "mute": True})

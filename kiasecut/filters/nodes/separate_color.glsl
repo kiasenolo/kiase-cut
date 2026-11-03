@@ -6,7 +6,7 @@
 // @output c3 "藍／明度／Cr／V"
 // @output a "透明度"
 // @param mode menu RGB "RGB|HSV|HSL|YCC|YUV" "模式"
-// @param ycc_mode menu "ITU 601" "ITU 601|ITU 709|JPEG" "YCC 標準"
+// @param ycc_mode menu "ITU 709" "ITU 601|ITU 709|JPEG" "YCC 標準"
 // @enable ycc_mode mode == YCC
 
 vec3 rgb_to_hsv(vec3 c) {

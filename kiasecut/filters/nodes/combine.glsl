@@ -6,7 +6,7 @@
 // @input b "藍／明度／Cr／V" v3
 // @input a "透明度" alpha
 // @param mode menu RGB "RGB|HSV|HSL|YCC|YUV" "模式"
-// @param ycc_mode menu "ITU 601" "ITU 601|ITU 709|JPEG" "YCC 標準"
+// @param ycc_mode menu "ITU 709" "ITU 601|ITU 709|JPEG" "YCC 標準"
 // @param v1 float 0 -1000 1000 "紅／色相／Y"
 // @param v2 float 0 -1000 1000 "綠／飽和度／Cb／U"
 // @param v3 float 0 -1000 1000 "藍／明度／Cr／V"

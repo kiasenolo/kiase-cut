@@ -202,7 +202,7 @@ class RunTest(unittest.TestCase):
         self.close(out, (255, 128, 0, 255), 2)                   # 0.5 of 0 - 0.5 -> 1, clamped
         g, n, p = self.node("gamma")
         out, _, _ = self.run_graph(g, self.solid([64, 64, 64, 255]), params={n + ".gamma": 2.0})
-        self.close(out, (128, 128, 128, 255), 2)                 # sqrt(0.25)
+        self.close(out, (16, 16, 16, 255), 2)                    # 0.25 ** 2
 
     def test_channel_then_set_alpha(self):
         g = ng.new_graph()

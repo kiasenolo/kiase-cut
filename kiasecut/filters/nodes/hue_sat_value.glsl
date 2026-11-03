@@ -28,7 +28,7 @@ vec4 effect(vec2 uv) {
     vec4 a = unpremultiply(src(uv));
     vec3 h = rgb_to_hsv(a.rgb);
     h.x = fract(h.x + hue - 0.5 + 1.0);
-    h.y = clamp(h.y * sat, 0.0, 1.0);
+    h.y = h.y * sat;
     h.z = h.z * val;
-    return premultiply(vec4(mix(a.rgb, hsv_to_rgb(h), clamp(fac, 0.0, 1.0)), a.a));
+    return premultiply(vec4(mix(a.rgb, max(hsv_to_rgb(h), 0.0), clamp(fac, 0.0, 1.0)), a.a));
 }

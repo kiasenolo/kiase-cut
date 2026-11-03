@@ -6,6 +6,6 @@
 
 vec4 effect(vec2 uv) {
     vec4 a = unpremultiply(src(uv));
-    vec3 r = mix(a.rgb, pow(max(a.rgb, vec3(0.0)), vec3(1.0 / gamma)), greaterThan(a.rgb, vec3(0.0)));
+    vec3 r = mix(a.rgb, pow(max(a.rgb, vec3(0.0)), vec3(gamma)), greaterThan(a.rgb, vec3(0.0)));
     return premultiply(vec4(r, a.a));
 }

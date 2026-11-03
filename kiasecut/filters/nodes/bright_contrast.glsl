@@ -16,7 +16,8 @@ vec4 effect(vec2 uv) {
         b = a * (br - delta);
     } else {
         delta = -delta;
-        b = a * (br + delta);
+        a = 1.0 - delta * 2.0;
+        b = a * br + delta;
     }
     return premultiply(vec4(a * c.rgb + b, c.a));
 }

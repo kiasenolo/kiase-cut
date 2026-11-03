@@ -8,6 +8,6 @@
 
 vec4 effect(vec2 uv) {
     vec4 a = unpremultiply(src(uv));
-    vec3 r = mode == 0 ? clamp(a.rgb, min(lo, hi), max(lo, hi)) : clamp(a.rgb, lo, hi);
+    vec3 r = mode == 0 ? min(max(a.rgb, lo), hi) : clamp(a.rgb, min(lo, hi), max(lo, hi));
     return premultiply(vec4(r, a.a));
 }

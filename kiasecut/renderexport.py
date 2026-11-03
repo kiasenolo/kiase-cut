@@ -48,7 +48,7 @@ def needs_renderer(proj):
                or project.speed(c) != 1.0 or c.get("speed_curve") or project.frozen(c) is not None or project.is_group(c)
                or project.has_corners(c) or c.get("expr") or c.get("viz")
                or (c["type"] == "text" and project.active_mask(c))
-               or assets.animated(c.get("asset")) or (c.get("asset") and assets.overflow(assets.at(c["asset"], 0)))
+               or assets.animated(c.get("asset")) or (c.get("asset") and (assets.overflow(assets.at(c["asset"], 0)) or assets.fade_distance(assets.at(c["asset"], 0))))
                for c in project.all_clips(proj))
 
 

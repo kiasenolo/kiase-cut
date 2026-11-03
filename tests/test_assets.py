@@ -36,32 +36,29 @@ class AssetTests(unittest.TestCase):
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def test_edge_fade_goes_inward_on_every_basic_shape(self):
-        from PySide6.QtCore import QByteArray
-        from PySide6.QtGui import QImage, QPainter
-        from PySide6.QtSvg import QSvgRenderer
+        from kiasecut import render
+        r = render.Renderer()
         for key in ("shape.rect", "shape.circle", "shape.hexagon", "shape.star", "shape.heart", "shape.arrow", "shape.parallelogram"):
             a = assets.get(key)
             self.assertIsNotNone(a, key)
             p = assets.at(assets.make(a, "#ffffff", "#000000", 200, 200), 0)
             self.assertIn("fade", assets.fields_of(p["family"]), key)
-            self.assertNotIn('id="fade"', assets.svg(p), key)
             p["fade"] = 40
-            self.assertIn('id="fade"', assets.svg(p), key)
-            self.assertNotIn("Blur", assets.svg(p), key)                       # (no filter: those cost speed)
             self.assertEqual(assets.overflow(p), 0.0, key)                    # (inward: the frame stays the same)
+            self.assertNotIn("Blur", assets.svg(p, part="fill"), key)          # (no filter: those cost speed)
+            im = r.asset(p, 200, 200)
+            self.assertGreater(im.pixelColor(im.width() // 2, im.height() // 2).alpha(), 200, key)
         p = assets.at(assets.make(assets.get("shape.rect"), "#ffffff", "#000000", 200, 200), 0)
         p["fade"] = 40
-        r = QSvgRenderer(QByteArray(assets.svg(p).encode("utf-8")))
-        im = QImage(400, 400, QImage.Format_ARGB32_Premultiplied)
-        im.fill(0)
-        painter = QPainter(im)
-        r.render(painter)
-        painter.end()
-        row = [im.pixelColor(x, 200).alpha() for x in range(0, 200, 5)]
+        im = r.asset(p, 200, 200)
+        row = [im.pixelColor(x, im.height() // 2).alpha() for x in range(0, im.width() // 2)]
         self.assertGreater(row[-1], 250)                                       # solid in the middle
         self.assertLess(row[0], 30)                                            # clear at the edge
-        self.assertEqual(row, sorted(row))                                     # and a steady rise between
-        self.assertTrue(row[len(row) // 4] < 250)
+        self.assertEqual(row, sorted(row))                                     # a steady rise between
+        self.assertLessEqual(max(b - a for a, b in zip(row, row[1:])), 10)      # in small steps (no bands)
+        p["stroke_on"], p["stroke"], p["stroke_color"] = True, 10, "#ff0000"
+        im = r.asset(p, 200, 200)
+        self.assertGreater(im.pixelColor(im.width() // 2, 2).alpha(), 250)     # the outline stays whole
 
     def test_every_preset_is_a_picture(self):
         for a in assets.ASSETS:

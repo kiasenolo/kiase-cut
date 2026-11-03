@@ -151,7 +151,17 @@ class Renderer:
         if im is None:
             k = side / max(p["w"], p["h"], 1)
             pad = 2 * assets.overflow(p)                 # (an outline reaching out of its frame)
-            im = svgimage.raster_text(text, (p["w"] + pad) * k, (p["h"] + pad) * k)
+            size = ((p["w"] + pad) * k, (p["h"] + pad) * k)
+            reach = assets.fade_distance(p) * k
+            if reach >= 0.5 and p.get("family") not in ("empty", "solid", "gradient", "grid"):    # 邊緣淡出: the fill, faded by the distance from the edge, then the outline over it
+                im = svgimage.faded(svgimage.raster_text(assets.svg(p, part="fill"), *size),
+                                    svgimage.raster_text(assets.svg(p, part="mask"), *size), reach)
+                if assets.stroked(p):
+                    painter = QPainter(im)
+                    painter.drawImage(0, 0, svgimage.raster_text(assets.svg(p, part="stroke"), *size))
+                    painter.end()
+            else:
+                im = svgimage.raster_text(text, *size)
             if len(self.images) >= 48:
                 self.images.pop(next(iter(self.images)))
             self.images[key] = im

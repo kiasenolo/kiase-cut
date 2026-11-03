@@ -690,7 +690,8 @@ def _grid(p, w, h):
     return _svg(w, h, body)
 
 
-def _shape(p, w, h):
+def _shape(p, w, h, part=None):
+    """part: only the "fill", only the "stroke", or only the shape's "mask" (white; what 邊緣淡出 measures from)."""
     d = outline_d(p, w, h)
     pad = overflow(p)
     body, defs = [], ""
@@ -716,24 +717,11 @@ def _shape(p, w, h):
     def attr(prop, v, op):
         return f'{prop}="{v}"' + (f' {prop}-opacity="{op:.3f}"' if op < 1 else "")
 
-    if p.get("fill", True) and d:
+    if part == "mask":
+        return _svg(w, h, f'<path d="{d}" fill-rule="evenodd" fill="#fff"/>', "", pad)
+    if p.get("fill", True) and d and part != "stroke":
         put("fill", lambda prop, v, op: f'<path d="{d}" fill-rule="evenodd" {attr("fill", v, op)}/>')
-        reach = fade_distance(p)
-        if reach >= 0.5:                           # 邊緣淡出: the fill turns from clear at the edge to full over `reach`, as a vignette
-            # (no filter: a mask of the shape in white, with dark outlines of growing width over it - each one covers the
-            # band of its depth and thins it by a step, so the mask rises as a smoothstep of the distance from the edge)
-            steps, rest, strokes = 12, 1.0, []
-            for j in range(steps, 0, -1):          # the deepest first
-                t = (j - 0.5) / steps
-                c = t * t * (3.0 - 2.0 * t)        # (what the band should keep)
-                alpha = 1.0 - c / rest
-                rest = c
-                strokes.append(f'<path d="{d}" fill="none" stroke="#000" stroke-linejoin="round" stroke-opacity="{alpha:.3f}" '
-                               f'stroke-width="{2 * reach * j / steps:.2f}"/>')
-            defs += (f'<mask id="fade" maskUnits="userSpaceOnUse" {box}><path d="{d}" fill-rule="evenodd" fill="#fff"/>'
-                     + "".join(strokes) + '</mask>')
-            body[:] = ['<g mask="url(#fade)">'] + body + ["</g>"]
-    if stroked(p) and d:
+    if stroked(p) and d and part != "fill":
         align, s = p.get("stroke_align", "inside"), p["stroke"]
         line = f'fill="none" stroke-linejoin="{p.get("join", "miter")}" stroke-miterlimit="{MITER_LIMIT}"'
         if align == "center":
@@ -775,7 +763,7 @@ def _empty(w, h):
                       f'<path d="M0 {h / 2:g}H{w:g}M{w / 2:g} 0V{h:g}" {line}/>')
 
 
-def svg(p, editing=False):
+def svg(p, editing=False, part=None):
     """The SVG text of asset parameters p as at() gives them (editing: the editor's preview, which
     also shows an empty - nothing otherwise)."""
     w, h = p["w"], p["h"]
@@ -787,7 +775,7 @@ def svg(p, editing=False):
         return _gradient(p, w, h)
     if p["family"] == "grid":
         return _grid(p, w, h)
-    return _shape(p, w, h)
+    return _shape(p, w, h, part)
 
 
 def store(media_dir, p):

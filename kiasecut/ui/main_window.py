@@ -271,6 +271,8 @@ class MainWindow(QMainWindow):
         self._last_tick = time.monotonic()
         self.path_ids = []              # open compound clips, outermost first
         self.tl_views = {}              # playhead / scroll / zoom of each timeline while another is open
+        self.level_zoom = {}            # (tab, compound path) -> time scroll / zoom as that level was left
+        self._level_key = None          # the level the timeline shows now
         self.clipboard = None           # clips copied with 複製 / 剪下 (edit.copy_clips)
         self.open_tls = None            # timelines with a tab (None: all, until the first tab update)
         self.xml = None                 # truthy once the preview has a project
@@ -1326,7 +1328,13 @@ class MainWindow(QMainWindow):
         self.player.worker.set_playing(False)
         self.timeline.mark_in = self.timeline.mark_out = None      # selections belong to a level
         self.marks_changed()
+        if self._level_key is not None and self.timeline.proj is not None:      # back to a level: as it was left
+            self.level_zoom[self._level_key] = {k: v for k, v in self.timeline.view_state().items()
+                                                if k in ("scroll_s", "px_per_s")}
+        self._level_key = (self.current_tab(), tuple(self.path_ids))
         self.timeline.set_project(self.view())
+        if self._level_key in self.level_zoom:
+            self.timeline.set_view_state(self.level_zoom[self._level_key])
         if select is not None:
             self.timeline.select(select)
         self.pos = pos
@@ -1669,6 +1677,7 @@ class MainWindow(QMainWindow):
         self.path_ids = []
         self.open_tls = None
         self.tl_views = {}
+        self.level_zoom, self._level_key = {}, (self.proj["active_timeline"], ())
         self._thumb_renderer = None                    # (layer thumbnails: the last project's pictures go)
         self.fps = edit_rate(proj)
         self.timeline.edit_fps = self.fps if self.fps != proj["fps"] else None

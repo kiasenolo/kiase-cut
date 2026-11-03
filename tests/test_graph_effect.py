@@ -185,6 +185,27 @@ class ExposedParamTests(unittest.TestCase):
         self.assertEqual(other["params"][made[0] + key[len(m):]], 0.25)
         self.assertEqual((other["graph"]["nodes"][made[0]]["x"], other["graph"]["nodes"][made[0]]["y"]), (7.0, 9.0))
 
+    def test_group_edits(self):
+        before = set(self.e["graph"]["nodes"])
+        a = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/math"}, 100, 0)
+        edit.connect_graph(self.p, "c1", self.eid, "input", a, "src")
+        edit.connect_graph(self.p, "c1", self.eid, a, "output", "src")
+        gid = edit.group_graph_nodes(self.p, "c1", self.eid, [a], "我的群組")
+        self.assertEqual(self.e["graph"]["nodes"][gid]["label"], "我的群組")
+        b = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/mix", "group": gid}, 150, 0)
+        self.assertEqual(self.e["graph"]["nodes"][b]["group"], gid)
+        name = edit.group_port(self.p, "c1", self.eid, gid, b, socket="b")
+        out = edit.group_port(self.p, "c1", self.eid, gid, b, out="")
+        edit.connect_graph(self.p, "c1", self.eid, "input", gid, name)
+        self.assertIsNone(ng.check(self.e["graph"]))
+        edit.group_unplug(self.p, "c1", self.eid, gid, output=out)
+        edit.remove_graph_node(self.p, "c1", self.eid, gid)           # members and their settings go too
+        self.assertEqual(set(self.e["graph"]["nodes"]), before)
+        self.assertFalse([k for k in self.e["params"] if k.startswith(a + ".")])
+        gid = edit.group_graph_nodes(self.p, "c1", self.eid, ["input"])
+        edit.ungroup_graph(self.p, "c1", self.eid, gid)
+        self.assertNotIn(gid, self.e["graph"]["nodes"])
+
     def test_viewer_edit(self):
         sep = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/separate_color"})
         edit.set_graph_viewer(self.p, "c1", self.eid, sep, "a")
@@ -362,6 +383,17 @@ class GraphRenderTests(unittest.TestCase):
         for r in self.renderers:
             r.render(v, 0, W, H)
             self.assertEqual(r.thumbs, {})
+
+    def test_a_group_renders_as_what_is_inside(self):
+        def f(e):
+            g = e["graph"]
+            sep = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/separate_color"}, base="sep")
+            ng.connect(g, "input", sep, "src")
+            ng.connect(g, sep, "output", "src", "c1")
+            gid = ng.make_group(g, [sep])
+            self.assertIn(gid, g["nodes"])
+            e["params"].update(ng.default_params(g))
+        self.check(self.view(f), WHITE, WHITE)
 
     def test_empty_graph_changes_nothing(self):
         self.check(self.view(lambda e: None), RED, RED)

@@ -172,3 +172,65 @@ class RunTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GroupTests(unittest.TestCase):
+    def build(self):
+        g = ng.new_graph()
+        a = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/math"}, 100, 0)
+        b = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/math"}, 200, 0)
+        ng.connect(g, "input", a, "src")
+        ng.connect(g, a, b, "src")
+        ng.connect(g, b, "output", "src")
+        return g, a, b
+
+    def test_make_group_rewires_the_border(self):
+        g, a, b = self.build()
+        gid = ng.make_group(g, [a, b])
+        grp = g["nodes"][gid]
+        self.assertEqual(ng.members(g, gid), [a, b])
+        self.assertEqual([i["to"] for i in grp["inputs"]], [[[a, "src"]]])
+        self.assertEqual([(o["from"], o["out"]) for o in grp["outputs"]], [(b, "")])
+        self.assertEqual({(l["from"], l["to"]) for l in g["links"]},
+                         {("input", gid), (gid, "output"), (a, b)})
+        flat = ng.flatten(g)
+        self.assertNotIn(gid, flat["nodes"])
+        self.assertEqual({(l["from"], l["to"], l["socket"]) for l in flat["links"]},
+                         {("input", a, "src"), (a, b, "src"), (b, "output", "src")})
+        self.assertIsNone(ng.check(g))
+
+    def test_ungroup_gives_the_same_graph_back(self):
+        g, a, b = self.build()
+        before = {(l["from"], l["to"], l["socket"]) for l in g["links"]}
+        gid = ng.make_group(g, [a, b])
+        ng.ungroup(g, gid)
+        self.assertEqual({(l["from"], l["to"], l["socket"]) for l in g["links"]}, before)
+        self.assertNotIn("group", g["nodes"][a])
+        self.assertNotIn(gid, g["nodes"])
+
+    def test_group_sockets_can_be_added_and_taken_away(self):
+        g, a, b = self.build()
+        c = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/mix"}, 150, 80)
+        gid = ng.make_group(g, [a, b, c])
+        name = ng.group_input(g, gid, c, "b")
+        self.assertIn((name, "圖像"), [(s, l) for s, l in ng.sockets(g["nodes"][gid])] + [(name, "圖像")])
+        ng.connect(g, "input", gid, name)
+        flat = ng.flatten(g)
+        self.assertIn(("input", c, "b"), {(l["from"], l["to"], l["socket"]) for l in flat["links"]})
+        ng.group_unplug(g, gid, c, "b")
+        self.assertNotIn(name, [s for s, _ in ng.sockets(g["nodes"][gid])])
+        self.assertFalse([l for l in g["links"] if l["to"] == gid and l["socket"] == name])
+
+    def test_removing_a_group_removes_its_members(self):
+        g, a, b = self.build()
+        gid = ng.make_group(g, [a, b])
+        ng.remove_node(g, gid)
+        self.assertEqual(set(g["nodes"]), {"input", "output"})
+
+    def test_groups_inside_groups(self):
+        g, a, b = self.build()
+        inner = ng.make_group(g, [a])
+        outer = ng.make_group(g, [inner, b])
+        self.assertEqual(g["nodes"][inner]["group"], outer)
+        flat = ng.flatten(g)
+        self.assertEqual({(l["from"], l["to"]) for l in flat["links"]}, {("input", a), (a, b), (b, "output")})

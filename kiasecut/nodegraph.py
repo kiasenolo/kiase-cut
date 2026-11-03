@@ -22,7 +22,7 @@ import copy
 from . import curves, fx
 
 US = 1_000_000
-INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME = "input", "output", "source", "filter", "params", "reroute", "frame"
+INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output", "source", "filter", "params", "reroute", "frame", "group"
 SOURCE_KINDS = ("image", "video", "compound", "track", "shape")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
@@ -82,10 +82,14 @@ def default_params(graph):
 
 
 def remove_node(graph, nid):
+    if (graph["nodes"].get(nid) or {}).get("type") == GROUP:      # (a group takes its members with it)
+        for m in members(graph, nid):
+            remove_node(graph, m)
     graph["nodes"].pop(nid, None)
     if (graph.get("viewer") or {}).get("node") == nid:
         graph.pop("viewer")
     graph["links"] = [l for l in graph["links"] if nid not in (l["from"], l["to"])]
+    prune_groups(graph)
 
 
 def reaches(graph, a, b):
@@ -140,6 +144,7 @@ def exposed(graph):
 
 def binds(graph):
     """{(node id, socket): exposed parameter name} of the parameters bound to the effect's own."""
+    graph = flatten(graph)
     return {(l["to"], l["socket"]): l["out"] for l in graph["links"]
             if l.get("out") and graph["nodes"].get(l["from"], {}).get("type") == PARAMS}
 
@@ -150,6 +155,8 @@ def sockets(node):
         return [("src", "結果")]
     if node["type"] == REROUTE:
         return [("src", "")]
+    if node["type"] == GROUP:
+        return [(i["name"], i["label"]) for i in node.get("inputs") or []]
     if node["type"] != FILTER:
         return []
     d = fx.get(node["ref"])
@@ -163,14 +170,211 @@ def outputs(node):
         d = fx.get(node["ref"])
         if d.outputs:
             return list(d.outputs)
+    if node["type"] == GROUP:
+        return [(o["name"], o["label"]) for o in node.get("outputs") or []]
     return [("", "圖像")]
 
 
 def title(node):
     if node["type"] == FILTER:
         return fx.get(node["ref"]).name
+    if node["type"] == GROUP:
+        return node.get("label") or "群組"
     return {FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
+
+
+# -- groups: nodes boxed up in one (a flat graph keeps the nodes; a member says node["group"] = the group's id) ----
+def flatten(graph):
+    """The graph without its group nodes: every link that goes into / out of a group goes to / from the members
+    behind its socket instead (a graph with no group is returned as it is)."""
+    nodes = graph["nodes"]
+    if not any(n["type"] == GROUP for n in nodes.values()):
+        return graph
+
+    def source(nid, out, seen=()):
+        n = nodes.get(nid)
+        if n is None:
+            return None
+        if n["type"] != GROUP:
+            return nid, out
+        o = next((o for o in n.get("outputs") or [] if o["name"] == out), None)
+        if o is None or (nid, out) in seen:
+            return None
+        return source(o["from"], o.get("out") or "", seen + ((nid, out),))
+
+    def sinks(nid, socket, seen=()):
+        n = nodes.get(nid)
+        if n is None:
+            return []
+        if n["type"] != GROUP:
+            return [(nid, socket)]
+        i = next((i for i in n.get("inputs") or [] if i["name"] == socket), None)
+        if i is None or (nid, socket) in seen:
+            return []
+        return [t for m, sk in i.get("to") or [] for t in sinks(m, sk, seen + ((nid, socket),))]
+    links = []
+    for l in graph["links"]:
+        a = source(l["from"], l.get("out") or "")
+        if a is None:
+            continue
+        for to, socket in sinks(l["to"], l["socket"]):
+            link = {"from": a[0], "to": to, "socket": socket}
+            if a[1]:
+                link["out"] = a[1]
+            links.append(link)
+    return {**graph, "nodes": {i: n for i, n in nodes.items() if n["type"] != GROUP}, "links": links}
+
+
+def make_group(graph, ids, label="群組"):
+    """Box the nodes ids (all at one level, none the output) up in a group node; every link across the border
+    goes through a socket of it. Returns the group's id."""
+    nodes = graph["nodes"]
+    ids = [i for i in ids if i in nodes and nodes[i]["type"] not in (OUTPUT, FRAME)]
+    if not ids:
+        raise GraphError("沒有可以群組的節點")
+    level = {nodes[i].get("group") for i in ids}
+    if len(level) != 1:
+        raise GraphError("要群組的節點要在同一層")
+    parent = level.pop()
+    inside = set(ids)
+    gid = new_node_id(graph, "group")
+    group = {"type": GROUP, "label": label, "x": sum(nodes[i].get("x", 0.0) for i in ids) / len(ids),
+             "y": sum(nodes[i].get("y", 0.0) for i in ids) / len(ids), "inputs": [], "outputs": []}
+    if parent:
+        group["group"] = parent
+    ins, outs, links = {}, {}, []
+    for l in graph["links"]:
+        a, b = l["from"] in inside, l["to"] in inside
+        if b and not a:                                           # a link in: one socket per source
+            key = (l["from"], l.get("out") or "")
+            if key not in ins:
+                n = len(group["inputs"]) + 1
+                label_in = dict(sockets(nodes[l["to"]])).get(l["socket"]) or f"輸入 {n}"
+                group["inputs"].append({"name": f"in{n}", "label": label_in, "to": []})
+                ins[key] = group["inputs"][-1]
+                links.append({**l, "to": gid, "socket": ins[key]["name"]})
+            ins[key]["to"].append([l["to"], l["socket"]])
+        elif a and not b:                                         # a link out: one socket per member output
+            key = (l["from"], l.get("out") or "")
+            if key not in outs:
+                n = len(group["outputs"]) + 1
+                group["outputs"].append({"name": f"out{n}", "label": f"輸出 {n}", "from": key[0], "out": key[1]})
+                outs[key] = group["outputs"][-1]
+            links.append({**l, "from": gid, "out": outs[key]["name"]})
+        else:
+            links.append(l)
+    graph["links"] = links
+    graph["nodes"][gid] = group
+    for i in ids:
+        nodes[i]["group"] = gid
+    return gid
+
+
+def members(graph, gid):
+    return [i for i, n in graph["nodes"].items() if n.get("group") == gid]
+
+
+def ungroup(graph, gid):
+    """Take group gid apart: its members go to the group's level and its links are joined again."""
+    g = graph["nodes"].get(gid)
+    if g is None or g["type"] != GROUP:
+        raise GraphError("這不是群組")
+    links = []
+    for l in graph["links"]:
+        if l["to"] == gid:
+            i = next((i for i in g.get("inputs") or [] if i["name"] == l["socket"]), None)
+            links += [{**l, "to": m, "socket": s} for m, s in (i or {}).get("to") or []]
+        elif l["from"] == gid:
+            o = next((o for o in g.get("outputs") or [] if o["name"] == (l.get("out") or "")), None)
+            if o is not None:
+                link = {**l, "from": o["from"]}
+                link.pop("out", None)
+                if o.get("out"):
+                    link["out"] = o["out"]
+                links.append(link)
+        else:
+            links.append(l)
+    graph["links"] = links
+    for i in members(graph, gid):
+        if g.get("group"):
+            graph["nodes"][i]["group"] = g["group"]
+        else:
+            graph["nodes"][i].pop("group", None)
+    del graph["nodes"][gid]
+
+
+def group_input(graph, gid, member, socket, name=None):
+    """Feed socket of member from the group's input name (a new one when None): what fed it inside goes."""
+    g = graph["nodes"][gid]
+    if graph["nodes"].get(member, {}).get("group") != gid:
+        raise GraphError("節點不在這個群組裡")
+    if socket not in [s for s, _ in sockets(graph["nodes"][member])]:
+        raise GraphError("這個節點沒有這個輸入")
+    for i in g["inputs"]:
+        i["to"] = [t for t in i["to"] if t != [member, socket]]
+    graph["links"] = [l for l in graph["links"] if not (l["to"] == member and l["socket"] == socket)]
+    entry = next((i for i in g["inputs"] if i["name"] == name), None)
+    if entry is None:
+        n = 1
+        while any(i["name"] == f"in{n}" for i in g["inputs"]):
+            n += 1
+        entry = {"name": name or f"in{n}", "label": dict(sockets(graph["nodes"][member])).get(socket) or f"輸入 {n}", "to": []}
+        g["inputs"].append(entry)
+    entry["to"].append([member, socket])
+    _tidy_group(graph, gid)
+    return entry["name"]
+
+
+def group_output(graph, gid, member, out="", name=None):
+    """The group's output name (a new one when None) is member's output out."""
+    g = graph["nodes"][gid]
+    node = graph["nodes"].get(member)
+    if node is None or node.get("group") != gid or not has_output(node):
+        raise GraphError("節點不在這個群組裡")
+    entry = next((o for o in g["outputs"] if o["name"] == name), None)
+    if entry is None:
+        n = 1
+        while any(o["name"] == f"out{n}" for o in g["outputs"]):
+            n += 1
+        entry = {"name": name or f"out{n}", "label": f"輸出 {n}"}
+        g["outputs"].append(entry)
+    entry["from"], entry["out"] = member, out or ""
+    return entry["name"]
+
+
+def group_unplug(graph, gid, member=None, socket=None, output=None):
+    """Cut member's socket from the group's input, or take away the group's output named output."""
+    g = graph["nodes"][gid]
+    if output is not None:
+        g["outputs"] = [o for o in g["outputs"] if o["name"] != output]
+        graph["links"] = [l for l in graph["links"] if not (l["from"] == gid and (l.get("out") or "") == output)]
+        return
+    for i in g["inputs"]:
+        i["to"] = [t for t in i["to"] if t != [member, socket]]
+    _tidy_group(graph, gid)
+
+
+def _tidy_group(graph, gid):
+    """Inputs nothing is behind any more go (with the links that fed them)."""
+    g = graph["nodes"][gid]
+    gone = {i["name"] for i in g["inputs"] if not i["to"]}
+    g["inputs"] = [i for i in g["inputs"] if i["name"] not in gone]
+    graph["links"] = [l for l in graph["links"] if not (l["to"] == gid and l["socket"] in gone)]
+
+
+def prune_groups(graph):
+    """After nodes were removed: group sockets that lead to a missing node go."""
+    nodes = graph["nodes"]
+    for gid, g in list(nodes.items()):
+        if g["type"] != GROUP:
+            continue
+        for i in g["inputs"]:
+            i["to"] = [t for t in i["to"] if t[0] in nodes]
+        _tidy_group(graph, gid)
+        dead = [o["name"] for o in g["outputs"] if o["from"] not in nodes]
+        g["outputs"] = [o for o in g["outputs"] if o["name"] not in dead]
+        graph["links"] = [l for l in graph["links"] if not (l["from"] == gid and (l.get("out") or "") in dead)]
 
 
 FRAME_COLORS = {"gray": "#5a5a60", "red": "#a04848", "orange": "#a8742e", "green": "#4a8a52", "blue": "#3f6fa8", "purple": "#7a5aa0"}
@@ -283,6 +487,8 @@ def shape_image(src, size=512):
 
 
 def has_output(node):
+    if node["type"] == GROUP:
+        return bool(node.get("outputs"))
     return node["type"] not in (OUTPUT, FRAME)
 
 
@@ -379,7 +585,7 @@ def dissolve(graph, nid):
 
 def duplicate(graph, ids, dx=40.0, dy=40.0):
     """Copies of the nodes ids (with the links among them); returns {old id: new id}."""
-    ids = [i for i in ids if i in graph["nodes"] and graph["nodes"][i]["type"] != OUTPUT]
+    ids = [i for i in ids if i in graph["nodes"] and graph["nodes"][i]["type"] not in (OUTPUT, GROUP)]
     made = {}
     for i in ids:
         node = copy.deepcopy(graph["nodes"][i])
@@ -394,8 +600,8 @@ def duplicate(graph, ids, dx=40.0, dy=40.0):
 def pack(graph, ids, params=None, sources=None):
     """What copying nodes ids takes along (to paste in this or another graph): the nodes, the links among them,
     their settings and pictures."""
-    ids = [i for i in ids if i in graph["nodes"] and graph["nodes"][i]["type"] != OUTPUT]
-    out = {"nodes": {i: copy.deepcopy(graph["nodes"][i]) for i in ids},
+    ids = [i for i in ids if i in graph["nodes"] and graph["nodes"][i]["type"] not in (OUTPUT, GROUP)]
+    out = {"nodes": {i: {k: copy.deepcopy(v) for k, v in graph["nodes"][i].items() if k != "group"} for i in ids},
            "links": [copy.deepcopy(l) for l in graph["links"] if l["from"] in ids and l["to"] in ids],
            "params": {}, "sources": {i: copy.deepcopy(sources[i]) for i in ids if i in (sources or {})}}
     for k, v in (params or {}).items():
@@ -404,7 +610,7 @@ def pack(graph, ids, params=None, sources=None):
     return out
 
 
-def paste(graph, data, x=0.0, y=0.0):
+def paste(graph, data, x=0.0, y=0.0, group=None):
     """Put a pack (see pack) in the graph with its top left corner at (x, y); returns {old id: new id}. The
     caller copies params and sources under the new ids."""
     nodes = data["nodes"]
@@ -416,6 +622,8 @@ def paste(graph, data, x=0.0, y=0.0):
     for i, n in nodes.items():
         node = copy.deepcopy(n)
         node["x"], node["y"] = node.get("x", 0.0) - x0 + x, node.get("y", 0.0) - y0 + y
+        if group:
+            node["group"] = group
         made[i] = add_node(graph, node, node["x"], node["y"], base=i.rstrip("0123456789") or "node")
     for l in data["links"]:
         if l["from"] in made and l["to"] in made:
@@ -451,7 +659,7 @@ def check(graph):
     nodes = graph.get("nodes") or {}
     if sum(n["type"] == OUTPUT for n in nodes.values()) != 1:
         return "節點圖要有一個輸出節點"
-    if has_loop(graph):
+    if has_loop(flatten(graph)):
         return "節點連成了迴圈"
     for n in nodes.values():
         if n["type"] == FILTER:
@@ -526,6 +734,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     Returns (texture, owner): owner is the object to give back to free when done with it (None: the
     texture is src_tex itself); (None, None) when the graph has no output. Node errors go to errors."""
     errors = errors if errors is not None else []
+    graph = flatten(graph)
     nodes, links = graph["nodes"], graph["links"]
     out = next((i for i, n in nodes.items() if n["type"] == OUTPUT), None)
     if out is None:

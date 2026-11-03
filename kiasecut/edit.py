@@ -2131,6 +2131,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
     its id."""
     _, c = find(proj, clip_id)
     e, g = _graph(c, effect_id)
+    inside = node.get("group")                           # (added while looking inside a group: it is a member)
     if node["type"] == nodegraph.FILTER:
         d = fx.get(node["ref"])
         node = {"type": nodegraph.FILTER, "ref": node["ref"]}
@@ -2145,6 +2146,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = nodegraph.frame_defaults(node)
     else:
         raise EditError("不能新增這種節點")
+    if inside and (g["nodes"].get(inside) or {}).get("type") == nodegraph.GROUP:
+        node["group"] = inside
     try:
         nid = nodegraph.add_node(g, node, x, y)
     except nodegraph.GraphError as exc:
@@ -2167,12 +2170,66 @@ def remove_graph_node(proj, clip_id, effect_id, nid):
         raise EditError("找不到這個節點")
     if node["type"] == nodegraph.OUTPUT:
         raise EditError("輸出節點不能刪除")
+    gone = {nid}                                         # (a group goes with its members, at any depth)
+    todo = [nid]
+    while todo:
+        for m in nodegraph.members(g, todo.pop()):
+            gone.add(m)
+            todo.append(m)
     nodegraph.remove_node(g, nid)
-    for k in [k for k in e["params"] if k.startswith(nid + ".")]:
-        del e["params"][k]
-    (e.get("sources") or {}).pop(nid, None)
+    for n in gone:
+        for k in [k for k in e["params"] if k.startswith(n + ".")]:
+            del e["params"][k]
+        (e.get("sources") or {}).pop(n, None)
     if "sources" in e and not e["sources"]:
         e.pop("sources")
+
+
+def group_graph_nodes(proj, clip_id, effect_id, ids, label="群組"):
+    """Box nodes ids up in a group node (Ctrl+G); returns its id."""
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    try:
+        return nodegraph.make_group(g, ids, label)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
+def ungroup_graph(proj, clip_id, effect_id, gid):
+    """Take a group apart (Ctrl+Alt+G)."""
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    try:
+        nodegraph.ungroup(g, gid)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
+def group_port(proj, clip_id, effect_id, gid, member, socket=None, out=None, name=None):
+    """Inside group gid: socket of member is fed by the group's input name (a new one when None), or - with out -
+    the group's output name is member's output out."""
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    try:
+        if out is not None:
+            return nodegraph.group_output(g, gid, member, out, name)
+        return nodegraph.group_input(g, gid, member, socket, name)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
+def group_unplug(proj, clip_id, effect_id, gid, member=None, socket=None, output=None):
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    nodegraph.group_unplug(g, gid, member, socket, output)
+
+
+def rename_graph_group(proj, clip_id, effect_id, gid, label):
+    _, c = find(proj, clip_id)
+    node = _graph(c, effect_id)[1]["nodes"].get(gid)
+    if node is None or node["type"] != nodegraph.GROUP:
+        raise EditError("這不是群組")
+    node["label"] = label.strip() or "群組"
 
 
 def connect_graph(proj, clip_id, effect_id, src, dst, socket, out=None):
@@ -2224,6 +2281,9 @@ def dissolve_graph_node(proj, clip_id, effect_id, nid):
     e, g = _graph(c, effect_id)
     if (g["nodes"].get(nid) or {}).get("type") == nodegraph.OUTPUT:
         raise EditError("輸出節點不能刪除")
+    if (g["nodes"].get(nid) or {}).get("type") == nodegraph.GROUP:     # (a group: taken apart, nothing lost)
+        nodegraph.ungroup(g, nid)
+        return
     nodegraph.dissolve(g, nid)
     for k in [k for k in e["params"] if k.startswith(nid + ".")]:
         del e["params"][k]
@@ -2245,14 +2305,14 @@ def duplicate_graph_nodes(proj, clip_id, effect_id, ids, dx=40.0, dy=40.0):
     return list(made.values())
 
 
-def paste_graph_nodes(proj, clip_id, effect_id, data, x=0.0, y=0.0):
+def paste_graph_nodes(proj, clip_id, effect_id, data, x=0.0, y=0.0, group=None):
     """Nodes copied from a node effect (nodegraph.pack) put in this one; returns the new ids."""
     _, c = find(proj, clip_id)
     e, g = _graph(c, effect_id)
     for n in data["nodes"].values():
         if n["type"] == nodegraph.FILTER:
             fx.get(n["ref"])
-    made = nodegraph.paste(g, data, x, y)
+    made = nodegraph.paste(g, data, x, y, group if (g["nodes"].get(group) or {}).get("type") == nodegraph.GROUP else None)
     for old, new in made.items():
         for k, v in data["params"].items():
             if k.startswith(old + "."):
@@ -2302,7 +2362,7 @@ def set_graph_viewer(proj, clip_id, effect_id, nid, out=""):
         g.pop("viewer", None)
         return
     node = g["nodes"].get(nid)
-    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT):
+    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT, nodegraph.GROUP):
         raise EditError("這個節點沒有圖可以預覽")
     if out not in [o for o, _ in nodegraph.outputs(node)]:
         raise EditError("這個節點沒有這個輸出")

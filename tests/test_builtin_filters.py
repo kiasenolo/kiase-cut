@@ -147,6 +147,25 @@ class BuiltinFilterTests(unittest.TestCase):
         out = eng.run(d, vals, rgba)
         self.assertEqual(tuple(out[3, 3]), (255, 0, 0, 255))
 
+    def test_exposure_node_doubles_per_stop(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:nodes/exposure")
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        rgba = np.zeros((4, 4, 4), np.uint8)
+        rgba[...] = (50, 40, 20, 200)
+        vals["exposure"] = 0.0
+        self.assertTrue(np.abs(eng.run(d, vals, rgba).astype(int) - rgba).max() <= 1)      # (0: as it was)
+        vals["exposure"] = 1.0
+        out = eng.run(d, vals, rgba)
+        self.assertEqual(int(out[0, 0, 3]), 200)                                           # (alpha stays)
+        self.assertAlmostEqual(int(out[0, 0, 0]), 100, delta=2)                            # (one stop: twice)
+        vals["exposure"] = -1.0
+        self.assertAlmostEqual(int(eng.run(d, vals, rgba)[0, 0, 0]), 25, delta=2)
+
     def test_white_noise_is_random_per_point(self):
         import numpy as np
         try:

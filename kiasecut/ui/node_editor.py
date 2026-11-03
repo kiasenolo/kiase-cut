@@ -834,6 +834,7 @@ class GraphView(QGraphicsView):
         self.items_by_id = {}
         self.link_items = []                     # [(Link, from node, to node, socket, output name)]
         self.pseudo_links = []                   # [(from, to, socket, output)] the links to and from a group's own sockets, inside it
+        self.lifted = []                         # the placed link a dragged one picked up, hidden meanwhile
         self.snapped = None                      # the socket a dragged link has jumped onto: (kind, node id, socket, point)
         self.snap_ring = None
         self.rubber = None                       # a link being dragged: (Link, source node, old (dst, socket) or None, output name)
@@ -988,6 +989,10 @@ class GraphView(QGraphicsView):
                     ln = Link(DRAG_W)
                     self.scene().addItem(ln)
                     self.rubber = (ln, nid, old, out)
+                    if old:                              # (picked up: the link itself is what is dragged, not a second one beside it)
+                        self.lifted = [l for l, _a, b, sk, _o in self.link_items if (b, sk) == old]
+                        for l in self.lifted:
+                            l.setVisible(False)
                     self._route_temp(pos)
                     return
                 if kind == "in" and nid != PORT_OUT:           # a free input dragged the other way: it is let go on an output
@@ -1207,6 +1212,9 @@ class GraphView(QGraphicsView):
             ln, src, old, out = self.rubber
             self.rubber = None
             self.scene().removeItem(ln)
+            for l in self.lifted:                        # (shown again: let go on the same socket it stays; else the graph is redrawn)
+                l.setVisible(True)
+            self.lifted = []
             snapped = self.end_snap()
             self.editor.drop_link(src, out, old, snapped[:3] if snapped else self.socket_at(pos), pos, e.globalPosition().toPoint())
             return

@@ -124,6 +124,20 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, v.items_by_id["input"].output_pos(), target + QPointF(-200, 0))   # (far from every socket: no link)
         self.assertEqual(len(got), 1)
 
+    def test_a_picked_up_link_is_the_one_dragged_not_a_second_beside_it(self):
+        ed = self.make()
+        v = ed.view
+        out = v.items_by_id["output"]
+        placed = [l for l, _a, b, sk, _o in v.link_items if (b, sk) == ("output", "src")]
+        self.assertTrue(placed and all(l.isVisible() for l in placed))
+        a = out.input_pos("src")
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(a))
+        QTest.mouseMove(v.viewport(), v.mapFromScene(a + QPointF(-60, 80)))
+        self.assertFalse(any(l.isVisible() for l in placed))                   # (it left the socket)
+        ed.add_menu = lambda *a, **k: None
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(a))   # (back on its own socket: it stays)
+        self.assertTrue(all(l.isVisible() for l in placed))
+
     def test_picking_up_a_link_and_dropping_it_nowhere_unlinks(self):
         ed = self.make()
         got = []

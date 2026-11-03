@@ -15,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np  # noqa: E402
 from PySide6.QtCore import QPointF, QRectF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QPainter  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import edit, glrender, render, renderexport  # noqa: E402
@@ -194,6 +195,21 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(group, "mask")
         self.assertAlmostEqual(vals["h"] / vals["w"], 1.0 / round(9 / 16, 4), 2)
         self.assertLess(vals["w"], round(9 / 16, 4))
+
+    def test_guides_can_be_hidden(self):
+        p = proj()
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.set_scene(p, S // 2, "c1")
+        self.assertTrue(pv.show_guides)
+        shown = pv.grab().toImage()
+        pv.set_show_guides(False)
+        hidden = pv.grab().toImage()
+        self.assertNotEqual(shown, hidden)                                  # (the frame and handles are gone)
+        pv.drag = None
+        at = pv._rect().center()
+        QTest.mousePress(pv, Qt.LeftButton, NONE, at.toPoint())
+        self.assertIsNone(pv.drag)                                          # (and they cannot be dragged unseen)
 
 
 if __name__ == "__main__":

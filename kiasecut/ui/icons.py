@@ -30,6 +30,14 @@ def _draw(p, name):
         for dx in (-4, 3):
             _poly(p, [(12 + (dx - 3) * s, 6), (12 + (dx + 4) * s, 12), (12 + (dx - 3) * s, 18)])
         p.drawRect(QRectF(12 + 7.5 * s - (0 if s > 0 else 2), 6, 2, 12))
+    elif name == "guides":                              # (the frame and handles drawn over the picture)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(pen.color(), 1.6, Qt.DashLine))
+        p.drawRect(QRectF(5, 6, 14, 12))
+        p.setPen(Qt.NoPen)
+        p.setBrush(pen.color())
+        for x, y in ((5, 6), (19, 6), (5, 18), (19, 18)):
+            p.drawRect(QRectF(x - 2, y - 2, 4, 4))
     elif name == "fullscreen":
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(pen.color(), 2))

@@ -543,6 +543,9 @@ class MainWindow(QMainWindow):
         self.play_btn = tool("play", "播放 / 暫停（空白鍵）", self.toggle_play)
         self.play_btn.setIconSize(QSize(22, 22))
         full_btn = tool("fullscreen", "全螢幕（F）", self.toggle_fullscreen)
+        self.guides_btn = tool("guides", "顯示 / 隱藏預覽上的外框和控制點（只看畫面）", self.toggle_guides, True)
+        self.guides_btn.setChecked(str(self.settings().value("show_guides", "true")).lower() not in ("false", "0"))
+        self.preview.set_show_guides(self.guides_btn.isChecked())
         self.time_lbl = QLabel("00:00.00")
         self.time_lbl.setObjectName("time")
         self.dur_lbl = QLabel("")
@@ -585,6 +588,7 @@ class MainWindow(QMainWindow):
         self.pitch_btn.toggled.connect(self.set_keep_pitch)
         bar.addWidget(self.pitch_btn)
         self.transport += [self.rate_box, self.pitch_btn]
+        bar.addWidget(self.guides_btn)
         bar.addWidget(full_btn)
         head = QHBoxLayout()
         head.setContentsMargins(8, 3, 8, 3)
@@ -4466,6 +4470,11 @@ class MainWindow(QMainWindow):
 
     def step(self, d):
         self.seek(self.pos + d)
+
+    def toggle_guides(self):
+        on = self.guides_btn.isChecked()
+        self.preview.set_show_guides(on)
+        self.settings().setValue("show_guides", "true" if on else "false")
 
     def toggle_fullscreen(self):
         if self.fullscreen:

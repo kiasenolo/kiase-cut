@@ -493,6 +493,7 @@ class Preview(QWidget):
         self.selected_id = None
         self.selected_ids = set()               # the whole selection (with selected_id, the primary)
         self.interactive = interactive
+        self.show_guides = True                          # 輔助線: the frame, handles and notes drawn over the picture (off: just the picture)
         self.mask_mode = False
         self.mask_group = "mask"                # which mask mask mode edits: the clip's, "fxmask:<effect id>"
         self.text_box = None                    # TextBox while a text clip's words are typed on the canvas
@@ -530,6 +531,11 @@ class Preview(QWidget):
         self.selected_ids = (set(selected_ids or ()) | {selected_id}) if selected_id else set()
         if self.drag is None:
             self.update()
+
+    def set_show_guides(self, on):
+        self.show_guides = bool(on)
+        self.unsetCursor()
+        self.update()
 
     def set_mask_mode(self, on, group="mask"):
         self.mask_mode, self.mask_group = on, group
@@ -877,7 +883,7 @@ class Preview(QWidget):
         p.fillRect(r, QColor("black"))
         if self.img is not None:
             p.drawImage(r, self.img)                   # (no smoothing: zoomed in, the pixels stay square)
-        if not self.interactive:
+        if not self.interactive or not self.show_guides:
             return
         if self.zoom != 1.0 or self.pan != QPointF(0, 0):
             p.setPen(QColor("#9a9aa0"))
@@ -1277,7 +1283,7 @@ class Preview(QWidget):
         if self.box_zoom and e.button() == Qt.RightButton:
             self._arm_box_zoom(False)
             return
-        if not self.interactive or e.button() != Qt.LeftButton or not self.view:
+        if not self.interactive or e.button() != Qt.LeftButton or not self.view or not self.show_guides:
             return
         x, y = self._to_canvas(e.position())
         m = QPointF(x, y)
@@ -1719,7 +1725,7 @@ class Preview(QWidget):
         super().leaveEvent(e)
 
     def _hover(self, e):
-        if not self.interactive or not self.view or self.box_zoom:
+        if not self.interactive or not self.view or self.box_zoom or not self.show_guides:
             return
         x, y = self._to_canvas(e.position())
         m, k = QPointF(x, y), self._k()

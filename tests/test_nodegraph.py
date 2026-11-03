@@ -208,7 +208,7 @@ class RunTest(unittest.TestCase):
     def test_map_range_and_gamma(self):
         g, n, p = self.node("map_range", from_max=2.0, to_max=4.0)
         out, _, _ = self.run_graph(g, self.solid([128, 64, 0, 255]), params={n + ".to_max": 1.0, n + ".from_max": 0.5})
-        self.close(out, (255, 128, 0, 255), 2)                   # 0.5 of 0 - 0.5 -> 1, clamped
+        self.close(out, (146, 146, 146, 255), 2)                # the brightness 0.286 of 0 - 0.5 -> 0.572 (a float node: grey)
         g, n, p = self.node("gamma")
         out, _, _ = self.run_graph(g, self.solid([64, 64, 64, 255]), params={n + ".gamma": 2.0})
         self.close(out, (16, 16, 16, 255), 2)                    # 0.25 ** 2

@@ -66,6 +66,26 @@ class GraphEditTests(unittest.TestCase):
         self.assertIsNot(copy["graph"], self.e["graph"])
 
 
+class GraphPanelTests(unittest.TestCase):
+    def test_form_has_the_nodes_parameters_and_sources(self):
+        from kiasecut.ui.effects_panel import EffectsPanel
+        p = proj()
+        e = edit.add_effect(p, "c1", fx.GRAPH)
+        m = edit.add_graph_node(p, "c1", e["id"], {"type": "filter", "ref": "builtin:nodes/mix"}, 0, 0)
+        s = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "image"}, -100, 0)
+        panel = EffectsPanel()
+        opened = []
+        panel.nodesRequested.connect(opened.append)
+        panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        self.assertIn(("fx:" + e["id"], m + ".fac"), panel.widgets)
+        self.assertIn(("source_media", "fx:" + e["id"], s), panel.widgets)
+        edit.set_param(p, "c1", "fx:" + e["id"], m + ".fac", 0.25)
+        panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        self.assertEqual(fx.def_of(e).params[1].name, m + ".fac")
+        panel.nodesRequested.emit("x")
+        self.assertEqual(opened, ["x"])
+
+
 class GraphRenderTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

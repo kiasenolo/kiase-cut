@@ -66,7 +66,7 @@ def param_rows(c):
     if "volume" in c:
         out.append(("clip", "volume", "音量 %", 100, 1.0))
     for e in c.get("effects") or []:                    # the numbers of the clip's filters and their masks
-        d = fx.get(e["filter"])
+        d = fx.def_of(e)
         name = d.name if len(c["effects"]) == 1 else f"{d.name} #{c['effects'].index(e) + 1}"
         out.append(("fxmix:" + e["id"], "mix", f"{name}·混合程度 %", 100, 1.0))
         for p in d.params:

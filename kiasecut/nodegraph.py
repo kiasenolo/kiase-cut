@@ -127,6 +127,53 @@ def sockets(node):
             [(PARAM + p.name, p.label) for p in d.params if p.type in fx.SOURCE_TYPES])
 
 
+def title(node):
+    if node["type"] == FILTER:
+        return fx.get(node["ref"]).name
+    return {INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段",
+                                                  "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
+
+
+def ordered(graph):
+    """Node ids from left to right (then top to bottom): the order their rows are listed in."""
+    return sorted(graph["nodes"], key=lambda i: (graph["nodes"][i].get("x", 0.0), graph["nodes"][i].get("y", 0.0), i))
+
+
+_defs = {}
+
+
+def virtual_def(e):
+    """A FilterDef whose parameters are those of every filter node of effect e's graph, named
+    "<node>.<parameter>" and in a panel (@panel) of the node each (so the effects panel, keyframes and the
+    numbers lists treat a graph like any filter)."""
+    g = e["graph"]
+    rows = []
+    for nid in ordered(g):
+        n = g["nodes"][nid]
+        if n["type"] == FILTER:
+            d = fx.get(n["ref"])
+            rows.append((nid, n.get("mute"), d))
+    key = tuple((nid, mute, d.key(), d.error) for nid, mute, d in rows)
+    hit = _defs.get(key)
+    if hit is not None:
+        return hit
+    params, panels = [], []
+    for nid, mute, d in rows:
+        name = f"{d.name}（{nid}）"
+        panels.append((name, False))
+        for q in d.params:
+            c = fx.Param(param_key(nid, q.name), q.type, q.default, q.lo, q.hi, q.label, q.items)
+            c.panel = name
+            c.enable = [(param_key(nid, o), neg, want) for o, neg, want in q.enable]
+            params.append(c)
+    out = fx.FilterDef(fx.GRAPH, fx.GRAPH_DEF.name, "", params, fx.GRAPH_DEF.category, fx.GRAPH_DEF.description,
+                       panels=panels, error=next((f"{d.name}：{d.error}" for _n, _m, d in rows if d.error), None))
+    if len(_defs) > 64:
+        _defs.clear()
+    _defs[key] = out
+    return out
+
+
 def has_output(node):
     return node["type"] != OUTPUT
 

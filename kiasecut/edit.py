@@ -1078,7 +1078,7 @@ def _check_choice(c, group, key, value):
         if value == "pass_through" and c["type"] != "group":
             raise EditError("only groups pass through")
     if group.startswith("fx:"):
-        p = next((q for q in fx.get(_effect(c, group[3:])["filter"]).params if q.name == key), None)
+        p = next((q for q in fx.def_of(_effect(c, group[3:])).params if q.name == key), None)
         if p is not None and p.type == "menu" and value not in p.items:
             raise EditError(f"{key} has no choice {value!r}")
 

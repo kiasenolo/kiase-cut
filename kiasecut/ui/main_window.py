@@ -41,6 +41,7 @@ from .docks import Panels
 from .curve_editor import CurveEditor, param_rows as curve_param_rows
 from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
+from .node_editor import NodeEditor
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
 from .inspector import Inspector
 from .library import LibraryPanel, dropped_paths
@@ -443,6 +444,16 @@ class MainWindow(QMainWindow):
         cv.keyJump.connect(self.jump_key)
         self.effects = EffectsPanel()
         ef = self.effects
+        self.nodes = NodeEditor()                       # 節點 (nodegraph.py)
+        nd = self.nodes
+        nd.addRequested.connect(self.on_node_add)
+        nd.removeRequested.connect(self.on_node_remove)
+        nd.connectRequested.connect(self.on_node_connect)
+        nd.disconnectRequested.connect(self.on_node_disconnect)
+        nd.moveRequested.connect(self.on_node_move)
+        nd.muteRequested.connect(self.on_node_mute)
+        nd.nodeSelected.connect(self.on_node_selected)
+        ef.nodesRequested.connect(self.open_node_editor)
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.browseRequested.connect(self.browse_effect)
         ef.removeRequested.connect(lambda ids, eid: self.fx_each(
@@ -779,7 +790,7 @@ class MainWindow(QMainWindow):
             "library": self.library, "assets": self.assets, "userlib": self.ulpanel, "vfx": self.vfx,
             "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_dock,
             "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "rack": self.rack_panel,
-            "timeline": lower})
+            "nodes": self.nodes, "timeline": lower})
         self.panels["rack"].visibilityChanged.connect(lambda on: on and self.show_rack())
         for key, split in (("split/curves", cv.split), ("split/component", self.tl_split),
                            ("split/layers", self.layers.split)):     # where their lines were dragged to
@@ -796,12 +807,16 @@ class MainWindow(QMainWindow):
                 self.preview.set_mask_mode(True, "fxmask:" + ef.mask_edit)
             elif pn.is_active("effects") and ef.source_edit:
                 self.preview.set_mask_mode(True, "fxsrc:{}:{}".format(*ef.source_edit))
+            elif pn.is_active("nodes") and self.node_source:
+                self.preview.set_mask_mode(True, "fxsrc:{}:{}".format(*self.node_source))
             elif pn.is_active("inspector") and ins.place_edit:
                 self.preview.set_mask_mode(True, "place:" + ins.place_edit)
             else:
                 self.preview.set_mask_mode(False)
             self._matte_preview_changed()
             self._update_matte_region()
+        self.node_source = None         # (effect id, node id) of the picture node selected in the node editor
+        self.node_mask_mode = mask_mode
         self.panels.activeChanged.connect(lambda _k: mask_mode())
         ef.maskEditChanged.connect(mask_mode)
         ins.placeEditChanged.connect(mask_mode)
@@ -2538,6 +2553,7 @@ class MainWindow(QMainWindow):
             self.mask_panel.set_tracks(self.mask_tracks())
             self.inspector.set_images(self.mask_images())          # (a component's picture parameters)
         self.mask_panel.show_clips(clips, t, self.fps)
+        self.nodes.show_clip(clips[0] if len(clips) == 1 else None)
         self.beats.show_clips(clips)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
         self._update_side_tabs(clips)
@@ -2551,8 +2567,9 @@ class MainWindow(QMainWindow):
                 "mask": bool(clips) and all(c["type"] in edit.MASKABLE for c in clips),
                 "beat": len(clips) == 1 and edit.has_sound(clips[0]),
                 "subtitle": any(c["type"] == "text" for c in clips),
-                "curves": bool(clips)}
-        for key, dock in (("fx", "effects"), ("mask", "mask"), ("beat", "beats"), ("subtitle", "subtitles"),
+                "curves": bool(clips),
+                "nodes": len(clips) == 1 and any(e.get("filter") == fx.GRAPH for e in clips[0].get("effects") or [])}
+        for key, dock in (("nodes", "nodes"), ("fx", "effects"), ("mask", "mask"), ("beat", "beats"), ("subtitle", "subtitles"),
                           ("curves", "curves")):
             self.panels.set_usable(dock, show[key])
 
@@ -2741,7 +2758,7 @@ class MainWindow(QMainWindow):
                 return float(info[2]), float(info[3])
             if g.startswith("fx:"):
                 e = next(e for e in c.get("effects") or [] if e["id"] == g[3:])
-                q = next(q for q in fx.get(e["filter"]).params if q.name == k)
+                q = next(q for q in fx.def_of(e).params if q.name == k)
                 return float(q.lo), float(q.hi)
         except (KeyError, StopIteration, IndexError, TypeError):
             pass
@@ -4920,6 +4937,7 @@ class MainWindow(QMainWindow):
         for it in sorted(self.ulib.lib("filters")["items"], key=lambda i: i["name"].lower()):
             mine.append((fx.get(it["path"]).name or it["name"], it["path"]))
         self.effects.set_user_filters(mine)
+        self.nodes.set_user_filters(mine)
         self.vfx.set_user_filters(mine)
 
     def ul_item(self, key, ident):
@@ -5105,6 +5123,8 @@ class MainWindow(QMainWindow):
     # -- filters ----------------------------------------------------------------------------------
     def _fill_filter_menu(self, menu, fn):
         menu.clear()
+        menu.addAction("節點效果（用節點編輯器組合）", lambda: fn(fx.GRAPH))
+        menu.addSeparator()
         cats = {}
         for ref in fx.builtin_refs():
             d = fx.get(ref)
@@ -5281,6 +5301,61 @@ class MainWindow(QMainWindow):
                 fn(level, cid, g.split(":", 1)[1])
 
         self.apply(label + many(targets), each)
+
+    # -- the node editor (節點): one clip's node effect, every change an undo step ------------------------
+    def node_clip(self):
+        """The clip the node editor shows: the only one selected."""
+        sel = self.timeline.selected_clips_primary_first()
+        return sel[0]["id"] if len(sel) == 1 else None
+
+    def open_node_editor(self, eid):
+        self.panels.show("nodes")
+        self.nodes.show_clip(self.timeline.selected_clips_primary_first()[0], eid)
+
+    def on_node_add(self, eid, node, x, y):
+        cid = self.node_clip()
+        if cid:
+            made = []
+            if self.apply("新增節點", lambda lvl: made.append(edit.add_graph_node(lvl, cid, eid, node, x, y))) is not None and made:
+                self.nodes.select(made[0])
+
+    def on_node_remove(self, eid, ids):
+        cid = self.node_clip()
+        if cid:
+            self.apply("刪除節點", lambda lvl: [edit.remove_graph_node(lvl, cid, eid, n) for n in ids])
+
+    def on_node_connect(self, eid, src, dst, socket):
+        cid = self.node_clip()
+        if cid:
+            self.apply("連接節點", lambda lvl: edit.connect_graph(lvl, cid, eid, src, dst, socket))
+
+    def on_node_disconnect(self, eid, dst, socket):
+        cid = self.node_clip()
+        if cid:
+            self.apply("中斷連線", lambda lvl: edit.disconnect_graph(lvl, cid, eid, dst, socket))
+
+    def on_node_move(self, eid, positions):
+        cid = self.node_clip()
+        if cid:
+            self.apply("移動節點", lambda lvl: edit.move_graph_nodes(lvl, cid, eid, positions))
+
+    def on_node_mute(self, eid, ids, on):
+        cid = self.node_clip()
+        if cid:
+            self.apply("停用節點" if on else "啟用節點", lambda lvl: [edit.mute_graph_node(lvl, cid, eid, n, on) for n in ids])
+
+    def on_node_selected(self, eid, nid):
+        """A node picked in the node editor: a picture / video / compound / track one is placed on the preview
+        as a mask is (the node's own settings are in the 效果 panel)."""
+        cid = self.node_clip()
+        want = None
+        if cid and nid:
+            c = edit.find(self.container(), cid)[1]
+            e = next((x for x in c.get("effects") or [] if x["id"] == eid), None)
+            if e is not None and nid in (e.get("sources") or {}):
+                want = (eid, nid)
+        self.node_source = want
+        self.node_mask_mode()
 
     def on_fx_param_edited(self, ids, group, key, value):
         """A value of an effect typed in the effects panel: set on the alike effect of every clip

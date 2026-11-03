@@ -31,7 +31,7 @@ from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
                                QPushButton, QToolButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, fx
+from .. import curves, edit, fx, nodegraph
 from .colorpick import pick_color, qcolor, rgba
 from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, key_button, kind_tag,
                         section)
@@ -128,6 +128,7 @@ class EffectsPanel(QWidget):
     liveEdited = Signal(list, str, str, object)
     liveCancelled = Signal()                 # a colour being picked was given up: show what is there
     backdropChosen = Signal(list, object, object)   # clip ids, 套用至背景 (or None), 隱藏本體 (or None)
+    nodesRequested = Signal(str)                    # effect id: open the node editor on this node effect
     docRequested = Signal()
     revealFilter = Signal(str)                      # filter ref: show its file
     effectDropped = Signal(list, str, int)          # clip ids, what FX_MIME carries, place in the chain
@@ -197,6 +198,8 @@ class EffectsPanel(QWidget):
     def _fill_menu(self):
         menu = self.add_btn.menu()
         menu.clear()
+        menu.addAction("節點效果（用節點編輯器組合）", lambda: self._add(fx.GRAPH)).setToolTip(fx.GRAPH_DEF.description)
+        menu.addSeparator()
         cats = {}
         for ref in fx.builtin_refs():
             d = fx.get(ref)
@@ -310,7 +313,7 @@ class EffectsPanel(QWidget):
         return lab
 
     def _effect_box(self, c, e, index, count):
-        d = fx.get(e["filter"])
+        d = fx.def_of(e)
         box = QFrame()
         box.setFrameShape(QFrame.StyledPanel)
         lay = QVBoxLayout(box)
@@ -355,7 +358,12 @@ class EffectsPanel(QWidget):
             err.setWordWrap(True)
             err.setStyleSheet("color: #e0605a;")
             lay.addWidget(err)
-        if not e["filter"].startswith(fx.BUILTIN):
+        if e["filter"] == fx.GRAPH:
+            open_nodes = QPushButton("開啟節點編輯器")
+            open_nodes.setToolTip("在節點編輯器裡接這個效果的節點")
+            open_nodes.clicked.connect(lambda _=False, eid=e["id"]: self.nodesRequested.emit(eid))
+            lay.addWidget(open_nodes)
+        elif not e["filter"].startswith(fx.BUILTIN):
             where = QPushButton("在檔案總管中顯示濾鏡檔")
             where.clicked.connect(lambda _=False, ref=e["filter"]: self.revealFilter.emit(ref))
             lay.addWidget(where)
@@ -381,6 +389,13 @@ class EffectsPanel(QWidget):
             pl.addWidget(row)
         for sec, _rows in sections.values():                    # (after the effect's own rows, in order)
             lay.addWidget(sec)
+        if e["filter"] == fx.GRAPH:                             # a node graph: its picture / video / compound nodes
+            for nid in nodegraph.ordered(e["graph"]):
+                node = e["graph"]["nodes"][nid]
+                if node["type"] == nodegraph.SOURCE and node.get("kind") and nid in (e.get("sources") or {}):
+                    sec, sl = self._panel(e["id"], f"{nodegraph.title(node)}（{nid}）", False)
+                    sl.addLayout(self._source_row(e["id"], nid, node["kind"]))
+                    lay.addWidget(sec)
         # where the effect works
         row = QHBoxLayout()
         row.addWidget(QLabel("範圍"))
@@ -816,7 +831,7 @@ class EffectsPanel(QWidget):
             shape = (len(clips), len(pics))
         else:
             shape = (len(clips) > 1, len(pics) > 1, len(pics) < len(clips),
-                     tuple((fx.get(e["filter"]).key(), fx.get(e["filter"]).error) for e in c.get("effects") or []),
+                     tuple((fx.def_of(e).key(), fx.def_of(e).error) for e in c.get("effects") or []),
                      frozenset((k["type"] == "filter", bool(k.get("asset")),
                                 tuple((e["filter"], bool(e.get("disabled")), kind_tag(e.get("mask")),
                                        tuple(sorted((n, s.get("kind")) for n, s in (e.get("sources") or {}).items())))
@@ -854,7 +869,7 @@ class EffectsPanel(QWidget):
         w = self.widgets
         for i, e in enumerate(c.get("effects") or []):
             es = [k["effects"][i] for k in pics]
-            d = fx.get(e["filter"])
+            d = fx.def_of(e)
             xgroup = "fxmix:" + e["id"]
             stored = [x.get("mix", 1.0) for x in es]
             s = w.get((xgroup, "mix"))
@@ -891,20 +906,10 @@ class EffectsPanel(QWidget):
                 sb = w.get(("source_btn", group, p.name))
                 if sb is not None:
                     sb.setChecked(all(sv.get("kind") for sv in srcs))
-                for key, field in ((("source", group, p.name), "kind"), (("source_media", group, p.name), None)):
-                    box = w.get(key)
-                    if box is None:
-                        continue
-                    vals = {sv.get(field) if field else sv.get({"image": "image", "video": "video", "track": "track_id"}.get(
-                        sv.get("kind"), "compound_id")) for sv in srcs}
-                    v = vals.pop() if len(vals) == 1 else MIXED
-                    i = -1 if v is MIXED else box.findData(v)
-                    if i < 0 and v not in (MIXED, None) and field is None:      # (a file not in the media library)
-                        box.insertItem(0, os.path.basename(str(v)), v)
-                        i = 0
-                    box.blockSignals(True)
-                    box.setCurrentIndex(i)
-                    box.blockSignals(False)
+                self._show_source(group, p.name, srcs)
+            if e["filter"] == fx.GRAPH:                             # the pictures its source nodes show
+                for nid in nodegraph.source_nodes(e["graph"]):
+                    self._show_source(group, nid, [(x.get("sources") or {}).get(nid) or {} for x in es])
             mgroup = "fxmask:" + e["id"]
             if ("key", mgroup, "kind") not in w:
                 continue                            # (not every clip has a range)
@@ -932,6 +937,23 @@ class EffectsPanel(QWidget):
                 else:
                     s.show_value(round(v * r[6], r[5]))
                 Inspector._key_state(w[("key", mgroup, r[0])], stored, pics, ts)
+
+    def _show_source(self, group, name, srcs):
+        """The source pickers of parameter (or source node) name as the sources srcs (one per clip) have them."""
+        for key, field in ((("source", group, name), "kind"), (("source_media", group, name), None)):
+            box = self.widgets.get(key)
+            if box is None:
+                continue
+            vals = {sv.get(field) if field else sv.get({"image": "image", "video": "video", "track": "track_id"}.get(
+                sv.get("kind"), "compound_id")) for sv in srcs}
+            v = vals.pop() if len(vals) == 1 else MIXED
+            i = -1 if v is MIXED else box.findData(v)
+            if i < 0 and v not in (MIXED, None) and field is None:      # (a file not in the media library)
+                box.insertItem(0, os.path.basename(str(v)), v)
+                i = 0
+            box.blockSignals(True)
+            box.setCurrentIndex(i)
+            box.blockSignals(False)
 
     def _show(self, group, p, v):
         """Parameter p of effect group showing value v (MIXED: the clips' are not the same)."""

@@ -325,6 +325,14 @@ def get(ref):
     return _file_def(ref, ref, os.path.splitext(os.path.basename(ref))[0])
 
 
+def def_of(e):
+    """FilterDef of effect e: its filter's, or for a node graph one whose parameters are those of its nodes."""
+    if e["filter"] == GRAPH and "graph" in e:
+        from . import nodegraph
+        return nodegraph.virtual_def(e)
+    return get(e["filter"])
+
+
 def builtin_refs():
     """Refs of the built-in filters, in the order the menus list them."""
     out = []

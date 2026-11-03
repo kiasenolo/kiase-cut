@@ -26,12 +26,14 @@ from . import appevents, icons
 STATE_VERSION = 1
 LEFT = ("library", "assets", "userlib", "vfx", "compounds")
 SIDE = ("inspector", "effects", "mask", "beats", "subtitles", "curves", "rack")
+WITH_TIMELINE = ("nodes",)                  # side panels that sit with the timeline: they want room
 TITLES = {"library": "專案素材", "assets": "內建素材", "userlib": "Library", "vfx": "VFX", "compounds": "複合片段",
           "preview": "預覽", "inspector": "屬性", "effects": "效果", "mask": "遮罩", "beats": "節拍",
-          "subtitles": "字幕", "curves": "關鍵幀曲線", "rack": "全局參數架", "timeline": "時間線"}
-ORDER = LEFT + ("preview",) + SIDE + ("timeline",)
+          "subtitles": "字幕", "curves": "關鍵幀曲線", "rack": "全局參數架", "nodes": "節點", "timeline": "時間線"}
+ORDER = LEFT + ("preview",) + SIDE + WITH_TIMELINE + ("timeline",)
+USED = SIDE + WITH_TIMELINE                  # the panels the one in use (Panels.active) can be
 NOTES = {"effects": "選取的片段沒有效果可用", "mask": "選取的片段不能加遮罩", "beats": "選取一個有聲音的片段",
-         "subtitles": "選取文字片段", "curves": "選取一個片段"}
+         "subtitles": "選取文字片段", "curves": "選取一個片段", "nodes": "選取有節點效果的片段"}
 
 
 class DockTitle(QWidget):
@@ -234,9 +236,9 @@ class Panels(QObject):
             return
         d = self.docks[key]
         # a tab switched to (side by side ones become the one in use by a click in them)
-        if on and key in SIDE and self.tabbed(d):
+        if on and key in USED and self.tabbed(d):
             self.set_active(key)
-        elif key in SIDE:
+        elif key in USED:
             self.activeChanged.emit(self.active)       # (it may have gone away)
 
     def set_active(self, key):
@@ -252,7 +254,7 @@ class Panels(QObject):
             w = obj
             while w is not None and not isinstance(w, Dock):
                 w = w.parentWidget()
-            if w is not None and w.key in SIDE and w.key != self.active and w in self.docks.values():
+            if w is not None and w.key in USED and w.key != self.active and w in self.docks.values():
                 self.set_active(w.key)
         return False
 
@@ -268,7 +270,7 @@ class Panels(QObject):
         d.show()
         if raise_:
             d.raise_()
-        if key in SIDE:
+        if key in USED:
             self.set_active(key)
 
     def close(self, key):
@@ -378,6 +380,8 @@ class Panels(QObject):
                 for k in ("effects", "mask", "curves", "beats", "subtitles", "rack"):
                     w.tabifyDockWidget(D["inspector"], D[k])
                 w.addDockWidget(Qt.BottomDockWidgetArea, D["timeline"])
+                for k in WITH_TIMELINE:
+                    w.tabifyDockWidget(D["timeline"], D[k])
                 closed = ("curves", "beats", "subtitles")
                 sizes = ((("assets", "preview", "inspector"), (290, 1000, 360), Qt.Horizontal),
                          (("assets", "compounds"), (430, 260), Qt.Vertical),
@@ -392,6 +396,8 @@ class Panels(QObject):
                 for k in SIDE[1:]:
                     w.tabifyDockWidget(D["inspector"], D[k])
                 w.addDockWidget(Qt.BottomDockWidgetArea, D["timeline"])
+                for k in WITH_TIMELINE:
+                    w.tabifyDockWidget(D["timeline"], D[k])
                 sizes = ((("library", "preview", "inspector"), (360, 840, 420), Qt.Horizontal),
                          (("preview", "timeline"), (560, 360), Qt.Vertical))
                 front = ("library", "inspector")
@@ -417,11 +423,12 @@ class Panels(QObject):
         try:
             ok = self.win.restoreState(state, STATE_VERSION)
             if ok:
-                for k in SIDE:                          # a panel the layout was saved without goes in the 屬性 tabs, last
+                for k in USED:                          # a panel the layout was saved without goes in the 屬性 tabs (or the timeline's), last
                     if k != "inspector" and ("dock_" + k).encode("utf-16-be") not in bytes(state):
+                        mate = "timeline" if k in WITH_TIMELINE else "inspector"
                         self.win.removeDockWidget(self.docks[k])
-                        self.win.addDockWidget(Qt.TopDockWidgetArea, self.docks[k])
-                        self.win.tabifyDockWidget(self.docks["inspector"], self.docks[k])
+                        self.win.addDockWidget(Qt.BottomDockWidgetArea if mate == "timeline" else Qt.TopDockWidgetArea, self.docks[k])
+                        self.win.tabifyDockWidget(self.docks[mate], self.docks[k])
                 for k, d in self.docks.items():
                     d.user_closed = k in closed
                     d.auto_hidden = False

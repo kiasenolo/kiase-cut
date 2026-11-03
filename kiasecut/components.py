@@ -139,7 +139,7 @@ def number_info(c, prop):
         return info[0], float(assets._DEFAULTS.get(key, info[2])), 1, lo, hi
     if group.startswith("fx:"):                          # a filter's own number: "fx:<effect id>.<name>"
         e = _effect_of(c, group[3:])
-        d = fx.get(e["filter"])
+        d = fx.def_of(e)
         q = next(q for q in d.params if q.name == key)
         return f"{d.name}·{q.label}", float(q.default), 1, None, None
     if group.startswith("tvar:"):                        # a text variable's value
@@ -183,7 +183,7 @@ def number_props_of(c):
                 if assets.FIELD_INFO[f][1] == "number" and f not in ("w", "h")]
     for e in c.get("effects") or []:                     # the numbers of its filters
         try:
-            out += [f"fx:{e['id']}.{q.name}" for q in fx.get(e["filter"]).params if q.type in ("float", "int")]
+            out += [f"fx:{e['id']}.{q.name}" for q in fx.def_of(e).params if q.type in ("float", "int")]
         except Exception:
             pass
     if c.get("text"):                                    # and of its text variables

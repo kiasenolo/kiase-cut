@@ -1,4 +1,5 @@
 """Node graphs (nodegraph.py): the graph as data, and running it on the GPU."""
+import math
 import os
 import sys
 import unittest
@@ -621,6 +622,41 @@ class RunTest(unittest.TestCase):
         mid = [[0.0, 0.5, 0.0, 0.0, 0.0, 0.0], [1.0, 0.5, 0.0, 0.0, 0.0, 0.0]]                           # (every x gives 0.5 = 0 on the -1 - 1 side)
         out, _, _ = self.run_graph(g, self.solid([64, 128, 192, 255]), params={v + ".curve_y": mid})
         self.close(out, (64, 0, 192, 255), 2)
+
+    def test_mask_outputs_and_rounded_square_mask(self):
+        """Vignette's Mask output, Color Ramp's Alpha output and the Rounded Square Mask node (the last one checked against the node group of Blender 5.2)."""
+        self.W, self.H = 40, 24
+        g = ng.new_graph()
+        v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:blender_vignette"})
+        ng.connect(g, "input", v, "src")
+        ng.connect(g, v, "output", "src", "mask")
+        out, errors, _ = self.run_graph(g, self.solid([200, 100, 50, 255]), params={v + ".factor": 0.0})
+        self.assertEqual(errors, [])
+        self.assertEqual(out[12, 20, 0], 255)                                       # (the middle is inside; the strength does not touch the mask)
+        self.assertLess(out[0, 0, 0], 40)
+        self.assertEqual(tuple(out[12, 20, :3]), (255, 255, 255))
+        ng.connect(g, v, "output", "src")                                          # (the first output is still the picture)
+        out, _, _ = self.run_graph(g, self.solid([200, 100, 50, 255]), params={v + ".factor": 0.0})
+        self.close(out, (200, 100, 50, 255), 2)
+        g = ng.new_graph()
+        r = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:blender_color_ramp"})
+        ng.connect(g, "input", r, "src")
+        ng.connect(g, r, "output", "src", "alpha")
+        out, errors, _ = self.run_graph(g, self.solid([128, 128, 128, 255]))
+        self.assertEqual(errors, [])
+        self.assertEqual(out[0, 0, 0], out[0, 0, 1])                                # (grey)
+        g = ng.new_graph()
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/rounded_square_mask"})
+        ng.connect(g, "input", m, "src")
+        ng.connect(g, m, "output", "src")
+        out, errors, _ = self.run_graph(g, self.solid([0, 0, 0, 255]), params={m + ".size": (0.5, 0.5), m + ".angle": 0.0})
+        self.assertEqual(errors, [])
+        self.assertEqual(out[12, 20, 0], 255)
+        self.assertEqual(out[0, 0, 0], 0)
+        out, _, _ = self.run_graph(g, self.solid([0, 0, 0, 255]), params={m + ".size": (1.2, 0.6), m + ".roundness": 1.0, m + ".feather": 0.8,
+                                                                           m + ".offset": (-0.3, 0.1), m + ".angle": math.degrees(0.5)})
+        for (y, x), want in {(2, 5): 0.935, (6, 30): 0.422, (12, 20): 0.981, (18, 10): 0.551, (20, 35): 0.685, (22, 3): 0.116}.items():
+            self.assertLess(abs(out[y, x, 0] / 255.0 - want), 0.012, (y, x))        # (values from Blender's Rounded Square Mask group)
 
     def test_mix_blend_modes(self):
         g = ng.new_graph()

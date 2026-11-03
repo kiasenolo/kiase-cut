@@ -1,6 +1,8 @@
 // @filter [Blender] Vignette
 // @category Blender
-// @description Blender 合成器的 Vignette：圓角矩形的暗角，可以調大小、位置、角度（在線性光裡運算）
+// @description Blender 合成器的 Vignette：圓角矩形的暗角，可以調大小、位置、角度（在線性光裡運算）。「遮罩」輸出是暗角的遮罩（黑白的圖，中間 1、邊緣 0，不受強度影響）
+// @output image "圖像"
+// @output mask "遮罩"
 // @param factor float 1 0 1 "強度"
 // @param feather float 0.4 0 1 "柔邊"
 // @param roundness float 1 0 1 "圓角"
@@ -34,6 +36,7 @@ vec4 effect(vec2 uv) {
     float hi = clamp(1.0 - (f - 1.0) / (0.5 * f - 1.0), 0.0, 1.0);
     float k = 1.0 - smoothstep(0.0, 1.0, clamp((sd - lo) / max(hi - lo, 1e-6), 0.0, 1.0));
 
+    if (output_index == 1) return vec4(vec3(k), 1.0);
     vec4 s = unpremultiply(src(uv));
     vec3 c = srgb_to_lin(s.rgb) * mix(1.0, k, clamp(factor, 0.0, 1.0));    // darkened in linear light
     return premultiply(vec4(lin_to_srgb(c), s.a));

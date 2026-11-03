@@ -1,6 +1,8 @@
 // @filter [Blender] Color Ramp
 // @category Blender
-// @description Blender 的 Color Ramp：輸入是數值（Fac），所以進來的圖都先變成黑白（明度），再把每個像素的明度對應到漸變上的顏色
+// @description Blender 的 Color Ramp：輸入是數值（Fac），所以進來的圖都先變成黑白（明度），再把每個像素的明度對應到漸變上的顏色；「透明度」輸出是漸變在那個位置的透明度（黑白的圖）
+// @output color "顏色"
+// @output alpha "透明度"
 // @param ramp gradient 0:#000000,1:#ffffff "色彩漸變"
 // @param interp menu 線性 "線性|緩和|固定|基數|B 樣條" "插值"
 // @param mode menu RGB "RGB|HSV|HSL" "色彩模式"
@@ -26,5 +28,6 @@ vec4 effect(vec2 uv) {
     // where the ramp is)
     float fac = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
     vec4 r = gradient_eval(ramp_p, ramp_c, ramp_n, fac, INTERP[interp], mode, hue);
+    if (output_index == 1) return vec4(vec3(r.a), 1.0);
     return vec4(r.rgb * r.a, r.a);
 }

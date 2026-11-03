@@ -25,6 +25,7 @@ from .. import curves, fx, nodegraph as ng
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 SOCKET_R = 5.5
 HIT_R = 9.0
+THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / gradient parameter's picture in a node
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
 HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f"}
@@ -106,6 +107,9 @@ class NodeItem(QGraphicsItem):
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
             add("shapecolor", "顏色")
+        if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.PARAMS):
+            for name, _label in ng.outputs(node):
+                add("thumb", "", p=name, h=THUMB_H)
         self.h = y + PAD
 
     def row_of(self, socket):
@@ -226,6 +230,9 @@ class NodeItem(QGraphicsItem):
                 p.setPen(QColor("#c8c8cc"))
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignLeft, ("▾ " if r["panel"] else "▸ ") + r["label"])
                 continue
+            if kind == "thumb":
+                self._thumb(p, QRectF(10, y + 2, WIDTH - 20, r["h"] - 4), self.editor.thumb_image(self.nid, r["p"]))
+                continue
             dim = kind == "param" and not vals.enabled(r["p"])
             p.setPen(QColor(text.red(), text.green(), text.blue(), 110 if dim else 255))
             linked = r["socket"] and r["socket"] in self.linked
@@ -286,6 +293,23 @@ class NodeItem(QGraphicsItem):
             box = self.field_rect(r)
             c = (list(v) + [1.0] * 4)[:4]
             self._box(p, box, QColor.fromRgbF(max(0, min(1, c[0])), max(0, min(1, c[1])), max(0, min(1, c[2])), 1.0))
+
+    @staticmethod
+    def _thumb(p, box, img):
+        p.setPen(QPen(QColor(0, 0, 0, 90), 1))
+        p.setBrush(QColor("#1c1c1f"))
+        p.drawRoundedRect(box, 3, 3)
+        if img is None:
+            return
+        k = min((box.width() - 2) / img.width(), (box.height() - 2) / img.height())
+        w, h = img.width() * k, img.height() * k
+        at = QRectF(box.center().x() - w / 2, box.center().y() - h / 2, w, h)
+        n = 6
+        for i in range(int(w // n) + 1):                    # (the checkerboard that shows transparency)
+            for j in range(int(h // n) + 1):
+                p.fillRect(QRectF(at.left() + i * n, at.top() + j * n, n, n).intersected(at),
+                           QColor("#9a9a9a") if (i + j) % 2 else QColor("#6a6a6a"))
+        p.drawImage(at, img)
 
     @staticmethod
     def _plot(p, box, q, v, bg):
@@ -846,6 +870,7 @@ class NodeEditor(QWidget):
     addLinkedRequested = Signal(str, dict, float, float, str, str)         # effect id, node, x, y, node and output to link into it
     rerouteRequested = Signal(str, list)                    # effect id, [(x, y, from, to, socket, output)]: bends to put in links
     mediaDropped = Signal(str, list, list, float, float)    # effect id, library item ids, file paths, x, y: dragged in as source nodes
+    thumbsToggled = Signal(bool)                            # the 縮圖 button: the preview sends every node's picture
     viewerRequested = Signal(str, str, str)                 # effect id, node, output ("" node: the effect's output again)
     pasteRequested = Signal(str, dict, float, float)        # effect id, nodegraph.pack, x, y: nodes pasted
     frameEdited = Signal(str, str, dict)                    # effect id, frame id, what changed (label / text / color / w / h)
@@ -889,6 +914,13 @@ class NodeEditor(QWidget):
         save.setToolTip("把這個節點效果（節點、設定、圖片）存進 Library 的「效果預設」，之後可以套用到別的片段")
         save.clicked.connect(lambda: self.eid and self.saveRequested.emit(self.eid))
         bar.addWidget(save)
+        self.show_thumbs = False
+        self.thumbs = {}                                    # {node id: {output: QImage}} of the last frame drawn
+        thumb = QPushButton("縮圖")
+        thumb.setCheckable(True)
+        thumb.setToolTip("每個節點下面顯示它輸出的圖（預覽目前這一格的結果）")
+        thumb.toggled.connect(self.set_show_thumbs)
+        bar.addWidget(thumb)
         tidy = QPushButton("整理 ▾")
         tidy.setToolTip("對齊、均分、自動排列選取的節點")
         tidy.clicked.connect(lambda: self.tidy_menu(tidy.mapToGlobal(tidy.rect().bottomLeft())))
@@ -1169,6 +1201,23 @@ class NodeEditor(QWidget):
         for key in ng.FRAME_COLORS:
             colors.addAction(names[key], lambda _=False, k=key: self.frameEdited.emit(self.eid, item.nid, {"color": k}))
         self.popup(menu, pos.toPoint() if hasattr(pos, "toPoint") else pos)
+
+    def set_show_thumbs(self, on):
+        self.show_thumbs = bool(on)
+        self.thumbsToggled.emit(self.show_thumbs)
+        self.rebuild()
+
+    def set_thumbs(self, data):
+        """{effect id: {node id: {output: (w, h, RGBA bytes)}}} from the preview: what the thumbnails show."""
+        from PySide6.QtGui import QImage
+        mine = data.get(self.eid) or {}
+        self.thumbs = {nid: {o: QImage(b, w, h, w * 4, QImage.Format_RGBA8888_Premultiplied).copy()
+                             for o, (w, h, b) in outs.items()} for nid, outs in mine.items()}
+        if self.show_thumbs:
+            self.view.viewport().update()
+
+    def thumb_image(self, nid, out):
+        return (self.thumbs.get(nid) or {}).get(out)
 
     def view_node(self, nid):
         """Ctrl + Shift + click on node nid: step the preview along nid's outputs (then off)."""

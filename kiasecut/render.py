@@ -131,6 +131,8 @@ class Renderer:
         self.compounds = {}         # the view's compounds (what compound masks cut with)
         self.matte_preview = None   # {clip, opacity}: show that clip's mask compound over it
         self.editing = False
+        self.thumbs = {}            # {effect id: nodegraph.thumb_tap store} of the node effects the editor shows thumbnails of
+        self.want_thumbs = set()
         self.level = frozenset()    # ids of the tracks a 參考 track shows on (project.level_tracks)
         self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
         self.outer = None           # (painter / layer, what is under it) of a 效果穿透 compound's layer
@@ -243,6 +245,8 @@ class Renderer:
         """Take what a frame of view needs besides its tracks."""
         self.compounds = view.get("compounds") or {}
         self.matte_preview = view.get("matte_preview")
+        self.want_thumbs = set(view.get("thumbs") or ()) if view.get("editing") else set()
+        self.thumbs = {}
         self.editing = bool(view.get("editing"))            # (the editor's preview: a node effect shows the node picked with 預覽)
         self.level = project.level_tracks(view)
 
@@ -777,6 +781,9 @@ class Renderer:
                 self.errors.append(f"濾鏡：{exc}")
         return self._fx
 
+    def thumb_tap(self, e):
+        return nodegraph.thumb_tap(self.thumbs.setdefault(e["id"], {})) if e["id"] in self.want_thumbs else None
+
     def graph_effect(self, eng, e, arr, t, duration, fps, disp, wt, unit):
         """Node graph effect e over arr (H x W x 4, premultiplied) on the CPU renderer's engine: the
         result as such an array, or None when it cannot run."""
@@ -805,7 +812,7 @@ class Renderer:
             try:
                 tex, owner = nodegraph.evaluate(eng, e["graph"], e["params"], upload(arr), w, h, pool.alloc, pool.free,
                                                 t=t, duration=duration, fps=fps, unit=unit, picture=picture, errors=errors,
-                                                viewer=self.editing)
+                                                viewer=self.editing, tap=self.thumb_tap(e))
                 out = np.frombuffer(tex.read(), np.uint8).reshape(h, w, 4).copy() if tex is not None else None
             except nodegraph.GraphError as exc:
                 self.errors.append(f"節點效果：{exc}")

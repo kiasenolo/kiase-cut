@@ -460,6 +460,7 @@ class MainWindow(QMainWindow):
         nd.frameEdited.connect(self.on_node_frame)
         nd.pasteRequested.connect(self.on_node_paste)
         nd.viewerRequested.connect(self.on_node_viewer)
+        nd.thumbsToggled.connect(lambda _on: self.proj is not None and self.rebuild())
         nd.dissolveRequested.connect(self.on_node_dissolve)
         nd.disconnectRequested.connect(self.on_node_disconnect)
         nd.moveRequested.connect(self.on_node_move)
@@ -845,6 +846,7 @@ class MainWindow(QMainWindow):
         self.player.worker.set_keep_pitch(self.pitch_btn.isChecked())
         w = self.player.worker
         w.frameReady.connect(self.on_frame)
+        w.thumbsReady.connect(self.nodes.set_thumbs)
         w.loaded.connect(self.on_loaded)
         w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))  # never modal
         w.stateChanged.connect(self.on_state)
@@ -4050,6 +4052,9 @@ class MainWindow(QMainWindow):
         shown = self._matte_shown = self.matte_target()
         if shown:
             v["matte_preview"] = shown
+        if self.nodes.show_thumbs:                       # the node effects of the selected clip: send each node's picture
+            sel = self.timeline.selected
+            v["thumbs"] = [e["id"] for e in (sel or {}).get("effects") or [] if e.get("filter") == fx.GRAPH]
         return v
 
     def matte_target(self):

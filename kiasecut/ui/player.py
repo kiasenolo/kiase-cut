@@ -64,6 +64,7 @@ def speed_pcm(pcm, rate, carry=0.0):
 
 class Worker(QObject):
     frameReady = Signal(QImage, int)
+    thumbsReady = Signal(dict)                      # {effect id: {node id: {output: (w, h, RGBA bytes)}}} the node editor shows
     loaded = Signal(dict)
     failed = Signal(str)
     stateChanged = Signal(bool)
@@ -301,6 +302,8 @@ class Worker(QObject):
         h = max(2, round(w * v["height"] / v["width"]))
         self.asked = []
         self.frameReady.emit(self.renderer.render(v, pos, w, h), pos)
+        if self.renderer.thumbs:
+            self.thumbsReady.emit(self.renderer.thumbs)
         if not self.playing:
             self.prefetch = list(self.asked)            # (streamed ahead if the playhead rests here)
         if self.renderer.errors:

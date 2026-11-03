@@ -887,7 +887,7 @@ class GLRenderer(render.Renderer):
         try:
             tex, owner = nodegraph.evaluate(gl.fx, e["graph"], e["params"], cur.tex, cur.w, cur.h, gl.layer, gl.release,
                                             t=t, duration=duration, fps=fps, unit=ppu, picture=picture, errors=errors,
-                                            viewer=self.editing)
+                                            viewer=self.editing, tap=self.thumb_tap(e))
         except nodegraph.GraphError as exc:
             self.errors.append(f"節點效果：{exc}")
             return None

@@ -384,6 +384,25 @@ class NodeEditorTests(unittest.TestCase):
         popups[1][1]([[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]])
         self.assertEqual(got[-1][1], nid + ".g")
 
+    def test_thumbnails_row_per_output(self):
+        def add(e):
+            made.append(ng.add_node(e["graph"], {"type": "filter", "ref": "builtin:nodes/separate_color"}, 200, 40))
+            e["params"].update(ng.default_params(e["graph"]))
+        made = []
+        ed = self.make(add)
+        asked = []
+        ed.thumbsToggled.connect(asked.append)
+        before = ed.view.items_by_id[made[0]].h
+        ed.set_show_thumbs(True)
+        self.assertEqual(asked, [True])
+        it = ed.view.items_by_id[made[0]]
+        self.assertEqual([r["p"] for r in it.rows if r["kind"] == "thumb"], ["c1", "c2", "c3", "a"])
+        self.assertGreater(it.h, before)
+        self.assertEqual([r for r in ed.view.items_by_id["output"].rows if r["kind"] == "thumb"], [])
+        ed.set_thumbs({"e1": {made[0]: {"c1": (2, 2, bytes([255]) * 16)}}})
+        self.assertEqual(ed.thumb_image(made[0], "c1").width(), 2)
+        self.assertIsNone(ed.thumb_image(made[0], "a"))
+
     def test_shift_right_drag_puts_bends_in_links(self):
         ed = self.make()
         got = []

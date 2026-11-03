@@ -342,6 +342,27 @@ class GraphRenderTests(unittest.TestCase):
             self.assertLess(first, 20, type(r).__name__)
             self.assertGreater(later, first + 20, type(r).__name__)
 
+    def test_thumbnails_come_back_for_every_node(self):
+        def f(e):
+            g = e["graph"]
+            sep = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/separate_color"}, base="sep")
+            ng.connect(g, "input", sep, "src")
+            ng.connect(g, sep, "output", "src", "c1")
+            e["params"].update(ng.default_params(g))
+        v = self.view(f)
+        v["editing"], v["thumbs"] = True, ["e1"]
+        for r in self.renderers:
+            r.render(v, 0, W, H)
+            got = r.thumbs["e1"]
+            self.assertIn("", got["input"])
+            w, h, data = got["sep1"]["c1"]
+            self.assertEqual(len(data), w * h * 4)
+            self.assertEqual(data[:3], bytes(WHITE), type(r).__name__)
+        v["editing"] = False
+        for r in self.renderers:
+            r.render(v, 0, W, H)
+            self.assertEqual(r.thumbs, {})
+
     def test_empty_graph_changes_nothing(self):
         self.check(self.view(lambda e: None), RED, RED)
 

@@ -466,6 +466,20 @@ def source_nodes(graph):
     return {i: n.get("kind") for i, n in graph["nodes"].items() if n["type"] == SOURCE}
 
 
+def thumb_tap(store, size=96):
+    """A tap for evaluate that keeps a small RGBA (premultiplied) copy of every node's picture in store:
+    {node id: {output: (width, height, bytes)}}."""
+    import numpy as np
+
+    def tap(nid, out, tex):
+        w, h = tex.size
+        arr = np.frombuffer(tex.read(), np.uint8).reshape(h, w, 4)
+        k = max(1, w // size)
+        small = np.ascontiguousarray(arr[::k, ::k])
+        store.setdefault(nid, {})[out] = (small.shape[1], small.shape[0], small.tobytes())
+    return tap
+
+
 # -- running it -----------------------------------------------------------------------------------
 class Pool:
     """Textures to draw nodes into, for callers that have no layer pool of their own (alloc / free as
@@ -502,12 +516,13 @@ class Pool:
         self.spare = []
 
 
-def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False):
+def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False, tap=None):
     """Work out graph's output (params: the effect's e["params"]) for the w x h texture src_tex (the effect's input)
     at clip time t.
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
     (texture, 3 x 3 map, done) of a source node's picture (see Engine.run_tex's sources) or None.
     viewer: show the node graph["viewer"] names instead of the output (the editor's preview, not an export).
+    tap(node id, output, texture): told every picture a node gives (the editor's thumbnails, see thumb_tap).
     Returns (texture, owner): owner is the object to give back to free when done with it (None: the
     texture is src_tex itself); (None, None) when the graph has no output. Node errors go to errors."""
     errors = errors if errors is not None else []
@@ -553,6 +568,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
 
     def put(n, tex, owner, o=""):
         made[(n, o)] = (tex, owner)
+        if tap is not None:
+            tap(n, o, tex)
         if owner is not None:
             left[id(owner)] = left.get(id(owner), 0) + users.get((n, o), 0)
 

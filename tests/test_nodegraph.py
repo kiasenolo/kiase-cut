@@ -53,7 +53,7 @@ class DataTest(unittest.TestCase):
         g = ng.new_graph()
         m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/mix"})
         names = [s for s, _ in ng.sockets(g["nodes"][m])]
-        self.assertEqual(names, ["src", "b", "param:fac"])
+        self.assertEqual(names, ["src", "b", "param:mode", "param:fac"])
         c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
         self.assertIn("param:value", [s for s, _ in ng.sockets(g["nodes"][c])])
 

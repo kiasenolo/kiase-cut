@@ -75,6 +75,87 @@ class GraphEditTests(unittest.TestCase):
         self.assertIsNot(copy["graph"], self.e["graph"])
 
 
+class ExposedParamTests(unittest.TestCase):
+    def setUp(self):
+        self.p = proj()
+        self.e = edit.add_effect(self.p, "c1", fx.GRAPH)
+        self.eid = self.e["id"]
+        self.m = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/math"})
+        self.n = edit.add_graph_node(self.p, "c1", self.eid, {"type": "params"})
+
+    def test_dragging_from_the_empty_socket_makes_a_parameter(self):
+        edit.set_param(self.p, "c1", "fx:" + self.eid, self.m + ".value", 0.8)
+        name = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
+        x = self.e["graph"]["exposed"][0]
+        self.assertEqual((x["name"], x["type"], x["label"]), (name, "float", "數值"))
+        self.assertEqual(self.e["params"]["expose." + name], 0.8)             # (it starts at what the parameter had)
+        self.assertNotIn(self.m + ".value", self.e["params"])
+        names = [q.name for q in fx.def_of(self.e).params]
+        self.assertIn("expose." + name, names)
+        self.assertNotIn(self.m + ".value", names)                            # (the bound one is not a row of its own)
+        self.assertEqual(ng.binds(self.e["graph"]), {(self.m, "param:value"): name})
+        self.assertTrue(edit.has_param(edit.find(self.p, "c1")[1], "fx:" + self.eid, "expose." + name))
+
+    def test_any_kind_of_parameter_can_be_exposed_and_a_second_one_gets_another_name(self):
+        a = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
+        m2 = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/math"})
+        b = edit.expose_graph_param(self.p, "c1", self.eid, self.n, m2, "param:value")
+        self.assertNotEqual(a, b)
+        c = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:clamp_on")     # a tick
+        d = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:op")           # a menu
+        kinds = {x["name"]: x["type"] for x in self.e["graph"]["exposed"]}
+        self.assertEqual((kinds[c], kinds[d]), ("bool", "menu"))
+
+    def test_existing_parameter_to_another_node_of_the_same_kind_only(self):
+        a = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
+        m2 = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/math"})
+        edit.connect_graph(self.p, "c1", self.eid, self.n, m2, "param:value", a)
+        with self.assertRaises(edit.EditError):
+            edit.connect_graph(self.p, "c1", self.eid, self.n, m2, "param:clamp_on", a)    # (a number into a tick)
+        with self.assertRaises(edit.EditError):
+            edit.connect_graph(self.p, "c1", self.eid, self.n, m2, "src", a)               # (a parameter is no picture)
+
+    def test_a_picture_cannot_feed_a_tick_or_a_menu(self):
+        with self.assertRaises(edit.EditError):
+            edit.connect_graph(self.p, "c1", self.eid, "input", self.m, "param:clamp_on")
+
+    def test_removing_a_parameter_unbinds_it(self):
+        a = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
+        edit.remove_exposed_param(self.p, "c1", self.eid, a)
+        self.assertEqual(ng.binds(self.e["graph"]), {})
+        self.assertNotIn("expose." + a, self.e["params"])
+        self.assertIn(self.m + ".value", [q.name for q in fx.def_of(self.e).params])
+
+    def test_bound_value_drives_the_picture(self):
+        if not HAVE_GL:
+            self.skipTest("needs OpenGL 3.3")
+        from kiasecut import glrender
+        edit.connect_graph(self.p, "c1", self.eid, "input", self.m, "src")
+        edit.connect_graph(self.p, "c1", self.eid, self.m, "output", "src")
+        edit.set_param(self.p, "c1", "fx:" + self.eid, self.m + ".op", "相乘")
+        a = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
+        edit.set_param(self.p, "c1", "fx:" + self.eid, "expose." + a, 0.0)
+        s = Scene(tempfile.mkdtemp())
+        v = s.view()
+        v["tracks"][0]["clips"][0]["effects"] = [self.e]
+        for r in (render.Renderer(), glrender.GLRenderer()):
+            self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), BLACK, type(r).__name__)      # red x 0
+        self.e["params"]["expose." + a] = 1.0
+        for r in (render.Renderer(), glrender.GLRenderer()):
+            self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), RED, type(r).__name__)
+
+    def test_insert_dissolve_duplicate(self):
+        edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
+        edit.insert_graph_node(self.p, "c1", self.eid, self.m, "input", "output", "src")
+        links = {(l["from"], l["to"], l["socket"]) for l in self.e["graph"]["links"]}
+        self.assertEqual(links, {("input", self.m, "src"), (self.m, "output", "src")})
+        copy_ids = edit.duplicate_graph_nodes(self.p, "c1", self.eid, [self.m])
+        self.assertIn(copy_ids[0] + ".value", self.e["params"])
+        edit.dissolve_graph_node(self.p, "c1", self.eid, self.m)
+        self.assertEqual({(l["from"], l["to"], l["socket"]) for l in self.e["graph"]["links"]}, {("input", "output", "src")})
+        self.assertNotIn(self.m + ".value", self.e["params"])
+
+
 class GraphPresetTests(unittest.TestCase):
     def test_saved_as_a_custom_effect_and_applied_again(self):
         from kiasecut import userlib

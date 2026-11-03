@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QWidget)
 
 from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
-               mapping, rack, render, renderexport, sysmem, thumbnail, toolsdata, userlib, viz, waveform, workspace)
+               mapping, nodegraph, rack, render, renderexport, sysmem, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -449,6 +449,13 @@ class MainWindow(QMainWindow):
         nd.addRequested.connect(self.on_node_add)
         nd.removeRequested.connect(self.on_node_remove)
         nd.connectRequested.connect(self.on_node_connect)
+        nd.exposeRequested.connect(self.on_node_expose)
+        nd.removeExposedRequested.connect(self.on_node_remove_exposed)
+        nd.disconnectManyRequested.connect(self.on_node_cut)
+        nd.insertRequested.connect(self.on_node_insert)
+        nd.addLinkedRequested.connect(self.on_node_add_linked)
+        nd.duplicateRequested.connect(self.on_node_duplicate)
+        nd.dissolveRequested.connect(self.on_node_dissolve)
         nd.disconnectRequested.connect(self.on_node_disconnect)
         nd.moveRequested.connect(self.on_node_move)
         nd.muteRequested.connect(self.on_node_mute)
@@ -5345,10 +5352,62 @@ class MainWindow(QMainWindow):
         if cid:
             self.apply("刪除節點", lambda lvl: [edit.remove_graph_node(lvl, cid, eid, n) for n in ids])
 
-    def on_node_connect(self, eid, src, dst, socket):
+    def on_node_connect(self, eid, src, dst, socket, out=""):
         cid = self.node_clip()
         if cid:
-            self.apply("連接節點", lambda lvl: edit.connect_graph(lvl, cid, eid, src, dst, socket))
+            self.apply("連接節點", lambda lvl: edit.connect_graph(lvl, cid, eid, src, dst, socket, out))
+
+    def on_node_expose(self, eid, src, dst, socket):
+        cid = self.node_clip()
+        if cid:
+            self.apply("新增效果參數", lambda lvl: edit.expose_graph_param(lvl, cid, eid, src, dst, socket))
+
+    def on_node_remove_exposed(self, eid, name):
+        cid = self.node_clip()
+        if cid:
+            self.apply("刪除效果參數", lambda lvl: edit.remove_exposed_param(lvl, cid, eid, name))
+
+    def on_node_cut(self, eid, pairs):
+        cid = self.node_clip()
+        if cid:
+            self.apply("切斷連線", lambda lvl: [edit.disconnect_graph(lvl, cid, eid, dst, sock) for dst, sock in pairs])
+
+    def on_node_insert(self, eid, nid, x, y, src, dst, socket, out):
+        cid = self.node_clip()
+        if cid:
+            def do(lvl):
+                edit.move_graph_nodes(lvl, cid, eid, {nid: (x, y)})
+                edit.insert_graph_node(lvl, cid, eid, nid, src, dst, socket, out)
+            self.apply("把節點放進連線", do)
+
+    def on_node_add_linked(self, eid, node, x, y, src, out):
+        """A node added where a link was let go: that link goes into its first picture input."""
+        cid = self.node_clip()
+        if not cid:
+            return
+        made = []
+
+        def do(lvl):
+            nid = edit.add_graph_node(lvl, cid, eid, node, x, y)
+            made.append(nid)
+            g = next(e for e in edit.find(lvl, cid)[1]["effects"] if e["id"] == eid)["graph"]
+            ins = [s for s, _ in nodegraph.sockets(g["nodes"][nid]) if not s.startswith(nodegraph.PARAM)]
+            if ins:
+                edit.connect_graph(lvl, cid, eid, src, nid, ins[0], out)
+        if self.apply("新增節點", do) is not None and made:
+            self.nodes.select(made[0])
+
+    def on_node_duplicate(self, eid, ids):
+        cid = self.node_clip()
+        if cid:
+            made = []
+            if self.apply("複製節點", lambda lvl: made.extend(edit.duplicate_graph_nodes(lvl, cid, eid, ids))) is not None and made:
+                self.nodes.select(made[0])
+
+    def on_node_dissolve(self, eid, ids):
+        cid = self.node_clip()
+        if cid:
+            self.apply("刪除節點（保留連線）", lambda lvl: [edit.dissolve_graph_node(lvl, cid, eid, n) for n in ids])
 
     def on_node_disconnect(self, eid, dst, socket):
         cid = self.node_clip()

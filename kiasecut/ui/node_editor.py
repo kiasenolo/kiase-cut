@@ -16,7 +16,7 @@ import json
 import os
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget)
 
@@ -26,9 +26,10 @@ WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 SOCKET_R = 5.5
 HIT_R = 9.0
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
-HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.SOURCE: "#3f8a5a"}
+HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f"}
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
-SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a"}
+SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0"}
+GHOST = "\0ghost"                              # the empty socket of a 參數輸入 node: drag out of it to make a parameter
 
 
 def node_refs():
@@ -76,7 +77,11 @@ class NodeItem(QGraphicsItem):
             nonlocal y
             rows.append({"y": y, "kind": kind, "socket": socket, "label": label, "p": p, "panel": panel})
             y += ROW
-        if self.has_out:
+        if node["type"] == ng.PARAMS:
+            for x in ng.exposed(self.editor.graph):
+                add("expose", x["label"], p=x)
+            add("ghost", "（拉出一條線來新增參數）")
+        elif self.has_out:
             add("out", "圖像")
         if node["type"] == ng.OUTPUT:
             add("image", "結果", "src")
@@ -86,13 +91,13 @@ class NodeItem(QGraphicsItem):
             for name, label in d.inputs:
                 add("image", label, name)
             for p in (q for q in d.params if q.panel is None):
-                add("param", p.label, ng.PARAM + p.name if p.type in fx.SOURCE_TYPES else None, p)
+                add("param", p.label, ng.PARAM + p.name if ng.has_socket(p) else None, p)
             for name, closed in d.panels:
                 opened = self.editor.panel_open.get((self.nid, name), not closed)
                 add("panel", name, panel=opened)
                 if opened:
                     for p in (q for q in d.params if q.panel == name):
-                        add("param", p.label, ng.PARAM + p.name if p.type in fx.SOURCE_TYPES else None, p)
+                        add("param", p.label, ng.PARAM + p.name if ng.has_socket(p) else None, p)
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
             add("shapecolor", "顏色")
@@ -105,8 +110,17 @@ class NodeItem(QGraphicsItem):
         r = self.row_of(socket)
         return self.mapToScene(QPointF(0, r["y"] + ROW / 2 if r else HEAD))
 
-    def output_pos(self):
-        return self.mapToScene(QPointF(WIDTH, HEAD + PAD + ROW / 2))
+    def output_pos(self, out=""):
+        r = next((r for r in self.rows if r["kind"] == "out"), None) if not out else \
+            next((r for r in self.rows if r["kind"] in ("expose", "ghost") and (r["p"]["name"] if r["p"] else GHOST) == out), None)
+        return self.mapToScene(QPointF(WIDTH, (r["y"] if r else HEAD + PAD) + ROW / 2))
+
+    def outputs(self):
+        """[(output name, scene point)]: one for a picture, one for each parameter (and the empty one) of a 參數輸入."""
+        if self.node["type"] == ng.PARAMS:
+            return [((r["p"]["name"] if r["p"] else GHOST), self.output_pos(r["p"]["name"] if r["p"] else GHOST))
+                    for r in self.rows if r["kind"] in ("expose", "ghost")]
+        return [("", self.output_pos())] if self.has_out else []
 
     def sockets(self):
         """[(socket name, scene point)] of the sockets a link can end at."""
@@ -182,6 +196,18 @@ class NodeItem(QGraphicsItem):
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
                 self._socket(p, QPointF(WIDTH, y + ROW / 2), SOCKET_COLORS["image"])
                 continue
+            if kind in ("expose", "ghost"):
+                ghost = kind == "ghost"
+                p.setPen(QColor(text.red(), text.green(), text.blue(), 120 if ghost else 255))
+                p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
+                at = QPointF(WIDTH, y + ROW / 2)
+                if ghost:
+                    p.setPen(QPen(QColor("#a0a0a8"), 1, Qt.DashLine))
+                    p.setBrush(Qt.NoBrush)
+                    p.drawEllipse(at, SOCKET_R, SOCKET_R)
+                else:
+                    self._socket(p, at, SOCKET_COLORS.get(r["p"]["type"] if r["p"]["type"] in ("float", "color") else "other"))
+                continue
             if kind == "panel":
                 p.setPen(QColor("#c8c8cc"))
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignLeft, ("▾ " if r["panel"] else "▸ ") + r["label"])
@@ -189,12 +215,11 @@ class NodeItem(QGraphicsItem):
             dim = kind == "param" and not vals.enabled(r["p"])
             p.setPen(QColor(text.red(), text.green(), text.blue(), 110 if dim else 255))
             linked = r["socket"] and r["socket"] in self.linked
-            show = r["label"] if not self.has_field(r) or kind in ("image",) else r["label"]
             p.drawText(QRectF(10, y, WIDTH * LABEL_W - 6, ROW) if self.has_field(r) else row, Qt.AlignVCenter | Qt.AlignLeft,
-                       fm_elide(p, show, WIDTH * LABEL_W - 8 if self.has_field(r) else WIDTH - 20))
+                       fm_elide(p, r["label"], WIDTH * LABEL_W - 8 if self.has_field(r) else WIDTH - 20))
             if r["socket"]:
                 self._socket(p, QPointF(0, y + ROW / 2), SOCKET_COLORS["image"] if kind == "image" else
-                             SOCKET_COLORS["color" if r["p"].type == "color" else "float"])
+                             SOCKET_COLORS.get(r["p"].type if r["p"].type in ("float", "color") else "other"))
             if not self.has_field(r):
                 if kind == "param" and r["p"].type in ("curve", "gradient"):
                     p.setPen(QColor(text.red(), text.green(), text.blue(), 110))
@@ -334,16 +359,19 @@ class GraphView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.setFocusPolicy(Qt.StrongFocus)
         self.items_by_id = {}
-        self.link_items = []
-        self.rubber = None                       # a link being dragged: (Link, source node id, old (dst, socket) or None)
+        self.link_items = []                     # [(Link, from node, to node, socket, output name)]
+        self.rubber = None                       # a link being dragged: (Link, source node, old (dst, socket) or None, output name)
+        self.cut = None                          # a Ctrl + right button cut: (the line, its points)
+        self.over = None                         # the link a dragged node is over (it will go through the node)
         self.press_at = {}
 
     # -- finding sockets -----------------------------------------------------------------------------
     def socket_at(self, pos):
-        """("out", node id, "") / ("in", node id, socket) near scene point pos, else None."""
+        """("out", node id, output name) / ("in", node id, socket) near scene point pos, else None."""
         for nid, it in self.items_by_id.items():
-            if it.has_out and (it.output_pos() - pos).manhattanLength() <= HIT_R * 1.5:
-                return "out", nid, ""
+            for out, at in it.outputs():
+                if (at - pos).manhattanLength() <= HIT_R * 1.5:
+                    return "out", nid, out
             for sock, at in it.sockets():
                 if (at - pos).manhattanLength() <= HIT_R * 1.5:
                     return "in", nid, sock
@@ -351,63 +379,140 @@ class GraphView(QGraphicsView):
 
     # -- mouse ---------------------------------------------------------------------------------------
     def mousePressEvent(self, e):
+        pos = self.mapToScene(e.position().toPoint())
         if e.button() == Qt.LeftButton:
-            pos = self.mapToScene(e.position().toPoint())
             hit = self.socket_at(pos)
             if hit:
                 kind, nid, sock = hit
-                old = None
+                old, out = None, sock if kind == "out" else ""
                 if kind == "in":
                     link = next((l for l in self.editor.graph["links"] if l["to"] == nid and l["socket"] == sock), None)
-                    if link is None:
-                        pass
-                    else:
-                        old, nid = (nid, sock), link["from"]
-                        kind = "out"
+                    if link is not None:                # a linked input is picked up: the link comes with the pointer
+                        old, nid, out, kind = (nid, sock), link["from"], link.get("out") or "", "out"
                 if kind == "out":
                     ln = Link()
                     self.scene().addItem(ln)
-                    self.rubber = (ln, nid, old)
+                    self.rubber = (ln, nid, old, out)
                     self._route_temp(pos)
                     return
             self.press_at = {i: (it.pos().x(), it.pos().y()) for i, it in self.items_by_id.items()}
         elif e.button() == Qt.RightButton:
-            self.editor.add_menu(self.mapToScene(e.position().toPoint()), e.globalPosition().toPoint())
+            if e.modifiers() & Qt.ControlModifier:      # Ctrl + right button: drag across links to cut them
+                line = QGraphicsPathItem()
+                line.setPen(QPen(QColor("#e0605a"), 2, Qt.DashLine))
+                line.setZValue(20)
+                self.scene().addItem(line)
+                self.cut = (line, [pos])
+                return
+            hit = self.socket_at(pos)
+            if hit and hit[0] == "out" and hit[2] not in ("", GHOST):
+                self.editor.parameter_menu(hit[1], hit[2], e.globalPosition().toPoint())
+                return
+            self.editor.add_menu(pos, e.globalPosition().toPoint())
             return
         super().mousePressEvent(e)
 
     def reroute(self):
         """Draw the links again (a node moved)."""
-        for ln, a, b, sock in self.link_items:
-            ln.route(self.items_by_id[a].output_pos(), self.items_by_id[b].input_pos(sock))
+        for ln, a, b, sock, out in self.link_items:
+            ln.route(self.items_by_id[a].output_pos(out), self.items_by_id[b].input_pos(sock))
 
     def _route_temp(self, pos):
-        ln, src, _old = self.rubber
-        ln.route(self.items_by_id[src].output_pos(), pos)
+        ln, src, _old, out = self.rubber
+        ln.route(self.items_by_id[src].output_pos(out), pos)
 
     def mouseMoveEvent(self, e):
+        pos = self.mapToScene(e.position().toPoint())
         if self.rubber:
-            self._route_temp(self.mapToScene(e.position().toPoint()))
+            self._route_temp(pos)
+            return
+        if self.cut:
+            self.cut[1].append(pos)
+            path = QPainterPath(self.cut[1][0])
+            for q in self.cut[1][1:]:
+                path.lineTo(q)
+            self.cut[0].setPath(path)
             return
         super().mouseMoveEvent(e)
+        if e.buttons() & Qt.LeftButton:
+            self._hover_link()
+
+    def _lone_node(self):
+        """The one node being dragged if it has no links yet and could go in the middle of one: (id, item)."""
+        sel = [(i, it) for i, it in self.items_by_id.items() if it.isSelected()]
+        if len(sel) != 1:
+            return None
+        nid, it = sel[0]
+        if any(nid in (l["from"], l["to"]) for l in self.editor.graph["links"]) or not it.has_out:
+            return None
+        if not [s for s, _ in ng.sockets(it.node) if not s.startswith(ng.PARAM)] or it.node["type"] == ng.PARAMS:
+            return None
+        if self.press_at.get(nid) in (None, (it.pos().x(), it.pos().y())):
+            return None
+        return nid, it
+
+    def _hover_link(self):
+        """Light the link under the node being dragged (dropped there, the link goes through the node)."""
+        lone = self._lone_node()
+        over = None
+        if lone:
+            box = lone[1].sceneBoundingRect().adjusted(8, 8, -8, -8)
+            for ln, a, b, sock, out in self.link_items:
+                if ln.path().intersects(box):
+                    over = (ln, a, b, sock, out)
+                    break
+        if over != self.over:
+            for ln, *_ in self.link_items:
+                ln.setPen(QPen(QColor("#d0d0d8"), 2))
+            if over:
+                over[0].setPen(QPen(QColor("#ffffff"), 4))
+            self.over = over
 
     def mouseReleaseEvent(self, e):
+        pos = self.mapToScene(e.position().toPoint())
         if self.rubber:
-            ln, src, old = self.rubber
+            ln, src, old, out = self.rubber
             self.rubber = None
             self.scene().removeItem(ln)
-            hit = self.socket_at(self.mapToScene(e.position().toPoint()))
+            hit = self.socket_at(pos)
+            ed = self.editor
             if hit and hit[0] == "in" and hit[1] != src:
-                if old != (hit[1], hit[2]):
-                    self.editor.connectRequested.emit(self.editor.eid, src, hit[1], hit[2])
-            elif old:
-                self.editor.disconnectRequested.emit(self.editor.eid, old[0], old[1])
+                if out == GHOST:
+                    ed.exposeRequested.emit(ed.eid, src, hit[1], hit[2])
+                elif old != (hit[1], hit[2]):
+                    ed.connectRequested.emit(ed.eid, src, hit[1], hit[2], out)
+            elif hit is None and old:
+                ed.disconnectRequested.emit(ed.eid, old[0], old[1])
+            elif hit is None and out == "":                      # a link let go in the empty: add a node there to take it
+                ed.add_menu(pos, e.globalPosition().toPoint(), (src, out))
             return
+        if self.cut:
+            line, pts = self.cut
+            self.cut = None
+            self.scene().removeItem(line)
+            path = QPainterPath(pts[0])
+            for q in pts[1:]:
+                path.lineTo(q)
+            stroke = QPainterPathStroker()
+            stroke.setWidth(3)
+            hit = stroke.createStroke(path)
+            cut = [(b, sock) for ln, a, b, sock, out in self.link_items if ln.path().intersects(hit)]
+            if cut:
+                self.editor.disconnectManyRequested.emit(self.editor.eid, cut)
+            return
+        over, self.over = self.over, None
+        lone = self._lone_node() if over else None
         super().mouseReleaseEvent(e)
         moved = {i: (it.pos().x(), it.pos().y()) for i, it in self.items_by_id.items()
                  if self.press_at.get(i) not in (None, (it.pos().x(), it.pos().y()))}
         self.press_at = {}
-        if moved:
+        for ln, *_ in self.link_items:
+            ln.setPen(QPen(QColor("#d0d0d8"), 2))
+        if over and lone and list(moved) == [lone[0]]:
+            _ln, a, b, sock, out = over
+            x, y = moved[lone[0]]
+            self.editor.insertRequested.emit(self.editor.eid, lone[0], x, y, a, b, sock, out)
+        elif moved:
             self.editor.moveRequested.emit(self.editor.eid, moved)
         self.editor.selection_changed()
 
@@ -418,14 +523,18 @@ class GraphView(QGraphicsView):
             self.scale(k, k)
 
     def keyPressEvent(self, e):
-        key = e.key()
-        if key in (Qt.Key_X, Qt.Key_Delete):
+        key, mods = e.key(), e.modifiers()
+        if key == Qt.Key_X and mods & Qt.ControlModifier:
+            self.editor.dissolve_selected()
+        elif key in (Qt.Key_X, Qt.Key_Delete):
             self.editor.remove_selected()
         elif key == Qt.Key_M:
             self.editor.mute_selected()
+        elif key == Qt.Key_D and mods & Qt.ShiftModifier:
+            self.editor.duplicate_selected()
         elif key == Qt.Key_Home:
             self.fit()
-        elif key == Qt.Key_A and e.modifiers() & Qt.ShiftModifier:
+        elif key == Qt.Key_A and mods & Qt.ShiftModifier:
             pos = self.mapFromGlobal(self.cursor().pos())
             self.editor.add_menu(self.mapToScene(pos), self.cursor().pos())
         else:
@@ -443,7 +552,14 @@ class GraphView(QGraphicsView):
 class NodeEditor(QWidget):
     addRequested = Signal(str, dict, float, float)          # effect id, node ({"type", "ref" / "kind"}), x, y
     removeRequested = Signal(str, list)                     # effect id, node ids
-    connectRequested = Signal(str, str, str, str)           # effect id, from node, to node, socket
+    connectRequested = Signal(str, str, str, str, str)      # effect id, from node, to node, socket, the output (a parameter's name; "": picture)
+    exposeRequested = Signal(str, str, str, str)            # effect id, 參數輸入 node, to node, socket: make a parameter of it
+    disconnectManyRequested = Signal(str, list)             # effect id, [(to node, socket)]: links cut with Ctrl + right drag
+    insertRequested = Signal(str, str, float, float, str, str, str, str)   # effect id, node, x, y, then the link it was dropped on
+    addLinkedRequested = Signal(str, dict, float, float, str, str)         # effect id, node, x, y, node and output to link into it
+    duplicateRequested = Signal(str, list)                  # effect id, node ids
+    dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
+    removeExposedRequested = Signal(str, str)               # effect id, parameter name
     disconnectRequested = Signal(str, str, str)             # effect id, to node, socket
     moveRequested = Signal(str, dict)                       # effect id, {node id: (x, y)}
     muteRequested = Signal(str, list, bool)                 # effect id, node ids, on
@@ -545,12 +661,13 @@ class NodeEditor(QWidget):
             it.setSelected(nid in keep)
         for l in self.graph["links"]:
             a, b = v.items_by_id.get(l["from"]), v.items_by_id.get(l["to"])
-            if a is None or b is None or b.row_of(l["socket"]) is None:
+            out = l.get("out") or ""
+            if a is None or b is None or b.row_of(l["socket"]) is None or out not in [o for o, _ in a.outputs()]:
                 continue
             ln = Link()
-            ln.route(a.output_pos(), b.input_pos(l["socket"]))
+            ln.route(a.output_pos(out), b.input_pos(l["socket"]))
             sc.addItem(ln)
-            v.link_items.append((ln, l["from"], l["to"], l["socket"]))
+            v.link_items.append((ln, l["from"], l["to"], l["socket"], out))
         r = sc.itemsBoundingRect()
         sc.setSceneRect(r.adjusted(-1500, -1500, 1500, 1500))
         if fit:
@@ -610,7 +727,7 @@ class NodeEditor(QWidget):
     def field_clicked(self, item, row, cell, global_pos):
         """A field pressed and let go without dragging: a tick turns over, a menu / colour / text box opens."""
         nid, kind = item.nid, row["kind"]
-        gp = global_pos.toPoint()
+        gp = global_pos.toPoint() if hasattr(global_pos, "toPoint") else global_pos
         if kind == "panel":
             key = (nid, row["label"])
             self.panel_open[key] = not row["panel"]
@@ -620,7 +737,7 @@ class NodeEditor(QWidget):
             menu = QMenu(self)
             for sid, name in ng.SHAPES:
                 menu.addAction(name, lambda sid=sid: self.shapeEdited.emit(self.eid, nid, sid, None))
-            menu.exec(gp)
+            self.popup(menu, gp)
             return
         if kind == "shapecolor":
             self._pick(nid, self.node_values(nid).color, lambda c: self.shapeEdited.emit(self.eid, nid, None, c), item, row)
@@ -634,7 +751,7 @@ class NodeEditor(QWidget):
             menu = QMenu(self)
             for name in q.items:
                 menu.addAction(name, lambda name=name: self.paramEdited.emit(self.eid, key, name))
-            menu.exec(gp)
+            self.popup(menu, gp)
         elif q.type == "color":
             self._pick(nid, v, lambda c: self.paramEdited.emit(self.eid, key, c), item, row)
         elif q.type in ("float", "int", "vec2", "vec3"):
@@ -703,19 +820,44 @@ class NodeEditor(QWidget):
         if ids and self.eid:
             self.muteRequested.emit(self.eid, ids, not all(self.graph["nodes"][i].get("mute") for i in ids))
 
-    def add_menu(self, scene_pos, global_pos):
+    def popup(self, menu, pos):
+        menu.exec(pos)
+
+    def duplicate_selected(self):
+        ids = [i for i in self.selected() if self.graph["nodes"][i]["type"] != ng.OUTPUT]
+        if ids and self.eid:
+            self.duplicateRequested.emit(self.eid, ids)
+
+    def dissolve_selected(self):
+        ids = [i for i in self.selected() if self.graph["nodes"][i]["type"] != ng.OUTPUT]
+        if ids and self.eid:
+            self.dissolveRequested.emit(self.eid, ids)
+
+    def parameter_menu(self, nid, name, global_pos):
+        menu = QMenu(self)
+        menu.addAction("刪除這個參數", lambda: self.removeExposedRequested.emit(self.eid, name))
+        self.popup(menu, global_pos)
+
+    def add_menu(self, scene_pos, global_pos, link=None):
+        """The menu of nodes to add at scene_pos; link (node id, output): a link let go in the empty - the new
+        node takes it."""
         if not self.eid:
             return
+
+        def ask(node):
+            if link:
+                self.addLinkedRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y(), link[0], link[1])
+            else:
+                self.addRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y())
         menu = QMenu(self)
         inp = menu.addMenu("輸入")
-        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
+        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
                            ("影片", {"type": ng.SOURCE, "kind": "video"}), ("複合片段", {"type": ng.SOURCE, "kind": "compound"}),
                            ("時間線（軌道）", {"type": ng.SOURCE, "kind": "track"})):
-            inp.addAction(text, lambda n=node: self.addRequested.emit(self.eid, n, scene_pos.x(), scene_pos.y()))
+            inp.addAction(text, lambda _=False, n=node: ask(n))
         shapes = menu.addMenu("形狀")
         for sid, name in ng.SHAPES:
-            shapes.addAction(name, lambda _=False, sid=sid: self.addRequested.emit(
-                self.eid, {"type": ng.SOURCE, "kind": "shape", "shape": sid}, scene_pos.x(), scene_pos.y()))
+            shapes.addAction(name, lambda _=False, sid=sid: ask({"type": ng.SOURCE, "kind": "shape", "shape": sid}))
         cats = {}
         for ref in node_refs() + fx.builtin_refs():
             d = fx.get(ref)
@@ -723,11 +865,9 @@ class NodeEditor(QWidget):
         for cat in sorted(cats, key=lambda c: (c != "節點", c)):
             sub = menu.addMenu(cat)
             for name, ref in cats[cat]:
-                sub.addAction(name, lambda r=ref: self.addRequested.emit(self.eid, {"type": ng.FILTER, "ref": r},
-                                                                         scene_pos.x(), scene_pos.y()))
+                sub.addAction(name, lambda _=False, r=ref: ask({"type": ng.FILTER, "ref": r}))
         if self.user_filters:
             mine = menu.addMenu("我的濾鏡（Library）")
             for name, path in self.user_filters:
-                mine.addAction(name, lambda r=path: self.addRequested.emit(self.eid, {"type": ng.FILTER, "ref": r},
-                                                                           scene_pos.x(), scene_pos.y()))
-        menu.exec(global_pos)
+                mine.addAction(name, lambda _=False, r=path: ask({"type": ng.FILTER, "ref": r}))
+        self.popup(menu, global_pos)

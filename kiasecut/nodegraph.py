@@ -6,7 +6,9 @@ nodes, as in Blender's compositor. The graph is e["graph"]:
 A filter node's parameters are in the effect's own e["params"] as "<node id>.<parameter>" (so they are
 keyframed, edited and copied as an ordinary effect's are).
 
-Node types: "input" (the picture the effect was given), "output" (the graph's result; one), "source"
+Node types: "params" (參數輸入, Blender's group input: the effect's own parameters, graph["exposed"], one output
+socket each - a link from one into a parameter socket of a node (any kind of parameter) binds that parameter
+to it; the value is e["params"]["expose.<name>"], shown in the 效果 panel as the effect's own), "input" (the picture the effect was given), "output" (the graph's result; one), "source"
 (a picture, video, compound or track: "kind" says which, and where it sits on the clip is
 e["sources"][node id], placed as a mask is) and "filter" ("ref": a filter, built-in or the user's -
 every filter is a node; "builtin:nodes/..." are the ones made for graphs). A link goes into a socket
@@ -20,7 +22,7 @@ import copy
 from . import curves, fx
 
 US = 1_000_000
-INPUT, OUTPUT, SOURCE, FILTER = "input", "output", "source", "filter"
+INPUT, OUTPUT, SOURCE, FILTER, PARAMS = "input", "output", "source", "filter", "params"
 SOURCE_KINDS = ("image", "video", "compound", "track", "shape")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
@@ -71,8 +73,8 @@ def param_key(nid, name):
 
 
 def default_params(graph):
-    """{"<node>.<param>": default} of every filter node of the graph."""
-    out = {}
+    """{"<node>.<param>": default} of every filter node of the graph, and of the effect's own parameters."""
+    out = {expose_key(x["name"]): copy.deepcopy(x["default"]) for x in exposed(graph)}
     for nid, n in graph["nodes"].items():
         if n["type"] == FILTER:
             out.update({param_key(nid, k): v for k, v in fx.default_params(fx.get(n["ref"])).items()})
@@ -118,6 +120,28 @@ def has_loop(graph):
     return any(walk(n) for n in list(graph["nodes"]))
 
 
+EXPOSE = "expose."
+
+
+def has_socket(p):
+    """Whether parameter p can be fed by a link: a picture (a number or colour) or a bound effect parameter."""
+    return p.type not in ("curve", "gradient")
+
+
+def expose_key(name):
+    return EXPOSE + name
+
+
+def exposed(graph):
+    return graph.get("exposed") or []
+
+
+def binds(graph):
+    """{(node id, socket): exposed parameter name} of the parameters bound to the effect's own."""
+    return {(l["to"], l["socket"]): l["out"] for l in graph["links"]
+            if l.get("out") and graph["nodes"].get(l["from"], {}).get("type") == PARAMS}
+
+
 def sockets(node):
     """[(socket, label)] a node takes pictures in at."""
     if node["type"] == OUTPUT:
@@ -126,13 +150,13 @@ def sockets(node):
         return []
     d = fx.get(node["ref"])
     return ([("src", d.src_label)] + [(n, lab) for n, lab in d.inputs] +
-            [(PARAM + p.name, p.label) for p in d.params if p.type in fx.SOURCE_TYPES])
+            [(PARAM + p.name, p.label) for p in d.params if has_socket(p)])
 
 
 def title(node):
     if node["type"] == FILTER:
         return fx.get(node["ref"]).name
-    return {INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
+    return {PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
 
@@ -155,15 +179,23 @@ def virtual_def(e):
         if n["type"] == FILTER:
             d = fx.get(n["ref"])
             rows.append((nid, n.get("mute"), d))
-    key = tuple((nid, mute, d.key(), d.error) for nid, mute, d in rows)
+    bound = binds(g)
+    own = exposed(g)
+    key = (tuple((nid, mute, d.key(), d.error) for nid, mute, d in rows), tuple(sorted(bound)),
+           tuple((x["name"], x["label"], x["type"], x["lo"], x["hi"], tuple(x.get("items") or ())) for x in own))
     hit = _defs.get(key)
     if hit is not None:
         return hit
     params, panels = [], []
+    for x in own:                                              # the effect's own parameters first
+        params.append(fx.Param(expose_key(x["name"]), x["type"], copy.deepcopy(x["default"]), x["lo"], x["hi"], x["label"],
+                               x.get("items") or ()))
     for nid, mute, d in rows:
         name = f"{d.name}（{nid}）"
         panels.append((name, False))
         for q in d.params:
+            if (nid, PARAM + q.name) in bound:                 # (fed by an effect parameter)
+                continue
             c = fx.Param(param_key(nid, q.name), q.type, q.default, q.lo, q.hi, q.label, q.items)
             c.panel = name
             c.enable = [(param_key(nid, o), neg, want) for o, neg, want in q.enable]
@@ -232,18 +264,108 @@ def has_output(node):
     return node["type"] != OUTPUT
 
 
-def connect(graph, src, dst, socket):
-    """Link node src's picture into socket of node dst (replacing what was there); GraphError when it
-    would make a loop or the socket does not exist."""
+def param_of(graph, nid, socket):
+    """The Param a socket "param:<name>" of filter node nid stands for (None: it is not one)."""
+    node = graph["nodes"].get(nid)
+    if node is None or node["type"] != FILTER or not socket.startswith(PARAM):
+        return None
+    return next((p for p in fx.get(node["ref"]).params if p.name == socket[len(PARAM):]), None)
+
+
+def connect(graph, src, dst, socket, out=None):
+    """Link node src's picture (or its exposed parameter out) into socket of node dst (replacing what was
+    there); GraphError when it would make a loop, the socket does not exist or the kinds do not fit."""
     nodes = graph["nodes"]
     if src not in nodes or dst not in nodes or not has_output(nodes[src]):
         raise GraphError("找不到這個節點")
     if socket not in [s for s, _ in sockets(nodes[dst])]:
         raise GraphError("這個節點沒有這個輸入")
+    p = param_of(graph, dst, socket)
+    if nodes[src]["type"] == PARAMS:
+        x = next((x for x in exposed(graph) if x["name"] == out), None)
+        if x is None or p is None:
+            raise GraphError("參數只能接到節點的參數插槽")
+        if (x["type"], x.get("items") or []) != (p.type, list(p.items)):
+            raise GraphError("參數的種類和這個插槽不一樣")
+    else:
+        out = None
+        if p is not None and p.type not in fx.SOURCE_TYPES:
+            raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):
         raise GraphError("節點不能連成迴圈")
     graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
-    graph["links"].append({"from": src, "to": dst, "socket": socket})
+    link = {"from": src, "to": dst, "socket": socket}
+    if out:
+        link["out"] = out
+    graph["links"].append(link)
+
+
+def expose(graph, params, src, dst, socket):
+    """Make a new effect parameter out of parameter socket of node dst and bind it (a link from node src, a
+    參數輸入 node): it starts at the value the parameter had and takes its name, range and choices. Returns its
+    name. (params: the effect's e["params"].)"""
+    p = param_of(graph, dst, socket)
+    if p is None or graph["nodes"].get(src, {}).get("type") != PARAMS:
+        raise GraphError("參數只能接到節點的參數插槽")
+    names = {x["name"] for x in exposed(graph)}
+    name, n = p.name, 1
+    while name in names:
+        n += 1
+        name = f"{p.name}{n}"
+    key = param_key(dst, p.name)
+    value = copy.deepcopy(params.pop(key, p.default))
+    graph.setdefault("exposed", []).append({"name": name, "label": p.label, "type": p.type, "default": copy.deepcopy(p.default),
+                                            "lo": p.lo, "hi": p.hi, "items": list(p.items)})
+    params[expose_key(name)] = value
+    connect(graph, src, dst, socket, name)
+    return name
+
+
+def remove_exposed(graph, params, name):
+    graph["exposed"] = [x for x in exposed(graph) if x["name"] != name]
+    graph["links"] = [l for l in graph["links"] if l.get("out") != name]
+    params.pop(expose_key(name), None)
+
+
+def insert_on_link(graph, nid, src, dst, socket, out=None):
+    """Put node nid in the middle of the link src -> dst (socket): its main picture in, its picture out."""
+    nodes = graph["nodes"]
+    node = nodes[nid]
+    ins = [s for s, _ in sockets(node) if not s.startswith(PARAM)]
+    if not ins or not has_output(node):
+        raise GraphError("這個節點不能放在連線上")
+    if any(l["from"] == nid or l["to"] == nid for l in graph["links"]):
+        raise GraphError("節點已經有連線")
+    connect(graph, nid, dst, socket)
+    connect(graph, src, nid, ins[0], out)
+
+
+def dissolve(graph, nid):
+    """Delete node nid but keep the picture going through it (its first picture input to what its output fed)."""
+    feeds = [l for l in graph["links"] if l["to"] == nid and not l["socket"].startswith(PARAM)]
+    main = next((l for l in feeds if l["socket"] == "src"), feeds[0] if feeds else None)
+    outs = [l for l in graph["links"] if l["from"] == nid]
+    remove_node(graph, nid)
+    if main is not None:
+        for l in outs:
+            try:
+                connect(graph, main["from"], l["to"], l["socket"], main.get("out"))
+            except GraphError:
+                pass
+
+
+def duplicate(graph, ids, dx=40.0, dy=40.0):
+    """Copies of the nodes ids (with the links among them); returns {old id: new id}."""
+    ids = [i for i in ids if i in graph["nodes"] and graph["nodes"][i]["type"] != OUTPUT]
+    made = {}
+    for i in ids:
+        node = copy.deepcopy(graph["nodes"][i])
+        node["x"], node["y"] = node.get("x", 0.0) + dx, node.get("y", 0.0) + dy
+        made[i] = add_node(graph, node, node["x"], node["y"], base=i.rstrip("0123456789") or "node")
+    for l in list(graph["links"]):
+        if l["from"] in made and l["to"] in made:
+            graph["links"].append({**l, "from": made[l["from"]], "to": made[l["to"]]})
+    return made
 
 
 def disconnect(graph, dst, socket):
@@ -318,7 +440,9 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     out = next((i for i, n in nodes.items() if n["type"] == OUTPUT), None)
     if out is None:
         return None, None
-    feed = {(l["to"], l["socket"]): l["from"] for l in links if l["from"] in nodes and l["to"] in nodes}
+    feed = {(l["to"], l["socket"]): l["from"] for l in links if l["from"] in nodes and l["to"] in nodes
+            and nodes[l["from"]]["type"] != PARAMS}
+    bound = binds(graph)
     order, state = [], {}
 
     def visit(n):
@@ -377,6 +501,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     for n in order:
         node = nodes[n]
         kind = node["type"]
+        if kind == PARAMS:
+            continue
         if kind == INPUT:
             put(n, src_tex, None)
         elif kind == OUTPUT:
@@ -403,7 +529,9 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                 alias(n, main)
             else:
                 dest = alloc(w, h)
-                vals = {p.name: fx.uniform_value(p, params.get(param_key(n, p.name)), t) for p in d.params}
+                vals = {p.name: fx.uniform_value(p, params.get(expose_key(bound[(n, PARAM + p.name)]))
+                                                 if (n, PARAM + p.name) in bound else params.get(param_key(n, p.name)), t)
+                        for p in d.params}
                 srcs = {}
                 for p in d.params:
                     pt = take(n, PARAM + p.name)

@@ -2139,8 +2139,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
             raise EditError("來源節點要是圖片、影片、複合片段、軌道或形狀")
         shape = node.get("shape")
         node = {"type": nodegraph.SOURCE, "kind": node["kind"]}
-    elif node["type"] == nodegraph.INPUT:
-        node = {"type": nodegraph.INPUT}
+    elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS):
+        node = {"type": node["type"]}
     else:
         raise EditError("不能新增這種節點")
     try:
@@ -2173,13 +2173,67 @@ def remove_graph_node(proj, clip_id, effect_id, nid):
         e.pop("sources")
 
 
-def connect_graph(proj, clip_id, effect_id, src, dst, socket):
+def connect_graph(proj, clip_id, effect_id, src, dst, socket, out=None):
     _, c = find(proj, clip_id)
     _, g = _graph(c, effect_id)
     try:
-        nodegraph.connect(g, src, dst, socket)
+        nodegraph.connect(g, src, dst, socket, out or None)
     except nodegraph.GraphError as exc:
         raise EditError(str(exc)) from exc
+
+
+def expose_graph_param(proj, clip_id, effect_id, src, dst, socket):
+    """Drag out of a 參數輸入 node's empty socket onto a parameter: it becomes a parameter of the effect (the 效果
+    panel shows it) and is bound to that one. Returns its name."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    try:
+        return nodegraph.expose(g, e["params"], src, dst, socket)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
+def remove_exposed_param(proj, clip_id, effect_id, name):
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    nodegraph.remove_exposed(g, e["params"], name)
+
+
+def insert_graph_node(proj, clip_id, effect_id, nid, src, dst, socket, out=None):
+    """A node dropped on a link: the link goes through it."""
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    try:
+        nodegraph.insert_on_link(g, nid, src, dst, socket, out or None)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
+def dissolve_graph_node(proj, clip_id, effect_id, nid):
+    """Delete a node and keep the picture going through it."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    if (g["nodes"].get(nid) or {}).get("type") == nodegraph.OUTPUT:
+        raise EditError("輸出節點不能刪除")
+    nodegraph.dissolve(g, nid)
+    for k in [k for k in e["params"] if k.startswith(nid + ".")]:
+        del e["params"][k]
+    (e.get("sources") or {}).pop(nid, None)
+    if "sources" in e and not e["sources"]:
+        e.pop("sources")
+
+
+def duplicate_graph_nodes(proj, clip_id, effect_id, ids, dx=40.0, dy=40.0):
+    """Copies of nodes (settings and pictures too, links among them); returns the new ids."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    made = nodegraph.duplicate(g, ids, dx, dy)
+    for old, new in made.items():
+        for k in [k for k in e["params"] if k.startswith(old + ".")]:
+            e["params"][new + k[len(old):]] = copy.deepcopy(e["params"][k])
+        if old in (e.get("sources") or {}):
+            e["sources"][new] = copy.deepcopy(e["sources"][old])
+    return list(made.values())
 
 
 def disconnect_graph(proj, clip_id, effect_id, dst, socket):

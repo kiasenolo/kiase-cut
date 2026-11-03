@@ -629,18 +629,20 @@ def duplicate_moved(root, level, clip_ids, d_us=0, d_rows=0, moves=None, t_of=No
     return new
 
 
-def add_text(proj, at_us, content="輸入文字", duration_us=3_000_000):
-    """New text clip at at_us on the topmost text track with room, else a new track."""
+def add_text(proj, at_us, content="輸入文字", duration_us=3_000_000, track_id=None, style=None):
+    """New text clip at at_us on track_id when that is a text track with room, else on the topmost text track with room,
+    else a new track. style: fields of its text that replace the defaults (textpresets.py)."""
     clip = {
         "id": new_clip_id(proj), "type": "text", "name": content[:20],
         "start_us": int(at_us), "duration_us": int(duration_us), "source_start_us": 0,
         "text": {"content": content, "font_path": project.DEFAULT_FONT, "size": 7.95,
                  "color": [1.0, 1.0, 1.0], "fill": True, "stroke_on": False,
                  "stroke_color": [0.0, 0.0, 0.0], "stroke": 2.0, "stroke_align": "inside",
-                 "letter_spacing": 0.0, "line_spacing": 0.02, "italic_deg": 0},
+                 "letter_spacing": 0.0, "line_spacing": 0.02, "italic_deg": 0, **copy.deepcopy(style or {})},
         "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0},
     }
-    for t in reversed(proj["tracks"]):
+    asked = [t for t in proj["tracks"] if t["id"] == track_id and t["kind"] == "text"]
+    for t in asked + list(reversed(proj["tracks"])):
         if t["kind"] == "text" and free_range(t, clip["start_us"], end(clip)) is not None:
             rng = free_range(t, clip["start_us"], end(clip))
             if rng[1] - clip["start_us"] >= MIN_US:
@@ -2139,6 +2141,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         if node.get("kind") not in nodegraph.SOURCE_KINDS:
             raise EditError("來源節點要是圖片、影片、複合片段、軌道、形狀或文字")
         shape = node.get("shape")
+        preset = node.get("preset")                      # (a text node: looks to start with)
         asset = node.get("asset")                        # {"key": a shape preset of assets.py, "colors": (c1, c2)}
         colors = (asset or {}).get("colors")
         if asset:
@@ -2170,9 +2173,13 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
         if node["kind"] == "shape" and shape:
             set_effect_shape(proj, clip_id, effect_id, nid, shape)
-        if node["kind"] == "text":                       # (its fields: parameters of the effect)
+        if node["kind"] == "text":                       # (its fields: parameters of the effect; a preset of the 內建素材 tab sets some)
             for q in nodegraph.text_def(node).params:
                 e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
+            for k, v in (preset or {}).items():
+                key = nodegraph.param_key(nid, k)
+                if key in e["params"]:
+                    e["params"][key] = nodegraph.text_value(k, v)
         if asset:                                        # (its fields: parameters of the effect; its frame keeps the preset's proportions)
             d = nodegraph.asset_def(node)
             for q in d.params:

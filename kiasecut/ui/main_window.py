@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QWidget)
 
 from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
-               mapping, nodegraph, rack, render, renderexport, sysmem, thumbnail, toolsdata, userlib, viz, waveform, workspace)
+               mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -3255,7 +3255,7 @@ class MainWindow(QMainWindow):
             for ident in idents:
                 if ident.startswith("cmp:"):
                     self.place_compound(ident[4:], tid, start)
-                elif ident.startswith((assets.PREFIX, "viz:")):
+                elif ident.startswith((assets.PREFIX, "viz:", textpresets.PREFIX)):
                     self.place_asset(ident, tid, start)
                 elif ident.startswith("m"):
                     self.place_media(ident, tid, start)
@@ -3967,6 +3967,12 @@ class MainWindow(QMainWindow):
         return (params, path) if path else None
 
     def place_asset(self, ident, track_id, start_us):
+        if ident.startswith(textpresets.PREFIX):           # a text preset of the 內建素材 tab: a new text clip with those looks
+            style = textpresets.fields(ident)
+            if style is not None and self.ensure_project():
+                self.apply("加入文字", lambda lvl: edit.add_text(lvl, round(start_us), track_id=track_id or None, style=style),
+                           select=lambda c: c["id"])
+            return
         if ident.startswith("viz:"):                       # an Audio Visualizer of the 內建素材 tab
             self.add_visualizer(ident[4:], track_id, start_us)
             return
@@ -3988,8 +3994,8 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         picture = True
-        if ident.startswith("viz:"):
-            self.statusBar().showMessage("Audio Visualizer 不能用來替換素材", 4000)
+        if ident.startswith(("viz:", textpresets.PREFIX)):
+            self.statusBar().showMessage("Audio Visualizer 和文字不能用來替換素材", 4000)
             return
         if ident.startswith(assets.PREFIX):
             made = self.new_asset(ident)
@@ -5447,6 +5453,11 @@ class MainWindow(QMainWindow):
             return
         found = []                                         # [(kind, what set_effect_source_media takes)]
         for ident in ids:
+            if ident.startswith(textpresets.PREFIX):           # a text preset (內建素材 > 文字): a text node set the same way
+                style = textpresets.fields(ident)
+                if style is not None:
+                    found.append(("text", style))
+                continue
             if ident.startswith(assets.PREFIX):                # a built-in shape (內建素材): a shape node with all its parameters
                 parsed = assets.parse(ident)
                 if parsed and parsed[0].cat == "shape":
@@ -5481,13 +5492,17 @@ class MainWindow(QMainWindow):
             if info.get("kind") in ("image", "video") and info.get("width"):
                 found.append((info["kind"], self._node_media(info["kind"], path.replace("\\", "/"), info)))
         if not found:
-            self.statusBar().showMessage("節點編輯器只收圖片、影片、複合片段和內建形狀", 4000)
+            self.statusBar().showMessage("節點編輯器只收圖片、影片、複合片段、內建形狀和文字", 4000)
             return
         made = []
         level = self.nodes.level
 
         def do(lvl):
             for i, (kind, media) in enumerate(found):
+                if kind == "text":
+                    nid = edit.add_graph_node(lvl, cid, eid, {"type": nodegraph.SOURCE, "kind": "text", "preset": media, **({"group": level} if level else {})}, x + 40 * i, y + 40 * i)
+                    made.append(nid)
+                    continue
                 if kind == "asset":
                     nid = edit.add_graph_node(lvl, cid, eid, {"type": nodegraph.SOURCE, "kind": "shape", "asset": media, **({"group": level} if level else {})}, x + 40 * i, y + 40 * i)
                     made.append(nid)

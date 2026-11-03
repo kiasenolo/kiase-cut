@@ -186,6 +186,26 @@ class GraphEditTests(unittest.TestCase):
         self.assertEqual(self.e["params"][nid + ".stroke_color"], list(assets.to_rgba("#00ff00")))
         self.assertEqual(self.e["params"][nid + ".points"], 5.0)
 
+    def test_dropped_text_preset_makes_a_text_node_with_its_looks(self):
+        import types
+        from kiasecut import textpresets
+        from kiasecut.ui.main_window import MainWindow
+        p, eid = self.p, self.e["id"]
+        picked = []
+        h = types.SimpleNamespace(node_clip=lambda: "c1", apply=lambda _n, fn: fn(p) or True, proj=p,
+                                  nodes=types.SimpleNamespace(level=None, select=picked.append),
+                                  statusBar=lambda: types.SimpleNamespace(showMessage=lambda *a: None))
+        MainWindow.on_node_media(h, eid, [textpresets.ident("black_outline"), textpresets.ident("white_box")], [], 10, 20)
+        ids = [n for n, node in self.e["graph"]["nodes"].items() if ng.is_text(node)]
+        self.assertEqual(len(ids), 2)
+        outline, box = ids
+        self.assertEqual(self.e["params"][outline + ".color"], [1.0, 1.0, 1.0, 1.0])
+        self.assertEqual((self.e["params"][outline + ".stroke_on"], self.e["params"][outline + ".stroke_color"],
+                          self.e["params"][outline + ".stroke_align"]), (True, [0.0, 0.0, 0.0, 1.0], "外側"))
+        self.assertEqual((self.e["params"][box + ".bg_on"], self.e["params"][box + ".bg_color"], self.e["params"][box + ".color"]),
+                         (True, [1.0, 1.0, 1.0, 1.0], [0.0, 0.0, 0.0, 1.0]))
+        self.assertFalse(self.e["params"][outline + ".bg_on"])
+
     def test_new_pasted_and_duplicated_nodes_are_carried(self):
         """The handlers hand what they made to the editor to stick to the pointer (apply returns None for these, as the real one)."""
         import types

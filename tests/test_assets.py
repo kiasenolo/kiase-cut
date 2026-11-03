@@ -323,6 +323,33 @@ class AssetTests(unittest.TestCase):
         lst.itemDoubleClicked.emit(lst.item(0))
         self.assertEqual(got, ["asset:shape.rect:#ff0000:#00ff00"])
 
+    def test_text_presets_are_a_category_of_the_panel(self):
+        from kiasecut import textpresets
+        from kiasecut.ui.assets_panel import AssetsPanel
+        from kiasecut.ui.timeline import MEDIA_MIME
+        panel = AssetsPanel()
+        got = []
+        panel.addRequested.connect(got.append)
+        lst = panel.lists["text"]
+        self.assertEqual([lst.item(i).text() for i in range(lst.count())], [name for _k, name, _f in textpresets.PRESETS])
+        md = lst.mimeData([lst.item(2)])
+        self.assertEqual(bytes(md.data(MEDIA_MIME)).decode(), "text:black_outline")
+        self.assertFalse(lst.item(2).icon().isNull())                                     # (a picture of its looks)
+        lst.itemDoubleClicked.emit(lst.item(0))
+        self.assertEqual(got, ["text:white"])
+
+    def test_dropping_a_text_preset_adds_a_text_clip(self):
+        import types
+        from kiasecut.ui.main_window import MainWindow
+        p = proj()
+        made = []
+        h = types.SimpleNamespace(ensure_project=lambda: True, apply=lambda _n, fn, select=None: made.append(fn(p)))
+        MainWindow.place_asset(h, "text:black_box", "", 1_500_000)
+        c = made[0]
+        self.assertEqual((c["type"], c["start_us"], c["text"]["bg_on"], c["text"]["color"]), ("text", 1_500_000, True, [1.0, 1.0, 1.0]))
+        MainWindow.place_asset(h, "text:nope", "", 0)                                     # (no such preset: nothing added)
+        self.assertEqual(len(made), 1)
+
     def test_inspector(self):
         from kiasecut.ui.inspector import Inspector
         p = proj()

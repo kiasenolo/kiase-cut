@@ -1,4 +1,4 @@
-"""The 內建素材 tab: solid colours, gradients and basic shapes (see assets.py), and the four Audio
+"""The 內建素材 tab: solid colours, gradients and basic shapes (see assets.py), the text presets (textpresets.py; ident "text:<key>") and the four Audio
 Visualizers (viz.py; their ident is "viz:<kind>").
 
 Drag one onto the timeline (hold Alt over a picture clip to replace its source), or
@@ -11,7 +11,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
-from .. import assets, viz
+from .. import assets, textlayout, textpresets, viz
 from .colorpick import hex_of, pick_color, qcolor
 from .timeline import MEDIA_MIME
 from .menukeys import Menu
@@ -36,6 +36,30 @@ def thumbnail(a, c1, c2):
     r.setAspectRatioMode(Qt.KeepAspectRatio)
     pad = 5 if a.cat in ("shape", "empty") else 0
     r.render(p, QRectF(pad, pad, w - 2 * pad, h - 2 * pad))
+    p.end()
+    return QPixmap.fromImage(img)
+
+
+TEXT_CAT = ("text", "文字")                      # (looks of a text clip, see textpresets.py)
+
+
+def text_thumbnail(key):
+    """A small picture of a text preset: its looks on 文字 over a checkerboard."""
+    from PIL.ImageQt import ImageQt
+    w, h = THUMB
+    img = QImage(QSize(w, h), QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor("#2a2a2e"))
+    p = QPainter(img)
+    p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+    for y in range(0, h, 6):
+        for x in range(0, w, 6):
+            if (x // 6 + y // 6) % 2:
+                p.fillRect(x, y, 6, 6, QColor("#38383d"))
+    spec = {"content": "文字", "font_path": None, "size": 5.0, **(textpresets.fields(textpresets.ident(key)) or {})}
+    spec.pop("font_path")
+    pic = QImage(ImageQt(textlayout.render(spec, 0.45))).convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    pic = pic.scaled(w - 6, h - 6, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    p.drawImage((w - pic.width()) // 2, (h - pic.height()) // 2, pic)
     p.end()
     return QPixmap.fromImage(img)
 
@@ -185,6 +209,21 @@ class AssetsPanel(QWidget):
             blay.addWidget(head)
             blay.addWidget(lst)
             self.lists[cat] = lst
+        head = QLabel(TEXT_CAT[1])                          # 文字: drag one on, the words are typed afterwards
+        head.setStyleSheet("font-weight: bold; margin-top: 4px;")
+        lst = AssetList(self)
+        lst.itemDoubleClicked.connect(lambda it: self.addRequested.emit(self.ident(it.data(ROLE_KEY))))
+        lst.setContextMenuPolicy(Qt.CustomContextMenu)
+        lst.customContextMenuRequested.connect(lambda pos, l=lst: self._menu(l, pos))
+        for key, name, _fields in textpresets.PRESETS:
+            it = QListWidgetItem(name)
+            it.setData(ROLE_KEY, "text." + key)
+            it.setToolTip(name + "（拖到時間線加入文字，或拖進節點編輯器；文字在屬性裡改）")
+            it.setIcon(QIcon(text_thumbnail(key)))
+            lst.addItem(it)
+        blay.addWidget(head)
+        blay.addWidget(lst)
+        self.lists[TEXT_CAT[0]] = lst
         head = QLabel(VIZ_CAT[1])                           # Audio Visualizer: a picture drawn from sound
         head.setStyleSheet("font-weight: bold; margin-top: 4px;")
         lst = AssetList(self)
@@ -211,6 +250,8 @@ class AssetsPanel(QWidget):
     def ident(self, key):
         if key.startswith("viz."):
             return "viz:" + key[4:]
+        if key.startswith("text."):
+            return textpresets.ident(key[5:])
         return assets.ident(key, *self.colors)
 
     def refresh(self):

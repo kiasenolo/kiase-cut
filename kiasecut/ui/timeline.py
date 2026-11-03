@@ -2237,7 +2237,7 @@ class Timeline(QWidget):
         for ident in bytes(e.mimeData().data(MEDIA_MIME)).decode().split(","):
             if ident.startswith("cmp:"):                 # from the compound browser
                 self.compoundDropped.emit(ident[4:], tid, start)
-            elif ident.startswith(("asset:", "viz:")):   # from the 內建素材 tab
+            elif ident.startswith(("asset:", "viz:", "text:")):   # from the 內建素材 tab
                 self.assetDropped.emit(ident, tid, start)
             elif ident.startswith("m"):
                 self.mediaDropped.emit(ident, tid, start)

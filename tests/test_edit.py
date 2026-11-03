@@ -286,5 +286,37 @@ class CopyPasteTests(unittest.TestCase):
         self.assertFalse(project.compound_uses(p).get(k2))
 
 
+class TextPresetTests(unittest.TestCase):
+    def test_every_preset_is_a_text_with_its_looks(self):
+        from kiasecut import textpresets
+        names = [name for _k, name, _f in textpresets.PRESETS]
+        for want in ("黑字", "白字", "黑框白字", "白框黑字", "黑底白字", "白底黑字"):
+            self.assertIn(want, names)
+        p = proj()
+        for key, name, fields in textpresets.PRESETS:
+            style = textpresets.fields(textpresets.ident(key))
+            self.assertEqual(style, fields)
+            c = edit.add_text(p, 0, style=style)
+            for k, v in fields.items():
+                self.assertEqual(c["text"][k], v, (name, k))
+            self.assertEqual(c["text"]["content"], "輸入文字")
+        self.assertIsNone(textpresets.fields("text:nope"))
+        self.assertIsNone(textpresets.fields("asset:solid.0:#fff:#000"))
+        fields = textpresets.fields("text:black_box")
+        fields["bg_color"][0] = 0.5                                   # (a copy: the preset is not changed)
+        self.assertEqual(textpresets.fields("text:black_box")["bg_color"][0], 0.0)
+
+    def test_text_goes_on_the_track_it_is_dropped_on(self):
+        p = proj()
+        first = edit.add_text(p, 0)
+        track = next(t for t in p["tracks"] if any(c["id"] == first["id"] for c in t["clips"]))
+        other = {"id": "tx", "kind": "text", "name": "other", "clips": []}
+        p["tracks"].append(other)
+        c = edit.add_text(p, 0, track_id="tx")
+        self.assertEqual([x["id"] for x in other["clips"]], [c["id"]])
+        d = edit.add_text(p, 0, track_id="v1")                        # (a picture track: the usual place)
+        self.assertNotIn(d, other["clips"])
+
+
 if __name__ == "__main__":
     unittest.main()

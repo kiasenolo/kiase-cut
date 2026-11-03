@@ -339,6 +339,16 @@ def text_def(_node=None):
     return _text_def[0]
 
 
+def text_value(name, v):
+    """What text field `name` holds as a node parameter, from the value a clip's text has (a colour without alpha, a menu's word)."""
+    q = next(q for q in text_def().params if q.name == name)
+    if q.type == "color":
+        return [float(x) for x in (list(v) + [1.0])[:4]] if len(v) < 4 else [float(x) for x in v[:4]]
+    if q.type == "menu":
+        return next((n for n, val in TEXT_MENUS[name] if val == v), v)
+    return v
+
+
 def text_place_params():
     """Where a text node sits: its centre and turn (its size comes from the words and the font)."""
     return [q for q in place_params() if q.name in ("cx", "cy", "rotation")]

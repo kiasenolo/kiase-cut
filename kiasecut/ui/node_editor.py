@@ -55,7 +55,7 @@ def node_refs():
     return [r for r in refs if r != ng.PICTURE]                  # (the picture node is what source nodes are drawn with)
 
 
-NODE_HEADS = {"輸入": "#a8473f", "色彩": "#8a8a3f", "向量": "#5a5aa8", "轉換器": "#3f6fa8", "變換": "#3f8f9a", "濾鏡": "#6c696f"}   # the tool nodes, as Blender colours them
+NODE_HEADS = {"輸入": "#a8473f", "色彩": "#8a8a3f", "向量": "#5a5aa8", "轉換器": "#3f6fa8", "變換": "#3f8f9a", "濾鏡": "#6c696f", "紋理": "#b3702f"}   # the tool nodes, as Blender colours them
 
 
 def is_tool(ref):
@@ -135,7 +135,7 @@ class NodeItem(QGraphicsItem):
             for name, label in ng.outputs(node):
                 add("out", label, p=name)
         elif self.has_out:
-            for name, label in ng.outputs(node):
+            for name, label in self.shown_outputs():
                 add("out", label, p=name)
         if node["type"] == ng.OUTPUT:
             add("image", "結果", "src")
@@ -148,7 +148,8 @@ class NodeItem(QGraphicsItem):
             shown = lambda name: fx.shown(d, name, named)            # (@show: only the rows the settings use)
             if node["type"] == ng.FILTER:
                 pair = next((q for q in d.params if q.name == d.input_param.get("src")), None)
-                add("param", d.src_label, "src", pair) if pair is not None else add("image", d.src_label, "src")
+                if shown("src"):
+                    add("param", d.src_label, "src", pair) if pair is not None else add("image", d.src_label, "src")
                 for name, label in d.inputs:
                     if shown(name):
                         pair = next((q for q in d.params if q.name == d.input_param.get(name)), None)
@@ -195,9 +196,18 @@ class NodeItem(QGraphicsItem):
             add("shape", "形狀")
             add("shapecolor", "顏色")
         if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.VIEWER, ng.PARAMS, ng.GROUP, "groupin", "groupout"):
-            for name, _label in ng.outputs(node):
+            for name, _label in self.shown_outputs():
                 add("thumb", "", p=name, h=THUMB_H)
         self.h = y + PAD
+
+    def shown_outputs(self):
+        """[(name, label)] of the outputs the node shows (@show on an @output: Blender's sockets that depend on the settings)."""
+        outs = ng.outputs(self.node)
+        if self.node["type"] != ng.FILTER or not ng.node_def(self.node).input_show:
+            return outs
+        d = ng.node_def(self.node)
+        named = self.editor.node_values(self.nid).named
+        return [(name, label) for name, label in outs if fx.shown(d, name, named)]
 
     def row_of(self, socket):
         r = next((r for r in self.rows if r["socket"] == socket), None)
@@ -1448,7 +1458,7 @@ class NodeEditor(QWidget):
                 d = ng.node_def(node)
                 if d.input_show or any(p.show for p in d.params):
                     named = fx.named(d, {p.name: curves.value(e["params"].get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params})
-                    out.append((nid, [n for n in [x for x, _ in d.inputs] + [p.name for p in d.params] if not fx.shown(d, n, named)]))
+                    out.append((nid, [n for n in [x for x, _ in d.inputs] + [o for o, _ in d.outputs] + ["src"] + [p.name for p in d.params] if not fx.shown(d, n, named)]))
         return json.dumps(out)
 
     def rebuild(self, fit=False):

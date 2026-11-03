@@ -63,8 +63,8 @@ KEYING = ["chroma_key", "value_key"]
 
 MASK = ["nodes/rounded_square_mask"]
 
-TEXTURE = ["blender_tex_brick", "blender_tex_checker", "blender_tex_gradient", "blender_tex_magic", "blender_tex_noise",
-           "blender_tex_voronoi", "blender_tex_wave", "blender_tex_white_noise", "blender_sensor_noise"]
+TEXTURE = ["nodes/tex_brick", "nodes/tex_checker", "nodes/tex_gabor", "nodes/tex_gradient", "nodes/tex_magic", "nodes/tex_noise",
+           "nodes/tex_voronoi", "nodes/tex_wave", "nodes/tex_white_noise", "blender_sensor_noise"]
 
 TRANSFORM = ["scale", "nodes/transform", "translate", SEP, "blender_lens_distortion"]
 

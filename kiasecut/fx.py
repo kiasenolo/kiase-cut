@@ -170,7 +170,7 @@ def _menu_param(name, default, extra):
 ENABLE = re.compile(r"^(\w+)\s+(?:(!?)(\w+)|(\w+)\s*(==|!=)\s*(.+))$")
 
 
-def _enable(rest, params, inputs=(), show=None):
+def _enable(rest, params, inputs=(), show=None, word=None):
     """`// @enable target cond`: cond is `flag`, `!flag` (a bool parameter) or `other == A|B`,
     `other != A` (a menu's choices, or numbers)."""
     m = ENABLE.match(rest.strip())
@@ -178,7 +178,7 @@ def _enable(rest, params, inputs=(), show=None):
         raise ValueError("@enable 要寫成：參數 條件（例如 size type == Bloom|Fog Glow，或 maximum clamp_on）")
     target, neg, flag, other, op, vals = m.groups()
     by = {p.name: p for p in params}
-    word = "@enable" if show is None else "@show" if "src" not in inputs else "@use"
+    word = word or ("@enable" if show is None else "@show" if "src" not in inputs else "@use")
     name = flag or other
     if target in by:
         into = by[target].show if show is not None else by[target].enable
@@ -323,8 +323,8 @@ def parse(text, ref, fallback_name="濾鏡"):
     input_show, input_use = {}, {}
     for line, rest, kind in enables:
         try:
-            _enable(rest, params, [n for n, _ in inputs] + (["src"] if kind == "use" else []),
-                    input_show if kind == "show" else input_use if kind == "use" else None)
+            _enable(rest, params, [n for n, _ in inputs] + (["src"] if kind != "enable" else []) + ([n for n, _ in outputs] if kind == "show" else []),
+                    input_show if kind == "show" else input_use if kind == "use" else None, "@" + kind)       # (@show: also the main picture and the outputs)
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
     skipped = []

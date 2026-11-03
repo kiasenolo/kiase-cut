@@ -248,6 +248,24 @@ class RunTest(unittest.TestCase):
             ng.remove_item(g, params, m, "src")                     # (never fewer than two)
 
 
+    def test_menu_switch_tells_which_option_is_chosen(self):
+        g = ng.new_graph()
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/menu_switch"})
+        params = ng.default_params(g)
+        self.assertEqual([lab for _o, lab in ng.outputs(g["nodes"][m])], ["輸出", "選項 1", "選項 2", "選項 3"])
+        ng.connect(g, m, "output", "src", "sel_i2")                 # the boolean of the second option
+        green = self.solid([0, 255, 0, 255])
+        for choice, want in (("選項 2", (255, 255, 255, 255)), ("選項 1", (0, 0, 0, 255)), ("選項 3", (0, 0, 0, 255))):
+            out, errors, _ = self.run_graph(g, green, params={m + ".choice": choice})
+            self.assertEqual(errors, [], choice)
+            self.close(out, want)
+        ng.move_item(g, params, m, "i2", -1)                        # first now (the socket "src"): the link goes with the option
+        out, _, _ = self.run_graph(g, green, params={m + ".choice": "選項 2"})
+        self.assertEqual(next(l for l in g["links"] if l["from"] == m)["out"], "sel_src")
+        self.close(out, (255, 255, 255, 255))
+        ng.remove_item(g, params, m, "src")                         # the option goes: so does the link from its boolean
+        self.assertFalse(any(l["from"] == m for l in g["links"]))
+
     def test_missing_source_is_transparent(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "video"}, base="s")

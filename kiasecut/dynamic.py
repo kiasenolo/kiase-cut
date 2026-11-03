@@ -47,17 +47,26 @@ def generate(kind, items):
     return GENERATORS[kind](items)
 
 
+def selected_output(sock):
+    """The name of the output of a Menu Switch that says whether the option on socket `sock` is the chosen one."""
+    return f"sel_{sock}"
+
+
 def menu_switch(items):
     names = unique(n for _s, n in items)
     head = ["// @filter 選單切換",
             "// @category 轉換器",
-            "// @description 節點用：照 Blender 的「選單切換」節點（Menu Switch）：用選單選一張圖輸出，沒被選到的圖不會被運算。選項自己加（把線拉到最下面的空插槽）、改名（在選項上按右鍵）、刪除；選單可以在效果面板做成參數，一次切換整個效果",
+            "// @description 節點用：照 Blender 的「選單切換」節點（Menu Switch）：用選單選一張圖輸出，沒被選到的圖不會被運算；每個選項還有一個輸出，被選到時是 1（白），否則是 0（黑）。選項自己加（把線拉到最下面的空插槽）、改名（在選項上按右鍵）、刪除；選單可以在效果面板做成參數，一次切換整個效果",
             "// @dynamic menu_switch",
             f'// @source "{names[0]}"']
     head += [f'// @input {s} "{n}"' for (s, _), n in zip(items[1:], names[1:])]
+    head += ['// @output result "輸出"']                                           # (Blender: the chosen picture, then a boolean for every option)
+    head += [f'// @output {selected_output(s)} "{n}"' for (s, _), n in zip(items, names)]
     head += [f'// @param choice menu "{names[0]}" "{"|".join(names)}" "選單"']
     head += [f"// @use {s} choice == {n}" for (s, _), n in zip(items, names)]
-    body = ["", "vec4 effect(vec2 uv) {", "    switch (choice) {"]
+    body = ["", "vec4 effect(vec2 uv) {",
+            "    if (output_index > 0) return vec4(vec3(choice == output_index - 1 ? 1.0 : 0.0), 1.0);",
+            "    switch (choice) {"]
     body += [f"    case {k}: return {'src(uv)' if s == 'src' else f'input_{s}(uv)'};" for k, (s, _) in enumerate(items)]
     body += ["    }", "    return vec4(0.0);", "}", ""]
     return "\n".join(head + body)

@@ -94,9 +94,12 @@ def _items(node):
 
 def _swap_sockets(graph, nid, a, b):
     """Links into socket a of node nid go to b and the other way round."""
+    oa, ob = dynamic.selected_output(a), dynamic.selected_output(b)
     for l in graph["links"]:
         if l["to"] == nid and l["socket"] in (a, b):
             l["socket"] = b if l["socket"] == a else a
+        if l["from"] == nid and l.get("out") in (oa, ob):                   # (a Menu Switch's "this one is chosen" outputs go with their options too)
+            l["out"] = ob if l["out"] == oa else oa
 
 
 def _settle_items(graph, params, nid, old_names):
@@ -166,7 +169,8 @@ def remove_item(graph, params, nid, sock):
     if not any(it["sock"] == sock for it in items):
         raise GraphError("找不到這個選項")
     node["items"] = [it for it in items if it["sock"] != sock]
-    graph["links"] = [l for l in graph["links"] if not (l["to"] == nid and l["socket"] == sock)]
+    gone = dynamic.selected_output(sock)
+    graph["links"] = [l for l in graph["links"] if not (l["to"] == nid and l["socket"] == sock) and not (l["from"] == nid and l.get("out") == gone)]
     _settle_items(graph, params, nid, old)
 
 

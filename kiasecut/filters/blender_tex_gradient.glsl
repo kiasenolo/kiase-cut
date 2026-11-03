@@ -1,4 +1,4 @@
-// @filter [Blender] Gradient Texture
+// @filter [Blender] Texture / Gradient
 // @category Blender
 // @description Blender 的漸層紋理：線性、二次、平滑、對角、球形、放射
 // @param type menu 線性 "線性|二次|平滑|對角|球形|二次球形|放射" "類型"

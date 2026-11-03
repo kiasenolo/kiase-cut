@@ -1,4 +1,4 @@
-// @filter [Blender] Checker Texture
+// @filter [Blender] Texture / Checker
 // @category Blender
 // @description Blender 的棋盤格紋理：兩種顏色交錯的方格（3D：Z 每過一格就黑白反轉）
 // @param color1 color #cccccc "顏色 1"

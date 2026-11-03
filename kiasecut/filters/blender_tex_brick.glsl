@@ -1,4 +1,4 @@
-// @filter [Blender] Brick Texture
+// @filter [Blender] Texture / Brick
 // @category Blender
 // @description Blender 的磚塊紋理：一排排錯開的磚，磚縫可以調粗細和柔邊
 // @param color1 color #cc6644 "磚色 1"

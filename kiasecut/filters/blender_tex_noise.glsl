@@ -1,4 +1,4 @@
-// @filter [Blender] Noise Texture
+// @filter [Blender] Texture / Noise
 // @category Blender
 // @description Blender 的噪點紋理：分形柏林噪訊（細節、粗糙度、間隙度、扭曲），調 Z 可以讓它連貫地流動（3D 噪訊）
 // @param color1 color #000000 "顏色 1"

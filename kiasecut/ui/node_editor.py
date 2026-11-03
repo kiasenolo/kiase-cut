@@ -16,7 +16,7 @@ import json
 import os
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
+from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
@@ -662,7 +662,7 @@ class GraphView(QGraphicsView):
         self.setScene(QGraphicsScene(self))
         self.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
         self.setDragMode(QGraphicsView.RubberBandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)       # (zoom_by keeps the point under the pointer itself)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -898,20 +898,30 @@ class GraphView(QGraphicsView):
             self.editor.moveRequested.emit(self.editor.eid, moved)
         self.editor.selection_changed()
 
-    def zoom_by(self, k):
+    def zoom_by(self, k, at=None):
+        """Zoom by k (limited), keeping the scene point under `at` (a viewport point) where it is."""
         s = self.transform().m11() * k
         if 0.2 <= s <= 3.0:
+            if at is None:
+                at = self.viewport().mapFromGlobal(QCursor.pos())
+            before = self.mapToScene(at)
             self.scale(k, k)
+            d = self.mapToScene(at) - before
+            self.translate(d.x(), d.y())
 
     def wheelEvent(self, e):
-        """As the other views: the wheel scrolls (Shift: sideways; a touchpad moves both ways), Ctrl zooms."""
+        """As Blender's 2D views: the wheel zooms (towards the pointer), Ctrl+wheel scrolls sideways, Shift+wheel
+        up / down; a touchpad's two fingers scroll both ways (Ctrl zooms them)."""
         from . import wheel
-        if e.modifiers() & Qt.ControlModifier:
-            self.zoom_by(1.15 ** wheel.notch(e))
+        ctrl, shift = bool(e.modifiers() & Qt.ControlModifier), bool(e.modifiers() & Qt.ShiftModifier)
+        if wheel.touchpad(e) and not ctrl:
+            dx, dy = wheel.pixels(e, 60, 60)
+        elif ctrl or shift:
+            n = wheel.notch(e) * 60                        # (Ctrl: the picture moves with the wheel's top going left)
+            dx, dy = (n, 0.0) if ctrl else (0.0, n)
+        else:
+            self.zoom_by(1.15 ** wheel.notch(e), e.position().toPoint())
             return
-        dx, dy = wheel.pixels(e, 60, 60)
-        if e.modifiers() & Qt.ShiftModifier:
-            dx, dy = (dy if abs(dy) >= abs(dx) else dx), 0.0
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(dx))
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(dy))
 

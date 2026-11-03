@@ -138,21 +138,29 @@ class NodeEditorTests(unittest.TestCase):
         it.linked.add("param:value")
         self.assertFalse(it.has_field(row))
 
-    def test_wheel_scrolls_and_ctrl_zooms(self):
+    def test_wheel_zooms_ctrl_and_shift_scroll(self):
         from PySide6.QtCore import QPoint
         from PySide6.QtGui import QWheelEvent
         ed = self.make()
         v = ed.view
-        before = (v.verticalScrollBar().value(), v.transform().m11())
+        pos = QPointF(100, 100)
 
         def wheel(delta, mods):
-            pos = QPointF(100, 100)
             v.wheelEvent(QWheelEvent(pos, v.mapToGlobal(pos.toPoint()), QPoint(0, 0), QPoint(0, delta), Qt.NoButton, mods, Qt.NoScrollPhase, False))
+        k0, under = v.transform().m11(), v.mapToScene(pos.toPoint())
+        wheel(120, Qt.NoModifier)
+        self.assertGreater(v.transform().m11(), k0)                     # up: zoom in
+        moved = v.mapToScene(pos.toPoint()) - under
+        self.assertLess(abs(moved.x()) + abs(moved.y()), 2.0)           # (the point under the pointer stays)
         wheel(-120, Qt.NoModifier)
-        self.assertGreater(v.verticalScrollBar().value(), before[0])    # down
-        self.assertEqual(v.transform().m11(), before[1])
-        wheel(120, Qt.ControlModifier)
-        self.assertGreater(v.transform().m11(), before[1])              # Ctrl: zoom
+        self.assertAlmostEqual(v.transform().m11(), k0, places=3)
+        h0, v0 = v.horizontalScrollBar().value(), v.verticalScrollBar().value()
+        wheel(-120, Qt.ShiftModifier)
+        self.assertGreaterEqual(v.verticalScrollBar().value(), v0)
+        self.assertEqual(v.horizontalScrollBar().value(), h0)
+        self.assertEqual(v.transform().m11(), k0)
+        wheel(-120, Qt.ControlModifier)
+        self.assertEqual(v.transform().m11(), k0)                       # Ctrl: sideways, not zoom
 
     def test_pressing_elsewhere_closes_the_number_box_keeping_the_text(self):
         def build(e):

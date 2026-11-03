@@ -253,6 +253,22 @@ class NodeEditorTests(unittest.TestCase):
         self.assertAlmostEqual(x, 50, delta=2)
         self.assertAlmostEqual(y, 60, delta=2)
 
+    def test_add_menu_searches(self):
+        ed = self.make()
+        asked = []
+        ed.addRequested.connect(lambda *a: asked.append(a[1]))
+        menus = []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        ed.add_menu(QPointF(5, 6), QPoint(0, 0))
+        menu = menus[0]
+        menu.search.setText("blur")
+        self.assertTrue(menu.found and all(a.isEnabled() for a in menu.found))
+        menu.search.setText("zzzzqq")
+        self.assertFalse(menu.found[0].isEnabled())
+        menu.search.setText("圓")
+        menu.search.returnPressed.emit()
+        self.assertEqual(asked[-1]["kind"], "shape")
+
     def test_shift_right_drag_puts_bends_in_links(self):
         ed = self.make()
         got = []

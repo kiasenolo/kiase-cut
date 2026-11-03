@@ -18,7 +18,7 @@ import os
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
-                               QMenu, QPushButton, QVBoxLayout, QWidget)
+                               QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import curves, fx, nodegraph as ng
 
@@ -974,24 +974,72 @@ class NodeEditor(QWidget):
             else:
                 self.addRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y())
         menu = QMenu(self)
+        entries = []                                      # [(menu path, name, node)] - what the search looks through
+        search = QLineEdit()
+        search.setPlaceholderText("搜尋節點…")
+        box = QWidgetAction(menu)
+        box.setDefaultWidget(search)
+        menu.addAction(box)
+        groups = []                                       # the category submenus (hidden while searching)
         inp = menu.addMenu("輸入")
+        groups.append(inp.menuAction())
         for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("繞線點", {"type": ng.REROUTE}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
                            ("影片", {"type": ng.SOURCE, "kind": "video"}), ("複合片段", {"type": ng.SOURCE, "kind": "compound"}),
                            ("時間線（軌道）", {"type": ng.SOURCE, "kind": "track"})):
             inp.addAction(text, lambda _=False, n=node: ask(n))
+            entries.append(("輸入", text, node))
         shapes = menu.addMenu("形狀")
+        groups.append(shapes.menuAction())
         for sid, name in ng.SHAPES:
-            shapes.addAction(name, lambda _=False, sid=sid: ask({"type": ng.SOURCE, "kind": "shape", "shape": sid}))
+            node = {"type": ng.SOURCE, "kind": "shape", "shape": sid}
+            shapes.addAction(name, lambda _=False, n=node: ask(n))
+            entries.append(("形狀", name, node))
         cats = {}
         for ref in node_refs() + fx.builtin_refs():
             d = fx.get(ref)
             cats.setdefault("節點" if ref.startswith("builtin:nodes/") else d.category or "其他", []).append((d.name, ref))
         for cat in sorted(cats, key=lambda c: (c != "節點", c)):
             sub = menu.addMenu(cat)
+            groups.append(sub.menuAction())
             for name, ref in cats[cat]:
-                sub.addAction(name, lambda _=False, r=ref: ask({"type": ng.FILTER, "ref": r}))
+                node = {"type": ng.FILTER, "ref": ref}
+                sub.addAction(name, lambda _=False, n=node: ask(n))
+                entries.append((cat, name, node))
         if self.user_filters:
             mine = menu.addMenu("我的濾鏡（Library）")
+            groups.append(mine.menuAction())
             for name, path in self.user_filters:
-                mine.addAction(name, lambda _=False, r=path: ask({"type": ng.FILTER, "ref": r}))
+                node = {"type": ng.FILTER, "ref": path}
+                mine.addAction(name, lambda _=False, n=node: ask(n))
+                entries.append(("我的濾鏡", name, node))
+        found = []                                        # the actions of the matches, shown in place of the categories
+
+        def refresh(text):
+            for act in found:
+                menu.removeAction(act)
+            found.clear()
+            text = text.strip().lower()
+            for act in groups:
+                act.setVisible(not text)
+            if not text:
+                return
+            for cat, name, node in entries:
+                if text in name.lower() or text in cat.lower() or text in str(node.get("ref", node.get("shape", ""))).lower():
+                    found.append(menu.addAction(f"{name}　（{cat}）", lambda _=False, n=node: ask(n)))
+            if not found:
+                none = menu.addAction("沒有符合的節點")
+                none.setEnabled(False)
+                found.append(none)
+        search.textChanged.connect(refresh)
+
+        def first():
+            for act in found:
+                if act.isEnabled():
+                    act.trigger()
+                    menu.close()
+                    return
+        search.returnPressed.connect(first)
+        menu.search, menu.found = search, found           # (for the tests)
+        menu.setActiveAction(box)
+        QTimer.singleShot(0, search.setFocus)
         self.popup(menu, global_pos)

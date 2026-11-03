@@ -782,6 +782,19 @@ def disconnect(graph, dst, socket):
     graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
 
 
+def migrate(graph):
+    """Make every link leave an output its node has: one made before the filter had @output pictures (or from a
+    picture it no longer gives) names none, and is the filter's first (what the editor draws and the renderer reads)."""
+    nodes = graph.get("nodes") or {}
+    for l in graph.get("links") or []:
+        src = nodes.get(l["from"])
+        if src is None or src["type"] != FILTER:
+            continue
+        names = [o for o, _ in outputs(src)]
+        if names and (l.get("out") or "") not in names:
+            l["out"] = names[0]
+
+
 def check(graph):
     """A message when the graph cannot run (no output, a loop, a missing filter), else None."""
     nodes = graph.get("nodes") or {}

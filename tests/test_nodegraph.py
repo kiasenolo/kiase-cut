@@ -49,6 +49,19 @@ class DataTest(unittest.TestCase):
         with self.assertRaises(ng.GraphError):
             ng.add_node(ng.new_graph(), {"type": ng.OUTPUT})
 
+    def test_a_link_without_an_output_leaves_the_first_one(self):
+        """Made before the filter had @output pictures (Glare's), a link names none: it is the first output."""
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:blender_glare"})
+        ng.connect(g, "input", n, "src")
+        g["links"].append({"from": n, "to": "output", "socket": "src"})
+        g["links"].append({"from": n, "to": "output", "socket": "x", "out": "gone"})
+        ng.migrate(g)
+        self.assertEqual([l.get("out") for l in g["links"] if l["from"] == n], ["image", "image"])
+        ng.connect(g, n, "output", "src", "highlights")
+        ng.migrate(g)
+        self.assertEqual([l["out"] for l in g["links"] if l["from"] == n and l["to"] == "output"][-1], "highlights")
+
     def test_sockets(self):
         g = ng.new_graph()
         m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/mix"})

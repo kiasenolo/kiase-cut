@@ -626,6 +626,10 @@ def link(p):
                 if c.get("viz"):
                     from . import viz
                     viz.migrate(c)
+                for e in c.get("effects") or []:
+                    if e.get("graph"):
+                        from . import nodegraph
+                        nodegraph.migrate(e["graph"])
                 if "compound_id" in c:
                     c["compound"] = comps[c["compound_id"]]
                 elif "timeline_id" in c:

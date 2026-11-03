@@ -10,6 +10,11 @@
 // @param vector_b vec3 0,0,0 -1000 1000 "B 的向量"
 // @param vector_c vec3 0,0,0 -1000 1000 "C 的向量"
 // @param vec_scale float 1 -1000 1000 "縮放 / 折射率"
+// @show b op != 長度|縮放|正規化|絕對值|向下取整|向上取整|小數部分|正弦|餘弦|正切
+// @show vector_b op != 長度|縮放|正規化|絕對值|向下取整|向上取整|小數部分|正弦|餘弦|正切
+// @show c op == 乘加|朝向
+// @show vector_c op == 乘加|朝向
+// @show vec_scale op == 折射|縮放
 
 vec3 safe_div(vec3 a, vec3 b) { return mix(vec3(0.0), a / max(abs(b), vec3(1e-30)) * sign(b), notEqual(b, vec3(0.0))); }
 vec3 safe_norm(vec3 a) { float l = length(a); return l > 0.0 ? a / l : vec3(0.0); }

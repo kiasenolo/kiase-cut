@@ -59,6 +59,24 @@ class BuiltinFilterTests(unittest.TestCase):
         for n in ("Glare", "Lens Distortion", "Vignette", "Sensor Noise"):
             self.assertIn("[Blender] " + n, names)
 
+    def test_white_noise_is_random_per_point(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:blender_tex_white_noise")
+        self.assertEqual([n for n, _ in d.outputs], ["value", "color"])
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        rgba = np.full((64, 128, 4), 255, np.uint8)
+        out = eng.run(d, vals, rgba)
+        r = out[..., 0].astype(float)
+        self.assertTrue((out[..., 0] == out[..., 1]).all())              # (the value output: grey)
+        self.assertGreater(r.std(), 60)                                   # (even over 0..255: ~74)
+        self.assertAlmostEqual(r.mean(), 127.5, delta=8)
+        vals["z"] = 3.0
+        self.assertFalse((eng.run(d, vals, rgba)[..., 0] == out[..., 0]).all())     # (another Z, another picture)
+
     def test_memory_pull_garbles_what_is_under_it(self):
         import numpy as np
         try:

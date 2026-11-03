@@ -60,6 +60,23 @@ class AssetTests(unittest.TestCase):
         im = r.asset(p, 200, 200)
         self.assertGreater(im.pixelColor(im.width() // 2, 2).alpha(), 250)     # the outline stays whole
 
+    def test_grid_has_edge_fade_towards_the_frames_edge(self):
+        from kiasecut import render
+        p = assets.at(assets.make(assets.get("shape.grid"), "#ffffff", "#000000", 400, 400), 0)
+        self.assertIn("fade", assets.fields_of("grid"))
+        r = render.Renderer()
+        plain = r.asset(p, 400, 400)
+        p["fade"] = 60
+        faded = r.asset(p, 400, 400)                                            # (the cache told them apart)
+        w, h = plain.width(), plain.height()
+        edge = sum(plain.pixelColor(x, 0).alpha() for x in range(w))
+        self.assertGreater(edge, 0)                                             # (the grid's top line)
+        self.assertLess(sum(faded.pixelColor(x, 0).alpha() for x in range(w)), edge / 10)
+        mid = [(x, y) for x in range(w // 2 - 40, w // 2 + 40) for y in range(h // 2 - 40, h // 2 + 40) if plain.pixelColor(x, y).alpha() > 200]
+        self.assertTrue(mid)
+        x, y = mid[0]
+        self.assertGreater(faded.pixelColor(x, y).alpha(), 200)                 # (whole in the middle)
+
     def test_every_preset_is_a_picture(self):
         for a in assets.ASSETS:
             p = assets.make(a, "#3366ff", "#ff336680", 1920, 1080)

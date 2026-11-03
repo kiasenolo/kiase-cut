@@ -133,7 +133,7 @@ FIELDS = {                                 # what each family has besides w, h a
     "parallelogram": ("skew",) + STROKE,
     "line": (),
     "empty": (),
-    "grid": ("gcols", "grows", "gratio", "gline", "gleft", "gright", "gtop", "gbottom"),
+    "grid": ("gcols", "grows", "gratio", "gline", "gleft", "gright", "gtop", "gbottom", "fade"),
 }
 NAMES = {"solid": "純色", "gradient": "漸變", "rect": "矩形", "ellipse": "橢圓", "polygon": "多邊形",
          "star": "星形", "heart": "心形", "arrow": "箭頭", "parallelogram": "平行四邊形", "line": "線條", "grid": "網格", "empty": "空物體"}
@@ -774,6 +774,8 @@ def svg(p, editing=False, part=None):
     if p["family"] == "gradient":
         return _gradient(p, w, h)
     if p["family"] == "grid":
+        if part == "mask":                       # (邊緣淡出 measures from the frame's edge)
+            return _svg(w, h, f'<rect width="{w}" height="{h}" fill="#fff"/>')
         return _grid(p, w, h)
     return _shape(p, w, h, part)
 

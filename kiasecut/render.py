@@ -154,7 +154,7 @@ class Renderer:
             pad = 2 * assets.overflow(p)                 # (an outline reaching out of its frame)
             size = ((p["w"] + pad) * k, (p["h"] + pad) * k)
             reach = assets.fade_distance(p) * k
-            if reach >= 0.5 and p.get("family") not in ("empty", "solid", "gradient", "grid"):    # 邊緣淡出: the fill, faded by the distance from the edge, then the outline over it
+            if reach >= 0.5 and p.get("family") not in ("empty", "solid", "gradient"):    # 邊緣淡出: the fill, faded by the distance from the edge, then the outline over it
                 im = svgimage.faded(svgimage.raster_text(assets.svg(p, part="fill"), *size),
                                     svgimage.raster_text(assets.svg(p, part="mask"), *size), reach)
                 if assets.stroked(p):

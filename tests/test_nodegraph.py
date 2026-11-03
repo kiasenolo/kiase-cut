@@ -543,6 +543,57 @@ class RunTest(unittest.TestCase):
         mixed = np.clip(np.maximum(0.5 * a + 0.5 * want["方塊銳利化"], 0), 0, 1) * 255
         self.assertLess(np.abs(out.astype(float) - mixed).max(), 2.5)
 
+    def test_dilate_erode_types(self):
+        """Dilate / Erode against Blender 5.2: steps (square window), distance (round window), threshold (nearest edge, falloff) and feather
+        (every curve; the numbers are Blender's results on a single pixel / a single hole)."""
+        self.W, self.H = 32, 32
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/dilate_erode"})
+        ng.connect(g, "input", n, "src")
+        ng.connect(g, n, "output", "src")
+
+        def go(mask, **p):
+            v = (mask * 255 + 0.5).astype(np.uint8)
+            out, errors, _ = self.run_graph(g, np.dstack([v, v, v, np.full_like(v, 255)]), params={n + "." + k: x for k, x in p.items()})
+            self.assertEqual(errors, [], p)
+            return out[..., 0].astype(float) / 255
+        dot = np.zeros((32, 32))
+        dot[16, 16] = 1.0
+        hole = 1.0 - dot
+        block = np.zeros((32, 32))
+        block[8:13, 8:13] = 1.0
+        near = lambda got, want, tol=0.01: self.assertLess(np.abs(np.asarray(got) - np.asarray(want)).max(), tol, (got, want))
+        want = np.zeros((32, 32))
+        want[6:15, 6:15] = 1.0
+        near(go(block, size=2, kind="步驟"), want)                                  # (a 5 x 5 block grows to 9 x 9)
+        near(go(block, size=-1, kind="步驟")[8:13, 8:13], np.pad(np.ones((3, 3)), 1))
+        near(go(block, size=0, kind="羽化"), block)                                 # (size 0: as it was)
+        yy, xx = np.mgrid[-16:16, -16:16]
+        near(go(dot, size=3, kind="距離"), (xx * xx + yy * yy <= 9).astype(float))
+        near(go(dot, size=4, kind="閾值")[16, 16:22], [1, 1, 1, 1, 0, 0])             # (distance below the size)
+        near(go(dot, size=4, kind="閾值", falloff_size=3.0)[range(16, 19), range(16, 19)], [1, (4 - 2 ** 0.5) / 3, (4 - 8 ** 0.5) / 3])
+        near(go(hole, size=-4, kind="閾值", falloff_size=3.0)[16, 16:23], [0, 0, 0, 0, 0, 1 / 3, 2 / 3])
+        for fall, dilated, eroded in (("平滑", [1, 0.7472, 0.2986, 0.0445, 0], [0, 0.2528, 0.7014, 0.9555, 1]),
+                                      ("球形", [1, 0.9447, 0.763, 0.4456, 0], [0, 0.0553, 0.237, 0.5544, 1]),
+                                      ("平方根", [1, 0.7803, 0.5285, 0.2619, 0], [0, 0.2197, 0.4715, 0.7381, 1]),
+                                      ("反平方", [1, 0.893, 0.5868, 0.2048, 0], [0, 0.107, 0.4132, 0.7952, 1]),
+                                      ("銳利", [1, 0.4153, 0.1354, 0.0262, 0], [0, 0.5847, 0.8646, 0.9738, 1]),
+                                      ("線性", [1, 0.619, 0.2986, 0.0804, 0], [0, 0.381, 0.7014, 0.9196, 1])):
+            near(go(dot, size=4, kind="羽化", falloff=fall)[16, 16:21], dilated, 0.006)
+            near(go(hole, size=-4, kind="羽化", falloff=fall)[16, 16:21], eroded, 0.006)
+        both = go(dot, size=4, kind="羽化", falloff="平滑")                          # (the two axes multiply)
+        near(both[17, 17], 0.7472 ** 2, 0.006)
+        self.W, self.H = 37, 23                                                     # (a picture that is not square)
+        rng = np.random.default_rng(2)
+        mask = (rng.random((23, 37)) > 0.93).astype(float)
+        got = go(mask, size=3, kind="距離")
+        want = np.zeros((23, 37))
+        for y in range(23):
+            for x in range(37):
+                want[y, x] = max(mask[y + j, x + i] for j in range(-3, 4) for i in range(-3, 4)
+                                 if i * i + j * j <= 9 and 0 <= y + j < 23 and 0 <= x + i < 37)
+        near(got, want)
+
     def test_mix_blend_modes(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="s")

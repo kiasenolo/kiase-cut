@@ -158,6 +158,14 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(brush.gradient().stops()[0][1].name(), ne.SOCKET_COLORS["image"])
         self.assertEqual(brush.gradient().stops()[-1][1].name(), ne.SOCKET_COLORS["float"])
 
+    def test_each_kind_of_value_has_its_own_socket_colour(self):
+        from kiasecut.ui import node_editor as ne
+        kinds = ("float", "int", "bool", "color", "vec3", "menu", "curve")
+        colours = [ne.type_color(t) for t in kinds]
+        self.assertEqual(len(set(colours)), len(kinds))
+        self.assertEqual(ne.type_color("vec2"), ne.type_color("vec3"))
+        self.assertNotIn(ne.type_color("bool"), (ne.SOCKET_COLORS["image"], ne.SOCKET_COLORS["string"], ne.SOCKET_COLORS["font"]))
+
     def test_picking_up_a_link_and_dropping_it_nowhere_unlinks(self):
         ed = self.make()
         got = []

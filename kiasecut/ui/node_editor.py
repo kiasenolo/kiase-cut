@@ -50,13 +50,14 @@ GHOST_ITEM = "\0newitem"                       # the empty input of a Menu Switc
 GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸出: drag a link into it to make a group output
 PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
-SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0", "string": "#70b870", "font": "#b070b0"}
+SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0", "string": "#70b870", "font": "#b070b0",
+                 "int": "#598c5c", "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a"}     # (Blender's socket colours for the numbers, switches and vectors)
 LINK_COLOR = "#d0d0d8"                           # (a link with no types to colour it)
 
 
 def type_color(t):
     """The colour of a socket that holds a value of parameter type t."""
-    return SOCKET_COLORS.get(t if t in ("float", "color") else "other")
+    return SOCKET_COLORS.get("vector" if t in ("vec2", "vec3") else t if t in ("float", "int", "bool", "color", "menu") else "other")
 
 
 GHOST = "\0ghost"                              # the empty socket of a 參數輸入 node: drag out of it to make a parameter

@@ -363,7 +363,7 @@ class GraphPanelTests(unittest.TestCase):
         self.assertIn(("source_media", "fx:" + e["id"], s), panel.widgets)
         edit.set_param(p, "c1", "fx:" + e["id"], m + ".fac", 0.25)
         panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
-        self.assertEqual(fx.def_of(e).params[1].name, m + ".fac")
+        self.assertIn(m + ".fac", [q.name for q in fx.def_of(e).params])
         panel.nodesRequested.emit("x")
         self.assertEqual(opened, ["x"])
 

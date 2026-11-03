@@ -66,7 +66,8 @@ class DataTest(unittest.TestCase):
         g = ng.new_graph()
         m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/mix"})
         names = [s for s, _ in ng.sockets(g["nodes"][m])]
-        self.assertEqual(names, ["src", "b", "param:blend", "param:fac", "param:use_alpha", "param:clamp_on"])
+        self.assertEqual(names, ["src", "b", "facv", "param:data_type", "param:factor_mode", "param:blend", "param:fac", "param:clamp_fac",
+                                 "param:use_alpha", "param:clamp_on"])
         c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
         self.assertIn("param:value", [s for s, _ in ng.sockets(g["nodes"][c])])
 
@@ -265,6 +266,37 @@ class RunTest(unittest.TestCase):
         self.close(out, (255, 255, 255, 255))
         ng.remove_item(g, params, m, "src")                         # the option goes: so does the link from its boolean
         self.assertFalse(any(l["from"] == m for l in g["links"]))
+
+    def test_mix_data_types_are_blenders(self):
+        """Mix as Blender 5.2 gives it: A (0.8, 0.4, 0.2, 0.5) with B (0.2, 0.6, 0.9, 0.8), the four channels as stored."""
+        g = ng.new_graph()
+        b = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="b")
+        fv = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="fv")
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/mix"})
+        ng.connect(g, "input", m, "src")
+        ng.connect(g, b, m, "b")
+        ng.connect(g, m, "output", "src")
+        pic_a = self.solid([204, 102, 51, 128])
+        pic_b = self.solid([51, 153, 230, 204])
+        facv = self.solid([0, 128, 255, 255])
+
+        def run(**kw):
+            params = ng.default_params(g)
+            params.update({m + "." + k: v for k, v in kw.items()})
+            out, errors, _ = self.run_graph(g, pic_a, {b: pic_b, fv: facv}, params=params)
+            self.assertEqual(errors, [], kw)
+            return out[4, 4] / 255.0
+
+        def near(got, want, tol=0.012):
+            self.assertTrue(np.allclose(got, want, atol=tol), (got, want))
+        near(run(use_alpha=False, fac=0.5), (0.5, 0.5, 0.55, 0.65))                   # (colour: alpha mixes too)
+        near(run(use_alpha=False, fac=0.5, blend="相乘"), (0.48, 0.32, 0.19, 0.5))     # (other modes keep A's alpha)
+        near(run(use_alpha=False, fac=-0.5, clamp_fac=False), (1.0, 0.3, 0.0, 0.35))   # (factor past 0 - 1: pushed out)
+        near(run(use_alpha=False, fac=-0.5), (0.8, 0.4, 0.2, 0.5))                     # (clamped: A)
+        near(run(data_type="浮點", fac=0.25), (0.487, 0.487, 0.487, 1.0))               # (brightness of A and B)
+        near(run(data_type="向量", fac=0.25), (0.65, 0.45, 0.375, 1.0))
+        ng.connect(g, fv, m, "facv")
+        near(run(data_type="向量", factor_mode="非統一"), (0.8, 0.5, 0.9, 1.0))         # (a factor for every axis)
 
     def test_missing_source_is_transparent(self):
         g = ng.new_graph()

@@ -1,12 +1,22 @@
 // @filter 混合
 // @category 色彩
-// @description 節點用：照 Blender 的「混合」節點（Mix）：把 B 以選的混合模式（19 種）混到圖像上，係數可以接一張圖當遮罩
+// @description 節點用：照 Blender 的「混合」節點（Mix）：資料型態選顏色、浮點或向量。顏色：把 B 以選的混合模式（19 種）混到圖像上；浮點：圖進來是黑白的明度，結果是黑白的圖；向量：紅綠藍當 XYZ，係數可以是統一的一個數，也可以是向量（每個軸各自的係數，接到「係數（向量）」）。係數可以接一張圖當遮罩，不限制係數時可以超過 0~1（往外推）。「使用 B 的透明度」開著時 B 的透明度會乘上係數（常見的疊圖）；關掉就和 Blender 一樣直接算預乘後的四個通道：混合模式時透明度也跟著混，其他模式透明度用圖像的
 // @source 圖像
 // @input b "B"
+// @input facv "係數（向量）"
+// @param data_type menu 顏色 "顏色|浮點|向量" "資料型態"
+// @param factor_mode menu 統一 "統一|非統一" "係數模式"
 // @param blend menu 混合 "混合|變暗|相乘|加深顏色|變亮|濾色|加亮顏色|相加|疊加|柔光|線性光|差異|排除|相減|相除|色相|飽和度|顏色|明度" "混合模式"
-// @param fac float 1 0 1 "係數"
+// @param fac float 1 -5 5 "係數"
+// @param clamp_fac bool true "限制係數"
 // @param use_alpha bool true "使用 B 的透明度"
-// @param clamp_on bool false "限制在 0~1"
+// @param clamp_on bool false "限制結果"
+// @enable factor_mode data_type == 向量
+// @enable blend data_type == 顏色
+// @enable use_alpha data_type == 顏色
+// @enable clamp_on data_type == 顏色
+// @show facv data_type == 向量
+// @show facv factor_mode == 非統一
 
 vec3 rgb_to_hsv(vec3 c) {
     float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), d = mx - mn;
@@ -67,8 +77,30 @@ vec3 blend_color(vec3 a, vec3 b, float f) {
 }
 
 vec4 effect(vec2 uv) {
+    float f = fac;
+    if (clamp_fac) f = clamp(f, 0.0, 1.0);
+    if (data_type == 1) {                                      // float: the brightness of each picture over black
+        float a = dot(src(uv).rgb, vec3(0.2126, 0.7152, 0.0722)), b = dot(input_b(uv).rgb, vec3(0.2126, 0.7152, 0.0722));
+        return vec4(vec3(mix(a, b, f)), 1.0);
+    }
+    if (data_type == 2) {                                      // vector: red, green, blue are x, y, z
+        vec3 a = src(uv).rgb, b = input_b(uv).rgb;
+        vec3 k = vec3(f);
+        if (factor_mode == 1) {
+            k = has_input_facv() ? input_facv(uv).rgb : vec3(0.5);
+            if (clamp_fac) k = clamp(k, 0.0, 1.0);
+        }
+        return vec4(mix(a, b, k), 1.0);
+    }
+    if (!use_alpha) {                                          // as Blender: the four channels as they are stored (premultiplied)
+        vec4 a = src(uv), b = input_b(uv);
+        vec3 r = blend_color(a.rgb, b.rgb, f);
+        float alpha = blend == 0 ? mix(a.a, b.a, f) : a.a;
+        if (clamp_on) { r = clamp(r, 0.0, 1.0); alpha = clamp(alpha, 0.0, 1.0); }
+        return vec4(r, alpha);
+    }
     vec4 a = unpremultiply(src(uv)), b = unpremultiply(input_b(uv));
-    float f = clamp(fac, 0.0, 1.0) * (use_alpha ? b.a : 1.0);
+    f *= b.a;
     vec3 r = blend_color(a.rgb, b.rgb, f);
     if (clamp_on) r = clamp(r, 0.0, 1.0);
     return premultiply(vec4(r, a.a));

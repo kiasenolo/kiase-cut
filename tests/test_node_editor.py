@@ -120,10 +120,14 @@ class NodeEditorTests(unittest.TestCase):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
             e["params"].update(ng.default_params(e["graph"]))
         ed = self.make(build)
-        got = []
+        got, live = [], []
         ed.paramEdited.connect(lambda *a: got.append(a))
+        ed.paramLive.connect(lambda *a: live.append(a))
         at = self.row_pos(ed, "math1", "value")
         self.drag(ed, at, at + QPointF(40, 0))
+        self.assertTrue(live)                                           # (the preview followed the drag...)
+        self.assertEqual(len(got), 1)                                   # ...and one edit came when it was let go
+        self.assertEqual(got[0][2], live[-1][3])
         self.assertTrue(got)
         eid, key, value = got[-1]
         self.assertEqual((eid, key), ("e1", "math1.value"))
@@ -133,6 +137,38 @@ class NodeEditorTests(unittest.TestCase):
         self.assertTrue(it.has_field(row))
         it.linked.add("param:value")
         self.assertFalse(it.has_field(row))
+
+    def test_wheel_scrolls_and_ctrl_zooms(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QWheelEvent
+        ed = self.make()
+        v = ed.view
+        before = (v.verticalScrollBar().value(), v.transform().m11())
+
+        def wheel(delta, mods):
+            pos = QPointF(100, 100)
+            v.wheelEvent(QWheelEvent(pos, v.mapToGlobal(pos.toPoint()), QPoint(0, 0), QPoint(0, delta), Qt.NoButton, mods, Qt.NoScrollPhase, False))
+        wheel(-120, Qt.NoModifier)
+        self.assertGreater(v.verticalScrollBar().value(), before[0])    # down
+        self.assertEqual(v.transform().m11(), before[1])
+        wheel(120, Qt.ControlModifier)
+        self.assertGreater(v.transform().m11(), before[1])              # Ctrl: zoom
+
+    def test_pressing_elsewhere_closes_the_number_box_keeping_the_text(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got = []
+        ed.paramEdited.connect(lambda *a: got.append(a))
+        it = ed.view.items_by_id["math1"]
+        row = next(r for r in it.rows if r["socket"] == "param:value")
+        ed.field_clicked(it, row, 0, QPointF(0, 0))                     # the box opens
+        self.assertIsNotNone(ed.edit_proxy)
+        ed.edit_proxy.widget().setText("0.9")
+        self.click(ed, QPointF(-400, -400))                             # an empty place
+        self.assertIsNone(ed.edit_proxy)
+        self.assertEqual(got[-1], ("e1", "math1.value", 0.9))
 
     def test_tick_flips_and_menu_choices_are_asked_for(self):
         def build(e):

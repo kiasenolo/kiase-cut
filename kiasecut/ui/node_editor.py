@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QLineEdit, QGraphicsPat
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, fx, nodegraph as ng
+from .wheel import pinch as wheel_pinch
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 SOCKET_R = 5.5
@@ -420,7 +421,7 @@ class NodeItem(QGraphicsItem):
         d["moved"] = True
         from .effects_panel import step_for
         step = step_for(q) / 2 * (0.1 if e.modifiers() & Qt.ShiftModifier else 1.0)
-        self.editor.set_number(self.nid, r, d["cell"], d["v0"] + dx * step)
+        self.editor.set_number(self.nid, r, d["cell"], d["v0"] + dx * step, final=False)
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
@@ -428,6 +429,7 @@ class NodeItem(QGraphicsItem):
             super().mouseReleaseEvent(e)
             return
         if d["moved"]:
+            self.editor.commit_scrub()
             return
         self.editor.field_clicked(self, d["row"], d["cell"], e.screenPos())
 
@@ -631,6 +633,7 @@ class GraphView(QGraphicsView):
         self.cut = None                          # a Ctrl + right button cut: (the line, its points)
         self.over = None                         # the link a dragged node is over (it will go through the node)
         self.press_at = {}
+        self.panning = None                      # the point of a middle-button drag moving the view
         self.setAcceptDrops(True)
 
     # -- media dragged in (the library's pictures / videos / compounds, or files): source nodes
@@ -684,6 +687,14 @@ class GraphView(QGraphicsView):
     # -- mouse ---------------------------------------------------------------------------------------
     def mousePressEvent(self, e):
         pos = self.mapToScene(e.position().toPoint())
+        box = self.editor.edit_proxy                    # (a number being typed: pressing anywhere else keeps it and closes the box)
+        if box is not None and not box.sceneBoundingRect().contains(pos) and self.editor.edit_finish is not None:
+            self.editor.edit_finish(True)
+            self.setFocus()
+        if e.button() == Qt.MiddleButton:                # (the wheel pressed and dragged moves the view)
+            self.panning = e.position()
+            self.setCursor(Qt.ClosedHandCursor)
+            return
         if e.button() == Qt.LeftButton and e.modifiers() & Qt.ControlModifier and e.modifiers() & Qt.ShiftModifier:
             # Ctrl + Shift + click: the preview shows this node; again: its next output, and after the last, the effect's
             for nid, it in self.items_by_id.items():
@@ -734,6 +745,12 @@ class GraphView(QGraphicsView):
         ln.route(self.items_by_id[src].output_pos(out), pos)
 
     def mouseMoveEvent(self, e):
+        if self.panning is not None:
+            d = e.position() - self.panning
+            self.panning = e.position()
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(d.x()))
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(d.y()))
+            return
         pos = self.mapToScene(e.position().toPoint())
         if self.rubber:
             self._route_temp(pos)
@@ -781,6 +798,10 @@ class GraphView(QGraphicsView):
             self.over = over
 
     def mouseReleaseEvent(self, e):
+        if self.panning is not None and e.button() == Qt.MiddleButton:
+            self.panning = None
+            self.unsetCursor()
+            return
         pos = self.mapToScene(e.position().toPoint())
         if self.rubber:
             ln, src, old, out = self.rubber
@@ -837,11 +858,29 @@ class GraphView(QGraphicsView):
             self.editor.moveRequested.emit(self.editor.eid, moved)
         self.editor.selection_changed()
 
-    def wheelEvent(self, e):
-        k = 1.15 if e.angleDelta().y() > 0 else 1 / 1.15
+    def zoom_by(self, k):
         s = self.transform().m11() * k
         if 0.2 <= s <= 3.0:
             self.scale(k, k)
+
+    def wheelEvent(self, e):
+        """As the other views: the wheel scrolls (Shift: sideways; a touchpad moves both ways), Ctrl zooms."""
+        from . import wheel
+        if e.modifiers() & Qt.ControlModifier:
+            self.zoom_by(1.15 ** wheel.notch(e))
+            return
+        dx, dy = wheel.pixels(e, 60, 60)
+        if e.modifiers() & Qt.ShiftModifier:
+            dx, dy = (dy if abs(dy) >= abs(dx) else dx), 0.0
+        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(dx))
+        self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(dy))
+
+    def viewportEvent(self, e):
+        k = wheel_pinch(e)
+        if k is not None:
+            self.zoom_by(k)
+            return True
+        return super().viewportEvent(e)
 
     def focusNextPrevChild(self, forward):
         return False                                       # (Tab goes into a group, not to the next widget)
@@ -944,6 +983,7 @@ class NodeEditor(QWidget):
     effectChosen = Signal(str)                              # effect id: another node effect of the clip
     saveRequested = Signal(str)                             # effect id: keep it as a 效果預設 (a custom effect)
     paramEdited = Signal(str, str, object)                  # effect id, "<node>.<parameter>", value
+    paramLive = Signal(str, str, str, object)               # effect id, group ("fx:<id>" / "fxsrc:<id>:<node>"), key, value: still being changed
     placeEdited = Signal(str, str, str, object)             # effect id, node id, where it sits (cx / cy / w / h / rotation), value
     shapeEdited = Signal(str, str, object, object)          # effect id, shape node, shape id or None, colour or None
 
@@ -956,6 +996,8 @@ class NodeEditor(QWidget):
         self._sig = None
         self._selected = ""
         self.params, self.sources, self.t = {}, {}, 0         # what the fields show: the effect's, at clip time t
+        self._scrub = None                                   # the field being scrubbed: (node, row, cell, value)
+        self.edit_finish = None                              # ends the number box being typed in: finish(keep)
         self.panel_open = {}                                  # (node id, panel name) -> opened or shut by the user
         self.edit_proxy = None                                # the text box of a number being typed
         lay = QVBoxLayout(self)
@@ -1132,8 +1174,9 @@ class NodeEditor(QWidget):
             return float((list(v) + [0.0] * 3)[cell])
         return None
 
-    def set_number(self, nid, row, cell, value):
-        """A number field scrubbed or typed: clamped, asked for, and shown at once."""
+    def set_number(self, nid, row, cell, value, final=True):
+        """A number field scrubbed or typed: clamped, asked for, and shown at once. final False: while it is still being
+        scrubbed - only the preview follows (paramLive); the edit (an undo step) comes with the last value (commit_scrub)."""
         q = row["p"]
         value = min(max(value, q.lo), q.hi)
         key = ng.param_key(nid, q.name)
@@ -1145,16 +1188,29 @@ class NodeEditor(QWidget):
             cur = list(self.node_values(nid).get(q.name))
             cur[cell] = round(value, 4)
             new = cur
-        if getattr(q, "place", False):
+        place = getattr(q, "place", False)
+        if place:
             src = self.sources.get(nid)
             if src is not None and not curves.is_animated(src.get(q.name)):
                 src[q.name] = new
-            self.placeEdited.emit(self.eid, nid, q.name, new)
-            self.view.viewport().update()
-            return
-        self.params[key] = new if not curves.is_animated(self.params.get(key)) else self.params[key]
-        self.paramEdited.emit(self.eid, key, new)
+        else:
+            self.params[key] = new if not curves.is_animated(self.params.get(key)) else self.params[key]
         self.view.viewport().update()
+        if not final:
+            self._scrub = (nid, row, cell, new)
+            self.paramLive.emit(self.eid, f"fxsrc:{self.eid}:{nid}" if place else "fx:" + self.eid, q.name if place else key, new)
+            return
+        self._scrub = None
+        if place:
+            self.placeEdited.emit(self.eid, nid, q.name, new)
+        else:
+            self.paramEdited.emit(self.eid, key, new)
+
+    def commit_scrub(self):
+        """The mouse is let go after scrubbing a field: the value it ended on is the edit."""
+        if self._scrub is not None:
+            nid, row, cell, value = self._scrub
+            self.set_number(nid, row, cell, value)
 
     def field_clicked(self, item, row, cell, global_pos):
         """A field pressed and let go without dragging: a tick turns over, a menu / colour / text box opens."""
@@ -1188,7 +1244,8 @@ class NodeEditor(QWidget):
                 menu.addAction(name, lambda name=name: self.paramEdited.emit(self.eid, key, name))
             self.popup(menu, gp)
         elif q.type == "color":
-            self._pick(nid, v, lambda c: self.paramEdited.emit(self.eid, key, c), item, row)
+            self._pick(nid, v, lambda c: self.paramEdited.emit(self.eid, key, c), item, row,
+                       live=lambda c: self.paramLive.emit(self.eid, "fx:" + self.eid, key, c))
         elif q.type in ("float", "int", "vec2", "vec3"):
             self._type_number(item, row, cell)
 
@@ -1215,12 +1272,12 @@ class NodeEditor(QWidget):
         frame.show()
         self._popup_editor = frame
 
-    def _pick(self, nid, colour, done, item, row):
+    def _pick(self, nid, colour, done, item, row, live=None):
         from .colorpick import pick_color, qcolor, rgba
         c = list(colour) + [1.0] * 4
         start = qcolor("#%02x%02x%02x" % tuple(int(round(max(0, min(1, x)) * 255)) for x in c[:3]))
         start.setAlphaF(max(0.0, min(1.0, c[3])))
-        col = pick_color(self, start, "顏色")
+        col = pick_color(self, start, "顏色", live=(lambda c: live(rgba(c))) if live else None)
         if col is not None:
             done(rgba(col))
 
@@ -1251,6 +1308,7 @@ class NodeEditor(QWidget):
                     pass
         le.returnPressed.connect(lambda: finish(True))
         le.editingFinished.connect(lambda: finish(False))
+        self.edit_finish = finish
 
     # -- asking for edits ------------------------------------------------------------------------------
     def selected(self):

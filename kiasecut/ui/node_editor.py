@@ -36,6 +36,8 @@ MIN_WIDTH, EDGE = 140.0, 7.0                              # (narrowest node; the
 SOCKET_R = 5.5
 GRID = 20.0                                                # (Blender's NODE_GRID_STEP_SIZE: what a dragged node snaps to)
 HIT_R = 9.0
+SNAP_R = 28.0                                              # (a dragged link this near (screen px) to a socket it can go into jumps onto it)
+DRAG_W = 3.5                                               # (the width of a link being dragged: thicker than the placed ones)
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 190.0, "gradient": 30.0}          # the height of a curve / gradient parameter in a node (a curve is edited right there: its plot and buttons)
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
@@ -806,10 +808,10 @@ def fm_elide(p, text, width):
 
 
 class Link(QGraphicsPathItem):
-    def __init__(self):
+    def __init__(self, width=2):
         super().__init__()
         self.setZValue(0)
-        self.setPen(QPen(QColor("#d0d0d8"), 2))
+        self.setPen(QPen(QColor("#d0d0d8"), width))
 
     def route(self, a, b):
         path = QPainterPath(a)
@@ -832,6 +834,8 @@ class GraphView(QGraphicsView):
         self.items_by_id = {}
         self.link_items = []                     # [(Link, from node, to node, socket, output name)]
         self.pseudo_links = []                   # [(from, to, socket, output)] the links to and from a group's own sockets, inside it
+        self.snapped = None                      # the socket a dragged link has jumped onto: (kind, node id, socket, point)
+        self.snap_ring = None
         self.rubber = None                       # a link being dragged: (Link, source node, old (dst, socket) or None, output name)
         self.reverse = None                      # a link dragged from an input towards an output: (Link, node, socket)
         self.cut = None                          # a Ctrl + right button cut: (the line, its points)
@@ -981,13 +985,13 @@ class GraphView(QGraphicsView):
                     if link is not None:                # a linked input is picked up: the link comes with the pointer
                         old, nid, out, kind = (nid, sock), link["from"], link.get("out") or "", "out"
                 if kind == "out":
-                    ln = Link()
+                    ln = Link(DRAG_W)
                     self.scene().addItem(ln)
                     self.rubber = (ln, nid, old, out)
                     self._route_temp(pos)
                     return
                 if kind == "in" and nid != PORT_OUT:           # a free input dragged the other way: it is let go on an output
-                    ln = Link()
+                    ln = Link(DRAG_W)
                     self.scene().addItem(ln)
                     self.reverse = (ln, nid, sock)
                     ln.route(pos, self.items_by_id[nid].input_pos(sock))
@@ -1034,7 +1038,44 @@ class GraphView(QGraphicsView):
 
     def _route_temp(self, pos):
         ln, src, _old, out = self.rubber
-        ln.route(self.items_by_id[src].output_pos(out), pos)
+        hit = self.snap_to(pos, "in", src)
+        ln.route(self.items_by_id[src].output_pos(out), hit[3] if hit else pos)
+
+    def snap_to(self, pos, kind, own):
+        """The socket a link being dragged (from node `own`) goes onto when let go at scene point pos: the nearest input
+        ("in") or output ("out") of another node within SNAP_R screen px - ("in" / "out", node id, socket, its point) - and
+        the ring that shows it; None when none is near."""
+        k = self.transform().m11() or 1.0
+        best = None
+        for nid, it in self.items_by_id.items():
+            if nid == own:
+                continue
+            for sock, at in (it.sockets() if kind == "in" else it.outputs()):
+                d = math.hypot(at.x() - pos.x(), at.y() - pos.y())
+                if d * k <= SNAP_R and (best is None or d < best[0]):
+                    best = (d, (kind, nid, sock, at))
+        self.snapped = best[1] if best else None
+        ring = getattr(self, "snap_ring", None)
+        if best is None:
+            if ring is not None:
+                self.scene().removeItem(ring)
+                self.snap_ring = None
+        else:
+            if ring is None:
+                ring = self.snap_ring = self.scene().addEllipse(QRectF(), QPen(QColor("#ffb020"), 2))
+                ring.setZValue(5)
+            r = SOCKET_R + 3
+            ring.setRect(QRectF(best[1][3].x() - r, best[1][3].y() - r, 2 * r, 2 * r))
+        return self.snapped
+
+    def end_snap(self):
+        """The socket the link was snapped to as it is let go (None: not snapped); the ring goes."""
+        hit, self.snapped = self.snapped, None
+        ring = getattr(self, "snap_ring", None)
+        if ring is not None:
+            self.scene().removeItem(ring)
+            self.snap_ring = None
+        return hit
 
     def mouseMoveEvent(self, e):
         if self.carrying:
@@ -1052,7 +1093,8 @@ class GraphView(QGraphicsView):
             return
         if self.reverse:
             ln, nid, sock = self.reverse
-            ln.route(pos, self.items_by_id[nid].input_pos(sock))
+            hit = self.snap_to(pos, "out", nid)
+            ln.route(hit[3] if hit else pos, self.items_by_id[nid].input_pos(sock))
             return
         if self.cut:
             self.cut[1].append(pos)
@@ -1154,7 +1196,8 @@ class GraphView(QGraphicsView):
             ln, nid, sock = self.reverse
             self.reverse = None
             self.scene().removeItem(ln)
-            hit = self.socket_at(pos)
+            snapped = self.end_snap()
+            hit = snapped[:3] if snapped else self.socket_at(pos)
             if hit and hit[0] == "out" and hit[1] != nid:     # (as if dragged from that output to this input)
                 self.editor.drop_link(hit[1], hit[2], None, ("in", nid, sock), pos, e.globalPosition().toPoint())
             elif hit is None:                                 # let go in the empty (Blender's link drag search): a node to feed it
@@ -1164,7 +1207,8 @@ class GraphView(QGraphicsView):
             ln, src, old, out = self.rubber
             self.rubber = None
             self.scene().removeItem(ln)
-            self.editor.drop_link(src, out, old, self.socket_at(pos), pos, e.globalPosition().toPoint())
+            snapped = self.end_snap()
+            self.editor.drop_link(src, out, old, snapped[:3] if snapped else self.socket_at(pos), pos, e.globalPosition().toPoint())
             return
         if self.cut:
             line, pts, reroute = self.cut

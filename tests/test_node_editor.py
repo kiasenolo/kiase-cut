@@ -99,6 +99,31 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, ed.view.items_by_id["input"].output_pos(), mix.input_pos("b"))
         self.assertEqual(got, [("e1", "input", "mix1", "b", "")])
 
+    def test_a_dragged_link_jumps_onto_a_near_socket_and_is_thicker_than_the_placed_ones(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/mix"}, 0, 150)
+        ed = self.make(build)
+        v = ed.view
+        got = []
+        ed.connectRequested.connect(lambda *a: got.append(a))
+        mix = v.items_by_id["mix1"]
+        target = mix.input_pos("b")
+        near = target + QPointF(-20 / v.transform().m11(), 0)                 # (beyond the socket's own size, within the snap range)
+        self.assertIsNone(v.socket_at(near))
+        pa, pb = v.mapFromScene(v.items_by_id["input"].output_pos()), v.mapFromScene(near)
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, pa)
+        QTest.mouseMove(v.viewport(), pb)
+        ln = v.rubber[0]
+        self.assertGreater(ln.pen().widthF(), v.link_items[0][0].pen().widthF())
+        self.assertAlmostEqual((ln.path().currentPosition() - target).manhattanLength(), 0, delta=0.5)   # (its end is on the socket)
+        self.assertIsNotNone(v.snap_ring)
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, pb)
+        self.assertEqual(got, [("e1", "input", "mix1", "b", "")])
+        self.assertIsNone(v.snap_ring)
+        ed.add_menu = lambda *a, **k: None                                   # (let go in the empty it asks for a node: not here)
+        self.drag(ed, v.items_by_id["input"].output_pos(), target + QPointF(-200, 0))   # (far from every socket: no link)
+        self.assertEqual(len(got), 1)
+
     def test_picking_up_a_link_and_dropping_it_nowhere_unlinks(self):
         ed = self.make()
         got = []

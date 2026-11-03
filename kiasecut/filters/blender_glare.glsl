@@ -6,10 +6,12 @@
 // @output highlights "亮部"
 // @passes 26
 // @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 quality
-// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 -
+// @extras - - - - - 0 - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 -
 // @shared
 // @alone highlights
-// @skip 1-23 type != Bloom
+// @skip 1-4 type != Bloom
+// @skip 5 type != Bloom|Sun Beams
+// @skip 6-23 type != Bloom
 // @precision float
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
 // @param quality menu 中 "高|中|低" "品質"
@@ -50,6 +52,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // (Blender's code is GPL-2.0-or-later.)
 
+// (Sun Beams uses pass 5 - 1 / 16 of the canvas, 1 / 32, 1 / 64 for 中, 低 - for a map of the blocks of the highlights that
+// hold any light, and the passes of Bloom's chain that are not drawn for it are left out: see sun_occupancy.)
 // Pass 0 keeps the highlights (what glows, as Blender computes it). Bloom is Blender's own chain, one
 // pass per step (@levels shrinks them): pass 1 the highlights at the glare's size, passes 2 - 12 the
 // downsamples (13 taps, the first Karis-weighted), passes 13 - 23 the upsamples (3 x 3 tent, each level
@@ -288,9 +292,24 @@ vec3 simple_star(vec2 uv, vec2 R, float q) {
     return g;
 }
 
+// Sun Beams, pass 5: 1 where a block of the highlights (pass 0, extra()) holds any light - its margin of 2 pixels counts, a
+// read takes the four pixels around a point - else 0. Highlights are never negative, so any light is a sum above 0.
+vec4 sun_occupancy(vec2 uv) {
+    vec2 cell = extra_px / pass_px;                            // highlight pixels per block
+    ivec2 b = ivec2(floor(uv * pass_px));
+    ivec2 last = ivec2(extra_px) - 1;
+    ivec2 lo = max(ivec2(floor(vec2(b) * cell)) - 2, ivec2(0)), hi = min(ivec2(ceil(vec2(b + 1) * cell)) + 2, last);
+    for (int y = lo.y; y <= hi.y; y++)
+        for (int x = lo.x; x <= hi.x; x++)
+            if (dot(texelFetch(extra_, ivec2(x, y), 0).rgb, vec3(1.0)) > 0.0) return vec4(1.0);
+    return vec4(0.0);
+}
+
 vec3 sun_beams(vec2 uv, vec2 R, float q) {
     // along the line to the sun, one step per glare pixel (q canvas px; never finer than this pass's own pixels):
-    // every step is read, so the picture stays free of grain however fine the highlights are
+    // every step is read, so the picture stays free of grain however fine the highlights are - but a run of steps
+    // that lies in blocks with no light (pass 5's map, src()) adds nothing, so it is not read; the weights' sum, the same
+    // for every pixel with this many steps, is worked out whole (n (4 n^2 - 1) / 12 over n^2)
     float k = pass_px.x / R.x;                                 // this pass's px per canvas px
     vec2 P = uv * pass_px;
     vec2 v = sun_position * pass_px - P;
@@ -299,13 +318,27 @@ vec3 sun_beams(vec2 uv, vec2 R, float q) {
     float L = min(max(size, 0.0) * length(pass_px), dist);
     float step_px = max(1.0, q * k);
     int steps = int(clamp(ceil(L / step_px), 1.0, 2304.0));
+    float n = float(steps);
+    float wsum = (4.0 * n * n - 1.0) / (12.0 * n);
+    vec2 map = src_px;
+    int run = max(1, int(floor(min(extra_px.x / map.x, extra_px.y / map.y) / step_px)));    // steps that fit in a block
     vec3 acc = vec3(0.0);
-    float wsum = 0.0;
-    for (int i = 0; i < steps; i++) {
-        float t = (float(i) + 0.5) / float(steps);
-        float w = (1.0 - t) * (1.0 - t);
-        acc += w * H((P + dir * t * L) / pass_px);
-        wsum += w;
+    for (int c = 0; c < steps; c += run) {
+        int e = min(c + run, steps) - 1;
+        vec2 pa = (P + dir * ((float(c) + 0.5) / n * L)) / pass_px, pb = (P + dir * ((float(e) + 0.5) / n * L)) / pass_px;
+        vec2 lo = min(pa, pb), hi = max(pa, pb);
+        if (hi.x < 0.0 || hi.y < 0.0 || lo.x > 1.0 || lo.y > 1.0) continue;
+        ivec2 ba = clamp(ivec2(floor(lo * map)), ivec2(0), ivec2(map) - 1), bb = clamp(ivec2(floor(hi * map)), ivec2(0), ivec2(map) - 1);
+        bool lit = false;
+        for (int y = ba.y; y <= bb.y; y++)
+            for (int x = ba.x; x <= bb.x; x++)
+                lit = lit || texelFetch(source, ivec2(x, y), 0).r > 0.0;
+        if (!lit)
+            continue;
+        for (int i = c; i <= e; i++) {
+            float t = (float(i) + 0.5) / n;
+            acc += (1.0 - t) * (1.0 - t) * H((P + dir * t * L) / pass_px);
+        }
     }
     return acc / max(wsum, 1e-6);
 }
@@ -322,6 +355,7 @@ float grain_sigma() {
 vec4 effect(vec2 uv) {
     if (pass_index == 0)
         return vec4(max(highlights(linear(src(uv)).rgb), vec3(0.0)), 1.0);
+    if (pass_index == 5 && type == 5) return sun_occupancy(uv);
     if (pass_index < 24) {                                     // (Bloom's chain; the other types leave it empty)
         if (type != 0) return vec4(0.0);
         if (pass_index == 1) return src(uv);

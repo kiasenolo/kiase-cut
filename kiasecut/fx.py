@@ -1017,7 +1017,7 @@ class Engine:
                     continue
                 pool = self._mid_targets(w, h) if d.precise and i < d.passes - 1 else targets
                 dst_tex, dst_fbo = next(t for t in pool if t[0] is not read and t[0] is not src)
-            sw, sh = (made[-1][1], made[-1][2]) if made else (w, h)
+            sw, sh = read.size
             ex = d.extras[i] if i < len(d.extras) else None
             for name, v in (("pass_px", (float(tw), float(th))), ("src_px", (float(sw), float(sh))),
                             ("extra_px", (float(made[ex][1]), float(made[ex][2])) if ex is not None else (1.0, 1.0))):

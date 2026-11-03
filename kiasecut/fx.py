@@ -29,9 +29,9 @@ TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
 MAX_PASSES = 32
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
-TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve")
+TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve", "gradient")
 RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "src",
-            "original", "effect", "curve_ease", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
+            "original", "effect", "curve_ease", "gradient_eval", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
 
 
 class FilterError(Exception):
@@ -119,12 +119,25 @@ def _param(rest):
         d = [float(x) for x in default.split(",")]
         if len(d) != 4 or not (0 <= d[0] <= 1 and 0 <= d[2] <= 1):
             raise ValueError("curve 的預設值要寫成 x1,y1,x2,y2（cubic-bezier 的兩個控制點，x 在 0 - 1）")
+    elif typ == "gradient":
+        d = _gradient_default(default)
     else:
         n = 2 if typ == "vec2" else 3
         d = [float(x) for x in default.split(",")]
         if len(d) != n:
             raise ValueError(f"{typ} 的預設值要寫成 {','.join('xyz'[:n])}")
     return Param(name, typ, d, lo, hi, label)
+
+
+def _gradient_default(text):
+    """`0:#000000,0.5:#ff0000,1:#ffffff`: the colour stops (position 0 - 1: colour) of a gradient parameter."""
+    try:
+        stops = [[float(a), _color(b)] for a, b in (x.split(":", 1) for x in text.split(","))]
+    except ValueError:
+        raise ValueError("gradient 的預設值要寫成 位置:顏色,位置:顏色…（例如 0:#000000,1:#ffffff）") from None
+    if len(stops) < 2 or len(stops) > GRADIENT_N or not all(0 <= x[0] <= 1 for x in stops):
+        raise ValueError(f"gradient 要有 2 - {GRADIENT_N} 個色標，位置在 0 - 1")
+    return sorted(stops, key=lambda x: x[0])
 
 
 def _menu_param(name, default, extra):
@@ -339,6 +352,7 @@ def menu_index(p, v):
     return p.items.index(p.default)
 
 
+GRADIENT_N = 32                  # most colour stops a gradient parameter has (Blender's colour ramp has as many)
 CURVE_N = 128                    # a curve parameter reaches the shader as this many samples
 
 
@@ -356,6 +370,27 @@ def curve_keys(v):
     except (TypeError, ValueError):
         pass
     return [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]]
+
+
+def gradient_stops(v):
+    """The stops [[position, [r, g, b, a]], ...] (positions 0 - 1, in order, up to GRADIENT_N) of a gradient
+    parameter's value; an empty or unusable one is black to white."""
+    try:
+        stops = [[min(1.0, max(0.0, float(x))), [min(1.0, max(0.0, float(a))) for a in (list(c) + [1.0])[:4]]]
+                 for x, c in v][:GRADIENT_N]
+        if len(stops) >= 1 and all(len(c) == 4 for _x, c in stops):
+            return sorted(stops, key=lambda s: s[0])
+    except (TypeError, ValueError):
+        pass
+    return [[0.0, [0.0, 0.0, 0.0, 1.0]], [1.0, [1.0, 1.0, 1.0, 1.0]]]
+
+
+def gradient_uniforms(v):
+    """(positions padded to GRADIENT_N, colours padded to GRADIENT_N x 4 flat, how many) for the shader."""
+    st = gradient_stops(v)
+    pos = [s[0] for s in st] + [1.0] * (GRADIENT_N - len(st))
+    col = [a for s in st for a in s[1]] + list(st[-1][1]) * (GRADIENT_N - len(st))
+    return tuple(pos), tuple(col), len(st)
 
 
 def curve_samples(v, n=CURVE_N):
@@ -383,6 +418,8 @@ def uniform_value(p, stored, t):
         return tuple(float(x) for x in v[:4])
     if p.type == "curve":
         return curve_samples(v)
+    if p.type == "gradient":
+        return gradient_uniforms(v)
     n = 3 if p.type == "vec3" else 2
     v = list(v) + [0.0] * (n - len(v))
     return tuple(float(x) for x in v[:n])
@@ -415,6 +452,73 @@ float curve_ease(float c[128], float x) {
     float f = clamp(x, 0.0, 1.0) * float(127);
     int i = int(floor(f));
     return mix(c[i], c[min(i + 1, 127)], f - float(i));
+}
+// a gradient parameter (name_p positions, name_c colours, name_n how many): its colour at x (0 - 1), as Blender's
+// colour ramp gives it. interp 0 ease, 1 cardinal, 2 linear, 3 b-spline, 4 constant; mode 0 rgb, 1 hsv, 2 hsl;
+// hue (hsv / hsl): 0 near, 1 far, 2 clockwise, 3 counter-clockwise. Straight (not premultiplied) colours
+vec3 gradient_hsv_(vec3 c) {
+    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), d = mx - mn, h = 0.0;
+    if (d > 0.0) {
+        if (mx == c.r) h = (c.g - c.b) / d; else if (mx == c.g) h = 2.0 + (c.b - c.r) / d; else h = 4.0 + (c.r - c.g) / d;
+        h /= 6.0; if (h < 0.0) h += 1.0;
+    }
+    return vec3(h, mx > 0.0 ? d / mx : 0.0, mx);
+}
+vec3 gradient_hsl_(vec3 c) {
+    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), d = mx - mn, l = (mx + mn) * 0.5, h = 0.0, s = 0.0;
+    if (d > 0.0) {
+        s = l <= 0.5 ? d / (mx + mn) : d / (2.0 - mx - mn);
+        if (mx == c.r) h = (c.g - c.b) / d; else if (mx == c.g) h = 2.0 + (c.b - c.r) / d; else h = 4.0 + (c.r - c.g) / d;
+        h /= 6.0; if (h < 0.0) h += 1.0;
+    }
+    return vec3(h, s, l);
+}
+vec3 gradient_from_hsv_(vec3 c) {
+    vec3 k = clamp(abs(fract(c.x + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    return c.z * mix(vec3(1.0), k, c.y);
+}
+vec3 gradient_from_hsl_(vec3 c) {
+    vec3 k = clamp(abs(fract(c.x + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    float ch = (1.0 - abs(2.0 * c.z - 1.0)) * c.y;
+    return (k - 0.5) * ch + c.z;
+}
+vec4 gradient_blend_(vec4 a, vec4 b, float f, int mode, int hue) {
+    if (mode == 0) return mix(a, b, f);
+    vec3 x = mode == 1 ? gradient_hsv_(a.rgb) : gradient_hsl_(a.rgb), y = mode == 1 ? gradient_hsv_(b.rgb) : gradient_hsl_(b.rgb);
+    float h1 = x.x, h2 = y.x, d = h2 - h1;
+    if (hue == 0) { if (d > 0.5) h1 += 1.0; else if (d < -0.5) h2 += 1.0; }
+    else if (hue == 1) { if (d > 0.0 && d < 0.5) h1 += 1.0; else if (d <= 0.0 && d > -0.5) h2 += 1.0; }
+    else if (hue == 2) { if (h2 < h1) h2 += 1.0; }
+    else { if (h1 < h2) h1 += 1.0; }
+    vec3 m = vec3(fract(mix(h1, h2, f)), mix(x.yz, y.yz, f));
+    return vec4(mode == 1 ? gradient_from_hsv_(m) : gradient_from_hsl_(m), mix(a.a, b.a, f));
+}
+vec4 gradient_eval(float p[32], vec4 c[32], int n, float x, int interp, int mode, int hue) {
+    x = clamp(x, 0.0, 1.0);
+    if (n < 2) return c[0];
+    if (mode != 0) interp = 2;                                 // (hsv / hsl: always linear, as Blender's)
+    bool spline = interp == 1 || interp == 3;
+    int a = 0;                                                // the first stop after x
+    while (a < n && p[a] <= x) a++;
+    if (a == n && !spline) return c[n - 1];
+    if (a == 0 && !spline) return c[0];
+    vec4 l, r, pl, nr;                                        // the segment's left and right, and the stops outside them
+    float lp, rp;
+    if (a == 0) { l = pl = c[0]; lp = 0.0; r = c[0]; rp = p[0]; nr = c[1]; }
+    else if (a == n) {
+        if (p[n - 1] >= 1.0) { l = c[n - 2]; lp = p[n - 2]; r = nr = c[n - 1]; rp = p[n - 1]; pl = c[max(n - 3, 0)]; }
+        else { l = c[n - 1]; lp = p[n - 1]; r = nr = c[n - 1]; rp = 1.0; pl = c[n - 2]; }
+    } else { l = c[a - 1]; lp = p[a - 1]; r = c[a]; rp = p[a]; pl = a < 2 ? l : c[a - 2]; nr = a >= n - 1 ? r : c[a + 1]; }
+    float u = rp > lp ? (x - lp) / (rp - lp) : 0.0;
+    if (interp == 4) return l;
+    if (interp == 0) u = u * u * (3.0 - 2.0 * u);
+    if (spline) {
+        float u2 = u * u, u3 = u2 * u;
+        vec4 w = interp == 1 ? vec4(-0.71 * u3 + 1.42 * u2 - 0.71 * u, 1.29 * u3 - 2.29 * u2 + 1.0, -1.29 * u3 + 1.58 * u2 + 0.71 * u, 0.71 * u3 - 0.71 * u2)
+                             : vec4(-u3 / 6.0 + 0.5 * u2 - 0.5 * u + 1.0 / 6.0, 0.5 * u3 - u2 + 2.0 / 3.0, -0.5 * u3 + 0.5 * u2 + 0.5 * u + 1.0 / 6.0, u3 / 6.0);
+        return clamp(pl * w.x + l * w.y + r * w.z + nr * w.w, 0.0, 1.0);
+    }
+    return gradient_blend_(l, r, u, mode, hue);
 }
 float rand(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 // the frame as two small numbers (the frame itself is too big for a hash to stay fine: past ~20000 the float
@@ -470,13 +574,15 @@ out vec2 uv_;
 void main() { uv_ = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }
 """
 GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "vec2": "vec2", "vec3": "vec3",
-              "menu": "int", "curve": "float"}
+              "menu": "int", "curve": "float", "gradient": "vec4"}
 
 
 def shader_source(d, sampled=()):
     """The fragment shader of filter d; sampled: its colour and number parameters that read a
     picture."""
-    decl = "\n".join(f"uniform {GLSL_TYPES[p.type]} {p.name}" + (f"[{CURVE_N}]" if p.type == "curve" else "") + ";"
+    decl = "\n".join((f"uniform float {p.name}_p[{GRADIENT_N}];\nuniform vec4 {p.name}_c[{GRADIENT_N}];\nuniform int {p.name}_n;"
+                      if p.type == "gradient" else
+                      f"uniform {GLSL_TYPES[p.type]} {p.name}" + (f"[{CURVE_N}]" if p.type == "curve" else "") + ";")
                      for p in d.params if p.name not in sampled)
     kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
     return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + EPILOGUE
@@ -620,7 +726,14 @@ class Engine:
             if name in prog:
                 prog[name].value = v
         for p in d.params:
-            if p.name in prog and p.name in values:
+            if p.type == "gradient" and p.name in values:
+                pos, col, n = values[p.name]
+                for u, v in ((p.name + "_p", np.array(pos, "f4")), (p.name + "_c", np.array(col, "f4"))):
+                    if u in prog:
+                        prog[u].write(v.tobytes())
+                if p.name + "_n" in prog:
+                    prog[p.name + "_n"].value = n
+            elif p.name in prog and p.name in values:
                 prog[p.name].value = values[p.name]
         if "source" in prog:
             prog["source"].value = 0

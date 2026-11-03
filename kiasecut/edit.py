@@ -2143,12 +2143,14 @@ def replace_effects(proj, clip_id, whats):
     return [put_effect(proj, clip_id, w) for w in whats]
 
 
-_FITS = {"float": "number", "int": "number", "bool": "bool", "menu": "choice", "color": 4, "vec2": 2, "vec3": 3, "curve": 4}
+_FITS = {"float": "number", "int": "number", "bool": "bool", "menu": "choice", "color": 4, "vec2": 2, "vec3": 3, "curve": 4, "gradient": "gradient"}
 
 
 def _value_kind(v):
     """What kind of parameter a stored value (or its keyframes') is: as _FITS's values."""
     v = curves.value(v, 0)
+    if isinstance(v, list) and v and isinstance(v[0], list) and len(v[0]) == 2 and isinstance(v[0][1], list):
+        return "gradient"
     if isinstance(v, bool):
         return "bool"
     if isinstance(v, (int, float)):

@@ -37,6 +37,7 @@ from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_l
                         section)
 from .mediapick import pick_button
 from .curvefield import CurveField
+from .gradientbar import GradientEditor
 from .vfx_panel import FX_MIME, effect_mime
 
 DEBOUNCE_MS = 350
@@ -534,6 +535,11 @@ class EffectsPanel(QWidget):
             field.changed.connect(lambda v, g=group, k=p.name: self._queue(g, k, v))
             self.widgets[(group, p.name)] = field
             row.addWidget(field, 1)
+        elif p.type == "gradient":                              # colour stops, as a gradient asset's
+            ed = GradientEditor()
+            ed.changed.connect(lambda st, g=group, k=p.name: self._queue(g, k, st))
+            self.widgets[(group, p.name)] = ed
+            row.addWidget(ed, 1)
         else:                                                   # vec2 / vec3
             n = 3 if p.type == "vec3" else 2
             for i in range(n):
@@ -951,6 +957,10 @@ class EffectsPanel(QWidget):
             field = w.get((group, p.name))
             if field is not None and v is not MIXED and field.drag is None and (group, p.name) not in self.pending:
                 field.set_value(v)
+        elif p.type == "gradient":
+            ed = w.get((group, p.name))
+            if ed is not None and v is not MIXED and not ed.drag and (group, p.name) not in self.pending:
+                ed.set_stops(fx.gradient_stops(v))
         elif p.type == "color":
             btn = w.get((group, p.name))
             if btn is not None and v is MIXED:

@@ -599,6 +599,14 @@ class GraphRenderTests(unittest.TestCase):
             self.assertEqual(r.errors, [], type(r).__name__)
             yield type(r).__name__, [rgb(img, x, y) for x, y in spots]
 
+    def test_edge_fade_of_a_shape_node_fades_its_fill(self):
+        view, _e, _n = self.shape_view(fade=80.0)
+        view0, _e0, _n0 = self.shape_view()
+        spot = (W // 2 + W // 4 - 3, H // 2)                                      # (just inside the frame's right edge)
+        want = dict(self.pixels(view0, spot))
+        for name, (got,) in self.pixels(view, spot):
+            self.assertLess(sum(got), sum(want[name][0]) - 150, f"{name}: {got} vs {want[name][0]}")
+
     def test_outline_outside_the_frame_is_drawn(self):
         for align, want in (("外側", RED), ("內側", BLACK)):
             view, _e, _n = self.shape_view(stroke_on=True, stroke=200.0, stroke_align=align, stroke_color=[1.0, 0.0, 0.0, 1.0], fill=False)

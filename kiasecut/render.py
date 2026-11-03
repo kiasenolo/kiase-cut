@@ -147,7 +147,7 @@ class Renderer:
         power of two at or above it, so it stays sharp (as SVG files are)."""
         side = 2 ** max(6, math.ceil(math.log2(max(w, h, 1))))
         text = assets.svg(p, self.editing)
-        key = ("asset", text, side)
+        key = ("asset", text, side, round(assets.fade_distance(p), 3))      # (邊緣淡出 is not in the SVG's text)
         im = self.images.get(key)
         if im is None:
             k = side / max(p["w"], p["h"], 1)

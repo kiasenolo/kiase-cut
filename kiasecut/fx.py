@@ -62,9 +62,11 @@ class FilterDef:
         self.precise = precise                   # the passes before the last one keep 16-bit floats, not 8 bits
         self.params, self.category, self.description = list(params), category, description
         self.passes, self.error = passes, error
+        self.src_label = "圖像"                  # @source: what the main picture socket is called
+        self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
 
     def key(self):
-        return hashlib.sha1((self.code + "|" + str(self.passes) + "|" +
+        return hashlib.sha1((self.code + "|" + str(self.passes) + "|" + ",".join(n for n, _ in self.inputs) + "|" +
                              ",".join(f"{p.name}:{p.type}" for p in self.params)).encode()).hexdigest()
 
 
@@ -216,7 +218,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     `error` set (the panel shows it) so that one bad file never breaks the program."""
     head = {}
     params, error = [], None
-    panels, panel, enables = [], None, []
+    panels, panel, enables, inputs = [], None, [], []
     for line in text.splitlines():
         m = HEADER.match(line)
         if not m:
@@ -234,6 +236,13 @@ def parse(text, ref, fallback_name="濾鏡"):
                 panel = words[0] if words and words[0] != "-" else None
                 if panel and all(n != panel for n, _ in panels):
                     panels.append((panel, "closed" in words[1:]))
+            elif key == "source":
+                head["source"] = rest.strip().strip('"')
+            elif key == "input":                          # a picture more than src(): input_<name>(uv)
+                words = shlex.split(rest)
+                if not words or not IDENT.match(words[0]) or words[0] in RESERVED or any(words[0] == n for n, _ in inputs):
+                    raise ValueError("@input 要寫：名稱（英文、數字、底線，不重複）[\"顯示名稱\"]")
+                inputs.append((words[0], words[1] if len(words) > 1 else words[0]))
             elif key == "enable":                         # (read once every @param is known)
                 enables.append((line, rest))
             elif key in ("filter", "category", "description"):
@@ -271,9 +280,12 @@ def parse(text, ref, fallback_name="濾鏡"):
         error = error or "@levels 不能比 @passes 多；@extras 只能讀前面的繪製"
     if "effect" not in text:
         error = error or "找不到 effect() 函式"
-    return FilterDef(ref, head.get("filter") or fallback_name, text, params, head.get("category", ""),
-                     head.get("description", ""), n, error, head.get("precise", False), panels, levels, level_param,
-                     head.get("extras", []), fixed)
+    d = FilterDef(ref, head.get("filter") or fallback_name, text, params, head.get("category", ""),
+                  head.get("description", ""), n, error, head.get("precise", False), panels, levels, level_param,
+                  head.get("extras", []), fixed)
+    d.inputs = inputs
+    d.src_label = head.get("source") or d.src_label
+    return d
 
 
 _cache = {}
@@ -299,8 +311,14 @@ def _file_def(path, ref, fallback):
     return d
 
 
+GRAPH = "nodes:graph"            # the filter of an effect that is a node graph (nodegraph.py; e["graph"])
+GRAPH_DEF = FilterDef(GRAPH, "節點效果", "", category="節點", description="用節點編輯器組出來的效果")
+
+
 def get(ref):
     """FilterDef of "builtin:name" or of a filter file's path."""
+    if ref == GRAPH:
+        return GRAPH_DEF
     if ref.startswith(BUILTIN):
         name = ref[len(BUILTIN):]
         return _file_def(os.path.join(PKG, name + ".glsl"), ref, name)
@@ -585,6 +603,9 @@ def shader_source(d, sampled=()):
                       f"uniform {GLSL_TYPES[p.type]} {p.name}" + (f"[{CURVE_N}]" if p.type == "curve" else "") + ";")
                      for p in d.params if p.name not in sampled)
     kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
+    for name, _label in d.inputs:
+        decl += (f"\nuniform sampler2D inp_{name}_;\n"
+                 f"vec4 input_{name}(vec2 uv) {{ return texture(inp_{name}_, clamp(uv, 0.0, 1.0)); }}")
     return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + EPILOGUE
 
 
@@ -636,6 +657,14 @@ class Engine:
                 self.programs.clear()
             self.programs[key] = prog = (prog, vao)
         return prog
+
+    def blank_texture(self):
+        """A 1 x 1 transparent texture: what an @input nothing was given reads."""
+        t = getattr(self, "_blank", None)
+        if t is None:
+            t = self._blank = self.ctx.texture((1, 1), 4, bytes(4))
+            t.filter = (self.mgl.NEAREST, self.mgl.NEAREST)
+        return t
 
     def _targets(self, w, h):
         t = self.targets.get((w, h))
@@ -708,14 +737,17 @@ class Engine:
                     tex.release()
         return np.frombuffer(data, np.uint8).reshape(h, w, 4)
 
-    def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None):
+    def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None, inputs=None,
+                dest=None):
         """Filter the w x h texture src (premultiplied RGBA) on the card; returns the texture
         holding the result, one of this engine's own (valid until its next run at that size).
         unit: texture px per canvas px. The filter is told the canvas size as its resolution, so
         its pixel lengths are canvas px whatever size the picture is drawn at (a small preview,
         full screen, the export). sources {colour or number param: (texture, map)}: those read a
         picture (premultiplied), map the 3 x 3 matrix (9 numbers, by columns) from src's uv to
-        the picture's (both with v = 0 at the top)."""
+        the picture's (both with v = 0 at the top). inputs {@input name: texture} (w x h, premultiplied;
+        a missing one reads as transparent); dest (texture, framebuffer) of w x h: the last pass is drawn
+        there instead of into this engine's own targets (so the result outlives the next run)."""
         types = {p.name: p.type for p in d.params}
         sources = {n: v for n, v in (sources or {}).items() if types.get(n) in SOURCE_TYPES}
         prog, vao = self._program(d, tuple(sorted(sources)))
@@ -749,6 +781,13 @@ class Engine:
             for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)), own, *more):
                 if u in prog:
                     prog[u].value = v
+        for k, (name, _label) in enumerate(d.inputs):
+            tex = (inputs or {}).get(name)
+            if tex is None:
+                tex = self.blank_texture()
+            tex.use(8 + k)
+            if "inp_" + name + "_" in prog:
+                prog["inp_" + name + "_"].value = 8 + k
         self.ctx.disable(self.mgl.BLEND)
         read = src
         made = []                                      # each pass's (texture, w, h), for @extras
@@ -761,6 +800,9 @@ class Engine:
             if i < len(d.levels):
                 tw, th = self.level_size(d, i, values, w, h, canvas)
                 dst_tex, dst_fbo = self._level_target(d, i, tw, th)
+            elif dest is not None and i == d.passes - 1:
+                tw, th = w, h
+                dst_tex, dst_fbo = dest
             else:
                 tw, th = w, h
                 pool = self._mid_targets(w, h) if d.precise and i < d.passes - 1 else targets

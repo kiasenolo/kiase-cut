@@ -165,7 +165,9 @@ class Renderer:
         node = e["graph"]["nodes"].get(nid)
         if node is None or not nodegraph.is_asset(node):
             return None
-        q = nodegraph.asset_of(node, nid, e["params"], t)
+        bound = nodegraph.binds(e["graph"])
+        q = nodegraph.asset_of(node, nid, e["params"], t, bound)
+        src = nodegraph.placed_by(src, e["params"], bound, nid, t)         # (a position / size / turn fed by an effect parameter)
         v = lambda k: curves.value(src.get(k, 1.0), t)
         sw, sh = max(round(v("w") * disp[0], 2), 1), max(round(v("h") * disp[1], 2), 1)
         q["w"], q["h"] = sw, sh

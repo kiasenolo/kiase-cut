@@ -86,7 +86,20 @@ def default_params(graph):
 
 
 # -- shape nodes made from the built-in shapes (assets.py): node["asset"] = {"key": preset, "family": ...} ----------
-ASSET_SKIP = ("w", "h", "fill_image", "stroke_image")    # (the size is the node's frame; the pictures are its inputs)
+ASSET_SKIP = ("w", "h", "fill_image", "stroke_image", "stops", "fill_stops", "stroke_stops")   # (size: the node's frame; pictures: its inputs; gradients: made with nodes)
+PLACE = (("cx", "位置 X", -2.0, 2.0, 0.0), ("cy", "位置 Y", -2.0, 2.0, 0.0), ("w", "寬", 0.01, 4.0, 1.0),
+         ("h", "高", 0.01, 4.0, 1.0), ("rotation", "旋轉 °", -360.0, 360.0, 0.0))   # where a source sits on the clip (the source's own fields)
+
+
+def place_params():
+    """The Params of where a shape node sits (position, size as fractions of the clip, rotation): sockets like any, fed by
+    parameters of the effect; their values are the source's (what the preview's handles move)."""
+    out = []
+    for name, label, lo, hi, default in PLACE:
+        q = fx.Param(name, "float", default, lo, hi, label)
+        q.place = True
+        out.append(q)
+    return out
 _asset_defs = {}
 
 
@@ -129,8 +142,6 @@ def asset_def(node):
                 q = fx.Param(f, "color", list(assets.to_rgba(default)), label=info[0])
             elif info[1] == "toggle":
                 q = fx.Param(f, "bool", bool(default), label=info[0])
-            elif info[1] == "stops":                       # ([] : the gradient goes from its colour to its colour 2)
-                q = fx.Param(f, "gradient", [], label=info[0])
             elif info[1] == "choice":
                 items = [n for n, _ in info[2]]
                 label = next((n for n, v in info[2] if v == default), items[0])
@@ -144,13 +155,30 @@ def asset_def(node):
     return out
 
 
-def asset_of(node, nid, params, t):
-    """The built-in shape's parameters (assets.at) of shape node nid at clip time t, from the effect's params."""
+def bound_value(params, bound, nid, name, default=None):
+    """What parameter `name` of node nid holds: the effect parameter it is bound to, or its own."""
+    if bound and (nid, PARAM + name) in bound:
+        return params.get(expose_key(bound[(nid, PARAM + name)]), default)
+    return params.get(param_key(nid, name), default)
+
+
+def placed_by(src, params, bound, nid, t):
+    """Source dict src with the place fields that are bound to effect parameters taken from them."""
+    out = dict(src)
+    for name, *_ in PLACE:
+        if bound and (nid, PARAM + name) in bound:
+            out[name] = curves.value(params.get(expose_key(bound[(nid, PARAM + name)]), src.get(name)), t)
+    return out
+
+
+def asset_of(node, nid, params, t, bound=None):
+    """The built-in shape's parameters (assets.at) of shape node nid at clip time t, from the effect's params
+    (bound: binds(graph), the parameters fed by the effect's own)."""
     a = node["asset"]
     d = asset_def(node)
     out = {"key": a["key"], "family": a.get("family") or (assets.get(a["key"]) or assets.ASSETS[0]).family}
     for q in d.params:
-        v = curves.value(params.get(param_key(nid, q.name)) if param_key(nid, q.name) in params else q.default, t)
+        v = curves.value(bound_value(params, bound, nid, q.name, q.default), t)
         if q.type == "menu":
             v = next((val for n, val in assets.FIELD_INFO[q.name][2] if n == v), v)
         out[q.name] = v
@@ -233,8 +261,9 @@ def sockets(node):
         return [("src", "")]
     if node["type"] == GROUP:
         return [(i["name"], i["label"]) for i in node.get("inputs") or []]
-    if is_asset(node):                                   # (a built-in shape: a picture to paint its fill and its outline with)
-        return [(sock, label) for _p, sock, label in ASSET_PAINTS]
+    if is_asset(node):                                   # (a built-in shape: pictures to paint its fill and outline with, then every value)
+        return ([(sock, label) for _p, sock, label in ASSET_PAINTS] +
+                [(PARAM + q.name, q.label) for q in asset_def(node).params + place_params() if has_socket(q)])
     if node["type"] != FILTER:
         return []
     d = fx.get(node["ref"])
@@ -582,7 +611,11 @@ def has_output(node):
 def param_of(graph, nid, socket):
     """The Param a socket "param:<name>" of filter node nid stands for (None: it is not one)."""
     node = graph["nodes"].get(nid)
-    if node is None or node["type"] != FILTER or not socket.startswith(PARAM):
+    if node is None or not socket.startswith(PARAM):
+        return None
+    if is_asset(node):
+        return next((p for p in asset_def(node).params + place_params() if p.name == socket[len(PARAM):]), None)
+    if node["type"] != FILTER:
         return None
     return next((p for p in fx.get(node["ref"]).params if p.name == socket[len(PARAM):]), None)
 
@@ -605,6 +638,8 @@ def connect(graph, src, dst, socket, out=None):
     else:
         if out not in [o for o, _ in outputs(nodes[src])]:
             out = outputs(nodes[src])[0][0]
+        if p is not None and is_asset(nodes[dst]):
+            raise GraphError("形狀的數值只能接效果自己的參數（參數輸入節點）")
         if p is not None and p.type not in fx.SOURCE_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):
@@ -616,7 +651,7 @@ def connect(graph, src, dst, socket, out=None):
     graph["links"].append(link)
 
 
-def expose(graph, params, src, dst, socket):
+def expose(graph, params, src, dst, socket, sources=None):
     """Make a new effect parameter out of parameter socket of node dst and bind it (a link from node src, a
     參數輸入 node): it starts at the value the parameter had and takes its name, range and choices. Returns its
     name. (params: the effect's e["params"].)"""
@@ -629,7 +664,11 @@ def expose(graph, params, src, dst, socket):
         n += 1
         name = f"{p.name}{n}"
     key = param_key(dst, p.name)
-    value = copy.deepcopy(params.pop(key, p.default))
+    if getattr(p, "place", False):                      # (where a shape sits is the source's own, not a node parameter)
+        v = ((sources or {}).get(dst) or {}).get(p.name, p.default)
+        value = copy.deepcopy(curves.value(v, 0) if curves.is_animated(v) else v)
+    else:
+        value = copy.deepcopy(params.pop(key, p.default))
     graph.setdefault("exposed", []).append({"name": name, "label": p.label, "type": p.type, "default": copy.deepcopy(p.default),
                                             "lo": p.lo, "hi": p.hi, "items": list(p.items)})
     params[expose_key(name)] = value

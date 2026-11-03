@@ -473,6 +473,8 @@ class MainWindow(QMainWindow):
         nd.nodeSelected.connect(self.on_node_selected)
         nd.saveRequested.connect(self.save_node_preset)
         nd.paramEdited.connect(lambda eid, key, v: self.node_clip() and self.on_fx_param_edited([self.node_clip()], "fx:" + eid, key, v))
+        nd.placeEdited.connect(lambda eid, nid, key, v: self.node_clip() and self.on_fx_param_edited(
+            [self.node_clip()], f"fxsrc:{eid}:{nid}", key, v))
         nd.shapeEdited.connect(lambda eid, nid, shape, col: self.node_clip() and self.fx_each(
             "形狀", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_shape(lvl, cid, e, nid, shape, col)))
         ef.nodesRequested.connect(self.open_node_editor)

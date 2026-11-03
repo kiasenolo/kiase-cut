@@ -413,12 +413,25 @@ class GraphRenderTests(unittest.TestCase):
             for name, (got,) in self.pixels(view, (12, 18)):                     # (just left of the frame's edge)
                 self.assertTrue(all(abs(a - b) <= 3 for a, b in zip(got, want)), f"{name} {align}: {got}")
 
-    def test_gradient_stops_of_a_shape(self):
-        view, eff, nid = self.shape_view(fill_type="漸變", fill_angle=0.0, fill_stops=[[0.0, [1.0, 0.0, 0.0, 1.0]], [1.0, [0.0, 0.0, 1.0, 1.0]]])
+    def test_shape_values_are_sockets_fed_by_effect_parameters(self):
+        view, eff, nid = self.shape_view()
         eff["sources"][nid].update(w=1.0, h=1.0)
-        for name, (left, right) in self.pixels(view, (4, 18), (60, 18)):
-            self.assertGreater(left[0], left[2] + 80, name)                      # red at the start,
-            self.assertGreater(right[2], right[0] + 80, name)                    # blue at the end
+        proj_ = proj()
+        g = eff["graph"]
+        pn = ng.add_node(g, {"type": "params"}, base="params")
+        self.assertIn(("param:color", "顏色"), ng.sockets(g["nodes"][nid]))
+        self.assertIn(("param:cx", "位置 X"), ng.sockets(g["nodes"][nid]))
+        with self.assertRaises(ng.GraphError):                                    # (a picture is no number)
+            ng.connect(g, "input", nid, "param:radius")
+        colour = ng.expose(g, eff["params"], pn, nid, "param:color")
+        shift = ng.expose(g, eff["params"], pn, nid, "param:cx", eff["sources"])
+        eff["params"]["expose." + colour] = [0.0, 0.0, 1.0, 1.0]
+        for name, (a_, b_) in self.pixels(view, (12, 18), (52, 18)):
+            self.assertTrue(all(abs(x - y) <= 3 for x, y in zip(a_, BLUE)), f"{name}: {a_}")
+        eff["params"]["expose." + shift] = 2.0                                    # (moved out of the picture)
+        for name, (a_, b_) in self.pixels(view, (12, 18), (52, 18)):
+            self.assertEqual(a_, BLACK, name)
+        self.assertNotIn("expose." + colour, [q.name for q in fx.def_of(eff).params if q.name == nid + ".color"])
 
     def test_a_picture_paints_the_fill(self):
         view, eff, nid = self.shape_view()

@@ -2265,7 +2265,7 @@ def expose_graph_param(proj, clip_id, effect_id, src, dst, socket):
     _, c = find(proj, clip_id)
     e, g = _graph(c, effect_id)
     try:
-        return nodegraph.expose(g, e["params"], src, dst, socket)
+        return nodegraph.expose(g, e["params"], src, dst, socket, e.get("sources"))
     except nodegraph.GraphError as exc:
         raise EditError(str(exc)) from exc
 

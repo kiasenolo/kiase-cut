@@ -122,14 +122,19 @@ class NodeItem(QGraphicsItem):
             add("image", "結果", "src")
         elif node["type"] == ng.FILTER or ng.is_asset(node):         # (a built-in shape: its fields, no sockets)
             d = ng.node_def(node)
-            socket = lambda p: ng.PARAM + p.name if node["type"] == ng.FILTER and ng.has_socket(p) else None
+            socket = lambda p: ng.PARAM + p.name if ng.has_socket(p) else None
             if node["type"] == ng.FILTER:
                 add("image", d.src_label, "src")
                 for name, label in d.inputs:
                     add("image", label, name)
-            else:                                                      # (pictures to paint its fill and its outline with)
+            else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
                 for _part, sock, label in ng.ASSET_PAINTS:
                     add("image", label, sock)
+                opened = self.editor.panel_open.get((self.nid, "位置"), True)
+                add("panel", "位置", panel=opened)
+                if opened:
+                    for p in ng.place_params():
+                        add("param", p.label, socket(p), p)
             for p in (q for q in d.params if q.panel is None):
                 add("param", p.label, socket(p), p)
             for name, closed in d.panels:
@@ -939,6 +944,7 @@ class NodeEditor(QWidget):
     effectChosen = Signal(str)                              # effect id: another node effect of the clip
     saveRequested = Signal(str)                             # effect id: keep it as a 效果預設 (a custom effect)
     paramEdited = Signal(str, str, object)                  # effect id, "<node>.<parameter>", value
+    placeEdited = Signal(str, str, str, object)             # effect id, node id, where it sits (cx / cy / w / h / rotation), value
     shapeEdited = Signal(str, str, object, object)          # effect id, shape node, shape id or None, colour or None
 
     def __init__(self, parent=None):
@@ -1111,6 +1117,8 @@ class NodeEditor(QWidget):
             return self.Values({}, None, src.get("shape", "rectangle"), src.get("color") or [1.0, 1.0, 1.0, 1.0])
         d = ng.node_def(node)
         vals = {p.name: curves.value(self.params.get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params}
+        if ng.is_asset(node):                                  # (where it sits: the source's own fields)
+            vals.update({p.name: curves.value(src.get(p.name, p.default), self.t) for p in ng.place_params()})
         return self.Values(vals, d, "", [1.0, 1.0, 1.0, 1.0])
 
     def field_number(self, nid, row, cell):
@@ -1137,6 +1145,13 @@ class NodeEditor(QWidget):
             cur = list(self.node_values(nid).get(q.name))
             cur[cell] = round(value, 4)
             new = cur
+        if getattr(q, "place", False):
+            src = self.sources.get(nid)
+            if src is not None and not curves.is_animated(src.get(q.name)):
+                src[q.name] = new
+            self.placeEdited.emit(self.eid, nid, q.name, new)
+            self.view.viewport().update()
+            return
         self.params[key] = new if not curves.is_animated(self.params.get(key)) else self.params[key]
         self.paramEdited.emit(self.eid, key, new)
         self.view.viewport().update()

@@ -37,7 +37,8 @@ SOCKET_R = 5.5
 GRID = 20.0                                                # (Blender's NODE_GRID_STEP_SIZE: what a dragged node snaps to)
 HIT_R = 9.0
 SNAP_R = 28.0                                              # (a dragged link this near (screen px) to a socket it can go into jumps onto it)
-DRAG_W = 5.0                                               # (the width of a link being dragged: thicker than the placed ones)
+LINK_W = 5.0                                               # (the width of a placed link)
+DRAG_W = 7.0                                               # (and of one being dragged)
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 190.0, "gradient": 30.0}          # the height of a curve / gradient parameter in a node (a curve is edited right there: its plot and buttons)
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
@@ -808,7 +809,7 @@ def fm_elide(p, text, width):
 
 
 class Link(QGraphicsPathItem):
-    def __init__(self, width=2):
+    def __init__(self, width=LINK_W):
         super().__init__()
         self.setZValue(0)
         self.setPen(QPen(QColor("#d0d0d8"), width))
@@ -932,7 +933,7 @@ class GraphView(QGraphicsView):
     def _put_down(self, cancel):
         c, self.carrying = self.carrying, None
         for ln, *_ in self.link_items:
-            ln.setPen(QPen(QColor("#d0d0d8"), 2))
+            ln.setPen(QPen(QColor("#d0d0d8"), LINK_W))
         if cancel and c["remove"]:
             self.press_at = {}
             self.over = None
@@ -1182,9 +1183,9 @@ class GraphView(QGraphicsView):
                     break
         if over != self.over:
             for ln, *_ in self.link_items:
-                ln.setPen(QPen(QColor("#d0d0d8"), 2))
+                ln.setPen(QPen(QColor("#d0d0d8"), LINK_W))
             if over:
-                over[0].setPen(QPen(QColor("#ffffff"), 4))
+                over[0].setPen(QPen(QColor("#ffffff"), DRAG_W))
             self.over = over
 
     def mouseReleaseEvent(self, e):
@@ -1259,7 +1260,7 @@ class GraphView(QGraphicsView):
                  if self.press_at.get(i) not in (None, (it.pos().x(), it.pos().y()))}
         self.press_at = {}
         for ln, *_ in self.link_items:
-            ln.setPen(QPen(QColor("#d0d0d8"), 2))
+            ln.setPen(QPen(QColor("#d0d0d8"), LINK_W))
         if over and lone and list(moved) == [lone[0]]:
             _ln, a, b, sock, out = over
             x, y = moved[lone[0]]

@@ -402,7 +402,7 @@ class NodeItem(QGraphicsItem):
             self.scene().clearSelection()
             self.setSelected(True)
         r, cell = hit
-        self.drag = {"row": r, "cell": cell, "x0": e.pos().x(), "moved": False,
+        self.drag = {"row": r, "cell": cell, "x0": e.pos().x(), "y0": e.pos().y(), "axis": None, "moved": False,
                      "v0": self.editor.field_number(self.nid, r, cell)}
         e.accept()
 
@@ -415,13 +415,19 @@ class NodeItem(QGraphicsItem):
         q = r["p"] if r["kind"] == "param" else None
         if q is None or q.type not in ("float", "int", "vec2", "vec3") or d["v0"] is None:
             return
-        dx = e.pos().x() - d["x0"]
-        if not d["moved"] and abs(dx) < 3:
-            return
+        dx, dy = e.pos().x() - d["x0"], d["y0"] - e.pos().y()
+        if d["axis"] is None:                              # (the way it first moves: up / down as the number boxes of the panels, or sideways)
+            if max(abs(dx), abs(dy)) < 3:
+                return
+            d["axis"] = "y" if abs(dy) >= abs(dx) else "x"
         d["moved"] = True
         from .effects_panel import step_for
-        step = step_for(q) / 2 * (0.1 if e.modifiers() & Qt.ShiftModifier else 1.0)
-        self.editor.set_number(self.nid, r, d["cell"], d["v0"] + dx * step, final=False)
+        k = 0.1 if e.modifiers() & Qt.ShiftModifier else 10 if e.modifiers() & Qt.ControlModifier else 1
+        if d["axis"] == "y":                               # a step per 2 px, up is more
+            value = d["v0"] + round(dy / 2) * step_for(q) * k
+        else:
+            value = d["v0"] + dx * step_for(q) / 2 * k
+        self.editor.set_number(self.nid, r, d["cell"], value, final=False)
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None

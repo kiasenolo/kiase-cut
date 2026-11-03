@@ -170,6 +170,19 @@ class NodeEditorTests(unittest.TestCase):
         self.assertIsNone(ed.edit_proxy)
         self.assertEqual(got[-1], ("e1", "math1.value", 0.9))
 
+    def test_number_field_scrubs_up_and_down(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got = []
+        ed.paramEdited.connect(lambda *a: got.append(a))
+        at = self.row_pos(ed, "math1", "value")
+        self.drag(ed, at, at + QPointF(0, -20))                         # up: more, a step per 2 px
+        self.assertAlmostEqual(got[-1][2], 0.5 + 10 * 1.0, 4)           # (a range of 2000: a step is 1)
+        self.drag(ed, at, at + QPointF(0, 20))                          # down: less
+        self.assertAlmostEqual(got[-1][2], 0.5, 4)
+
     def test_tick_flips_and_menu_choices_are_asked_for(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)

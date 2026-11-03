@@ -1,7 +1,10 @@
 """Node graphs: an effect (filter "nodes:graph", fx.GRAPH) whose picture is worked out by a graph of
 nodes, as in Blender's compositor. The graph is e["graph"]:
 
-    {"nodes": {id: {"type", "x", "y", "params", "mute"?, ...}}, "links": [{"from": id, "to": id, "socket": s}]}
+    {"nodes": {id: {"type", "x", "y", "mute"?, ...}}, "links": [{"from": id, "to": id, "socket": s}]}
+
+A filter node's parameters are in the effect's own e["params"] as "<node id>.<parameter>" (so they are
+keyframed, edited and copied as an ordinary effect's are).
 
 Node types: "input" (the picture the effect was given), "output" (the graph's result; one), "source"
 (a picture, video, compound or track: "kind" says which, and where it sits on the clip is
@@ -39,7 +42,9 @@ def new_graph():
 def new_effect(effect_id, graph=None):
     """A node-graph effect for a clip (edit.add_effect makes them from fx.GRAPH)."""
     e = fx.new_effect(fx.GRAPH, effect_id)
-    e["graph"] = copy.deepcopy(graph) if graph else new_graph()
+    if graph:
+        e["graph"] = copy.deepcopy(graph)
+        e["params"] = default_params(e["graph"])
     return e
 
 
@@ -56,10 +61,20 @@ def add_node(graph, node, x=0.0, y=0.0, base=None):
         raise GraphError("只能有一個輸出節點")
     nid = new_node_id(graph, base or (node.get("ref") or node["type"]).rsplit("/", 1)[-1].replace(":", "_"))
     graph["nodes"][nid] = {**node, "x": float(x), "y": float(y)}
-    node = graph["nodes"][nid]
-    if node["type"] == FILTER:
-        node.setdefault("params", fx.default_params(fx.get(node["ref"])))
     return nid
+
+
+def param_key(nid, name):
+    return f"{nid}.{name}"
+
+
+def default_params(graph):
+    """{"<node>.<param>": default} of every filter node of the graph."""
+    out = {}
+    for nid, n in graph["nodes"].items():
+        if n["type"] == FILTER:
+            out.update({param_key(nid, k): v for k, v in fx.default_params(fx.get(n["ref"])).items()})
+    return out
 
 
 def remove_node(graph, nid):
@@ -190,8 +205,9 @@ class Pool:
         self.spare = []
 
 
-def evaluate(eng, graph, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None):
-    """Work out graph's output for the w x h texture src_tex (the effect's input) at clip time t.
+def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None):
+    """Work out graph's output (params: the effect's e["params"]) for the w x h texture src_tex (the effect's input)
+    at clip time t.
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
     (texture, 3 x 3 map, done) of a source node's picture (see Engine.run_tex's sources) or None.
     Returns (texture, owner): owner is the object to give back to free when done with it (None: the
@@ -286,7 +302,7 @@ def evaluate(eng, graph, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, 
                 alias(n, main)
             else:
                 dest = alloc(w, h)
-                vals = {p.name: fx.uniform_value(p, (node.get("params") or {}).get(p.name), t) for p in d.params}
+                vals = {p.name: fx.uniform_value(p, params.get(param_key(n, p.name)), t) for p in d.params}
                 srcs = {}
                 for p in d.params:
                     pt = take(n, PARAM + p.name)

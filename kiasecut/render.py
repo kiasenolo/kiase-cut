@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, components, curves, fonts, fx, masks, project, propexpr, rack, svgimage, textlayout, textvars, viz
+from . import assets, components, curves, fonts, fx, masks, nodegraph, project, propexpr, rack, svgimage, textlayout, textvars, viz
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -775,6 +775,43 @@ class Renderer:
                 self.errors.append(f"濾鏡：{exc}")
         return self._fx
 
+    def graph_effect(self, eng, e, arr, t, duration, fps, disp, wt, unit):
+        """Node graph effect e over arr (H x W x 4, premultiplied) on the CPU renderer's engine: the
+        result as such an array, or None when it cannot run."""
+        h, w = arr.shape[:2]
+        sources = e.get("sources") or {}
+        pool = nodegraph.Pool(eng)
+        texs = []
+        with eng.ctx:
+            def upload(a):
+                tex = eng.ctx.texture((a.shape[1], a.shape[0]), 4, np.ascontiguousarray(a).tobytes())
+                tex.filter = (eng.mgl.LINEAR, eng.mgl.LINEAR)
+                tex.repeat_x = tex.repeat_y = False
+                texs.append(tex)
+                return tex
+
+            def picture(nid):
+                src = sources.get(nid)
+                comp = self.matte_compound(src, t) if src else None
+                if comp is None:
+                    return None
+                pic = self.matte_image(src, comp, t, self.matte_k(src, t, disp, comp, wt), fps)
+                return upload(image_to_array(pic)), source_map(src, t, disp, wt, w, h), None
+            errors = []
+            try:
+                tex, owner = nodegraph.evaluate(eng, e["graph"], e["params"], upload(arr), w, h, pool.alloc, pool.free,
+                                                t=t, duration=duration, fps=fps, unit=unit, picture=picture, errors=errors)
+                out = np.frombuffer(tex.read(), np.uint8).reshape(h, w, 4).copy() if tex is not None else None
+            except nodegraph.GraphError as exc:
+                self.errors.append(f"節點效果：{exc}")
+                out = None
+            finally:
+                for tex in texs:
+                    tex.release()
+                pool.close()
+        self.errors += errors
+        return out
+
     def run_effects(self, effects, img, t, duration, fps, wt, disp, unit):
         """Apply a chain of effects to img (QImage ARGB32 premultiplied, unit of its px per canvas
         px) at clip time t; each effect's own mask (clip-local, through world transform wt)
@@ -789,6 +826,18 @@ class Renderer:
             if amount <= 0:
                 continue
             d = fx.get(e["filter"])
+            if e["filter"] == fx.GRAPH:                                  # a node graph (nodegraph.py)
+                out = self.graph_effect(eng, e, arr, t, duration, fps, disp, wt, unit)
+                if out is None:
+                    continue
+                mk = e.get("mask")
+                if mk or amount < 1:
+                    h, w = arr.shape[:2]
+                    m = coverage(mk, t, disp, wt, w, h, curves.value(mk.get("feather", 0.0), t))[..., None] * amount \
+                        if mk else amount
+                    out = (arr * (1 - m) + out * m).round().astype(np.uint8)
+                arr = np.ascontiguousarray(out)
+                continue
             vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
             h, w = arr.shape[:2]
             sources = {}

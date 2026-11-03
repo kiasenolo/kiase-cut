@@ -19,6 +19,11 @@ def engine():
 
 
 class DataTest(unittest.TestCase):
+    def test_default_params(self):
+        g = ng.new_graph()
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
+        self.assertEqual(ng.default_params(g)[m + ".value"], 0.5)
+
     def test_new_graph_is_valid(self):
         g = ng.new_graph()
         self.assertIsNone(ng.check(g))
@@ -60,7 +65,7 @@ class DataTest(unittest.TestCase):
 class RunTest(unittest.TestCase):
     W = H = 8
 
-    def run_graph(self, g, rgba, pictures=None, t=0):
+    def run_graph(self, g, rgba, pictures=None, t=0, params=None):
         eng = engine()
         pool = ng.Pool(eng)
         with eng.ctx:
@@ -75,7 +80,7 @@ class RunTest(unittest.TestCase):
                 tex = texs[nid] = eng.ctx.texture((arr.shape[1], arr.shape[0]), 4, np.ascontiguousarray(arr).tobytes())
                 return tex, ng.IDENTITY, None
             errors = []
-            tex, owner = ng.evaluate(eng, g, src, self.W, self.H, pool.alloc, pool.free, t=t, picture=picture, errors=errors)
+            tex, owner = ng.evaluate(eng, g, params or {}, src, self.W, self.H, pool.alloc, pool.free, t=t, picture=picture, errors=errors)
             out = np.frombuffer(tex.read(), np.uint8).reshape(self.H, self.W, 4).copy() if tex is not None else None
             if owner is not None:
                 pool.free(owner)
@@ -115,16 +120,16 @@ class RunTest(unittest.TestCase):
 
     def test_math_value_and_linked_param(self):
         g = ng.new_graph()
-        c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math", "params": {"op": "相乘", "value": 0.5}})
+        c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
         ng.connect(g, "input", c, "src")
         ng.connect(g, c, "output", "src")
-        out, errors, _ = self.run_graph(g, self.solid([200, 100, 0, 255]))
+        out, errors, _ = self.run_graph(g, self.solid([200, 100, 0, 255]), params={c + ".op": "相乘", c + ".value": 0.5})
         self.assertEqual(errors, [])
         self.assertTrue(abs(int(out[0, 0, 0]) - 100) <= 2 and abs(int(out[0, 0, 1]) - 50) <= 2)
 
     def test_channel_then_set_alpha(self):
         g = ng.new_graph()
-        ch = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/channel", "params": {"channel": "紅"}})
+        ch = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/channel"})
         sa = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/set_alpha"})
         ng.connect(g, "input", ch, "src")
         ng.connect(g, "input", sa, "src")
@@ -136,7 +141,7 @@ class RunTest(unittest.TestCase):
 
     def test_mute_passes_the_picture_on(self):
         g = ng.new_graph()
-        c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math", "params": {"op": "相乘", "value": 0.0}, "mute": True})
+        c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math", "mute": True})
         ng.connect(g, "input", c, "src")
         ng.connect(g, c, "output", "src")
         red = self.solid([255, 0, 0, 255])
@@ -147,7 +152,7 @@ class RunTest(unittest.TestCase):
         g = ng.new_graph()
         prev = "input"
         for _ in range(4):
-            n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math", "params": {"op": "相加", "value": 0.0}})
+            n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
             ng.connect(g, prev, n, "src")
             prev = n
         ng.connect(g, prev, "output", "src")

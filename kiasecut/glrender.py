@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, components, curves, fx, project, propexpr, rack, render, textlayout, textvars
+from . import assets, components, curves, fx, nodegraph, project, propexpr, rack, render, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -829,6 +829,17 @@ class GLRenderer(render.Renderer):
             if amount <= 0:
                 continue
             d = fx.get(e["filter"])
+            if e["filter"] == fx.GRAPH:                                  # a node graph (nodegraph.py)
+                res = self.gl_graph(e, cur, t, duration, fps, world, disp, ppu)
+                if res is None:
+                    continue
+                nxt = gl.layer(cur.w, cur.h)
+                gl.mix(nxt, cur.tex, res[0], amount, e.get("mask"), t, disp, inv)
+                res[1]()
+                if cur is not lay:
+                    gl.release(cur)
+                cur = nxt
+                continue
             vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), t) for p in d.params}
             pics, sources = [], {}
             for name, src in (e.get("sources") or {}).items():           # colours read from a picture
@@ -855,6 +866,31 @@ class GLRenderer(render.Renderer):
                 gl.release(cur)
             cur = nxt
         return cur
+
+    def gl_graph(self, e, cur, t, duration, fps, world, disp, ppu):
+        """Effect e (a node graph) over layer cur: (the result's texture, a function that gives it back), or
+        None when it cannot run."""
+        gl = self.gl
+        sources = e.get("sources") or {}
+
+        def picture(nid):
+            src = sources.get(nid)
+            pic = self.gl_matte(src, t, disp, world, fps) if src else None
+            if pic is None:
+                return None
+            give = (lambda: gl.release(pic[0])) if pic[1] else None
+            return pic[0].tex, render.source_map(src, t, disp, world, cur.w, cur.h), give
+        errors = []
+        try:
+            tex, owner = nodegraph.evaluate(gl.fx, e["graph"], e["params"], cur.tex, cur.w, cur.h, gl.layer, gl.release,
+                                            t=t, duration=duration, fps=fps, unit=ppu, picture=picture, errors=errors)
+        except nodegraph.GraphError as exc:
+            self.errors.append(f"節點效果：{exc}")
+            return None
+        self.errors += errors
+        if tex is None:
+            return None
+        return tex, (lambda: owner is not None and gl.release(owner))
 
     def gl_filter_clip(self, tgt, base, c, W, H, fps, t_us, ppu, below=None):
         """A filter clip: what has been drawn so far goes through its effects, inside its mask

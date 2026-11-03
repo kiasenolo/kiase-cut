@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fx, mapping, project, rack, textlayout, textvars, viz
+from . import assets, components, curves, expr, fx, mapping, nodegraph, project, rack, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -2117,6 +2117,94 @@ def add_effect(proj, clip_id, ref):
     return e
 
 
+# -- node graph effects (nodegraph.py) ---------------------------------------------------------------
+def _graph(c, effect_id):
+    e = _effect(c, effect_id)
+    if e.get("filter") != fx.GRAPH:
+        raise EditError("這不是節點效果")
+    return e, e["graph"]
+
+
+def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
+    """Add a node to a node effect: {"type": "filter", "ref": ...}, {"type": "source", "kind": "image" |
+    "video" | "compound" | "track"} (placed on the clip as a mask is: chosen next, set_effect_source_media). Returns
+    its id."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    if node["type"] == nodegraph.FILTER:
+        d = fx.get(node["ref"])
+        node = {"type": nodegraph.FILTER, "ref": node["ref"]}
+    elif node["type"] == nodegraph.SOURCE:
+        if node.get("kind") not in nodegraph.SOURCE_KINDS:
+            raise EditError("來源節點要是圖片、影片、複合片段或軌道")
+        node = {"type": nodegraph.SOURCE, "kind": node["kind"]}
+    elif node["type"] == nodegraph.INPUT:
+        node = {"type": nodegraph.INPUT}
+    else:
+        raise EditError("不能新增這種節點")
+    try:
+        nid = nodegraph.add_node(g, node, x, y)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+    if node["type"] == nodegraph.FILTER:
+        for k, v in fx.default_params(d).items():
+            e["params"][nodegraph.param_key(nid, k)] = v
+    elif node["type"] == nodegraph.SOURCE:
+        set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
+    return nid
+
+
+def remove_graph_node(proj, clip_id, effect_id, nid):
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    node = g["nodes"].get(nid)
+    if node is None:
+        raise EditError("找不到這個節點")
+    if node["type"] == nodegraph.OUTPUT:
+        raise EditError("輸出節點不能刪除")
+    nodegraph.remove_node(g, nid)
+    for k in [k for k in e["params"] if k.startswith(nid + ".")]:
+        del e["params"][k]
+    (e.get("sources") or {}).pop(nid, None)
+    if "sources" in e and not e["sources"]:
+        e.pop("sources")
+
+
+def connect_graph(proj, clip_id, effect_id, src, dst, socket):
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    try:
+        nodegraph.connect(g, src, dst, socket)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
+def disconnect_graph(proj, clip_id, effect_id, dst, socket):
+    _, c = find(proj, clip_id)
+    nodegraph.disconnect(_graph(c, effect_id)[1], dst, socket)
+
+
+def move_graph_nodes(proj, clip_id, effect_id, positions):
+    """positions {node id: (x, y)}."""
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    for nid, (x, y) in positions.items():
+        if nid in g["nodes"]:
+            g["nodes"][nid]["x"], g["nodes"][nid]["y"] = float(x), float(y)
+
+
+def mute_graph_node(proj, clip_id, effect_id, nid, on):
+    """Mute a filter node: the picture goes through it unchanged."""
+    _, c = find(proj, clip_id)
+    node = _graph(c, effect_id)[1]["nodes"].get(nid)
+    if node is None or node["type"] != nodegraph.FILTER:
+        raise EditError("只有濾鏡節點可以停用")
+    if on:
+        node["mute"] = True
+    else:
+        node.pop("mute", None)
+
+
 def put_effect(proj, clip_id, what, index=None):
     """Put an effect on a clip: what is a filter ref (a new effect at its defaults) or an effect
     (a copy of it, its settings, keyframes and mask included: one dragged from a clip), at index
@@ -2297,7 +2385,10 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
     sits on the clip as a mask does (the whole clip until it is placed)."""
     _, c = find(proj, clip_id)
     e = _effect(c, effect_id)
-    if not any(p.name == param and p.type in fx.SOURCE_TYPES for p in fx.get(e["filter"]).params):
+    if e["filter"] == fx.GRAPH:                          # a node graph's picture / video / compound / track node
+        if (e["graph"]["nodes"].get(param) or {}).get("type") != nodegraph.SOURCE:
+            raise EditError("這個節點不是來源節點")
+    elif not any(p.name == param and p.type in fx.SOURCE_TYPES for p in fx.get(e["filter"]).params):
         raise EditError("這個濾鏡沒有這個顏色或數字參數")
     sources = e.setdefault("sources", {})
     if kind is None:

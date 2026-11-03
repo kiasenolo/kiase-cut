@@ -349,7 +349,12 @@ def new_effect(ref, effect_id):
             stamp = time.time_ns() / 1_000_000_000
             seed = p.lo + (stamp % (p.hi - p.lo))
             params[p.name] = round(seed) if p.type == "int" else seed
-    return {"id": effect_id, "filter": ref, "enabled": True, "params": params}
+    e = {"id": effect_id, "filter": ref, "enabled": True, "params": params}
+    if ref == GRAPH:                             # (nodegraph.py)
+        from . import nodegraph
+        e["graph"] = nodegraph.new_graph()
+        e["params"].update(nodegraph.default_params(e["graph"]))
+    return e
 
 
 def mix_at(e, t):

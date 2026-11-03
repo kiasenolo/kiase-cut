@@ -91,6 +91,26 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertEqual(list(got[0][1]), ["input"])
 
+    def test_dragged_nodes_snap_to_the_grid(self):
+        from kiasecut.ui import node_editor
+        ed = self.make()
+        got = []
+        ed.moveRequested.connect(lambda *a: got.append(a))
+        v = ed.view
+        it = v.items_by_id["input"]
+        start = v.mapFromScene(it.mapToScene(40, 12))
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(v.viewport(), start + QPoint(33, 47))
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, start + QPoint(33, 47))
+        x, y = got[-1][1]["input"]
+        self.assertEqual((x % node_editor.GRID, y % node_editor.GRID), (0, 0))
+        v.snap = False
+        start = v.mapFromScene(it.mapToScene(40, 12))
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(v.viewport(), start + QPoint(7, 3))
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, start + QPoint(7, 3))
+        self.assertNotEqual(got[-1][1]["input"][0] % node_editor.GRID, 0)
+
     def test_delete_and_mute_keys(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)

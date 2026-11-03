@@ -13,9 +13,11 @@ mask is (the main window follows nodeSelected).
 """
 import glob
 import json
+import math
 import os
 
 import shiboken6
+
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
@@ -29,6 +31,7 @@ UNBOUNDED = 1e6                                            # (a number with no l
 RAMP_INTERP = (2, 0, 4, 1, 3)                              # (a Color Ramp's 插值 choices as the shader's numbers: linear, ease, constant, cardinal, b-spline)
 MIN_WIDTH, EDGE = 140.0, 7.0                              # (narrowest node; the strip of its right edge that widens it)
 SOCKET_R = 5.5
+GRID = 20.0                                                # (Blender's NODE_GRID_STEP_SIZE: what a dragged node snaps to)
 HIT_R = 9.0
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / gradient parameter's picture in a node
@@ -709,6 +712,8 @@ class GraphView(QGraphicsView):
         self.over = None                         # the link a dragged node is over (it will go through the node)
         self.press_at = {}
         self.panning = None                      # the point of a middle-button drag moving the view
+        self.snap = True                         # 吸附: dragged nodes land on the grid (Ctrl while dragging: the other way)
+        self.grabbed = None                      # the item the left button went down on
         self.setAcceptDrops(True)
 
     # -- media dragged in (the library's pictures / videos / compounds, or files): source nodes
@@ -798,6 +803,7 @@ class GraphView(QGraphicsView):
                     ln.route(pos, self.items_by_id[nid].input_pos(sock))
                     return
             self.press_at = {i: (it.pos().x(), it.pos().y()) for i, it in self.items_by_id.items()}
+            self.grabbed = next(((i, it) for i, it in self.items_by_id.items() if it.sceneBoundingRect().contains(pos)), None)
         elif e.button() == Qt.RightButton:
             if e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier):
                 # Ctrl + right button: drag across links to cut them; Shift + right button: to put a bend (繞線) in each
@@ -849,7 +855,46 @@ class GraphView(QGraphicsView):
             return
         super().mouseMoveEvent(e)
         if e.buttons() & Qt.LeftButton:
+            self._snap_grabbed(bool(e.modifiers() & Qt.ControlModifier))
             self._hover_link()
+
+    def _snap_grabbed(self, ctrl):
+        """Blender's grid snapping: the node being dragged lands on the grid, the rest of the selection moving with it (the
+        snap button decides, Ctrl held does the opposite)."""
+        if self.grabbed is None or self.snap == ctrl:
+            return
+        nid, it = self.grabbed
+        if not it.isSelected() or self.press_at.get(nid) in (None, (it.pos().x(), it.pos().y())):     # (not dragged: a click on a field)
+            return
+        want = QPointF(round(it.pos().x() / GRID) * GRID, round(it.pos().y() / GRID) * GRID)
+        d = want - it.pos()
+        if d.isNull():
+            return
+        chosen = [x for x in self.items_by_id.values() if x.isSelected()]
+        carried = {id(o) for x in chosen for o in (getattr(x, "carry", None) or (None, ()))[1]}     # (a frame takes its nodes along)
+        for x in chosen:
+            if id(x) not in carried:
+                x.setPos(x.pos() + d)
+
+    def drawBackground(self, painter, rect):
+        """The grid the nodes snap to: fine lines every GRID, stronger every five, fading out as the view zooms away."""
+        super().drawBackground(painter, rect)
+        z = self.transform().m11()
+        if z * GRID < 6:
+            return
+        fine = min(1.0, (z * GRID - 6) / 10)
+        x0, y0 = math.floor(rect.left() / GRID) * GRID, math.floor(rect.top() / GRID) * GRID
+        for n, (step, alpha) in enumerate(((GRID, 22 * fine), (GRID * 5, 36))):
+            pen = QPen(QColor(255, 255, 255, int(alpha)), 0)
+            painter.setPen(pen)
+            x = math.floor(rect.left() / step) * step
+            while x <= rect.right():
+                painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
+                x += step
+            y = math.floor(rect.top() / step) * step
+            while y <= rect.bottom():
+                painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
+                y += step
 
     def _lone_node(self):
         """The one node being dragged if it has no links yet and could go in the middle of one: (id, item)."""
@@ -1173,6 +1218,12 @@ class NodeEditor(QWidget):
         thumb.setToolTip("每個節點下面顯示它輸出的圖（預覽目前這一格的結果）")
         thumb.toggled.connect(self.set_show_thumbs)
         bar.addWidget(thumb)
+        snap = QPushButton("吸附")
+        snap.setCheckable(True)
+        snap.setChecked(True)
+        snap.setToolTip("拖動節點時對齊網格（按住 Ctrl 暫時反過來）")
+        snap.toggled.connect(lambda on: setattr(self.view, "snap", on))
+        bar.addWidget(snap)
         tidy = QPushButton("整理 ▾")
         tidy.setToolTip("對齊、均分、自動排列選取的節點")
         tidy.clicked.connect(lambda: self.tidy_menu(tidy.mapToGlobal(tidy.rect().bottomLeft())))

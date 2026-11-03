@@ -45,6 +45,15 @@ class GraphEditTests(unittest.TestCase):
         edit.remove_graph_node(self.p, "c1", self.e["id"], nid)
         self.assertNotIn("sources", self.e)
 
+    def test_shape_node_edits(self):
+        nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "shape", "shape": "star"})
+        self.assertEqual(self.e["sources"][nid]["shape"], "star")
+        edit.set_effect_shape(self.p, "c1", self.e["id"], nid, "heart", [1, 0, 0, 1])
+        self.assertEqual((self.e["sources"][nid]["shape"], self.e["sources"][nid]["color"]), ("heart", [1.0, 0.0, 0.0, 1.0]))
+        with self.assertRaises(edit.EditError):
+            edit.set_effect_shape(self.p, "c1", self.e["id"], nid, "blob")
+        self.assertTrue(edit.has_param(self.p_clip(), f"fxsrc:{self.e['id']}:{nid}", "cx"))
+
     def test_connect_errors_and_output_stays(self):
         a = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
         b = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/mix"})
@@ -95,10 +104,17 @@ class GraphPanelTests(unittest.TestCase):
         e = edit.add_effect(p, "c1", fx.GRAPH)
         m = edit.add_graph_node(p, "c1", e["id"], {"type": "filter", "ref": "builtin:nodes/mix"}, 0, 0)
         s = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "image"}, -100, 0)
+        sh = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "shape", "shape": "star"})
         panel = EffectsPanel()
         opened = []
         panel.nodesRequested.connect(opened.append)
+        picked = []
+        panel.shapeChosen.connect(lambda *a: picked.append(a))
         panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        box = panel.widgets[("shape_pick", "fx:" + e["id"], sh)]
+        self.assertEqual(box.currentData(), "star")
+        box.activated.emit(box.findData("heart"))
+        self.assertEqual(picked[-1][1:], (e["id"], sh, "heart", None))
         self.assertIn(("fx:" + e["id"], m + ".fac"), panel.widgets)
         self.assertIn(("source_media", "fx:" + e["id"], s), panel.widgets)
         edit.set_param(p, "c1", "fx:" + e["id"], m + ".fac", 0.25)
@@ -159,6 +175,27 @@ class GraphRenderTests(unittest.TestCase):
             build(e)
             self.source(e, "s1", self.s.alpha)              # left half opaque white, right see-through
         self.check(self.view(half), WHITE, RED)
+
+    def test_shape_node(self):
+        def build(e, shape="rectangle"):
+            g = e["graph"]
+            n = ng.add_node(g, {"type": "source", "kind": "shape"}, base="shape")
+            m = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/mix"})
+            ng.connect(g, "input", m, "src")
+            ng.connect(g, n, m, "b")
+            ng.connect(g, m, "output", "src")
+            e["params"].update(ng.default_params(g))
+            e.setdefault("sources", {})[n] = {"kind": "shape", "shape": shape, "color": [0, 0, 1, 1],
+                                              "cx": 0.0, "cy": 0.0, "w": 0.5, "h": 0.5, "rotation": 0.0}
+        for shape, corner in (("rectangle", True), ("ellipse", False)):
+            v = self.view(lambda e, s=shape: build(e, s))
+            for r in self.renderers:
+                img = r.render(v, 0, W, H)
+                self.assertEqual(r.errors, [])
+                self.assertEqual(rgb(img, W // 2, H // 2), BLUE, shape)
+                self.assertEqual(rgb(img, 2, 2), RED, shape)                 # outside it: the clip
+                x, y = int(W * 0.27), int(H * 0.27)                          # just inside the box's corner
+                self.assertEqual(rgb(img, x, y), BLUE if corner else RED, shape)
 
     def test_filter_node_chain_and_mix_amount(self):
         def build(e):

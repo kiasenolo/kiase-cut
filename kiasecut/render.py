@@ -792,6 +792,8 @@ class Renderer:
 
             def picture(nid):
                 src = sources.get(nid)
+                if src and src.get("kind") == "shape":
+                    return upload(image_to_array(nodegraph.shape_image(src))), source_map(src, t, disp, wt, w, h), None
                 comp = self.matte_compound(src, t) if src else None
                 if comp is None:
                     return None

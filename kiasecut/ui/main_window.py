@@ -475,6 +475,8 @@ class MainWindow(QMainWindow):
             "效果來源" if kind else "移除效果來源", ids, eid,
             lambda lvl, cid, e: edit.set_effect_source(lvl, cid, e, name, kind)))
         ef.sourceMediaChosen.connect(self.on_fx_source_media)
+        ef.shapeChosen.connect(lambda ids, eid, nid, shape, col: self.fx_each(
+            "形狀", ids, eid, lambda lvl, cid, e: edit.set_effect_shape(lvl, cid, e, nid, shape, col)))
         ef.sourceRegionChanged.connect(self._update_matte_region)
         ef.paramEdited.connect(self.on_fx_param_edited)
         ef.menu_extender = self.number_menu

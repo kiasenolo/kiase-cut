@@ -128,6 +128,7 @@ class EffectsPanel(QWidget):
     liveEdited = Signal(list, str, str, object)
     liveCancelled = Signal()                 # a colour being picked was given up: show what is there
     backdropChosen = Signal(list, object, object)   # clip ids, 套用至背景 (or None), 隱藏本體 (or None)
+    shapeChosen = Signal(list, str, str, object, object)   # clip ids, effect id, shape node, shape id or None, colour or None
     nodesRequested = Signal(str)                    # effect id: open the node editor on this node effect
     docRequested = Signal()
     revealFilter = Signal(str)                      # filter ref: show its file
@@ -610,9 +611,22 @@ class EffectsPanel(QWidget):
         """A colour's or a number's (使用遮罩) source: which picture / video / compound, 編輯位置
         (one clip) and for a video or a compound 編輯區域."""
         row = QHBoxLayout()
-        lab = QLabel("　" + dict((k, n) for n, k in SOURCE_NAMES)[kind])
+        lab = QLabel("　" + dict((k, n) for n, k in SOURCE_NAMES + (("形狀", "shape"),))[kind])
         lab.setMinimumWidth(70)
         row.addWidget(lab)
+        if kind == "shape":                         # (drawn, no file: which shape, its colour, then where it sits)
+            shape = ComboBox()
+            for sid, label in nodegraph.SHAPES:
+                shape.addItem(label, sid)
+            shape.activated.connect(lambda i, cb=shape: self._now(self.shapeChosen, eid, name, cb.itemData(i), None))
+            self.widgets[("shape_pick", "fx:" + eid, name)] = shape
+            row.addWidget(shape, 1)
+            col = QPushButton("顏色")
+            col.clicked.connect(lambda _=False: self._pick_shape_color(eid, name))
+            self.widgets[("shape_color", "fx:" + eid, name)] = col
+            row.addWidget(col)
+            self._edit_buttons(row, eid, name, kind)
+            return row
         pick = ComboBox()
         pick.setPlaceholderText({"image": "選擇圖片…", "video": "選擇影片…", "compound": "選擇複合片段…",
                                  "track": "選擇軌道…"}[kind])
@@ -625,6 +639,11 @@ class EffectsPanel(QWidget):
         row.addWidget(pick, 1)
         if kind != "track":
             row.addWidget(pick_button((kind,), lambda value: self._now(self.sourceMediaChosen, eid, name, value)))
+        self._edit_buttons(row, eid, name, kind)
+        return row
+
+    def _edit_buttons(self, row, eid, name, kind):
+        """編輯位置 (and 編輯區域 for a video or a compound) of a source, for one clip."""
         if len(self.clips) == 1:                    # (the preview places one clip's)
             ed = QPushButton("編輯位置")
             ed.setCheckable(True)
@@ -641,7 +660,14 @@ class EffectsPanel(QWidget):
                 reg.toggled.connect(lambda v: self._source_region(eid, name, v))
                 self.widgets[("source_region", eid, name)] = reg
                 row.addWidget(reg)
-        return row
+
+    def _pick_shape_color(self, eid, name):
+        eid = self._real(eid)
+        btn = self.widgets[("shape_color", "fx:" + eid, name)]
+        ids = list(self.ids) if self.clip_id else []
+        col = pick_color(self, qcolor(btn.property("hex") or "#ffffff"), "形狀顏色", cancel=self.liveCancelled.emit, anchor=btn)
+        if col is not None and ids:
+            self._now(self.shapeChosen, eid, name, None, rgba(col))
 
     def _range_row(self, eid, p):
         """What a number's source gives for black and for white (最小值 / 最大值): 0 and the number itself
@@ -940,6 +966,17 @@ class EffectsPanel(QWidget):
 
     def _show_source(self, group, name, srcs):
         """The source pickers of parameter (or source node) name as the sources srcs (one per clip) have them."""
+        box = self.widgets.get(("shape_pick", group, name))
+        if box is not None:
+            shapes = {sv.get("shape") for sv in srcs}
+            box.blockSignals(True)
+            box.setCurrentIndex(box.findData(shapes.pop()) if len(shapes) == 1 else -1)
+            box.blockSignals(False)
+        btn = self.widgets.get(("shape_color", group, name))
+        if btn is not None and srcs:
+            r, g, b, *_ = [int(round(x * 255)) for x in (list(srcs[0].get("color") or [1, 1, 1, 1]) + [1])[:4]]
+            btn.setProperty("hex", "#%02x%02x%02x" % (r, g, b))
+            btn.setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
         for key, field in ((("source", group, name), "kind"), (("source_media", group, name), None)):
             box = self.widgets.get(key)
             if box is None:

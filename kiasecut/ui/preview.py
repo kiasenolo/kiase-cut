@@ -397,7 +397,7 @@ class MaskGeo:
     def handles(self, k):
         """[(name, canvas point)]; k = canvas px per screen px."""
         out = []
-        if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place"):
+        if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place", "shape"):
             out += [("w", self.xf.map(QPointF(self.hw, 0))), ("h", self.xf.map(QPointF(0, -self.hh))),
                     ("wh", self.xf.map(QPointF(self.hw, -self.hh)))]
         elif self.kind == "mirror":
@@ -407,7 +407,7 @@ class MaskGeo:
         u, hh = self.down()
         c = self.centre()
         out.append(("rot", c - u * (hh + ROT_PX * k)))
-        if self.kind not in ("compound", "image", "video", "track"):              # (a picture mask has no feather)
+        if self.kind not in ("compound", "image", "video", "track", "shape"):              # (a picture mask has no feather)
             out.append(("feather", c + u * (hh + (14 + self.feather * 80) * k)))
         return out
 

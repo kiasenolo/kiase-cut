@@ -2127,7 +2127,7 @@ def _graph(c, effect_id):
 
 def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
     """Add a node to a node effect: {"type": "filter", "ref": ...}, {"type": "source", "kind": "image" |
-    "video" | "compound" | "track"} (placed on the clip as a mask is: chosen next, set_effect_source_media). Returns
+    "video" | "compound" | "track" | "shape"} (placed on the clip as a mask is: chosen next, set_effect_source_media). Returns
     its id."""
     _, c = find(proj, clip_id)
     e, g = _graph(c, effect_id)
@@ -2136,7 +2136,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.FILTER, "ref": node["ref"]}
     elif node["type"] == nodegraph.SOURCE:
         if node.get("kind") not in nodegraph.SOURCE_KINDS:
-            raise EditError("來源節點要是圖片、影片、複合片段或軌道")
+            raise EditError("來源節點要是圖片、影片、複合片段、軌道或形狀")
+        shape = node.get("shape")
         node = {"type": nodegraph.SOURCE, "kind": node["kind"]}
     elif node["type"] == nodegraph.INPUT:
         node = {"type": nodegraph.INPUT}
@@ -2151,6 +2152,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
             e["params"][nodegraph.param_key(nid, k)] = v
     elif node["type"] == nodegraph.SOURCE:
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
+        if node["kind"] == "shape" and shape:
+            set_effect_shape(proj, clip_id, effect_id, nid, shape)
     return nid
 
 
@@ -2396,6 +2399,11 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
         if not sources:
             e.pop("sources")
         return e
+    if kind == "shape" and e["filter"] == fx.GRAPH:      # a shape node: drawn, not a file (nodegraph.shape_image)
+        old = sources.get(param) or {}
+        sources[param] = {"kind": "shape", "shape": old.get("shape", "rectangle"), "color": old.get("color", [1.0, 1.0, 1.0, 1.0]),
+                          **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 0.5), ("h", 0.5), ("rotation", 0.0))}}
+        return e
     if kind not in PICTURE_MASKS:
         raise EditError(f"unknown source {kind}")
     old = sources.get(param) or {}
@@ -2406,6 +2414,21 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
             src[k] = old[k]
     sources[param] = src
     return e
+
+
+def set_effect_shape(proj, clip_id, effect_id, nid, shape=None, color=None):
+    """A shape node's shape (nodegraph.SHAPES id) and / or colour ([r, g, b, a], 0 - 1)."""
+    _, c = find(proj, clip_id)
+    src = _source(c, f"fxsrc:{effect_id}:{nid}")
+    if src.get("kind") != "shape":
+        raise EditError("這不是形狀節點")
+    if shape is not None:
+        if shape not in dict(nodegraph.SHAPES):
+            raise EditError(f"unknown shape {shape}")
+        src["shape"] = shape
+    if color is not None:
+        src["color"] = [float(x) for x in color][:4]
+    return src
 
 
 def set_effect_source_media(proj, clip_id, effect_id, param, image=None, video=None, compound=None, track=None):

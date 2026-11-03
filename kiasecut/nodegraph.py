@@ -21,7 +21,9 @@ from . import curves, fx
 
 US = 1_000_000
 INPUT, OUTPUT, SOURCE, FILTER = "input", "output", "source", "filter"
-SOURCE_KINDS = ("image", "video", "compound", "track")
+SOURCE_KINDS = ("image", "video", "compound", "track", "shape")
+SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
+          ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
 PICTURE = "builtin:nodes/picture"
 IDENTITY = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 PARAM = "param:"
@@ -130,7 +132,7 @@ def sockets(node):
 def title(node):
     if node["type"] == FILTER:
         return fx.get(node["ref"]).name
-    return {INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段",
+    return {INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
 
@@ -172,6 +174,58 @@ def virtual_def(e):
         _defs.clear()
     _defs[key] = out
     return out
+
+
+_shape_cache = {}
+
+
+def shape_image(src, size=512):
+    """The picture of a shape source ({"shape", "color"}): the shape in its colour, filling a size x size square
+    (the source's frame: where and how big it is on the clip is cx / cy / w / h / rotation, as a picture's).
+    QImage, premultiplied; the same image object while its settings are the same."""
+    from PySide6.QtCore import QPointF, QRectF, Qt
+    from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPolygonF
+    import math
+    shape = src.get("shape", "rectangle")
+    col = [max(0.0, min(1.0, float(x))) for x in (list(src.get("color") or [1, 1, 1, 1]) + [1.0] * 4)[:4]]
+    key = (shape, tuple(round(x, 4) for x in col), size)
+    hit = _shape_cache.get(key)
+    if hit is not None:
+        return hit
+    img = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+    img.fill(Qt.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor.fromRgbF(*col))
+    r = QRectF(0, 0, size, size)
+    c = size / 2
+    if shape == "ellipse":
+        p.drawEllipse(r)
+    elif shape == "rounded":
+        p.drawRoundedRect(r, size * 0.2, size * 0.2)
+    elif shape == "triangle":
+        p.drawPolygon(QPolygonF([QPointF(c, 0), QPointF(size, size), QPointF(0, size)]))
+    elif shape in ("hexagon", "star"):
+        n, inner = (6, 1.0) if shape == "hexagon" else (10, 0.42)
+        pts = []
+        for i in range(n):
+            a = -math.pi / 2 + i * 2 * math.pi / n
+            k = 1.0 if shape == "hexagon" or i % 2 == 0 else inner
+            pts.append(QPointF(c + math.cos(a) * c * k, c + math.sin(a) * c * k))
+        p.drawPolygon(QPolygonF(pts))
+    elif shape == "heart":
+        path = QPainterPath(QPointF(c, size * 0.95))
+        path.cubicTo(QPointF(-size * 0.15, size * 0.55), QPointF(size * 0.1, -size * 0.05), QPointF(c, size * 0.3))
+        path.cubicTo(QPointF(size * 0.9, -size * 0.05), QPointF(size * 1.15, size * 0.55), QPointF(c, size * 0.95))
+        p.drawPath(path)
+    else:
+        p.drawRect(r)
+    p.end()
+    if len(_shape_cache) > 64:
+        _shape_cache.clear()
+    _shape_cache[key] = img
+    return img
 
 
 def has_output(node):

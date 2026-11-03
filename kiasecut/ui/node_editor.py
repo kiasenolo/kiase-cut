@@ -387,6 +387,10 @@ class NodeEditor(QWidget):
                            ("影片", {"type": ng.SOURCE, "kind": "video"}), ("複合片段", {"type": ng.SOURCE, "kind": "compound"}),
                            ("時間線（軌道）", {"type": ng.SOURCE, "kind": "track"})):
             inp.addAction(text, lambda n=node: self.addRequested.emit(self.eid, n, scene_pos.x(), scene_pos.y()))
+        shapes = menu.addMenu("形狀")
+        for sid, name in ng.SHAPES:
+            shapes.addAction(name, lambda _=False, sid=sid: self.addRequested.emit(
+                self.eid, {"type": ng.SOURCE, "kind": "shape", "shape": sid}, scene_pos.x(), scene_pos.y()))
         cats = {}
         for ref in node_refs() + fx.builtin_refs():
             d = fx.get(ref)

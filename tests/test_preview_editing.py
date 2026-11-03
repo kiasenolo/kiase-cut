@@ -211,6 +211,87 @@ class GapHandleTests(unittest.TestCase):
         self.assertAlmostEqual(moves["c5"]["y"], -0.2 - 40 / 540, 4)          # 148 px below it
 
 
+class TextNodeOnPreviewTests(unittest.TestCase):
+    """A text node of a node effect is edited on the canvas as a text clip is: a frame of what its words take up, its
+    sides setting the 文字框, a double click to type the words."""
+
+    def setUp(self):
+        from kiasecut import fx
+        self.p = proj()
+        self.e = edit.add_effect(self.p, "c1", fx.GRAPH)
+        self.nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "text"}, 0, 0)
+        self.group = f"fxsrc:{self.e['id']}:{self.nid}"
+        self.pv = preview(self.p, "c1")
+        self.pv.set_mask_mode(True, self.group)
+        self.pv.resize(960, 540)
+        self.pv.show()
+        self.addCleanup(self.pv.close)
+
+    def geo(self):
+        from kiasecut.ui.preview import MaskGeo
+        box = self.pv.selected_box()
+        return MaskGeo(box, self.pv.mask_of(box.clip))
+
+    def drag(self, a, b):
+        got = []
+        self.pv.paramsCommitted.connect(lambda *args: got.append(args))
+        QTest.mousePress(self.pv, Qt.LeftButton, NONE, a)
+        QTest.mouseMove(self.pv, (a + b) / 2)
+        QTest.mouseMove(self.pv, b)
+        QTest.mouseRelease(self.pv, Qt.LeftButton, NONE, b)
+        return got
+
+    def test_frame_is_what_the_words_take_up_with_the_clip_boxs_handles(self):
+        from kiasecut.ui.preview import text_node, text_size
+        g = self.geo()
+        w, h = text_size(text_node(self.pv.selected_box().clip, self.group, 0)[3], 1080)
+        self.assertAlmostEqual(2 * g.hw, w, delta=1)
+        self.assertAlmostEqual(2 * g.hh, h, delta=1)
+        self.assertTrue(g.is_picture())
+        names = [n for n, _ in g.handles(1.0)]
+        self.assertEqual(names.count("w") + names.count("h") + names.count("wh"), 8)
+        self.assertNotIn("feather", names)
+
+    def test_a_side_sets_the_box_and_a_corner_with_no_box_sets_the_size(self):
+        g = self.geo()
+        centre = g.centre()
+        edge = next(pt for n, pt in g.handles(1.0) if n == "w")
+        px = lambda pt: QPoint(round(pt.x() / 2), round(pt.y() / 2))               # (the canvas at half size)
+        corner = next(pt for n, pt in g.handles(1.0) if n == "wh")
+        got = self.drag(px(corner), px(corner + (corner - centre)))
+        group, vals = got[-1][1], got[-1][2]
+        self.assertEqual(group, "multi")
+        (fx_group, change), = vals.items()
+        self.assertEqual(fx_group, "fx:" + self.e["id"])
+        self.assertEqual(list(change), [f"{self.nid}.size"])                      # (no 文字框: the words get bigger)
+        self.assertGreater(change[f"{self.nid}.size"], 7.95 * 1.5)
+        edit.set_param(self.p, "c1", fx_group, f"{self.nid}.box_w", 600.0, 0)     # a box now
+        self.pv.set_scene(self.p, S // 2, "c1")
+        self.pv.set_mask_mode(True, self.group)
+        g = self.geo()
+        self.assertAlmostEqual(2 * g.hw, 600.0, delta=1)                          # (the frame is the box)
+        edge = next(pt for n, pt in g.handles(1.0) if n == "w")
+        got = self.drag(px(edge), px(edge + (edge - g.centre()) * 0.5))
+        (fx_group, change), = got[-1][2].items()
+        self.assertEqual(list(change), [f"{self.nid}.box_w"])                     # (an edge: its own side only)
+        self.assertGreater(change[f"{self.nid}.box_w"], 600.0)
+
+    def test_dragging_inside_moves_it_and_double_click_types_the_words(self):
+        got = self.drag(QPoint(480, 270), QPoint(580, 270))
+        self.assertEqual(got[-1][1], self.group)
+        self.assertGreater(got[-1][2]["cx"], 0.1)
+        typed = []
+        self.pv.sourceTextEdited.connect(lambda *a: typed.append(a))
+        QTest.mouseDClick(self.pv, Qt.LeftButton, NONE, QPoint(480, 270))
+        tb = self.pv.text_box
+        self.assertIsNotNone(tb)
+        tb.setPlainText("新的字")
+        QTest.keyClick(tb, Qt.Key_Return, Qt.ControlModifier)
+        self.assertIsNone(self.pv.text_box)
+        self.assertEqual(typed, [("c1", self.e["id"], self.nid, "新的字")])
+        edit.set_effect_text(self.p, "c1", self.e["id"], self.nid, "新的字")
+
+
 class TextOnPreviewTests(unittest.TestCase):
     def setUp(self):
         self.p = proj()

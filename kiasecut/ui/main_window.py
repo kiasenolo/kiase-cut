@@ -354,6 +354,8 @@ class MainWindow(QMainWindow):
         self.preview.dupLive.connect(self.live_dup)
         self.preview.dupCommitted.connect(self.on_preview_dup)
         self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
+        self.preview.sourceTextEdited.connect(lambda cid, eid, nid, words: self.fx_each(
+            "文字", [cid], eid, lambda lvl, c, e: edit.set_effect_text(lvl, c, e, nid, words)))
         self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
         self.preview.mediaDropped.connect(self.preview_drop)

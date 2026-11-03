@@ -73,6 +73,10 @@ zooms into the box dragged (Esc or the right button: not).
 
 Double-clicking a text clip opens a box over it to type its words in (textEdited while
 typing, one undo step); Ctrl+Enter or a click elsewhere closes it, Esc puts the words back.
+A text node of a node effect (編輯位置 of its fxsrc group) is edited the same way: its frame is what its
+words take up (a clip box's eight handles, the ring at its centre, the round handle to turn it); an edge sets its
+own side's 文字框 (box_w / box_h of the node, group "multi": {"fx:<effect id>": {...}}), a corner both - or, with no
+box, scales its 字號; a double click types its words (sourceTextEdited) unless a string node gives them.
 
 Every drag shows live (paramsLive) and becomes one edit on release (paramsCommitted), in
 the project's units: transform x / y in half-canvas units (y up), scale, clockwise degrees;
@@ -96,7 +100,7 @@ from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTran
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
-from .. import components, curves, edit, fonts, project, render, textlayout, textvars
+from .. import components, curves, edit, fonts, nodegraph, project, render, textlayout, textvars
 from . import appevents, wheel
 from .wrapdrag import WrapDrag
 
@@ -138,6 +142,26 @@ def base_size(c, W, H, t):
         w, h = W, H
     k = min(W / w, H / h)
     return w * k, h * k
+
+
+def text_node(clip, group, t):
+    """(effect id, node id, node, text spec at t) of the text node that source group "fxsrc:<effect id>:<node id>" of
+    clip edits, else None."""
+    if not group.startswith("fxsrc:"):
+        return None
+    eid, _, nid = group[6:].partition(":")
+    try:
+        e = edit.holder(clip, "fxmix:" + eid)
+    except (edit.EditError, KeyError):
+        return None
+    graph = e.get("graph") or {}
+    node = (graph.get("nodes") or {}).get(nid)
+    if node is None or not nodegraph.is_text(node):
+        return None
+    src = (e.get("sources") or {}).get(nid) or {}
+    spec = textvars.spec_at(nodegraph.text_of(node, nid, e.get("params") or {}, t, nodegraph.binds(graph), src, graph), t,
+                            render.TEXT_FIELDS)
+    return eid, nid, node, spec
 
 
 class Box:
@@ -367,7 +391,7 @@ class MaskGeo:
 
     def is_picture(self):
         """A picture or shape placed like a clip (not a mask that cuts one)."""
-        return self.kind in ("shape", "image", "video", "track", "compound")
+        return self.kind in ("shape", "text", "image", "video", "track", "compound")
 
     def centre(self):
         return self.xf.map(QPointF(0, 0))
@@ -401,7 +425,7 @@ class MaskGeo:
     def handles(self, k):
         """[(name, canvas point)]; k = canvas px per screen px."""
         out = []
-        if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place", "shape"):
+        if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place", "shape", "text"):
             out += [("w", self.xf.map(QPointF(self.hw, 0))), ("h", self.xf.map(QPointF(0, -self.hh))),
                     ("wh", self.xf.map(QPointF(self.hw, -self.hh)))]
             if self.is_picture():                   # (the clip box's eight: the sizing is about the centre either way)
@@ -415,7 +439,7 @@ class MaskGeo:
         u, hh = self.down()
         c = self.centre()
         out.append(("rot", c - u * (hh + ROT_PX * k)))
-        if self.kind not in ("compound", "image", "video", "track", "shape"):              # (a picture mask has no feather)
+        if self.kind not in ("compound", "image", "video", "track", "shape", "text"):      # (a picture mask has no feather)
             out.append(("feather", c + u * (hh + (14 + self.feather * 80) * k)))
         return out
 
@@ -480,6 +504,7 @@ class Preview(QWidget):
     dupCommitted = Signal(dict)                 # the same on release: make the copies
     doubleClicked = Signal()
     textEdited = Signal(str, str)               # text clip id, its words: typed in on the canvas
+    sourceTextEdited = Signal(str, str, str, str)   # clip id, effect id, text node id, its words: typed in on the canvas
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
     mediaDropped = Signal(list, list, float, float, str)  # idents, file paths, transform x / y there, group id or ""
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
@@ -547,9 +572,16 @@ class Preview(QWidget):
             p = components.param(components.of_clip(clip), self.mask_group[6:]) if components.of_clip(clip) else None
             return components.place_of(clip, p["id"]) if p and p["kind"] == "image" else None
         try:
-            return edit.holder(clip, self.mask_group)
+            m = edit.holder(clip, self.mask_group)
         except (edit.EditError, KeyError):
             return None
+        if m.get("kind") == "text":                      # (a text node's frame is what its words take up, as a text clip's box is)
+            box = self.selected_box()
+            info = box is not None and box.clip["id"] == clip["id"] and text_node(clip, self.mask_group, box.t)
+            if info:
+                w, h = text_size(info[3], self.H)
+                return dict(m, w=w / max(box.bw, 1e-6), h=h / max(box.bh, 1e-6))
+        return m
 
     def mask_box(self, box):
         """What mask mode edits in: the clip's box, or for 編輯位置 its layer's frame (or None)."""
@@ -616,8 +648,10 @@ class Preview(QWidget):
     def _view_changed(self):
         if self.text_box is not None:                    # it stays over its clip
             box = next((b for b in self.visible_boxes() if b.clip["id"] == self.text_box.clip_id), None)
-            if box is not None:
+            if box is not None and self.text_box.source is None:
                 self._place_text_box(box)
+            elif box is not None and self.mask_mode and self.masking(self.mask_box(box)):
+                self._place_text_box(MaskGeo(self.mask_box(box), self.mask_of(box.clip)))
         self._report_size()
         self.update()
 
@@ -866,7 +900,7 @@ class Preview(QWidget):
         group, vals = self.live
         c = json.loads(json.dumps(box.clip))
         for g, v in (vals.items() if group == "multi" else [(group, vals)]):
-            holder = c if g == "clip" else edit.holder(c, g) if g.startswith(("fxmask:", "fxsrc:", "place:")) else c.setdefault(g, {})
+            holder = c if g == "clip" else edit.holder(c, g) if g.startswith(("fx:", "fxmask:", "fxsrc:", "place:")) else c.setdefault(g, {})
             holder.update(edit.with_linked_scale(holder, v, box.t) if g == "transform" else v)
         return box.moved(c)
 
@@ -1510,6 +1544,8 @@ class Preview(QWidget):
                 min(1.0, max(0.0, ((dist - hh) / self._k() - 14) / 80)), 3)}, g, box, bool(e.modifiers() & Qt.AltModifier))
         linv, _ = g.local.inverted()
         q = linv.map(p1)                                       # in the mask's own frame
+        if g.kind == "text":
+            return self._text_node_values(box, g, kind, q, free)
         out = {}
         if "w" in kind:
             out["w"] = round(max(0.01, 2 * abs(q.x()) / g.dw), 4)
@@ -1521,6 +1557,24 @@ class Preview(QWidget):
             out = {"w": round(g.mw * f, 4), "h": round(g.mh * f, 4)}
             return "mask", self._snap_mask("w", out, g, box, bool(e.modifiers() & Qt.AltModifier), keep=g.mh / max(g.mw, 1e-9))
         return "mask", self._snap_mask(kind, out, g, box, bool(e.modifiers() & Qt.AltModifier))
+
+    def _text_node_values(self, box, g, kind, q, free):
+        """("multi", values) of a drag of a size handle of a text node's frame: its 文字框 (an edge fixes its own side, a
+        corner both - as a text clip's), or, with no box, its 字號 as the clip is scaled."""
+        eid, nid, _node, spec = text_node(box.clip, self.mask_group, box.t)
+        nw, nh = max(1.0, 2 * abs(q.x())), max(1.0, 2 * abs(q.y()))        # (canvas px, about its centre)
+        group = {}
+        if textlayout.boxed(spec):
+            k = 1080 / box.H
+            for f, n, on in (("box_w", nw, "w" in kind), ("box_h", nh, "h" in kind)):
+                if on:
+                    group[nodegraph.param_key(nid, f)] = round(n * k, 1)
+        else:
+            cw, ch = g.mw * g.dw, g.mh * g.dh
+            f = nw / cw if kind == "w" else nh / ch if kind == "h" else (
+                (abs(q.x()) * cw + abs(q.y()) * ch) * 2 / max(cw * cw + ch * ch, 1e-9))
+            group[nodegraph.param_key(nid, "size")] = round(min(200.0, max(0.1, (spec.get("size") or 1.0) * f)), 2)
+        return "multi", {"fx:" + eid: group}
 
     def _scale_values(self, box, d, m, mods):
         """(group, values) of a drag of scale handle d["side"] to canvas point m (see the
@@ -1801,9 +1855,12 @@ class Preview(QWidget):
         if not self.interactive:
             self.doubleClicked.emit()
             return
-        if e.button() != Qt.LeftButton or not self.view or self.mask_mode:
+        if e.button() != Qt.LeftButton or not self.view:
             return
         x, y = self._to_canvas(e.position())
+        if self.mask_mode:                               # (a text node's frame: its words are typed in as a text clip's)
+            self._edit_source_text(QPointF(x, y))
+            return
         boxes = [b for b in self.visible_boxes() if not b.locked]
         hit = next((b for b in boxes if b.clip["id"] == self.selected_id and b.contains(x, y)), None) \
             or next((b for b in boxes if b.contains(x, y)), None)
@@ -1821,11 +1878,46 @@ class Preview(QWidget):
 
     # -- typing a text clip's words on the canvas -------------------------------------------------
     def _screen_rect(self, box):
-        """Where box is on the widget (its bounding rectangle)."""
-        r, pts = self._rect(), box.corners()
+        """Where box (a clip's Box, or a text node's MaskGeo) is on the widget (its bounding rectangle)."""
+        r = self._rect()
+        pts = box.corners() if hasattr(box, "corners") else list(box.xf.map(QPolygonF(
+            QRectF(-box.hw, -box.hh, 2 * box.hw, 2 * box.hh))))
         xs = [r.x() + pt.x() / self.W * r.width() for pt in pts]
         ys = [r.y() + pt.y() / self.H * r.height() for pt in pts]
         return QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+    def _edit_source_text(self, m):
+        """Double-click at canvas point m while a text node's frame is edited: its words open for typing."""
+        box = self.selected_box()
+        mbox = self.mask_box(box)
+        if mbox is None or not self.masking(mbox):
+            return
+        info = text_node(box.clip, self.mask_group, box.t)
+        src = self.mask_of(box.clip)
+        if not info or nodegraph.constant_into(self._graph_of(box.clip), info[1], nodegraph.TEXT_SOCKET) is not None \
+                or curves.is_animated(src.get("content")):
+            return                                       # (words that a string node gives are edited there)
+        g = MaskGeo(mbox, src)
+        if not g.contains(m):
+            return
+        self.drag = None
+        self.close_text_box()
+        eid, nid = info[0], info[1]
+        self.text_box = TextBox(self, box.clip["id"], str(src.get("content", "")))
+        self.text_box.source = (eid, nid)
+        self.text_box.edited.connect(lambda cid, words: self.sourceTextEdited.emit(cid, eid, nid, words))
+        self.text_box.finished.connect(self.close_text_box)
+        self._place_text_box(g)
+        self.text_box.show()
+        self.text_box.setFocus()
+        self.text_box.selectAll()
+
+    def _graph_of(self, clip):
+        eid = self.mask_group[6:].partition(":")[0]
+        try:
+            return edit.holder(clip, "fxmix:" + eid).get("graph")
+        except (edit.EditError, KeyError):
+            return None
 
     def edit_text(self, box):
         self.close_text_box()
@@ -1864,6 +1956,7 @@ class TextBox(QPlainTextEdit):
     def __init__(self, parent, clip_id, words):
         super().__init__(parent)
         self.clip_id, self.original, self.sent = clip_id, words, words
+        self.source = None                      # (effect id, node id) when it types a text node's words
         self.setPlainText(words)
         self.setToolTip("Ctrl+Enter 或點別的地方完成，Esc 還原")
         self.setStyleSheet("QPlainTextEdit { background: rgba(20, 20, 24, 225); color: #ffffff;"

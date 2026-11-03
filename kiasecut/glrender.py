@@ -31,6 +31,7 @@ MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5
 MAX_LAYER = 8192
 TEX_CACHE = 160
 FREE_LAYER_BYTES = 384 << 20         # (the layers waiting to be drawn on again)
+GRAPH_CACHE_BYTES = 384 << 20        # (the pictures of node effects' costly nodes kept between frames: nodegraph.Cache)
 TEX_CACHE_BYTES = 768 << 20          # (of the card's memory: animated texts are a new picture every frame)
 
 VERTEX = """#version 330
@@ -435,6 +436,7 @@ class GLRenderer(render.Renderer):
         super().__init__(video_frame, cache_limit)
         self.gl = GL()
         self.gl_stills = {}            # still key -> Layer (static compounds)
+        self.graph_cache = nodegraph.Cache(GRAPH_CACHE_BYTES)
 
     def render(self, view, frame, width, height, alpha=False):
         """RGBA frame `frame` of a project-like view, drawn at width x height (RGBA8888); on a
@@ -442,6 +444,7 @@ class GLRenderer(render.Renderer):
         gl = self.gl
         with gl.ctx:                    # (another renderer's filters may have made theirs current)
             gl.new_frame()
+            self.graph_cache.frame()
             tgt = gl.layer(width, height, (0.0, 0.0, 0.0, 0.0 if alpha else 1.0))
             self.begin(view)
             self.names = rack.values(view, frame / view["fps"] * US)
@@ -887,11 +890,21 @@ class GLRenderer(render.Renderer):
                 return None
             give = (lambda: gl.release(pic[0])) if pic[1] else None
             return pic[0].tex, render.source_map(src, t, disp, world, cur.w, cur.h), give
+        def stamp(nid, paint=None, linked=()):
+            """What picture(nid, ...) gives, as something that is the same while the picture is (None: not known)."""
+            src = sources.get(nid)
+            if not (src and src.get("kind") == "shape"):
+                return None
+            got = self.shape_source(e, nid, src, t, disp, paint, linked)
+            if got is None and paint:
+                return ("none",)
+            pic, placed = got or (nodegraph.shape_image(src), src)
+            return pic.cacheKey(), render.source_map(placed, t, disp, world, cur.w, cur.h)
         errors = []
         try:
             tex, owner = nodegraph.evaluate(gl.fx, e["graph"], e["params"], cur.tex, cur.w, cur.h, lambda w, h: gl.layer(w, h, dtype="f2"), gl.release,
                                             t=t, duration=duration, fps=fps, unit=ppu, picture=picture, errors=errors,
-                                            viewer=self.editing, tap=self.thumb_tap(e))
+                                            viewer=self.editing, tap=self.thumb_tap(e), stamp=stamp, cache=self.graph_cache, scope=e["id"])
         except nodegraph.GraphError as exc:
             self.errors.append(f"節點效果：{exc}")
             return None

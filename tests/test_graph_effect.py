@@ -580,6 +580,50 @@ class GraphRenderTests(unittest.TestCase):
                 x, y = int(W * 0.27), int(H * 0.27)                          # just inside the box's corner
                 self.assertEqual(rgb(img, x, y), BLUE if corner else RED, shape)
 
+    def test_costly_nodes_keep_their_pictures_between_frames(self):
+        """On the GPU a node that does not read the clip (here the blur of a shape) is drawn once while its settings and the
+        shape stay the same - frames of any time, the same picture - and again when one changes."""
+        if not HAVE_GL:
+            self.skipTest("no OpenGL")
+        from kiasecut import glrender
+        r = glrender.GLRenderer()
+        ran = []
+        real = r.gl.fx.run_outputs
+
+        def counted(d, *a, **k):
+            ran.append(d.name)
+            return real(d, *a, **k)
+        r.gl.fx.run_outputs = counted
+
+        def build(e, color):
+            g = e["graph"]
+            n = ng.add_node(g, {"type": "source", "kind": "shape"}, base="shape")
+            b = ng.add_node(g, {"type": "filter", "ref": "builtin:blur"})
+            m = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/mix"})
+            ng.connect(g, n, b, "src")
+            ng.connect(g, "input", m, "src")
+            ng.connect(g, b, m, "b")
+            ng.connect(g, m, "output", "src")
+            e["params"].update(ng.default_params(g))
+            e.setdefault("sources", {})[n] = {"kind": "shape", "shape": "rectangle", "color": color,
+                                              "cx": 0.0, "cy": 0.0, "w": 0.5, "h": 0.5, "rotation": 0.0}
+            return e
+        v = self.view(lambda e: build(e, [0, 1, 0, 1]))
+        first = r.render(v, 0, W, H)
+        self.assertEqual(r.errors, [])
+        self.assertEqual(ran.count("模糊"), 1, ran)
+        for frame in (0, 20, 40):
+            self.assertEqual(r.render(v, frame, W, H), first)
+        self.assertEqual(ran.count("模糊"), 1, ran)                              # (the other frames drew no blur)
+        self.assertGreater(rgb(first, W // 2, H // 2)[1], 200)
+        e = v["tracks"][0]["clips"][0]["effects"][0]
+        src = next(iter(e["sources"].values()))
+        src["color"] = [0, 0, 1, 1]                                            # (the shape's colour changes: the blur is drawn again)
+        changed = r.render(v, 0, W, H)
+        self.assertEqual(rgb(changed, W // 2, H // 2)[:2], (0, 0))
+        self.assertGreater(rgb(changed, W // 2, H // 2)[2], 200)
+        self.assertEqual(ran.count("模糊"), 2, ran)
+
     def test_filter_node_chain_and_mix_amount(self):
         def build(e):
             g = e["graph"]

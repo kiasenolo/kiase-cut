@@ -265,7 +265,7 @@ def _profile(renderer, readers, log, i, spent, waited):
     if gl is not None:
         parts += [f"textures {len(gl.textures)} ({gl.tex_bytes >> 20} MB)",
                   f"layers {sum(len(v) for v in gl.free.values())} ({gl.free_bytes >> 20} MB)",
-                  f"gl stills {len(renderer.gl_stills)}"]
+                  f"gl stills {len(renderer.gl_stills)}", f"graph pictures {len(renderer.graph_cache.items)} ({renderer.graph_cache.bytes >> 20} MB)"]
     try:
         with open(log, "a", encoding="utf-8") as fh:
             fh.write(", ".join(parts) + "\n")

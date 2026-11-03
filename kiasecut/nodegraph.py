@@ -15,9 +15,12 @@ every filter is a node; "builtin:nodes/..." are the ones made for graphs). A lin
 of the node it ends at: "src" (the main picture), an @input name of the filter, or "param:<name>" (a
 colour or number parameter fed from the picture, as the effect's sources do: fx.py). Every socket
 carries a picture (premultiplied RGBA, the size of the layer): colours, numbers and masks are
-pictures too. Each filter node is drawn once (Engine.run_tex) into a texture of its own.
+pictures too. Each filter node is drawn once (Engine.run_tex) into a texture of its own; the costly ones that do not read the
+picture the effect was given keep it from one evaluation to the next (Cache), so a frame that changes nothing they depend on draws none of them.
 """
 import copy
+import hashlib
+import re
 
 from . import assets, curves, fx
 
@@ -887,15 +890,117 @@ def viewed(graph):
     return found
 
 
-def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False, tap=None):
+_SRC_WORDS = re.compile(r"\b(src|original|has_src|source|original_|src_px)\b")
+_TIME_WORDS = re.compile(r"\b(time|progress|frame|frame_phase)\b")
+HEAVY = 1200                                                # (a filter with more code than this - comments aside - or more passes is worth keeping)
+
+
+def traits(d):
+    """(reads the picture it is given, changes with the time, costs enough to keep its picture) of filter d, from its code
+    (its comments left out): what decides whether a node's picture can be reused (see Cache)."""
+    got = getattr(d, "_traits", None)
+    if got is None:
+        code = re.sub(r"//[^\n]*", "", d.code)
+        got = d._traits = (bool(_SRC_WORDS.search(code)), bool(_TIME_WORDS.search(code)), d.passes > 1 or len(code) > HEAVY)
+    return got
+
+
+def _frozen(v):
+    if isinstance(v, dict):
+        return tuple(sorted((k, _frozen(x)) for k, x in v.items()))
+    if isinstance(v, (list, tuple)):
+        return tuple(_frozen(x) for x in v)
+    return v.tobytes() if hasattr(v, "tobytes") else v
+
+
+def _digest(*parts):
+    return hashlib.blake2b(repr(_frozen(parts)).encode("utf-8", "replace"), digest_size=16).digest()
+
+
+class Cache:
+    """The pictures of the costly nodes of node effects (Cache.get / put: key (effect, node, output)), kept from one
+    evaluation to the next while nothing they depend on changes (their settings, the pictures that go into them, the
+    size, the time when the filter reads it) - as Blender's compositor keeps what is slow to make between its runs.
+    A picture is the cache's, not the pool's, until it is dropped: when the effect no longer draws it (sweep), or for
+    room (the ones longest unused go first, never one used by the evaluation going on) - limit bytes of them at most."""
+
+    def __init__(self, limit=384 << 20, keep=240):
+        self.limit, self.keep, self.bytes, self.serial, self.age, self.free = limit, keep, 0, 0, 0, None
+        self.items = {}                          # key -> [signature, item, the serial of the evaluation that used it last, the frame that did]; least recently used first
+
+    @staticmethod
+    def size(item):
+        return getattr(item, "bytes", item.w * item.h * 8)
+
+    def frame(self):
+        """A picture is being drawn: what none of the last `keep` frames used (an effect that was deleted, a place on the
+        timeline the playhead has left) goes."""
+        self.age += 1
+        for k in [k for k, e in self.items.items() if self.age - e[3] > self.keep]:
+            self._drop(k)
+
+    def begin(self, free):
+        """A new evaluation (free(item) gives a picture back)."""
+        self.serial += 1
+        self.free = free
+
+    def get(self, key, sig):
+        e = self.items.pop(key, None)
+        if e is None:
+            return None
+        self.items[key] = e                      # (most recently used last)
+        if e[0] != sig:
+            return None
+        e[2], e[3] = self.serial, self.age
+        return e[1]
+
+    def put(self, key, sig, item):
+        """True when the cache took item: it is the cache's from now on (nothing else gives it back)."""
+        size = self.size(item)
+        old = self.items.pop(key, None)
+        if old is not None:
+            self.bytes -= self.size(old[1])
+            self.free(old[1])
+        if size > self.limit:
+            return False
+        while self.bytes + size > self.limit:
+            victim = next((k for k, e in self.items.items() if e[2] < self.serial), None)
+            if victim is None:
+                return False
+            self._drop(victim)
+        self.items[key] = [sig, item, self.serial, self.age]
+        self.bytes += size
+        return True
+
+    def _drop(self, key):
+        e = self.items.pop(key)
+        self.bytes -= self.size(e[1])
+        self.free(e[1])
+
+    def sweep(self, scope):
+        """The effect scope has been drawn: what it did not use this time is not wanted any more."""
+        for k in [k for k, e in self.items.items() if k[0] == scope and e[2] != self.serial]:
+            self._drop(k)
+
+    def clear(self):
+        for k in list(self.items):
+            self._drop(k)
+
+
+def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False, tap=None,
+             stamp=None, cache=None, scope=None):
     """Work out graph's output (params: the effect's e["params"]) for the w x h texture src_tex (the effect's input)
     at clip time t.
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
     (texture, 3 x 3 map, done) of a source node's picture (see Engine.run_tex's sources) or None.
     viewer: show the picture a 預覽 node takes instead of the output (the editor's preview, not an export).
     tap(node id, output, texture): told every picture a node gives (the editor's thumbnails, see thumb_tap).
+    cache (a Cache), scope (the effect's id) and stamp(node id[, paint, linked]) -> something hashable that says what a source's
+    picture is (the same stamp: the same picture; None: it may be a different one every time, as a video's) keep the pictures of
+    the costly nodes that do not read the picture the effect was given (the clip) from one evaluation to the next: a node whose
+    picture is kept, or that only nodes with kept pictures need, is not drawn.
     Returns (texture, owner): owner is the object to give back to free when done with it (None: the
-    texture is src_tex itself); (None, None) when the graph has no output. Node errors go to errors."""
+    texture is src_tex itself, or the cache's); (None, None) when the graph has no output. Node errors go to errors."""
     errors = errors if errors is not None else []
     graph = flatten(graph)
     nodes, links = graph["nodes"], graph["links"]
@@ -923,12 +1028,68 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         order.append(n)
 
     visit(view[0] if view else out)                           # (a viewed node: the picture at it, not the output)
+    final = view or feed.get((out, "src"))
+    time = t / US
+    prog = min(1.0, max(0.0, t / max(1, duration)))
+    frame = max(0, round(t * fps / US))
+    settings = {}
+
+    def values(n, d):
+        got = settings.get(n)
+        if got is None:
+            got = settings[n] = {p.name: fx.uniform_value(p, params.get(expose_key(bound[(n, PARAM + p.name)]))
+                                                          if (n, PARAM + p.name) in bound else params.get(param_key(n, p.name)), t)
+                                 for p in d.params}
+        return got
+
+    # what each picture depends on (None: something that changes whatever is set), and which are kept from before
+    sigs = {}
+    if cache is not None:
+        cache.begin(free)
+        for n in order:
+            _sign(n, nodes[n], feed, sigs, values, w, h, unit, time, prog, frame, stamp, final)
+
+    def cached(f):
+        node = nodes[f[0]]
+        if cache is None or sigs.get(f) is None or node["type"] != FILTER or node.get("mute"):
+            return False
+        d = fx.get(node["ref"])
+        return not d.error and (traits(d)[2] or f == final)
+
+    hits, miss, needed = {}, set(), set()
+
+    def demand(f):
+        if f in hits or f in miss:
+            return
+        item = cache.get((scope, *f), sigs[f]) if cached(f) else None
+        if item is not None:
+            hits[f] = item
+            return
+        miss.add(f)
+        if f[0] in needed:
+            return
+        needed.add(f[0])
+        for (to, _s), g in list(feed.items()):
+            if to == f[0]:
+                demand(g)
+
+    if tap is not None:                                       # (every picture goes to the editor's thumbnails)
+        for (to, _s), f in feed.items():
+            if to in order and f[0] in order:
+                demand(f)
+    if final is not None:
+        demand(final)
+    if view is None:
+        needed.add(out)                                       # (the output node records the result)
+    if cache is not None:
+        for f in sigs:                                        # (what is not asked for this time stays while the graph is the same)
+            if cached(f):
+                cache.get((scope, *f), sigs[f])
     users = {}
     for (to, _s), f in feed.items():
-        if to in order and f[0] in order:
+        if to in needed and f[0] in needed:
             users[f] = users.get(f, 0) + 1
-    final = view or feed.get((out, "src"))
-    if final is not None:
+    if final is not None and final[0] in needed:
         users[final] = users.get(final, 0) + 1                # (the caller keeps the result)
     made = {}                  # node id -> (texture, owner)
     left = {}                  # id(owner) -> uses left of it
@@ -945,6 +1106,10 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             tap(n, o, tex)
         if owner is not None:
             left[id(owner)] = left.get(id(owner), 0) + users.get((n, o), 0)
+
+    def keep(n, o, dest):
+        """Whether the cache took the picture dest of node n's output o."""
+        return cache is not None and cached((n, o)) and cache.put((scope, n, o), sigs[(n, o)], dest)
 
     def take(n, socket):
         f = feed.get((n, socket))
@@ -963,10 +1128,11 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         tex, owner = made[f] if f in made else (empty(), None)
         put(n, tex, owner, o)
 
-    time = t / US
-    prog = min(1.0, max(0.0, t / max(1, duration)))
-    frame = max(0, round(t * fps / US))
+    for f, item in hits.items():
+        put(f[0], item.tex, None, f[1])
     for n in order:
+        if n not in needed:
+            continue
         node = nodes[n]
         kind = node["type"]
         if kind in (PARAMS, FRAME, VIEWER):
@@ -982,7 +1148,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             made[(n, "")] = made[f] if f in made else (src_tex, None)
         elif kind == SOURCE:
             def draw(pic, dest):
-                ptex, pmap, give = pic
+                ptex, pmap, give = pic[:3]
                 try:
                     _run(eng, fx.get(PICTURE), {"color": (0.0, 0.0, 0.0, 0.0)}, empty(), w, h, [(0, dest)], time, prog, frame, unit,
                          {"color": (ptex, pmap)}, None, errors)
@@ -1020,9 +1186,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                 for o in names:
                     alias(n, main, o)
             else:
-                vals = {p.name: fx.uniform_value(p, params.get(expose_key(bound[(n, PARAM + p.name)]))
-                                                 if (n, PARAM + p.name) in bound else params.get(param_key(n, p.name)), t)
-                        for p in d.params}
+                vals = dict(values(n, d))
                 srcs = {}
                 for p in d.params:
                     pt = take(n, PARAM + p.name)
@@ -1031,7 +1195,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                         if p.type == "float":
                             vals[p.name + fx.RANGE_MIN], vals[p.name + fx.RANGE_MAX] = fx.source_range({}, vals[p.name], t)
                 ins = {name: take(n, name) for name, _ in d.inputs}
-                wanted = [(k, o) for k, o in enumerate(names) if (n, o) in users]     # (an output nothing reads is not drawn)
+                wanted = [(k, o) for k, o in enumerate(names) if (n, o) in miss]     # (an output nothing reads, or has kept, is not drawn)
                 dests = [alloc(w, h) for _ in wanted]
                 if not _run(eng, d, vals, take(n, "src") or empty(), w, h, [(k, dest) for (k, _o), dest in zip(wanted, dests)], time,
                             prog, frame, unit, srcs, ins, errors, src_on=take(n, "src") is not None):
@@ -1040,14 +1204,64 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                         alias(n, main, o)
                 else:                                                 # (one run for all of them: see Engine.run_outputs)
                     for dest, (_k, o) in zip(dests, wanted):
-                        put(n, dest.tex, dest, o)
+                        put(n, dest.tex, None if keep(n, o, dest) else dest, o)
         done_with(n)
+    if cache is not None:
+        cache.sweep(scope)
     tex, owner = made[final] if final in made else made.get((out, ""), (src_tex, None))
     if blank[0] is not None:
         if tex is blank[0].tex:                               # (an empty graph: nothing drawn)
             return tex, blank[0]
         free(blank[0])
     return tex, owner
+
+
+def _sign(n, node, feed, sigs, values, w, h, unit, time, prog, frame, stamp, final):
+    """Set sigs[(n, output)] for node n: a digest of everything its picture depends on, or None when something it reads
+    changes whatever the settings say (the picture the effect was given, a source with no stamp)."""
+    kind = node["type"]
+    if kind == REROUTE:
+        f = feed.get((n, "src"))
+        sigs[(n, "")] = sigs.get(f) if f is not None else _digest("blank", w, h)
+    elif kind == SOURCE:
+        if stamp is None:
+            return
+        asset = is_asset(node)
+        linked = frozenset(part for part, sock, _l in ASSET_PAINTS if (n, sock) in feed) if asset else frozenset()
+        parts = [("source", node.get("kind")), stamp(n, None, linked) if asset else stamp(n), w, h, unit]
+        for part, sock, _label in ASSET_PAINTS:
+            if part in linked:
+                s = sigs.get(feed[(n, sock)])
+                if s is None:
+                    return
+                parts.append((part, stamp(n, part, linked), s))
+        sigs[(n, "")] = _digest(*parts)
+    elif kind == FILTER:
+        d = fx.get(node["ref"])
+        names = [o for o, _ in outputs(node)]
+        main = feed.get((n, "src"))
+        if node.get("mute") or d.error:                       # (the picture it is given goes on)
+            s = sigs.get(main) if main is not None else _digest("blank", w, h)
+            for o in names:
+                sigs[(n, o)] = s
+            return
+        reads, timed, _heavy = traits(d)
+        parts = [d.key(), w, h, unit, values(n, d), main is not None]
+        links = [(name, feed.get((n, name))) for name, _l in d.inputs]
+        links += [(p.name, feed.get((n, PARAM + p.name))) for p in d.params if p.type in fx.SOURCE_TYPES]
+        if reads:
+            links.append(("", main))
+        for name, f in links:
+            if f is not None:
+                s = sigs.get(f)
+                if s is None:
+                    return
+                parts.append((name, s))
+        if timed:
+            parts += [time, prog, frame]
+        base = _digest(*parts)
+        for o in names:
+            sigs[(n, o)] = _digest(base, o)
 
 
 def _run(eng, d, vals, src, w, h, outs, time, prog, frame, unit, sources, inputs, errors, src_on=True):

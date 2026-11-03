@@ -1,6 +1,8 @@
 // @filter [Blender] Texture / Brick
 // @category Blender
 // @description Blender 的磚塊紋理：一排排錯開的磚，磚縫可以調粗細和柔邊
+// @output color "顏色"
+// @output fac "數值"
 // @param color1 color #cc6644 "磚色 1"
 // @param color2 color #884433 "磚色 2"
 // @param mortar_color color #202020 "磚縫顏色"
@@ -15,13 +17,12 @@
 // @param squash_freq int 2 1 99 "壓縮間隔"
 // @param tex_scale float 5 0.001 1000 "比例"
 // @param offset vec2 0,0 -1000 1000 "位置"
-// @param amount float 1 0 1 "強度"
 
 // Source: the Brick Texture shader node of Blender (source/blender/gpu/shaders/material/
 // gpu_shader_material_tex_*.glsl), rewritten by hand for KiaseCut - the same pattern and parameters,
 // the cell/hash randomness is not bit-identical with Blender. The coordinates are Blender's image
-// coordinates (the long side -1..1, y up) times 比例. Where the clip is transparent it stays so;
-// 強度 mixes the pattern over the clip's own colours.
+// coordinates (the long side -1..1, y up) times 比例. Like Blender's, it
+// gives its two outputs and is drawn opaque (the picture it is put on only gives the size).
 // Blender: https://github.com/blender/blender
 // SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -38,10 +39,8 @@ vec3 pcg3(uvec3 v) {
     return vec3(v) * (1.0 / 4294967295.0);
 }
 vec3 hash2(vec2 c) { return pcg3(uvec3(uint(int(c.x) + 65536), uint(int(c.y) + 65536), 7u)); }
-vec4 finish(vec2 uv, vec3 rgb) {
-    vec4 c = src(uv);
-    vec3 base = c.a > 0.0 ? c.rgb / c.a : vec3(0.0);
-    return vec4(mix(base, rgb, amount) * c.a, c.a);
+vec4 finish(vec2 uv, vec3 first, vec3 second) {      // (the node's two outputs, in the order of @output; drawn opaque)
+    return vec4(output_index == 0 ? first : second, 1.0);
 }
 
 vec4 effect(vec2 uv) {
@@ -59,5 +58,5 @@ vec4 effect(vec2 uv) {
     else if (mortar_smooth == 0.0) mortar = 1.0;
     else mortar = smoothstep(0.0, mortar_smooth, 1.0 - min_dist / mortar_size);
     vec3 brick = mix(color1.rgb, color2.rgb, tint);
-    return finish(uv, mix(brick, mortar_color.rgb, mortar));
+    return finish(uv, mix(brick, mortar_color.rgb, mortar), vec3(mortar));
 }

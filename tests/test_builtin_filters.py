@@ -84,6 +84,30 @@ class BuiltinFilterTests(unittest.TestCase):
         self.assertEqual(high[25, 70, 3], 0)                              # (the highlights stay on it)
         self.assertGreater(image[25, 70, 0], 0)
 
+    def test_textures_give_fac_and_colour_outputs(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        h, w = 36, 64
+        rgba = np.zeros((h, w, 4), np.uint8)
+        for name, outs in (("noise", ["fac", "color"]), ("gradient", ["color", "fac"]), ("wave", ["color", "fac"]),
+                           ("magic", ["color", "fac"]), ("voronoi", ["distance", "color"]), ("checker", ["color", "fac"]),
+                           ("brick", ["color", "fac"])):
+            d = fx.get("builtin:blender_tex_" + name)
+            self.assertIsNone(d.error, name)
+            self.assertEqual([n for n, _ in d.outputs], outs, name)
+            self.assertFalse([p.name for p in d.params if p.name == "amount"], name)
+            vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+            with eng.ctx:
+                (ta, _), _, _ = eng._targets(w, h)
+                ta.write(rgba.tobytes())
+                pics = [np.frombuffer(eng.run_tex(d, vals, ta, w, h, output=i).read(), np.uint8).reshape(h, w, 4) for i in range(2)]
+            for pic in pics:
+                self.assertTrue((pic[..., 3] == 255).all(), name)              # (opaque, whatever it is put on)
+                self.assertGreater(pic[..., :3].std(), 3, name)                # (and a pattern)
+
     def test_white_noise_is_random_per_point(self):
         import numpy as np
         try:

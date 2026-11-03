@@ -1,8 +1,8 @@
 // @filter [Blender] Texture / Noise
 // @category Blender
 // @description Blender 的噪點紋理：分形柏林噪訊（細節、粗糙度、間隙度、扭曲），調 Z 可以讓它連貫地流動（3D 噪訊）
-// @param color1 color #000000 "顏色 1"
-// @param color2 color #ffffff "顏色 2"
+// @output fac "數值"
+// @output color "顏色"
 // @param z float 0 -1000 1000 "Z（3D 噪訊）"
 // @param detail float 2 0 15 "細節"
 // @param roughness float 0.5 0 1 "粗糙度"
@@ -11,13 +11,12 @@
 // @param normalize bool true "正規化"
 // @param tex_scale float 5 0.001 1000 "比例"
 // @param offset vec2 0,0 -1000 1000 "位置"
-// @param amount float 1 0 1 "強度"
 
 // Source: the Noise Texture shader node of Blender (source/blender/gpu/shaders/material/
 // gpu_shader_material_tex_*.glsl), rewritten by hand for KiaseCut - the same pattern and parameters,
 // the cell/hash randomness is not bit-identical with Blender. The coordinates are Blender's image
-// coordinates (the long side -1..1, y up) times 比例. Where the clip is transparent it stays so;
-// 強度 mixes the pattern over the clip's own colours.
+// coordinates (the long side -1..1, y up) times 比例. Like Blender's, it
+// gives its two outputs and is drawn opaque (the picture it is put on only gives the size).
 // Blender: https://github.com/blender/blender
 // SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -34,10 +33,8 @@ vec3 pcg3(uvec3 v) {
     return vec3(v) * (1.0 / 4294967295.0);
 }
 vec3 hash2(vec2 c) { return pcg3(uvec3(uint(int(c.x) + 65536), uint(int(c.y) + 65536), 7u)); }
-vec4 finish(vec2 uv, vec3 rgb) {
-    vec4 c = src(uv);
-    vec3 base = c.a > 0.0 ? c.rgb / c.a : vec3(0.0);
-    return vec4(mix(base, rgb, amount) * c.a, c.a);
+vec4 finish(vec2 uv, vec3 first, vec3 second) {      // (the node's two outputs, in the order of @output; drawn opaque)
+    return vec4(output_index == 0 ? first : second, 1.0);
 }
 
 // ---- Blender's perlin noise (as in replace_color.glsl) ---
@@ -156,5 +153,7 @@ vec4 effect(vec2 uv) {
                   fbm3(p + vec3(0.0, 0.0, 13.5), detail, roughness, lacunarity, true)) * distortion;
     }
     float f = fbm3(p, detail, roughness, lacunarity, normalize);
-    return finish(uv, mix(color1.rgb, color2.rgb, clamp(f, 0.0, 1.0)));
+    vec3 col = vec3(f, fbm3(p + vec3(23.1, 7.7, 41.3), detail, roughness, lacunarity, normalize),
+                    fbm3(p + vec3(11.9, 53.3, 5.7), detail, roughness, lacunarity, normalize));
+    return finish(uv, vec3(f), col);
 }

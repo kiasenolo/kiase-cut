@@ -1,11 +1,11 @@
 // @filter [Blender] Texture / Wave
 // @category Blender
 // @description Blender 的波浪紋理：條紋或同心圓，正弦、鋸齒、三角波，可加噪訊扭曲；調相位可以讓它移動
+// @output color "顏色"
+// @output fac "數值"
 // @param kind menu 條紋 "條紋|圓環" "類型"
 // @param direction menu X "X|Y|對角" "條紋方向"
 // @param profile menu 正弦 "正弦|鋸齒|三角" "波形"
-// @param color1 color #000000 "顏色 1"
-// @param color2 color #ffffff "顏色 2"
 // @param distortion float 0 -1000 1000 "扭曲"
 // @param detail_scale float 1 -1000 1000 "細節比例"
 // @param detail float 2 0 15 "細節"
@@ -14,13 +14,12 @@
 // @param z float 0 -1000 1000 "Z（3D）"
 // @param tex_scale float 5 0.001 1000 "比例"
 // @param offset vec2 0,0 -1000 1000 "位置"
-// @param amount float 1 0 1 "強度"
 
 // Source: the Wave Texture shader node of Blender (source/blender/gpu/shaders/material/
 // gpu_shader_material_tex_*.glsl), rewritten by hand for KiaseCut - the same pattern and parameters,
 // the cell/hash randomness is not bit-identical with Blender. The coordinates are Blender's image
-// coordinates (the long side -1..1, y up) times 比例. Where the clip is transparent it stays so;
-// 強度 mixes the pattern over the clip's own colours.
+// coordinates (the long side -1..1, y up) times 比例. Like Blender's, it
+// gives its two outputs and is drawn opaque (the picture it is put on only gives the size).
 // Blender: https://github.com/blender/blender
 // SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -37,10 +36,8 @@ vec3 pcg3(uvec3 v) {
     return vec3(v) * (1.0 / 4294967295.0);
 }
 vec3 hash2(vec2 c) { return pcg3(uvec3(uint(int(c.x) + 65536), uint(int(c.y) + 65536), 7u)); }
-vec4 finish(vec2 uv, vec3 rgb) {
-    vec4 c = src(uv);
-    vec3 base = c.a > 0.0 ? c.rgb / c.a : vec3(0.0);
-    return vec4(mix(base, rgb, amount) * c.a, c.a);
+vec4 finish(vec2 uv, vec3 first, vec3 second) {      // (the node's two outputs, in the order of @output; drawn opaque)
+    return vec4(output_index == 0 ? first : second, 1.0);
 }
 
 // ---- Blender's perlin noise (as in replace_color.glsl) ---
@@ -163,5 +160,5 @@ vec4 effect(vec2 uv) {
     if (profile == 0) w = 0.5 + 0.5 * sin(n - 1.57079632679);
     else if (profile == 1) { n /= 6.28318530718; w = n - floor(n); }
     else { n /= 6.28318530718; w = abs(n - floor(n + 0.5)) * 2.0; }
-    return finish(uv, mix(color1.rgb, color2.rgb, w));
+    return finish(uv, vec3(w), vec3(w));
 }

@@ -458,6 +458,7 @@ class MainWindow(QMainWindow):
         nd.rerouteRequested.connect(self.on_node_reroute)
         nd.mediaDropped.connect(self.on_node_media)
         nd.frameEdited.connect(self.on_node_frame)
+        nd.widthEdited.connect(self.on_node_width)
         nd.pasteRequested.connect(self.on_node_paste)
         nd.viewerRequested.connect(self.on_node_viewer)
         nd.groupRequested.connect(self.on_node_group)
@@ -5528,6 +5529,11 @@ class MainWindow(QMainWindow):
         cid = self.node_clip()
         if cid:
             self.apply("編輯框架", lambda lvl: edit.set_graph_frame(lvl, cid, eid, nid, **change))
+
+    def on_node_width(self, eid, nid, width):
+        cid = self.node_clip()
+        if cid:
+            self.apply("調整節點寬度", lambda lvl: edit.set_graph_node_width(lvl, cid, eid, nid, width))
 
     def on_node_reroute(self, eid, spots):
         cid = self.node_clip()

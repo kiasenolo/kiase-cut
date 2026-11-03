@@ -24,6 +24,7 @@ from .. import assets, curves, fx, nodegraph as ng
 from .wheel import pinch as wheel_pinch
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
+MIN_WIDTH, EDGE = 140.0, 7.0                              # (narrowest node; the strip of its right edge that widens it)
 SOCKET_R = 5.5
 HIT_R = 9.0
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
@@ -79,6 +80,9 @@ class NodeItem(QGraphicsItem):
         self.rows = []
         self.linked = {l["socket"] for l in editor.graph["links"] if l["to"] == nid}
         self.drag = None                                    # a field being dragged: {...}
+        self.w = max(MIN_WIDTH, float(node.get("width", WIDTH)))
+        self.sizing = None                                  # while widened: (scene x at the press, width then)
+        self.setAcceptHoverEvents(True)
         self._layout()
         if node["type"] in ("groupin", "groupout"):          # (drawn from the group, not nodes of the graph)
             self.setFlags(QGraphicsItem.ItemSendsGeometryChanges)
@@ -164,7 +168,7 @@ class NodeItem(QGraphicsItem):
             r = next((r for r in self.rows if r["kind"] in ("expose", "ghost") and (r["p"]["name"] if r["p"] else GHOST) == out), None)
         else:
             r = next((r for r in self.rows if (r["kind"] == "out" and (r["p"] or "") == out) or (r["kind"] == "ghost" and out == GHOST)), None)
-        return self.mapToScene(QPointF(WIDTH, (r["y"] if r else HEAD + PAD) + ROW / 2))
+        return self.mapToScene(QPointF(self.w, (r["y"] if r else HEAD + PAD) + ROW / 2))
 
     def outputs(self):
         """[(output name, scene point)]: one for a picture, one for each parameter (and the empty one) of a 參數輸入."""
@@ -185,14 +189,14 @@ class NodeItem(QGraphicsItem):
         return super().itemChange(change, value)
 
     def boundingRect(self):
-        return QRectF(-SOCKET_R - 1, -1, WIDTH + SOCKET_R * 2 + 2, self.h + 2)
+        return QRectF(-SOCKET_R - 1, -1, self.w + SOCKET_R * 2 + 2, self.h + 2)
 
     # -- fields ---------------------------------------------------------------------------------------
     def field_rect(self, r, cell=0, cells=1):
         if r["kind"] == "plot":
-            return QRectF(10, r["y"] + 2, WIDTH - 20, r["h"] - 4)
-        x0 = WIDTH * LABEL_W
-        w = (WIDTH - 10 - x0) / cells
+            return QRectF(10, r["y"] + 2, self.w - 20, r["h"] - 4)
+        x0 = self.w * LABEL_W
+        w = (self.w - 10 - x0) / cells
         return QRectF(x0 + cell * w + (2 if cell else 0), r["y"] + 3, w - (2 if cells > 1 and cell < cells - 1 else 0), ROW - 6)
 
     def has_field(self, r):
@@ -222,12 +226,12 @@ class NodeItem(QGraphicsItem):
         field_bg = base.darker(150)
         p.setRenderHint(QPainter.Antialiasing)
         body = QPainterPath()
-        body.addRoundedRect(QRectF(0, 0, WIDTH, self.h), 6, 6)
+        body.addRoundedRect(QRectF(0, 0, self.w, self.h), 6, 6)
         p.fillPath(body, base)
         head = QPainterPath()
         head.setFillRule(Qt.WindingFill)
-        head.addRoundedRect(QRectF(0, 0, WIDTH, HEAD), 6, 6)
-        head.addRect(QRectF(0, HEAD / 2, WIDTH, HEAD / 2))
+        head.addRoundedRect(QRectF(0, 0, self.w, HEAD), 6, 6)
+        head.addRect(QRectF(0, HEAD / 2, self.w, HEAD / 2))
         muted = bool(self.node.get("mute"))
         col = head_colour(self.node)
         p.fillPath(head.intersected(body), col.darker(160) if muted else col)
@@ -237,29 +241,29 @@ class NodeItem(QGraphicsItem):
         f.setBold(True)
         p.setFont(f)
         p.setPen(QColor("white") if not muted else QColor(255, 255, 255, 110))
-        p.drawText(QRectF(8, 0, WIDTH - 16, HEAD), Qt.AlignVCenter | Qt.AlignLeft,
+        p.drawText(QRectF(8, 0, self.w - 16, HEAD), Qt.AlignVCenter | Qt.AlignLeft,
                    self.title + ("（停用）" if muted else ""))
         viewed = self.editor.graph.get("viewer") or {}
         if viewed.get("node") == self.nid:                  # the node the preview shows (Ctrl + Shift + click)
             p.setPen(QColor("#ffe27a"))
             tag = "◉ 預覽" + (f"：{dict(ng.outputs(self.node)).get(viewed.get('out') or '', '')}" if len(ng.outputs(self.node)) > 1 else "")
-            p.drawText(QRectF(8, 0, WIDTH - 16, HEAD), Qt.AlignVCenter | Qt.AlignRight, tag)
+            p.drawText(QRectF(8, 0, self.w - 16, HEAD), Qt.AlignVCenter | Qt.AlignRight, tag)
         f.setBold(False)
         p.setFont(f)
         vals = self.editor.node_values(self.nid)
         for r in self.rows:
             y, kind = r["y"], r["kind"]
-            row = QRectF(10, y, WIDTH - 20, ROW)
+            row = QRectF(10, y, self.w - 20, ROW)
             p.setPen(text)
             if kind == "out":
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
-                self._socket(p, QPointF(WIDTH, y + ROW / 2), SOCKET_COLORS["image"])
+                self._socket(p, QPointF(self.w, y + ROW / 2), SOCKET_COLORS["image"])
                 continue
             if kind in ("expose", "ghost"):
                 ghost = kind == "ghost"
                 p.setPen(QColor(text.red(), text.green(), text.blue(), 120 if ghost else 255))
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
-                at = QPointF(WIDTH, y + ROW / 2)
+                at = QPointF(self.w, y + ROW / 2)
                 if ghost:
                     p.setPen(QPen(QColor("#a0a0a8"), 1, Qt.DashLine))
                     p.setBrush(Qt.NoBrush)
@@ -272,13 +276,13 @@ class NodeItem(QGraphicsItem):
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignLeft, ("▾ " if r["panel"] else "▸ ") + r["label"])
                 continue
             if kind == "thumb":
-                self._thumb(p, QRectF(10, y + 2, WIDTH - 20, r["h"] - 4), self.editor.thumb_image(self.nid, r["p"]))
+                self._thumb(p, QRectF(10, y + 2, self.w - 20, r["h"] - 4), self.editor.thumb_image(self.nid, r["p"]))
                 continue
             dim = kind == "param" and not vals.enabled(r["p"])
             p.setPen(QColor(text.red(), text.green(), text.blue(), 110 if dim else 255))
             linked = r["socket"] and r["socket"] in self.linked
-            p.drawText(QRectF(10, y, WIDTH * LABEL_W - 6, ROW) if self.has_field(r) else row, Qt.AlignVCenter | Qt.AlignLeft,
-                       fm_elide(p, r["label"], WIDTH * LABEL_W - 8 if self.has_field(r) else WIDTH - 20))
+            p.drawText(QRectF(10, y, self.w * LABEL_W - 6, ROW) if self.has_field(r) else row, Qt.AlignVCenter | Qt.AlignLeft,
+                       fm_elide(p, r["label"], self.w * LABEL_W - 8 if self.has_field(r) else self.w - 20))
             if r["socket"]:
                 self._socket(p, QPointF(0, y + ROW / 2), SOCKET_COLORS["image"] if kind == "image" else
                              SOCKET_COLORS.get(r["p"].type if r["p"].type in ("float", "color") else "other"))
@@ -318,7 +322,7 @@ class NodeItem(QGraphicsItem):
                 p.setPen(text)
                 p.drawText(box, Qt.AlignCenter, number_text(q, (list(v) + [0.0] * 3)[i]))
         elif q.type == "bool":
-            box = QRectF(WIDTH - 10 - ROW + 4, r["y"] + 4, ROW - 8, ROW - 8)
+            box = QRectF(self.w - 10 - ROW + 4, r["y"] + 4, ROW - 8, ROW - 8)
             self._box(p, box, bg)
             if v:
                 p.setPen(QPen(QColor("#f0a030"), 2))
@@ -393,7 +397,24 @@ class NodeItem(QGraphicsItem):
         p.drawEllipse(at, SOCKET_R, SOCKET_R)
 
     # -- mouse: a field takes the press (the rest of the node moves it) ------------------------------------
+    def edge_at(self, pos):
+        return self.has_edge() and pos.x() >= self.w - EDGE and pos.y() > HEAD
+
+    def has_edge(self):
+        return bool(self.flags() & QGraphicsItem.ItemIsMovable)
+
+    def hoverMoveEvent(self, e):
+        self.setCursor(Qt.SizeHorCursor if self.edge_at(e.pos()) else Qt.ArrowCursor)
+        super().hoverMoveEvent(e)
+
     def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and self.edge_at(e.pos()):
+            if not self.isSelected():
+                self.scene().clearSelection()
+                self.setSelected(True)
+            self.sizing = (e.scenePos().x(), self.w)
+            e.accept()
+            return
         hit = self.field_at(e.pos()) if e.button() == Qt.LeftButton else None
         if hit is None:
             super().mousePressEvent(e)
@@ -407,6 +428,14 @@ class NodeItem(QGraphicsItem):
         e.accept()
 
     def mouseMoveEvent(self, e):
+        if self.sizing:
+            at, w0 = self.sizing
+            self.prepareGeometryChange()
+            self.w = max(MIN_WIDTH, round(w0 + e.scenePos().x() - at))
+            self.update()
+            for view in self.scene().views():
+                view.reroute()
+            return
         d = self.drag
         if d is None:
             super().mouseMoveEvent(e)
@@ -430,6 +459,11 @@ class NodeItem(QGraphicsItem):
         self.editor.set_number(self.nid, r, d["cell"], value, final=False)
 
     def mouseReleaseEvent(self, e):
+        size, self.sizing = self.sizing, None
+        if size:
+            if self.w != size[1]:
+                self.editor.widthEdited.emit(self.editor.eid, self.nid, self.w)
+            return
         d, self.drag = self.drag, None
         if d is None:
             super().mouseReleaseEvent(e)
@@ -978,6 +1012,7 @@ class NodeEditor(QWidget):
     groupUnplugRequested = Signal(str, str, str, str, object)  # effect id, group, member, socket, group output name (None: an input)
     viewerRequested = Signal(str, str, str)                 # effect id, node, output ("" node: the effect's output again)
     pasteRequested = Signal(str, dict, float, float)        # effect id, nodegraph.pack, x, y: nodes pasted
+    widthEdited = Signal(str, str, float)                   # effect id, node id, its new width
     frameEdited = Signal(str, str, dict)                    # effect id, frame id, what changed (label / text / color / w / h)
     duplicateRequested = Signal(str, list)                  # effect id, node ids
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through

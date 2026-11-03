@@ -2372,6 +2372,15 @@ def set_graph_frame(proj, clip_id, effect_id, nid, label=None, text=None, color=
         node["h"] = max(40.0, float(h))
 
 
+def set_graph_node_width(proj, clip_id, effect_id, nid, width):
+    """How wide a node's box is drawn in the editor (nodes.MIN_WIDTH and up)."""
+    _, c = find(proj, clip_id)
+    node = _graph(c, effect_id)[1]["nodes"].get(nid)
+    if node is None:
+        raise EditError("沒有這個節點")
+    node["width"] = max(140.0, float(width))
+
+
 def set_graph_viewer(proj, clip_id, effect_id, nid, out=""):
     """The node the editor's preview shows the picture of (Ctrl+Shift+click), and which of its outputs; None: the
     effect's output again. Exports never use it."""

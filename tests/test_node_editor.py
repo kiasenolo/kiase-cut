@@ -606,6 +606,28 @@ class NodeEditorTests(unittest.TestCase):
         ed.view.event(e)
         self.assertFalse(e.isAccepted())
 
+    def test_edge_widens_a_node(self):
+        ed = self.make()
+        got = []
+        ed.widthEdited.connect(lambda eid, nid, w: got.append((nid, w)))
+        it = ed.view.items_by_id["output"]
+        w0 = it.w
+        v = ed.view
+        a = it.mapToScene(QPointF(w0 - 3, 40))
+        self.drag(ed, a, a + QPointF(60, 0))
+        self.assertEqual(len(got), 1)
+        self.assertAlmostEqual(it.w, w0 + 60, delta=3)           # (the view's zoom rounds the drag)
+        self.assertEqual(got[0], ("output", it.w))
+        b = it.mapToScene(QPointF(it.w - 3, 40))
+        self.drag(ed, b, b - QPointF(500, 0))
+        self.assertEqual(it.w, 140.0)                            # (narrowest)
+
+    def test_width_is_kept(self):
+        def g(e):
+            e["graph"]["nodes"]["output"]["width"] = 300.0
+        ed = self.make(g)
+        self.assertEqual(ed.view.items_by_id["output"].w, 300.0)
+
     def test_a_selects_all(self):
         ed = self.make()
         QTest.keyClick(ed.view, Qt.Key_A)

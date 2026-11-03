@@ -552,16 +552,15 @@ def stroked(p):
 def overflow(p):
     """How far (asset px) the outline of p (as at() gives it) reaches past its w x h frame:
     all of it outside, half of it on the edge; sharp corners with miter joins reach further."""
-    soft = 3.0 * fade_sigma(p)                     # (a faded edge spreads past the frame too)
     if not stroked(p) or p.get("stroke_align") == "inside":
-        return soft
+        return 0.0
     s = p["stroke"] * (1.0 if p["stroke_align"] == "outside" else 0.5)
-    return s * (MITER_LIMIT if p.get("join") == "miter" else 1.0) + soft
+    return s * (MITER_LIMIT if p.get("join") == "miter" else 1.0)
 
 
-def fade_sigma(p):
-    """The blur (asset px, a Gaussian's deviation) that fades the edge of p: 邊緣淡出 % of a quarter of its short side."""
-    return max(0.0, float(p.get("fade", 0) or 0)) / 100.0 * min(p["w"], p["h"]) * 0.25
+def fade_distance(p):
+    """How far (asset px) inside its edge the fill of p fades in: 邊緣淡出 % of half its short side (100: to the middle)."""
+    return max(0.0, float(p.get("fade", 0) or 0)) / 100.0 * min(p["w"], p["h"]) / 2
 
 
 def _num(x):
@@ -719,6 +718,16 @@ def _shape(p, w, h):
 
     if p.get("fill", True) and d:
         put("fill", lambda prop, v, op: f'<path d="{d}" fill-rule="evenodd" {attr("fill", v, op)}/>')
+        reach = fade_distance(p)
+        if reach >= 0.5:                           # 邊緣淡出: the fill turns from clear at the edge to full, over `reach`, as a vignette
+            # (the shape's own alpha blurred is its distance from the edge: 0.5 at the edge, 0.98 at 2 sigma inside;
+            # that, stretched to 0 - 1, cuts the fill; the outline above it stays whole)
+            k = 2.1
+            defs += (f'<filter id="fade" filterUnits="userSpaceOnUse" {box}>'
+                     f'<feGaussianBlur in="SourceAlpha" stdDeviation="{reach / 2:.2f}" result="b"/>'
+                     f'<feColorMatrix in="b" type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 {k} {-0.5 * k:.2f}" result="m"/>'
+                     f'<feComposite in="SourceGraphic" in2="m" operator="in"/></filter>')
+            body[:] = ['<g filter="url(#fade)">'] + body + ["</g>"]
     if stroked(p) and d:
         align, s = p.get("stroke_align", "inside"), p["stroke"]
         line = f'fill="none" stroke-linejoin="{p.get("join", "miter")}" stroke-miterlimit="{MITER_LIMIT}"'
@@ -733,10 +742,6 @@ def _shape(p, w, h):
                          f'<path d="{d}" fill-rule="evenodd" fill="#000"/></mask>')
             put("stroke", lambda prop, v, op: f'<path d="{d}" {line} {attr("stroke", v, op)} '
                                               f'stroke-width="{2 * s:g}" mask="url(#s)"/>')
-    sigma = fade_sigma(p)
-    if sigma > 0:                                  # 邊緣淡出: the whole shape blurred (the room around it takes the spread)
-        defs += (f'<filter id="fade" filterUnits="userSpaceOnUse" {box}><feGaussianBlur stdDeviation="{sigma:.2f}"/></filter>')
-        body = [f'<g filter="url(#fade)">'] + body + ["</g>"]
     return _svg(w, h, "\n".join(body), defs, pad)
 
 

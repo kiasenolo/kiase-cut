@@ -35,7 +35,7 @@ class AssetTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def test_edge_fade_blurs_every_basic_shape(self):
+    def test_edge_fade_goes_inward_on_every_basic_shape(self):
         from PySide6.QtCore import QByteArray
         from PySide6.QtGui import QImage, QPainter
         from PySide6.QtSvg import QSvgRenderer
@@ -44,27 +44,23 @@ class AssetTests(unittest.TestCase):
             self.assertIsNotNone(a, key)
             p = assets.at(assets.make(a, "#ffffff", "#000000", 200, 200), 0)
             self.assertIn("fade", assets.fields_of(p["family"]), key)
-            self.assertNotIn("feGaussianBlur", assets.svg(p), key)
-            self.assertEqual(assets.overflow(p), 0.0)
+            self.assertNotIn("feComposite", assets.svg(p), key)
             p["fade"] = 40
-            text = assets.svg(p)
-            self.assertIn("feGaussianBlur", text, key)
-            self.assertGreater(assets.overflow(p), 0.0)                       # (the faded edge reaches past the frame)
+            self.assertIn("feComposite", assets.svg(p), key)
+            self.assertEqual(assets.overflow(p), 0.0, key)                    # (inward: the frame stays the same)
         p = assets.at(assets.make(assets.get("shape.rect"), "#ffffff", "#000000", 200, 200), 0)
         p["fade"] = 40
-        pad = assets.overflow(p)
         r = QSvgRenderer(QByteArray(assets.svg(p).encode("utf-8")))
-        size = 400
-        im = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+        im = QImage(400, 400, QImage.Format_ARGB32_Premultiplied)
         im.fill(0)
         painter = QPainter(im)
         r.render(painter)
         painter.end()
-        mid = size // 2
-        edge = int(pad * size / (p["w"] + 2 * pad))                             # the frame's left edge
-        self.assertGreater(im.pixelColor(mid, mid).alpha(), 250)               # solid inside
-        self.assertTrue(40 < im.pixelColor(edge, mid).alpha() < 215)           # half way at the edge: faded
-        self.assertLess(im.pixelColor(2, mid).alpha(), 30)                     # gone further out
+        row = [im.pixelColor(x, 200).alpha() for x in range(0, 200, 5)]
+        self.assertGreater(row[-1], 250)                                       # solid in the middle
+        self.assertLess(row[0], 30)                                            # clear at the edge
+        self.assertEqual(row, sorted(row))                                     # and a steady rise between
+        self.assertTrue(row[len(row) // 4] < 250)
 
     def test_every_preset_is_a_picture(self):
         for a in assets.ASSETS:

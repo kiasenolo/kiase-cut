@@ -478,6 +478,29 @@ class BuiltinFilterTests(unittest.TestCase):
         names = {fx.get(ref).name for ref in fx.builtin_refs()}
         self.assertTrue({"Transform", "Scale", "Translate"}.issubset(names))
 
+    def test_blur_kernel_is_blenders(self):
+        """A white line blurred: tent weights (size - distance) / size^2 across it, a flat box, a radial kernel when not
+        separable (as Blender 5.2's Blur node)."""
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        d = fx.get("builtin:blur")
+        base = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        line = np.zeros((41, 41, 4), np.uint8)
+        line[..., 3] = 255
+        line[20, :, :3] = 255
+        tent = {**base, "radius": 10.0, "link_xy": True, "kind": 1, "separable": True}
+        col = self.eng.run(d, tent, line)[20:31, 20, 0] / 255.0
+        self.assertTrue(np.allclose(col, [(10 - i) / 100 for i in range(11)], atol=1.5 / 255), col)
+        dot = np.zeros((41, 41, 4), np.uint8)
+        dot[..., 3] = 255
+        dot[20, 20, :3] = 255
+        flat = self.eng.run(d, {**tent, "radius": 3.0, "kind": 0}, dot)[..., 0].astype(float)
+        self.assertTrue((flat[17:24, 17:24] == flat[20, 20]).all())                   # 7 x 7, all the same
+        self.assertEqual(flat[16, 20], 0.0)
+        disc = self.eng.run(d, {**tent, "radius": 4.0, "kind": 0, "separable": False}, dot)[..., 0]
+        self.assertGreater(disc[20, 24], 0)                                            # a radial kernel: on the radius ...
+        self.assertEqual(disc[24, 24], 0)                                              # ... but not in the corner of the box
+
     def test_seed_uses_subsecond_timestamp(self):
         ref = "builtin:light_leak"
         with patch("kiasecut.fx.time.time_ns", side_effect=(1_234_567_890_123, 1_234_567_890_456)):

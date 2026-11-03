@@ -72,19 +72,19 @@ class EffectSwapTests(unittest.TestCase):
         self.assertEqual(e["params"]["kind"]["keys"][0][1], "B")
 
     def test_not_lined_up(self):
-        self.assertFalse(edit.swap_filter(self.p, "c1", self.eid, "builtin:blur"))     # one parameter, not five
+        self.assertFalse(edit.swap_filter(self.p, "c1", self.eid, "builtin:posterize"))     # one parameter, not five
         e = effect_of(self.p, "c1")
-        self.assertEqual((e["filter"], e["params"], e["mask"]), ("builtin:blur", {"radius": 10.0}, {"kind": "circle"}))
+        self.assertEqual((e["filter"], e["params"], e["mask"]), ("builtin:posterize", {"levels": 8.0}, {"kind": "circle"}))
         bool_first = self.filter_file("b.glsl", '// @param on bool true\n' + "\n".join(
             f"// @param p{i} float 0" for i in range(4)))
         e2 = edit.put_effect(self.p, "c2", LENS)
         self.assertFalse(edit.swap_filter(self.p, "c2", e2["id"], bool_first))         # menu vs bool: not alike
 
     def test_dropped_effect_settings_when_not_lined_up(self):
-        blur = edit.put_effect(self.p, "c2", "builtin:blur")
-        blur["params"]["radius"] = 33.0
-        self.assertFalse(edit.swap_filter(self.p, "c1", self.eid, blur))
-        self.assertEqual(effect_of(self.p, "c1")["params"], {"radius": 33.0})
+        post = edit.put_effect(self.p, "c2", "builtin:posterize")
+        post["params"]["levels"] = 33.0
+        self.assertFalse(edit.swap_filter(self.p, "c1", self.eid, post))
+        self.assertEqual(effect_of(self.p, "c1")["params"], {"levels": 33.0})
 
     def test_alt_drop_in_the_panel(self):
         edit.put_effect(self.p, "c1", "builtin:sharpen")

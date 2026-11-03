@@ -14,6 +14,11 @@
 // @show c op == 乘加|比較|平滑最小|平滑最大|迴繞
 // @show value3 op == 乘加|比較|平滑最小|平滑最大|迴繞
 
+// Reimplementation of Blender's Math compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec3 safe_div(vec3 a, vec3 b) { return mix(vec3(0.0), a / max(abs(b), vec3(1e-30)) * sign(b), notEqual(b, vec3(0.0))); }
 
 vec3 power(vec3 a, vec3 b) {

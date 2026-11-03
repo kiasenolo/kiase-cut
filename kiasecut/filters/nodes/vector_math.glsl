@@ -16,6 +16,11 @@
 // @show vector_c op == 乘加|朝向|迴繞
 // @show vec_scale op == 折射|縮放
 
+// Reimplementation of Blender's Vector Math compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec3 safe_div(vec3 a, vec3 b) { return mix(vec3(0.0), a / max(abs(b), vec3(1e-30)) * sign(b), notEqual(b, vec3(0.0))); }
 // Blender's Power: a negative base with a fractional exponent gives minus the power of its size; no number (0 to a negative power) is 0
 float vpow(float a, float b) {

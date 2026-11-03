@@ -5,6 +5,11 @@
 // @output seconds "秒"
 // @output progress "片段進度"
 
+// Reimplementation of Blender's Scene Time compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec4 effect(vec2 uv) {
     float v = output_index == 0 ? float(frame) : output_index == 1 ? time : progress;
     return vec4(vec3(v), 1.0);

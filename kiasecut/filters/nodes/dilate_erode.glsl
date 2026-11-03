@@ -12,6 +12,11 @@
 // @enable falloff_size kind == 閾值
 // @enable falloff kind == 羽化
 
+// Reimplementation of Blender's Dilate/Erode compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Blender 5.2 (compositor_morphological_step / _distance / _distance_threshold / _distance_feather.glsl) rewritten for KiaseCut;
 // checked against its results on masks (steps, distance, threshold with its falloff, feather with every falloff curve, and erode).
 // Differences: Distance uses a square window of the same width on the two sides (Blender's loop reads the other side's end,

@@ -4,6 +4,11 @@
 // @source "溫度" temperature
 // @param temperature float 6500 0 20000 "溫度 (K)"
 
+// Reimplementation of Blender's Blackbody compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Blender's own fit of the blackbody colour (colorspace code of Blender 5.2): per range of temperature R and G are a / T + b T + c,
 // B a cubic, found back from Blender's results (within 5e-6 at every 25 K from 700 to 12500).
 const int SEGMENTS = 7;

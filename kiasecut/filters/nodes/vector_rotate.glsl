@@ -18,6 +18,11 @@
 // @show rotation kind == 歐拉 XYZ
 // @show vec_rotation kind == 歐拉 XYZ
 
+// Reimplementation of Blender's Vector Rotate compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Checked against Blender 5.2 (Rodrigues' rotation about the axis; Euler XYZ = Rz Ry Rx, the inverse is the transpose).
 
 vec3 rodrigues(vec3 v, vec3 axis, float ang) {

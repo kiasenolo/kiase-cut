@@ -6,6 +6,11 @@
 // @param curve curve 0,0,1,1 "曲線"
 // @param fac float 1 0 1 "係數"
 
+// Reimplementation of Blender's Float Curve compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Curve evaluation as Blender's Float Curve: inside 0 - 1 the curve, outside it the line of the end's slope (the end slope is
 // read from the curve's samples).
 

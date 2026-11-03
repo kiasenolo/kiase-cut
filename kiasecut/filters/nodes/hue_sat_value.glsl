@@ -7,6 +7,11 @@
 // @param val float 1 0 2 "明度"
 // @param fac float 1 0 1 "係數"
 
+// Reimplementation of Blender's Hue/Saturation/Value compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec3 rgb_to_hsv(vec3 c) {
     float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), d = mx - mn;
     float h = 0.0;

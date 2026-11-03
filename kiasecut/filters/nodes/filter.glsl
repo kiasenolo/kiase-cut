@@ -5,6 +5,11 @@
 // @param kind menu 柔化 "柔化|方塊銳利化|菱形銳利化|拉普拉斯|索伯|普魯伊特|基爾希|陰影" "類型"
 // @param fac float 1 0 1 "係數"
 
+// Reimplementation of Blender's Filter compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Kernels and combinations as the Filter node of Blender 5.2 gives them (checked in every type on random pictures: within
 // 1e-6); the picture's edge is repeated outwards. All four channels (premultiplied) go through the kernel, except in the
 // edge types, which leave the alpha alone.

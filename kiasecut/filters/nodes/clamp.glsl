@@ -6,6 +6,11 @@
 // @param lo float 0 -1000 1000 "最小"
 // @param hi float 1 -1000 1000 "最大"
 
+// Reimplementation of Blender's Clamp compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec4 effect(vec2 uv) {
     float a = dot(src(uv).rgb, vec3(0.2126, 0.7152, 0.0722));        // (a float input: the picture's brightness over black)
     float r = mode == 0 ? min(max(a, lo), hi) : clamp(a, min(lo, hi), max(lo, hi));

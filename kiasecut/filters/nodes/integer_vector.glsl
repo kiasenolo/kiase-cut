@@ -5,6 +5,11 @@
 // @param y int 0 -1000000 1000000 "Y"
 // @param z int 0 -1000000 1000000 "Z"
 
+// Reimplementation of Blender's Integer Vector compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec4 effect(vec2 uv) {
     return vec4(float(x), float(y), float(z), 1.0);
 }

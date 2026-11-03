@@ -7,6 +7,11 @@
 // @param curve_z curve 0,0,1,1 "Z 曲線"
 // @param fac float 1 0 1 "係數"
 
+// Reimplementation of Blender's Vector Curves compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 float through(float c[128], float x) {
     if (x < 0.0) return c[0] + x * (c[1] - c[0]) * 127.0;
     if (x > 1.0) return c[127] + (x - 1.0) * (c[127] - c[126]) * 127.0;

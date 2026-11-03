@@ -28,6 +28,11 @@
 // @show steps_v data_type == 向量
 // @show steps_v mode == 階梯
 
+// Reimplementation of Blender's Map Range compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 float remap(float v, float from_min, float from_max, float to_min, float to_max, float steps) {
     float span = from_max - from_min;
     float t = span != 0.0 ? (v - from_min) / max(abs(span), 1e-30) * sign(span) : 0.0;

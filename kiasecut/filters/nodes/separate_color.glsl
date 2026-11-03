@@ -9,6 +9,11 @@
 // @param ycc_mode menu "ITU 709" "ITU 601|ITU 709|JPEG" "YCC 標準"
 // @enable ycc_mode mode == YCC
 
+// Reimplementation of Blender's Separate Color compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec3 rgb_to_hsv(vec3 c) {
     float mx = max(c.r, max(c.g, c.b));
     float mn = min(c.r, min(c.g, c.b));

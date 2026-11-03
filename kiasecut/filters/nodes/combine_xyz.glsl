@@ -8,6 +8,11 @@
 // @param y float 0 -1000000 1000000 "Y"
 // @param z float 0 -1000000 1000000 "Z"
 
+// Reimplementation of Blender's Combine XYZ compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 float bright(vec4 c) { return dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)); }     // (a number input: the picture's brightness over black)
 
 vec4 effect(vec2 uv) {

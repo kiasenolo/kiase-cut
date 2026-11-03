@@ -6,6 +6,11 @@
 // @param type menu 套用遮罩 "套用遮罩|取代透明度" "類型"
 // @param alpha float 1 0 1 "透明度"
 
+// Reimplementation of Blender's Set Alpha compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec4 effect(vec2 uv) {
     vec4 c = unpremultiply(src(uv)), m = input_alpha_img(uv);
     float k = has_input_alpha_img() ? clamp(dot(m.rgb, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0) : clamp(alpha, 0.0, 1.0);

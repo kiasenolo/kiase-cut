@@ -4,6 +4,9 @@ is left out). What Blender has no place for - KiaseCut's own effects - comes aft
 
 An item is a filter name ("nodes/mix" is builtin:nodes/mix, "blur" builtin:blur), SEP, ("menu", label, [items]), ("node", label, node)
 for the nodes that are not filters, or SHAPES (the built-in shapes, a submenu)."""
+# Blender: https://github.com/blender/blender (the layout follows its node_add_menu_compositor.py)
+# SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+# SPDX-License-Identifier: GPL-3.0-or-later
 from . import nodegraph as ng
 
 SEP = "-"

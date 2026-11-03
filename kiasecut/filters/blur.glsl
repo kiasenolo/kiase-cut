@@ -11,6 +11,11 @@
 // @param linear_light bool false "線性光"
 // @enable radius_y !link_xy
 
+// Reimplementation of Blender's Blur compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Weights as Blender's (RE_filter_value, used by the Blur node of the compositor): the tap at distance i from the
 // centre weighs kern(i / size), taps out to ceil(size) on each side, the weights normalised to a sum of 1. Not
 // separable: the weight of a tap is kern of its distance in size units, sqrt((x / size_x)^2 + (y / size_y)^2), over the box

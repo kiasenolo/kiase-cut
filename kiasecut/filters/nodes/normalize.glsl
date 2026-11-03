@@ -4,6 +4,11 @@
 // @passes 15
 // @levels 1 2 3 4 5 6 7 8 9 10 11 12 13 14
 
+// Reimplementation of Blender's Normalize compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // Checked against Blender 5.2: (v - min) / (max - min) of the luminance, 0 where max = min. The first 14 passes shrink the
 // picture by half each time and keep (min, max) of every block (the first one takes it from the brightness of the pixels),
 // the last pass reads that one pixel.

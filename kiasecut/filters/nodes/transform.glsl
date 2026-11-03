@@ -7,6 +7,11 @@
 // @param zoom float 1 0.001 1000 "縮放"
 // @param interp menu 雙線性 "最近點|雙線性|雙三次" "取樣"
 
+// Reimplementation of Blender's Transform compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
+// Blender: https://github.com/blender/blender
+// SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 vec4 cubic_tap(vec2 q) {                            // (Catmull-Rom over the 16 nearest pixels)
     vec2 px = src_px, f = q * px - 0.5, i = floor(f), t = f - i;
     vec2 t2 = t * t, t3 = t2 * t;

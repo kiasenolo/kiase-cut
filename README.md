@@ -772,11 +772,18 @@ Taken from elsewhere:
 |---|---|---|
 | `kiasecut/filters/blender_glare.glsl` | Blender's Glare compositor node (`node_composite_glare.cc`, `compositor_glare_*.glsl`) | GPL-2.0-or-later |
 | `kiasecut/filters/blender_lens_distortion.glsl` | Blender's Lens Distortion compositor node (`node_composite_lens_distortion.cc`, `compositor_*_lens_distortion.glsl`) | GPL-2.0-or-later |
+| `kiasecut/filters/oil_paint.glsl` | Blender's Kuwahara compositor node (`compositor_kuwahara_*.glsl`) | GPL-2.0-or-later |
+| `kiasecut/filters/nodes/dilate_erode.glsl`, `nodes/filter.glsl`, `blur.glsl` | Blender's Dilate/Erode, Filter and Blur compositor nodes (`compositor_morphological_*.glsl`, `compositor_filter.glsl`, `RE_filter_value`) | GPL-2.0-or-later |
+| `kiasecut/filters/blender_tex_*.glsl`, `blender_color_ramp.glsl` | Blender's texture nodes (Brick, Checker, Gradient, Magic, Noise, Voronoi, Wave, White Noise) and Color Ramp (`colorband.cc`) | GPL-2.0-or-later |
+| `kiasecut/filters/nodes/*.glsl` (all but `picture.glsl`), `posterize.glsl`, `invert.glsl` | reimplementations of the Blender compositor nodes of the same names (Math, Mix, Map Range, Vector Math, Value, Switch ...): their behaviour and constants, checked against Blender 5.2 | GPL-2.0-or-later |
+| `kiasecut/nodemenu.py` | the layout of Blender's compositor Add menu (`node_add_menu_compositor.py`) | GPL-2.0-or-later |
 | `kiasecut/filters/blender_sensor_noise.glsl` | the Sensor Noise node group of Blender's Essentials assets (`compositing_nodes_essentials.blend`), by Blender Studio | CC0 (public domain) |
-| `kiasecut/filters/blender_vignette.glsl` | the Vignette node group of Blender's Essentials assets (`compositing_nodes_essentials.blend`), by Blender Studio | CC0 (public domain) |
+| `kiasecut/filters/blender_vignette.glsl`, `nodes/rounded_square_mask.glsl` | the Vignette and Rounded Square Mask node groups of Blender's Essentials assets (`compositing_nodes_essentials.blend`), by Blender Studio | CC0 (public domain) |
 
-Each was exported with `compositor_to_hyprshade.py`, then rewritten by hand; its header names
-the Blender files. Blender: <https://www.blender.org>, source at
+Each was exported with `compositor_to_hyprshade.py` or read from Blender's shaders, then rewritten by
+hand; its header names the Blender files. GPL-2.0-or-later code can be used under GPL-3.0, which is
+how KiaseCut carries it. The license texts are in `LICENSES/` (`GPL-2.0-or-later.txt`,
+`CC0-1.0.txt`; KiaseCut's own is `LICENSE`). Blender: <https://www.blender.org>, source at
 <https://projects.blender.org/blender/blender>, © Blender Authors.
 
 Used, not included: PySide6 / Qt (LGPL-3.0), MLT (LGPL-2.1), FFmpeg (LGPL or GPL, by

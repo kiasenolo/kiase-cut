@@ -313,6 +313,35 @@ class GraphRenderTests(unittest.TestCase):
         v["editing"] = True
         self.check(v, BLACK, BLACK)                            # the editor's preview: the green channel picture
 
+    def test_coordinate_node_is_a_gradient(self):
+        def build(mode):
+            def f(e):
+                g = e["graph"]
+                c = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/coordinate"}, base="c")
+                ng.connect(g, c, "output", "src")
+                e["params"].update(ng.default_params(g))
+                e["params"][c + ".mode"] = mode
+            return f
+        for r in self.renderers:
+            img = r.render(self.view(build(1)), 0, W, H)
+            left, right = rgb(img, 12, 18), rgb(img, 52, 18)
+            self.assertLess(left[0], 90, type(r).__name__)
+            self.assertGreater(right[0], 165, type(r).__name__)
+            self.assertEqual(left[0], left[1])
+
+    def test_time_node_follows_the_clip(self):
+        def f(e):
+            g = e["graph"]
+            c = ng.add_node(g, {"type": "filter", "ref": "builtin:nodes/time"}, base="t")
+            ng.connect(g, c, "output", "src")
+            e["params"].update(ng.default_params(g))
+        v = self.view(f)
+        for r in self.renderers:
+            first = rgb(r.render(v, 0, W, H), 12, 18)[0]
+            later = rgb(r.render(v, 45, W, H), 12, 18)[0]
+            self.assertLess(first, 20, type(r).__name__)
+            self.assertGreater(later, first + 20, type(r).__name__)
+
     def test_empty_graph_changes_nothing(self):
         self.check(self.view(lambda e: None), RED, RED)
 

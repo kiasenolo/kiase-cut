@@ -53,6 +53,18 @@ def value(p, t):
     return bez(a[1], a[1] + a[5], b[1] + b[3], b[1])
 
 
+def unit_value(keys, x):
+    """The value at x (0 - 1) of a curve of keys [[x, y, left dx, left dy, right dx, right dy], ...] in fx.curve_keys's shape:
+    the value holds before its first key and after its last; no usable keys are a straight line."""
+    try:
+        ks = sorted(([float(a) for a in k][:6] for k in keys), key=lambda k: k[0])
+        if len(ks) < 1 or any(len(k) != 6 for k in ks):
+            raise ValueError
+    except (TypeError, ValueError):
+        return min(1.0, max(0.0, float(x)))
+    return float(value({"keys": [[k[0] * US, k[1], k[2] * US, k[3], k[4] * US, k[5]] for k in ks]}, float(x) * US))
+
+
 def span(p):
     """(first, last) key time, or None for a constant."""
     if not is_animated(p):

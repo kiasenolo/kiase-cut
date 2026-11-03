@@ -29,6 +29,18 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(mapping.apply(mapping.make("js", js="input * 3 + other", in_=(0, 1)), 2.0, {"other": 1.0}), 7.0)
         self.assertEqual(mapping.apply(mapping.make("js", js="nothing_here"), 0.5, {}), 0.5)               # (broken: linear)
 
+    def test_a_custom_curve_and_curve_in_an_expression(self):
+        keys = [[0.0, 0.0, 0, 0, 0, 0], [0.5, 1.0, 0, 0, 0, 0], [1.0, 0.0, 0, 0, 0, 0]]          # (up, then down)
+        m = mapping.make("curve", in_=(0, 10), out=(100, 200), curve=keys)
+        self.assertIsNone(mapping.check(m))
+        self.assertEqual([round(mapping.apply(m, x), 3) for x in (0, 2.5, 5, 7.5, 10)], [100.0, 150.0, 200.0, 150.0, 100.0])
+        js = mapping.make("js", in_=(0, 1), out=(0, 10), js="lerp(lo, hi, curve(t)) + 1", curve=keys)
+        self.assertEqual(round(mapping.apply(js, 0.5), 3), 11.0)
+        self.assertEqual(round(mapping.apply(mapping.make("js", js="curve(0.25)"), 0.0), 3), 0.25)     # (no curve of a mapping: x itself)
+        self.assertAlmostEqual(mapping.apply({k: v for k, v in m.items() if k != "curve"}, 5.0), 150.0)       # (a saved one without keys: a straight line)
+        self.assertIsNotNone(mapping.check(dict(m, curve=[[0, 1]])))
+        self.assertEqual(mapping.label(m).split("　")[0], "自訂曲線")
+
     def test_checks_and_preview_points(self):
         self.assertIsNone(mapping.check(mapping.make("linear")))
         self.assertIsNotNone(mapping.check(mapping.make("js", js="1 +")))
@@ -138,6 +150,16 @@ class DialogTests(unittest.TestCase):
         self.assertEqual(d.field.v[1], 0.5)
         d.mode.setCurrentIndex(d.mode.findData("linear"))
         self.assertTrue(d.field.isHidden())
+        self.assertTrue(d.cfield.isHidden())
+        d.mode.setCurrentIndex(d.mode.findData("curve"))                                                # (a curve of any number of points)
+        self.assertFalse(d.cfield.isHidden())
+        d.cfield.finished.emit([[0.0, 0.0, 0, 0, 0, 0], [0.4, 1.0, 0, 0, 0, 0], [1.0, 0.5, 0, 0, 0, 0]])
+        d.cfield.set_value([[0.0, 0.0, 0, 0, 0, 0], [0.4, 1.0, 0, 0, 0, 0], [1.0, 0.5, 0, 0, 0, 0]])
+        d.cfield.changed.emit(d.cfield.keys)
+        self.assertEqual(len(d.mapping()["curve"]), 3)
+        d.mode.setCurrentIndex(d.mode.findData("js"))                                                   # (the same curve is curve(x) there)
+        self.assertFalse(d.cfield.isHidden())
+        self.assertEqual(len(d.mapping()["curve"]), 3)
 
 
 if __name__ == "__main__":

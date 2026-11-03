@@ -19,7 +19,7 @@ Functions: sin cos tan asin acos atan atan2 sqrt abs floor ceil round trunc sign
 log2 log10 min max hypot, clamp(x, lo, hi), lerp(a, b, t) / mix, smoothstep(lo, hi, x),
 step(edge, x), fract(x), mod(x, m) (always >= 0 for m > 0), degrees / radians, remap(x, a, b,
 c, d), cubicBezier(x1, y1, x2, y2, x), random(seed), noise(x) (smooth, -1 - 1),
-wiggle(freq, amp, seed = 0) (needs `time`), len(list). Math.<fn> is the same as <fn>.
+wiggle(freq, amp, seed = 0) (needs `time`), curve(x) (the custom curve of a 映射, 0 - 1; x itself elsewhere), len(list). Math.<fn> is the same as <fn>.
 """
 import math
 import re
@@ -269,6 +269,15 @@ def _wiggle(env, freq, amp, seed=0):
     return noise(float(env.get("time", 0.0)) * float(freq), int(seed)) * float(amp)
 
 
+def _curve(env, x):
+    """curve(x): the custom curve of the 映射 the expression belongs to (映射 > 自訂曲線), x from 0 to 1; x itself where there is none."""
+    keys = env.get("__curve__")
+    if keys is None:
+        return float(x)
+    from . import curves
+    return curves.unit_value(keys, x)
+
+
 def _mod(x, m):
     return x % m if m else 0.0
 
@@ -333,7 +342,7 @@ FUNCTIONS = {
     "len": lambda a: float(len(a)) if isinstance(a, (list, str)) else 0.0,
 }
 FUNCTIONS["mix"] = FUNCTIONS["lerp"]
-NEEDS_ENV = {"wiggle": _wiggle}                                     # (functions that read the caller's names)
+NEEDS_ENV = {"wiggle": _wiggle, "curve": _curve}                                     # (functions that read the caller's names)
 CONSTANTS = {"pi": math.pi, "PI": math.pi, "e": math.e, "E": math.e, "Infinity": math.inf, "NaN": math.nan,
              "true": True, "false": False, "SQRT2": math.sqrt(2), "TAU": math.tau}
 

@@ -1,12 +1,14 @@
 """映射 (mapping.py) when a number is bound to a parameter: how the parameter's value becomes the number
-- as it is, along a straight line between a minimum and a maximum, along a cubic-bezier curve, or by a
-JavaScript expression - with a picture of the curve it makes."""
+- as it is, along a straight line between a minimum and a maximum, along a cubic-bezier curve, along a curve of
+any number of points (which a JavaScript expression reads as curve(x) too), or by a JavaScript expression - with a
+picture of the curve it makes."""
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QInputDialog,
                                QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
 from .. import mapping
+from .curvefield import CurveField
 from .tools import BezierField
 
 
@@ -93,7 +95,7 @@ class MapDialog(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(460)
         m = mapping.make(**{k: v for k, v in {"mode": m["mode"], "src": m.get("src", ""), "in_": m["in"], "out": m["out"],
-                                             "bezier": m["bezier"], "js": m.get("js") or mapping.DEFAULT_JS}.items()})
+                                             "bezier": m["bezier"], "curve": m.get("curve"), "js": m.get("js") or mapping.DEFAULT_JS}.items()})
         self.src = m["src"]
         lay = QVBoxLayout(self)
         head = QLabel(f"數字跟著{src_label}走。選它的值怎麼變成這個數字：")
@@ -150,7 +152,7 @@ class MapDialog(QDialog):
         self.rows["js"] = (self.js, self.form.labelForField(self.js))
         lay.addLayout(self.form)
         self.hint = QLabel("input 是值、t 是 0–1 的位置、lo 和 hi 是數字的最小和最大；也可以直接寫其他全局參數的名字。"
-                           "例：lerp(lo, hi, t * t)、t > 0.5 ? hi : lo")
+                           "curve(x) 會讀下面這條曲線（x 是 0–1）。例：lerp(lo, hi, t * t)、t > 0.5 ? hi : lo、lerp(lo, hi, curve(t))")
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("color: #8a8a90;")
         lay.addWidget(self.hint)
@@ -160,9 +162,14 @@ class MapDialog(QDialog):
         self.field.setMinimumSize(240, 380)
         self.field.set_value(m["bezier"])
         self.field.setToolTip("拖曳兩個圓點調整曲線（y 可以超出 0 - 1，會有回彈）")
+        self.cfield = CurveField()                         # (a curve of any number of points: its own mode, and what curve(x) reads)
+        self.cfield.set_value(m["curve"])
+        self.cfield.setMinimumWidth(240)
+        self.cfield.setToolTip("拖曳點調整曲線，雙擊新增點，Delete 刪除；點拖過另一個點會取代它")
         pic = QHBoxLayout()
         pic.addWidget(self.preview, 1)
         pic.addWidget(self.field, 1)
+        pic.addWidget(self.cfield, 1)
         lay.addLayout(pic)
         self.status = QLabel()
         self.status.setWordWrap(True)
@@ -177,6 +184,7 @@ class MapDialog(QDialog):
         self.js.textChanged.connect(self._changed)
         self.presets.activated.connect(self._preset)
         self.field.changed.connect(self._dragged)
+        self.cfield.changed.connect(self._changed)
         self._changed()
 
     def fill_saved(self):
@@ -213,7 +221,7 @@ class MapDialog(QDialog):
     def mapping(self):
         return {"mode": self.mode.currentData(), "src": self.src, "in": [self.in_lo.value(), self.in_hi.value()],
                 "out": [self.out_lo.value(), self.out_hi.value()], "bezier": [s.value() for s in self.bz],
-                "js": self.js.toPlainText().strip() or mapping.DEFAULT_JS}
+                "curve": [list(k) for k in self.cfield.keys], "js": self.js.toPlainText().strip() or mapping.DEFAULT_JS}
 
     def _changed(self, *_a):
         mode = self.mode.currentData()
@@ -225,6 +233,7 @@ class MapDialog(QDialog):
                     w.setVisible(on)
         self.hint.setVisible(mode == "js")
         self.field.setVisible(mode == "bezier")
+        self.cfield.setVisible(mode in ("curve", "js"))
         self.field.set_value([s.value() for s in self.bz])
         m = self.mapping()
         why = mapping.check(m)
@@ -232,6 +241,8 @@ class MapDialog(QDialog):
         self.status.setText("✗ " + why if why else "")
         self.status.setStyleSheet("color: #ff7a7a;")
         self.buttons.button(QDialogButtonBox.Ok).setEnabled(why is None)
+        self.layout().activate()
+        self.resize(self.size().expandedTo(self.sizeHint()))                  # (a curve editor beside the preview needs the room)
 
 
 def ask_mapping(parent, title, m, src_label, current=None, env=None, out_hint=None):

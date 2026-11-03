@@ -585,11 +585,11 @@ class NodeEditorTests(unittest.TestCase):
         popups, got = [], []
         ed.edit_popup = lambda q, v, done, pos, live=None: popups.append((q.type, done))
         ed.paramEdited.connect(lambda *a: got.append(a))
-        for r in plots:
-            at = ed.view.mapFromScene(it.mapToScene(it.field_rect(r).center()))
-            QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, Qt.NoModifier, at)
-        self.assertEqual([t for t, _ in popups], ["curve", "gradient"])
-        popups[1][1]([[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]])
+        self.assertEqual([q.name for q, _w in it.inline], ["c"])                  # (a curve is edited right in the node)
+        at = ed.view.mapFromScene(it.mapToScene(it.field_rect(plots[1]).center()))
+        QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, Qt.NoModifier, at)     # (a gradient in a popup)
+        self.assertEqual([t for t, _ in popups], ["gradient"])
+        popups[0][1]([[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]])
         self.assertEqual(got[-1][1], nid + ".g")
 
     def test_ramp_drag_is_live_and_its_end_is_the_edit(self):

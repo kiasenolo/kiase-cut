@@ -4,9 +4,10 @@ to add a key, Delete to remove the selected, the wheel zooms). The 緩動 button
 after the selected keys (all of them when none is selected) like the keyframe editor's presets.
 """
 import copy
+import math
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from .. import curves, fx
 from .curve_editor import PRESETS, US, CurveCanvas
@@ -15,10 +16,44 @@ FPS = 1000.0                       # (x snaps to 0.001)
 
 
 class UnitCanvas(CurveCanvas):
-    """The keyframe canvas with a plain 0 - 1 ruler and no playhead."""
+    """The keyframe canvas with a plain 0 - 1 ruler and no playhead. A key dragged along x goes on past the others as
+    in Blender's curve widget: the keys it passes over are gone (the order of the keys is what it is), where the keyframe
+    editor keeps every key between its neighbours."""
 
     def x_label(self, t):
         return f"{t:.3g}"
+
+    def _bounds(self):
+        lo, hi = -math.inf, math.inf
+        for ci, i in self.sel:
+            t = self.curves[ci]["keys"][i][0]
+            lo, hi = max(lo, -t), min(hi, self.duration - t)
+        return lo, hi
+
+    def _move_keys(self, d, dt, dp):
+        if len(d["orig"]) != 1 or any(ci != 0 for ci, _ in d["sel"]):
+            return super()._move_keys(d, dt, dp)
+        orig = d["orig"][0]
+        chosen = sorted(i for _ci, i in d["sel"])
+        keys = [copy.deepcopy(k) for k in orig]
+        for i in chosen:
+            keys[i][0] = int(round(orig[i][0] + dt))
+            keys[i][1] = self.vv(0, self.pv(0, orig[i][1]) + dp)
+        passed = sorted({j for i in chosen for j in range(len(orig)) if j not in chosen
+                         and (orig[i][0] < orig[j][0] <= keys[i][0] or keys[i][0] <= orig[j][0] < orig[i][0])},
+                        key=lambda j: min(abs(orig[j][0] - orig[i][0]) for i in chosen))
+        gone = set(passed[:max(0, len(orig) - 2)])                # (two keys are the least a curve has)
+        ref_i = d.setdefault("ref0", d["ref"][1])                  # (the key under the pointer, as the press numbered it)
+        rows = sorted(((keys[j], j in chosen, j == ref_i) for j in range(len(orig)) if j not in gone), key=lambda r: r[0][0])
+        out = [r[0] for r in rows]
+        for n, k in enumerate(out):                              # (a handle does not reach past the next key)
+            if n + 1 < len(out):
+                k[4] = min(k[4], out[n + 1][0] - k[0])
+            if n > 0:
+                k[2] = max(k[2], -(k[0] - out[n - 1][0]))
+        self.curves[0]["keys"] = out
+        self.sel = {(0, n) for n, r in enumerate(rows) if r[1]}
+        d["ref"] = (0, next(n for n, r in enumerate(rows) if r[2]))
 
     def mouseDoubleClickEvent(self, e):
         super().mouseDoubleClickEvent(e)
@@ -26,26 +61,42 @@ class UnitCanvas(CurveCanvas):
 
 class CurveField(QWidget):
     changed = Signal(list)         # the keys (fx.curve_keys), while dragging and when done
+    live = Signal(list)            # the keys while a drag is on (the same as `changed` then)
+    finished = Signal(list)        # the keys when an edit is done (a drag let go, a key added or removed, a button)
 
-    def __init__(self):
+    def __init__(self, compact=False):
+        """compact: the field a node holds in itself - no endless drags (the view scales it), a shorter plot, the buttons in two rows."""
         super().__init__()
         self.keys = fx.curve_keys(None)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(3)
         self.canvas = UnitCanvas()
-        self.canvas.setMinimumHeight(240)
+        self.canvas.setMinimumHeight(120 if compact else 240)
+        if compact:
+            self.canvas.wrapping = False
+            self.canvas.L, self.canvas.R, self.canvas.T, self.canvas.B = 32, 14, 8, 18
         self.canvas.set_normalize(False)
         lay.addWidget(self.canvas)
-        row = QHBoxLayout()
+        row = QGridLayout() if compact else QHBoxLayout()
         row.setSpacing(3)
+        buttons = []
         for name, spec in PRESETS:
             b = QPushButton(name)
             b.clicked.connect(lambda _=False, s=spec: self._shape(s))
-            row.addWidget(b)
+            buttons.append(b)
         reset = QPushButton("重設")
         reset.clicked.connect(lambda: self._send(fx.curve_keys(None)))
-        row.addWidget(reset)
+        buttons.append(reset)
+        for n, b in enumerate(buttons):
+            if compact:
+                b.setFocusPolicy(Qt.NoFocus)
+                b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)         # (the node's width is what it is: the buttons share it)
+                b.setFixedHeight(22)
+                b.setStyleSheet("padding: 0px; font-size: 11px;")
+                row.addWidget(b, n // 3, n % 3)
+            else:
+                row.addWidget(b)
         lay.addLayout(row)
         self.canvas.keysLive.connect(lambda ch: self._take(ch, False))
         self.canvas.keysCommitted.connect(lambda ch: self._take(ch, True))
@@ -79,12 +130,14 @@ class CurveField(QWidget):
         out = [[k[0] / US, k[1], k[2] / US, k[3], k[4] / US, k[5]] for k in keys] or fx.curve_keys(None)
         self.keys = out
         self.changed.emit(copy.deepcopy(out))
+        (self.finished if final else self.live).emit(copy.deepcopy(out))
         if final:
             self._show()
 
     def _send(self, keys):
         self.keys = keys
         self.changed.emit(copy.deepcopy(keys))
+        self.finished.emit(copy.deepcopy(keys))
         self.canvas.sel = set()
         self.canvas.fit()
         self._show()
@@ -100,4 +153,5 @@ class CurveField(QWidget):
     def _send_keep(self, keys):
         self.keys = keys
         self.changed.emit(copy.deepcopy(keys))
+        self.finished.emit(copy.deepcopy(keys))
         self._show()

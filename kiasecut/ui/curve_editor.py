@@ -105,6 +105,7 @@ class CurveCanvas(QWidget):
     selectionChanged = Signal()
 
     L, R, T, B = 52, 12, 10, 22
+    wrapping = True                  # drags are endless (wrapdrag.py); off for a canvas shown inside a node (scaled by the view)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -432,7 +433,7 @@ class CurveCanvas(QWidget):
                 self._set_sel({ref})
             self.drag = {"kind": "keys", "pos": pos, "moved": False, "bounds": self._bounds(),
                          "orig": {ci: copy.deepcopy(self.curves[ci]["keys"]) for ci, _ in self.sel},
-                         "ref": ref}
+                         "sel": set(self.sel), "ref": ref}
             return
         if pos.y() > self.height() - self.B:               # the time ruler: scrub
             self.drag = {"kind": "seek"}
@@ -458,7 +459,7 @@ class CurveCanvas(QWidget):
     def mouseMoveEvent(self, e):
         d = self.drag
         pos = e.position()
-        if d is not None and d["kind"] in ("pan", "zoom", "keys"):
+        if d is not None and d["kind"] in ("pan", "zoom", "keys") and self.wrapping:
             if not d.get("wrap"):                       # (this drag's first move)
                 d["wrap"] = True
                 self.wrap.start()
@@ -513,12 +514,7 @@ class CurveCanvas(QWidget):
                 dp = 0.0
             elif e.modifiers() & Qt.AltModifier:           # Alt: along the values only (the times stay)
                 dt = 0
-            for ci, i in self.sel:
-                o = d["orig"][ci][i]
-                k = self.curves[ci]["keys"][i]
-                k[0] = int(round(o[0] + dt))
-                if not self.curves[ci]["color"]:
-                    k[1] = self.vv(ci, self.pv(ci, o[1]) + dp)
+            self._move_keys(d, dt, dp)
             self._follow(self.key_point(*d["ref"]))
             self._paths = None
             self.keysLive.emit(self._changes(d["orig"].keys()))
@@ -548,12 +544,22 @@ class CurveCanvas(QWidget):
             self.keysLive.emit(self._changes([ci]))
             self.update()
 
+    def _move_keys(self, d, dt, dp):
+        """The selection of the drag d moved by dt (us) and dp (plot values) from where the press found it."""
+        for ci, i in self.sel:
+            o = d["orig"][ci][i]
+            k = self.curves[ci]["keys"][i]
+            k[0] = int(round(o[0] + dt))
+            if not self.curves[ci]["color"]:
+                k[1] = self.vv(ci, self.pv(ci, o[1]) + dp)
+
     def _changes(self, cis):
         return [(ci, copy.deepcopy(self.curves[ci]["keys"])) for ci in sorted(set(cis))]
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
-        self.wrap.stop(self.key_point(*d["ref"]) if d and d["kind"] == "keys" else None)
+        if self.wrapping:
+            self.wrap.stop(self.key_point(*d["ref"]) if d and d["kind"] == "keys" else None)
         if d is None:
             return
         if d["kind"] == "band":

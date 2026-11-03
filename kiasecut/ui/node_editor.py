@@ -20,7 +20,7 @@ import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPainterPathStroker, QPen
-from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
@@ -34,7 +34,7 @@ SOCKET_R = 5.5
 GRID = 20.0                                                # (Blender's NODE_GRID_STEP_SIZE: what a dragged node snaps to)
 HIT_R = 9.0
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
-PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / gradient parameter's picture in a node
+PLOT_H = {"curve": 190.0, "gradient": 30.0}          # the height of a curve / gradient parameter in a node (a curve is edited right there: its plot and buttons)
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
 HEADS = {ng.STRING: "#a8473f", ng.FONT: "#a8473f", ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
          "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
@@ -96,6 +96,8 @@ class NodeItem(QGraphicsItem):
         self.sizing = None                                  # while widened: (scene x at the press, width then)
         self.setAcceptHoverEvents(True)
         self._layout()
+        self.inline = []                                    # [(parameter, CurveField)] the curves edited inside the node
+        self._inline_curves()
         if node["type"] in ("groupin", "groupout"):          # (drawn from the group, not nodes of the graph)
             self.setFlags(QGraphicsItem.ItemSendsGeometryChanges)
         else:
@@ -199,6 +201,29 @@ class NodeItem(QGraphicsItem):
             for name, _label in self.shown_outputs():
                 add("thumb", "", p=name, h=THUMB_H)
         self.h = y + PAD
+
+    def _inline_curves(self):
+        """A curve parameter is edited in place: the keyframe editor's plot and its buttons, over the row of its picture."""
+        from .curvefield import CurveField
+        for r in self.rows:
+            if r["kind"] != "plot" or r["p"] is None or r["p"].type != "curve":
+                continue
+            q = r["p"]
+            w = CurveField(compact=True)
+            box = self.field_rect(r)
+            proxy = QGraphicsProxyWidget(self)
+            proxy.setWidget(w)
+            proxy.setGeometry(box)
+            w.set_value(self.editor.node_values(self.nid).get(q.name))
+            w.live.connect(lambda keys, q=q: self.editor.curve_live(self.nid, q, keys))
+            w.finished.connect(lambda keys, q=q: self.editor.curve_done(self.nid, q, keys))
+            self.inline.append((q, w))
+
+    def refresh_inline(self):
+        """The curves again from the parameters (an undo, a keyframe, another view of the same node changed them)."""
+        vals = self.editor.node_values(self.nid)
+        for q, w in self.inline:
+            w.set_value(vals.get(q.name))
 
     def shown_outputs(self):
         """[(name, label)] of the outputs the node shows (@show on an @output: Blender's sockets that depend on the settings)."""
@@ -391,8 +416,9 @@ class NodeItem(QGraphicsItem):
             return
         q = r["p"]
         v = vals.get(q.name)
-        if kind == "plot":                                  # a curve or a gradient: drawn, click to edit it
-            self._plot(p, self.field_rect(r), q, v, bg, self.ramp_options(vals))
+        if kind == "plot":                                  # a gradient: drawn, click to edit it (a curve is its own widget)
+            if q.type != "curve":
+                self._plot(p, self.field_rect(r), q, v, bg, self.ramp_options(vals))
             return
         if q.type in ("float", "int"):
             box = self.field_rect(r)
@@ -1174,6 +1200,8 @@ class GraphView(QGraphicsView):
         up / down; a touchpad's two fingers scroll both ways (Ctrl zooms them)."""
         from . import wheel
         ctrl, shift = bool(e.modifiers() & Qt.ControlModifier), bool(e.modifiers() & Qt.ShiftModifier)
+        if e.modifiers() & Qt.AltModifier and isinstance(self.itemAt(e.position().toPoint()), QGraphicsProxyWidget):
+            return super().wheelEvent(e)                   # (Alt over a curve in a node: the curve's own zoom)
         if wheel.touchpad(e) and not ctrl:
             dx, dy = wheel.pixels(e, 60, 60)
         elif ctrl or shift:
@@ -1220,6 +1248,8 @@ class GraphView(QGraphicsView):
 
     def keyPressEvent(self, e):
         key, mods = e.key(), e.modifiers()
+        if isinstance(self.scene().focusItem(), QGraphicsProxyWidget):
+            return super().keyPressEvent(e)                # (a curve in a node has the focus: its keys, Delete removes a key)
         if self.carrying:
             if key in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter):
                 self._put_down(key == Qt.Key_Escape)
@@ -1448,7 +1478,21 @@ class NodeEditor(QWidget):
             self.graph = e["graph"]
             self.rebuild(first)
         else:
+            for it in self.view.items_by_id.values():
+                if getattr(it, "inline", None):
+                    it.refresh_inline()
             self.view.viewport().update()                   # (the values only)
+
+    def curve_live(self, nid, q, keys):
+        """A key of a curve in a node is being dragged: the node's picture and the preview follow at once."""
+        key = ng.param_key(nid, q.name)
+        if not curves.is_animated(self.params.get(key)):
+            self.params[key] = keys
+        self.view.viewport().update()
+        self.paramLive.emit(self.eid, "fx:" + self.eid, key, keys)
+
+    def curve_done(self, nid, q, keys):
+        self.paramEdited.emit(self.eid, ng.param_key(nid, q.name), keys)
 
     def shown_sig(self, e):
         """Which rows of the nodes (@show) the settings hide: when it changes, the boxes are laid out again."""

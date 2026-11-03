@@ -183,8 +183,8 @@ class PreviewTests(unittest.TestCase):
         pv.set_mask_mode(True)
         box = pv.selected_box()
         g = MaskGeo(box)
-        self.assertEqual([n for n, _ in g.handles(pv._k())], ["w", "h", "wh", "rot"])    # no feather
-        corner = dict(g.handles(pv._k()))["wh"]
+        self.assertEqual([n for n, _ in g.handles(pv._k())], ["w", "h", "wh", "w", "h", "wh", "wh", "wh", "rot"])    # no feather
+        corner = next(pt for n, pt in g.handles(pv._k()) if n == "wh")
         pv.drag = {"kind": "wh", "box": box, "geo": g, "m0": corner, "moved": True}
 
         class Ev:

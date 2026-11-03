@@ -365,6 +365,10 @@ class MaskGeo:
         self.local = QTransform().translate(self.cx * self.dw / 2, -self.cy * self.dh / 2).rotate(self.rot)
         self.xf = self.local * box.xf()                         # mask frame -> canvas
 
+    def is_picture(self):
+        """A picture or shape placed like a clip (not a mask that cuts one)."""
+        return self.kind in ("shape", "image", "video", "track", "compound")
+
     def centre(self):
         return self.xf.map(QPointF(0, 0))
 
@@ -400,6 +404,10 @@ class MaskGeo:
         if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place", "shape"):
             out += [("w", self.xf.map(QPointF(self.hw, 0))), ("h", self.xf.map(QPointF(0, -self.hh))),
                     ("wh", self.xf.map(QPointF(self.hw, -self.hh)))]
+            if self.is_picture():                   # (the clip box's eight: the sizing is about the centre either way)
+                out += [("w", self.xf.map(QPointF(-self.hw, 0))), ("h", self.xf.map(QPointF(0, self.hh))),
+                        ("wh", self.xf.map(QPointF(-self.hw, -self.hh))), ("wh", self.xf.map(QPointF(self.hw, self.hh))),
+                        ("wh", self.xf.map(QPointF(-self.hw, self.hh)))]
         elif self.kind == "mirror":
             out.append(("h", self.xf.map(QPointF(0, -self.hh))))
         if self.kind == "place":                    # (a component's picture is moved and sized, not turned)
@@ -1208,6 +1216,8 @@ class Preview(QWidget):
         path = g.outline()
         on = g.m.get("enabled", True)
         edge = QColor("#ffb020") if on else QColor(255, 176, 32, 110)
+        if g.is_picture():                     # drawn as the clip's own box is (white, the same handles)
+            edge = QColor("#ffffff") if on else QColor(255, 255, 255, 110)
         p.save()
         clip = QPainterPath()
         clip.addPolygon(QPolygonF(box.corners()))
@@ -1219,11 +1229,14 @@ class Preview(QWidget):
         p.drawPath(path)
         p.restore()
         c = g.centre()
+        pic = g.is_picture()
+        hcol = "#ffffff" if pic else "#ffb020"
         for name, pt in g.handles(k):
             if name == "rot":
-                p.setPen(QPen(QColor("#ffb020"), 1 * k))
-                p.drawLine(c, pt)
-                self._handle(p, pt, k, round_=True, color="#ffb020")
+                u, hh = g.down()
+                p.setPen(QPen(QColor("#ffffff") if pic else QColor("#ffb020"), 1 * k))
+                p.drawLine(c - u * hh if pic else c, pt)
+                self._handle(p, pt, k, round_=True, color="#e6e6e6" if pic else "#ffb020")
             elif name == "feather":
                 u, _ = g.down()
                 n = QPointF(-u.y(), u.x())
@@ -1232,8 +1245,17 @@ class Preview(QWidget):
                 p.setBrush(QColor("#ffb020"))
                 p.drawPolygon(QPolygonF([pt + u * s * 0.8, pt - u * s * 0.4 + n * s * 0.7, pt - u * s * 0.4 - n * s * 0.7]))
             else:
-                self._handle(p, pt, k, color="#ffb020")
-        self._handle(p, c, k, round_=True, color="#ffffff")
+                self._handle(p, pt, k, color=hcol)
+        if pic:                                # 中心點: a ring with a cross, as on a clip
+            r = 5 * k
+            for w, col in ((3 * k, "#111114"), (1.25 * k, "#ffffff")):
+                p.setPen(QPen(QColor(col), w))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(c, r, r)
+                p.drawLine(c - QPointF(2 * r, 0), c + QPointF(2 * r, 0))
+                p.drawLine(c - QPointF(0, 2 * r), c + QPointF(0, 2 * r))
+        else:
+            self._handle(p, c, k, round_=True, color="#ffffff")
         if self.drag and self.drag["kind"] == "feather":
             f = p.font()
             f.setPixelSize(round(14 * k))

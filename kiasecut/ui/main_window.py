@@ -5372,7 +5372,8 @@ class MainWindow(QMainWindow):
         cid = self.node_clip()
         if cid:
             made = []
-            if self.apply("新增節點", lambda lvl: made.append(edit.add_graph_node(lvl, cid, eid, node, x, y))) is not None and made:
+            self.apply("新增節點", lambda lvl: made.append(edit.add_graph_node(lvl, cid, eid, node, x, y)))
+            if made:
                 self.nodes.carry(made)                         # (stuck to the pointer till a click, as Blender's)
 
     def on_node_remove(self, eid, ids):
@@ -5422,7 +5423,8 @@ class MainWindow(QMainWindow):
             ins = [s for s, _ in nodegraph.sockets(g["nodes"][nid]) if not s.startswith(nodegraph.PARAM)]
             if ins:
                 edit.connect_graph(lvl, cid, eid, src, nid, ins[0], out)
-        if self.apply("新增節點", do) is not None and made:
+        self.apply("新增節點", do)
+        if made:
             self.nodes.carry(made)
 
     def on_node_media(self, eid, ids, paths, x, y):
@@ -5480,7 +5482,8 @@ class MainWindow(QMainWindow):
                 nid = edit.add_graph_node(lvl, cid, eid, {"type": nodegraph.SOURCE, "kind": kind, **({"group": level} if level else {})}, x + 40 * i, y + 40 * i)
                 edit.set_effect_source_media(lvl, cid, eid, nid, **media)
                 made.append(nid)
-        if self.apply("拖入節點", do) is not None and made:
+        self.apply("拖入節點", do)
+        if made:
             self.nodes.select(made[-1])
 
     @staticmethod
@@ -5493,7 +5496,8 @@ class MainWindow(QMainWindow):
         cid = self.node_clip()
         if cid:
             made = []
-            if self.apply("群組節點", lambda lvl: made.append(edit.group_graph_nodes(lvl, cid, eid, ids))) is not None and made:
+            self.apply("群組節點", lambda lvl: made.append(edit.group_graph_nodes(lvl, cid, eid, ids)))
+            if made:
                 self.nodes.select(made[0])
 
     def on_node_ungroup(self, eid, gid):
@@ -5531,7 +5535,8 @@ class MainWindow(QMainWindow):
         cid = self.node_clip()
         if cid:
             made = []
-            if self.apply("貼上節點", lambda lvl: made.extend(edit.paste_graph_nodes(lvl, cid, eid, data, x, y, self.nodes.level or None))) is not None and made:
+            self.apply("貼上節點", lambda lvl: made.extend(edit.paste_graph_nodes(lvl, cid, eid, data, x, y, self.nodes.level or None)))
+            if made:
                 self.nodes.carry(made)
 
     def on_node_frame(self, eid, nid, change):
@@ -5553,7 +5558,8 @@ class MainWindow(QMainWindow):
         cid = self.node_clip()
         if cid:
             made = []
-            if self.apply("複製節點", lambda lvl: made.extend(edit.duplicate_graph_nodes(lvl, cid, eid, ids))) is not None and made:
+            self.apply("複製節點", lambda lvl: made.extend(edit.duplicate_graph_nodes(lvl, cid, eid, ids)))
+            if made:
                 self.nodes.carry(made, remove=False)
 
     def on_node_dissolve(self, eid, ids):

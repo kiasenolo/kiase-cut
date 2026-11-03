@@ -111,6 +111,22 @@ class GraphEditTests(unittest.TestCase):
         self.assertEqual(self.e["params"][nid + ".stroke_color"], list(assets.to_rgba("#00ff00")))
         self.assertEqual(self.e["params"][nid + ".points"], 5.0)
 
+    def test_new_pasted_and_duplicated_nodes_are_carried(self):
+        """The handlers hand what they made to the editor to stick to the pointer (apply returns None for these, as the real one)."""
+        import types
+        from kiasecut.ui.main_window import MainWindow
+        p, eid = self.p, self.e["id"]
+        carried = []
+        h = types.SimpleNamespace(node_clip=lambda: "c1", apply=lambda _n, fn: (fn(p), None)[1], proj=p,
+                                  nodes=types.SimpleNamespace(level=None, carry=lambda ids, remove=True: carried.append((list(ids), remove))))
+        MainWindow.on_node_add(h, eid, {"type": "filter", "ref": "builtin:nodes/math"}, 10.0, 20.0)
+        nid = carried[-1][0][0]
+        self.assertEqual((carried[-1][1], nid in self.e["graph"]["nodes"]), (True, True))
+        MainWindow.on_node_duplicate(h, eid, [nid])
+        self.assertEqual((len(carried[-1][0]), carried[-1][1]), (1, False))                 # (a duplicate is not taken back)
+        MainWindow.on_node_paste(h, eid, ng.pack(self.e["graph"], [nid]), 5.0, 5.0)
+        self.assertEqual(len(carried), 3)
+
     def test_copied_effect_keeps_its_graph(self):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
         copy = edit.put_effect(self.p, "c1", self.e)

@@ -438,6 +438,37 @@ class RunTest(unittest.TestCase):
         self.close(run(kind="歐拉 XYZ", vec_rotation=(0.0, 0.0, 90.0)), (0, 255, 0, 255))
         self.close(run(kind="歐拉 XYZ", vec_rotation=(0.0, 0.0, 90.0), invert=True), (0, 0, 0, 255))
 
+    def test_constant_input_nodes(self):
+        """The input nodes Vector, Boolean, Integer, Integer Vector and Menu: a constant picture each."""
+        def run(ref, **vals):
+            g = ng.new_graph()
+            n = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/" + ref})
+            ng.connect(g, n, "output", "src")
+            out, errors, _ = self.run_graph(g, self.solid([0, 0, 0, 0]), params={n + "." + k: v for k, v in vals.items()})
+            self.assertEqual(errors, [])
+            return out
+        self.close(run("vector", vector=(0.2, 0.4, 1.0)), (51, 102, 255, 255))
+        self.close(run("boolean", value=True), (255, 255, 255, 255))
+        self.close(run("boolean", value=False), (0, 0, 0, 255))
+        self.close(run("integer", value=1), (255, 255, 255, 255))             # (a picture holds 0 - 1: bigger numbers are clamped in the 8-bit view)
+        self.close(run("integer_vector", x=1, y=0, z=1), (255, 0, 255, 255))
+        self.close(run("menu", choice="選項 1"), (0, 0, 0, 255))
+        self.close(run("menu", choice="選項 2"), (255, 255, 255, 255))
+        for ref, par, val in (("integer", "value", 2), ("menu", "choice", "選項 3")):      # the input nodes drive the switches by their number
+            g = ng.new_graph()
+            v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/" + ref})
+            a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")
+            m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/index_switch"})
+            ng.connect(g, "input", m, "src")
+            ng.connect(g, a, m, "i2")
+            s3 = ng.add_item(g, ng.default_params(g), m)
+            ng.connect(g, a, m, s3)
+            ng.connect(g, v, m, "param:index")
+            ng.connect(g, m, "output", "src")
+            out, errors, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), {a: self.solid([255, 0, 0, 255])}, params={v + "." + par: val})
+            self.assertEqual(errors, [], ref)
+            self.close(out, (255, 0, 0, 255))
+
     def test_mix_blend_modes(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="s")

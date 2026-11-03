@@ -1,0 +1,8 @@
+// @filter 整數
+// @category 輸入
+// @description 節點用：照 Blender 的「整數」節點（Integer）：一個整數常數，整張圖都是這個數字（黑白的圖）。接到別的節點的數字輸入或參數（例如索引切換的索引）
+// @param value int 0 -1000000 1000000 "整數"
+
+vec4 effect(vec2 uv) {
+    return vec4(vec3(float(value)), 1.0);
+}

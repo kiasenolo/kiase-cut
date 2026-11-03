@@ -36,7 +36,7 @@ INPUT = [
 OUTPUT = [node("預覽（編輯器的預覽看這裡）", type=ng.VIEWER)]
 
 COLOR = [
-    menu("調整", ["nodes/bright_contrast", "nodes/exposure", "nodes/gamma", "nodes/hue_sat_value"]),
+    menu("調整", ["nodes/bright_contrast", "nodes/exposure", "nodes/gamma", "nodes/hue_sat_value", "nodes/rgb_curves"]),
     SEP,
     "nodes/alpha_over", "nodes/set_alpha",
     SEP,

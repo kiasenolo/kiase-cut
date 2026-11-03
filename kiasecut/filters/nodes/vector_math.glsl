@@ -6,17 +6,23 @@
 // @input c "C"
 // @output vector "向量"
 // @output value "數值"
-// @param op menu 相加 "相加|相減|相乘|相除|乘加|外積|投影|反射|折射|朝向|點積|距離|長度|縮放|正規化|絕對值|最小|最大|向下取整|向上取整|小數部分|取餘|迴繞|對齊|正弦|餘弦|正切" "運算"
+// @param op menu 相加 "相加|相減|相乘|相除|乘加|外積|投影|反射|折射|朝向|點積|距離|長度|縮放|正規化|絕對值|次方|正負號|最小|最大|四捨五入|向下取整|向上取整|小數部分|取餘|迴繞|對齊|正弦|餘弦|正切" "運算"
 // @param vector_b vec3 0,0,0 -1000 1000 "B 的向量"
 // @param vector_c vec3 0,0,0 -1000 1000 "C 的向量"
 // @param vec_scale float 1 -1000 1000 "縮放 / 折射率"
-// @show b op != 長度|縮放|正規化|絕對值|向下取整|向上取整|小數部分|正弦|餘弦|正切
-// @show vector_b op != 長度|縮放|正規化|絕對值|向下取整|向上取整|小數部分|正弦|餘弦|正切
-// @show c op == 乘加|朝向
-// @show vector_c op == 乘加|朝向
+// @show b op != 長度|縮放|正規化|絕對值|正負號|四捨五入|向下取整|向上取整|小數部分|正弦|餘弦|正切
+// @show vector_b op != 長度|縮放|正規化|絕對值|正負號|四捨五入|向下取整|向上取整|小數部分|正弦|餘弦|正切
+// @show c op == 乘加|朝向|迴繞
+// @show vector_c op == 乘加|朝向|迴繞
 // @show vec_scale op == 折射|縮放
 
 vec3 safe_div(vec3 a, vec3 b) { return mix(vec3(0.0), a / max(abs(b), vec3(1e-30)) * sign(b), notEqual(b, vec3(0.0))); }
+// Blender's Power: a negative base with a fractional exponent gives minus the power of its size; no number (0 to a negative power) is 0
+float vpow(float a, float b) {
+    float p = a < 0.0 ? (b == floor(b) ? pow(-a, b) * (mod(b, 2.0) == 0.0 ? 1.0 : -1.0) : -pow(-a, b)) : pow(a, b);
+    return (isnan(p) || isinf(p)) ? 0.0 : p;
+}
+vec3 vpow(vec3 a, vec3 b) { return vec3(vpow(a.x, b.x), vpow(a.y, b.y), vpow(a.z, b.z)); }
 vec3 safe_norm(vec3 a) { float l = length(a); return l > 0.0 ? a / l : vec3(0.0); }
 
 // the vector result and the number result of operation op
@@ -38,19 +44,22 @@ void calc(vec3 a, vec3 b, vec3 c, out vec3 v, out float f) {
     else if (op == 13) v = a * vec_scale;
     else if (op == 14) v = safe_norm(a);
     else if (op == 15) v = abs(a);
-    else if (op == 16) v = min(a, b);
-    else if (op == 17) v = max(a, b);
-    else if (op == 18) v = floor(a);
-    else if (op == 19) v = ceil(a);
-    else if (op == 20) v = a - floor(a);
-    else if (op == 21) v = mix(vec3(0.0), a - b * trunc(a / max(abs(b), vec3(1e-30)) * sign(b)), notEqual(b, vec3(0.0)));
-    else if (op == 22) {
+    else if (op == 16) v = vpow(a, b);
+    else if (op == 17) v = sign(a);
+    else if (op == 18) v = min(a, b);
+    else if (op == 19) v = max(a, b);
+    else if (op == 20) v = floor(a + 0.5);
+    else if (op == 21) v = floor(a);
+    else if (op == 22) v = ceil(a);
+    else if (op == 23) v = a - floor(a);
+    else if (op == 24) v = mix(vec3(0.0), a - b * trunc(a / max(abs(b), vec3(1e-30)) * sign(b)), notEqual(b, vec3(0.0)));
+    else if (op == 25) {
         vec3 range = b - c;
         v = mix(c, a - range * floor((a - c) / max(abs(range), vec3(1e-30)) * sign(range)), notEqual(range, vec3(0.0)));
     }
-    else if (op == 23) v = mix(vec3(0.0), floor(a / max(abs(b), vec3(1e-30)) * sign(b)) * b, notEqual(b, vec3(0.0)));
-    else if (op == 24) v = sin(a);
-    else if (op == 25) v = cos(a);
+    else if (op == 26) v = mix(vec3(0.0), floor(a / max(abs(b), vec3(1e-30)) * sign(b)) * b, notEqual(b, vec3(0.0)));
+    else if (op == 27) v = sin(a);
+    else if (op == 28) v = cos(a);
     else v = tan(a);
 }
 

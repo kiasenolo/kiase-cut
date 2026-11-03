@@ -298,6 +298,31 @@ class RunTest(unittest.TestCase):
         ng.connect(g, fv, m, "facv")
         near(run(data_type="向量", factor_mode="非統一"), (0.8, 0.5, 0.9, 1.0))         # (a factor for every axis)
 
+    def test_vector_math_new_operations_and_vector_map_range(self):
+        """Power, Sign and Round of Vector Math, and Map Range on a vector (every axis its own range), as Blender 5.2 gives them."""
+        g = ng.new_graph()
+        v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/vector_math"})
+        ng.connect(g, "input", v, "src")
+        ng.connect(g, v, "output", "src")
+        pic = self.solid([64, 128, 191, 255])                      # (0.25, 0.5, 0.75)
+
+        def run(node_params):
+            params = ng.default_params(g)
+            params.update(node_params)
+            out, errors, _ = self.run_graph(g, pic, params=params)
+            self.assertEqual(errors, [])
+            return out[4, 4] / 255.0
+        want = lambda got, w: self.assertTrue(np.allclose(got, w, atol=0.012), (got, w))
+        want(run({v + ".op": "四捨五入"}), (0, 1, 1, 1))              # (floor(x + 0.5): Blender rounds a half up)
+        want(run({v + ".op": "正負號"}), (1, 1, 1, 1))
+        want(run({v + ".op": "次方", v + ".vector_b": (0.5, 2.0, 0.0)}), (0.5, 0.25, 1, 1))
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/map_range"})
+        ng.connect(g, "input", m, "src")
+        ng.connect(g, m, "output", "src")
+        p = {m + ".data_type": "向量", m + ".from_max_v": (1.0, 0.5, 1.0), m + ".to_min_v": (0.1, 0.0, 0.2), m + ".to_max_v": (0.9, 1.0, 0.6)}
+        want(run(p), (0.1 + 0.25 * 0.8, 1.0, 0.2 + 0.75 * 0.4, 1))   # (the green axis runs 0 - 0.5: clamped at the end)
+        want(run({**p, m + ".mode": "階梯", m + ".steps_v": (4.0, 2.0, 3.0)}), (0.1 + 0.25 * 0.8, 1.0, 0.2 + 2 / 3 * 0.4, 1))
+
     def test_missing_source_is_transparent(self):
         g = ng.new_graph()
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "video"}, base="s")

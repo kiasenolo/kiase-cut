@@ -26,6 +26,7 @@ from .wheel import pinch as wheel_pinch
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 UNBOUNDED = 1e6                                            # (a number with no limit still stays finite)
+RAMP_INTERP = (2, 0, 4, 1, 3)                              # (a Color Ramp's 插值 choices as the shader's numbers: linear, ease, constant, cardinal, b-spline)
 MIN_WIDTH, EDGE = 140.0, 7.0                              # (narrowest node; the strip of its right edge that widens it)
 SOCKET_R = 5.5
 HIT_R = 9.0
@@ -326,7 +327,7 @@ class NodeItem(QGraphicsItem):
         q = r["p"]
         v = vals.get(q.name)
         if kind == "plot":                                  # a curve or a gradient: drawn, click to edit it
-            self._plot(p, self.field_rect(r), q, v, bg)
+            self._plot(p, self.field_rect(r), q, v, bg, self.ramp_options(vals))
             return
         if q.type in ("float", "int"):
             box = self.field_rect(r)
@@ -375,8 +376,16 @@ class NodeItem(QGraphicsItem):
                            QColor("#9a9a9a") if (i + j) % 2 else QColor("#6a6a6a"))
         p.drawImage(at, img)
 
+    def ramp_options(self, vals):
+        """(interp, mode, hue) the node's own choices make its gradient picture go by (a Color Ramp's), as the shader's numbers."""
+        d = vals.d
+        if d is None or not all(any(q.name == n and q.type == "menu" for q in d.params) for n in ("interp", "mode", "hue")):
+            return (2, 0, 0)
+        idx = lambda n: next((max(0, q.items.index(vals.named[n])) if vals.named.get(n) in q.items else 0) for q in d.params if q.name == n)
+        return (RAMP_INTERP[idx("interp")] if idx("interp") < len(RAMP_INTERP) else 2, idx("mode"), idx("hue"))
+
     @staticmethod
-    def _plot(p, box, q, v, bg):
+    def _plot(p, box, q, v, bg, opts=(2, 0, 0)):
         p.setPen(QPen(QColor(0, 0, 0, 90), 1))
         if q.type == "gradient":
             from PySide6.QtGui import QLinearGradient
@@ -386,8 +395,13 @@ class NodeItem(QGraphicsItem):
                     p.fillRect(QRectF(box.left() + i * n, box.top() + j * n, n, n).intersected(box),
                                QColor("#cfcfcf") if (i + j) % 2 else QColor("#8a8a8a"))
             g = QLinearGradient(box.left(), 0, box.right(), 0)
-            for x, c in fx.gradient_stops(v):
-                g.setColorAt(x, QColor.fromRgbF(*c))
+            stops = fx.gradient_stops(v)
+            if opts == (2, 0, 0):
+                for x, c in stops:
+                    g.setColorAt(x, QColor.fromRgbF(*c))
+            else:                                                       # (the node's interpolation: sampled along the bar)
+                for i in range(65):
+                    g.setColorAt(i / 64, QColor.fromRgbF(*fx.gradient_color(stops, i / 64, *opts)))
             p.setBrush(g)
             p.drawRoundedRect(box, 3, 3)
             return
@@ -689,6 +703,7 @@ class GraphView(QGraphicsView):
         self.link_items = []                     # [(Link, from node, to node, socket, output name)]
         self.pseudo_links = []                   # [(from, to, socket, output)] the links to and from a group's own sockets, inside it
         self.rubber = None                       # a link being dragged: (Link, source node, old (dst, socket) or None, output name)
+        self.reverse = None                      # a link dragged from an input towards an output: (Link, node, socket)
         self.cut = None                          # a Ctrl + right button cut: (the line, its points)
         self.over = None                         # the link a dragged node is over (it will go through the node)
         self.press_at = {}
@@ -775,6 +790,12 @@ class GraphView(QGraphicsView):
                     self.rubber = (ln, nid, old, out)
                     self._route_temp(pos)
                     return
+                if kind == "in" and nid != PORT_OUT:           # a free input dragged the other way: it is let go on an output
+                    ln = Link()
+                    self.scene().addItem(ln)
+                    self.reverse = (ln, nid, sock)
+                    ln.route(pos, self.items_by_id[nid].input_pos(sock))
+                    return
             self.press_at = {i: (it.pos().x(), it.pos().y()) for i, it in self.items_by_id.items()}
         elif e.button() == Qt.RightButton:
             if e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier):
@@ -813,6 +834,10 @@ class GraphView(QGraphicsView):
         pos = self.mapToScene(e.position().toPoint())
         if self.rubber:
             self._route_temp(pos)
+            return
+        if self.reverse:
+            ln, nid, sock = self.reverse
+            ln.route(pos, self.items_by_id[nid].input_pos(sock))
             return
         if self.cut:
             self.cut[1].append(pos)
@@ -862,6 +887,14 @@ class GraphView(QGraphicsView):
             self.unsetCursor()
             return
         pos = self.mapToScene(e.position().toPoint())
+        if self.reverse:
+            ln, nid, sock = self.reverse
+            self.reverse = None
+            self.scene().removeItem(ln)
+            hit = self.socket_at(pos)
+            if hit and hit[0] == "out" and hit[1] != nid:     # (as if dragged from that output to this input)
+                self.editor.drop_link(hit[1], hit[2], None, ("in", nid, sock), pos, e.globalPosition().toPoint())
+            return
         if self.rubber:
             ln, src, old, out = self.rubber
             self.rubber = None

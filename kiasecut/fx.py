@@ -452,6 +452,78 @@ def gradient_stops(v):
     return [[0.0, [0.0, 0.0, 0.0, 1.0]], [1.0, [1.0, 1.0, 1.0, 1.0]]]
 
 
+def gradient_color(stops, x, interp=2, mode=0, hue=0):
+    """The colour [r, g, b, a] of gradient `stops` at x (0 - 1) as gradient_eval() of the shader gives it (interp 0 ease,
+    1 cardinal, 2 linear, 3 b-spline, 4 constant; mode 0 rgb, 1 hsv, 2 hsl; hue 0 near, 1 far, 2 clockwise, 3 counter-
+    clockwise): what a node's picture of a gradient draws."""
+    import colorsys
+    p = [s[0] for s in stops]
+    c = [list(s[1]) for s in stops]
+    n = len(stops)
+    x = min(1.0, max(0.0, x))
+    if n < 2:
+        return c[0]
+    if mode != 0:
+        interp = 2
+    spline = interp in (1, 3)
+    a = 0
+    while a < n and p[a] <= x:
+        a += 1
+    if (a == n or a == 0) and not spline:
+        return c[n - 1] if a == n else c[0]
+    if a == 0:
+        l = pl = c[0]; lp = 0.0; r = c[0]; rp = p[0]; nr = c[1]
+    elif a == n:
+        if p[n - 1] >= 1.0:
+            l = c[n - 2]; lp = p[n - 2]; r = nr = c[n - 1]; rp = p[n - 1]; pl = c[max(n - 3, 0)]
+        else:
+            l = c[n - 1]; lp = p[n - 1]; r = nr = c[n - 1]; rp = 1.0; pl = c[n - 2]
+    else:
+        l = c[a - 1]; lp = p[a - 1]; r = c[a]; rp = p[a]
+        pl = l if a < 2 else c[a - 2]
+        nr = r if a >= n - 1 else c[a + 1]
+    u = (x - lp) / (rp - lp) if rp > lp else 0.0
+    if interp == 4:
+        return l
+    if interp == 0:
+        u = u * u * (3.0 - 2.0 * u)
+    if spline:
+        u2, u3 = u * u, u * u * u
+        if interp == 1:
+            w = (-0.71 * u3 + 1.42 * u2 - 0.71 * u, 1.29 * u3 - 2.29 * u2 + 1.0, -1.29 * u3 + 1.58 * u2 + 0.71 * u, 0.71 * u3 - 0.71 * u2)
+        else:
+            w = (-u3 / 6.0 + 0.5 * u2 - 0.5 * u + 1.0 / 6.0, 0.5 * u3 - u2 + 2.0 / 3.0, -0.5 * u3 + 0.5 * u2 + 0.5 * u + 1.0 / 6.0, u3 / 6.0)
+        return [min(1.0, max(0.0, pl[i] * w[0] + l[i] * w[1] + r[i] * w[2] + nr[i] * w[3])) for i in range(4)]
+    if mode == 0:
+        return [l[i] + (r[i] - l[i]) * u for i in range(4)]
+    conv = colorsys.rgb_to_hsv if mode == 1 else lambda *q: colorsys.rgb_to_hls(*q)
+    back = colorsys.hsv_to_rgb if mode == 1 else lambda h, s_, l_: colorsys.hls_to_rgb(h, l_, s_)
+
+    def split(col):                                     # (hue, saturation, value / lightness)
+        if mode == 1:
+            return colorsys.rgb_to_hsv(*col[:3])
+        h, lt, s_ = colorsys.rgb_to_hls(*col[:3])
+        return h, s_, lt
+    x1, x2 = split(l), split(r)
+    h1, h2 = x1[0], x2[0]
+    d = h2 - h1
+    if hue == 0:
+        if d > 0.5: h1 += 1.0
+        elif d < -0.5: h2 += 1.0
+    elif hue == 1:
+        if 0.0 < d < 0.5: h1 += 1.0
+        elif d <= 0.0 and d > -0.5: h2 += 1.0
+    elif hue == 2:
+        if h2 < h1: h2 += 1.0
+    elif h1 < h2:
+        h1 += 1.0
+    h = (h1 + (h2 - h1) * u) % 1.0
+    s_ = x1[1] + (x2[1] - x1[1]) * u
+    v = x1[2] + (x2[2] - x1[2]) * u
+    rgb = colorsys.hsv_to_rgb(h, s_, v) if mode == 1 else colorsys.hls_to_rgb(h, v, s_)
+    return [rgb[0], rgb[1], rgb[2], l[3] + (r[3] - l[3]) * u]
+
+
 def gradient_uniforms(v):
     """(positions padded to GRADIENT_N, colours padded to GRADIENT_N x 4 flat, how many) for the shader."""
     st = gradient_stops(v)

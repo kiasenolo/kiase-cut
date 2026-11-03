@@ -276,6 +276,22 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, ghost, ed.view.items_by_id["math1"].input_pos("param:value"))
         self.assertEqual(got, [("e1", "params1", "math1", "param:value")])
 
+    def test_free_input_dragged_to_an_output_links_and_makes_a_parameter(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 150)
+            ng.add_node(e["graph"], {"type": ng.PARAMS}, -300, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got, made = [], []
+        ed.connectRequested.connect(lambda *a: got.append(a))
+        ed.exposeRequested.connect(lambda *a: made.append(a))
+        math = ed.view.items_by_id["math1"]
+        self.drag(ed, math.input_pos("src"), ed.view.items_by_id["input"].output_pos(""))        # input -> output
+        self.assertEqual(got, [("e1", "input", "math1", "src", "")])
+        ghost = next(at for out, at in ed.view.items_by_id["params1"].outputs() if out == "\0ghost")
+        self.drag(ed, math.input_pos("param:value"), ghost)                                     # input -> the ghost: a new parameter
+        self.assertEqual(made, [("e1", "params1", "math1", "param:value")])
+
     def test_existing_parameter_output_links_with_its_name(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 150)
@@ -660,6 +676,23 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))                      # (no field shares a name with where it sits)
         self.assertIn("ratio", names)
         self.assertIn("fit", names)
+
+    def test_gradient_picture_follows_the_ramps_choices(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:blender_color_ramp"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        key = "builtin_blender_color_ramp1."
+        vals = ed.node_values("builtin_blender_color_ramp1")
+        self.assertEqual(ed.view.items_by_id["builtin_blender_color_ramp1"].ramp_options(vals), (2, 0, 0))
+        ed.params[key + "interp"] = "固定"
+        ed.params[key + "mode"] = "HSV"
+        opts = ed.view.items_by_id["builtin_blender_color_ramp1"].ramp_options(ed.node_values("builtin_blender_color_ramp1"))
+        self.assertEqual(opts, (4, 1, 0))                                 # constant (the shader's 4), HSV (1)
+        stops = [[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]]
+        self.assertEqual(fx.gradient_color(stops, 0.5, 4), [1, 0, 0, 1])    # constant: holds the left stop
+        mid = fx.gradient_color(stops, 0.5, 2)
+        self.assertAlmostEqual(mid[0], 0.5)
 
     def test_rows_follow_the_operation(self):
         def build(e):

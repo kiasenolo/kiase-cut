@@ -484,6 +484,8 @@ class MainWindow(QMainWindow):
             "文字", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_text(lvl, cid, e, nid, content, font)))
         nd.stringEdited.connect(lambda eid, nid, value: self.node_clip() and self.fx_each(
             "字串", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_graph_string(lvl, cid, e, nid, value)))
+        nd.fontEdited.connect(lambda eid, nid, path: self.node_clip() and self.fx_each(
+            "字體", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_graph_font(lvl, cid, e, nid, path)))
         ef.nodesRequested.connect(self.open_node_editor)
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.browseRequested.connect(self.browse_effect)

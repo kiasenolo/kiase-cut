@@ -410,7 +410,7 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual([k for k in top if k != "搜尋節點…"][:12],
                          ["輸入", "輸出", "色彩", "創意", "濾鏡", "去背", "遮罩", "紋理", "變換", "工具", "KiaseCut 效果", "佈局"][:12])
         self.assertEqual(list(top["輸入"])[:2], ["常數", "輸入（片段的畫面）"])
-        self.assertEqual(list(top["輸入"]["常數"]), ["布林", "顏色", "整數", "整數向量", "選單", "字串", "數值", "向量"])
+        self.assertEqual(list(top["輸入"]["常數"]), ["布林", "顏色", "字體", "整數", "整數向量", "選單", "字串", "數值", "向量"])
         self.assertEqual(list(top["色彩"])[0], "調整")
         self.assertEqual(list(top["濾鏡"])[:3], ["模糊", "擴張／侵蝕", "濾鏡"])
         self.assertEqual(list(top["工具"])[:3], ["數學", "向量", "正規化"])

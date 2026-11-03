@@ -103,6 +103,32 @@ class GraphEditTests(unittest.TestCase):
         with self.assertRaises(edit.EditError):
             edit.set_graph_string(self.p, "c1", self.e["id"], math, "x")
 
+    def test_font_node_feeds_a_text_node(self):
+        t = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "text"})
+        f = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "font", "value": "/x/a.ttf"})
+        d = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "font"})
+        s = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "string"})
+        g = self.e["graph"]
+        self.assertEqual((g["nodes"][f]["value"], g["nodes"][d]["value"], ng.title(g["nodes"][f])), ("/x/a.ttf", project.DEFAULT_FONT, "字體"))
+        self.assertEqual(ng.outputs(g["nodes"][f]), [("", "字體")])
+        self.assertIn(("font", "字體"), ng.sockets(g["nodes"][t]))
+        edit.set_effect_text(self.p, "c1", self.e["id"], t, font_path="/x/own.ttf")
+        spec = lambda: ng.text_of(g["nodes"][t], t, self.e["params"], 0, None, self.e["sources"][t], g)
+        self.assertEqual(spec()["font_path"], "/x/own.ttf")
+        edit.connect_graph(self.p, "c1", self.e["id"], f, t, "font")
+        self.assertEqual(spec()["font_path"], "/x/a.ttf")
+        edit.set_graph_font(self.p, "c1", self.e["id"], f, "/x/b.ttf")
+        self.assertEqual(spec()["font_path"], "/x/b.ttf")
+        edit.connect_graph(self.p, "c1", self.e["id"], s, t, "content")                 # (both constants at once)
+        self.assertEqual((spec()["content"], spec()["font_path"]), ("文字", "/x/b.ttf"))
+        for src, socket in ((f, "content"), (s, "font"), (f, "src")):                    # (each goes to its own socket only)
+            with self.assertRaises(edit.EditError):
+                edit.connect_graph(self.p, "c1", self.e["id"], src, t if socket != "src" else "output", socket)
+        with self.assertRaises(edit.EditError):
+            edit.set_graph_font(self.p, "c1", self.e["id"], s, "/x")
+        edit.remove_graph_node(self.p, "c1", self.e["id"], f)
+        self.assertEqual(spec()["font_path"], "/x/own.ttf")
+
     def test_connect_errors_and_output_stays(self):
         a = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
         b = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/mix"})

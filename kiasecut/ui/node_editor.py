@@ -6,25 +6,29 @@ Left drag on a socket makes a link (dropped on a socket of another node: linked;
 dropped on nothing: unlinked), on a node moves it, on the empty part selects with a box. Wheel zooms, the
 middle button drags the view (middledrag.py), Shift+A (or the right button) adds a node where the pointer
 is, X / Delete removes the selected ones, M mutes them (the picture goes through unchanged), Home shows
-everything. Selecting a picture / video / compound / track node shows it on the preview to place it, as a
+everything. Every parameter of a node has its field in the node as in Blender's compositor (drag a number to
+change it, click it to type, click a tick, a menu or a colour); a number or colour parameter also has a socket:
+link a picture to it and the field gives way to the link. Selecting a picture / video / compound / track node shows it on the preview to place it, as a
 mask is (the main window follows nodeSelected).
 """
 import glob
 import json
 import os
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QComboBox, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget)
 
-from .. import fx, nodegraph as ng
+from .. import curves, fx, nodegraph as ng
 
-WIDTH, HEAD, ROW, PAD = 160.0, 24.0, 20.0, 6.0
+WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 SOCKET_R = 5.5
 HIT_R = 9.0
+LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
 HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.SOURCE: "#3f8a5a"}
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
+SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a"}
 
 
 def node_refs():
@@ -40,18 +44,73 @@ def head_colour(node):
     return QColor(CATEGORY_COLORS[sum(map(ord, cat)) % len(CATEGORY_COLORS)] if cat != "節點" else "#3f6fa8")
 
 
+def number_text(p, v):
+    if p.type == "int":
+        return str(int(round(float(v))))
+    return f"{float(v):.3f}".rstrip("0").rstrip(".") if abs(float(v)) < 1000 else f"{float(v):.1f}"
+
+
 class NodeItem(QGraphicsItem):
-    def __init__(self, nid, node):
+    """One node: head, an output row, a row for every picture it takes and a row for every parameter with
+    its field in it (a number, a tick, a menu, a colour...) - or just its socket's name when a link feeds it.
+    Rows: {"y", "kind": out / image / param / panel / shape / shapecolor, "socket", "label", "p"}."""
+
+    def __init__(self, nid, node, editor):
         super().__init__()
-        self.nid, self.node = nid, node
-        self.inputs = ng.sockets(node)
+        self.nid, self.node, self.editor = nid, node, editor
         self.has_out = ng.has_output(node)
-        rows = max(1, len(self.inputs), 1 if self.has_out else 0)
-        self.h = HEAD + PAD * 2 + rows * ROW
+        self.rows = []
+        self.linked = {l["socket"] for l in editor.graph["links"] if l["to"] == nid}
+        self.drag = None                                    # a field being dragged: {...}
+        self._layout()
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
         self.setPos(node.get("x", 0.0), node.get("y", 0.0))
         self.setZValue(1)
         self.title = ng.title(node)
+
+    def _layout(self):
+        node, rows = self.node, self.rows
+        y = HEAD + PAD
+
+        def add(kind, label, socket=None, p=None, panel=None):
+            nonlocal y
+            rows.append({"y": y, "kind": kind, "socket": socket, "label": label, "p": p, "panel": panel})
+            y += ROW
+        if self.has_out:
+            add("out", "圖像")
+        if node["type"] == ng.OUTPUT:
+            add("image", "結果", "src")
+        elif node["type"] == ng.FILTER:
+            d = fx.get(node["ref"])
+            add("image", d.src_label, "src")
+            for name, label in d.inputs:
+                add("image", label, name)
+            for p in (q for q in d.params if q.panel is None):
+                add("param", p.label, ng.PARAM + p.name if p.type in fx.SOURCE_TYPES else None, p)
+            for name, closed in d.panels:
+                opened = self.editor.panel_open.get((self.nid, name), not closed)
+                add("panel", name, panel=opened)
+                if opened:
+                    for p in (q for q in d.params if q.panel == name):
+                        add("param", p.label, ng.PARAM + p.name if p.type in fx.SOURCE_TYPES else None, p)
+        elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
+            add("shape", "形狀")
+            add("shapecolor", "顏色")
+        self.h = y + PAD
+
+    def row_of(self, socket):
+        return next((r for r in self.rows if r["socket"] == socket), None)
+
+    def input_pos(self, socket):
+        r = self.row_of(socket)
+        return self.mapToScene(QPointF(0, r["y"] + ROW / 2 if r else HEAD))
+
+    def output_pos(self):
+        return self.mapToScene(QPointF(WIDTH, HEAD + PAD + ROW / 2))
+
+    def sockets(self):
+        """[(socket name, scene point)] of the sockets a link can end at."""
+        return [(r["socket"], self.input_pos(r["socket"])) for r in self.rows if r["socket"] and r["kind"] in ("image", "param")]
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene() is not None:
@@ -62,16 +121,37 @@ class NodeItem(QGraphicsItem):
     def boundingRect(self):
         return QRectF(-SOCKET_R - 1, -1, WIDTH + SOCKET_R * 2 + 2, self.h + 2)
 
-    def input_pos(self, i):
-        return self.mapToScene(QPointF(0, HEAD + PAD + i * ROW + ROW / 2))
+    # -- fields ---------------------------------------------------------------------------------------
+    def field_rect(self, r, cell=0, cells=1):
+        x0 = WIDTH * LABEL_W
+        w = (WIDTH - 10 - x0) / cells
+        return QRectF(x0 + cell * w + (2 if cell else 0), r["y"] + 3, w - (2 if cells > 1 and cell < cells - 1 else 0), ROW - 6)
 
-    def output_pos(self):
-        return self.mapToScene(QPointF(WIDTH, HEAD + PAD + ROW / 2))
+    def has_field(self, r):
+        if r["kind"] == "param":
+            return not (r["socket"] and r["socket"] in self.linked) and r["p"].type not in ("curve", "gradient")
+        return r["kind"] in ("shape", "shapecolor")
+
+    def field_at(self, pos):
+        """(row, cell) of the field under pos (item coordinates), or the panel header row, else None."""
+        for r in self.rows:
+            if not (r["y"] <= pos.y() < r["y"] + ROW):
+                continue
+            if r["kind"] == "panel":
+                return r, 0
+            if not self.has_field(r):
+                return None
+            n = 3 if r["kind"] == "param" and r["p"].type == "vec3" else 2 if r["kind"] == "param" and r["p"].type == "vec2" else 1
+            for i in range(n):
+                if self.field_rect(r, i, n).contains(pos):
+                    return r, i
+        return None
 
     def paint(self, p, option, widget=None):
         pal = widget.palette() if widget else None
         base = pal.window().color().lighter(125) if pal else QColor("#38383c")
         text = pal.windowText().color() if pal else QColor("white")
+        field_bg = base.darker(150)
         p.setRenderHint(QPainter.Antialiasing)
         body = QPainterPath()
         body.addRoundedRect(QRectF(0, 0, WIDTH, self.h), 6, 6)
@@ -93,23 +173,140 @@ class NodeItem(QGraphicsItem):
                    self.title + ("（停用）" if muted else ""))
         f.setBold(False)
         p.setFont(f)
-        p.setPen(text)
-        for i, (sock, label) in enumerate(self.inputs):
-            y = HEAD + PAD + i * ROW
-            p.drawText(QRectF(10, y, WIDTH - 20, ROW), Qt.AlignVCenter | Qt.AlignLeft, ("▸ " if sock.startswith(ng.PARAM) else "") + label)
-        if self.has_out:
+        vals = self.editor.node_values(self.nid)
+        for r in self.rows:
+            y, kind = r["y"], r["kind"]
+            row = QRectF(10, y, WIDTH - 20, ROW)
             p.setPen(text)
-            p.drawText(QRectF(10, HEAD + PAD, WIDTH - 20, ROW), Qt.AlignVCenter | Qt.AlignRight, "圖像")
-        for i, (sock, _l) in enumerate(self.inputs):
-            self._socket(p, QPointF(0, HEAD + PAD + i * ROW + ROW / 2), sock.startswith(ng.PARAM))
-        if self.has_out:
-            self._socket(p, QPointF(WIDTH, HEAD + PAD + ROW / 2), False)
+            if kind == "out":
+                p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
+                self._socket(p, QPointF(WIDTH, y + ROW / 2), SOCKET_COLORS["image"])
+                continue
+            if kind == "panel":
+                p.setPen(QColor("#c8c8cc"))
+                p.drawText(row, Qt.AlignVCenter | Qt.AlignLeft, ("▾ " if r["panel"] else "▸ ") + r["label"])
+                continue
+            dim = kind == "param" and not vals.enabled(r["p"])
+            p.setPen(QColor(text.red(), text.green(), text.blue(), 110 if dim else 255))
+            linked = r["socket"] and r["socket"] in self.linked
+            show = r["label"] if not self.has_field(r) or kind in ("image",) else r["label"]
+            p.drawText(QRectF(10, y, WIDTH * LABEL_W - 6, ROW) if self.has_field(r) else row, Qt.AlignVCenter | Qt.AlignLeft,
+                       fm_elide(p, show, WIDTH * LABEL_W - 8 if self.has_field(r) else WIDTH - 20))
+            if r["socket"]:
+                self._socket(p, QPointF(0, y + ROW / 2), SOCKET_COLORS["image"] if kind == "image" else
+                             SOCKET_COLORS["color" if r["p"].type == "color" else "float"])
+            if not self.has_field(r):
+                if kind == "param" and r["p"].type in ("curve", "gradient"):
+                    p.setPen(QColor(text.red(), text.green(), text.blue(), 110))
+                    p.drawText(QRectF(WIDTH * LABEL_W, y, WIDTH * (1 - LABEL_W) - 10, ROW), Qt.AlignVCenter | Qt.AlignRight, "（效果面板）")
+                continue
+            self._field(p, r, vals, field_bg, text, dim)
+
+    def _field(self, p, r, vals, bg, text, dim):
+        kind = r["kind"]
+        if kind == "shape":
+            box = self.field_rect(r)
+            self._box(p, box, bg)
+            p.setPen(text)
+            p.drawText(box.adjusted(6, 0, -14, 0), Qt.AlignVCenter | Qt.AlignLeft,
+                       dict(ng.SHAPES).get(vals.shape, vals.shape))
+            p.drawText(box.adjusted(0, 0, -4, 0), Qt.AlignVCenter | Qt.AlignRight, "▾")
+            return
+        if kind == "shapecolor":
+            box = self.field_rect(r)
+            self._box(p, box, QColor.fromRgbF(*(list(vals.color) + [1.0] * 4)[:3]))
+            return
+        q = r["p"]
+        v = vals.get(q.name)
+        if q.type in ("float", "int"):
+            box = self.field_rect(r)
+            self._box(p, box, bg)
+            p.setPen(text if not dim else QColor(text.red(), text.green(), text.blue(), 110))
+            p.drawText(box, Qt.AlignCenter, number_text(q, v))
+        elif q.type in ("vec2", "vec3"):
+            n = 3 if q.type == "vec3" else 2
+            for i in range(n):
+                box = self.field_rect(r, i, n)
+                self._box(p, box, bg)
+                p.setPen(text)
+                p.drawText(box, Qt.AlignCenter, number_text(q, (list(v) + [0.0] * 3)[i]))
+        elif q.type == "bool":
+            box = QRectF(WIDTH - 10 - ROW + 4, r["y"] + 4, ROW - 8, ROW - 8)
+            self._box(p, box, bg)
+            if v:
+                p.setPen(QPen(QColor("#f0a030"), 2))
+                p.drawLine(box.topLeft() + QPointF(2, box.height() / 2), box.center() + QPointF(-1, 3))
+                p.drawLine(box.center() + QPointF(-1, 3), box.topRight() + QPointF(-2, 2))
+        elif q.type == "menu":
+            box = self.field_rect(r)
+            self._box(p, box, bg)
+            p.setPen(text)
+            p.drawText(box.adjusted(6, 0, -14, 0), Qt.AlignVCenter | Qt.AlignLeft, q.items[fx.menu_index(q, v)] if q.items else "")
+            p.drawText(box.adjusted(0, 0, -4, 0), Qt.AlignVCenter | Qt.AlignRight, "▾")
+        elif q.type == "color":
+            box = self.field_rect(r)
+            c = (list(v) + [1.0] * 4)[:4]
+            self._box(p, box, QColor.fromRgbF(max(0, min(1, c[0])), max(0, min(1, c[1])), max(0, min(1, c[2])), 1.0))
 
     @staticmethod
-    def _socket(p, at, param):
+    def _box(p, box, colour):
+        p.setPen(QPen(QColor(0, 0, 0, 90), 1))
+        p.setBrush(colour)
+        p.drawRoundedRect(box, 3, 3)
+
+    @staticmethod
+    def _socket(p, at, colour):
         p.setPen(QPen(QColor(0, 0, 0, 160), 1))
-        p.setBrush(QColor("#a0a0a8") if param else QColor("#c8c85a"))
+        p.setBrush(QColor(colour))
         p.drawEllipse(at, SOCKET_R, SOCKET_R)
+
+    # -- mouse: a field takes the press (the rest of the node moves it) ------------------------------------
+    def mousePressEvent(self, e):
+        hit = self.field_at(e.pos()) if e.button() == Qt.LeftButton else None
+        if hit is None:
+            super().mousePressEvent(e)
+            return
+        if not self.isSelected():
+            self.scene().clearSelection()
+            self.setSelected(True)
+        r, cell = hit
+        self.drag = {"row": r, "cell": cell, "x0": e.pos().x(), "moved": False,
+                     "v0": self.editor.field_number(self.nid, r, cell)}
+        e.accept()
+
+    def mouseMoveEvent(self, e):
+        d = self.drag
+        if d is None:
+            super().mouseMoveEvent(e)
+            return
+        r = d["row"]
+        q = r["p"] if r["kind"] == "param" else None
+        if q is None or q.type not in ("float", "int", "vec2", "vec3") or d["v0"] is None:
+            return
+        dx = e.pos().x() - d["x0"]
+        if not d["moved"] and abs(dx) < 3:
+            return
+        d["moved"] = True
+        from .effects_panel import step_for
+        step = step_for(q) / 2 * (0.1 if e.modifiers() & Qt.ShiftModifier else 1.0)
+        self.editor.set_number(self.nid, r, d["cell"], d["v0"] + dx * step)
+
+    def mouseReleaseEvent(self, e):
+        d, self.drag = self.drag, None
+        if d is None:
+            super().mouseReleaseEvent(e)
+            return
+        if d["moved"]:
+            return
+        self.editor.field_clicked(self, d["row"], d["cell"], e.screenPos())
+
+    def mouseDoubleClickEvent(self, e):
+        if self.field_at(e.pos()) is None:
+            super().mouseDoubleClickEvent(e)
+
+
+def fm_elide(p, text, width):
+    return p.fontMetrics().elidedText(text, Qt.ElideRight, int(width))
 
 
 class Link(QGraphicsPathItem):
@@ -147,8 +344,8 @@ class GraphView(QGraphicsView):
         for nid, it in self.items_by_id.items():
             if it.has_out and (it.output_pos() - pos).manhattanLength() <= HIT_R * 1.5:
                 return "out", nid, ""
-            for i, (sock, _l) in enumerate(it.inputs):
-                if (it.input_pos(i) - pos).manhattanLength() <= HIT_R * 1.5:
+            for sock, at in it.sockets():
+                if (at - pos).manhattanLength() <= HIT_R * 1.5:
                     return "in", nid, sock
         return None
 
@@ -181,8 +378,8 @@ class GraphView(QGraphicsView):
 
     def reroute(self):
         """Draw the links again (a node moved)."""
-        for ln, a, b, i in self.link_items:
-            ln.route(self.items_by_id[a].output_pos(), self.items_by_id[b].input_pos(i))
+        for ln, a, b, sock in self.link_items:
+            ln.route(self.items_by_id[a].output_pos(), self.items_by_id[b].input_pos(sock))
 
     def _route_temp(self, pos):
         ln, src, _old = self.rubber
@@ -253,6 +450,8 @@ class NodeEditor(QWidget):
     nodeSelected = Signal(str, str)                         # effect id, the one node selected ("" none)
     effectChosen = Signal(str)                              # effect id: another node effect of the clip
     saveRequested = Signal(str)                             # effect id: keep it as a 效果預設 (a custom effect)
+    paramEdited = Signal(str, str, object)                  # effect id, "<node>.<parameter>", value
+    shapeEdited = Signal(str, str, object, object)          # effect id, shape node, shape id or None, colour or None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -262,6 +461,9 @@ class NodeEditor(QWidget):
         self.user_filters = []
         self._sig = None
         self._selected = ""
+        self.params, self.sources, self.t = {}, {}, 0         # what the fields show: the effect's, at clip time t
+        self.panel_open = {}                                  # (node id, panel name) -> opened or shut by the user
+        self.edit_proxy = None                                # the text box of a number being typed
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
         bar = QHBoxLayout()
@@ -293,8 +495,9 @@ class NodeEditor(QWidget):
     def set_user_filters(self, filters):
         self.user_filters = list(filters)
 
-    def show_clip(self, clip, want=None):
-        """Show a node effect of clip (None: nothing): want, else the one shown before, else the first."""
+    def show_clip(self, clip, want=None, t=0):
+        """Show a node effect of clip (None: nothing): want, else the one shown before, else the first; its
+        fields at clip time t."""
         es = [e for e in (clip or {}).get("effects") or [] if e.get("filter") == fx.GRAPH]
         names = [(e["id"], f"節點效果 {i + 1}") for i, e in enumerate(es)]
         if names != self.effects:
@@ -319,38 +522,160 @@ class NodeEditor(QWidget):
         self.view.show()
         first = self.eid != e["id"]
         self.eid = e["id"]
+        self.params, self.sources, self.t = e["params"], e.get("sources") or {}, t
         sig = json.dumps(e["graph"], sort_keys=True)
         if sig != self._sig:
             self._sig = sig
             self.graph = e["graph"]
             self.rebuild(first)
+        else:
+            self.view.viewport().update()                   # (the values only)
 
-    def rebuild(self, fit):
+    def rebuild(self, fit=False):
         v = self.view
         keep = {i for i, it in v.items_by_id.items() if it.isSelected()}
         sc = v.scene()
         sc.clear()
+        self.edit_proxy = None
         v.items_by_id, v.link_items = {}, []
         for nid, node in self.graph["nodes"].items():
-            it = NodeItem(nid, node)
+            it = NodeItem(nid, node, self)
             sc.addItem(it)
             v.items_by_id[nid] = it
             it.setSelected(nid in keep)
         for l in self.graph["links"]:
             a, b = v.items_by_id.get(l["from"]), v.items_by_id.get(l["to"])
-            if a is None or b is None:
-                continue
-            names = [s for s, _ in b.inputs]
-            if l["socket"] not in names:
+            if a is None or b is None or b.row_of(l["socket"]) is None:
                 continue
             ln = Link()
-            ln.route(a.output_pos(), b.input_pos(names.index(l["socket"])))
+            ln.route(a.output_pos(), b.input_pos(l["socket"]))
             sc.addItem(ln)
-            v.link_items.append((ln, l["from"], l["to"], names.index(l["socket"])))
+            v.link_items.append((ln, l["from"], l["to"], l["socket"]))
         r = sc.itemsBoundingRect()
         sc.setSceneRect(r.adjusted(-1500, -1500, 1500, 1500))
         if fit:
             v.fit()
+
+    # -- the fields of the nodes -------------------------------------------------------------------------
+    class Values:
+        """What a node's fields show now."""
+
+        def __init__(self, vals, d, shape, color):
+            self.vals, self.d, self.shape, self.color = vals, d, shape, color
+            self.named = fx.named(d, vals) if d is not None else {}
+
+        def get(self, name):
+            return self.vals.get(name)
+
+        def enabled(self, p):
+            return fx.enabled(p, self.named)
+
+    def node_values(self, nid):
+        node = self.graph["nodes"].get(nid) or {}
+        src = self.sources.get(nid) or {}
+        if node.get("type") != ng.FILTER:
+            return self.Values({}, None, src.get("shape", "rectangle"), src.get("color") or [1.0, 1.0, 1.0, 1.0])
+        d = fx.get(node["ref"])
+        vals = {p.name: curves.value(self.params.get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params}
+        return self.Values(vals, d, "", [1.0, 1.0, 1.0, 1.0])
+
+    def field_number(self, nid, row, cell):
+        """The number a field holds (None: it holds none)."""
+        if row["kind"] != "param":
+            return None
+        q, v = row["p"], self.node_values(nid).get(row["p"].name)
+        if q.type in ("float", "int"):
+            return float(v)
+        if q.type in ("vec2", "vec3"):
+            return float((list(v) + [0.0] * 3)[cell])
+        return None
+
+    def set_number(self, nid, row, cell, value):
+        """A number field scrubbed or typed: clamped, asked for, and shown at once."""
+        q = row["p"]
+        value = min(max(value, q.lo), q.hi)
+        key = ng.param_key(nid, q.name)
+        if q.type == "int":
+            new = int(round(value))
+        elif q.type == "float":
+            new = round(value, 4)
+        else:
+            cur = list(self.node_values(nid).get(q.name))
+            cur[cell] = round(value, 4)
+            new = cur
+        self.params[key] = new if not curves.is_animated(self.params.get(key)) else self.params[key]
+        self.paramEdited.emit(self.eid, key, new)
+        self.view.viewport().update()
+
+    def field_clicked(self, item, row, cell, global_pos):
+        """A field pressed and let go without dragging: a tick turns over, a menu / colour / text box opens."""
+        nid, kind = item.nid, row["kind"]
+        gp = global_pos.toPoint()
+        if kind == "panel":
+            key = (nid, row["label"])
+            self.panel_open[key] = not row["panel"]
+            QTimer.singleShot(0, self.rebuild)
+            return
+        if kind == "shape":
+            menu = QMenu(self)
+            for sid, name in ng.SHAPES:
+                menu.addAction(name, lambda sid=sid: self.shapeEdited.emit(self.eid, nid, sid, None))
+            menu.exec(gp)
+            return
+        if kind == "shapecolor":
+            self._pick(nid, self.node_values(nid).color, lambda c: self.shapeEdited.emit(self.eid, nid, None, c), item, row)
+            return
+        q = row["p"]
+        key = ng.param_key(nid, q.name)
+        v = self.node_values(nid).get(q.name)
+        if q.type == "bool":
+            self.paramEdited.emit(self.eid, key, not bool(v))
+        elif q.type == "menu":
+            menu = QMenu(self)
+            for name in q.items:
+                menu.addAction(name, lambda name=name: self.paramEdited.emit(self.eid, key, name))
+            menu.exec(gp)
+        elif q.type == "color":
+            self._pick(nid, v, lambda c: self.paramEdited.emit(self.eid, key, c), item, row)
+        elif q.type in ("float", "int", "vec2", "vec3"):
+            self._type_number(item, row, cell)
+
+    def _pick(self, nid, colour, done, item, row):
+        from .colorpick import pick_color, qcolor, rgba
+        c = list(colour) + [1.0] * 4
+        start = qcolor("#%02x%02x%02x" % tuple(int(round(max(0, min(1, x)) * 255)) for x in c[:3]))
+        start.setAlphaF(max(0.0, min(1.0, c[3])))
+        col = pick_color(self, start, "顏色")
+        if col is not None:
+            done(rgba(col))
+
+    def _type_number(self, item, row, cell):
+        """A text box over the number's field: Enter keeps what was typed, Esc or leaving it does not."""
+        q = row["p"]
+        n = 3 if q.type == "vec3" else 2 if q.type == "vec2" else 1
+        box = item.field_rect(row, cell, n)
+        le = QLineEdit(number_text(q, self.field_number(item.nid, row, cell)))
+        proxy = self.view.scene().addWidget(le)
+        proxy.setZValue(10)
+        proxy.setPos(item.mapToScene(box.topLeft()))
+        proxy.resize(box.width(), box.height())
+        le.selectAll()
+        le.setFocus()
+        self.edit_proxy = proxy
+
+        def finish(keep):
+            if self.edit_proxy is not proxy:
+                return
+            self.edit_proxy = None
+            text = le.text()
+            QTimer.singleShot(0, lambda: (proxy.scene() and proxy.scene().removeItem(proxy)))
+            if keep:
+                try:
+                    self.set_number(item.nid, row, cell, float(text))
+                except ValueError:
+                    pass
+        le.returnPressed.connect(lambda: finish(True))
+        le.editingFinished.connect(lambda: finish(False))
 
     # -- asking for edits ------------------------------------------------------------------------------
     def selected(self):

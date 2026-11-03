@@ -58,7 +58,7 @@ class NodeEditorTests(unittest.TestCase):
         got = []
         ed.connectRequested.connect(lambda *a: got.append(a))
         mix = ed.view.items_by_id["mix1"]
-        self.drag(ed, ed.view.items_by_id["input"].output_pos(), mix.input_pos(1))
+        self.drag(ed, ed.view.items_by_id["input"].output_pos(), mix.input_pos("b"))
         self.assertEqual(got, [("e1", "input", "mix1", "b")])
 
     def test_picking_up_a_link_and_dropping_it_nowhere_unlinks(self):
@@ -66,7 +66,7 @@ class NodeEditorTests(unittest.TestCase):
         got = []
         ed.disconnectRequested.connect(lambda *a: got.append(a))
         out = ed.view.items_by_id["output"]
-        self.drag(ed, out.input_pos(0), out.input_pos(0) + QPointF(-30, 200))
+        self.drag(ed, out.input_pos("src"), out.input_pos("src") + QPointF(-30, 200))
         self.assertEqual(got, [("e1", "output", "src")])
 
     def test_moving_a_node_asks_for_the_move(self):
@@ -99,6 +99,69 @@ class NodeEditorTests(unittest.TestCase):
         ed.select("output")
         QTest.keyClick(ed.view, Qt.Key_X)
         self.assertEqual(len(removed), 1)                       # (the output stays)
+
+    def row_pos(self, ed, nid, name):
+        """Scene point of the middle of the field of parameter name of node nid."""
+        it = ed.view.items_by_id[nid]
+        r = next(r for r in it.rows if r["kind"] == "param" and r["p"].name == name)
+        return it.mapToScene(it.field_rect(r).center())
+
+    def test_number_field_scrubs_and_is_hidden_when_linked(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got = []
+        ed.paramEdited.connect(lambda *a: got.append(a))
+        at = self.row_pos(ed, "math1", "value")
+        self.drag(ed, at, at + QPointF(40, 0))
+        self.assertTrue(got)
+        eid, key, value = got[-1]
+        self.assertEqual((eid, key), ("e1", "math1.value"))
+        self.assertGreater(value, 0.5)                                  # (dragged right: more)
+        it = ed.view.items_by_id["math1"]
+        row = next(r for r in it.rows if r["socket"] == "param:value")
+        self.assertTrue(it.has_field(row))
+        it.linked.add("param:value")
+        self.assertFalse(it.has_field(row))
+
+    def test_tick_flips_and_menu_choices_are_asked_for(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got = []
+        ed.paramEdited.connect(lambda *a: got.append(a))
+        it = ed.view.items_by_id["math1"]
+        r = next(r for r in it.rows if r["kind"] == "param" and r["p"].name == "clamp_on")
+        ed.field_clicked(it, r, 0, QPointF(0, 0))
+        self.assertEqual(got, [("e1", "math1.clamp_on", True)])
+        self.assertEqual(ed.field_number("math1", r, 0), None)
+
+    def test_typed_number_and_clamp(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:bulge"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got = []
+        ed.paramEdited.connect(lambda *a: got.append(a))
+        it = ed.view.items_by_id["builtin_bulge1"]
+        r = next(r for r in it.rows if r["kind"] == "param" and r["p"].type == "float")
+        ed.set_number("builtin_bulge1", r, 0, 1e9)
+        self.assertEqual(got[-1][2], r["p"].hi)
+
+    def test_values_follow_the_effect_without_redrawing(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        item = ed.view.items_by_id["math1"]
+        c = clip_with(build)
+        c["effects"][0]["params"]["math1.value"] = 0.9
+        c["effects"][0]["graph"] = ed.graph
+        ed.show_clip(c)
+        self.assertIs(ed.view.items_by_id["math1"], item)
+        self.assertEqual(ed.node_values("math1").get("value"), 0.9)
 
     def test_redraws_only_when_the_graph_changed(self):
         ed = self.make()

@@ -454,6 +454,9 @@ class MainWindow(QMainWindow):
         nd.muteRequested.connect(self.on_node_mute)
         nd.nodeSelected.connect(self.on_node_selected)
         nd.saveRequested.connect(self.save_node_preset)
+        nd.paramEdited.connect(lambda eid, key, v: self.node_clip() and self.on_fx_param_edited([self.node_clip()], "fx:" + eid, key, v))
+        nd.shapeEdited.connect(lambda eid, nid, shape, col: self.node_clip() and self.fx_each(
+            "形狀", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_shape(lvl, cid, e, nid, shape, col)))
         ef.nodesRequested.connect(self.open_node_editor)
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.browseRequested.connect(self.browse_effect)
@@ -2556,7 +2559,7 @@ class MainWindow(QMainWindow):
             self.mask_panel.set_tracks(self.mask_tracks())
             self.inspector.set_images(self.mask_images())          # (a component's picture parameters)
         self.mask_panel.show_clips(clips, t, self.fps)
-        self.nodes.show_clip(clips[0] if len(clips) == 1 else None)
+        self.nodes.show_clip(clips[0] if len(clips) == 1 else None, t=times[clips[0]["id"]] if len(clips) == 1 else 0)
         self.beats.show_clips(clips)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
         self._update_side_tabs(clips)

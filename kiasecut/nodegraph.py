@@ -20,6 +20,7 @@ picture the effect was given keep it from one evaluation to the next (Cache), so
 """
 import copy
 import hashlib
+import math
 import re
 
 from . import assets, curves, fx
@@ -828,17 +829,38 @@ def read_rgba8(tex):
     return (np.clip(a, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
 
 
-def thumb_tap(store, size=96):
-    """A tap for evaluate that keeps a small RGBA (premultiplied) copy of every node's picture in store:
-    {node id: {output: (width, height, bytes)}}."""
+def small_rgba8(tex, size=96):
+    """(width, height, 8-bit RGBA rows as bytes) of a node texture shrunk to about size px wide. The card shrinks it (a
+    mip level: an average, so nothing is skipped over) and only that is read back - not a whole picture a few times
+    the size of the screen (floats are clamped to 0 - 1)."""
     import numpy as np
+    w, h = tex.size
+    level = max(0, int(math.log2(max(1.0, w / size))))
+    if level:
+        tex.build_mipmaps(0, level)
+    lw, lh = max(1, w >> level), max(1, h >> level)
+    raw = tex.read(level=level)
+    if tex.dtype == "f1":
+        arr = np.frombuffer(raw, np.uint8).reshape(lh, lw, 4)
+    else:
+        a = np.frombuffer(raw, np.float16 if tex.dtype == "f2" else np.float32).reshape(lh, lw, 4)
+        arr = (np.clip(a, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+    return lw, lh, arr.tobytes()
 
-    def tap(nid, out, tex):
-        w, h = tex.size
-        arr = read_rgba8(tex)
-        k = max(1, w // size)
-        small = np.ascontiguousarray(arr[::k, ::k])
-        store.setdefault(nid, {})[out] = (small.shape[1], small.shape[0], small.tobytes())
+
+def thumb_tap(store, size=96, memo=None):
+    """A tap for evaluate that keeps a small RGBA (premultiplied) copy of every node's picture in store:
+    {node id: {output: (width, height, bytes)}}. memo ({(node id, output): (signature, copy)}, the caller's, kept between
+    frames): a picture whose signature (what evaluate knows it depends on) is the one of the last copy is not read again."""
+    def tap(nid, out, tex, sig=None):
+        if memo is not None and sig is not None:
+            got = memo.get((nid, out))
+            if got is not None and got[0] == sig:
+                store.setdefault(nid, {})[out] = got[1]
+                return
+        small = store.setdefault(nid, {})[out] = small_rgba8(tex, size)
+        if memo is not None and sig is not None:
+            memo[(nid, out)] = (sig, small)
     return tap
 
 
@@ -994,7 +1016,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
     (texture, 3 x 3 map, done) of a source node's picture (see Engine.run_tex's sources) or None.
     viewer: show the picture a 預覽 node takes instead of the output (the editor's preview, not an export).
-    tap(node id, output, texture): told every picture a node gives (the editor's thumbnails, see thumb_tap).
+    tap(node id, output, texture, signature): told every picture a node gives (the editor's thumbnails, see thumb_tap; the
+    signature is None unless there is a cache).
     cache (a Cache), scope (the effect's id) and stamp(node id[, paint, linked]) -> something hashable that says what a source's
     picture is (the same stamp: the same picture; None: it may be a different one every time, as a video's) keep the pictures of
     the costly nodes that do not read the picture the effect was given (the clip) from one evaluation to the next: a node whose
@@ -1103,7 +1126,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     def put(n, tex, owner, o=""):
         made[(n, o)] = (tex, owner)
         if tap is not None:
-            tap(n, o, tex)
+            tap(n, o, tex, sigs.get((n, o)))
         if owner is not None:
             left[id(owner)] = left.get(id(owner), 0) + users.get((n, o), 0)
 

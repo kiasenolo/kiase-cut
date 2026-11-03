@@ -300,6 +300,18 @@ class RunTest(unittest.TestCase):
         out, _, _ = self.run_graph(g, red)
         self.assertTrue((out == red).all())
 
+    def test_thumbnails_are_shrunk_on_the_card_before_they_are_read(self):
+        eng = engine()
+        with eng.ctx:
+            for dtype, raw in (("f1", bytes([255, 0, 0, 255]) * (400 * 200)),
+                               ("f2", np.tile(np.array([1.0, 0.0, 0.0, 1.0], np.float16), 400 * 200).tobytes())):
+                tex = eng.ctx.texture((400, 200), 4, raw, dtype=dtype)
+                w, h, data = ng.small_rgba8(tex, 96)
+                self.assertEqual((w, h, len(data)), (100, 50, 100 * 50 * 4), dtype)        # (400 / 4: two levels down)
+                self.assertEqual(data[:4], bytes([255, 0, 0, 255]), dtype)
+                self.assertEqual(ng.small_rgba8(tex, 500)[:2], (400, 200))                  # (small enough: as it is)
+                tex.release()
+
     def test_no_leaks_between_runs(self):
         g = ng.new_graph()
         prev = "input"

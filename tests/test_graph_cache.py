@@ -157,9 +157,29 @@ class CacheTests(unittest.TestCase):
         params = {a + ".k": 0.5, b + ".k": 1.0}
         self.go(g, params)
         seen = []
-        self.go(g, params, tap=lambda n, o, tex: seen.append(n))
+        self.go(g, params, tap=lambda n, o, tex, sig: seen.append(n))
         self.assertEqual(self.draws, ["Gen", "Read"])                      # (nothing drawn again)
         self.assertTrue({"input", a, b} <= set(seen), seen)
+
+    def test_a_thumbnail_is_read_back_again_only_when_its_picture_changed(self):
+        g, (a, b) = self.chain("gen", "read")
+        memo, taps, reads = {}, [], []
+        real = ng.small_rgba8
+        ng.small_rgba8 = lambda tex, size=96: (reads.append(1), real(tex, size))[1]
+        self.addCleanup(setattr, ng, "small_rgba8", real)
+
+        def frame(params):
+            store = {}
+            self.go(g, params, tap=ng.thumb_tap(store, memo=memo))
+            return store
+        first = frame({a + ".k": 0.5, b + ".k": 1.0})
+        n = len(reads)
+        self.assertEqual(frame({a + ".k": 0.5, b + ".k": 1.0}), first)    # (nothing changed: the copies of the last frame, nothing read)
+        self.assertEqual(len(reads), n + 1)                                  # (the clip's own picture is read every time)
+        again = frame({a + ".k": 0.5, b + ".k": 0.5})                       # (the last one changed: its thumbnail is read, the other's not)
+        self.assertEqual(len(reads), n + 3)
+        self.assertEqual(again[a], first[a])
+        self.assertNotEqual(again[b], first[b])
 
     def test_what_the_effect_no_longer_draws_is_given_back(self):
         g, (a,) = self.chain("gen")

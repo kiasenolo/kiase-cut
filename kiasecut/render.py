@@ -133,6 +133,7 @@ class Renderer:
         self.editing = False
         self.thumbs = {}            # {effect id: nodegraph.thumb_tap store} of the node effects the editor shows thumbnails of
         self.want_thumbs = set()
+        self.thumb_memo = {}        # {effect id: {(node id, output): (signature, thumbnail)}}: pictures of nodes that did not change are not read back again
         self.level = frozenset()    # ids of the tracks a 參考 track shows on (project.level_tracks)
         self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
         self.outer = None           # (painter / layer, what is under it) of a 效果穿透 compound's layer
@@ -825,7 +826,8 @@ class Renderer:
         return self._fx
 
     def thumb_tap(self, e):
-        return nodegraph.thumb_tap(self.thumbs.setdefault(e["id"], {})) if e["id"] in self.want_thumbs else None
+        return (nodegraph.thumb_tap(self.thumbs.setdefault(e["id"], {}), memo=self.thumb_memo.setdefault(e["id"], {}))
+                if e["id"] in self.want_thumbs else None)
 
     def graph_effect(self, eng, e, arr, t, duration, fps, disp, wt, unit):
         """Node graph effect e over arr (H x W x 4, premultiplied) on the CPU renderer's engine: the

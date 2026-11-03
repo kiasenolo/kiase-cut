@@ -398,7 +398,7 @@ class NodeEditorTests(unittest.TestCase):
         self.assertAlmostEqual(x, 50, delta=2)
         self.assertAlmostEqual(y, 60, delta=2)
 
-    def test_add_menu_has_tool_nodes_apart_from_the_effects(self):
+    def test_add_menu_follows_blenders_order(self):
         ed = self.make()
         menus = []
         ed.popup = lambda menu, pos: menus.append(menu)
@@ -407,17 +407,29 @@ class NodeEditorTests(unittest.TestCase):
         def tree(menu):
             return {a.text(): (tree(a.menu()) if a.menu() else None) for a in menu.actions() if a.text()}
         top = tree(menus[0])
-        for cat in ("輸入", "形狀", "色彩", "向量", "轉換器", "變換", "內建／效果"):
-            self.assertIn(cat, top)
+        self.assertEqual([k for k in top if k != "搜尋節點…"][:12],
+                         ["輸入", "輸出", "色彩", "創意", "濾鏡", "去背", "遮罩", "紋理", "變換", "工具", "KiaseCut 效果", "佈局"][:12])
+        self.assertEqual(list(top["輸入"])[:2], ["常數", "輸入（片段的畫面）"])
+        self.assertEqual(list(top["輸入"]["常數"]), ["布林", "顏色", "整數", "整數向量", "選單", "數值", "向量"])
+        self.assertEqual(list(top["色彩"])[0], "調整")
+        self.assertEqual(list(top["濾鏡"])[:3], ["模糊", "擴張／侵蝕", "濾鏡"])
+        self.assertEqual(list(top["工具"])[:3], ["數學", "向量", "正規化"])
+        self.assertEqual(list(top["工具"]["向量"]), ["合併 XYZ", "映射範圍", "混合", "分離 XYZ", "向量曲線", "向量數學", "向量旋轉"])
+        self.assertIn("場景", top["輸入"])
         self.assertIn("混合", top["色彩"])
-        self.assertIn("向量數學", top["向量"])
-        self.assertIn("數學", top["轉換器"])
-        self.assertIn("場景時間", top["輸入"])
-        self.assertNotIn("混合", top["內建／效果"])
-        self.assertTrue(any("模糊" in k for sub in top["內建／效果"].values() for k in sub))
+        self.assertNotIn("混合", top["KiaseCut 效果"])
+        self.assertTrue(any("模糊" in k for sub in top["KiaseCut 效果"].values() for k in sub))
         self.assertNotIn("圖片來源", {k for sub in top.values() if sub for k in sub})
         menus[0].search.setText("向量數學")
         self.assertTrue(any("向量" in a.text() for a in menus[0].found))
+
+    def test_every_tool_node_has_a_place_in_the_menu(self):
+        from kiasecut import nodemenu
+        from kiasecut.ui.node_editor import node_refs
+        for ref in node_refs():
+            self.assertIn(ref, nodemenu.placed(), ref)
+        for ref in nodemenu.placed():
+            self.assertIn(ref, set(fx.builtin_refs()) | set(node_refs()), ref)
 
     def test_add_menu_searches(self):
         ed = self.make()

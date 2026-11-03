@@ -23,7 +23,7 @@ from PySide6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPaint
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QGraphicsItem, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
 
-from .. import assets, curves, dynamic, fx, nodegraph as ng
+from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from .wheel import pinch as wheel_pinch
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
@@ -53,7 +53,7 @@ def node_refs():
     return [r for r in refs if r != ng.PICTURE]                  # (the picture node is what source nodes are drawn with)
 
 
-NODE_HEADS = {"輸入": "#a8473f", "色彩": "#8a8a3f", "向量": "#5a5aa8", "轉換器": "#3f6fa8", "變換": "#3f8f9a"}   # the tool nodes, as Blender colours them
+NODE_HEADS = {"輸入": "#a8473f", "色彩": "#8a8a3f", "向量": "#5a5aa8", "轉換器": "#3f6fa8", "變換": "#3f8f9a", "濾鏡": "#6c696f"}   # the tool nodes, as Blender colours them
 
 
 def is_tool(ref):
@@ -1999,41 +1999,46 @@ class NodeEditor(QWidget):
         box = QWidgetAction(menu)
         box.setDefaultWidget(search)
         menu.addAction(box)
-        groups = []                                       # the category submenus (hidden while searching)
-        inp = menu.addMenu("輸入")
-        groups.append(inp.menuAction())
-        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("預覽（編輯器的預覽看這裡）", {"type": ng.VIEWER}), ("繞線點", {"type": ng.REROUTE}), ("框架／註解", {"type": ng.FRAME}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
-                           ("影片", {"type": ng.SOURCE, "kind": "video"}), ("複合片段", {"type": ng.SOURCE, "kind": "compound"}),
-                           ("時間線（軌道）", {"type": ng.SOURCE, "kind": "track"})):
-            inp.addAction(text, lambda _=False, n=node: ask(n))
-            entries.append(("輸入", text, node))
-        shapes = menu.addMenu("形狀")
-        groups.append(shapes.menuAction())
-        for a in assets.ASSETS:                           # the built-in shapes, with all their parameters
-            if a.cat == "shape":
-                node = {"type": ng.SOURCE, "kind": "shape", "asset": {"key": a.key}}
-                shapes.addAction(a.name, lambda _=False, n=node: ask(n))
-                entries.append(("形狀", a.name, node))
-        tools = {}                                        # the tool nodes (filters/nodes), by Blender-like category
-        for ref in node_refs():
-            d = fx.get(ref)
-            tools.setdefault(d.category or "其他", []).append((d.name, ref))
-        for name, ref in tools.pop("輸入", []):             # (the inputs menu has the time and coordinate nodes too)
-            node = {"type": ng.FILTER, "ref": ref}
-            inp.addAction(name, lambda _=False, n=node: ask(n))
-            entries.append(("輸入", name, node))
-        for cat in [c for c in NODE_HEADS if c in tools] + sorted(c for c in tools if c not in NODE_HEADS):
-            sub = menu.addMenu(cat)
-            groups.append(sub.menuAction())
-            for name, ref in tools[cat]:
-                node = {"type": ng.FILTER, "ref": ref}
-                sub.addAction(name, lambda _=False, n=node: ask(n))
-                entries.append((cat, name, node))
-        effects = menu.addMenu("內建／效果")                # every effect of the 效果 list, as a node
+        groups = []                                       # the top menus and separators (hidden while searching)
+        known = set(fx.builtin_refs()) | set(node_refs())
+
+        def fill(target, items, path, top=False):
+            """The items of nodemenu (Blender's Add menu, in its order) into the menu `target`."""
+            for it in items:
+                if it == nodemenu.SEP:
+                    act = target.addSeparator()
+                    if top:
+                        groups.append(act)
+                elif it == nodemenu.SHAPES:
+                    sub = target.addMenu("形狀")
+                    for a in assets.ASSETS:               # the built-in shapes, with all their parameters
+                        if a.cat == "shape":
+                            n = {"type": ng.SOURCE, "kind": "shape", "asset": {"key": a.key}}
+                            sub.addAction(a.name, lambda _=False, n=n: ask(n))
+                            entries.append((path + " ▸ 形狀", a.name, n))
+                elif isinstance(it, str):
+                    ref = nodemenu.ref_of(it)
+                    if ref not in known:
+                        continue
+                    n = {"type": ng.FILTER, "ref": ref}
+                    name = fx.get(ref).name
+                    target.addAction(name, lambda _=False, n=n: ask(n))
+                    entries.append((path, name, n))
+                elif it[0] == "node":
+                    target.addAction(it[1], lambda _=False, n=it[2]: ask(dict(n)))
+                    entries.append((path, it[1], it[2]))
+                else:
+                    sub = target.addMenu(it[1])
+                    if top:
+                        groups.append(sub.menuAction())
+                    fill(sub, it[2], (path + " ▸ " if path else "") + it[1])
+        fill(menu, nodemenu.ROOT, "", True)
+        placed = nodemenu.placed()
+        effects = menu.addMenu("KiaseCut 效果")           # what Blender has no place for: the other effects of the 效果 list, as nodes
         groups.append(effects.menuAction())
         cats = {}
-        for ref in fx.builtin_refs():
-            if not is_tool(ref):
+        for ref in sorted(known):
+            if ref not in placed and ref != ng.PICTURE:
                 d = fx.get(ref)
                 cats.setdefault(d.category or "其他", []).append((d.name, ref))
         for cat in sorted(cats):
@@ -2041,7 +2046,7 @@ class NodeEditor(QWidget):
             for name, ref in cats[cat]:
                 node = {"type": ng.FILTER, "ref": ref}
                 sub.addAction(name, lambda _=False, n=node: ask(n))
-                entries.append(("內建／效果 ▸ " + cat, name, node))
+                entries.append(("KiaseCut 效果 ▸ " + cat, name, node))
         if self.user_filters:
             mine = menu.addMenu("我的濾鏡（Library）")
             groups.append(mine.menuAction())
@@ -2049,6 +2054,8 @@ class NodeEditor(QWidget):
                 node = {"type": ng.FILTER, "ref": path}
                 mine.addAction(name, lambda _=False, n=node: ask(n))
                 entries.append(("我的濾鏡", name, node))
+        menu.addSeparator()
+        fill(menu, nodemenu.AFTER, "", True)
         found = []                                        # the actions of the matches, shown in place of the categories
 
         def refresh(text):

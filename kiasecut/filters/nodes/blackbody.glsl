@@ -3,6 +3,8 @@
 // @description 節點用：照 Blender 的「黑體」節點（Blackbody）：溫度（單位 K）換成黑體輻射的顏色，一張純色的圖（暖色在低溫、藍白在高溫，6500 K 接近白；800 K 以下和 12000 K 以上不再變）。溫度是數字（圖進來就是黑白的明度），沒接線就用欄位裡的數字
 // @source "溫度" temperature
 // @param temperature float 6500 0 20000 "溫度 (K)"
+// @socket in - float
+// @socket out - color
 
 // Reimplementation of Blender's Blackbody compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

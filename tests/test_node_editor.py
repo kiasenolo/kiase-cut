@@ -166,6 +166,26 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(ne.type_color("vec2"), ne.type_color("vec3"))
         self.assertNotIn(ne.type_color("bool"), (ne.SOCKET_COLORS["image"], ne.SOCKET_COLORS["string"], ne.SOCKET_COLORS["font"]))
 
+    def test_nodes_that_carry_values_say_so_in_their_sockets(self):
+        from kiasecut import fx
+        from kiasecut.ui import node_editor as ne
+        for ref in ne.node_refs():
+            d = fx.get(ref)
+            self.assertIsNone(d.error, ref)
+            for (way, name), kind in d.socket_types.items():
+                self.assertIn(kind, fx.SOCKET_TYPES, ref)
+                known = ["src"] + [n for n, _ in d.inputs] if way == "in" else [""] + [n for n, _ in d.outputs]
+                self.assertIn(name, known, f"{ref}: @socket {way} {name}")
+                if way == "out" and d.outputs:
+                    self.assertNotEqual(name, "", ref)
+        sep, comb = fx.get("builtin:nodes/separate_xyz"), fx.get("builtin:nodes/combine_xyz")
+        self.assertEqual(sep.socket_type("in", "src"), "vector")
+        self.assertEqual(sep.src_label, "向量")                                  # (not 圖像)
+        self.assertEqual([sep.socket_type("out", n) for n in "xyz"], ["float"] * 3)
+        self.assertEqual((comb.socket_type("out", ""), comb.out_label), ("vector", "向量"))
+        self.assertEqual(fx.get("builtin:nodes/value").out_label, "數值")
+        self.assertEqual(fx.get("builtin:mix").socket_type("out", ""), "image")    # (a picture stays one)
+
     def test_picking_up_a_link_and_dropping_it_nowhere_unlinks(self):
         ed = self.make()
         got = []

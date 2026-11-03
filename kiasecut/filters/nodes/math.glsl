@@ -13,6 +13,10 @@
 // @show value op != 平方根|平方根倒數|絕對值|指數|正負號|四捨五入|向下取整|向上取整|截斷|小數部分|正弦|餘弦|正切|反正弦|反餘弦|反正切|雙曲正弦|雙曲餘弦|雙曲正切|轉弧度|轉角度
 // @show c op == 乘加|比較|平滑最小|平滑最大|迴繞
 // @show value3 op == 乘加|比較|平滑最小|平滑最大|迴繞
+// @socket in - float
+// @socket in b float
+// @socket in c float
+// @socket out - float
 
 // Reimplementation of Blender's Math compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

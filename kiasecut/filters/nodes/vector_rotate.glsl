@@ -17,6 +17,11 @@
 // @show angle kind != 歐拉 XYZ
 // @show rotation kind == 歐拉 XYZ
 // @show vec_rotation kind == 歐拉 XYZ
+// @socket in - vector
+// @socket in center vector
+// @socket in axis vector
+// @socket in rotation vector
+// @socket out - vector
 
 // Reimplementation of Blender's Vector Rotate compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

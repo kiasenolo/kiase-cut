@@ -30,6 +30,9 @@
 // @show in_offset ntype == 脊狀多重分形|混合多重分形|異質地形
 // @show gain ntype == 脊狀多重分形|混合多重分形
 // @show in_gain ntype == 脊狀多重分形|混合多重分形
+// @socket in - vector
+// @socket out fac float
+// @socket out color color
 
 // Reimplementation of Blender's Noise Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_material_tex_noise.glsl, gpu_shader_material_fractal_noise.glsl, gpu_shader_material_noise.glsl, gpu_shader_common_hash.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

@@ -53,6 +53,12 @@
 // @show wout dims == 1D|4D
 // @show wout feature == F1|F2|平滑 F1
 // @show radius feature == N 球半徑
+// @socket in - vector
+// @socket out distance float
+// @socket out color color
+// @socket out position vector
+// @socket out wout float
+// @socket out radius float
 
 // Reimplementation of Blender's Voronoi Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_material_tex_voronoi.glsl, gpu_shader_material_fractal_voronoi.glsl, gpu_shader_material_voronoi.glsl, gpu_shader_common_hash.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

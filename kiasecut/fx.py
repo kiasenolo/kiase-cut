@@ -64,6 +64,8 @@ class FilterDef:
         self.params, self.category, self.description = list(params), category, description
         self.passes, self.error = passes, error
         self.src_label = "圖像"                  # @source: what the main picture socket is called
+        self.out_label = "圖像"                  # what the main output is called (@socket out - ...)
+        self.socket_types = {}                   # @socket: {("in" / "out", name): type} - what a socket carries, as Blender types its sockets (none: a picture)
         self.outputs = []                        # @output: [(name, label)] pictures a node gives (output_index tells which is drawn); none: one
         self.shared = False                      # @shared: only the last pass looks at output_index, the ones before it are drawn once for every output asked
         self.alone = []                          # @alone: outputs the last pass draws from nothing the earlier passes drew (they are not drawn for it)
@@ -73,6 +75,10 @@ class FilterDef:
         self.dynamic = None                      # @dynamic: the name of the generator that makes this filter's text from a node's items (dynamic.py)
         self.input_use = {}                      # @use: {input or "src": conditions}: the picture is read only while they hold (else it is not worked out at all)
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
+
+    def socket_type(self, way, name):
+        """What socket `name` ("src" for the main input, "" for the main output) of way "in" / "out" carries: one of SOCKET_TYPES."""
+        return self.socket_types.get((way, name), "image")
 
     def key(self):
         return hashlib.sha1((self.code + "|" + str(self.passes) + "|" + ",".join(n for n, _ in self.inputs) + "|" +
@@ -255,6 +261,10 @@ def _num(text):
         return None
 
 
+SOCKET_TYPES = ("image", "float", "int", "bool", "vector", "color", "menu")       # what a socket can carry (@socket)
+SOCKET_LABELS = {"image": "圖像", "float": "數值", "int": "整數", "bool": "布林", "vector": "向量", "color": "顏色", "menu": "選單"}
+
+
 def parse(text, ref, fallback_name="濾鏡"):
     """FilterDef of a filter file's text. A file with mistakes still gives a FilterDef, with
     `error` set (the panel shows it) so that one bad file never breaks the program."""
@@ -262,6 +272,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     params, error = [], None
     panels, panel, enables, inputs, outputs = [], None, [], [], []
     input_param, alone, skips = {}, [], []
+    sockets = []
     for line in text.splitlines():
         m = HEADER.match(line)
         if not m:
@@ -296,6 +307,12 @@ def parse(text, ref, fallback_name="濾鏡"):
                 if not words or not IDENT.match(words[0]) or any(words[0] == n for n, _ in outputs):
                     raise ValueError("@output 要寫：名稱（英文、數字、底線，不重複）[\"顯示名稱\"]")
                 outputs.append((words[0], words[1] if len(words) > 1 else words[0]))
+            elif key == "socket":                         # @socket in|out name|- type ["label"]: a socket that carries a value, not a picture
+                words = shlex.split(rest)
+                if len(words) < 3 or words[0] not in ("in", "out") or words[2] not in SOCKET_TYPES:
+                    raise ValueError("@socket 要寫：in 或 out、插槽名稱（- 是主要的）、種類（" + " / ".join(SOCKET_TYPES) + "）[\"顯示名稱\"]")
+                sockets.append((words[0], "" if words[1] == "-" and words[0] == "out" else "src" if words[1] == "-" else words[1],
+                                words[2], words[3] if len(words) > 3 else None))
             elif key == "shared":
                 head["shared"] = True
             elif key == "alone":
@@ -366,6 +383,14 @@ def parse(text, ref, fallback_name="濾鏡"):
     d.outputs = outputs
     d.shared, d.alone, d.skips = head.get("shared", False), alone, skipped
     d.src_label = head.get("source") or d.src_label
+    for way, name, kind, label in sockets:
+        d.socket_types[(way, name)] = kind
+        if way == "in" and name == "src":
+            d.src_label = label or (d.src_label if head.get("source") else SOCKET_LABELS[kind])
+        elif way == "out" and name == "":
+            d.out_label = label or SOCKET_LABELS[kind]
+        elif way == "out" and label:
+            d.outputs = [(n, label if n == name else l) for n, l in d.outputs]
     return d
 
 

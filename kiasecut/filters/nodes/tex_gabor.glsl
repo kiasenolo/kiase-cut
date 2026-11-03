@@ -20,6 +20,11 @@
 // @show in_angle gabor_type == 2D
 // @show orientation_3d gabor_type == 3D
 // @show in_dir gabor_type == 3D
+// @socket in - vector
+// @socket in in_dir vector
+// @socket out value float
+// @socket out phase float
+// @socket out intensity float
 
 // Reimplementation of Blender's Gabor Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_material_tex_gabor.glsl, gpu_shader_common_hash.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

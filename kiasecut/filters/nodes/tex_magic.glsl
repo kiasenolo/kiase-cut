@@ -9,6 +9,9 @@
 // @param depth int 2 0 10 "深度"
 // @param tex_scale float 5 -1000000 1000000 "比例"
 // @param distortion float 1 -1000000 1000000 "扭曲"
+// @socket in - vector
+// @socket out color color
+// @socket out fac float
 
 // Reimplementation of Blender's Magic Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_material_tex_magic.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

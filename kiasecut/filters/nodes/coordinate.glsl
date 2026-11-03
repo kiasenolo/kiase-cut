@@ -4,6 +4,9 @@
 // @output uniform "統一"
 // @output normalized "正規化"
 // @output pixel "像素"
+// @socket out uniform vector
+// @socket out normalized vector
+// @socket out pixel vector
 
 // Reimplementation of Blender's Image Coordinates compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

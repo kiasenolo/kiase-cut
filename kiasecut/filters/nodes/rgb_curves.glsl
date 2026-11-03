@@ -22,6 +22,8 @@
 // @show curve_g tone == 標準
 // @show curve_b tone == 標準
 // @show tab tone == 標準
+// @socket in black color
+// @socket in white color
 
 // Reimplementation of Blender's RGB Curves compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

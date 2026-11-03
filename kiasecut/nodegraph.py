@@ -512,6 +512,7 @@ def outputs(node):
         d = fx.for_node(node)
         if d.outputs:
             return list(d.outputs)
+        return [("", d.out_label)]
     if node["type"] == GROUP:
         return [(o["name"], o["label"]) for o in node.get("outputs") or []]
     if node["type"] in WORDS:

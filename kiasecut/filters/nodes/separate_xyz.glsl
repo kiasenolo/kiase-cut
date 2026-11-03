@@ -4,6 +4,10 @@
 // @output x "X"
 // @output y "Y"
 // @output z "Z"
+// @socket in - vector
+// @socket out x float
+// @socket out y float
+// @socket out z float
 
 // Reimplementation of Blender's Separate XYZ compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

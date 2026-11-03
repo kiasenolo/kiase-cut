@@ -10,6 +10,11 @@
 // @param color1 color #cccccc "顏色 1"
 // @param color2 color #333333 "顏色 2"
 // @param tex_scale float 5 -1000000 1000000 "比例"
+// @socket in - vector
+// @socket in c1 color
+// @socket in c2 color
+// @socket out color color
+// @socket out fac float
 
 // Reimplementation of Blender's Checker Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_material_tex_checker.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

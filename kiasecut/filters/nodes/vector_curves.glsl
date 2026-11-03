@@ -6,6 +6,8 @@
 // @param curve_y curve 0,0,1,1 "Y 曲線"
 // @param curve_z curve 0,0,1,1 "Z 曲線"
 // @param fac float 1 0 1 "係數"
+// @socket in - vector
+// @socket out - vector
 
 // Reimplementation of Blender's Vector Curves compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

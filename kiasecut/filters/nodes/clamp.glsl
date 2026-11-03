@@ -5,6 +5,8 @@
 // @param mode menu 最小最大 "最小最大|範圍" "類型"
 // @param lo float 0 -1000 1000 "最小"
 // @param hi float 1 -1000 1000 "最大"
+// @socket in - float
+// @socket out - float
 
 // Reimplementation of Blender's Clamp compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

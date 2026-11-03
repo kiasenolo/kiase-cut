@@ -5,6 +5,9 @@
 // @output color "顏色"
 // @output fac "係數"
 // @param gtype menu 線性 "線性|二次|平滑|對角|球形|二次球形|放射" "類型"
+// @socket in - vector
+// @socket out color color
+// @socket out fac float
 
 // Reimplementation of Blender's Gradient Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_material_tex_gradient.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

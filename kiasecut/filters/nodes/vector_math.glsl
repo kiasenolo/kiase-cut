@@ -15,6 +15,11 @@
 // @show c op == 乘加|朝向|迴繞
 // @show vector_c op == 乘加|朝向|迴繞
 // @show vec_scale op == 折射|縮放
+// @socket in - vector
+// @socket in b vector
+// @socket in c vector
+// @socket out vector vector
+// @socket out value float
 
 // Reimplementation of Blender's Vector Math compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

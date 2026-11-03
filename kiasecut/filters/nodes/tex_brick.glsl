@@ -26,6 +26,12 @@
 // @param offset_freq int 2 1 99 "錯位間隔"
 // @param squash float 1 0 99 "壓縮"
 // @param squash_freq int 2 1 99 "壓縮間隔"
+// @socket in - vector
+// @socket in c1 color
+// @socket in c2 color
+// @socket in cm color
+// @socket out color color
+// @socket out fac float
 
 // Reimplementation of Blender's Brick Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_material_tex_brick.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

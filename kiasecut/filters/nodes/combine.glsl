@@ -12,6 +12,11 @@
 // @param v3 float 0 -1000 1000 "藍／明度／Cr／V"
 // @param alpha float 1 0 1 "透明度"
 // @enable ycc_mode mode == YCC
+// @socket in - float
+// @socket in g float
+// @socket in b float
+// @socket in a float
+// @socket out - color
 
 // Reimplementation of Blender's Combine Color compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

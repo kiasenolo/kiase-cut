@@ -10,6 +10,9 @@
 // @show src dims != 1D
 // @show w dims == 1D|4D
 // @show in_w dims == 1D|4D
+// @socket in - vector
+// @socket out value float
+// @socket out color color
 
 // Reimplementation of Blender's White Noise Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_common_hash.glsl, gpu_shader_material_tex_white_noise.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

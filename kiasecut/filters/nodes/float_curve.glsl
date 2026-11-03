@@ -5,6 +5,8 @@
 // @param value float 0 -1000000 1000000 "數值"
 // @param curve curve 0,0,1,1 "曲線"
 // @param fac float 1 0 1 "係數"
+// @socket in - float
+// @socket out - float
 
 // Reimplementation of Blender's Float Curve compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

@@ -8,6 +8,11 @@
 // @param mode menu RGB "RGB|HSV|HSL|YCC|YUV" "模式"
 // @param ycc_mode menu "ITU 709" "ITU 601|ITU 709|JPEG" "YCC 標準"
 // @enable ycc_mode mode == YCC
+// @socket in - color
+// @socket out c1 float
+// @socket out c2 float
+// @socket out c3 float
+// @socket out a float
 
 // Reimplementation of Blender's Separate Color compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

@@ -3,6 +3,8 @@
 // @description 節點用：照 Blender 的「正規化」節點（Normalize）：把圖像的明度（黑白的數值）整張圖找出最小和最大，再把它們線性對應到 0～1；整張圖一樣亮就全部是 0。輸出是黑白的圖
 // @passes 15
 // @levels 1 2 3 4 5 6 7 8 9 10 11 12 13 14
+// @socket in - float
+// @socket out - float
 
 // Reimplementation of Blender's Normalize compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

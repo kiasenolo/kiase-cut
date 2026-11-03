@@ -6,6 +6,11 @@
 // @output location "位置"
 // @output rotation "旋轉"
 // @output scale "縮放"
+// @socket out dimensions vector
+// @socket out resolution vector
+// @socket out location vector
+// @socket out rotation float
+// @socket out scale vector
 
 // Reimplementation of Blender's Image Info compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

@@ -57,7 +57,7 @@ LINK_COLOR = "#d0d0d8"                           # (a link with no types to colo
 
 def type_color(t):
     """The colour of a socket that holds a value of parameter type t."""
-    return SOCKET_COLORS.get("vector" if t in ("vec2", "vec3") else t if t in ("float", "int", "bool", "color", "menu") else "other")
+    return SOCKET_COLORS.get("vector" if t in ("vec2", "vec3") else t if t in ("float", "int", "bool", "color", "menu", "vector", "image") else "other")
 
 
 GHOST = "\0ghost"                              # the empty socket of a 參數輸入 node: drag out of it to make a parameter
@@ -295,6 +295,8 @@ class NodeItem(QGraphicsItem):
             r = next((r for r in self.rows if r["kind"] == "expose" and r["p"] and r["p"]["name"] == out), None)
             if r is not None:
                 return type_color(r["p"]["type"])
+        if t == ng.FILTER:
+            return type_color(fx.for_node(self.node).socket_type("out", out))
         return SOCKET_COLORS["image"]
 
     def in_colour(self, sock):
@@ -302,6 +304,8 @@ class NodeItem(QGraphicsItem):
         r = self.row_of(sock)
         if not r:
             return SOCKET_COLORS["image"]
+        if self.node["type"] == ng.FILTER and (("in", sock) in fx.for_node(self.node).socket_types):
+            return type_color(fx.for_node(self.node).socket_type("in", sock))
         kind = r["kind"]
         if kind == "text":
             return SOCKET_COLORS["string"]

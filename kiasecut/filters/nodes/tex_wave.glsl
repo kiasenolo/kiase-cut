@@ -22,6 +22,9 @@
 // @param phase float 0 -1000000 1000000 "相位偏移"
 // @show bands_dir wave_type == 條帶
 // @show rings_dir wave_type == 環
+// @socket in - vector
+// @socket out color color
+// @socket out fac float
 
 // Reimplementation of Blender's Wave Texture shader node as a compositor node: the sockets, settings and shader code are Blender's (gpu_shader_material_tex_wave.glsl, gpu_shader_material_noise.glsl, gpu_shader_material_fractal_noise.glsl, gpu_shader_common_hash.glsl), checked against Blender 5.2.
 // Blender: https://github.com/blender/blender

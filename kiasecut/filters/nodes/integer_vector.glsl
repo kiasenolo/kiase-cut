@@ -4,6 +4,7 @@
 // @param x int 0 -1000000 1000000 "X"
 // @param y int 0 -1000000 1000000 "Y"
 // @param z int 0 -1000000 1000000 "Z"
+// @socket out - vector
 
 // Reimplementation of Blender's Integer Vector compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).
 // Blender: https://github.com/blender/blender

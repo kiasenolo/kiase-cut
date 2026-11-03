@@ -139,7 +139,8 @@ class NodeItem(QGraphicsItem):
             named = self.editor.node_values(self.nid).named
             shown = lambda name: fx.shown(d, name, named)            # (@show: only the rows the settings use)
             if node["type"] == ng.FILTER:
-                add("image", d.src_label, "src")
+                pair = next((q for q in d.params if q.name == d.input_param.get("src")), None)
+                add("param", d.src_label, "src", pair) if pair is not None else add("image", d.src_label, "src")
                 for name, label in d.inputs:
                     if shown(name):
                         pair = next((q for q in d.params if q.name == d.input_param.get(name)), None)

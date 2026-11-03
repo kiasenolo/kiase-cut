@@ -215,15 +215,39 @@ class RunTest(unittest.TestCase):
 
     def test_channel_then_set_alpha(self):
         g = ng.new_graph()
-        ch = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/channel"})
+        ch = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/separate_color"})
         sa = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/set_alpha"})
         ng.connect(g, "input", ch, "src")
         ng.connect(g, "input", sa, "src")
-        ng.connect(g, ch, sa, "alpha_img")
+        ng.connect(g, ch, sa, "alpha_img", "c1")
         ng.connect(g, sa, "output", "src")
         out, errors, _ = self.run_graph(g, self.solid([128, 0, 0, 255]))
         self.assertEqual(errors, [])
         self.assertTrue(abs(int(out[0, 0, 3]) - 128) <= 2)
+
+    def test_separate_then_combine_gives_the_picture_back(self):
+        for mode, ycc in (("RGB", None), ("HSV", None), ("HSL", None), ("YCC", "ITU 601"), ("YCC", "ITU 709"), ("YCC", "JPEG"), ("YUV", None)):
+            g = ng.new_graph()
+            sp = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/separate_color"}, base="sp")
+            cb = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/combine"}, base="cb")
+            ng.connect(g, "input", sp, "src")
+            for out, socket in (("c1", "src"), ("c2", "g"), ("c3", "b"), ("a", "a")):
+                ng.connect(g, sp, cb, socket, out)
+            ng.connect(g, cb, "output", "src")
+            params = {sp + ".mode": mode, cb + ".mode": mode}
+            if ycc:
+                params.update({sp + ".ycc_mode": ycc, cb + ".ycc_mode": ycc})
+            out, errors, _ = self.run_graph(g, self.solid([200, 90, 30, 255]), params=params)
+            self.assertEqual(errors, [], mode)
+            self.close(out, (200, 90, 30, 255), 4)
+
+    def test_combine_takes_its_boxes_when_not_linked(self):
+        g = ng.new_graph()
+        cb = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/combine"})
+        ng.connect(g, cb, "output", "src")
+        out, errors, _ = self.run_graph(g, self.solid([0, 0, 0, 0]), params={cb + ".v1": 1.0, cb + ".v2": 0.5, cb + ".v3": 0.0})
+        self.assertEqual(errors, [])
+        self.close(out, (255, 128, 0, 255), 3)                   # not linked: the numbers of the boxes
 
     def test_mute_passes_the_picture_on(self):
         g = ng.new_graph()

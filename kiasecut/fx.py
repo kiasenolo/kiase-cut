@@ -259,7 +259,10 @@ def parse(text, ref, fallback_name="濾鏡"):
                 if panel and all(n != panel for n, _ in panels):
                     panels.append((panel, "closed" in words[1:]))
             elif key == "source":
-                head["source"] = rest.strip().strip('"')
+                words = shlex.split(rest)
+                head["source"] = words[0] if words else ""
+                if len(words) > 1:                            # (the same pairing as @input: this parameter's box sits on the row)
+                    input_param["src"] = words[1]
             elif key == "input":                          # a picture more than src(): input_<name>(uv)
                 words = shlex.split(rest)
                 if not words or not IDENT.match(words[0]) or words[0] in RESERVED or any(words[0] == n for n, _ in inputs):
@@ -582,6 +585,8 @@ uniform vec2 extra_px;
 %(params)s
 in vec2 uv_;
 out vec4 fragColor;
+uniform bool src_on_;
+bool has_src() { return src_on_; }
 vec4 src(vec2 uv) { return texture(source, clamp(uv, 0.0, 1.0)); }
 vec4 original(vec2 uv) { return texture(original_, clamp(uv, 0.0, 1.0)); }
 vec4 extra(vec2 uv) { return texture(extra_, clamp(uv, 0.0, 1.0)); }
@@ -861,7 +866,7 @@ class Engine:
         return np.frombuffer(data, np.uint8).reshape(h, w, 4)
 
     def run_tex(self, d, values, src, w, h, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None, inputs=None,
-                dest=None, output=0):
+                dest=None, output=0, src_on=True):
         """Filter the w x h texture src (premultiplied RGBA) on the card; returns the texture
         holding the result, one of this engine's own (valid until its next run at that size).
         unit: texture px per canvas px. The filter is told the canvas size as its resolution, so
@@ -916,6 +921,8 @@ class Engine:
                 prog["inp_" + name + "_on_"].value = (inputs or {}).get(name) is not None
         if "output_index" in prog:
             prog["output_index"].value = int(output)
+        if "src_on_" in prog:
+            prog["src_on_"].value = bool(src_on)
         self.ctx.disable(self.mgl.BLEND)
         read = src
         made = []                                      # each pass's (texture, w, h), for @extras

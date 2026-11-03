@@ -1022,7 +1022,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                     if (n, o) not in users:                           # (an output nothing reads is not drawn)
                         continue
                     dest = alloc(w, h)
-                    if not _run(eng, d, vals, take(n, "src") or empty(), w, h, dest, time, prog, frame, unit, srcs, ins, errors, k):
+                    if not _run(eng, d, vals, take(n, "src") or empty(), w, h, dest, time, prog, frame, unit, srcs, ins, errors, k,
+                             src_on=take(n, "src") is not None):
                         free(dest)
                         alias(n, main, o)
                     else:
@@ -1036,10 +1037,10 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     return tex, owner
 
 
-def _run(eng, d, vals, src, w, h, dest, time, prog, frame, unit, sources, inputs, errors, output=0):
+def _run(eng, d, vals, src, w, h, dest, time, prog, frame, unit, sources, inputs, errors, output=0, src_on=True):
     try:
         eng.run_tex(d, vals, src, w, h, time=time, progress=prog, frame=frame, unit=unit, sources=sources,
-                    inputs=inputs, dest=(dest.tex, dest.fbo), output=output)
+                    inputs=inputs, dest=(dest.tex, dest.fbo), output=output, src_on=src_on)
         return True
     except fx.FilterError as exc:
         errors.append(f"節點「{d.name}」：{exc}")

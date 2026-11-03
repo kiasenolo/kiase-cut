@@ -27,6 +27,8 @@ SOURCE_KINDS = ("image", "video", "compound", "track", "shape")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
 PICTURE = "builtin:nodes/picture"
+SHAPE_PAINT = "builtin:_shape_paint"      # (a built-in shape node whose fill / outline is a picture: the picture put where the paint is)
+ASSET_PAINTS = (("fill", "fill_image", "填充圖片"), ("stroke", "stroke_image", "外框圖片"))
 IDENTITY = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
 PARAM = "param:"
 
@@ -84,7 +86,7 @@ def default_params(graph):
 
 
 # -- shape nodes made from the built-in shapes (assets.py): node["asset"] = {"key": preset, "family": ...} ----------
-ASSET_SKIP = ("w", "h", "stops", "fill_stops", "stroke_stops", "fill_image", "stroke_image")    # (size is the node's frame)
+ASSET_SKIP = ("w", "h", "fill_image", "stroke_image")    # (the size is the node's frame; the pictures are its inputs)
 _asset_defs = {}
 
 
@@ -127,6 +129,8 @@ def asset_def(node):
                 q = fx.Param(f, "color", list(assets.to_rgba(default)), label=info[0])
             elif info[1] == "toggle":
                 q = fx.Param(f, "bool", bool(default), label=info[0])
+            elif info[1] == "stops":                       # ([] : the gradient goes from its colour to its colour 2)
+                q = fx.Param(f, "gradient", [], label=info[0])
             elif info[1] == "choice":
                 items = [n for n, _ in info[2]]
                 label = next((n for n, v in info[2] if v == default), items[0])
@@ -229,6 +233,8 @@ def sockets(node):
         return [("src", "")]
     if node["type"] == GROUP:
         return [(i["name"], i["label"]) for i in node.get("inputs") or []]
+    if is_asset(node):                                   # (a built-in shape: a picture to paint its fill and its outline with)
+        return [(sock, label) for _p, sock, label in ASSET_PAINTS]
     if node["type"] != FILTER:
         return []
     d = fx.get(node["ref"])
@@ -908,9 +914,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             f = feed.get((n, "src"))
             made[(n, "")] = made[f] if f in made else (src_tex, None)
         elif kind == SOURCE:
-            pic = picture(n) if picture else None
-            dest = alloc(w, h)
-            if pic is not None:
+            def draw(pic, dest):
                 ptex, pmap, give = pic
                 try:
                     _run(eng, fx.get(PICTURE), {"color": (0.0, 0.0, 0.0, 0.0)}, empty(), w, h, dest, time, prog, frame, unit,
@@ -918,6 +922,26 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                 finally:
                     if give:
                         give()
+            asset = is_asset(node)
+            linked = frozenset(part for part, sock, _l in ASSET_PAINTS if take(n, sock) is not None) if asset else frozenset()
+            pic = (picture(n, None, linked) if asset else picture(n)) if picture else None
+            dest = alloc(w, h)
+            if pic is not None:
+                draw(pic, dest)
+                for part, sock, _label in ASSET_PAINTS:         # (a picture as the fill / outline: where that paint is, from it)
+                    mask = picture(n, part, linked) if part in linked else None
+                    if mask is None:
+                        continue
+                    where = alloc(w, h)
+                    draw(mask, where)
+                    mixed = alloc(w, h)
+                    if _run(eng, fx.get(SHAPE_PAINT), {"over": part == "stroke"}, take(n, sock), w, h, mixed, time, prog, frame, unit,
+                            None, {"base": dest.tex, "mask": where.tex}, errors):
+                        free(dest)
+                        dest = mixed
+                    else:
+                        free(mixed)
+                    free(where)
             put(n, dest.tex, dest)
         else:
             d = fx.get(node["ref"])

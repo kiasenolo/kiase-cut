@@ -127,6 +127,9 @@ class NodeItem(QGraphicsItem):
                 add("image", d.src_label, "src")
                 for name, label in d.inputs:
                     add("image", label, name)
+            else:                                                      # (pictures to paint its fill and its outline with)
+                for _part, sock, label in ng.ASSET_PAINTS:
+                    add("image", label, sock)
             for p in (q for q in d.params if q.panel is None):
                 add("param", p.label, socket(p), p)
             for name, closed in d.panels:

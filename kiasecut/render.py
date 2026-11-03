@@ -157,18 +157,33 @@ class Renderer:
             self.images[key] = im
         return im
 
-    def shape_source(self, e, nid, src, t, disp):
-        """The picture of a node effect's shape node made from a built-in shape (assets.py), drawn at the size of its
-        frame on the clip (so corners and outlines keep their thickness), or None for the plain shapes."""
+    def shape_source(self, e, nid, src, t, disp, paint=None, linked=()):
+        """(picture, the source to place it by) of a node effect's shape node made from a built-in shape (assets.py), or
+        None for the plain shapes. Drawn at the size of its frame on the clip (so corners and outlines keep their
+        thickness), and as much larger as an outline reaching out of the frame needs. linked: the paints ("fill" /
+        "stroke") a picture input takes over, left out of the shape; paint: instead the opaque area of one of them."""
         node = e["graph"]["nodes"].get(nid)
         if node is None or not nodegraph.is_asset(node):
             return None
         q = nodegraph.asset_of(node, nid, e["params"], t)
         v = lambda k: curves.value(src.get(k, 1.0), t)
-        q["w"], q["h"] = max(round(v("w") * disp[0], 2), 1), max(round(v("h") * disp[1], 2), 1)
-        if assets.overflow(q) > 0:                       # (the picture is the frame: an outline stays inside it)
-            q["stroke_align"] = "inside"
-        return self.asset(q, q["w"], q["h"])
+        sw, sh = max(round(v("w") * disp[0], 2), 1), max(round(v("h") * disp[1], 2), 1)
+        q["w"], q["h"] = sw, sh
+        clear = "#00000000"                              # (hidden paint keeps the outline's reach: the same size for every variant)
+        if paint == "fill":
+            q.update(fill=True, fill_type="solid", color="#ffffff", stroke_color=clear, stroke_type="solid")
+        elif paint == "stroke":
+            q.update(fill=False, stroke_type="solid", stroke_color="#ffffff", stroke_on=True)
+        else:
+            if "fill" in linked:
+                q["fill"] = False
+            if "stroke" in linked:
+                q.update(stroke_color=clear, stroke_type="solid")
+        if paint == "stroke" and not assets.stroked(q):
+            return None
+        reach = 2 * assets.overflow(q)
+        placed = dict(src, w=(sw + reach) / max(disp[0], 1e-6), h=(sh + reach) / max(disp[1], 1e-6))
+        return self.asset(q, sw, sh), placed
 
     def image(self, path, w, h):
         """The image at the smallest mip level at least w x h; the painter scales it the rest
@@ -812,11 +827,14 @@ class Renderer:
                 texs.append(tex)
                 return tex
 
-            def picture(nid):
+            def picture(nid, paint=None, linked=()):
                 src = sources.get(nid)
                 if src and src.get("kind") == "shape":
-                    pic = self.shape_source(e, nid, src, t, disp) or nodegraph.shape_image(src)
-                    return upload(image_to_array(pic)), source_map(src, t, disp, wt, w, h), None
+                    got = self.shape_source(e, nid, src, t, disp, paint, linked)
+                    if got is None and paint:
+                        return None
+                    pic, placed = got or (nodegraph.shape_image(src), src)
+                    return upload(image_to_array(pic)), source_map(placed, t, disp, wt, w, h), None
                 comp = self.matte_compound(src, t) if src else None
                 if comp is None:
                     return None

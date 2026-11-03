@@ -388,6 +388,52 @@ class GraphRenderTests(unittest.TestCase):
             r.render(view, 0, W, H)
             self.assertEqual(r.errors, [], type(r).__name__)
 
+    def shape_view(self, **params):
+        """The scene's clip with a half-size rectangle shape node (white, no outline) as the effect's output."""
+        proj_ = proj()
+        eff = edit.add_effect(proj_, "c1", fx.GRAPH)
+        nid = edit.add_graph_node(proj_, "c1", eff["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect"}}, 0, 0)
+        edit.connect_graph(proj_, "c1", eff["id"], nid, "output", "src")
+        eff["sources"][nid].update(w=0.5, h=0.5)
+        for k, v in params.items():
+            eff["params"][nid + "." + k] = v
+        view = self.s.view()
+        view["tracks"][0]["clips"][0]["effects"] = [eff]
+        return view, eff, nid
+
+    def pixels(self, view, *spots):
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            yield type(r).__name__, [rgb(img, x, y) for x, y in spots]
+
+    def test_outline_outside_the_frame_is_drawn(self):
+        for align, want in (("外側", RED), ("內側", BLACK)):
+            view, _e, _n = self.shape_view(stroke_on=True, stroke=200.0, stroke_align=align, stroke_color=[1.0, 0.0, 0.0, 1.0], fill=False)
+            for name, (got,) in self.pixels(view, (12, 18)):                     # (just left of the frame's edge)
+                self.assertTrue(all(abs(a - b) <= 3 for a, b in zip(got, want)), f"{name} {align}: {got}")
+
+    def test_gradient_stops_of_a_shape(self):
+        view, eff, nid = self.shape_view(fill_type="漸變", fill_angle=0.0, fill_stops=[[0.0, [1.0, 0.0, 0.0, 1.0]], [1.0, [0.0, 0.0, 1.0, 1.0]]])
+        eff["sources"][nid].update(w=1.0, h=1.0)
+        for name, (left, right) in self.pixels(view, (4, 18), (60, 18)):
+            self.assertGreater(left[0], left[2] + 80, name)                      # red at the start,
+            self.assertGreater(right[2], right[0] + 80, name)                    # blue at the end
+
+    def test_a_picture_paints_the_fill(self):
+        view, eff, nid = self.shape_view()
+        ng.connect(eff["graph"], "input", nid, "fill_image")                    # (the clip's red picture)
+        for name, (out, mid) in self.pixels(view, (12, 18), (32, 18)):
+            self.assertEqual(out, BLACK, name)                                   # outside the shape
+            self.assertTrue(all(abs(a - b) <= 3 for a, b in zip(mid, RED)), f"{name}: {mid}")      # the picture, inside it
+
+    def test_a_picture_paints_the_outline_only(self):
+        view, eff, nid = self.shape_view(stroke_on=True, stroke=200.0, stroke_align="外側")
+        ng.connect(eff["graph"], "input", nid, "stroke_image")
+        for name, (ring, mid) in self.pixels(view, (12, 18), (32, 18)):
+            self.assertTrue(all(abs(a - b) <= 3 for a, b in zip(ring, RED)), f"{name}: {ring}")
+            self.assertTrue(all(abs(a - b) <= 3 for a, b in zip(mid, WHITE)), f"{name}: {mid}")     # (its own fill)
+
     def test_viewer_shows_a_node_in_the_editor_only(self):
         def f(e):
             g = e["graph"]

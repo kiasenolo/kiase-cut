@@ -128,6 +128,25 @@ class BuiltinFilterTests(unittest.TestCase):
         self.assertFalse(fx.shown(d, "w", {"dims": "3D"}))
         self.assertTrue(fx.shown(d, "w", {"dims": "4D"}))
 
+    def test_value_and_rgb_nodes_are_constants(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        rgba = np.zeros((8, 8, 4), np.uint8)
+        d = fx.get("builtin:nodes/value")
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        vals["value"] = 0.5
+        out = eng.run(d, vals, rgba)
+        self.assertTrue((out[..., 3] == 255).all())
+        self.assertTrue(abs(int(out[0, 0, 0]) - 128) <= 1 and (out[..., 0] == out[0, 0, 0]).all())
+        d = fx.get("builtin:nodes/rgb")
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        vals["color"] = [1.0, 0.0, 0.0, 1.0]
+        out = eng.run(d, vals, rgba)
+        self.assertEqual(tuple(out[3, 3]), (255, 0, 0, 255))
+
     def test_white_noise_is_random_per_point(self):
         import numpy as np
         try:

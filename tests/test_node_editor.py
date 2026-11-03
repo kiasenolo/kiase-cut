@@ -516,7 +516,7 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual([r["p"].type for r in plots], ["curve", "gradient"])
         self.assertGreater(plots[0]["h"], plots[1]["h"])
         popups, got = [], []
-        ed.edit_popup = lambda q, v, done, pos: popups.append((q.type, done))
+        ed.edit_popup = lambda q, v, done, pos, live=None: popups.append((q.type, done))
         ed.paramEdited.connect(lambda *a: got.append(a))
         for r in plots:
             at = ed.view.mapFromScene(it.mapToScene(it.field_rect(r).center()))
@@ -524,6 +524,31 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual([t for t, _ in popups], ["curve", "gradient"])
         popups[1][1]([[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]])
         self.assertEqual(got[-1][1], nid + ".g")
+
+    def test_ramp_drag_is_live_and_its_end_is_the_edit(self):
+        from kiasecut.ui.gradientbar import GradientEditor
+        made = []
+
+        def add(e):
+            made.append(ng.add_node(e["graph"], {"type": "filter", "ref": "builtin:blender_color_ramp"}, 300, 40))
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(add)
+        nid = made[0]
+        it = ed.view.items_by_id[nid]
+        row = next(r for r in it.rows if r["kind"] == "plot")
+        live, done = [], []
+        ed.paramLive.connect(lambda *a: live.append(a))
+        ed.paramEdited.connect(lambda *a: done.append(a))
+        at = ed.view.mapFromScene(it.mapToScene(it.field_rect(row).center()))
+        QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, Qt.NoModifier, at)
+        w = ed._popup_editor.findChild(GradientEditor)
+        stops = [[0.0, [1, 0, 0, 1]], [0.4, [0, 1, 0, 1]], [1.0, [0, 0, 1, 1]]]
+        w.bar.changed.emit(stops)                                    # (dragging)
+        self.assertEqual((len(live), len(done)), (1, 0))
+        self.assertEqual(live[-1][2], nid + ".ramp")
+        self.assertEqual(ed.params[nid + ".ramp"], stops)           # (the node's own picture follows)
+        w.bar.committed.emit(stops)                                  # (let go)
+        self.assertEqual(len(done), 1)
 
     def test_thumbnails_row_per_output(self):
         def add(e):

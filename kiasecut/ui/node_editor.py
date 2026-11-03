@@ -1543,7 +1543,12 @@ class NodeEditor(QWidget):
         key = ng.param_key(nid, q.name)
         v = self.node_values(nid).get(q.name)
         if kind == "plot":
-            self.edit_popup(q, v, lambda value: self.paramEdited.emit(self.eid, key, value), gp)
+            def live(value):                                   # (dragging a stop: the node's picture and the preview follow at once)
+                if not curves.is_animated(self.params.get(key)):
+                    self.params[key] = value
+                self.view.viewport().update()
+                self.paramLive.emit(self.eid, "fx:" + self.eid, key, value)
+            self.edit_popup(q, v, lambda value: self.paramEdited.emit(self.eid, key, value), gp, live)
             return
         if q.type == "bool":
             self.paramEdited.emit(self.eid, key, not bool(v))
@@ -1558,7 +1563,7 @@ class NodeEditor(QWidget):
         elif q.type in ("float", "int", "vec2", "vec3"):
             self._type_number(item, row, cell)
 
-    def edit_popup(self, q, v, done, pos):
+    def edit_popup(self, q, v, done, pos, live=None):
         """The curve or gradient editor of the 效果 panel in a small window at pos; done(value) hears every change."""
         from PySide6.QtWidgets import QFrame
         from .curvefield import CurveField
@@ -1577,7 +1582,11 @@ class NodeEditor(QWidget):
             w = GradientEditor()
             w.set_stops(fx.gradient_stops(v))
             frame.setMinimumWidth(360)
-        w.changed.connect(done)
+        if live is not None and q.type == "gradient":         # (the bar tells a drag from its end: the drag only shows, the end is the edit)
+            w.bar.changed.connect(live)
+            w.bar.committed.connect(done)
+        else:
+            w.changed.connect(done)
         lay.addWidget(w)
         frame.adjustSize()
         win = self.window()

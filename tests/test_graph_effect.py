@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from kiasecut import edit, fx, nodegraph as ng, render  # noqa: E402
+from kiasecut import edit, fx, nodegraph as ng, project, render  # noqa: E402
 from test_compound_mask import HAVE_GL, Scene, W, H, rgb  # noqa: E402
 from test_edit import S, proj  # noqa: E402
 
@@ -66,6 +66,20 @@ class GraphEditTests(unittest.TestCase):
         self.assertEqual((self.e["graph"]["nodes"][a]["x"], self.e["graph"]["nodes"][a]["y"]), (10.0, 20.0))
         edit.mute_graph_node(self.p, "c1", self.e["id"], a, True)
         self.assertTrue(self.e["graph"]["nodes"][a]["mute"])
+
+    def test_saved_and_opened_again(self):
+        """A node effect is not a filter file: its ref must not be made a path of the project folder."""
+        p = proj()
+        e = edit.add_effect(p, "c1", fx.GRAPH)
+        edit.add_graph_node(p, "c1", e["id"] if isinstance(e, dict) else e, {"type": "filter", "ref": "builtin:nodes/math"}, 10, 20)
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "x.kiasecut.json")
+        project.save(p, path)
+        _, c = edit.find(project.load(path), "c1")
+        got = [x for x in c["effects"] if x["filter"] == fx.GRAPH]
+        self.assertEqual(len(got), 1)
+        self.assertIn("math1", got[0]["graph"]["nodes"])
 
     def test_copied_effect_keeps_its_graph(self):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})

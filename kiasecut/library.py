@@ -473,7 +473,7 @@ def retarget(proj, old, new, is_dir=False):
         if m and m.get("path"):
             m["path"] = fix(m["path"])
         for e in c.get("effects") or []:                 # a filter file of the user's
-            if not e["filter"].startswith("builtin:"):
+            if not e["filter"].startswith("builtin:") and e["filter"] != project.GRAPH_FILTER:
                 e["filter"] = fix(e["filter"])
     dedupe(proj)
 

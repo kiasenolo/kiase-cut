@@ -213,7 +213,7 @@ def _map_paths(data, fn):
                     if isinstance(mk, dict) and mk.get(k):
                         mk[k] = fn(mk[k])
                 for e in c.get("effects") or []:              # filter files (the built-in ones are not paths)
-                    if e.get("filter") and not e["filter"].startswith("builtin:"):
+                    if e.get("filter") and not e["filter"].startswith("builtin:") and e["filter"] != GRAPH_FILTER:
                         e["filter"] = fn(e["filter"])
                     for src in (e.get("sources") or {}).values():      # its colours' pictures and videos
                         for k in ("image", "video"):
@@ -466,6 +466,7 @@ def curve_source_offsets(c, ts):
 
 
 TIME_FILTER = "builtin:frame_rate"      # 降低幀數: a clip's time steps at its fps (no picture change)
+GRAPH_FILTER = "nodes:graph"       # a node effect (fx.GRAPH): not a file, whatever its name looks like
 FREEZE_FILTER = "builtin:freeze"        # 凍結: a clip's time held where its effects begin (its start)
 TIME_FILTERS = (TIME_FILTER, FREEZE_FILTER)
 MOTION_BLUR_FILTER = "builtin:transform_motion_blur"   # 動態模糊: the clip drawn over the shutter (shutter_times)

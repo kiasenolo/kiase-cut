@@ -22,7 +22,7 @@ import copy
 from . import curves, fx
 
 US = 1_000_000
-INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE = "input", "output", "source", "filter", "params", "reroute"
+INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME = "input", "output", "source", "filter", "params", "reroute", "frame"
 SOURCE_KINDS = ("image", "video", "compound", "track", "shape")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
@@ -158,8 +158,17 @@ def sockets(node):
 def title(node):
     if node["type"] == FILTER:
         return fx.get(node["ref"]).name
-    return {REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
+    return {FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
+
+
+FRAME_COLORS = {"gray": "#5a5a60", "red": "#a04848", "orange": "#a8742e", "green": "#4a8a52", "blue": "#3f6fa8", "purple": "#7a5aa0"}
+
+
+def frame_defaults(node):
+    """A frame (框架 / 註解): the box, its label, the note written in it and its colour."""
+    return {"type": FRAME, "w": float(node.get("w", 320.0)), "h": float(node.get("h", 200.0)), "label": node.get("label", "框架"),
+            "text": node.get("text", ""), "color": node.get("color", "gray") if node.get("color", "gray") in FRAME_COLORS else "gray"}
 
 
 def ordered(graph):
@@ -263,7 +272,7 @@ def shape_image(src, size=512):
 
 
 def has_output(node):
-    return node["type"] != OUTPUT
+    return node["type"] not in (OUTPUT, FRAME)
 
 
 def param_of(graph, nid, socket):
@@ -503,7 +512,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     for n in order:
         node = nodes[n]
         kind = node["type"]
-        if kind == PARAMS:
+        if kind in (PARAMS, FRAME):
             continue
         if kind == REROUTE:                                   # (a bend in a link: the picture goes on)
             alias(n, feed.get((n, "src")))

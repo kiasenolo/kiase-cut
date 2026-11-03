@@ -457,6 +457,7 @@ class MainWindow(QMainWindow):
         nd.duplicateRequested.connect(self.on_node_duplicate)
         nd.rerouteRequested.connect(self.on_node_reroute)
         nd.mediaDropped.connect(self.on_node_media)
+        nd.frameEdited.connect(self.on_node_frame)
         nd.dissolveRequested.connect(self.on_node_dissolve)
         nd.disconnectRequested.connect(self.on_node_disconnect)
         nd.moveRequested.connect(self.on_node_move)
@@ -5452,6 +5453,11 @@ class MainWindow(QMainWindow):
         if kind == "image":
             return {"image": (path, info.get("width"), info.get("height"))}
         return {"video": (path, info.get("width"), info.get("height"), info.get("duration_us"))}
+
+    def on_node_frame(self, eid, nid, change):
+        cid = self.node_clip()
+        if cid:
+            self.apply("編輯框架", lambda lvl: edit.set_graph_frame(lvl, cid, eid, nid, **change))
 
     def on_node_reroute(self, eid, spots):
         cid = self.node_clip()

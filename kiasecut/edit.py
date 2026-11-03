@@ -2141,6 +2141,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.SOURCE, "kind": node["kind"]}
     elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS, nodegraph.REROUTE):
         node = {"type": node["type"]}
+    elif node["type"] == nodegraph.FRAME:
+        node = nodegraph.frame_defaults(node)
     else:
         raise EditError("不能新增這種節點")
     try:
@@ -2255,6 +2257,23 @@ def move_graph_nodes(proj, clip_id, effect_id, positions):
     for nid, (x, y) in positions.items():
         if nid in g["nodes"]:
             g["nodes"][nid]["x"], g["nodes"][nid]["y"] = float(x), float(y)
+
+
+def set_graph_frame(proj, clip_id, effect_id, nid, label=None, text=None, color=None, w=None, h=None):
+    """A frame's label, note, colour (nodegraph.FRAME_COLORS) and size."""
+    _, c = find(proj, clip_id)
+    node = _graph(c, effect_id)[1]["nodes"].get(nid)
+    if node is None or node["type"] != nodegraph.FRAME:
+        raise EditError("這不是框架")
+    if color is not None and color not in nodegraph.FRAME_COLORS:
+        raise EditError(f"unknown colour {color}")
+    for k, v in (("label", label), ("text", text), ("color", color)):
+        if v is not None:
+            node[k] = v
+    if w is not None:
+        node["w"] = max(60.0, float(w))
+    if h is not None:
+        node["h"] = max(40.0, float(h))
 
 
 def mute_graph_node(proj, clip_id, effect_id, nid, on):

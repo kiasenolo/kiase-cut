@@ -158,6 +158,21 @@ class ExposedParamTests(unittest.TestCase):
             for r in (render.Renderer(), glrender.GLRenderer()):
                 self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), RED, type(r).__name__)
 
+    def test_frame_is_a_note_that_changes_nothing(self):
+        edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
+        fid = edit.add_graph_node(self.p, "c1", self.eid, {"type": "frame", "w": 100, "h": 80}, 5, 6)
+        edit.set_graph_frame(self.p, "c1", self.eid, fid, label="註", text="x", color="red", w=10)
+        n = self.e["graph"]["nodes"][fid]
+        self.assertEqual((n["label"], n["text"], n["color"], n["w"], n["h"]), ("註", "x", "red", 60.0, 80.0))
+        self.assertIsNone(ng.check(self.e["graph"]))
+        if HAVE_GL:
+            from kiasecut import glrender
+            s = Scene(tempfile.mkdtemp())
+            v = s.view()
+            v["tracks"][0]["clips"][0]["effects"] = [self.e]
+            for r in (render.Renderer(), glrender.GLRenderer()):
+                self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), RED, type(r).__name__)
+
     def test_insert_dissolve_duplicate(self):
         edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
         edit.insert_graph_node(self.p, "c1", self.eid, self.m, "input", "output", "src")

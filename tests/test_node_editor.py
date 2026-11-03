@@ -269,6 +269,31 @@ class NodeEditorTests(unittest.TestCase):
         menu.search.returnPressed.emit()
         self.assertEqual(asked[-1]["kind"], "shape")
 
+    def test_frame_carries_nodes_and_is_sized(self):
+        def add(e):
+            g = e["graph"]
+            ng.add_node(g, {"type": ng.FRAME, "w": 300.0, "h": 200.0, "label": "框", "text": "", "color": "gray"}, -300, -300)
+            g["nodes"]["input"]["x"], g["nodes"]["input"]["y"] = -250.0, -250.0
+        ed = self.make(add)
+        fid = next(i for i, n in ed.graph["nodes"].items() if n["type"] == ng.FRAME)
+        moves, edits = [], []
+        ed.moveRequested.connect(lambda eid, m: moves.append(m))
+        ed.frameEdited.connect(lambda *a: edits.append(a[1:]))
+        v = ed.view
+        a = v.mapFromScene(QPointF(-290, -200))                    # empty part of the frame, not on the node
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, a)
+        QTest.mouseMove(v.viewport(), a + QPoint(30, 20))
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, a + QPoint(30, 20))
+        self.assertIn(fid, moves[-1])
+        self.assertIn("input", moves[-1])                         # the node inside went along
+        self.assertNotIn("output", moves[-1])
+        g = v.mapFromScene(v.items_by_id[fid].mapToScene(QPointF(295, 195)))
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, g)
+        QTest.mouseMove(v.viewport(), g + QPoint(40, 30))
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, g + QPoint(40, 30))
+        self.assertEqual(edits[-1][0], fid)
+        self.assertGreater(edits[-1][1]["w"], 300)
+
     def test_shift_right_drag_puts_bends_in_links(self):
         ed = self.make()
         got = []

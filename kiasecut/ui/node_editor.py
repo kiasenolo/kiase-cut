@@ -378,6 +378,112 @@ class RerouteItem(QGraphicsItem):
         NodeItem._socket(p, QPointF(self.W, self.H / 2), SOCKET_COLORS["image"])
 
 
+class FrameItem(QGraphicsItem):
+    """A frame (框架 / 註解): a coloured box behind the nodes with a label and a note; dragging it takes the nodes
+    inside along, the corner grip sizes it, double click edits it."""
+    GRIP, BAR = 16.0, 24.0
+
+    def __init__(self, nid, node, editor):
+        super().__init__()
+        self.nid, self.node, self.editor = nid, node, editor
+        self.has_out, self.rows, self.linked, self.drag = False, [], set(), None
+        self.w, self.h = float(node.get("w", 320.0)), float(node.get("h", 200.0))
+        self.title = node.get("label", "")
+        self.carry = None                                   # while dragged: the items inside it and where it was
+        self.size = None                                    # while sized: (scene point, w, h) at the press
+        self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
+        self.setPos(node.get("x", 0.0), node.get("y", 0.0))
+        self.setZValue(-1)
+
+    def boundingRect(self):
+        return QRectF(-1, -1, self.w + 2, self.h + 2)
+
+    def row_of(self, socket):
+        return None
+
+    def outputs(self):
+        return []
+
+    def sockets(self):
+        return []
+
+    def grip_at(self, pos):
+        return pos.x() > self.w - self.GRIP and pos.y() > self.h - self.GRIP
+
+    def inside(self):
+        """The other items whose middle is in the box."""
+        me = self.sceneBoundingRect()
+        return [it for it in self.scene().items() if it is not self and isinstance(it, (NodeItem, RerouteItem))
+                and me.contains(it.sceneBoundingRect().center())]
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and self.grip_at(e.pos()):
+            self.size = (e.scenePos(), self.w, self.h)
+            e.accept()
+            return
+        if e.button() == Qt.LeftButton:
+            self.carry = (self.pos(), [it for it in self.inside() if not it.isSelected()])
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self.size:
+            at, w0, h0 = self.size
+            d = e.scenePos() - at
+            self.prepareGeometryChange()
+            self.w, self.h = max(60.0, w0 + d.x()), max(40.0, h0 + d.y())
+            self.update()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        size, self.size = self.size, None
+        if size:
+            self.editor.frameEdited.emit(self.editor.eid, self.nid, {"w": self.w, "h": self.h})
+            return
+        super().mouseReleaseEvent(e)
+        self.carry = None
+
+    def mouseDoubleClickEvent(self, e):
+        self.editor.frame_menu(self, e.screenPos())
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.ItemPositionHasChanged and self.scene() is not None:
+            if self.carry:
+                at, items = self.carry
+                d = self.pos() - at
+                self.carry = (self.pos(), items)
+                for it in items:
+                    it.setPos(it.pos() + d)
+            for view in self.scene().views():
+                view.reroute()
+        return super().itemChange(change, value)
+
+    def paint(self, p, option, widget=None):
+        p.setRenderHint(QPainter.Antialiasing)
+        col = QColor(ng.FRAME_COLORS.get(self.node.get("color"), ng.FRAME_COLORS["gray"]))
+        box = QRectF(0, 0, self.w, self.h)
+        fill = QColor(col)
+        fill.setAlpha(70)
+        p.setBrush(fill)
+        p.setPen(QPen(QColor("#f0a030") if self.isSelected() else col.lighter(130), 2 if self.isSelected() else 1))
+        p.drawRoundedRect(box, 6, 6)
+        p.setPen(QColor("white"))
+        f = QFont(p.font())
+        f.setBold(True)
+        p.setFont(f)
+        p.drawText(QRectF(8, 0, self.w - 16, self.BAR), Qt.AlignVCenter | Qt.AlignLeft, self.title)
+        f.setBold(False)
+        p.setFont(f)
+        p.setPen(QColor(255, 255, 255, 200))
+        p.drawText(QRectF(8, self.BAR, self.w - 16, self.h - self.BAR - 8), Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap,
+                   self.node.get("text", ""))
+        tri = QPainterPath()
+        tri.moveTo(self.w - 2, self.h - self.GRIP + 4)
+        tri.lineTo(self.w - 2, self.h - 2)
+        tri.lineTo(self.w - self.GRIP + 4, self.h - 2)
+        p.fillPath(tri, col.lighter(160))
+
+
 def fm_elide(p, text, width):
     return p.fontMetrics().elidedText(text, Qt.ElideRight, int(width))
 
@@ -636,6 +742,8 @@ class GraphView(QGraphicsView):
         mods &= ~Qt.KeypadModifier
         if key in (Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_Home, Qt.Key_M, Qt.Key_X):
             return mods in (Qt.NoModifier, Qt.ControlModifier) if key == Qt.Key_X else mods == Qt.NoModifier
+        if key == Qt.Key_J:
+            return mods == Qt.ControlModifier
         if key in (Qt.Key_A, Qt.Key_D):
             return mods == Qt.ShiftModifier or (key == Qt.Key_A and mods == Qt.NoModifier)
         return False
@@ -654,6 +762,8 @@ class GraphView(QGraphicsView):
             self.editor.mute_selected()
         elif key == Qt.Key_D and mods & Qt.ShiftModifier:
             self.editor.duplicate_selected()
+        elif key == Qt.Key_J and mods == Qt.ControlModifier:
+            self.editor.frame_selected()
         elif key == Qt.Key_Home:
             self.fit()
         elif key == Qt.Key_A and mods & Qt.ShiftModifier:
@@ -681,6 +791,7 @@ class NodeEditor(QWidget):
     addLinkedRequested = Signal(str, dict, float, float, str, str)         # effect id, node, x, y, node and output to link into it
     rerouteRequested = Signal(str, list)                    # effect id, [(x, y, from, to, socket, output)]: bends to put in links
     mediaDropped = Signal(str, list, list, float, float)    # effect id, library item ids, file paths, x, y: dragged in as source nodes
+    frameEdited = Signal(str, str, dict)                    # effect id, frame id, what changed (label / text / color / w / h)
     duplicateRequested = Signal(str, list)                  # effect id, node ids
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
     removeExposedRequested = Signal(str, str)               # effect id, parameter name
@@ -779,7 +890,7 @@ class NodeEditor(QWidget):
         self.edit_proxy = None
         v.items_by_id, v.link_items = {}, []
         for nid, node in self.graph["nodes"].items():
-            it = (RerouteItem if node["type"] == ng.REROUTE else NodeItem)(nid, node, self)
+            it = {ng.REROUTE: RerouteItem, ng.FRAME: FrameItem}.get(node["type"], NodeItem)(nid, node, self)
             sc.addItem(it)
             v.items_by_id[nid] = it
             it.setSelected(nid in keep)
@@ -947,6 +1058,42 @@ class NodeEditor(QWidget):
     def popup(self, menu, pos):
         menu.exec(pos)
 
+    def ask_text(self, title, text, multi=False):
+        from PySide6.QtWidgets import QInputDialog
+        if multi:
+            got, ok = QInputDialog.getMultiLineText(self, title, title, text)
+        else:
+            got, ok = QInputDialog.getText(self, title, title, text=text)
+        return got if ok else None
+
+    def frame_menu(self, item, pos):
+        """Double click on a frame: its label, its note, its colour."""
+        menu = QMenu(self)
+        node = item.node
+
+        def ask(key, title, multi):
+            got = self.ask_text(title, node.get(key, ""), multi)
+            if got is not None and got != node.get(key):
+                self.frameEdited.emit(self.eid, item.nid, {key: got})
+        menu.addAction("改標籤…", lambda: ask("label", "標籤", False))
+        menu.addAction("改文字…", lambda: ask("text", "文字", True))
+        colors = menu.addMenu("顏色")
+        names = {"gray": "灰", "red": "紅", "orange": "橘", "green": "綠", "blue": "藍", "purple": "紫"}
+        for key in ng.FRAME_COLORS:
+            colors.addAction(names[key], lambda _=False, k=key: self.frameEdited.emit(self.eid, item.nid, {"color": k}))
+        self.popup(menu, pos.toPoint() if hasattr(pos, "toPoint") else pos)
+
+    def frame_selected(self):
+        """Ctrl+J: a frame around the selected nodes."""
+        items = [self.view.items_by_id[i] for i in self.selected() if self.graph["nodes"][i]["type"] != ng.FRAME]
+        if not items or not self.eid:
+            return
+        r = items[0].sceneBoundingRect()
+        for it in items[1:]:
+            r = r.united(it.sceneBoundingRect())
+        r = r.adjusted(-24, -FrameItem.BAR - 16, 24, 24)
+        self.addRequested.emit(self.eid, {"type": ng.FRAME, "w": r.width(), "h": r.height()}, r.x(), r.y())
+
     def duplicate_selected(self):
         ids = [i for i in self.selected() if self.graph["nodes"][i]["type"] != ng.OUTPUT]
         if ids and self.eid:
@@ -983,7 +1130,7 @@ class NodeEditor(QWidget):
         groups = []                                       # the category submenus (hidden while searching)
         inp = menu.addMenu("輸入")
         groups.append(inp.menuAction())
-        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("繞線點", {"type": ng.REROUTE}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
+        for text, node in (("輸入（片段的畫面）", {"type": ng.INPUT}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS}), ("繞線點", {"type": ng.REROUTE}), ("框架／註解", {"type": ng.FRAME}), ("圖片", {"type": ng.SOURCE, "kind": "image"}),
                            ("影片", {"type": ng.SOURCE, "kind": "video"}), ("複合片段", {"type": ng.SOURCE, "kind": "compound"}),
                            ("時間線（軌道）", {"type": ng.SOURCE, "kind": "track"})):
             inp.addAction(text, lambda _=False, n=node: ask(n))

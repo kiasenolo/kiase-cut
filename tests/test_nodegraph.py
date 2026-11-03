@@ -398,3 +398,26 @@ class GroupTests(unittest.TestCase):
         self.assertEqual(g["nodes"][inner]["group"], outer)
         flat = ng.flatten(g)
         self.assertEqual({(l["from"], l["to"]) for l in flat["links"]}, {("input", a), (a, b), (b, "output")})
+
+
+class SunPositionTests(unittest.TestCase):
+    def test_projects_saved_with_y_down_are_turned_over_when_opened(self):
+        from kiasecut import project
+        g = ng.new_graph()
+        n = ng.add_node(g, {"type": "filter", "ref": "builtin:blender_glare"})
+        graph_fx = {"id": "e2", "filter": "nodes:graph", "enabled": True, "graph": g,
+                    "params": {n + ".sun_position": [0.5, -0.05]}}
+        plain = {"id": "e1", "filter": "builtin:blender_glare", "enabled": True,
+                 "params": {"sun_position": [0.25, {"keys": [[0, 0.2, 0, 0, 5, 0.1], [100, 0.7, -5, -0.1, 0, 0]]}], "type": "Sun Beams"}}
+        clip = {"id": "c1", "type": "image", "name": "c", "start_us": 0, "duration_us": 10, "source_start_us": 0,
+                "media": {"path": "x.png", "width": 1, "height": 1}, "effects": [plain, graph_fx]}
+        old = {"format": project.FORMAT, "version": 4, "width": 16, "height": 9, "fps": 30, "duration_us": 10, "compounds": {},
+               "tracks": [{"id": "t0", "kind": "video", "name": "v", "clips": [clip]}]}
+        p = project.normalize(old)
+        self.assertEqual(p["version"], project.VERSION)
+        self.assertEqual(graph_fx["params"][n + ".sun_position"], [0.5, 1.05])
+        y = plain["params"]["sun_position"][1]
+        self.assertEqual((plain["params"]["sun_position"][0], y["keys"][0][1], y["keys"][1][1]), (0.25, 0.8, 0.30000000000000004))
+        self.assertEqual((y["keys"][0][3], y["keys"][0][5], y["keys"][1][3]), (0, -0.1, 0.1))     # (handles turn over too)
+        project.normalize(p)                                                   # (once only)
+        self.assertEqual(graph_fx["params"][n + ".sun_position"], [0.5, 1.05])

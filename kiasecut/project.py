@@ -116,7 +116,7 @@ from kiasecut import curves
 
 FORMAT = "kiasecut"
 OLD_FORMATS = ("tesetoa",)        # the program's earlier name: those projects still open
-VERSION = 4                     # 2: shared compounds; 3: several timelines; 4: project folder
+VERSION = 5                     # 2: shared compounds; 3: several timelines; 4: project folder; 5: Glare 光源位置 y up
 DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
                                  "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
                                  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
@@ -726,8 +726,40 @@ def normalize(p):
             c.setdefault("effects", []).insert(0, {
                 "id": new_effect_id(), "filter": MOTION_BLUR_FILTER, "enabled": True,
                 "params": {"shutter": float(mb.get("shutter", 180.0)), "samples": int(mb.get("samples", 8))}})
+    if p.get("version", VERSION) < 5:                      # Glare's 光源位置 counted y down: now up, as Blender's
+        for c in all_clips(p):
+            for e in c.get("effects") or []:
+                _flip_sun(e)
     p["version"] = VERSION
     return link(p)
+
+
+def _flip_y(v):
+    """A parameter value of the height of a point (a number, or keys) seen from the other end: 1 - v."""
+    if isinstance(v, dict) and v.get("keys"):
+        keys = [[k[0], 1.0 - k[1]] + ([k[2], -k[3], k[4], -k[5]] if len(k) >= 6 else list(k[2:])) for k in v["keys"]]
+        return dict(v, keys=keys)
+    return 1.0 - v if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+
+
+def _flip_sun(e):
+    """Turn the 光源位置 of the Blender Glare effects in effect e (the effect itself, or the nodes of its graph) upside down."""
+    params = e.get("params") or {}
+    keys = []
+    if e.get("filter") == "builtin:blender_glare":
+        keys.append("sun_position")
+    if e.get("graph"):
+        from . import nodegraph
+        graph = nodegraph.flatten(e["graph"])
+        bound = nodegraph.binds(graph)
+        for nid, node in graph["nodes"].items():
+            if node.get("type") == nodegraph.FILTER and node.get("ref") == "builtin:blender_glare":
+                b = bound.get((nid, nodegraph.PARAM + "sun_position"))
+                keys.append(nodegraph.expose_key(b) if b else nodegraph.param_key(nid, "sun_position"))
+    for k in keys:
+        v = params.get(k)
+        if isinstance(v, (list, tuple)) and len(v) >= 2:
+            params[k] = [v[0], _flip_y(v[1])] + list(v[2:])
 
 
 THUMBNAIL = "_thumbnail"         # a static compound of this name is the project's thumbnail

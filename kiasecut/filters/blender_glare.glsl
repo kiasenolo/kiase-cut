@@ -312,7 +312,7 @@ vec3 sun_beams(vec2 uv, vec2 R, float q) {
     // for every pixel with this many steps, is worked out whole (n (4 n^2 - 1) / 12 over n^2)
     float k = pass_px.x / R.x;                                 // this pass's px per canvas px
     vec2 P = uv * pass_px;
-    vec2 v = sun_position * pass_px - P;
+    vec2 v = vec2(sun_position.x, 1.0 - sun_position.y) * pass_px - P;     // (y up from the bottom, as Blender's: pictures are stored top row first)
     float dist = length(v);
     vec2 dir = v / max(dist, 1e-6);
     float L = min(max(size, 0.0) * length(pass_px), dist);

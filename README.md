@@ -772,6 +772,7 @@ Taken from elsewhere:
 |---|---|---|
 | `kiasecut/filters/blender_glare.glsl` | Blender's Glare compositor node (`node_composite_glare.cc`, `compositor_glare_*.glsl`) | GPL-2.0-or-later |
 | `kiasecut/filters/blender_lens_distortion.glsl` | Blender's Lens Distortion compositor node (`node_composite_lens_distortion.cc`, `compositor_*_lens_distortion.glsl`) | GPL-2.0-or-later |
+| `kiasecut/filters/oil_paint.glsl` | Blender's Kuwahara compositor node (`compositor_kuwahara_*.glsl`) | GPL-2.0-or-later |
 | `kiasecut/filters/nodes/dilate_erode.glsl`, `nodes/filter.glsl`, `blur.glsl` | Blender's Dilate/Erode, Filter and Blur compositor nodes (`compositor_morphological_*.glsl`, `compositor_filter.glsl`, `RE_filter_value`) | GPL-2.0-or-later |
 | `kiasecut/filters/blender_tex_*.glsl`, `blender_color_ramp.glsl` | Blender's texture nodes (Brick, Checker, Gradient, Magic, Noise, Voronoi, Wave, White Noise) and Color Ramp (`colorband.cc`) | GPL-2.0-or-later |
 | `kiasecut/filters/nodes/*.glsl` (all but `picture.glsl`), `posterize.glsl`, `invert.glsl` | reimplementations of the Blender compositor nodes of the same names (Math, Mix, Map Range, Vector Math, Value, Switch ...): their behaviour and constants, checked against Blender 5.2 | GPL-2.0-or-later |

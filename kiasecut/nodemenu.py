@@ -48,7 +48,7 @@ COLOR = [
     "invert", "nodes/rgb_to_bw",
 ]
 
-CREATIVE = ["pixelate", "posterize", "blender_vignette"]
+CREATIVE = ["oil_paint", "pixelate", "posterize", "blender_vignette"]
 
 FILTER = [
     menu("模糊", ["blur", "lens_blur", "motion_blur"]),

@@ -7,6 +7,9 @@
 // @passes 26
 // @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 quality
 // @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 -
+// @shared
+// @alone highlights
+// @skip 1-23 type != Bloom
 // @precision float
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
 // @param quality menu 中 "高|中|低" "品質"
@@ -337,6 +340,11 @@ vec4 effect(vec2 uv) {
         g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * (max(strength, 0.0) / (type == 0 ? float(max(1, bloom_length())) : 1.0));
         return vec4(g, 1.0);
     }
+    if (output_index == 2) {                                   // pass 25, 亮部: what glows, alone (Blender's Highlights output)
+        vec3 h = max(highlights(linear(original(uv)).rgb), vec3(0.0));
+        float ha = clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0);
+        return ha > 0.0 ? vec4(lin_to_srgb(h / ha) * ha, ha) : vec4(0.0);
+    }
     float sg = grain_sigma();                                  // pass 25: smooth the grain, add the light to the picture
     if (sg > 0.0) {
         vec2 px = 1.0 / pass_px;
@@ -353,11 +361,6 @@ vec4 effect(vec2 uv) {
         g = src(uv).rgb;
     }
 
-    if (output_index == 2) {                                   // 亮部: what glows, alone (Blender's Highlights output)
-        vec3 h = max(highlights(linear(original(uv)).rgb), vec3(0.0));
-        float ha = clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0);
-        return ha > 0.0 ? vec4(lin_to_srgb(h / ha) * ha, ha) : vec4(0.0);
-    }
     if (output_index == 1) {                                   // 光: the light alone (Blender's Glare output)
         float ga = clamp(max(g.r, max(g.g, g.b)), 0.0, 1.0);
         return ga > 0.0 ? vec4(lin_to_srgb(g / ga) * ga, ga) : vec4(0.0);

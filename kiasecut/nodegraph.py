@@ -984,7 +984,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             def draw(pic, dest):
                 ptex, pmap, give = pic
                 try:
-                    _run(eng, fx.get(PICTURE), {"color": (0.0, 0.0, 0.0, 0.0)}, empty(), w, h, dest, time, prog, frame, unit,
+                    _run(eng, fx.get(PICTURE), {"color": (0.0, 0.0, 0.0, 0.0)}, empty(), w, h, [(0, dest)], time, prog, frame, unit,
                          {"color": (ptex, pmap)}, None, errors)
                 finally:
                     if give:
@@ -1002,7 +1002,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                     where = alloc(w, h)
                     draw(mask, where)
                     mixed = alloc(w, h)
-                    if _run(eng, fx.get(SHAPE_PAINT), {"over": part == "stroke"}, take(n, sock), w, h, mixed, time, prog, frame, unit,
+                    if _run(eng, fx.get(SHAPE_PAINT), {"over": part == "stroke"}, take(n, sock), w, h, [(0, mixed)], time, prog, frame, unit,
                             None, {"base": dest.tex, "mask": where.tex}, errors):
                         free(dest)
                         dest = mixed
@@ -1031,15 +1031,15 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                         if p.type == "float":
                             vals[p.name + fx.RANGE_MIN], vals[p.name + fx.RANGE_MAX] = fx.source_range({}, vals[p.name], t)
                 ins = {name: take(n, name) for name, _ in d.inputs}
-                for k, o in enumerate(names):
-                    if (n, o) not in users:                           # (an output nothing reads is not drawn)
-                        continue
-                    dest = alloc(w, h)
-                    if not _run(eng, d, vals, take(n, "src") or empty(), w, h, dest, time, prog, frame, unit, srcs, ins, errors, k,
-                             src_on=take(n, "src") is not None):
+                wanted = [(k, o) for k, o in enumerate(names) if (n, o) in users]     # (an output nothing reads is not drawn)
+                dests = [alloc(w, h) for _ in wanted]
+                if not _run(eng, d, vals, take(n, "src") or empty(), w, h, [(k, dest) for (k, _o), dest in zip(wanted, dests)], time,
+                            prog, frame, unit, srcs, ins, errors, src_on=take(n, "src") is not None):
+                    for dest, (_k, o) in zip(dests, wanted):
                         free(dest)
                         alias(n, main, o)
-                    else:
+                else:                                                 # (one run for all of them: see Engine.run_outputs)
+                    for dest, (_k, o) in zip(dests, wanted):
                         put(n, dest.tex, dest, o)
         done_with(n)
     tex, owner = made[final] if final in made else made.get((out, ""), (src_tex, None))
@@ -1050,10 +1050,11 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     return tex, owner
 
 
-def _run(eng, d, vals, src, w, h, dest, time, prog, frame, unit, sources, inputs, errors, output=0, src_on=True):
+def _run(eng, d, vals, src, w, h, outs, time, prog, frame, unit, sources, inputs, errors, src_on=True):
+    """Draw filter d's outputs outs [(output index, where: an alloc's item)] over src; False when it failed."""
     try:
-        eng.run_tex(d, vals, src, w, h, time=time, progress=prog, frame=frame, unit=unit, sources=sources,
-                    inputs=inputs, dest=(dest.tex, dest.fbo), output=output, src_on=src_on)
+        eng.run_outputs(d, vals, src, w, h, [(k, (dest.tex, dest.fbo)) for k, dest in outs], time=time, progress=prog, frame=frame,
+                        unit=unit, sources=sources, inputs=inputs, src_on=src_on)
         return True
     except fx.FilterError as exc:
         errors.append(f"節點「{d.name}」：{exc}")

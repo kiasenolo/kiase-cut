@@ -65,6 +65,9 @@ class FilterDef:
         self.passes, self.error = passes, error
         self.src_label = "圖像"                  # @source: what the main picture socket is called
         self.outputs = []                        # @output: [(name, label)] pictures a node gives (output_index tells which is drawn); none: one
+        self.shared = False                      # @shared: only the last pass looks at output_index, the ones before it are drawn once for every output asked
+        self.alone = []                          # @alone: outputs the last pass draws from nothing the earlier passes drew (they are not drawn for it)
+        self.skips = []                          # @skip: (first pass, last pass, conditions): not drawn while the conditions hold
         self.input_param = {}                    # @input name "Label" param: the number box of that parameter sits on the input's row, hidden while a link feeds it
         self.input_show = {}                     # @show on an @input: {name: conditions}
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
@@ -189,6 +192,22 @@ def _enable(rest, params, inputs=(), show=None):
         into.append((name, op == "!=", [v.strip() for v in vals.split("|")]))
 
 
+SKIP = re.compile(r"^(\d+)(?:\s*-\s*(\d+))?\s+(\w+)\s*(==|!=)\s*(.+)$")
+
+
+def _skip(rest, params):
+    """`// @skip 1-23 type != Bloom`: passes 1 to 23 (`3`: just that one) are not drawn while the condition holds (a
+    menu parameter's choices, or numbers, as @enable's)."""
+    m = SKIP.match(rest.strip())
+    if not m:
+        raise ValueError("@skip 要寫成：第幾次（或 起-訖） 參數 == 選項（例如 1-23 type != Bloom）")
+    first, last, name, op, vals = m.groups()
+    if all(q.name != name for q in params):
+        raise ValueError(f"@skip：沒有叫「{name}」的參數")
+    first, last = int(first), int(last if last is not None else first)
+    return first, max(first, last), [(name, op == "!=", [v.strip() for v in vals.split("|")])]
+
+
 def enabled(p, values):
     """Whether parameter p does anything with the effect's other values {name: value} (its
     @enable conditions; a menu's value is its choice's name, or its number)."""
@@ -240,7 +259,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     head = {}
     params, error = [], None
     panels, panel, enables, inputs, outputs = [], None, [], [], []
-    input_param = {}
+    input_param, alone, skips = {}, [], []
     for line in text.splitlines():
         m = HEADER.match(line)
         if not m:
@@ -275,6 +294,12 @@ def parse(text, ref, fallback_name="濾鏡"):
                 if not words or not IDENT.match(words[0]) or any(words[0] == n for n, _ in outputs):
                     raise ValueError("@output 要寫：名稱（英文、數字、底線，不重複）[\"顯示名稱\"]")
                 outputs.append((words[0], words[1] if len(words) > 1 else words[0]))
+            elif key == "shared":
+                head["shared"] = True
+            elif key == "alone":
+                alone += shlex.split(rest)
+            elif key == "skip":                           # (read once every @param is known)
+                skips.append((line, rest))
             elif key in ("enable", "show"):               # (read once every @param is known)
                 enables.append((line, rest, key == "show"))
             elif key in ("filter", "category", "description"):
@@ -297,6 +322,15 @@ def parse(text, ref, fallback_name="濾鏡"):
             _enable(rest, params, [n for n, _ in inputs], input_show if show else None)
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
+    skipped = []
+    for line, rest in skips:
+        try:
+            skipped.append(_skip(rest, params))
+        except ValueError as exc:
+            error = error or f"{line.strip()}\n{exc}"
+    for name in alone:
+        if all(name != n for n, _ in outputs):
+            error = error or f"@alone：沒有叫「{name}」的 @output"
     levels, level_param, fixed = [], None, []
     words = head.get("levels", [])
     if words and not words[-1].rstrip("f").lstrip("-").isdigit():
@@ -323,6 +357,7 @@ def parse(text, ref, fallback_name="濾鏡"):
         if not any(q.name == pname and q.type in ("float", "int") for q in params):
             d.error = d.error or f"@input {iname}：「{pname}」不是數字參數"
     d.outputs = outputs
+    d.shared, d.alone, d.skips = head.get("shared", False), alone, skipped
     d.src_label = head.get("source") or d.src_label
     return d
 
@@ -877,6 +912,15 @@ class Engine:
         a missing one reads as transparent); dest (texture, framebuffer) of w x h: the last pass is drawn
         there instead of into this engine's own targets (so the result outlives the next run); output: which of the
         filter's @output pictures is drawn (output_index)."""
+        return self.run_outputs(d, values, src, w, h, [(output, dest)], time, progress, frame, unit, sources, inputs, src_on)[0]
+
+    def run_outputs(self, d, values, src, w, h, outs, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None, inputs=None,
+                    src_on=True):
+        """run_tex for several of the filter's @output pictures at once: outs [(output, dest)], each dest a
+        (texture, framebuffer) of w x h (None: this engine's own, only for one); the textures holding the results,
+        in the same order. A filter that says @shared draws the passes before its last once for all of them (as Blender's
+        nodes are worked out once, whichever of their outputs are used), and an @alone output is drawn by the last
+        pass alone; any other is drawn all over again for every output."""
         types = {p.name: p.type for p in d.params}
         sources = {n: v for n, v in (sources or {}).items() if types.get(n) in SOURCE_TYPES}
         prog, vao = self._program(d, tuple(sorted(sources)))
@@ -919,27 +963,58 @@ class Engine:
                 prog["inp_" + name + "_"].value = 8 + k
             if "inp_" + name + "_on_" in prog:
                 prog["inp_" + name + "_on_"].value = (inputs or {}).get(name) is not None
-        if "output_index" in prog:
-            prog["output_index"].value = int(output)
         if "src_on_" in prog:
             prog["src_on_"].value = bool(src_on)
-        self.ctx.disable(self.mgl.BLEND)
-        read = src
-        made = []                                      # each pass's (texture, w, h), for @extras
         if "extra_" in prog:
             prog["extra_"].value = 7
-        canvas = (w / unit, h / unit)
-        for i in range(d.passes):
+        self.ctx.disable(self.mgl.BLEND)
+        run = (d, prog, vao, values, src, w, h, (w / unit, h / unit), targets, self._skipped(d, values))
+        last = d.passes - 1
+        if not (d.shared and last > 0):
+            return [self._chain(run, 0, d.passes, src, [], k, dst) for k, dst in outs]
+        names = [n for n, _ in d.outputs]
+        read, made = None, []
+        if any(names[k] not in d.alone for k, _ in outs):       # (the passes before the last, once)
+            read, made = self._chain(run, 0, last, src, made, None, None, whole=False)
+        results = []
+        for k, dst in outs:
+            alone = names[k] in d.alone
+            results.append(self._chain(run, last, d.passes, src if alone else read, [] if alone else list(made), k, dst))
+        return results
+
+    @staticmethod
+    def _skipped(d, values):
+        """The passes of filter d that its settings (@skip) leave undrawn."""
+        if not d.skips:
+            return ()
+        named_values = named(d, values)
+        return {i for first, last, conds in d.skips if _holds(conds, named_values) for i in range(first, last + 1)}
+
+    def _chain(self, run, first, stop, read, made, output, dest, whole=True):
+        """Draw passes first .. stop - 1 of a run (see run_outputs) from picture read, the earlier passes' sizes and
+        results being made [(texture, w, h)] (it is added to); output: the output_index to draw (None: leave as it was);
+        dest: where the last pass of the filter goes. Returns the texture holding the result - or, with whole False,
+        (that, made)."""
+        d, prog, vao, values, src, w, h, canvas, targets, skip = run
+        if output is not None and "output_index" in prog:
+            prog["output_index"].value = int(output)
+        for i in range(first, stop):
             if "pass_index" in prog:
                 prog["pass_index"].value = i
             if i < len(d.levels):
                 tw, th = self.level_size(d, i, values, w, h, canvas)
+                if i in skip:                          # (not drawn: it keeps its place in made, and what the pass after reads)
+                    made.append((None, tw, th))
+                    continue
                 dst_tex, dst_fbo = self._level_target(d, i, tw, th)
             elif dest is not None and i == d.passes - 1:
                 tw, th = w, h
                 dst_tex, dst_fbo = dest
             else:
                 tw, th = w, h
+                if i in skip:
+                    made.append((None, tw, th))
+                    continue
                 pool = self._mid_targets(w, h) if d.precise and i < d.passes - 1 else targets
                 dst_tex, dst_fbo = next(t for t in pool if t[0] is not read and t[0] is not src)
             sw, sh = (made[-1][1], made[-1][2]) if made else (w, h)
@@ -953,11 +1028,11 @@ class Engine:
             read.use(0)
             src.use(1)
             if ex is not None:
-                made[ex][0].use(7)
+                (made[ex][0] or self.blank_texture()).use(7)
             vao.render(self.mgl.TRIANGLE_STRIP)
             read = dst_tex
             made.append((dst_tex, tw, th))
-        return read
+        return read if whole else (read, made)
 
     def close(self):
         try:

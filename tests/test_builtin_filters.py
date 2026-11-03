@@ -234,6 +234,51 @@ class BuiltinFilterTests(unittest.TestCase):
         out = eng.run(d, {}, np.zeros((40, 80, 4), np.uint8))
         self.assertEqual(tuple(out[20, 40]), (51, 25, 128, 255))         # (pass 1 was 80 / 4 = 20 x 40 / 4 = 10 px; pass 0 gave 1.0 / 2)
 
+    def test_outputs_share_the_passes_before_the_last(self):
+        """@shared: every output asked at once is drawn by the last pass alone, the passes before it once for all;
+        an @alone output skips those; @skip leaves passes out while its condition holds."""
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.parse('// @passes 3\n// @shared\n// @output a\n// @output b\n// @output c\n// @alone c\n'
+                     '// @param mode menu on "on|off"\n// @skip 1 mode == off\n'
+                     'vec4 effect(vec2 uv) {\n'
+                     '  if (pass_index == 0) return vec4(0.25, 0.0, 0.0, 1.0);\n'
+                     '  if (pass_index == 1) return vec4(src(uv).r + 0.25, 0.0, 0.0, 1.0);\n'
+                     '  if (output_index == 0) return vec4(src(uv).r, 0.0, 0.0, 1.0);\n'
+                     '  if (output_index == 1) return vec4(src(uv).r, 1.0, 0.0, 1.0);\n'
+                     '  return vec4(0.0, 0.0, 1.0, 1.0);\n}', "t")
+        self.assertIsNone(d.error)
+        self.assertEqual((d.shared, d.alone, d.skips), (True, ["c"], [(1, 1, [("mode", False, ["off"])])]))
+        draws = []
+        real = eng._program
+
+        def counted(*a, **k):
+            prog, vao = real(*a, **k)
+            return prog, type("V", (), {"render": lambda _s, mode: (draws.append(1), vao.render(mode))})()
+        eng._program = counted
+
+        def targets(n):
+            out = []
+            for _ in range(n):
+                tex = eng.ctx.texture((8, 8), 4)
+                out.append((tex, eng.ctx.framebuffer(color_attachments=[tex])))
+            return out
+        src = eng.ctx.texture((8, 8), 4, bytes(8 * 8 * 4))
+
+        def run(values, which):
+            dests = targets(len(which))
+            draws.clear()
+            res = eng.run_outputs(d, values, src, 8, 8, list(zip(which, dests)))
+            return [tuple(np.frombuffer(t.read(), np.uint8)[:4]) for t in res], len(draws)
+        got, n = run({"mode": 0}, [0, 1, 2])
+        self.assertEqual((got[0], got[1], got[2]), ((128, 0, 0, 255), (128, 255, 0, 255), (0, 0, 255, 255)))
+        self.assertEqual(n, 5)                                    # (2 shared + one last pass each; 9 drawn one by one)
+        self.assertEqual(run({"mode": 0}, [2])[1], 1)             # (c alone: the last pass only)
+        got, n = run({"mode": 1}, [0, 1])                         # (pass 1 left out: the last reads pass 0's 0.25)
+        self.assertEqual((got[0], n), ((64, 0, 0, 255), 3))
+
     def test_bloom_is_blenders_chain(self):
         """Bloom normalised by the chain's length: a lit square on black glows evenly all round, and a bigger Size reaches further."""
         import numpy as np

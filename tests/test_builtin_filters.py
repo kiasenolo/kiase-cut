@@ -108,6 +108,26 @@ class BuiltinFilterTests(unittest.TestCase):
                 self.assertTrue((pic[..., 3] == 255).all(), name)              # (opaque, whatever it is put on)
                 self.assertGreater(pic[..., :3].std(), 3, name)                # (and a pattern)
 
+    def test_noise_w_moves_the_4d_noise_only(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:blender_tex_noise")
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        rgba = np.full((48, 64, 4), 255, np.uint8)
+        vals["w"] = 0.0
+        flat = eng.run(d, vals, rgba)
+        vals["w"] = 2.5
+        self.assertTrue((eng.run(d, vals, rgba) == flat).all())                  # (3D: W does nothing)
+        vals["dims"] = 1
+        moved = eng.run(d, vals, rgba)
+        vals["w"] = 0.0
+        self.assertFalse((moved == eng.run(d, vals, rgba)).all())                # (4D: another W, another picture)
+        self.assertFalse(fx.shown(d, "w", {"dims": "3D"}))
+        self.assertTrue(fx.shown(d, "w", {"dims": "4D"}))
+
     def test_white_noise_is_random_per_point(self):
         import numpy as np
         try:

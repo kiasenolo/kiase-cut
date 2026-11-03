@@ -1,9 +1,12 @@
 // @filter [Blender] Texture / Noise
 // @category Blender
-// @description Blender 的噪點紋理：分形柏林噪訊（細節、粗糙度、間隙度、扭曲），調 Z 可以讓它連貫地流動（3D 噪訊）
+// @description Blender 的噪點紋理：分形柏林噪訊（細節、粗糙度、間隙度、扭曲），調 Z（3D）或 W（4D）可以讓它連貫地流動
 // @output fac "數值"
 // @output color "顏色"
-// @param z float 0 -1000 1000 "Z（3D 噪訊）"
+// @param dims menu 3D "3D|4D" "維度"
+// @param z float 0 -1000 1000 "Z"
+// @param w float 0 -1000 1000 "W（4D）"
+// @show w dims == 4D
 // @param detail float 2 0 15 "細節"
 // @param roughness float 0.5 0 1 "粗糙度"
 // @param lacunarity float 2 0 1000 "間隙度"
@@ -146,6 +149,19 @@ float fbm4(vec4 p, float detail, float rough, float lac, bool normalize_) {
 }
 
 vec4 effect(vec2 uv) {
+    if (dims == 1) {                                 // 4D: W is a fourth axis of the same noise
+        vec4 q = vec4(tex_co(uv).xy, z, w);
+        if (distortion != 0.0) {
+            q += vec4(fbm4(q + vec4(13.5, 0.0, 0.0, 0.0), detail, roughness, lacunarity, true),
+                      fbm4(q + vec4(0.0, 13.5, 0.0, 0.0), detail, roughness, lacunarity, true),
+                      fbm4(q + vec4(0.0, 0.0, 13.5, 0.0), detail, roughness, lacunarity, true),
+                      fbm4(q + vec4(0.0, 0.0, 0.0, 13.5), detail, roughness, lacunarity, true)) * distortion;
+        }
+        float f4 = fbm4(q, detail, roughness, lacunarity, normalize);
+        vec3 col4 = vec3(f4, fbm4(q + vec4(23.1, 7.7, 41.3, 3.3), detail, roughness, lacunarity, normalize),
+                         fbm4(q + vec4(11.9, 53.3, 5.7, 29.1), detail, roughness, lacunarity, normalize));
+        return finish(uv, vec3(f4), col4);
+    }
     vec3 p = tex_co(uv) + vec3(0.0, 0.0, z);       // 3D: z moves through the noise, the picture changes smoothly
     if (distortion != 0.0) {
         p += vec3(fbm3(p + vec3(13.5, 0.0, 0.0), detail, roughness, lacunarity, true),

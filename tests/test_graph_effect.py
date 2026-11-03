@@ -433,6 +433,15 @@ class GraphRenderTests(unittest.TestCase):
             self.assertEqual(a_, BLACK, name)
         self.assertNotIn("expose." + colour, [q.name for q in fx.def_of(eff).params if q.name == nid + ".color"])
 
+    def test_ratio_keeps_the_shape_in_proportion(self):
+        view, eff, nid = self.shape_view()
+        eff["sources"][nid].update(w=1.0, h=1.0)
+        for name, (edge, mid) in self.pixels(view, (4, 18), (32, 18)):
+            self.assertEqual((edge, mid), (WHITE, WHITE), name)                  # 0: stretched over the frame
+        eff["sources"][nid]["ratio"] = 1.0                                       # a square in the 64 x 36 frame
+        for name, (edge, mid) in self.pixels(view, (4, 18), (32, 18)):
+            self.assertEqual((edge, mid), (BLACK, WHITE), name)
+
     def test_a_picture_paints_the_fill(self):
         view, eff, nid = self.shape_view()
         ng.connect(eff["graph"], "input", nid, "fill_image")                    # (the clip's red picture)

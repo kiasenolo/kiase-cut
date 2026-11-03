@@ -139,7 +139,7 @@ class NodeItem(QGraphicsItem):
             add("image", "結果", "src")
         elif node["type"] == ng.VIEWER:
             add("image", "圖像", "src")
-        elif node["type"] == ng.FILTER or ng.is_asset(node):         # (a built-in shape: its fields, no sockets)
+        elif node["type"] == ng.FILTER or ng.is_asset(node) or ng.is_text(node):         # (a built-in shape or a text: its fields, no sockets)
             d = ng.node_def(node)
             socket = lambda p: ng.PARAM + p.name if ng.has_socket(p) else None
             named = self.editor.node_values(self.nid).named
@@ -157,12 +157,16 @@ class NodeItem(QGraphicsItem):
                 if ng.is_dynamic(node):                            # (Blender's empty socket: a link let go on it makes an option)
                     add("image", "（拉一條線進來新增選項）", GHOST_ITEM)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
-                for _part, sock, label in ng.ASSET_PAINTS:
-                    add("image", label, sock)
+                if ng.is_text(node):                                   # (a text: its words and font first)
+                    add("text", "文字")
+                    add("font", "字體")
+                else:
+                    for _part, sock, label in ng.ASSET_PAINTS:
+                        add("image", label, sock)
                 opened = self.editor.panel_open.get((self.nid, "位置"), True)
                 add("panel", "位置", panel=opened)
                 if opened:
-                    for p in ng.place_params():
+                    for p in (ng.text_place_params() if ng.is_text(node) else ng.place_params()):
                         add("param", p.label, socket(p), p)
             paired = set(d.input_param.values())
             for p in (q for q in d.params if q.panel is None and shown(q.name) and q.name not in paired):
@@ -232,7 +236,7 @@ class NodeItem(QGraphicsItem):
     def has_field(self, r):
         if r["kind"] == "param":
             return not (r["socket"] and r["socket"] in self.linked) and r["p"].type not in ("curve", "gradient")
-        return r["kind"] in ("shape", "shapecolor", "plot")
+        return r["kind"] in ("shape", "shapecolor", "plot", "text", "font")
 
     def field_at(self, pos):
         """(row, cell) of the field under pos (item coordinates), or the panel header row, else None."""
@@ -338,6 +342,16 @@ class NodeItem(QGraphicsItem):
         if kind == "shapecolor":
             box = self.field_rect(r)
             self._box(p, box, QColor.fromRgbF(*(list(vals.color) + [1.0] * 4)[:3]))
+            return
+        if kind in ("text", "font"):                        # (the words, one line of them; the font's name)
+            box = self.field_rect(r)
+            self._box(p, box, bg)
+            p.setPen(text)
+            src = self.editor.sources.get(self.nid) or {}
+            shown = (src.get("content", ng.TEXT_CONTENT) or "").replace("\n", " ⏎ ") if kind == "text" else \
+                self.editor.font_name(src.get("font_path"))
+            p.drawText(box.adjusted(6, 0, -6, 0), Qt.AlignVCenter | Qt.AlignLeft,
+                       p.fontMetrics().elidedText(shown, Qt.ElideRight, int(box.width() - 12)))
             return
         q = r["p"]
         v = vals.get(q.name)
@@ -1284,6 +1298,7 @@ class NodeEditor(QWidget):
     paramLive = Signal(str, str, str, object)               # effect id, group ("fx:<id>" / "fxsrc:<id>:<node>"), key, value: still being changed
     placeEdited = Signal(str, str, str, object)             # effect id, node id, where it sits (cx / cy / w / h / rotation), value
     shapeEdited = Signal(str, str, object, object)          # effect id, shape node, shape id or None, colour or None
+    textEdited = Signal(str, str, object, object)           # effect id, text node, its words or None, its font file or None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1476,12 +1491,12 @@ class NodeEditor(QWidget):
     def node_values(self, nid):
         node = self.graph["nodes"].get(nid) or {}
         src = self.sources.get(nid) or {}
-        if node.get("type") != ng.FILTER and not ng.is_asset(node):
+        if node.get("type") != ng.FILTER and not ng.is_asset(node) and not ng.is_text(node):
             return self.Values({}, None, src.get("shape", "rectangle"), src.get("color") or [1.0, 1.0, 1.0, 1.0])
         d = ng.node_def(node)
         vals = {p.name: curves.value(self.params.get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params}
-        if ng.is_asset(node):                                  # (where it sits: the source's own fields)
-            vals.update({p.name: curves.value(src.get(p.name, p.default), self.t) for p in ng.place_params()})
+        if ng.is_asset(node) or ng.is_text(node):               # (where it sits: the source's own fields)
+            vals.update({p.name: curves.value(src.get(p.name, p.default), self.t) for p in (ng.text_place_params() if ng.is_text(node) else ng.place_params())})
         return self.Values(vals, d, "", [1.0, 1.0, 1.0, 1.0])
 
     def field_number(self, nid, row, cell):
@@ -1562,6 +1577,15 @@ class NodeEditor(QWidget):
             return
         if kind == "shapecolor":
             self._pick(nid, self.node_values(nid).color, lambda c: self.shapeEdited.emit(self.eid, nid, None, c), item, row)
+            return
+        if kind == "text":
+            old = (self.sources.get(nid) or {}).get("content", ng.TEXT_CONTENT)
+            got = self.ask_text("文字", old, True)
+            if got is not None and got != old:
+                self.textEdited.emit(self.eid, nid, got, None)
+            return
+        if kind == "font":
+            self._choose_font(nid)
             return
         q = row["p"]
         key = ng.param_key(nid, q.name)
@@ -1716,6 +1740,31 @@ class NodeEditor(QWidget):
 
     def popup(self, menu, pos):
         menu.exec(pos)
+
+    fonts = ()                                                # the installed fonts, [{"name", "path"}] (the main window's list)
+
+    def font_name(self, path):
+        """The name a font file goes by in the list (its file name when it is not in it)."""
+        hit = next((f["name"] for f in self.fonts if f["path"] == path), None)
+        return hit or (os.path.splitext(os.path.basename(path or ""))[0] or "（預設字體）")
+
+    def _choose_font(self, nid):
+        """A text node's font: one of the installed fonts, or a font file."""
+        from PySide6.QtWidgets import QFileDialog, QInputDialog
+        browse = "瀏覽字型檔…"
+        names = [f["name"] for f in self.fonts] + [browse]
+        path = (self.sources.get(nid) or {}).get("font_path")
+        current = next((i for i, f in enumerate(self.fonts) if f["path"] == path), 0)
+        got, ok = QInputDialog.getItem(self, "字體", "字體", names, current, False)
+        if not ok:
+            return
+        if got == browse:
+            got, _ = QFileDialog.getOpenFileName(self, "選擇字型檔", "", "字型 (*.ttf *.otf *.ttc *.otc)")
+            if not got:
+                return
+            self.textEdited.emit(self.eid, nid, None, got.replace("\\", "/"))
+        else:
+            self.textEdited.emit(self.eid, nid, None, next(f["path"] for f in self.fonts if f["name"] == got))
 
     def ask_text(self, title, text, multi=False):
         from PySide6.QtWidgets import QInputDialog

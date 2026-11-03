@@ -393,7 +393,7 @@ class EffectsPanel(QWidget):
         if e["filter"] == fx.GRAPH:                             # a node graph: its picture / video / compound nodes
             for nid in nodegraph.ordered(e["graph"]):
                 node = e["graph"]["nodes"][nid]
-                if node["type"] == nodegraph.SOURCE and node.get("kind") and nid in (e.get("sources") or {}):
+                if node["type"] == nodegraph.SOURCE and node.get("kind") not in (None, "text") and nid in (e.get("sources") or {}):    # (a text: its fields are in the node editor)
                     asset = nodegraph.is_asset(node)         # (a built-in shape: its fields are in a panel of their own)
                     sec, sl = self._panel(e["id"], f"{nodegraph.title(node)}的位置（{nid}）" if asset else f"{nodegraph.title(node)}（{nid}）", False)
                     sl.addLayout(self._source_row(e["id"], nid, node["kind"], asset))

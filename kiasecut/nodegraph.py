@@ -28,7 +28,7 @@ from . import assets, curves, dynamic, fx
 US = 1_000_000
 INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output", "source", "filter", "params", "reroute", "frame", "group"
 VIEWER = "viewer"                                           # 預覽: what the editor's preview shows (never exported)
-SOURCE_KINDS = ("image", "video", "compound", "track", "shape")
+SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
 PICTURE = "builtin:nodes/picture"
@@ -191,8 +191,8 @@ def default_params(graph):
     for nid, n in graph["nodes"].items():
         if n["type"] == FILTER:
             out.update({param_key(nid, k): v for k, v in fx.default_params(fx.for_node(n)).items()})
-        elif is_asset(n):
-            out.update({param_key(nid, k): v for k, v in fx.default_params(asset_def(n)).items()})
+        elif is_asset(n) or is_text(n):
+            out.update({param_key(nid, k): v for k, v in fx.default_params(node_def(n)).items()})
     return out
 
 
@@ -264,6 +264,95 @@ def asset_def(node):
             params.append(q)
     out = fx.FilterDef("asset:" + a["key"], preset.name if preset else "形狀", "", params, "形狀", "", panels=panels)
     _asset_defs[key] = out
+    return out
+
+
+# -- text nodes: KiaseCut's text tool as a node (node["kind"] == "text"; its words and font are its source's "content" and
+# "font_path", everything else a parameter like a text clip's - textlayout.py draws it) ---------------------------------------
+TEXT_ALIGNS = (("靠左", "left"), ("置中", "center"), ("靠右", "right"), ("齊頭尾", "justify"))
+TEXT_VALIGNS = (("上", "top"), ("中", "middle"), ("下", "bottom"))
+TEXT_STROKE_ALIGNS = (("內側", "inside"), ("居中", "center"), ("外側", "outside"))
+TEXT_CONTENT = "輸入文字"
+# name, type, label, default, lo, hi (menus: the choices instead), panel
+TEXT_FIELDS = (
+    ("size", "float", "字號", 7.95, 0.0, 200.0, None),
+    ("color", "color", "顏色", [1.0, 1.0, 1.0, 1.0], None, None, None),
+    ("fill", "bool", "填色", True, None, None, None),
+    ("letter_spacing", "float", "字距", 0.0, -0.5, 5.0, None),
+    ("line_spacing", "float", "行距", 0.02, -0.5, 5.0, None),
+    ("italic_deg", "float", "斜體角度", 0.0, -89.0, 89.0, None),
+    ("align", "menu", "對齊", TEXT_ALIGNS, None, None, None),
+    ("valign", "menu", "垂直對齊", TEXT_VALIGNS, None, None, None),
+    ("stroke_on", "bool", "外框", False, None, None, "外框"),
+    ("stroke_color", "color", "外框顏色", [0.0, 0.0, 0.0, 1.0], None, None, "外框"),
+    ("stroke", "float", "外框粗細 px", 2.0, 0.0, 100.0, "外框"),
+    ("stroke_align", "menu", "外框位置", TEXT_STROKE_ALIGNS, None, None, "外框"),
+    ("box_w", "float", "寬（0＝自動）", 0.0, 0.0, 4000.0, "文字框"),
+    ("box_h", "float", "高（0＝自動）", 0.0, 0.0, 4000.0, "文字框"),
+    ("shadow_on", "bool", "陰影", False, None, None, "陰影"),
+    ("shadow_color", "color", "陰影顏色", [0.0, 0.0, 0.0, 0.6], None, None, "陰影"),
+    ("shadow_x", "float", "陰影 X px", 4.0, -500.0, 500.0, "陰影"),
+    ("shadow_y", "float", "陰影 Y px", 4.0, -500.0, 500.0, "陰影"),
+    ("shadow_blur", "float", "陰影模糊 px", 6.0, 0.0, 200.0, "陰影"),
+    ("bg_on", "bool", "背景", False, None, None, "背景"),
+    ("bg_color", "color", "背景顏色", [0.0, 0.0, 0.0, 0.6], None, None, "背景"),
+    ("bg_pad_t", "float", "背景間隔 上", 12.0, -500.0, 500.0, "背景"),
+    ("bg_pad_b", "float", "背景間隔 下", 12.0, -500.0, 500.0, "背景"),
+    ("bg_pad_l", "float", "背景間隔 左", 12.0, -500.0, 500.0, "背景"),
+    ("bg_pad_r", "float", "背景間隔 右", 12.0, -500.0, 500.0, "背景"),
+    ("bg_radius", "float", "背景圓角 px", 0.0, 0.0, 500.0, "背景"),
+)
+TEXT_MENUS = {"align": TEXT_ALIGNS, "valign": TEXT_VALIGNS, "stroke_align": TEXT_STROKE_ALIGNS}
+TEXT_MENU_DEFAULTS = {"align": "置中"}                      # (the first choice otherwise)
+_text_def = []
+
+
+def is_text(node):
+    return node.get("type") == SOURCE and node.get("kind") == "text"
+
+
+def text_def(_node=None):
+    """FilterDef standing for every text node: the text tool's fields as parameters (the words and the font are the
+    source's, set from the node)."""
+    if _text_def:
+        return _text_def[0]
+    params, panels = [], []
+    for name, typ, label, default, lo, hi, panel in TEXT_FIELDS:
+        if typ == "menu":
+            q = fx.Param(name, "menu", TEXT_MENU_DEFAULTS.get(name, default[0][0]), label=label, items=[n for n, _ in default])
+        elif typ == "color":
+            q = fx.Param(name, "color", list(default), label=label)
+        elif typ == "bool":
+            q = fx.Param(name, "bool", default, label=label)
+        else:
+            q = fx.Param(name, "float", float(default), lo, hi, label)
+        q.panel = panel
+        if panel and (panel, True) not in panels:
+            panels.append((panel, True))
+        params.append(q)
+    _text_def.append(fx.FilterDef("text", "文字", "", params, "文字", "", panels=panels))
+    return _text_def[0]
+
+
+def text_place_params():
+    """Where a text node sits: its centre and turn (its size comes from the words and the font)."""
+    return [q for q in place_params() if q.name in ("cx", "cy", "rotation")]
+
+
+def text_of(node, nid, params, t, bound=None, src=None):
+    """The text spec (textlayout.render) of text node nid at clip time t: the source's words and font, the fields from the
+    effect's params (bound: binds(graph), the parameters fed by the effect's own)."""
+    out = {"content": (src or {}).get("content", TEXT_CONTENT), "font_path": (src or {}).get("font_path")}
+    for k in ("vars", "styles"):
+        if (src or {}).get(k):
+            out[k] = (src or {})[k]
+    for q in text_def(node).params:
+        v = curves.value(bound_value(params, bound, nid, q.name, q.default), t)
+        if q.type == "menu":
+            v = dict(TEXT_MENUS[q.name]).get(v, v)
+        out[q.name] = v
+    if out.get("font_path") is None:
+        out.pop("font_path")
     return out
 
 
@@ -382,6 +471,8 @@ def sockets(node):
     if is_asset(node):                                   # (a built-in shape: pictures to paint its fill and outline with, then every value)
         return ([(sock, label) for _p, sock, label in ASSET_PAINTS] +
                 [(PARAM + q.name, q.label) for q in asset_def(node).params + place_params() if has_socket(q)])
+    if is_text(node):                                    # (a text: every value)
+        return [(PARAM + q.name, q.label) for q in text_def(node).params + text_place_params() if has_socket(q)]
     if node["type"] != FILTER:
         return []
     d = fx.for_node(node)
@@ -407,7 +498,7 @@ def title(node):
         return node.get("label") or "群組"
     if is_asset(node):
         return asset_def(node).name
-    return {"groupin": "群組輸入", "groupout": "群組輸出", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀",
+    return {"groupin": "群組輸入", "groupout": "群組輸出", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀", "text": "文字",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
 
@@ -625,7 +716,7 @@ def node_def(node):
     """FilterDef whose parameters node has: a filter's, or a shape made from a built-in one; else None."""
     if node["type"] == FILTER:
         return fx.for_node(node)
-    return asset_def(node) if is_asset(node) else None
+    return asset_def(node) if is_asset(node) else text_def(node) if is_text(node) else None
 
 
 def virtual_def(e):
@@ -733,6 +824,8 @@ def param_of(graph, nid, socket):
         return None
     if is_asset(node):
         return next((p for p in asset_def(node).params + place_params() if p.name == socket[len(PARAM):]), None)
+    if is_text(node):
+        return next((p for p in text_def(node).params + text_place_params() if p.name == socket[len(PARAM):]), None)
     if node["type"] != FILTER:
         return None
     return next((p for p in fx.for_node(node).params if p.name == socket[len(PARAM):]), None)
@@ -756,8 +849,8 @@ def connect(graph, src, dst, socket, out=None):
     else:
         if out not in [o for o, _ in outputs(nodes[src])]:
             out = outputs(nodes[src])[0][0]
-        if p is not None and is_asset(nodes[dst]):
-            raise GraphError("形狀的數值只能接效果自己的參數（參數輸入節點）")
+        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst])):
+            raise GraphError("形狀和文字的數值只能接效果自己的參數（參數輸入節點）")
         if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):

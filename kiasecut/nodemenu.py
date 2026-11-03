@@ -27,6 +27,7 @@ INPUT = [
     node("輸入（片段的畫面）", type=ng.INPUT), node("參數輸入（效果自己的參數）", type=ng.PARAMS),
     node("圖片", type=ng.SOURCE, kind="image"), node("影片", type=ng.SOURCE, kind="video"),
     node("複合片段", type=ng.SOURCE, kind="compound"), node("時間線（軌道）", type=ng.SOURCE, kind="track"),
+    node("文字", type=ng.SOURCE, kind="text"),
     "nodes/image_info", "nodes/coordinate", SHAPES,
     SEP,
     menu("場景", ["nodes/time"]),

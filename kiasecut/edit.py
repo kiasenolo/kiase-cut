@@ -2137,7 +2137,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.FILTER, "ref": node["ref"]}
     elif node["type"] == nodegraph.SOURCE:
         if node.get("kind") not in nodegraph.SOURCE_KINDS:
-            raise EditError("來源節點要是圖片、影片、複合片段、軌道或形狀")
+            raise EditError("來源節點要是圖片、影片、複合片段、軌道、形狀或文字")
         shape = node.get("shape")
         asset = node.get("asset")                        # {"key": a shape preset of assets.py, "colors": (c1, c2)}
         colors = (asset or {}).get("colors")
@@ -2166,6 +2166,9 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
         if node["kind"] == "shape" and shape:
             set_effect_shape(proj, clip_id, effect_id, nid, shape)
+        if node["kind"] == "text":                       # (its fields: parameters of the effect)
+            for q in nodegraph.text_def(node).params:
+                e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
         if asset:                                        # (its fields: parameters of the effect; its frame keeps the preset's proportions)
             d = nodegraph.asset_def(node)
             for q in d.params:
@@ -2641,6 +2644,12 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
         sources[param] = {"kind": "shape", "shape": old.get("shape", "rectangle"), "color": old.get("color", [1.0, 1.0, 1.0, 1.0]),
                           **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 0.5), ("h", 0.5), ("rotation", 0.0))}}
         return e
+    if kind == "text" and e["filter"] == fx.GRAPH:       # a text node: the words drawn by textlayout.py
+        old = sources.get(param) or {}
+        sources[param] = {"kind": "text", "content": old.get("content", nodegraph.TEXT_CONTENT),
+                          "font_path": old.get("font_path", project.DEFAULT_FONT),
+                          **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 1.0), ("h", 1.0), ("rotation", 0.0))}}
+        return e
     if kind not in PICTURE_MASKS:
         raise EditError(f"unknown source {kind}")
     old = sources.get(param) or {}
@@ -2665,6 +2674,19 @@ def set_effect_shape(proj, clip_id, effect_id, nid, shape=None, color=None):
         src["shape"] = shape
     if color is not None:
         src["color"] = [float(x) for x in color][:4]
+    return src
+
+
+def set_effect_text(proj, clip_id, effect_id, nid, content=None, font_path=None):
+    """A text node's words and / or font (a file path)."""
+    _, c = find(proj, clip_id)
+    src = _source(c, f"fxsrc:{effect_id}:{nid}")
+    if src.get("kind") != "text":
+        raise EditError("這不是文字節點")
+    if content is not None:
+        src["content"] = str(content)
+    if font_path is not None:
+        src["font_path"] = str(font_path)
     return src
 
 

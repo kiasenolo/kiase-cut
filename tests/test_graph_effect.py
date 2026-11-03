@@ -54,6 +54,30 @@ class GraphEditTests(unittest.TestCase):
             edit.set_effect_shape(self.p, "c1", self.e["id"], nid, "blob")
         self.assertTrue(edit.has_param(self.p_clip(), f"fxsrc:{self.e['id']}:{nid}", "cx"))
 
+    def test_text_node_edits(self):
+        nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "text"})
+        node = self.e["graph"]["nodes"][nid]
+        self.assertTrue(ng.is_text(node))
+        self.assertEqual(self.e["sources"][nid]["content"], ng.TEXT_CONTENT)
+        names = [q.name for q in ng.text_def(node).params]
+        for name in ("size", "color", "stroke", "box_w", "shadow_blur", "bg_radius", "align", "italic_deg"):    # (what the text tool has)
+            self.assertIn(name, names)
+            self.assertIn(nid + "." + name, self.e["params"])
+        self.assertIn(("param:size", "字號"), ng.sockets(node))
+        edit.set_effect_text(self.p, "c1", self.e["id"], nid, content="你好\nworld", font_path="/x/y.ttf")
+        self.assertEqual((self.e["sources"][nid]["content"], self.e["sources"][nid]["font_path"]), ("你好\nworld", "/x/y.ttf"))
+        edit.set_effect_text(self.p, "c1", self.e["id"], nid, content="again")
+        self.assertEqual(self.e["sources"][nid]["font_path"], "/x/y.ttf")
+        spec = ng.text_of(node, nid, self.e["params"], 0, None, self.e["sources"][nid])
+        self.assertEqual((spec["content"], spec["align"], spec["stroke_align"], spec["valign"]), ("again", "center", "inside", "top"))
+        with self.assertRaises(edit.EditError):
+            edit.set_effect_text(self.p, "c1", self.e["id"], "output", content="x")
+        other = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
+        with self.assertRaises(ng.GraphError):                                 # (a value is fed by the effect's own parameters only)
+            ng.connect(self.e["graph"], other, nid, "param:size")
+        edit.remove_graph_node(self.p, "c1", self.e["id"], nid)
+        self.assertFalse([k for k in self.e["params"] if k.startswith(nid + ".")])
+
     def test_connect_errors_and_output_stays(self):
         a = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
         b = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/mix"})
@@ -434,6 +458,42 @@ class GraphRenderTests(unittest.TestCase):
         edit.set_param(proj_, "c1", "fx:" + eff["id"], nid + ".fill_type", "漸變")
         for r in self.renderers:
             r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+
+    def text_view(self, **params):
+        """The scene's clip with a text node (big white words in the middle) as the effect's output."""
+        proj_ = proj()
+        eff = edit.add_effect(proj_, "c1", fx.GRAPH)
+        nid = edit.add_graph_node(proj_, "c1", eff["id"], {"type": "source", "kind": "text"}, 0, 0)
+        edit.connect_graph(proj_, "c1", eff["id"], nid, "output", "src")
+        eff["sources"][nid]["content"] = "█"
+        eff["params"][nid + ".size"] = 12.0
+        for k, v in params.items():
+            eff["params"][nid + "." + k] = v
+        view = self.s.view()
+        view["tracks"][0]["clips"][0]["effects"] = [eff]
+        return view, eff, nid
+
+    def test_text_node_draws_its_words(self):
+        view, eff, nid = self.text_view()
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            self.assertEqual(rgb(img, W // 2, H // 2), WHITE, type(r).__name__)           # the block fills the middle
+            self.assertEqual(rgb(img, 2, 2), BLACK, type(r).__name__)                      # the rest is clear (the clip under it is gone)
+        eff["params"][nid + ".color"] = [0.0, 0.0, 1.0, 1.0]
+        for r in self.renderers:
+            self.assertEqual(rgb(r.render(view, 0, W, H), W // 2, H // 2), BLUE, type(r).__name__)
+        eff["params"][nid + ".color"] = [1.0, 1.0, 1.0, 1.0]
+        eff["sources"][nid].update(cx=2.0)                                                  # (moved out of the picture)
+        for r in self.renderers:
+            self.assertEqual(rgb(r.render(view, 0, W, H), W // 2, H // 2), BLACK, type(r).__name__)
+
+    def test_text_node_with_shadow_background_and_outline_renders(self):
+        view, eff, nid = self.text_view(shadow_on=True, bg_on=True, bg_color=[1.0, 0.0, 0.0, 1.0], stroke_on=True,
+                                        stroke_color=[0.0, 1.0, 0.0, 1.0], stroke=3.0, align="靠右", box_w=300.0)
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
             self.assertEqual(r.errors, [], type(r).__name__)
 
     def shape_view(self, **params):

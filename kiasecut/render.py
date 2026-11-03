@@ -168,12 +168,31 @@ class Renderer:
             self.images[key] = im
         return im
 
-    def shape_source(self, e, nid, src, t, disp, paint=None, linked=()):
+    canvas_h = 1080
+
+    def text_source(self, e, nid, src, t, disp, unit, fps):
+        """(picture, the source to place it by) of a node effect's text node: the words drawn as a text clip's are, at
+        `unit` render px per canvas px, as big as they come out (the source's w / h are what they take up)."""
+        node = e["graph"]["nodes"][nid]
+        bound = nodegraph.binds(e["graph"])
+        spec = textvars.spec_at(nodegraph.text_of(node, nid, e["params"], t, bound, src), t, TEXT_FIELDS, fps)
+        src = nodegraph.placed_by(src, e["params"], bound, nid, t)
+        H = self.canvas_h
+        em_unit = (spec.get("size") or 1.0) * textlayout.PX_PER_FONT_UNIT * H / 1080
+        rs = quantize(max(unit, 1.0 / max(em_unit, 1e-6)))
+        pic = self.text(spec, rs, H)
+        placed = dict(src, w=pic.width() / rs / max(disp[0], 1e-6), h=pic.height() / rs / max(disp[1], 1e-6))
+        return pic, placed
+
+    def shape_source(self, e, nid, src, t, disp, paint=None, linked=(), unit=1.0, fps=30.0):
         """(picture, the source to place it by) of a node effect's shape node made from a built-in shape (assets.py), or
         None for the plain shapes. Drawn at the size of its frame on the clip (so corners and outlines keep their
         thickness), and as much larger as an outline reaching out of the frame needs. linked: the paints ("fill" /
-        "stroke") a picture input takes over, left out of the shape; paint: instead the opaque area of one of them."""
+        "stroke") a picture input takes over, left out of the shape; paint: instead the opaque area of one of them.
+        A text node (unit: render px per canvas px) gives its words' picture; it has no paints."""
         node = e["graph"]["nodes"].get(nid)
+        if node is not None and nodegraph.is_text(node):
+            return None if paint else self.text_source(e, nid, src, t, disp, unit, fps)
         if node is None or not nodegraph.is_asset(node):
             return None
         bound = nodegraph.binds(e["graph"])
@@ -293,6 +312,7 @@ class Renderer:
         self.thumbs = {}
         self.editing = bool(view.get("editing"))            # (the editor's preview: a node effect shows the node picked with 預覽)
         self.level = project.level_tracks(view)
+        self.canvas_h = view.get("height") or 1080          # (a text node's size is in px of a 1080-high canvas, as a text clip's)
 
     track_ctx = None                    # (tracks, W, H, time) of the level being drawn: what 軌道 sources read
 
@@ -846,8 +866,8 @@ class Renderer:
 
             def picture(nid, paint=None, linked=()):
                 src = sources.get(nid)
-                if src and src.get("kind") == "shape":
-                    got = self.shape_source(e, nid, src, t, disp, paint, linked)
+                if src and src.get("kind") in ("shape", "text"):
+                    got = self.shape_source(e, nid, src, t, disp, paint, linked, unit, fps)
                     if got is None and paint:
                         return None
                     pic, placed = got or (nodegraph.shape_image(src), src)

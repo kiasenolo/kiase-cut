@@ -480,6 +480,8 @@ class MainWindow(QMainWindow):
             [self.node_clip()], f"fxsrc:{eid}:{nid}", key, v))
         nd.shapeEdited.connect(lambda eid, nid, shape, col: self.node_clip() and self.fx_each(
             "形狀", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_shape(lvl, cid, e, nid, shape, col)))
+        nd.textEdited.connect(lambda eid, nid, content, font: self.node_clip() and self.fx_each(
+            "文字", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_text(lvl, cid, e, nid, content, font)))
         ef.nodesRequested.connect(self.open_node_editor)
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.browseRequested.connect(self.browse_effect)
@@ -5717,6 +5719,8 @@ class MainWindow(QMainWindow):
 
     def set_fonts(self, found):
         self.fonts = found
+        if getattr(self, "nodes", None) is not None:
+            self.nodes.fonts = found                # (a text node's font list)
         self.inspector.set_fonts(found)
         self.refresh_inspector()
         if self.font_check is not None:             # a project opened before the list was read

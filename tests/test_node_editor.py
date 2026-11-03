@@ -214,7 +214,9 @@ class NodeEditorTests(unittest.TestCase):
         it = ed.view.items_by_id["builtin_bulge1"]
         r = next(r for r in it.rows if r["kind"] == "param" and r["p"].type == "float")
         ed.set_number("builtin_bulge1", r, 0, 1e9)
-        self.assertEqual(got[-1][2], r["p"].hi)
+        self.assertEqual(got[-1][2], 1e6)                                  # (typing has no range, only a sane end)
+        ed.set_number("builtin_bulge1", r, 0, 1e9, final=False)             # dragging: the field's own range
+        self.assertEqual(ed._scrub[3], r["p"].hi)
 
     def test_values_follow_the_effect_without_redrawing(self):
         def build(e):
@@ -636,6 +638,28 @@ class NodeEditorTests(unittest.TestCase):
             e["graph"]["nodes"]["output"]["width"] = 300.0
         ed = self.make(g)
         self.assertEqual(ed.view.items_by_id["output"].w, 300.0)
+
+    def test_typing_goes_past_the_range_dragging_does_not(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:blender_glare"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        it = ed.view.items_by_id["builtin_blender_glare1"]
+        row = next(r for r in it.rows if r["socket"] == "param:sun_position")
+        ed.set_number("builtin_blender_glare1", row, 0, -1.0)                     # typed: no limit
+        self.assertEqual(ed.params["builtin_blender_glare1.sun_position"][0], -1.0)
+        ed.set_number("builtin_blender_glare1", row, 1, 5.0, final=False)         # dragged: the soft range
+        self.assertEqual(ed.params["builtin_blender_glare1.sun_position"][1], 1.0)
+
+    def test_shape_ratio_field_is_its_own(self):
+        ed = self.make()
+        nid = ng.add_node(ed.graph, {"type": ng.SOURCE, "kind": "shape", "asset": {"key": "ring", "family": "ellipse"}}, 0, 100)
+        ed.params.update(ng.default_params(ed.graph))
+        ed.sources[nid] = {"kind": "shape", "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0, "fit": 0.0}
+        names = [p.name for p in ng.asset_def(ed.graph["nodes"][nid]).params + ng.place_params()]
+        self.assertEqual(len(names), len(set(names)))                      # (no field shares a name with where it sits)
+        self.assertIn("ratio", names)
+        self.assertIn("fit", names)
 
     def test_rows_follow_the_operation(self):
         def build(e):

@@ -24,6 +24,7 @@ from .. import assets, curves, fx, nodegraph as ng
 from .wheel import pinch as wheel_pinch
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
+UNBOUNDED = 1e6                                            # (a number with no limit still stays finite)
 MIN_WIDTH, EDGE = 140.0, 7.0                              # (narrowest node; the strip of its right edge that widens it)
 SOCKET_R = 5.5
 HIT_R = 9.0
@@ -1241,11 +1242,23 @@ class NodeEditor(QWidget):
             return float((list(v) + [0.0] * 3)[cell])
         return None
 
+    def limits(self, nid, q, soft):
+        """(lo, hi) a number may take (None: no limit): dragging keeps to the soft range of the field, typing reaches
+        the hard one (as the number boxes of the panels: Blender's soft and hard limits)."""
+        if soft:
+            return q.lo, q.hi
+        if getattr(q, "place", False):
+            return {"w": (0.01, None), "h": (0.01, None), "fit": (0.0, None)}.get(q.name, (None, None))
+        if ng.is_asset(self.graph["nodes"].get(nid) or {}) and q.name in assets.FIELD_INFO:
+            return assets.hard_range(q.name)
+        return None, None
+
     def set_number(self, nid, row, cell, value, final=True):
         """A number field scrubbed or typed: clamped, asked for, and shown at once. final False: while it is still being
         scrubbed - only the preview follows (paramLive); the edit (an undo step) comes with the last value (commit_scrub)."""
         q = row["p"]
-        value = min(max(value, q.lo), q.hi)
+        lo, hi = self.limits(nid, q, soft=not final)
+        value = min(max(value, lo if lo is not None else -UNBOUNDED), hi if hi is not None else UNBOUNDED)
         key = ng.param_key(nid, q.name)
         if q.type == "int":
             new = int(round(value))

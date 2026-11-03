@@ -2581,7 +2581,7 @@ def set_effect_mask(proj, clip_id, effect_id, kind, t=None):
     return e
 
 
-SOURCE_FIELDS = ("cx", "cy", "w", "h", "rotation", "ratio")     # where an effect's colour source sits (as a mask)
+SOURCE_FIELDS = ("cx", "cy", "w", "h", "rotation", "fit")     # where an effect's colour source sits (as a mask)
 
 
 def _source(c, group):

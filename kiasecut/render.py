@@ -170,7 +170,7 @@ class Renderer:
         src = nodegraph.placed_by(src, e["params"], bound, nid, t)         # (a position / size / turn fed by an effect parameter)
         v = lambda k: curves.value(src.get(k, 1.0), t)
         sw, sh = max(round(v("w") * disp[0], 2), 1), max(round(v("h") * disp[1], 2), 1)
-        ratio = v("ratio") if "ratio" in src else 0.0
+        ratio = v("fit") if "fit" in src else 0.0
         if ratio > 0:                                    # (比例: the shape keeps its proportions inside the frame; 0 stretches it to the frame)
             sw, sh = (round(sh * ratio, 2), sh) if sw / sh > ratio else (sw, round(sw / ratio, 2))
         q["w"], q["h"] = sw, sh

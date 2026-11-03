@@ -1,4 +1,4 @@
-// @filter 傷亡：未知－痛
+// @filter [KILO] Casualties: Unknown - Pain
 // @category 風格
 // @description 雜訊、鏡頭扭曲和像素化做出來的破損特效：縮放、種子、像素化；除了圖像，還有透明度和三張遮罩圖（外側、內側、雜訊）可以接出去（在線性光裡運算）
 // @output image "圖像"

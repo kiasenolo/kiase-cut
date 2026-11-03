@@ -1,4 +1,4 @@
-// @filter 遮罩位移（RGBA 各自）
+// @filter [KILO] 遮罩位移（RGBA 各自）
 // @category 扭曲
 // @description 紅、綠、藍、透明度四個通道各用自己的遮罩、大小和裁邊來位移（在線性光裡運算）
 // @panel "紅" closed

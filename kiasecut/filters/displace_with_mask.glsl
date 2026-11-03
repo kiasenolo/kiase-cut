@@ -1,4 +1,4 @@
-// @filter 遮罩位移
+// @filter [KILO] 遮罩位移
 // @category 扭曲
 // @description 用一張遮罩（可以接圖片當顏色）把畫面位移：大小、偏移，可以選擇是否裁掉邊緣（在線性光裡運算）
 // @param IN_Mask_c color #000000ff "遮罩"

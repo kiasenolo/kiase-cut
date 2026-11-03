@@ -1,4 +1,4 @@
-// @filter 神之光
+// @filter [KILO] God Light
 // @category 光效
 // @description 耶穌光：從光源位置往外拉出光束，可調曝光、長度、位移、縮放、泛光和球體的大小（內含雜訊、鏡頭扭曲和 Glare）（在線性光裡運算）
 // @param IN_Exposure float 2.5 -10 10 "曝光"

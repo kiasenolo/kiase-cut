@@ -356,6 +356,34 @@ class NodeEditorTests(unittest.TestCase):
         ed = self.make(add)
         self.assertEqual([l[4] for l in ed.view.link_items if l[1] == made[0]], ["c3"])
 
+    def test_curve_and_gradient_fields_are_drawn_and_edited_in_the_node(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        path = os.path.join(d, "curvy.glsl")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("// @filter 曲線測試\n// @param c curve 0,0,1,1 \"曲線\"\n// @param g gradient 0:#000000,1:#ffffff \"漸層\"\n"
+                    "vec4 effect(vec2 uv) { return src(uv) * curve_ease(c, uv.x); }\n")
+        made = []
+
+        def add(e):
+            made.append(ng.add_node(e["graph"], {"type": "filter", "ref": path}, 300, 40))
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(add)
+        nid = made[0]
+        it = ed.view.items_by_id[nid]
+        plots = [r for r in it.rows if r["kind"] == "plot"]
+        self.assertEqual([r["p"].type for r in plots], ["curve", "gradient"])
+        self.assertGreater(plots[0]["h"], plots[1]["h"])
+        popups, got = [], []
+        ed.edit_popup = lambda q, v, done, pos: popups.append((q.type, done))
+        ed.paramEdited.connect(lambda *a: got.append(a))
+        for r in plots:
+            at = ed.view.mapFromScene(it.mapToScene(it.field_rect(r).center()))
+            QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, Qt.NoModifier, at)
+        self.assertEqual([t for t, _ in popups], ["curve", "gradient"])
+        popups[1][1]([[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]])
+        self.assertEqual(got[-1][1], nid + ".g")
+
     def test_shift_right_drag_puts_bends_in_links(self):
         ed = self.make()
         got = []

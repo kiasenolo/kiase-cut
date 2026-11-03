@@ -25,6 +25,7 @@ from .. import curves, fx, nodegraph as ng
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 SOCKET_R = 5.5
 HIT_R = 9.0
+PLOT_H = {"curve": 64.0, "gradient": 30.0}           # the height of a curve / gradient parameter's picture in a node
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
 HEADS = {ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f"}
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
@@ -73,10 +74,13 @@ class NodeItem(QGraphicsItem):
         node, rows = self.node, self.rows
         y = HEAD + PAD
 
-        def add(kind, label, socket=None, p=None, panel=None):
+        def add(kind, label, socket=None, p=None, panel=None, h=ROW):
             nonlocal y
-            rows.append({"y": y, "kind": kind, "socket": socket, "label": label, "p": p, "panel": panel})
-            y += ROW
+            rows.append({"y": y, "kind": kind, "socket": socket, "label": label, "p": p, "panel": panel, "h": h})
+            y += h
+            if kind == "param" and p is not None and p.type in ("curve", "gradient"):     # (its picture, under the label)
+                rows.append({"y": y, "kind": "plot", "socket": None, "label": "", "p": p, "panel": None, "h": PLOT_H[p.type]})
+                y += PLOT_H[p.type]
         if node["type"] == ng.PARAMS:
             for x in ng.exposed(self.editor.graph):
                 add("expose", x["label"], p=x)
@@ -140,6 +144,8 @@ class NodeItem(QGraphicsItem):
 
     # -- fields ---------------------------------------------------------------------------------------
     def field_rect(self, r, cell=0, cells=1):
+        if r["kind"] == "plot":
+            return QRectF(10, r["y"] + 2, WIDTH - 20, r["h"] - 4)
         x0 = WIDTH * LABEL_W
         w = (WIDTH - 10 - x0) / cells
         return QRectF(x0 + cell * w + (2 if cell else 0), r["y"] + 3, w - (2 if cells > 1 and cell < cells - 1 else 0), ROW - 6)
@@ -147,12 +153,12 @@ class NodeItem(QGraphicsItem):
     def has_field(self, r):
         if r["kind"] == "param":
             return not (r["socket"] and r["socket"] in self.linked) and r["p"].type not in ("curve", "gradient")
-        return r["kind"] in ("shape", "shapecolor")
+        return r["kind"] in ("shape", "shapecolor", "plot")
 
     def field_at(self, pos):
         """(row, cell) of the field under pos (item coordinates), or the panel header row, else None."""
         for r in self.rows:
-            if not (r["y"] <= pos.y() < r["y"] + ROW):
+            if not (r["y"] <= pos.y() < r["y"] + r["h"]):
                 continue
             if r["kind"] == "panel":
                 return r, 0
@@ -229,9 +235,6 @@ class NodeItem(QGraphicsItem):
                 self._socket(p, QPointF(0, y + ROW / 2), SOCKET_COLORS["image"] if kind == "image" else
                              SOCKET_COLORS.get(r["p"].type if r["p"].type in ("float", "color") else "other"))
             if not self.has_field(r):
-                if kind == "param" and r["p"].type in ("curve", "gradient"):
-                    p.setPen(QColor(text.red(), text.green(), text.blue(), 110))
-                    p.drawText(QRectF(WIDTH * LABEL_W, y, WIDTH * (1 - LABEL_W) - 10, ROW), Qt.AlignVCenter | Qt.AlignRight, "（效果面板）")
                 continue
             self._field(p, r, vals, field_bg, text, dim)
 
@@ -251,6 +254,9 @@ class NodeItem(QGraphicsItem):
             return
         q = r["p"]
         v = vals.get(q.name)
+        if kind == "plot":                                  # a curve or a gradient: drawn, click to edit it
+            self._plot(p, self.field_rect(r), q, v, bg)
+            return
         if q.type in ("float", "int"):
             box = self.field_rect(r)
             self._box(p, box, bg)
@@ -280,6 +286,34 @@ class NodeItem(QGraphicsItem):
             box = self.field_rect(r)
             c = (list(v) + [1.0] * 4)[:4]
             self._box(p, box, QColor.fromRgbF(max(0, min(1, c[0])), max(0, min(1, c[1])), max(0, min(1, c[2])), 1.0))
+
+    @staticmethod
+    def _plot(p, box, q, v, bg):
+        p.setPen(QPen(QColor(0, 0, 0, 90), 1))
+        if q.type == "gradient":
+            from PySide6.QtGui import QLinearGradient
+            n = 6
+            for i in range(int(box.width() // n) + 1):                    # (the checkerboard that shows opacity)
+                for j in range(int(box.height() // n) + 1):
+                    p.fillRect(QRectF(box.left() + i * n, box.top() + j * n, n, n).intersected(box),
+                               QColor("#cfcfcf") if (i + j) % 2 else QColor("#8a8a8a"))
+            g = QLinearGradient(box.left(), 0, box.right(), 0)
+            for x, c in fx.gradient_stops(v):
+                g.setColorAt(x, QColor.fromRgbF(*c))
+            p.setBrush(g)
+            p.drawRoundedRect(box, 3, 3)
+            return
+        p.setBrush(bg)
+        p.drawRoundedRect(box, 3, 3)
+        ys = fx.curve_samples(v, 48)
+        lo, hi = min(0.0, min(ys)), max(1.0, max(ys))
+        pts = QPainterPath()
+        for i, y in enumerate(ys):
+            pt = QPointF(box.left() + 3 + (box.width() - 6) * i / (len(ys) - 1), box.bottom() - 3 - (box.height() - 6) * (y - lo) / (hi - lo))
+            pts.moveTo(pt) if i == 0 else pts.lineTo(pt)
+        p.setPen(QPen(QColor("#f0a030"), 1.5))
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(pts)
 
     @staticmethod
     def _box(p, box, colour):
@@ -1007,6 +1041,9 @@ class NodeEditor(QWidget):
         q = row["p"]
         key = ng.param_key(nid, q.name)
         v = self.node_values(nid).get(q.name)
+        if kind == "plot":
+            self.edit_popup(q, v, lambda value: self.paramEdited.emit(self.eid, key, value), gp)
+            return
         if q.type == "bool":
             self.paramEdited.emit(self.eid, key, not bool(v))
         elif q.type == "menu":
@@ -1018,6 +1055,29 @@ class NodeEditor(QWidget):
             self._pick(nid, v, lambda c: self.paramEdited.emit(self.eid, key, c), item, row)
         elif q.type in ("float", "int", "vec2", "vec3"):
             self._type_number(item, row, cell)
+
+    def edit_popup(self, q, v, done, pos):
+        """The curve or gradient editor of the 效果 panel in a small window at pos; done(value) hears every change."""
+        from PySide6.QtWidgets import QFrame
+        from .curvefield import CurveField
+        from .gradientbar import GradientEditor
+        frame = QFrame(self, Qt.Popup)
+        frame.setFrameShape(QFrame.StyledPanel)
+        lay = QVBoxLayout(frame)
+        lay.setContentsMargins(6, 6, 6, 6)
+        if q.type == "curve":
+            w = CurveField()
+            w.set_value(v)
+            frame.setMinimumWidth(320)
+        else:
+            w = GradientEditor()
+            w.set_stops(fx.gradient_stops(v))
+            frame.setMinimumWidth(360)
+        w.changed.connect(done)
+        lay.addWidget(w)
+        frame.move(pos)
+        frame.show()
+        self._popup_editor = frame
 
     def _pick(self, nid, colour, done, item, row):
         from .colorpick import pick_color, qcolor, rgba

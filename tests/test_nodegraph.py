@@ -164,6 +164,14 @@ class RunTest(unittest.TestCase):
         out, _, _ = self.run_graph(g, clear, params={c + ".op": "相加", c + ".value": 0.5})
         self.close(out, (0, 0, 0, 255))                          # linked: the clear picture is 0, not the box
 
+    def test_math_a_is_a_number_too(self):
+        g = ng.new_graph()
+        c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
+        ng.connect(g, c, "output", "src")
+        out, errors, _ = self.run_graph(g, self.solid([0, 0, 0, 0]), params={c + ".op": "相加", c + ".value_a": 0.25, c + ".value": 0.25})
+        self.assertEqual(errors, [])
+        self.close(out, (128, 128, 128, 255))                    # nothing linked: 0.25 + 0.25 from the boxes
+
     def test_math_operations(self):
         for op, value, want in (("次方", 2.0, (21,) * 3), ("平方根", 0.0, (136,) * 3), ("大於", 0.2, (255,) * 3),
                                 ("四捨五入", 0.0, (0,) * 3), ("相除", 2.0, (36,) * 3), ("最大", 0.6, (153,) * 3),

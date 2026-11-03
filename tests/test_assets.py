@@ -35,6 +35,37 @@ class AssetTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
+    def test_edge_fade_blurs_every_basic_shape(self):
+        from PySide6.QtCore import QByteArray
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+        for key in ("shape.rect", "shape.circle", "shape.hexagon", "shape.star", "shape.heart", "shape.arrow", "shape.parallelogram"):
+            a = assets.get(key)
+            self.assertIsNotNone(a, key)
+            p = assets.at(assets.make(a, "#ffffff", "#000000", 200, 200), 0)
+            self.assertIn("fade", assets.fields_of(p["family"]), key)
+            self.assertNotIn("feGaussianBlur", assets.svg(p), key)
+            self.assertEqual(assets.overflow(p), 0.0)
+            p["fade"] = 40
+            text = assets.svg(p)
+            self.assertIn("feGaussianBlur", text, key)
+            self.assertGreater(assets.overflow(p), 0.0)                       # (the faded edge reaches past the frame)
+        p = assets.at(assets.make(assets.get("shape.rect"), "#ffffff", "#000000", 200, 200), 0)
+        p["fade"] = 40
+        pad = assets.overflow(p)
+        r = QSvgRenderer(QByteArray(assets.svg(p).encode("utf-8")))
+        size = 400
+        im = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+        im.fill(0)
+        painter = QPainter(im)
+        r.render(painter)
+        painter.end()
+        mid = size // 2
+        edge = int(pad * size / (p["w"] + 2 * pad))                             # the frame's left edge
+        self.assertGreater(im.pixelColor(mid, mid).alpha(), 250)               # solid inside
+        self.assertTrue(40 < im.pixelColor(edge, mid).alpha() < 215)           # half way at the edge: faded
+        self.assertLess(im.pixelColor(2, mid).alpha(), 30)                     # gone further out
+
     def test_every_preset_is_a_picture(self):
         for a in assets.ASSETS:
             p = assets.make(a, "#3366ff", "#ff336680", 1920, 1080)

@@ -70,6 +70,7 @@ FIELD_INFO = {
     "arc_start": ("開始 °", "number", -360, 360, 1, 0),
     "arc_sweep": ("弧掃 %", "number", 0, 100, 1, 1),
     "ratio": ("比例 %", "number", 0, 100, 1, 1),
+    "fade": ("邊緣淡出 %", "number", 0, 100, 1, 0),
     "skew": ("斜度 °", "number", -80, 80, 1, 0),
     "gcols": ("欄數", "number", 1, 100, 1, 0),
     "grows": ("列數", "number", 1, 100, 1, 0),
@@ -118,7 +119,7 @@ def hard_range(f):
 
 
 FILL_PAINT = ("fill_type", "fill_color2", "fill_stops", "fill_gtype", "fill_angle", "fill_image", "fill_scale", "fill_seed", "fill_z")    # (beside color)
-STROKE = ("fill", "stroke_on", "stroke_type", "stroke_color", "stroke_color2", "stroke_stops", "stroke_gtype", "stroke_angle",
+STROKE = ("fade", "fill", "stroke_on", "stroke_type", "stroke_color", "stroke_color2", "stroke_stops", "stroke_gtype", "stroke_angle",
           "stroke_image", "stroke_scale", "stroke_seed", "stroke_z", "stroke", "stroke_align", "join") + FILL_PAINT
 FIELDS = {                                 # what each family has besides w, h and color
     "solid": (),
@@ -355,7 +356,7 @@ def normalize(p):
 
 _DEFAULTS = {"fill": True, "stroke_on": False, "stroke": 8, "stroke_align": "inside", "join": "miter",
              "stroke_color": "#000000", "radius": 0, "sides": 6, "points": 5, "inner": 40, "angle": 0,
-             "arc_start": 0, "arc_sweep": 100, "ratio": 0, "skew": 20,
+             "arc_start": 0, "arc_sweep": 100, "ratio": 0, "skew": 20, "fade": 0,
              "gcols": 16, "grows": 9, "gratio": 0, "gline": 4, "gleft": True, "gright": True, "gtop": True, "gbottom": True,
              "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX,
              "fill_type": "solid", "fill_color2": "#000000", "fill_gtype": "linear", "fill_angle": 0, "fill_image": "",
@@ -551,10 +552,16 @@ def stroked(p):
 def overflow(p):
     """How far (asset px) the outline of p (as at() gives it) reaches past its w x h frame:
     all of it outside, half of it on the edge; sharp corners with miter joins reach further."""
+    soft = 3.0 * fade_sigma(p)                     # (a faded edge spreads past the frame too)
     if not stroked(p) or p.get("stroke_align") == "inside":
-        return 0.0
+        return soft
     s = p["stroke"] * (1.0 if p["stroke_align"] == "outside" else 0.5)
-    return s * (MITER_LIMIT if p.get("join") == "miter" else 1.0)
+    return s * (MITER_LIMIT if p.get("join") == "miter" else 1.0) + soft
+
+
+def fade_sigma(p):
+    """The blur (asset px, a Gaussian's deviation) that fades the edge of p: 邊緣淡出 % of a quarter of its short side."""
+    return max(0.0, float(p.get("fade", 0) or 0)) / 100.0 * min(p["w"], p["h"]) * 0.25
 
 
 def _num(x):
@@ -726,6 +733,10 @@ def _shape(p, w, h):
                          f'<path d="{d}" fill-rule="evenodd" fill="#000"/></mask>')
             put("stroke", lambda prop, v, op: f'<path d="{d}" {line} {attr("stroke", v, op)} '
                                               f'stroke-width="{2 * s:g}" mask="url(#s)"/>')
+    sigma = fade_sigma(p)
+    if sigma > 0:                                  # 邊緣淡出: the whole shape blurred (the room around it takes the spread)
+        defs += (f'<filter id="fade" filterUnits="userSpaceOnUse" {box}><feGaussianBlur stdDeviation="{sigma:.2f}"/></filter>')
+        body = [f'<g filter="url(#fade)">'] + body + ["</g>"]
     return _svg(w, h, "\n".join(body), defs, pad)
 
 

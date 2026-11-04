@@ -20,6 +20,7 @@ class Probe(QWidget):
         super().__init__()
         self.resize(400, 300)
         self.log = []
+        self.move_buttons = []
 
     def event(self, e):
         t = e.type()
@@ -33,6 +34,7 @@ class Probe(QWidget):
             self.log.append(("pinch", round(wheel.pinch(e), 2)))
         elif t == QEvent.MouseMove:
             self.log.append(("move", e.position().x(), e.position().y()))
+            self.move_buttons.append(e.buttons())
         return super().event(e)
 
 
@@ -226,6 +228,70 @@ class TouchTest(unittest.TestCase):
         self.assertFalse(self.g.hold.isActive())
         self.g._held()
         self.assertFalse(self.g.held)
+
+
+class HoldRightTest(unittest.TestCase):
+    """The timeline: a finger held and then moved drags with the right button (it selects time) - below the ruler only."""
+
+    def setUp(self):
+        self.w = Probe()
+        self.w.show()
+        self.g = touch.enable(self.w, hold_right=lambda p: p.y() >= 40)
+        self.dev = QTest.createTouchDevice()
+        self.addCleanup(self.w.close)
+
+    def seq(self):
+        return QTest.touchEvent(self.w, self.dev)
+
+    def kinds(self):
+        return [x for x in self.w.log if x[0] in ("press", "release", "move", "menu")]
+
+    def test_held_below_the_ruler_then_moved_is_a_right_button_drag(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.assertEqual(self.kinds(), [])                       # (nothing is pressed while the hold may still say what it is)
+        self.g._held()
+        s.move(0, QPoint(150, 100), self.w).commit()
+        s.move(0, QPoint(200, 102), self.w).commit()
+        QTest.qWait(10)
+        s.release(0, QPoint(200, 102), self.w).commit()
+        got = [(x[0], x[1]) if x[0] != "move" else "move" for x in self.kinds()]
+        self.assertEqual(got, [("press", Qt.RightButton), "move", "move", ("release", Qt.RightButton)])
+        self.assertTrue(all(b == Qt.RightButton for b in self.w.move_buttons))
+        self.assertNotIn(("menu",), self.w.log)
+        self.assertEqual(self.g.mode, "idle")
+
+    def test_held_on_the_ruler_then_moved_is_the_left_button_as_before(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 20), self.w).commit()
+        self.g._held()
+        s.move(0, QPoint(150, 20), self.w).commit()
+        s.release(0, QPoint(150, 20), self.w).commit()
+        got = [x[1] for x in self.kinds() if x[0] in ("press", "release")]
+        self.assertEqual(got, [Qt.LeftButton, Qt.LeftButton])
+        self.assertTrue(all(b == Qt.LeftButton for b in self.w.move_buttons))
+
+    def test_moved_at_once_without_the_hold_is_the_left_button_drag(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        s.move(0, QPoint(150, 100), self.w).commit()
+        s.release(0, QPoint(150, 100), self.w).commit()
+        got = [x[1] for x in self.kinds() if x[0] in ("press", "release")]
+        self.assertEqual(got, [Qt.LeftButton, Qt.LeftButton])
+
+    def test_held_still_and_lifted_is_a_click_and_the_menu(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.g._held()
+        s.release(0, QPoint(100, 100), self.w).commit()
+        got = [(x[0], x[1]) if len(x) > 1 else x for x in self.kinds()]
+        self.assertEqual(got[-3:], [("press", Qt.RightButton), ("menu",), ("release", Qt.RightButton)])
+
+    def test_a_plain_tap_is_still_a_click(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        s.release(0, QPoint(100, 100), self.w).commit()
+        self.assertEqual([x for x in self.kinds()], [("press", Qt.LeftButton), ("release", Qt.LeftButton)])
 
 
 class ScrollAreaTest(unittest.TestCase):

@@ -41,6 +41,33 @@ class TimeSelectionTests(unittest.TestCase):
     def marks(self):
         return self.tl.mark_in, self.tl.mark_out
 
+    def finger(self, x0, x1, y, hold=True):
+        from kiasecut.ui import touch
+        self.tl.show()
+        dev = QTest.createTouchDevice()
+        seq = QTest.touchEvent(self.tl, dev)
+        seq.press(0, QPoint(x0, y), self.tl).commit()
+        if hold:
+            self.tl.findChild(touch._Gestures)._held()          # (the timer's work, without waiting for it)
+        for x in (x0 + (x1 - x0) // 3, x0 + 2 * (x1 - x0) // 3, x1):
+            seq.move(0, QPoint(x, y), self.tl).commit()
+            QTest.qWait(5)
+        seq.release(0, QPoint(x1, y), self.tl).commit()
+
+    def test_a_finger_held_below_the_ruler_then_moved_selects_time(self):
+        fps = self.tl.fps
+        self.finger(self.x(fps), self.x(3 * fps), 200)
+        self.assertEqual(self.marks(), (fps, 3 * fps - 1))
+
+    def test_a_finger_held_on_the_ruler_selects_no_time(self):
+        del self.tl._snap                                      # (a press there seeks, which snaps as it really does)
+        self.finger(self.x(fps := self.tl.fps), self.x(3 * fps), 10)
+        self.assertEqual(self.marks(), (None, None))
+
+    def test_a_finger_that_moves_at_once_selects_no_time(self):
+        self.finger(self.x(fps := self.tl.fps), self.x(3 * fps), 200, hold=False)
+        self.assertEqual(self.marks(), (None, None))
+
     def test_drag_selects(self):
         fps = self.tl.fps
         self.rdrag(self.x(fps), self.x(3 * fps))

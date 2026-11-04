@@ -323,7 +323,7 @@ class Timeline(QWidget):
         self.mark_in = self.mark_out = None        # export range, frames
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
-        touch.enable(self)
+        touch.enable(self, hold_right=lambda p: p.x() >= self.header_w and p.y() >= RULER_H)       # (held, then moved: the time is selected; on the ruler and the headers it is not)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers

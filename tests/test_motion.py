@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QToolButton, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QRadioButton, QToolButton, QWidget  # noqa: E402
 
 from kiasecut.ui import icons, look, motion  # noqa: E402
 
@@ -219,6 +219,66 @@ class HopTest(unittest.TestCase):
         QTest.mouseRelease(sp.lineEdit(), Qt.LeftButton, Qt.NoModifier, QPoint(20, 14))
         self.assertIn(1, seen)
         self.assertIn(-1, seen)
+        host.close()
+
+
+class ToggleTest(unittest.TestCase):
+    def make(self):
+        host = QWidget()
+        lay = QHBoxLayout(host)
+        cb, rb = QCheckBox("勾"), QRadioButton("選")
+        lay.addWidget(cb)
+        lay.addWidget(rb)
+        host.resize(240, 60)
+        host.show()
+        QTest.qWait(60)
+        QTest.mouseMove(host, QPoint(239, 59))
+        QTest.qWait(30)
+        return host, cb, rb
+
+    def test_ticking_a_box_moves_it_to_white_in_a_moment_and_unticking_moves_it_back(self):
+        host, cb, rb = self.make()
+        t = cb.property("kcToggle")
+        self.assertEqual(t.on, 0.0)
+        cb.setChecked(True)
+        QTest.qWait(60)
+        self.assertTrue(0.0 < t.on < 1.0)                         # (on its way)
+        QTest.qWait(motion.ON_MS + 100)
+        self.assertAlmostEqual(t.on, 1.0, places=2)
+        cb.setChecked(False)
+        QTest.qWait(motion.FADE_MS + 100)
+        self.assertAlmostEqual(t.on, 0.0, places=2)
+        host.close()
+
+    def test_a_radio_button_and_a_half_ticked_box_count_as_on(self):
+        host, cb, rb = self.make()
+        rb.setChecked(True)
+        cb.setTristate(True)
+        cb.setCheckState(Qt.PartiallyChecked)
+        QTest.qWait(motion.ON_MS + 100)
+        self.assertAlmostEqual(rb.property("kcToggle").on, 1.0, places=2)
+        self.assertAlmostEqual(cb.property("kcToggle").on, 1.0, places=2)
+        host.close()
+
+    def test_the_outline_brightens_under_the_mouse_over_the_label_too(self):
+        host, cb, rb = self.make()
+        t = cb.property("kcToggle")
+        QTest.mouseMove(cb, QPoint(cb.width() - 3, 8))              # (on the text, not the box)
+        QTest.qWait(motion.ON_MS + 100)
+        self.assertAlmostEqual(t.hover, 1.0, places=2)
+        QTest.mouseMove(host, QPoint(239, 59))
+        QTest.qWait(motion.FADE_MS + 100)
+        self.assertAlmostEqual(t.hover, 0.0, places=2)
+        host.close()
+
+    def test_a_ticked_box_is_drawn_white_with_a_black_tick(self):
+        host, cb, _ = self.make()
+        cb.setChecked(True)
+        QTest.qWait(motion.ON_MS + 100)
+        img = cb.grab().toImage()
+        colours = {img.pixelColor(x, y).name() for x in range(img.width()) for y in range(img.height())}
+        self.assertIn("#ffffff", colours)
+        self.assertIn("#000000", colours)
         host.close()
 
 

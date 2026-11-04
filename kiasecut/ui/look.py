@@ -106,14 +106,8 @@ QScrollBar::handle { background: #3a3a40; border-radius: 4px; min-height: 20px; 
 QScrollBar::handle:hover { background: #4a4a52; }
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { width: 0; height: 0; background: none; }
 QAbstractScrollArea::corner { background: transparent; border: none; }
-QCheckBox::indicator { width: 12px; height: 12px; border-radius: 2px; }
-QCheckBox::indicator:checked { background: #c9c9cd; border: 1px solid #c9c9cd; }
-QCheckBox::indicator:unchecked { background: #0a0a0a; border: 1px solid #4a4a52; }
-QCheckBox::indicator:indeterminate { background: #0a0a0a; border: 1px solid #c9c9cd; image: url(@/partial.svg); }
 QRadioButton { min-height: 22px; }
-QRadioButton::indicator { width: 16px; height: 16px; border-radius: 9px; border: 1px solid #3a3a3c; background: #111111; }
-QRadioButton::indicator:hover { border-color: @ACCENT; }
-QRadioButton::indicator:checked { border-color: @ACCENT; background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5, stop: 0 #d0d0d2, stop: 0.32 #d0d0d2, stop: 0.4 @DIM, stop: 1 @DIM); }
+QCheckBox { min-height: 22px; }
 QGroupBox { border: 1px solid @FRAME; border-radius: 5px; margin-top: 22px; padding-top: 6px; }
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 2px 4px; }
 QToolTip { background: #1f1f1f; color: #e0e0e2; border: 1px solid #000000; }
@@ -268,6 +262,9 @@ class Style(wheel.Style):
     def pixelMetric(self, metric, option=None, widget=None):
         if metric in METRICS:
             return METRICS[metric]
+        if metric in (QStyle.PM_IndicatorWidth, QStyle.PM_IndicatorHeight, QStyle.PM_ExclusiveIndicatorWidth,
+                      QStyle.PM_ExclusiveIndicatorHeight):
+            return motion.BOX
         if metric in MARGINS:                         # a window's own margins, or a widget's inside
             return 10 if widget is not None and widget.isWindow() else 6
         if metric == QStyle.PM_DefaultFrameWidth and isinstance(widget, QFrame):
@@ -278,6 +275,7 @@ class Style(wheel.Style):
         super().polish(widget)
         motion.attach(widget)                         # (a push or tool button paints itself from its Fader)
         motion.attach_field(widget)                   # (an input field has its outline drawn over it)
+        motion.attach_toggle(widget)                  # (a check box or radio button moves its indicator)
 
     def drawPrimitive(self, element, option, painter, widget=None):
         side = SIDES.get(element)
@@ -286,6 +284,9 @@ class Style(wheel.Style):
             r = QRect(0, 0, size, size)
             r.moveCenter(option.rect.center())
             arrow_icon("-" + side).paint(painter, r)
+            return
+        if element in (QStyle.PE_IndicatorCheckBox, QStyle.PE_IndicatorRadioButton):
+            motion.paint_indicator(painter, option, widget, element == QStyle.PE_IndicatorRadioButton)
             return
         super().drawPrimitive(element, option, painter, widget)
 

@@ -7,10 +7,10 @@ text from the two colours it keeps, the fill and the ink. The Fader watches the 
 enabled) and moves both colours to what the new state asks, in the time that state asks (0 for the mouse arriving: no tween).
 """
 import shiboken6
-from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QSize, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QPushButton, QTextEdit,
-                               QToolButton, QWidget)
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation
+from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QLineEdit, QPlainTextEdit, QPushButton,
+                               QRadioButton, QTextEdit, QToolButton, QWidget)
 
 REST = QColor("#262626")             # Color(.15)
 GREY = QColor("#808080")             # Color(.5): pressed, checked
@@ -343,3 +343,128 @@ class Hop(QObject):
         self.dir = 1 if direction > 0 else -1
         self._set(self.dir * HOP_PX)
         self.anim.start()
+
+
+# -- check boxes and radio buttons ----------------------------------------------------------------------------------------
+# A flat 2 px square (a ring for a radio button) in Color(.5), Color(.7) under the mouse; checked, it turns white with a black tick
+# drawn into it (a dot grown in the ring), in .3 s. look.Style draws the indicator (PE_IndicatorCheckBox / RadioButton) from the
+# Toggle of the button: `on` and `hover`, each 0 to 1, moved by it.
+
+BOX = 16                             # the indicator's size
+ON_MS = 300
+
+
+class Toggle(QObject):
+    def __init__(self, button):
+        super().__init__(button)
+        self.button = button
+        self.on = 1.0 if button.isChecked() else 0.0
+        self.hover = 0.0
+        self.anims = {}
+        for name in ("on", "hover"):
+            a = QVariantAnimation(self)
+            a.setEasingCurve(out_curve())
+            a.valueChanged.connect(lambda v, n=name: self._set(n, float(v)))
+            self.anims[name] = a
+        button.installEventFilter(self)
+        button.toggled.connect(lambda *_: self.sync())
+        if hasattr(button, "stateChanged"):
+            button.stateChanged.connect(lambda *_: self.sync())
+
+    def _set(self, name, v):
+        setattr(self, name, v)
+        self.button.update()
+
+    def want(self):
+        b = self.button
+        checked = b.isChecked() or (hasattr(b, "checkState") and b.checkState() == Qt.PartiallyChecked)
+        return (1.0 if checked else 0.0), (1.0 if b.underMouse() and b.isEnabled() else 0.0)
+
+    def sync(self):
+        if not shiboken6.isValid(self.button):
+            return
+        for name, target in zip(("on", "hover"), self.want()):
+            a = self.anims[name]
+            if a.state() == QVariantAnimation.Running and a.endValue() == target:
+                continue
+            a.stop()
+            if getattr(self, name) == target:
+                continue
+            if not self.button.isVisible():
+                self._set(name, target)
+                continue
+            a.setStartValue(getattr(self, name))
+            a.setEndValue(target)
+            a.setDuration(ON_MS if (name == "hover" and target) or (name == "on" and target) else FADE_MS)
+            a.start()
+
+    def eventFilter(self, obj, e):
+        if e.type() in (QEvent.Enter, QEvent.Leave, QEvent.EnabledChange, QEvent.Show):
+            QTimer.singleShot(0, self.sync)
+        return False
+
+
+def attach_toggle(widget):
+    if isinstance(widget, (QCheckBox, QRadioButton)) and widget.property("kcToggle") is None:
+        widget.setProperty("kcToggle", Toggle(widget))
+
+
+def paint_indicator(painter, option, widget, radio):
+    """The indicator of a check box or radio button, from its Toggle (or, for one without, from its state)."""
+    from PySide6.QtWidgets import QStyle
+    st = option.state
+    t = widget.property("kcToggle") if widget is not None else None
+    if t is not None:
+        on, hover = t.on, t.hover
+    else:
+        on = 1.0 if st & (QStyle.State_On | QStyle.State_NoChange) else 0.0
+        hover = 1.0 if st & QStyle.State_MouseOver else 0.0
+    down = bool(st & QStyle.State_Sunken)
+    enabled = bool(st & QStyle.State_Enabled)
+    partial = bool(st & QStyle.State_NoChange)
+    r = QRect(0, 0, min(BOX, option.rect.width(), option.rect.height()), min(BOX, option.rect.width(), option.rect.height()))
+    r.moveCenter(option.rect.center())
+    side = mix(SIDE, SIDE_HOT, hover)
+    ring = mix(side, WHITE, on)
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, radio)
+    painter.setPen(Qt.NoPen)
+    if not enabled:
+        painter.setOpacity(0.4)
+    if radio:
+        outer = QRectF(r)
+        painter.setBrush(ring)
+        painter.drawEllipse(outer)
+        painter.setBrush(QColor("#111111"))                           # (the ring: the middle shows the panel again)
+        painter.drawEllipse(outer.adjusted(BORDER, BORDER, -BORDER, -BORDER))
+        k = (r.width() / 2 - BORDER - 2) * on
+        if down:
+            painter.setBrush(GREY)
+            k = max(k, 3.0)
+        else:
+            painter.setBrush(WHITE)
+        if k > 0.2:
+            painter.drawEllipse(QPointF(outer.center()), k, k)
+    else:
+        fill = mix(QColor(0, 0, 0, 0), WHITE, on) if not down else GREY
+        painter.fillRect(r, ring if not down else GREY)
+        inner = r.adjusted(BORDER, BORDER, -BORDER, -BORDER)
+        painter.fillRect(inner, QColor("#0a0a0a"))
+        painter.fillRect(inner, fill)
+        if on > 0.01:                                         # (the tick or dash, black on the white)
+            painter.setRenderHint(QPainter.Antialiasing)
+            ink = WHITE if down else BLACK
+            p = QPen(ink, 2.0)
+            p.setCapStyle(Qt.SquareCap)
+            p.setJoinStyle(Qt.MiterJoin)
+            painter.setPen(p)
+            x, y, s = r.x(), r.y(), r.width() / 16.0
+            if partial:
+                painter.drawLine(QPointF(x + 4 * s, y + 8 * s), QPointF(x + (4 + 8 * on) * s, y + 8 * s))
+            else:
+                a, b, c = QPointF(x + 4 * s, y + 8.5 * s), QPointF(x + 7 * s, y + 11.5 * s), QPointF(x + 12 * s, y + 5 * s)
+                first = min(1.0, on / 0.4)
+                painter.drawLine(a, a + (b - a) * first)
+                if on > 0.4:
+                    painter.drawLine(b, b + (c - b) * min(1.0, (on - 0.4) / 0.6))
+    painter.restore()

@@ -138,7 +138,7 @@ def dim(colour, part=0.3, under="#111111"):
     return QColor(*(round(y + (x - y) * part) for x, y in zip(a.getRgb()[:3], b.getRgb()[:3]))).name()
 
 
-SASH = 18 if sys.platform == "android" else 6         # px: the line between panels (and between a splitter's parts) that is dragged
+SASH = 12 if sys.platform == "android" else 4         # px: the line between panels (and between a splitter's parts) that is dragged
 
 
 def style_sheet():

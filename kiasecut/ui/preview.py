@@ -1023,7 +1023,7 @@ class Preview(QWidget):
     # -- painting ---------------------------------------------------------------------------------
     def paintEvent(self, _):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#111114"))
+        p.fillRect(self.rect(), QColor("#070707"))
         r = self._rect()
         p.fillRect(r, QColor("black"))
         if self.img is not None:
@@ -1116,7 +1116,7 @@ class Preview(QWidget):
 
     def _handle(self, p, pt, k, round_=False, color="#ffffff"):
         s = HANDLE_PX * k
-        p.setPen(QPen(QColor("#111114"), 1 * k))
+        p.setPen(QPen(QColor("#070707"), 1 * k))
         p.setBrush(QColor(color))
         if round_:
             p.drawEllipse(pt, s / 1.6, s / 1.6)
@@ -1374,7 +1374,7 @@ class Preview(QWidget):
         clip.addPolygon(QPolygonF(box.corners()))
         if g.kind != "place":                  # the mask only matters inside the clip (a picture may go past its frame)
             p.setClipPath(clip)
-        p.setPen(QPen(QColor("#111114"), 3.5 * k))
+        p.setPen(QPen(QColor("#070707"), 3.5 * k))
         p.drawPath(path)
         p.setPen(QPen(edge, 2 * k, Qt.SolidLine if on else Qt.DashLine))
         p.drawPath(path)
@@ -1392,7 +1392,7 @@ class Preview(QWidget):
                 u, _ = g.down()
                 n = QPointF(-u.y(), u.x())
                 s = HANDLE_PX * k
-                p.setPen(QPen(QColor("#111114"), 1 * k))
+                p.setPen(QPen(QColor("#070707"), 1 * k))
                 p.setBrush(QColor("#ffb020"))
                 p.drawPolygon(QPolygonF([pt + u * s * 0.8, pt - u * s * 0.4 + n * s * 0.7, pt - u * s * 0.4 - n * s * 0.7]))
             else:

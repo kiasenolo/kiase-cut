@@ -6303,6 +6303,7 @@ def run(argv):
         # pw_stream_connect); its PulseAudio one (PipeWire serves it too) does not.
         # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
+    QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)        # the menus are ours, in the window (a global menu cannot be animated)
     app = QApplication(argv)
     look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area

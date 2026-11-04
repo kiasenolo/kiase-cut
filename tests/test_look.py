@@ -44,7 +44,7 @@ class LookTests(unittest.TestCase):
         img = root.grab().toImage()
         g = box.geometry()
         for x, y in ((g.left(), g.center().y()), (g.right(), g.center().y()), (g.center().x(), g.top())):
-            self.assertEqual(img.pixelColor(x, y).name(), "#1c1c1e")
+            self.assertEqual(img.pixelColor(x, y).name(), "#111111")
         edge = img.pixelColor(scroll.geometry().left(), scroll.geometry().center().y())
         self.assertEqual(edge.name(), QColor(look.FRAME).name())
         root.close()

@@ -107,7 +107,7 @@ FX_MIME = "application/x-kiasecut-fx"                # a filter dragged from the
 COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
           "text": "#7c5574", "audio": "#3e7055", "filter": "#8a6f2e", "static": "#3f7378", "group": "#7a5c96",
           "component": "#4d5fa8"}                              # DaVinci Resolve
-ROW_BG = QColor("#1f1f21")
+ROW_BG = QColor("#141414")
 WAVE_TILE = 256                                      # waveforms are drawn in pixmaps this wide,
 WAVE_BYTES = 64 << 20                                # kept up to about this much memory
 
@@ -922,7 +922,7 @@ class Timeline(QWidget):
             self._paint(p)
             if self.proj:                            # the line that sets the track headers' width
                 x = self.header_w - 1
-                p.fillRect(QRectF(x, 0, 1, RULER_H), QColor("#0e0e10"))
+                p.fillRect(QRectF(x, 0, 1, RULER_H), QColor("#000000"))
                 p.fillRect(QRectF(x - 3, RULER_H / 2 - 6, 1, 12), QColor("#5a5a62"))
                 p.fillRect(QRectF(x - 5, RULER_H / 2 - 6, 1, 12), QColor("#5a5a62"))
         finally:
@@ -958,7 +958,7 @@ class Timeline(QWidget):
             n += tick
 
     def _paint(self, p):
-        p.fillRect(self.rect(), QColor("#161618"))
+        p.fillRect(self.rect(), QColor("#0b0b0b"))
         if not self.proj:
             p.setPen(QColor("#777"))
             p.drawText(self.rect(), Qt.AlignCenter, "檔案 > 匯入剪映草稿")
@@ -966,7 +966,7 @@ class Timeline(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         w = self.width()
         p.fillRect(0, 0, w, RULER_H, QColor("#1e1e21"))
-        p.fillRect(0, RULER_H - 1, w, 1, QColor("#0e0e10"))
+        p.fillRect(0, RULER_H - 1, w, 1, QColor("#000000"))
         steps = sorted({n / self.fps for n in (1, 2, 5, 10, 20)} | {0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300})
         step = next(s for s in steps if s * self.px_per_s >= 70)
         p.setPen(QColor("#4a4a50"))
@@ -1019,7 +1019,7 @@ class Timeline(QWidget):
             if self.paint_span[0] < self.header_w:      # (a moving playhead repaints only near it)
                 picked = tr["id"] in self.selected_tracks
                 p.fillRect(0, y, self.header_w, h - 1, QColor("#3a3a42" if picked else "#242427"))   # as in Resolve
-                p.fillRect(self.header_w - 1, y, 1, h - 1, QColor("#0e0e10"))
+                p.fillRect(self.header_w - 1, y, 1, h - 1, QColor("#000000"))
                 if tr.get("color"):
                     p.fillRect(0, y, 3, h - 1, QColor(tr["color"]))
                 if picked:
@@ -1163,7 +1163,7 @@ class Timeline(QWidget):
             p.drawLine(QPointF(x, RULER_H), QPointF(x, self.height()))
             flag = QPolygonF([QPointF(x - MARKER_PX, 2), QPointF(x + MARKER_PX, 2), QPointF(x + MARKER_PX, 12),
                               QPointF(x, RULER_H - 4), QPointF(x - MARKER_PX, 12)])
-            p.setPen(QPen(QColor("#0e0e10"), 1))
+            p.setPen(QPen(QColor("#000000"), 1))
             p.setBrush(col)
             p.drawPolygon(flag)
             p.setBrush(Qt.NoBrush)

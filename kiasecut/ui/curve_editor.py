@@ -282,7 +282,7 @@ class CurveCanvas(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#18181b"))
+        p.fillRect(self.rect(), QColor("#0d0d0d"))
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
         p.setFont(QFont("Segoe UI", 8))

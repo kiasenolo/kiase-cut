@@ -63,7 +63,7 @@ class Bars(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         w, h = self.width(), self.height()
-        p.fillRect(self.rect(), QColor("#1c1c1e"))
+        p.fillRect(self.rect(), QColor("#111111"))
         top, hh = 4, h - 8
         bw = (w - 6) / 2
         for i in range(2):

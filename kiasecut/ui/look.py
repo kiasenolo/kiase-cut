@@ -10,6 +10,7 @@ way Breeze drew it, and the standard icons are Breeze Dark's (kiasecut/look/icon
 import gc
 import os
 import re
+import sys
 
 from PySide6.QtCore import QByteArray, QMargins, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
@@ -42,8 +43,9 @@ QMenu::right-arrow { image: url(@ARROW-right.svg); width: 14px; height: 14px; ri
 QToolBar { border: none; }
 QToolBar::separator { background: @FRAME; width: 1px; height: 1px; margin: 4px; }
 QSplitter::handle { background: #000000; }
-QSplitter::handle:horizontal { width: 3px; }
-QSplitter::handle:vertical { height: 3px; }
+QSplitter::handle:horizontal { width: @SASHpx; }
+QSplitter::handle:vertical { height: @SASHpx; }
+QSplitter::handle:hover { background: #808080; }
 QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox { background: transparent; color: #ffffff; border: 2px solid transparent; border-radius: 0; padding: 0px 6px; selection-background-color: #808080; selection-color: #000000; placeholder-text-color: rgba(255, 255, 255, 128); }
 QDoubleSpinBox:disabled, QSpinBox:disabled, QLineEdit:disabled, QComboBox:disabled { color: rgba(255, 255, 255, 128); }
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; subcontrol-origin: border; }
@@ -72,7 +74,7 @@ QLabel#crumb { color: #d0d0d2; font-weight: 600; }
 QWidget#bar { background: #161616; border-top: 1px solid #000000; border-bottom: 1px solid #000000; }
 QTabWidget::pane { border: none; border-top: 1px solid #000000; }
 QWidget#docktitle { background: #0b0b0b; border-bottom: 1px solid #000000; }
-QMainWindow::separator { background: #000000; width: 3px; height: 3px; }
+QMainWindow::separator { background: #000000; width: @SASHpx; height: @SASHpx; }
 QMainWindow::separator:hover { background: #808080; }
 QTabBar#layouts { background: transparent; }
 QTabBar { background: #0b0b0b; }
@@ -136,8 +138,11 @@ def dim(colour, part=0.3, under="#111111"):
     return QColor(*(round(y + (x - y) * part) for x, y in zip(a.getRgb()[:3], b.getRgb()[:3]))).name()
 
 
+SASH = 18 if sys.platform == "android" else 6         # px: the line between panels (and between a splitter's parts) that is dragged
+
+
 def style_sheet():
-    return STYLE.replace("@ACCENT", ACCENT).replace("@DIM", dim(ACCENT))
+    return STYLE.replace("@SASH", str(SASH)).replace("@ACCENT", ACCENT).replace("@DIM", dim(ACCENT))
 
 
 def palette():

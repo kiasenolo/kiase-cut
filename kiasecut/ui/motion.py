@@ -364,7 +364,7 @@ def attach_field(widget):
 # where it is (Kilo's `@keyframes 0% translate(+-offset) 100% translate(0)`, on the usual cubic-bezier(0, .5, 0, 1), no overshoot). A line edit has no offset for its text, but it has margins: more room under the
 # text lifts it, more above lowers it (by half the margin).
 
-HOP_PX = 1
+HOP_PX = 3
 HOP_MS = 500
 
 

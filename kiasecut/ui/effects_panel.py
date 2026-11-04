@@ -39,6 +39,7 @@ from .mediapick import pick_button
 from .curvefield import CurveField
 from .gradientbar import GradientEditor
 from .vfx_panel import FX_MIME, effect_mime
+from . import softdrag
 
 DEBOUNCE_MS = 350
 SOURCE_NAMES = (("顏色", None), ("圖片", "image"), ("影片", "video"), ("複合片段", "compound"), ("軌道", "track"))
@@ -105,7 +106,7 @@ class Grip(QLabel):
             pic = pic.copy(0, 0, pic.width(), 40)
         drag.setPixmap(pic)
         drag.setHotSpot(self.mapTo(self.parentWidget(), e.position().toPoint()))
-        drag.exec(Qt.CopyAction | Qt.MoveAction, Qt.CopyAction)
+        softdrag.exec_drag(drag, Qt.CopyAction | Qt.MoveAction, Qt.CopyAction)
 
 
 class EffectsPanel(QWidget):

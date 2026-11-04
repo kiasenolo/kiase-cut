@@ -29,9 +29,9 @@ def opened():
 
 
 class MenuAnimTest(unittest.TestCase):
-    def test_a_menu_is_translucent_and_starts_clear_of_the_effect_when_done(self):
+    def test_a_menu_is_flat_and_starts_clear_of_the_effect_when_done(self):
         host, m = opened()
-        self.assertTrue(m.testAttribute(Qt.WA_TranslucentBackground))
+        self.assertTrue(m.windowFlags() & Qt.FramelessWindowHint)
         self.assertIsInstance(m.graphicsEffect(), menuanim.Pop)
         self.assertEqual(m.graphicsEffect().t, 0.0)
         QTest.qWait(menuanim.DURATION_MS + 150)

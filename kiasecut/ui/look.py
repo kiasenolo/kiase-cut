@@ -31,7 +31,7 @@ STYLE = """
 QWidget { background: #111111; color: #d0d0d2; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC', sans-serif; font-size: 12px; }
 QMainWindow { background: #050505; }
 QMenuBar { background: #0b0b0b; border-bottom: 1px solid #000000; }
-QMenu { background: #1a1a1a; border: none; border-radius: 5px; padding: 10px 0; }
+QMenu { background: #1a1a1a; border: none; border-radius: 0; padding: 0; }
 QMenu::item { padding: 5px 30px 5px 28px; background: transparent; color: #cccccc; }
 QMenu::item:disabled { color: rgba(255, 255, 255, 77); }
 QMenu::item:selected { background: rgba(255, 255, 255, 26); color: #ffffff; }

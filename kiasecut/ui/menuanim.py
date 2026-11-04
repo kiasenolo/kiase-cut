@@ -4,7 +4,7 @@ They go away at once, without a fade.
 
 A menu (the menu bar's, a context menu, a combo box's list) is a window of its own, so it is not the page's clip-path: a
 QGraphicsEffect on it draws it clipped to the part from the top down that the animation has got to, the effect going when
-the animation ends. QMenu windows are made translucent for their round corners (the style sheet's QMenu radius).
+the animation ends. A QMenu window is made frameless and without the window manager's shadow (square, flat).
 install() watches for menus and combo lists being made ready and being shown.
 """
 from PySide6.QtCore import QEvent, QRectF, Qt, QVariantAnimation
@@ -79,12 +79,8 @@ def popup_window(obj):
 
 def install():
     def made(obj, e):
-        if popup_window(obj) and not obj.testAttribute(Qt.WA_TranslucentBackground):
-            obj.setWindowFlags(obj.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
-            obj.setAttribute(Qt.WA_TranslucentBackground)
-            if not isinstance(obj, QMenu):                # (a combo box's list: the rounded ground a menu has)
-                obj.setAttribute(Qt.WA_StyledBackground)
-                obj.setStyleSheet("QComboBoxPrivateContainer { background: #1a1a1a; border: none; border-radius: 5px; }")
+        if isinstance(obj, QMenu) and obj.isWindow() and not obj.windowFlags() & Qt.FramelessWindowHint:
+            obj.setWindowFlags(obj.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)     # (flat: no frame, no shadow)
         return False
 
     def shown(obj, e):

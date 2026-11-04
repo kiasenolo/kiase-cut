@@ -1,4 +1,5 @@
-"""menuanim: a menu (or a combo box's list) is unrolled from its top down, then the effect is gone; closing is at once."""
+"""menuanim: a menu (or a combo box's list) is unrolled from its top down, then the effect is gone; closing rolls a picture of it up;
+moving from one menu of a menu bar to the next is a swap with nothing animated."""
 import os
 import sys
 import unittest
@@ -8,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QComboBox, QMenu, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QComboBox, QMainWindow, QMenu, QWidget  # noqa: E402
 
 from kiasecut.ui import look, menuanim  # noqa: E402
 
@@ -102,12 +103,32 @@ class MenuAnimTest(unittest.TestCase):
         box.hidePopup()
         host.close()
 
-    def test_closing_is_at_once_with_no_fade_effect_on_it(self):
+    def test_closing_hides_the_menu_at_once_and_a_picture_of_it_rolls_up_and_is_gone(self):
         host, m = opened()
         QTest.qWait(menuanim.DURATION_MS + 150)
         m.close()
-        self.assertFalse(m.isVisible())
+        self.assertFalse(m.isVisible())                       # (the menu itself goes at once)
         self.assertIsNone(m.graphicsEffect())
+        self.assertEqual(len(menuanim._ghosts), 1)
+        g = menuanim._ghosts[0]
+        self.assertTrue(g.isVisible())
+        self.assertEqual(g.t, 1.0)
+        QTest.qWait(80)
+        self.assertTrue(0.0 < g.t < 1.0)                       # (rolling up)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.assertEqual(menuanim._ghosts, [])
+        host.close()
+
+    def test_a_menu_closed_while_it_was_still_opening_rolls_back_from_where_it_was(self):
+        host, m = opened()
+        QTest.qWait(60)
+        t = m.graphicsEffect().t
+        self.assertTrue(0.0 < t < 1.0)
+        m.close()
+        self.assertIsNone(m.graphicsEffect())
+        self.assertLessEqual(menuanim._ghosts[0].t, t + 0.3)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.assertEqual(menuanim._ghosts, [])
         host.close()
 
     def test_a_menu_slow_to_come_up_still_plays_its_whole_animation(self):
@@ -165,6 +186,76 @@ class MenuAnimTest(unittest.TestCase):
         self.assertIsNone(m.graphicsEffect())
         m.close()
         host.close()
+
+
+class MenuBarSwapTest(unittest.TestCase):
+    def setUp(self):
+        self.win = QMainWindow()
+        self.win.resize(500, 200)
+        self.menus = []
+        for n in ("檔案", "編輯", "濾鏡"):
+            m = self.win.menuBar().addMenu(n)
+            m.addAction(n + "一")
+            m.addAction(n + "二")
+            self.menus.append(m)
+        self.win.show()
+        QTest.qWait(80)
+        self.bar = self.win.menuBar()
+        self.addCleanup(self.win.close)
+
+    def go(self, i):
+        self.bar.setActiveAction(self.menus[i].menuAction())
+
+    def test_the_first_menu_opens_and_the_last_closes_with_animation(self):
+        self.go(0)
+        self.assertIsInstance(self.menus[0].graphicsEffect(), menuanim.Pop)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.menus[0].close()
+        QTest.qWait(10)                                            # (a bar's menu waits a turn to see whether another takes its place)
+        self.assertEqual(len(menuanim._ghosts), 1)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.assertEqual(menuanim._ghosts, [])
+
+    def test_moving_to_another_menu_is_a_swap_with_nothing_animated(self):
+        self.go(0)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.go(1)
+        QTest.qWait(30)
+        self.assertTrue(self.menus[1].isVisible())
+        self.assertFalse(self.menus[0].isVisible())
+        self.assertIsNone(self.menus[1].graphicsEffect())          # (no unrolling)
+        self.assertEqual(menuanim._ghosts, [])                     # (and no rolling up of the one that left)
+        self.go(2)
+        QTest.qWait(30)
+        self.assertIsNone(self.menus[2].graphicsEffect())
+        self.assertEqual(menuanim._ghosts, [])
+        self.menus[2].close()
+        QTest.qWait(10)
+        self.assertEqual(len(menuanim._ghosts), 1)                 # (only the last one's closing)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.assertEqual(menuanim._ghosts, [])
+
+    def test_a_swap_made_in_a_hurry_leaves_nothing_behind(self):
+        self.go(0)
+        for i in (1, 2, 1, 0, 2, 0, 1):
+            self.go(i)
+            QTest.qWait(8)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.assertEqual(menuanim._ghosts, [])
+        for m in self.menus:
+            self.assertIsNone(m.graphicsEffect())
+            self.assertIsNone(m.property("kcPop"))
+
+    def test_opening_again_after_closing_animates_again(self):
+        self.go(0)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.menus[0].close()
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.go(1)
+        self.assertIsInstance(self.menus[1].graphicsEffect(), menuanim.Pop)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.menus[1].close()
+        QTest.qWait(menuanim.DURATION_MS + 150)
 
 
 if __name__ == "__main__":

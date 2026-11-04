@@ -159,8 +159,10 @@ def _draw(p, name):
             p.drawRoundedRect(QRectF(x0, y - 1.6, x1 - x0, 3.2), 1, 1)
 
 
-def icon(name, size=24):
-    key = (name, size)
+def icon(name, size=24, on=INK):
+    """The icon name; on: its ink while the button is checked - light for the tool buttons (their checked
+    background is dark), DARK for a plain button (its checked background is light)."""
+    key = (name, size, on)
     if key in _cache:
         return _cache[key]
     ic = QIcon()
@@ -171,7 +173,7 @@ def icon(name, size=24):
             p = QPainter(pm)
             p.setRenderHint(QPainter.Antialiasing)
             p.scale(size * 2 / 24, size * 2 / 24)
-            ink = QColor(DARK if state == QIcon.On and mode == QIcon.Normal else color)
+            ink = QColor(on if state == QIcon.On and mode == QIcon.Normal else color)
             p.setPen(QPen(ink, 1))
             p.setBrush(ink)
             _draw(p, name)

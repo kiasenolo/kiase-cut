@@ -1291,7 +1291,7 @@ class Inspector(QWidget):
 
     def _link_button(self):
         b = QPushButton()
-        b.setIcon(icons.icon("link", 16))
+        b.setIcon(icons.icon("link", 16, icons.DARK))
         b.setCheckable(True)
         b.setFixedWidth(26)
         b.setToolTip("X / Y 縮放連動：開＝一起調整（保持比例），關＝分開調整")

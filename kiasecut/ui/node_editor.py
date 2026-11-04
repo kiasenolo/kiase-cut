@@ -23,7 +23,7 @@ import shiboken6
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
-                               QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget, QWidgetAction)
+                               QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from . import appevents
@@ -1604,7 +1604,7 @@ class ParamPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(280)
+        self.setMinimumWidth(180)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         title = QLabel("效果參數（N 開關）")
@@ -1665,11 +1665,14 @@ class ParamPanel(QWidget):
                 kind.addItem(text, t)
             kind.setCurrentIndex(0 if x["type"] == "float" else 1)
             kind.activated.connect(lambda _i: self.edited.emit(name, {"type": kind.currentData()}))
-            row = QHBoxLayout()
-            row.addWidget(kind)
+            v.addWidget(kind)
+            row = QHBoxLayout()                                 # (a label above each number: they share the width)
             for key, text in (("lo", "最小"), ("hi", "最大"), ("default", "預設")):
-                row.addWidget(QLabel(text))
-                row.addWidget(self.number(x, key, name))
+                col = QVBoxLayout()
+                col.setSpacing(0)
+                col.addWidget(QLabel(text))
+                col.addWidget(self.number(x, key, name))
+                row.addLayout(col, 1)
             v.addLayout(row)
         elif x["type"] == "bool":
             on = QCheckBox("預設：開")
@@ -1686,7 +1689,7 @@ class ParamPanel(QWidget):
         sp.setDecimals(0 if x["type"] == "int" else 3)
         sp.setButtonSymbols(QDoubleSpinBox.NoButtons)
         sp.setValue(float(x[key]))
-        sp.setMinimumWidth(40)
+        sp.setMinimumWidth(30)
         sp.editingFinished.connect(lambda: sp.value() != float(x[key]) and self.edited.emit(name, {key: sp.value()}))
         return sp
 
@@ -1814,15 +1817,20 @@ class NodeEditor(QWidget):
         self.note.setAlignment(Qt.AlignCenter)
         self.view = GraphView(self)
         lay.addWidget(self.note)
-        body = QHBoxLayout()
-        body.addWidget(self.view, 1)
+        self.split = QSplitter(Qt.Horizontal)                # (the line between the graph and the 參數 panel is dragged to size it)
+        self.split.setChildrenCollapsible(False)
+        self.split.addWidget(self.view)
         self.panel = ParamPanel()
         self.panel.edited.connect(lambda name, f: self.eid and self.exposedEdited.emit(self.eid, name, f))
         self.panel.moved.connect(lambda name, d: self.eid and self.exposedMoved.emit(self.eid, name, d))
         self.panel.removed.connect(lambda name: self.eid and self.removeExposedRequested.emit(self.eid, name))
         self.panel.hide()
-        body.addWidget(self.panel)
-        lay.addLayout(body, 1)
+        self.split.addWidget(self.panel)
+        self.split.setStretchFactor(0, 1)
+        self.split.setStretchFactor(1, 0)
+        self.split.setSizes([900, 300])
+        lay.addWidget(self.split, 1)
+        self.panel_btn.setChecked(True)                      # (open from the start)
         self.view.hide()
         self.setFocusProxy(self.view)
         appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress), self._panel_key)

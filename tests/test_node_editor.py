@@ -1015,6 +1015,8 @@ class NodeEditorTests(unittest.TestCase):
             n = ng.add_node(e["graph"], {"type": ng.PARAMS}, 0, 160)
             ng.expose(e["graph"], e["params"], n, m, "param:value")
         ed = self.make(build)
+        self.assertTrue(ed.panel.isVisible())                        # (open by default)
+        QTest.keyClick(ed.view, Qt.Key_N)
         self.assertFalse(ed.panel.isVisible())
         QTest.keyClick(ed.view, Qt.Key_N)
         self.assertTrue(ed.panel.isVisible())

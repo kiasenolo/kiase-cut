@@ -325,9 +325,9 @@ class Timeline(QWidget):
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
         # fingers: a clip is dragged once it has been held (it goes white from the hold), empty track space selects time once held,
-        # and a finger that moves first scrolls the view; on the ruler and the headers a drag is at once
+        # and a finger that moves first scrolls the view (on the ruler: moves the playhead); the ruler selects time once held too
         touch.enable(self, hold_left=lambda p: self._tracks_at(p) and self._hit(p)[1] is not None,
-                     hold_right=lambda p: self._tracks_at(p) and self._hit(p)[1] is None, lit=self._light_clip)
+                     hold_right=self._hold_selects_time, lit=self._light_clip)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
@@ -797,6 +797,15 @@ class Timeline(QWidget):
         y = self.tops[i] + (self.row_h(i) - 2 - BTN) / 2
         return [(f, QRectF(self.header_w - 6 - (len(flags) - k) * (BTN + 3), y, BTN, BTN))
                 for k, f in enumerate(flags)]
+
+    def _hold_selects_time(self, pos):
+        """Where a finger that is held and then moved selects time: empty track space, and the ruler (where a finger that moves
+        at once still moves the playhead, and a tap puts it there: only the hold selects)."""
+        if pos.x() < self.header_w:
+            return False
+        if pos.y() < RULER_H:
+            return "late"
+        return self._hit(pos)[1] is None
 
     def _tracks_at(self, pos):
         """Whether pos is in the tracks (below the ruler, right of the headers)."""

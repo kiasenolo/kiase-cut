@@ -32,7 +32,7 @@ import time
 import shiboken6
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QPoint, Qt, QTimer
-from PySide6.QtGui import (QContextMenuEvent, QEventPoint, QMouseEvent, QNativeGestureEvent, QPointingDevice,
+from PySide6.QtGui import (QContextMenuEvent, QEventPoint, QGuiApplication, QMouseEvent, QNativeGestureEvent, QPointingDevice,
                            QWheelEvent)
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication
 
@@ -41,7 +41,8 @@ from . import appevents
 
 HOLD_MS = 550            # a finger this long on the same spot is a right click (when lifted there)
 PRESS_MS = 70            # the mouse press waits this long for a second finger
-SLOP_PX = 10             # a finger moves nothing until it has gone this far from where it came down
+SLOP_PX = 10             # a finger moves nothing until it has gone this far from where it came down (at least: see slop())
+SLOP_DP = 12             # ... or this far in dp on a screen of many pixels to the inch: a finger held still still wanders
 DOUBLE_S, DOUBLE_PX = 0.35, 30      # a second tap this soon and this near the first is a double click
 TAP_S = 0.35             # fingers down and up within this long, without moving, are a tap
 MIN_ZOOM = 0.003         # a pinch step smaller than this (as a ratio) is not sent
@@ -57,6 +58,14 @@ _TOUCH = (QEvent.TouchBegin, QEvent.TouchUpdate, QEvent.TouchEnd, QEvent.TouchCa
 
 _finger = False          # the last input was a finger
 _taps = {}               # number of fingers -> what to call
+
+
+def slop():
+    """How far (px) a finger may wander from where it came down and still be a held or tapping one: SLOP_DP dp (160 dpi), not less than
+    SLOP_PX. A finger on a tablet drifts a few mm while it is held, and 10 px there is little more than 1 mm: the hold was lost."""
+    screen = QGuiApplication.primaryScreen()
+    dpi = screen.logicalDotsPerInch() if screen is not None else 160.0
+    return max(float(SLOP_PX), SLOP_DP * dpi / 160.0)
 
 
 def scale():
@@ -90,6 +99,7 @@ class _Gestures(QObject):
         self.lit = lit                         # f(point or None, on): what was held at point is lit (goes white) / is not any more
         self.lit_on = False
         self.gated = False                     # this finger came down where a hold comes first
+        self.waits = False                     # ... or where the press waits for the first move or the hold
         self.right = self.right_down = False   # ... the hold was such a one / the right button is down
         self.scroll = scroll                   # a scroll area's viewport: one finger swipes before it holds
         self.swiping = False                   # ... and has begun to
@@ -194,9 +204,11 @@ class _Gestures(QObject):
         self.mode = "one"
         self.start = self.last = at
         self.pressed = self.moved = self.held = self.swiping = self.right = False
-        self.gated = self._kind(at) is not None
+        kind = self._kind(at)
+        self.gated = kind in ("right", "left")             # (a hold comes first; "late": the drag is at once if the finger moves first)
+        self.waits = kind is not None
         self.double = now - self.tap_t < DOUBLE_S and _dist(at, self.tap_at) < DOUBLE_PX
-        if not self.scroll and not self.gated:                   # (what waits for the hold - a left or a right drag, or a swipe
+        if not self.scroll and not self.waits:                   # (what waits for the hold - a left or a right drag, or a swipe
             self.defer.start()                                  #  - is pressed at the first move or the hold, as a scroll area's is)
         self.hold.start()
 
@@ -212,7 +224,7 @@ class _Gestures(QObject):
         if self.swiping:
             self._swipe(at)
             return
-        if not self.moved and _dist(at, self.start) > SLOP_PX:
+        if not self.moved and _dist(at, self.start) > slop():
             self.hold.stop()
             self.defer.stop()
             if (self.scroll or self.gated) and not self.pressed and not self.held:    # (before the hold: the view is scrolled, nothing is pressed)
@@ -234,8 +246,10 @@ class _Gestures(QObject):
     def _kind(self, at):
         """What a hold at `at` makes of the finger: "right" (a right-button drag), "left" (the thing there is let go to be dragged), or
         None (nothing is waited for)."""
-        if self.hold_right is not None and self.hold_right(at):
-            return "right"
+        if self.hold_right is not None:
+            r = self.hold_right(at)
+            if r:
+                return "right_late" if r == "late" else "right"
         if self.hold_left is not None and self.hold_left(at):
             return "left"
         return None
@@ -302,7 +316,7 @@ class _Gestures(QObject):
         if self.mode == "one" and not self.moved and not self.swiping:
             self.held = True
             kind = self._kind(self.start)
-            if kind == "right":
+            if kind in ("right", "right_late"):
                 self.right = True                          # (nothing is pressed yet: the first move presses the right button)
             elif kind == "left":
                 self._press()                              # (what was held is let go: pressed, and lit, and dragged by the moves)
@@ -345,7 +359,7 @@ class _Gestures(QObject):
         cx, cy, dist = self._measure(points)
         if self.tapping:                                   # (nothing is sent until the fingers have really moved)
             ox, oy, od = self.origin
-            if math.hypot(cx - ox, cy - oy) <= SLOP_PX and abs(dist - od) <= SLOP_PX and now - self.t_multi < TAP_S:
+            if math.hypot(cx - ox, cy - oy) <= slop() and abs(dist - od) <= slop() and now - self.t_multi < TAP_S:
                 return
             self.tapping = False
         px, py, pdist = self.prev
@@ -447,7 +461,7 @@ class _Gestures(QObject):
 def enable(widget, scroll=False, hold_right=None, hold_left=None, lit=None):
     """Fingers zoom, scroll and right-click on widget (see the module notes; scroll: widget is a scroll area's viewport;
     hold_right: f(point), true where a finger that is held and then moved drags with the right button, as the timeline's
-    selection of time - elsewhere on the widget a held finger is the left button's drag, as it is without it); hold_left:
+    selection of time ("late": a finger that moves first is the left button's drag at once, not a swipe - the ruler) - elsewhere on the widget a held finger is the left button's drag, as it is without it); hold_left:
     f(point), true where the thing is dragged only once held, and lit(point, on) lights it from the hold to the lifting
     (a finger that moves first swipes the view).
     Returns the helper (kept alive by widget)."""

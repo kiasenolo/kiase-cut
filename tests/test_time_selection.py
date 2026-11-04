@@ -59,10 +59,36 @@ class TimeSelectionTests(unittest.TestCase):
         self.finger(self.x(fps), self.x(3 * fps), 200)
         self.assertEqual(self.marks(), (fps, 3 * fps - 1))
 
-    def test_a_finger_held_on_the_ruler_selects_no_time(self):
-        del self.tl._snap                                      # (a press there seeks, which snaps as it really does)
-        self.finger(self.x(fps := self.tl.fps), self.x(3 * fps), 10)
+    def test_a_finger_held_on_the_ruler_then_moved_selects_time_and_the_playhead_stays(self):
+        fps = self.tl.fps
+        before = self.tl.playhead if hasattr(self.tl, "playhead") else None
+        seeks = []
+        self.tl.seekRequested.connect(seeks.append)
+        self.finger(self.x(fps), self.x(3 * fps), 10)
+        self.assertEqual(self.marks(), (fps, 3 * fps - 1))
+        self.assertEqual(seeks, [])                            # (no jump of the playhead to where the finger was held)
+
+    def test_a_finger_that_moves_at_once_on_the_ruler_moves_the_playhead_and_selects_nothing(self):
+        del self.tl._snap
+        fps = self.tl.fps
+        seeks = []
+        self.tl.seekRequested.connect(seeks.append)
+        self.finger(self.x(fps), self.x(3 * fps), 10, hold=False)
         self.assertEqual(self.marks(), (None, None))
+        self.assertTrue(seeks)
+
+    def test_a_tap_on_the_ruler_puts_the_playhead_there_when_the_finger_lifts(self):
+        del self.tl._snap
+        seeks = []
+        self.tl.seekRequested.connect(seeks.append)
+        self.tl.show()
+        seq = QTest.touchEvent(self.tl, QTest.createTouchDevice())
+        at = QPoint(self.x(2 * self.tl.fps), 10)
+        seq.press(0, at, self.tl).commit()
+        QTest.qWait(150)
+        self.assertEqual(seeks, [])                            # (not at the touch: a hold may follow)
+        seq.release(0, at, self.tl).commit()
+        self.assertTrue(seeks)
 
     def test_a_finger_that_moves_at_once_selects_no_time(self):
         self.finger(self.x(fps := self.tl.fps), self.x(3 * fps), 200, hold=False)

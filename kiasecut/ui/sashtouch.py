@@ -17,9 +17,9 @@ from PySide6.QtGui import QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication, QMainWindow, QSplitterHandle, QWidget
 
 from .. import haptic
+from . import touch
 
 HOLD_MS = 450
-SLOP_PX = 10
 THIN = 40                  # px: a gap between panels thicker than this is not a line
 FORCE = False              # on for a desktop too (tests)
 
@@ -114,7 +114,7 @@ class _Watch(QObject):
                 return False
             if self.dead:
                 return True
-            if (e.position().toPoint() - self.start).manhattanLength() > SLOP_PX:
+            if (e.position().toPoint() - self.start).manhattanLength() > touch.slop():
                 self._take_back()                         # (a swipe: the press is undone where it was made)
             return True                                   # (nothing moves before the hold)
         if t == QEvent.MouseButtonRelease:

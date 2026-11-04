@@ -302,6 +302,54 @@ class HoldRightTest(unittest.TestCase):
         self.assertEqual([x for x in self.kinds()], [("press", Qt.LeftButton), ("release", Qt.LeftButton)])
 
 
+class HoldLateTest(unittest.TestCase):
+    """The timeline's ruler: held then moved selects (right button); a finger that moves first is the left button's drag at once;
+    nothing is pressed while the hold may still come."""
+
+    def setUp(self):
+        self.w = Probe()
+        self.w.show()
+        self.g = touch.enable(self.w, hold_right=lambda p: "late" if p.y() < 40 else p.y() >= 40)
+        self.dev = QTest.createTouchDevice()
+        self.addCleanup(self.w.close)
+
+    def seq(self):
+        return QTest.touchEvent(self.w, self.dev)
+
+    def kinds(self):
+        return [(x[0], x[1]) if x[0] != "move" else "move" for x in self.w.log if x[0] in ("press", "release", "move")]
+
+    def test_nothing_is_pressed_at_the_touch(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 20), self.w).commit()
+        QTest.qWait(150)
+        self.assertEqual(self.kinds(), [])
+        s.release(0, QPoint(100, 20), self.w).commit()
+        self.assertEqual(self.kinds(), [("press", Qt.LeftButton), ("release", Qt.LeftButton)])      # (a tap: when it is lifted)
+
+    def test_moved_first_it_is_the_left_drag_from_where_it_came_down(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 20), self.w).commit()
+        s.move(0, QPoint(150, 20), self.w).commit()
+        s.move(0, QPoint(190, 20), self.w).commit()
+        QTest.qWait(10)
+        s.release(0, QPoint(190, 20), self.w).commit()
+        self.assertEqual(self.kinds()[0], ("press", Qt.LeftButton))
+        self.assertEqual(self.kinds()[-1], ("release", Qt.LeftButton))
+        self.assertIn("move", self.kinds())
+
+    def test_held_then_moved_it_is_the_right_drag(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 20), self.w).commit()
+        self.g._held()
+        s.move(0, QPoint(150, 20), self.w).commit()
+        s.move(0, QPoint(190, 20), self.w).commit()
+        QTest.qWait(10)
+        s.release(0, QPoint(190, 20), self.w).commit()
+        got = [x for x in self.kinds() if x != "move"]
+        self.assertEqual(got, [("press", Qt.RightButton), ("release", Qt.RightButton)])
+
+
 class HoldLeftTest(unittest.TestCase):
     """The timeline's clips: they are dragged only once the finger has been held (and then they are white); a finger that moves
     first swipes the view."""

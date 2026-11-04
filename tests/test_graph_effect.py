@@ -339,6 +339,35 @@ class ExposedParamTests(unittest.TestCase):
         self.assertNotIn("expose." + a, self.e["params"])
         self.assertIn(self.m + ".value", [q.name for q in fx.def_of(self.e).params])
 
+    def test_the_panel_edits_name_range_and_default_and_the_value_follows(self):
+        a = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
+        key = "expose." + a
+        edit.set_param(self.p, "c1", "fx:" + self.eid, key, 40.0)
+        edit.edit_exposed_param(self.p, "c1", self.eid, a, {"label": " 力度 ", "lo": 0, "hi": 10, "default": 3})
+        x = self.e["graph"]["exposed"][0]
+        self.assertEqual((x["label"], x["lo"], x["hi"], x["default"]), ("力度", 0.0, 10.0, 3.0))
+        self.assertEqual(self.e["params"][key], 10.0)                         # (the value is held to the new range)
+        edit.edit_exposed_param(self.p, "c1", self.eid, a, {"type": "int", "default": 2.6})
+        self.assertEqual((x["type"], x["default"], self.e["params"][key]), ("int", 3, 10))
+        self.assertEqual([q.type for q in fx.def_of(self.e).params if q.name == key], ["int"])
+        edit.edit_exposed_param(self.p, "c1", self.eid, a, {"lo": 9, "hi": 2})   # (the wrong way round: swapped)
+        self.assertEqual((x["lo"], x["hi"]), (2, 9))
+        b = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:clamp_on")
+        with self.assertRaises(edit.EditError):
+            edit.edit_exposed_param(self.p, "c1", self.eid, b, {"type": "float"})    # (a tick stays a tick)
+        with self.assertRaises(edit.EditError):
+            edit.edit_exposed_param(self.p, "c1", self.eid, "nope", {"label": "x"})
+
+    def test_the_panel_moves_parameters_up_and_down(self):
+        a = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:value")
+        b = edit.expose_graph_param(self.p, "c1", self.eid, self.n, self.m, "param:clamp_on")
+        names = lambda: [x["name"] for x in self.e["graph"]["exposed"]]
+        edit.move_exposed_param(self.p, "c1", self.eid, b, -1)
+        self.assertEqual(names(), [b, a])
+        edit.move_exposed_param(self.p, "c1", self.eid, b, -1)                   # (already first: stays)
+        self.assertEqual(names(), [b, a])
+        self.assertEqual([q.name for q in fx.def_of(self.e).params][:2], ["expose." + b, "expose." + a])
+
     def test_bound_value_drives_the_picture(self):
         if not HAVE_GL:
             self.skipTest("needs OpenGL 3.3")

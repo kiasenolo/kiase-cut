@@ -455,6 +455,8 @@ class MainWindow(QMainWindow):
         nd.exposeRequested.connect(self.on_node_expose)
         nd.itemRequested.connect(self.on_node_item)
         nd.removeExposedRequested.connect(self.on_node_remove_exposed)
+        nd.exposedEdited.connect(self.on_node_exposed_edited)
+        nd.exposedMoved.connect(self.on_node_exposed_moved)
         nd.disconnectManyRequested.connect(self.on_node_cut)
         nd.insertRequested.connect(self.on_node_insert)
         nd.addLinkedRequested.connect(self.on_node_add_linked)
@@ -5420,6 +5422,17 @@ class MainWindow(QMainWindow):
         cid = self.node_clip()
         if cid:
             self.apply("刪除效果參數", lambda lvl: edit.remove_exposed_param(lvl, cid, eid, name))
+
+    def on_node_exposed_edited(self, eid, name, fields):
+        cid = self.node_clip()
+        if cid:
+            self.apply("修改效果參數", lambda lvl: edit.edit_exposed_param(lvl, cid, eid, name, fields),
+                       merge=("exposed", cid, eid, name, tuple(fields)))
+
+    def on_node_exposed_moved(self, eid, name, delta):
+        cid = self.node_clip()
+        if cid:
+            self.apply("移動效果參數", lambda lvl: edit.move_exposed_param(lvl, cid, eid, name, delta))
 
     def on_node_cut(self, eid, pairs):
         cid = self.node_clip()

@@ -997,6 +997,47 @@ def remove_exposed(graph, params, name):
     params.pop(expose_key(name), None)
 
 
+def edit_exposed(graph, params, name, fields):
+    """Change an effect parameter (the 參數 panel): fields may hold label, type (a number between float and int only), lo, hi,
+    default. The value it has now follows the range."""
+    x = next((x for x in exposed(graph) if x["name"] == name), None)
+    if x is None:
+        raise GraphError("找不到這個參數")
+    fields = dict(fields)
+    if "label" in fields:
+        fields["label"] = str(fields["label"]).strip() or x["label"]
+    number = x["type"] in ("float", "int")
+    if "type" in fields and fields["type"] != x["type"]:
+        if not (number and fields["type"] in ("float", "int")):
+            raise GraphError("只有數字可以改成浮點或整數")
+    if not number and {"lo", "hi"} & fields.keys():
+        raise GraphError("這個參數沒有範圍")
+    x.update({k: v for k, v in fields.items() if k in ("label", "type", "lo", "hi", "default")})
+    if x["type"] in ("float", "int"):
+        whole = x["type"] == "int"
+        conv = (lambda v: int(round(v))) if whole else float
+        x["lo"], x["hi"] = conv(x["lo"]), conv(x["hi"])
+        if x["lo"] > x["hi"]:
+            x["lo"], x["hi"] = x["hi"], x["lo"]
+        clamp = lambda v: min(x["hi"], max(x["lo"], conv(v)))
+        x["default"] = clamp(x["default"])
+        key = expose_key(name)
+        v = params.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            params[key] = clamp(v)
+
+
+def move_exposed(graph, name, delta):
+    """Move effect parameter `name` up (-1) or down (1) in the list."""
+    xs = graph.get("exposed") or []
+    i = next((i for i, x in enumerate(xs) if x["name"] == name), None)
+    if i is None:
+        raise GraphError("找不到這個參數")
+    j = i + delta
+    if 0 <= j < len(xs):
+        xs[i], xs[j] = xs[j], xs[i]
+
+
 def insert_on_link(graph, nid, src, dst, socket, out=None):
     """Put node nid in the middle of the link src -> dst (socket): its main picture in, its picture out."""
     nodes = graph["nodes"]

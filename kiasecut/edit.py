@@ -2333,6 +2333,25 @@ def remove_exposed_param(proj, clip_id, effect_id, name):
     nodegraph.remove_exposed(g, e["params"], name)
 
 
+def edit_exposed_param(proj, clip_id, effect_id, name, fields):
+    """The 參數 panel: change an effect parameter's label, type, range or default."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    try:
+        nodegraph.edit_exposed(g, e["params"], name, fields)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
+def move_exposed_param(proj, clip_id, effect_id, name, delta):
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    try:
+        nodegraph.move_exposed(g, name, delta)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
 def insert_graph_node(proj, clip_id, effect_id, nid, src, dst, socket, out=None):
     """A node dropped on a link: the link goes through it."""
     _, c = find(proj, clip_id)

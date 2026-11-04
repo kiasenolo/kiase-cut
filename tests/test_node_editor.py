@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QDropEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 
 from kiasecut import fx, nodegraph as ng  # noqa: E402
 from kiasecut.ui.node_editor import NodeEditor  # noqa: E402
@@ -1006,6 +1006,37 @@ class NodeEditorTests(unittest.TestCase):
         QTest.keyClick(v, Qt.Key_Escape)                             # Esc puts it back, and it was not taken away
         self.assertEqual(gone, [])
         self.assertEqual(it.pos(), QPointF(*moved[-1]["math1"]))
+
+    def test_n_opens_the_parameter_panel_and_its_fields_send_edits(self):
+        def build(e):
+            m = ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 160)
+            n = ng.add_node(e["graph"], {"type": ng.PARAMS}, 0, 160)
+            ng.expose(e["graph"], e["params"], n, m, "param:value")
+        ed = self.make(build)
+        self.assertFalse(ed.panel.isVisible())
+        QTest.keyClick(ed.view, Qt.Key_N)
+        self.assertTrue(ed.panel.isVisible())
+        self.assertTrue(ed.panel_btn.isChecked())
+        edited, moved, gone = [], [], []
+        ed.exposedEdited.connect(lambda eid, name, f: edited.append((name, f)))
+        ed.exposedMoved.connect(lambda eid, name, d: moved.append((name, d)))
+        ed.removeExposedRequested.connect(lambda eid, name: gone.append(name))
+        name = ng.exposed(ed.graph)[0]["name"]
+        boxes = ed.panel.findChildren(QLineEdit)
+        boxes[0].setText("力度")
+        boxes[0].editingFinished.emit()
+        self.assertEqual(edited[-1], (name, {"label": "力度"}))
+        from PySide6.QtWidgets import QDoubleSpinBox, QPushButton
+        spins = ed.panel.findChildren(QDoubleSpinBox)
+        self.assertEqual(len(spins), 3)                              # (最小 / 最大 / 預設)
+        spins[1].setValue(5)
+        spins[1].editingFinished.emit()
+        self.assertEqual(edited[-1], (name, {"hi": 5.0}))
+        buttons = {b.text(): b for b in ed.panel.findChildren(QPushButton)}
+        buttons["✕"].click()
+        self.assertEqual(gone, [name])
+        QTest.keyClick(ed.view, Qt.Key_N)
+        self.assertFalse(ed.panel.isVisible())
 
     def test_width_is_kept(self):
         def g(e):

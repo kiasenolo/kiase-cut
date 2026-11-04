@@ -23,7 +23,7 @@ import shiboken6
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
-                               QMenu, QPushButton, QVBoxLayout, QWidget, QWidgetAction)
+                               QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from .wheel import pinch as wheel_pinch
@@ -1465,7 +1465,7 @@ class GraphView(QGraphicsView):
             return mods == Qt.ControlModifier
         if key == Qt.Key_G:
             return mods in (Qt.NoModifier, Qt.ControlModifier, Qt.ControlModifier | Qt.AltModifier)
-        if key == Qt.Key_Tab:
+        if key in (Qt.Key_Tab, Qt.Key_N):
             return mods == Qt.NoModifier
         if key in (Qt.Key_A, Qt.Key_D):
             return mods == Qt.ShiftModifier or (key == Qt.Key_A and mods == Qt.NoModifier)
@@ -1503,6 +1503,8 @@ class GraphView(QGraphicsView):
             self.editor.ungroup_selected()
         elif key == Qt.Key_Tab and mods == Qt.NoModifier:
             self.editor.tab()
+        elif key == Qt.Key_N and mods == Qt.NoModifier:
+            self.editor.set_panel(not self.editor.panel_btn.isChecked())
         elif key == Qt.Key_J and mods == Qt.ControlModifier:
             self.editor.frame_selected()
         elif key == Qt.Key_Home:
@@ -1582,6 +1584,105 @@ class EditorFrame(QFrame):
         return False
 
 
+class ParamPanel(QWidget):
+    """The 參數 panel (N), as Blender's group interface: the effect's own parameters in a list - name, type (a number: 浮點 /
+    整數), range and default - to edit, move up / down and delete. Dragging a link out of a 參數輸入 socket still adds one."""
+    edited = Signal(str, dict)                              # parameter name, what changed (label / type / lo / hi / default)
+    moved = Signal(str, int)                                # parameter name, -1 up / 1 down
+    removed = Signal(str)                                   # parameter name
+    TYPES = (("float", "浮點"), ("int", "整數"))
+    KINDS = {"bool": "開關", "color": "顏色", "menu": "選單", "curve": "曲線", "gradient": "漸層", "vec2": "二維向量",
+             "vec3": "三維向量", "string": "字串"}
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(280)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        title = QLabel("效果參數（N 開關）")
+        title.setStyleSheet("font-weight: bold; padding: 2px 4px;")
+        lay.addWidget(title)
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        lay.addWidget(self.scroll, 1)
+        self.sig = None
+        self.fill([])
+
+    def fill(self, xs):
+        """Show parameters xs (graph["exposed"]); nothing is rebuilt while they are the same."""
+        sig = json.dumps(xs, sort_keys=True)
+        if sig == self.sig:
+            return
+        self.sig = sig
+        body = QWidget()
+        col = QVBoxLayout(body)
+        col.setContentsMargins(4, 4, 4, 4)
+        if not xs:
+            hint = QLabel("還沒有參數。\n從「參數輸入」節點的空插槽拉一條線到另一個節點的參數上，就會新增一個。")
+            hint.setWordWrap(True)
+            col.addWidget(hint)
+        for i, x in enumerate(xs):
+            col.addWidget(self.row(x, i, len(xs)))
+        col.addStretch()
+        self.scroll.setWidget(body)
+
+    def row(self, x, i, n):
+        name = x["name"]
+        box = QFrame()
+        box.setFrameShape(QFrame.StyledPanel)
+        v = QVBoxLayout(box)
+        v.setContentsMargins(4, 4, 4, 4)
+        top = QHBoxLayout()
+        label = QLineEdit(x["label"])
+        label.setToolTip("參數的名字（顯示在效果面板和節點上）")
+        label.editingFinished.connect(lambda: label.text().strip() != x["label"] and self.edited.emit(name, {"label": label.text()}))
+        top.addWidget(label, 1)
+        for text, tip, delta in (("▲", "上移", -1), ("▼", "下移", 1)):
+            b = QPushButton(text)
+            b.setFixedWidth(26)
+            b.setToolTip(tip)
+            b.setEnabled(0 <= i + delta < n)
+            b.clicked.connect(lambda _c=False, d=delta: self.moved.emit(name, d))
+            top.addWidget(b)
+        gone = QPushButton("✕")
+        gone.setFixedWidth(26)
+        gone.setToolTip("刪除這個參數（接上它的連線也會斷）")
+        gone.clicked.connect(lambda: self.removed.emit(name))
+        top.addWidget(gone)
+        v.addLayout(top)
+        if x["type"] in ("float", "int"):
+            kind = QComboBox()
+            for t, text in self.TYPES:
+                kind.addItem(text, t)
+            kind.setCurrentIndex(0 if x["type"] == "float" else 1)
+            kind.activated.connect(lambda _i: self.edited.emit(name, {"type": kind.currentData()}))
+            row = QHBoxLayout()
+            row.addWidget(kind)
+            for key, text in (("lo", "最小"), ("hi", "最大"), ("default", "預設")):
+                row.addWidget(QLabel(text))
+                row.addWidget(self.number(x, key, name))
+            v.addLayout(row)
+        elif x["type"] == "bool":
+            on = QCheckBox("預設：開")
+            on.setChecked(bool(x["default"]))
+            on.toggled.connect(lambda c: self.edited.emit(name, {"default": bool(c)}))
+            v.addWidget(on)
+        else:
+            v.addWidget(QLabel("種類：" + self.KINDS.get(x["type"], x["type"])))
+        return box
+
+    def number(self, x, key, name):
+        sp = QDoubleSpinBox()
+        sp.setRange(-1e9, 1e9)
+        sp.setDecimals(0 if x["type"] == "int" else 3)
+        sp.setButtonSymbols(QDoubleSpinBox.NoButtons)
+        sp.setValue(float(x[key]))
+        sp.setMinimumWidth(40)
+        sp.editingFinished.connect(lambda: sp.value() != float(x[key]) and self.edited.emit(name, {key: sp.value()}))
+        return sp
+
+
 class NodeEditor(QWidget):
     _popup_editor = None
     addRequested = Signal(str, dict, float, float)          # effect id, node ({"type", "ref" / "kind"}), x, y
@@ -1608,6 +1709,8 @@ class NodeEditor(QWidget):
     duplicateRequested = Signal(str, list)                  # effect id, node ids
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
     removeExposedRequested = Signal(str, str)               # effect id, parameter name
+    exposedEdited = Signal(str, str, dict)                  # effect id, parameter name, what changed (label / type / lo / hi / default)
+    exposedMoved = Signal(str, str, int)                    # effect id, parameter name, -1 up / 1 down
     disconnectRequested = Signal(str, str, str)             # effect id, to node, socket
     itemRequested = Signal(str, str, str, str, str, str, str)   # effect id, node, action (add / rename / remove / up / down), option socket, name, node to link into the new option, its output
     moveRequested = Signal(str, dict)                       # effect id, {node id: (x, y)}
@@ -1679,6 +1782,12 @@ class NodeEditor(QWidget):
         snap.setToolTip("拖動節點時對齊網格（按住 Ctrl 暫時反過來）")
         snap.toggled.connect(lambda on: setattr(self.view, "snap", on))
         bar.addWidget(snap)
+        side = QPushButton("參數 (N)")
+        side.setCheckable(True)
+        side.setToolTip("右邊的參數面板：這個效果的參數（名字、種類、最小、最大、預設）可以改、排序、刪除")
+        side.toggled.connect(self.set_panel)
+        self.panel_btn = side
+        bar.addWidget(side)
         tidy = QPushButton("整理 ▾")
         tidy.setToolTip("對齊、均分、自動排列選取的節點")
         tidy.clicked.connect(lambda: self.tidy_menu(tidy.mapToGlobal(tidy.rect().bottomLeft())))
@@ -1689,9 +1798,26 @@ class NodeEditor(QWidget):
         self.note.setAlignment(Qt.AlignCenter)
         self.view = GraphView(self)
         lay.addWidget(self.note)
-        lay.addWidget(self.view, 1)
+        body = QHBoxLayout()
+        body.addWidget(self.view, 1)
+        self.panel = ParamPanel()
+        self.panel.edited.connect(lambda name, f: self.eid and self.exposedEdited.emit(self.eid, name, f))
+        self.panel.moved.connect(lambda name, d: self.eid and self.exposedMoved.emit(self.eid, name, d))
+        self.panel.removed.connect(lambda name: self.eid and self.removeExposedRequested.emit(self.eid, name))
+        self.panel.hide()
+        body.addWidget(self.panel)
+        lay.addLayout(body, 1)
         self.view.hide()
         self.setFocusProxy(self.view)
+
+    def set_panel(self, on):
+        """Show or hide the 參數 panel (N)."""
+        self.panel_btn.blockSignals(True)
+        self.panel_btn.setChecked(on)
+        self.panel_btn.blockSignals(False)
+        self.panel.setVisible(bool(on) and self.eid is not None)
+        if on:
+            self.panel.fill(ng.exposed(self.graph) if self.eid else [])
 
     # -- what it shows ---------------------------------------------------------------------------------
     def set_user_filters(self, filters):
@@ -1713,6 +1839,7 @@ class NodeEditor(QWidget):
         if e is None:
             self.eid, self._sig = None, None
             self.note.show()
+            self.panel.hide()
             self.view.hide()
             self.view.scene().clear()
             self.view.items_by_id, self.view.link_items = {}, []
@@ -1722,6 +1849,7 @@ class NodeEditor(QWidget):
         self.combo.blockSignals(False)
         self.note.hide()
         self.view.show()
+        self.panel.setVisible(self.panel_btn.isChecked())
         first = self.eid != e["id"]
         if first:
             self.level = ""
@@ -1732,6 +1860,8 @@ class NodeEditor(QWidget):
             self._sig = sig
             self.graph = e["graph"]
             self.rebuild(first)
+            if self.panel.isVisible():
+                self.panel.fill(ng.exposed(self.graph))
         else:
             for it in self.view.items_by_id.values():
                 if getattr(it, "inline", None):

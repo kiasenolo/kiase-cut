@@ -21,7 +21,7 @@ import os
 import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QLinearGradient, QPainter, QPainterPath, QPainterPathStroker, QPen
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
@@ -598,7 +598,7 @@ class NodeItem(QGraphicsItem):
 
     # -- mouse: a field takes the press (the rest of the node moves it) ------------------------------------
     def edge_at(self, pos):
-        return self.has_edge() and pos.x() >= self.w - EDGE and pos.y() > HEAD
+        return self.has_edge() and pos.x() >= self.w - EDGE
 
     def has_edge(self):
         return bool(self.flags() & QGraphicsItem.ItemIsMovable)
@@ -963,7 +963,8 @@ class GraphView(QGraphicsView):
         self.grabbed = None                      # the id of the node the left button went down on
         self.swallow = False                     # the release after the click that put carried nodes down
         self.carrying = None                     # nodes just made, stuck to the pointer till a click: {ids, off, remove}
-        self.wrap = WrapDrag(self.viewport())    # (G: endless, the pointer wraps at the edges as in a middle-button drag)
+        self.wrap = WrapDrag(self.viewport(), lambda: self.viewport().rect())    # (G and dragged nodes: endless, the pointer wraps at the view's edges as in a middle-button drag)
+        self.plain_pos = None                    # where a dragged node's pointer is, wraps counted
         self.viewport().setMouseTracking(True)         # (carried nodes follow the pointer with no button down)
         self.setAcceptDrops(True)
 
@@ -1257,10 +1258,24 @@ class GraphView(QGraphicsView):
                 path.lineTo(q)
             self.cut[0].setPath(path)
             return
+        if e.buttons() & Qt.LeftButton and self.grabbed is not None:
+            e = self._wrapped(e)
         super().mouseMoveEvent(e)
         if e.buttons() & Qt.LeftButton:
             self._snap_grabbed(bool(e.modifiers() & Qt.ControlModifier))
             self._hover_link()
+
+    def _wrapped(self, e):
+        """A move while a node is dragged by its body: endless (wrapdrag.py) - the pointer jumps across the view's edge and the node
+        goes on, so the event the scene gets is at where the drag is, not where the pointer is."""
+        if not self.wrap.on:
+            g = self.scene().mouseGrabberItem()
+            if g is None or not g.flags() & QGraphicsItem.ItemIsMovable or any(
+                    getattr(g, a, None) for a in ("drag", "sizing", "grip", "size")):
+                return e                                   # (a field, a width or a frame being resized has its own drag)
+            self.wrap.start()
+        self.plain_pos = self.wrap.pos(e)
+        return QMouseEvent(e.type(), self.plain_pos, e.globalPosition(), e.button(), e.buttons(), e.modifiers())
 
     def snapping(self, mods):
         """Whether a move or resize with these modifiers lands on the grid (the snap button, Ctrl does the opposite)."""
@@ -1293,7 +1308,7 @@ class GraphView(QGraphicsView):
             return
         fine = min(1.0, (z * GRID - 6) / 10)
         x0, y0 = math.floor(rect.left() / GRID) * GRID, math.floor(rect.top() / GRID) * GRID
-        for n, (step, alpha) in enumerate(((GRID, 22 * fine), (GRID * 5, 36))):
+        for n, (step, alpha) in enumerate(((GRID, 9 * fine), (GRID * 5, 16))):
             pen = QPen(QColor(255, 255, 255, int(alpha)), 0)
             painter.setPen(pen)
             x = math.floor(rect.left() / step) * step
@@ -1403,6 +1418,11 @@ class GraphView(QGraphicsView):
         self.grabbed = None
         over, self.over = self.over, None
         lone = self._lone_node() if over else None
+        if self.wrap.on:                                   # (the node's drag ends where it got to; the pointer comes back there)
+            back, self.plain_pos = self.plain_pos, None
+            if back is not None:
+                e = QMouseEvent(e.type(), back, e.globalPosition(), e.button(), e.buttons(), e.modifiers())
+            self.wrap.stop(back)
         super().mouseReleaseEvent(e)
         moved = {i: (it.pos().x(), it.pos().y()) for i, it in self.items_by_id.items()
                  if self.press_at.get(i) not in (None, (it.pos().x(), it.pos().y()))}

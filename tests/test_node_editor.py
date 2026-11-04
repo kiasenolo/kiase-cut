@@ -1042,6 +1042,29 @@ class NodeEditorTests(unittest.TestCase):
         QTest.keyClick(ed.view, Qt.Key_N)
         self.assertFalse(ed.panel.isVisible())
 
+    def test_a_node_dragged_by_its_body_is_an_endless_drag(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 160)
+        ed = self.make(build)
+        v = ed.view
+        moved = []
+        ed.moveRequested.connect(lambda eid, m: moved.append(m))
+        it = v.items_by_id["math1"]
+        at = it.mapToScene(QPointF(it.w / 2, 4))                      # (its head)
+        pa = v.mapFromScene(at)
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, pa)
+        QTest.mouseMove(v.viewport(), pa + QPoint(60, 40))
+        self.assertTrue(v.wrap.on)
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, pa + QPoint(60, 40))
+        self.assertFalse(v.wrap.on)
+        self.assertEqual(list(moved[-1]), ["math1"])
+
+    def test_the_head_widens_a_node_from_its_right_edge_too(self):
+        ed = self.make()
+        it = ed.view.items_by_id["output"]
+        self.assertTrue(it.edge_at(QPointF(it.w - 2, 4)))
+        self.assertFalse(it.edge_at(QPointF(it.w / 2, 4)))
+
     def test_width_is_kept(self):
         def g(e):
             e["graph"]["nodes"]["output"]["width"] = 300.0

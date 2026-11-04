@@ -1,4 +1,4 @@
-"""touch.py: one finger is the mouse, two fingers pinch and scroll, a held finger is a right click."""
+"""touch.py: one finger is the mouse, two fingers pinch and scroll, a held finger lifted in place is a right click."""
 import os
 import sys
 import unittest
@@ -77,15 +77,28 @@ class TouchTest(unittest.TestCase):
                          [("press", Qt.LeftButton), ("move", 130.0, 105.0), ("release", Qt.LeftButton)])
         self.assertEqual(self.g.mode, "idle")
 
-    def test_a_finger_held_still_is_a_right_click(self):
+    def test_a_finger_held_still_and_lifted_is_a_right_click(self):
         s = self.seq()
         s.press(0, QPoint(100, 100), self.w).commit()
         self.g._held()                                          # (the timer's work, without waiting for it)
+        self.assertNotIn(("menu",), self.w.log)                 # (nothing yet: the finger is still down)
+        s.move(0, QPoint(104, 101), self.w).commit()            # (a tremble is not a drag)
+        self.assertEqual([x for x in self.w.log if x[0] == "move"], [])
+        s.release(0, QPoint(104, 101), self.w).commit()
         kinds = [x for x in self.w.log if x[0] in ("press", "release", "menu")]
         self.assertEqual(kinds[-3:], [("press", Qt.RightButton), ("menu",), ("release", Qt.RightButton)])
-        self.assertEqual(self.g.mode, "hold")
-        s.release(0, QPoint(100, 100), self.w).commit()
         self.assertEqual(self.g.mode, "idle")
+
+    def test_a_finger_held_and_moved_is_a_drag(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.g._held()
+        s.move(0, QPoint(160, 100), self.w).commit()
+        s.move(0, QPoint(180, 100), self.w).commit()
+        s.release(0, QPoint(180, 100), self.w).commit()
+        self.assertEqual([x[0] for x in self.w.log if x[0] in ("press", "move", "release", "menu")],
+                         ["press", "move", "move", "release"])
+        self.assertNotIn(("menu",), self.w.log)
 
     def test_moving_finger_is_not_a_hold(self):
         s = self.seq()
@@ -93,7 +106,7 @@ class TouchTest(unittest.TestCase):
         s.move(0, QPoint(140, 100), self.w).commit()
         self.assertFalse(self.g.timer.isActive())
         self.g._held()
-        self.assertEqual(self.g.mode, "one")
+        self.assertFalse(self.g.held)
 
 
 class OnTheViews(unittest.TestCase):

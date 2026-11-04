@@ -6,9 +6,10 @@ as well, and a second finger never arrives; so the touches are taken here and th
 Beyond that, for a widget given to enable():
   * two fingers pinch (a zoom, as a touchpad's pinch: a native gesture event) and move the view (a scroll, as a touchpad's
     two-finger scroll: a wheel event with pixel motion), both at once if the fingers do both - the views already read those;
-  * a finger held still (about half a second) is a right click: the menu a right click opens, at the finger.
-The first finger's mouse press is taken back as soon as it is known not to be a plain touch (a second finger came, or the hold
-became a right click): a mouse release goes to the widget, so a drag that had begun ends where it stands.
+  * a finger held still (about half a second) and then lifted is a right click: the menu a right click opens, at the finger;
+    a finger held and then moved is the drag it always was (the hold only matters if the finger comes up where it was).
+The first finger's mouse press is taken back as soon as a second finger comes: a mouse release goes to the widget, so a
+drag that had begun ends where it stands.
 """
 import math
 
@@ -37,7 +38,8 @@ class _Gestures(QObject):
     def __init__(self, widget):
         super().__init__(widget)
         self.w = widget
-        self.mode = "idle"                      # idle, one (a finger down: the mouse), multi (pinch / scroll), hold (a right click was made)
+        self.mode = "idle"                      # idle, one (a finger down: the mouse), multi (pinch / scroll)
+        self.held = False                       # the finger has stayed on its spot for HOLD_MS (lifting it now is a right click)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.setInterval(HOLD_MS)
@@ -73,12 +75,14 @@ class _Gestures(QObject):
         began = False
         if self.mode == "idle" and down:
             self.mode, began = "one", True
+            self.held = False
             self.start = self.last = down[0].position()
             self._mouse(QEvent.MouseButtonPress, self.last, Qt.LeftButton, Qt.LeftButton)
             self.timer.start()
         if self.mode == "one":
             if len(down) >= 2:                             # a second finger: the first one's press is taken back
                 self.timer.stop()
+                self.held = False
                 self._mouse(QEvent.MouseButtonRelease, self.last, Qt.LeftButton, Qt.NoButton)
                 self.mode = "multi"
                 self.prev = self._measure(down)
@@ -87,16 +91,21 @@ class _Gestures(QObject):
             elif down:
                 if not began:
                     self.last = down[0].position()
-                    if math.hypot(self.last.x() - self.start.x(), self.last.y() - self.start.y()) > SLOP_PX:
+                    if self._moved():
                         self.timer.stop()
-                    self._mouse(QEvent.MouseMove, self.last, Qt.NoButton, Qt.LeftButton)
+                        self.held = False
+                    if not self.held:                      # (a held finger's tremble is not a drag)
+                        self._mouse(QEvent.MouseMove, self.last, Qt.NoButton, Qt.LeftButton)
             else:                                          # the finger is up
                 self.timer.stop()
                 self._mouse(QEvent.MouseButtonRelease, self.last, Qt.LeftButton, Qt.NoButton)
+                if self.held:
+                    self._right_click(self.last)
+                self.held = False
                 self.mode = "idle"
         elif self.mode == "multi" and len(down) >= 2:
             self._pinch(down)
-        if self.mode in ("multi", "hold") and not down:
+        if self.mode == "multi" and not down:
             self._finish()
         return True
 
@@ -143,13 +152,15 @@ class _Gestures(QObject):
         ev = QWheelEvent(at, QPointF(g), pixels, pixels, Qt.NoButton, Qt.NoModifier, phase, False)
         QApplication.sendEvent(self.w, ev)
 
-    # -- the hold: a right click ----------------------------------------------------------------------------------------
+    # -- the hold: a right click when the finger is lifted where it was ----------------------------------------------------
+    def _moved(self):
+        return math.hypot(self.last.x() - self.start.x(), self.last.y() - self.start.y()) > SLOP_PX
+
     def _held(self):
-        if self.mode != "one" or math.hypot(self.last.x() - self.start.x(), self.last.y() - self.start.y()) > SLOP_PX:
-            return
-        self.mode = "hold"
-        at = self.last
-        self._mouse(QEvent.MouseButtonRelease, at, Qt.LeftButton, Qt.NoButton)
+        if self.mode == "one" and not self._moved():
+            self.held = True
+
+    def _right_click(self, at):
         self._mouse(QEvent.MouseButtonPress, at, Qt.RightButton, Qt.RightButton)
         target = self.w.childAt(at.toPoint()) or self.w
         local = target.mapFrom(self.w, at.toPoint())

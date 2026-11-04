@@ -305,9 +305,13 @@ HOP_MS = 380
 
 
 class Hop(QObject):
-    def __init__(self, edit):
-        super().__init__(edit)
-        self.edit = edit
+    """The hop of one number. `owner` is its line edit (the text moves with margins), or None with `apply(off)` given: whatever
+    paints the number (a node's field) reads `off`, pixels with up positive, and is asked to repaint."""
+
+    def __init__(self, owner=None, apply=None):
+        super().__init__(owner)
+        self.edit = owner
+        self.apply = apply
         self.dir = 0
         self.off = 0.0                        # pixels, up is positive
         self.anim = QVariantAnimation(self)
@@ -322,12 +326,15 @@ class Hop(QObject):
 
     def _set(self, off):
         self.off = off
+        if self.apply is not None:
+            self.apply(off)
+            return
         n = round(2 * abs(off))
         self.edit.setTextMargins(0, n if off < 0 else 0, 0, n if off > 0 else 0)
 
     def kick(self, direction):
         """The number went up (1) or down (-1)."""
-        if not direction or not self.edit.isVisible():
+        if not direction or (self.edit is not None and not self.edit.isVisible()):
             return
         running = self.anim.state() == QVariantAnimation.Running
         if running and direction == self.dir and self.anim.currentTime() < HOP_MS * 0.3:

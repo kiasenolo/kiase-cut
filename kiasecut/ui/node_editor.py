@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, 
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
-from . import appevents
+from . import appevents, motion
 from .wheel import pinch as wheel_pinch
 from .wrapdrag import WrapDrag
 
@@ -121,6 +121,7 @@ class NodeItem(QGraphicsItem):
             d = ng.node_def(node)
             self.linked |= {n for n, p in d.input_param.items() if ng.PARAM + p in self.linked}
         self.drag = None                                    # a field being dragged: {...}
+        self.hops = {}                                      # (row y, cell) -> motion.Hop: a number that hops as it is dragged
         self.w = max(MIN_WIDTH, float(node.get("width", WIDTH)))
         self.sizing = None                                  # while widened: (scene x at the press, width then)
         self.grip = None                                    # while a words box is dragged taller: {scene y at the press, its lines then}
@@ -531,14 +532,14 @@ class NodeItem(QGraphicsItem):
             box = self.field_rect(r)
             self._box(p, box, bg)
             p.setPen(text if not dim else QColor(text.red(), text.green(), text.blue(), 110))
-            p.drawText(box, Qt.AlignCenter, number_text(q, v))
+            self._number_text(p, box, self.hopped(box, r), number_text(q, v))
         elif q.type in ("vec2", "vec3"):
             n = 3 if q.type == "vec3" else 2
             for i in range(n):
                 box = self.field_rect(r, i, n)
                 self._box(p, box, bg)
                 p.setPen(text)
-                p.drawText(box, Qt.AlignCenter, number_text(q, (list(v) + [0.0] * 3)[i]))
+                self._number_text(p, box, self.hopped(box, r, i), number_text(q, (list(v) + [0.0] * 3)[i]))
         elif q.type == "bool":
             box = QRectF(self.w - 10 - ROW + 4, r["y"] + 4, ROW - 8, ROW - 8)
             self._box(p, box, bg)
@@ -692,7 +693,29 @@ class NodeItem(QGraphicsItem):
             value = d["v0"] + round(dy / 2) * step_for(q) * k
         else:
             value = d["v0"] + dx * step_for(q) / 2 * k
+        before = self.editor.field_number(self.nid, r, d["cell"])
         self.editor.set_number(self.nid, r, d["cell"], value, final=False)
+        after = self.editor.field_number(self.nid, r, d["cell"])
+        if before is not None and after is not None and after != before:
+            self.hop(r, d["cell"]).kick(1 if after > before else -1)
+
+    def _number_text(self, p, box, at, text):
+        """text centred in at, which may be box lifted or lowered by a hop: it does not show outside box."""
+        p.save()
+        p.setClipRect(box)
+        p.drawText(at, Qt.AlignCenter, text)
+        p.restore()
+
+    def hop(self, r, cell):
+        key = (r["y"], cell)
+        if key not in self.hops:
+            self.hops[key] = motion.Hop(apply=lambda off: self.update())
+        return self.hops[key]
+
+    def hopped(self, box, r, cell=0):
+        """box moved by the hop of the number in it (up is positive)."""
+        h = self.hops.get((r["y"], cell))
+        return box.translated(0, -h.off) if h is not None and h.off else box
 
     def mouseReleaseEvent(self, e):
         grip, self.grip = self.grip, None

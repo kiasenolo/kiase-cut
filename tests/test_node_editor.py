@@ -374,6 +374,30 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, at, at + QPointF(0, 20))                          # down: less
         self.assertAlmostEqual(got[-1][2], 0.5, 4)
 
+    def test_a_number_hops_up_as_it_grows_and_down_as_it_shrinks_inside_its_box(self):
+        from kiasecut.ui import motion
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        at = self.row_pos(ed, "math1", "value")
+        it = ed.view.items_by_id["math1"]
+        row = next(r for r in it.rows if r["kind"] == "param" and r["p"].name == "value")
+        v = ed.view
+        pa = v.mapFromScene(at)
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, pa)
+        QTest.mouseMove(v.viewport(), v.mapFromScene(at + QPointF(0, -20)))
+        hop = it.hops[(row["y"], 0)]
+        self.assertEqual(hop.off, motion.HOP_PX)                        # (up: more, the number is lifted)
+        box = it.field_rect(row)
+        self.assertEqual(it.hopped(box, row).top(), box.top() - motion.HOP_PX)
+        QTest.mouseMove(v.viewport(), v.mapFromScene(at + QPointF(0, 20)))
+        self.assertEqual(hop.off, -motion.HOP_PX)
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(at + QPointF(0, 20)))
+        QTest.qWait(motion.HOP_MS + 100)
+        self.assertEqual(hop.off, 0.0)
+        self.assertEqual(it.hopped(box, row), box)
+
     def test_number_scrub_is_endless_and_gives_the_pointer_back(self):
         from kiasecut.ui import wrapdrag
         def build(e):

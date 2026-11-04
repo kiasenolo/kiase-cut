@@ -889,19 +889,18 @@ class Strip(QWidget):
             enabled = a.isEnabled()
             white = self.fader.go(a.text(), 1.0 if enabled and a is active else 0.0)
             first = n == 0
-            half = s / 2.0                                                   # (the tab is centred on its box: the lean is half either side of the middle,
-            if white > 0.005:                                                #  so the menu that opens under the box is under the tab, not off to one side)
-                foot = r.left() if first else r.left() - half                # (the first is flat on its left, it is the window's edge)
-                top = r.left() if first else r.left() + half
+            if white > 0.005:                                                # (the foot of a tab is the left of its box, where the menu that opens under it
+                foot = r.left()                                              #  starts; the top leans a whole lean to the right of it. The first is flat on its
+                top = r.left() if first else r.left() + s                    #  left, it is the window's edge.)
                 lap = 0.75                                                   # (a little over the joint: two edges of one line leave a faint seam)
                 p.setPen(Qt.NoPen)
                 p.setBrush(QColor(255, 255, 255, round(255 * white)))
-                p.drawPolygon(QPolygonF([QPointF(top, r.top()), QPointF(r.right() + half + lap, r.top()),
-                                         QPointF(r.right() - half + lap, r.bottom()), QPointF(foot, r.bottom())]))
+                p.drawPolygon(QPolygonF([QPointF(top, r.top()), QPointF(r.right() + s + lap, r.top()),
+                                         QPointF(r.right() + lap, r.bottom()), QPointF(foot, r.bottom())]))
             base = bar.palette().color(QPalette.Active if enabled else QPalette.Disabled, QPalette.WindowText)
             p.setPen(BLACK if enabled and white > 0.5 else base)                 # (not mixed: half way the text would be the colour of the ground)
             p.setFont(bar.font())
-            p.drawText(r, Qt.AlignCenter | Qt.TextHideMnemonic, a.text())
+            p.drawText(r.translated(s / 4.0 if first else s / 2.0, 0), Qt.AlignCenter | Qt.TextHideMnemonic, a.text())   # (centred in the tab)
         p.end()
 
 

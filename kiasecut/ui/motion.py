@@ -1,13 +1,14 @@
 """Motion for the interface, after Kilo's CSS (styles/globals.scss: every property transitions in .5 s on cubic-bezier(0, .5, 0, 1);
 kiaseStyle.scss: a button turns white at once under the mouse, fades back slowly when it leaves, goes grey in .3 s when pressed).
 
-Qt's style sheets cannot animate, so a button is not drawn by its style sheet but by look.Style, from the two colours a Fader
-keeps for it: the fill and the ink (text and icon). The Fader watches the button (mouse in and out, press, release, checked, enabled)
-and moves both colours to what the new state asks, in the time that state asks (0 for the mouse arriving: no tween).
+Qt's style sheets cannot animate (and the program-wide `QWidget { color }` rule makes Qt's style sheet style draw a button's text
+itself, in that colour), so a push or tool button paints itself: its Fader takes the paint event and draws the fill, icon and
+text from the two colours it keeps, the fill and the ink. The Fader watches the button (mouse in and out, press, release, checked,
+enabled) and moves both colours to what the new state asks, in the time that state asks (0 for the mouse arriving: no tween).
 """
 import shiboken6
-from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QSize, Qt, QTimer, QVariantAnimation
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QPushButton, QToolButton
 
 REST = QColor("#262626")             # Color(.15)
@@ -27,6 +28,16 @@ def out_curve():
     c = QEasingCurve(QEasingCurve.BezierSpline)
     c.addCubicBezierSegment(QPointF(0, 0.5), QPointF(0, 1), QPointF(1, 1))
     return c
+
+
+def tinted(icon, size, colour, dpr=1.0, state=QIcon.Off):
+    """icon at size, every opaque part of it in colour."""
+    out = QPixmap(icon.pixmap(size, dpr, QIcon.Normal, state))
+    p = QPainter(out)
+    p.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    p.fillRect(out.rect(), colour)
+    p.end()
+    return out
 
 
 def mix(a, b, t):
@@ -84,7 +95,68 @@ class Fader(QObject):
         self.bg, self.ink = mix(self.src[0], self.dst[0], t), mix(self.src[1], self.dst[1], t)
         self.button.update()
 
+    def dark(self):
+        """The ink is black-ish (the fill white-ish): icons are then drawn in it too."""
+        return self.ink.alpha() == 255 and self.ink.lightness() < 250
+
+    def paint(self):
+        """The whole button: fill, then icon and text in the ink."""
+        b = self.button
+        p = QPainter(b)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(b.rect(), self.bg)
+        tool = isinstance(b, QToolButton)
+        text = b.text().replace("&&", "\0").replace("&", "").replace("\0", "&")
+        if tool and b.toolButtonStyle() == Qt.ToolButtonIconOnly and not b.icon().isNull():
+            text = ""
+        has_menu = b.menu() is not None and (not tool or b.popupMode() != QToolButton.DelayedPopup)
+        area = b.rect().adjusted(0, 0, -14 if has_menu else 0, 0)
+        icon = b.icon()
+        enabled = b.isEnabled()
+        size = b.iconSize() if b.iconSize().isValid() else QSize(16, 16)
+        pm = None
+        if not icon.isNull():
+            dpr = b.devicePixelRatioF()
+            state = QIcon.On if b.isChecked() else QIcon.Off
+            if not enabled:
+                pm = icon.pixmap(size, dpr, QIcon.Disabled, state)
+            elif self.dark():
+                pm = tinted(icon, size, self.ink, dpr, state)
+            else:
+                pm = icon.pixmap(size, dpr, QIcon.Normal, state)
+        fm = b.fontMetrics()
+        gap = 4 if text and pm is not None else 0
+        tw = fm.horizontalAdvance(text) if text else 0
+        under = tool and b.toolButtonStyle() == Qt.ToolButtonTextUnderIcon and text and pm is not None
+        if under:
+            total_h = size.height() + 2 + fm.height()
+            top = area.center().y() - total_h // 2
+            p.drawPixmap(QRect(area.center().x() - size.width() // 2, top, size.width(), size.height()), pm)
+            p.setPen(self.ink)
+            p.drawText(QRect(area.left(), top + size.height() + 2, area.width(), fm.height()), Qt.AlignHCenter | Qt.AlignTop, text)
+        else:
+            total = (size.width() if pm is not None else 0) + gap + tw
+            x = area.center().x() - total // 2 + (1 if total % 2 else 0)
+            if pm is not None:
+                p.drawPixmap(QRect(x, area.center().y() - size.height() // 2, size.width(), size.height()), pm)
+                x += size.width() + gap
+            if text:
+                p.setPen(self.ink)
+                p.drawText(QRect(x, area.top(), tw + 2, area.height()), Qt.AlignVCenter | Qt.AlignLeft, text)
+        if has_menu:                                  # (the chevron of a button that opens a menu)
+            from . import look
+            chevron = look.arrow_icon("-down")
+            at = QRect(b.rect().right() - 15 + 1, b.height() // 2 - 6, 12, 12)
+            if self.dark():
+                p.drawPixmap(at, tinted(chevron, QSize(12, 12), self.ink, b.devicePixelRatioF()))
+            else:
+                chevron.paint(p, at)
+        p.end()
+
     def eventFilter(self, obj, e):
+        if e.type() == QEvent.Paint:
+            self.paint()
+            return True
         if e.type() in (QEvent.Enter, QEvent.Leave, QEvent.MouseButtonPress, QEvent.MouseButtonRelease,
                         QEvent.MouseButtonDblClick, QEvent.EnabledChange, QEvent.Show, QEvent.KeyPress, QEvent.KeyRelease):
             QTimer.singleShot(0, self.sync)          # (after the button has handled it: isDown and the rest are then true)

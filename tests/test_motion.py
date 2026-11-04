@@ -83,11 +83,11 @@ class FaderTest(unittest.TestCase):
     def test_icons_are_drawn_black_on_a_white_button_and_left_alone_otherwise(self):
         host, _, tool = shown()
         f = motion.of(tool)
-        self.assertFalse(look.Style._dark_ink(f))                 # (at rest: the icon as it is)
+        self.assertFalse(f.dark())                 # (at rest: the icon as it is)
         QTest.mouseMove(tool, QPoint(8, 8))
         QTest.qWait(30)
-        self.assertTrue(look.Style._dark_ink(f))
-        pm = look.Style._tinted(tool.icon(), QSize(16, 16), f.ink)
+        self.assertTrue(f.dark())
+        pm = motion.tinted(tool.icon(), QSize(16, 16), f.ink)
         img = pm.toImage()
         opaque = [img.pixelColor(x, y) for x in range(img.width()) for y in range(img.height()) if img.pixelColor(x, y).alpha() > 200]
         self.assertTrue(opaque)

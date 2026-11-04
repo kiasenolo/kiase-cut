@@ -278,77 +278,19 @@ class Style(wheel.Style):
 
     def polish(self, widget):
         super().polish(widget)
-        motion.attach(widget)                         # (a push or tool button: its fill and ink are drawn from the Fader)
-
-    def unpolish(self, widget):
-        super().unpolish(widget)
+        motion.attach(widget)                         # (a push or tool button paints itself from its Fader)
 
     def drawPrimitive(self, element, option, painter, widget=None):
-        fader = motion.of(widget)
-        if fader is not None and element in (QStyle.PE_PanelButtonCommand, QStyle.PE_PanelButtonTool):
-            painter.fillRect(option.rect, fader.bg)
-            return
-        if fader is not None and element in (QStyle.PE_FrameDefaultButton, QStyle.PE_FrameButtonBevel, QStyle.PE_FrameButtonTool):
-            return
         side = SIDES.get(element)
         if side:                                      # every arrow is Breeze's chevron
             size = min(16, option.rect.width(), option.rect.height())
             r = QRect(0, 0, size, size)
             r.moveCenter(option.rect.center())
-            if fader is not None and self._dark_ink(fader):      # (on a white button: black)
-                painter.drawPixmap(r, self._tinted(arrow_icon("-" + side), r.size(), fader.ink))
-            else:
-                arrow_icon("-" + side).paint(painter, r)
+            arrow_icon("-" + side).paint(painter, r)
             return
         super().drawPrimitive(element, option, painter, widget)
 
-    @staticmethod
-    def _dark_ink(fader):
-        return fader.ink.alpha() == 255 and fader.ink.lightness() < 250
-
-    @staticmethod
-    def _tinted(icon, size, colour, state=QIcon.Off):
-        """icon at size, every opaque part of it in colour."""
-        dpr = QGuiApplication.primaryScreen().devicePixelRatio() if QGuiApplication.primaryScreen() else 1.0
-        pm = icon.pixmap(size, dpr, QIcon.Normal, state)
-        out = QPixmap(pm)
-        painter = QPainter(out)
-        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-        painter.fillRect(out.rect(), colour)
-        painter.end()
-        return out
-
-    def _inked(self, option, fader, icon_size=None):
-        """option (a button's) with its palette's text and its icon in the Fader's ink, and no state that makes the base draw a
-        panel or a hovered icon."""
-        opt = type(option)(option)
-        pal = QPalette(opt.palette)
-        for group in (QPalette.Active, QPalette.Inactive, QPalette.Disabled):
-            for role in (QPalette.ButtonText, QPalette.WindowText, QPalette.Text):
-                pal.setColor(group, role, fader.ink)
-        opt.palette = pal
-        opt.state &= ~(QStyle.State_MouseOver | QStyle.State_Sunken | QStyle.State_Raised)
-        if self._dark_ink(fader) and not opt.icon.isNull() and opt.state & QStyle.State_Enabled:
-            size = opt.iconSize if opt.iconSize.isValid() and not opt.iconSize.isEmpty() else QSize(16, 16)
-            state = QIcon.On if opt.state & QStyle.State_On else QIcon.Off
-            opt.icon = QIcon(self._tinted(opt.icon, size, fader.ink, state))
-        return opt
-
-    def drawComplexControl(self, control, option, painter, widget=None):
-        fader = motion.of(widget)
-        if control == QStyle.CC_ToolButton and fader is not None and isinstance(option, QStyleOptionToolButton):
-            painter.fillRect(option.rect, fader.bg)
-            opt = self._inked(option, fader)
-            opt.state &= ~QStyle.State_On
-            super().drawComplexControl(control, opt, painter, widget)
-            return
-        super().drawComplexControl(control, option, painter, widget)
-
     def drawControl(self, element, option, painter, widget=None):
-        fader = motion.of(widget)
-        if fader is not None and element == QStyle.CE_PushButtonLabel and isinstance(option, QStyleOptionButton):
-            super().drawControl(element, self._inked(option, fader), painter, widget)
-            return
         if element == QStyle.CE_ShapedFrame and option.frameShape in (QFrame.HLine, QFrame.VLine):
             painter.fillRect(QRect(option.rect.x(), option.rect.center().y(), option.rect.width(), 1)
                              if option.frameShape == QFrame.HLine else

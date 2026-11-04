@@ -35,7 +35,6 @@ QMenu { background: #1a1a1a; border: none; border-radius: 5px; padding: 10px 0; 
 QMenu::item { padding: 5px 30px 5px 28px; background: transparent; color: #cccccc; }
 QMenu::item:disabled { color: rgba(255, 255, 255, 77); }
 QMenu::item:selected { background: rgba(255, 255, 255, 26); color: #ffffff; }
-QMenuBar::item:selected { background: rgba(255, 255, 255, 26); }
 QMenu::separator { height: 2px; background: #4d4d4d; margin: 5px 8px; }
 QMenu::indicator { width: 14px; height: 14px; left: 4px; }
 QMenu::indicator:checked { image: url(@/check.svg); }
@@ -272,6 +271,7 @@ class Style(wheel.Style):
         super().polish(widget)
         motion.attach(widget)                         # (a push or tool button paints itself from its Fader)
         motion.attach_field(widget)                   # (an input field has its outline drawn over it)
+        motion.attach_menubar(widget)                 # (a menu bar's titles are white tabs under the mouse)
         smoothscroll.attach(widget)                   # (the wheel glides)
         motion.attach_bar(widget)                     # (a scroll bar's thumb is drawn over it)
         motion.attach_tabs(widget)                    # (a tab bar moves its tabs' colours)
@@ -291,6 +291,9 @@ class Style(wheel.Style):
         super().drawPrimitive(element, option, painter, widget)
 
     def drawControl(self, element, option, painter, widget=None):
+        if element == QStyle.CE_MenuBarItem and isinstance(option, QStyleOptionMenuItem):
+            motion.paint_menubar_item(painter, option, widget)
+            return
         if element == QStyle.CE_TabBarTabShape and isinstance(widget, QTabBar):
             motion.paint_tab(painter, option, widget)
             return
@@ -361,6 +364,8 @@ class Style(wheel.Style):
             size = QSize(contents.width() + (9 if flat else 19), contents.height() + (9 if flat else 15))
             if isinstance(option, QStyleOptionToolButton) and option.features & QStyleOptionToolButton.HasMenu:
                 size.setWidth(size.width() + 14)
+        elif kind == QStyle.CT_MenuBarItem:           # room for the slanted tab drawn round the title
+            size = QSize(contents.width() + 2 * motion.MENU_PAD, contents.height() + 8)
         elif kind == QStyle.CT_ItemViewItem:            # Breeze's rows are 3 px roomier all round
             size = size.grownBy(QMargins(3, 3, 3, 3))
         elif kind == QStyle.CT_MenuItem and not isinstance(widget, QMenu) \

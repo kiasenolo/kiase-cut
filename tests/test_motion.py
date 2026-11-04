@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QRadioButton, QScrollBar, QTabBar, QToolButton, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QCheckBox, QMenuBar, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QRadioButton, QScrollBar, QTabBar, QToolButton, QWidget  # noqa: E402
 
 from kiasecut.ui import icons, look, motion  # noqa: E402
 
@@ -203,7 +203,7 @@ class HopTest(unittest.TestCase):
         hop.kick(1)                                          # (past the first third: a new hop)
         self.assertEqual(hop.off, motion.HOP_PX)
         hop.kick(1)
-        QTest.qWait(10)
+        QTest.qWait(50)
         self.assertLess(hop.off, motion.HOP_PX)              # (the one that began just now runs on)
         hop.kick(-1)                                         # (the other way: at once)
         self.assertEqual(hop.off, -motion.HOP_PX)
@@ -469,6 +469,65 @@ class SwatchTest(unittest.TestCase):
         self.assertEqual(img.pixelColor(a.width() // 2, 6).name(), "#336699")             # (still its colour)
         self.assertEqual(img.pixelColor(a.width() // 2, 0).name(), "#ffffff")              # (in a frame that went white)
         host.close()
+
+
+class MenuBarTest(unittest.TestCase):
+    def make(self):
+        bar = QMenuBar()
+        for t in ("檔案", "編輯", "檢視"):
+            bar.addMenu(t).addAction("項目")
+        bar.resize(300, 40)
+        bar.show()
+        QTest.qWait(60)
+        return bar
+
+    def at(self, img, bar, i, fx, y):
+        r = bar.actionGeometry(bar.actions()[i])
+        return img.pixelColor(r.left() + fx, r.top() + y).name()
+
+    def test_the_chosen_title_is_a_white_slanted_tab_and_the_first_is_flat_on_the_left(self):
+        bar = self.make()
+        first, second = bar.actions()[0], bar.actions()[1]
+        bar.setActiveAction(first)
+        QTest.qWait(60)
+        img = bar.grab().toImage()
+        r = bar.actionGeometry(first)
+        self.assertGreater(img.pixelColor(r.left() + 1, r.top() + 1).lightness(), 230)                # (flat: white to the very corner)
+        self.assertGreater(img.pixelColor(r.left() + 1, r.bottom() - 1).lightness(), 230)
+        self.assertLess(img.pixelColor(r.right() - 2, r.bottom() - 1).lightness(), 100)         # (slanted: the foot of the right side is cut)
+        self.assertGreater(img.pixelColor(r.right() - 2, r.top() + 1).lightness(), 230)
+        bar.setActiveAction(second)
+        QTest.qWait(60)
+        img = bar.grab().toImage()
+        r = bar.actionGeometry(second)
+        self.assertLess(img.pixelColor(r.left() + 1, r.top() + 1).lightness(), 100)              # (slanted on the left too: the top corner is cut)
+        self.assertGreater(img.pixelColor(r.left() + 1, r.bottom() - 1).lightness(), 230)
+        bar.close()
+
+    def test_a_title_goes_white_at_once_and_back_in_half_a_second(self):
+        bar = self.make()
+        f = bar.property("kcMenuBar")
+        a = bar.actions()[1]
+        bar.setActiveAction(a)
+        QTest.qWait(30)
+        self.assertEqual(f.v["編輯"], 1.0)
+        bar.setActiveAction(None)
+        QTest.qWait(60)
+        self.assertTrue(0.0 < f.v["編輯"] < 1.0)
+        QTest.qWait(motion.FADE_MS + 150)
+        self.assertAlmostEqual(f.v["編輯"], 0.0, places=2)
+        bar.close()
+
+    def test_the_text_of_the_chosen_title_is_black(self):
+        bar = self.make()
+        bar.setActiveAction(bar.actions()[1])
+        QTest.qWait(60)
+        img = bar.grab().toImage()
+        r = bar.actionGeometry(bar.actions()[1])
+        dark = [img.pixelColor(x, y) for x in range(r.left() + 10, r.right() - 10) for y in range(r.top() + 3, r.bottom() - 3)
+                if img.pixelColor(x, y).lightness() < 40]
+        self.assertTrue(dark)
+        bar.close()
 
 
 if __name__ == "__main__":

@@ -10,9 +10,9 @@ import re
 
 import shiboken6
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QLineEdit, QPlainTextEdit, QPushButton,
-                               QRadioButton, QScrollBar, QStyle, QStyleOptionSlider, QTabBar, QTextEdit, QToolButton,
+                               QMenuBar, QRadioButton, QScrollBar, QStyle, QStyleOptionSlider, QTabBar, QTextEdit, QToolButton,
                                QWidget)
 
 REST = QColor("#262626")             # Color(.15)
@@ -744,3 +744,73 @@ class Thumb(QWidget):
 def attach_bar(widget):
     if isinstance(widget, QScrollBar) and widget.property("kcThumb") is None:
         widget.setProperty("kcThumb", Thumb(widget))
+
+
+# -- menu bar -------------------------------------------------------------------------------------------------------------
+# After Kilo's window menu (data/components/Window): the title under the mouse or with its menu open is a white tab, slanted
+# 30 degrees ("/" on both sides: the foot is further left than the top), with black text; the first one's left side is flat, it
+# is the window's edge. White at once when it is chosen, back to nothing in .5 s when it is not, as a button.
+
+SLANT = 0.5773502691896257           # tan 30 degrees
+MENU_PAD = 14                        # room left and right of a title's text
+
+
+class MenuBarFader(QObject):
+    def __init__(self, bar):
+        super().__init__(bar)
+        self.bar = bar
+        self.v = {}                  # title -> how white it is, 0 to 1
+        self.anims = {}
+
+    def go(self, key, target):
+        cur = self.v.setdefault(key, 0.0)
+        a = self.anims.get(key)
+        if a is not None and a.state() == QVariantAnimation.Running and a.endValue() == target:
+            return cur
+        if cur == target and (a is None or a.state() != QVariantAnimation.Running):
+            return cur
+        if a is None:
+            a = self.anims[key] = QVariantAnimation(self)
+            a.setEasingCurve(out_curve())
+            a.valueChanged.connect(lambda v, k=key: self._set(k, float(v)))
+        a.stop()
+        if target >= cur or not self.bar.isVisible():            # (white at once; the way back takes its time)
+            self.v[key] = target
+            return target
+        a.setStartValue(cur)
+        a.setEndValue(target)
+        a.setDuration(FADE_MS)
+        a.start()
+        return cur
+
+    def _set(self, key, v):
+        self.v[key] = v
+        self.bar.update()
+
+
+def attach_menubar(widget):
+    if isinstance(widget, QMenuBar) and widget.property("kcMenuBar") is None:
+        widget.setProperty("kcMenuBar", MenuBarFader(widget))
+
+
+def paint_menubar_item(painter, option, widget):
+    from PySide6.QtGui import QPolygonF
+    r = QRectF(option.rect)
+    enabled = bool(option.state & QStyle.State_Enabled)
+    chosen = enabled and bool(option.state & (QStyle.State_Selected | QStyle.State_Sunken))
+    f = widget.property("kcMenuBar") if widget is not None else None
+    white = f.go(option.text, 1.0 if chosen else 0.0) if f is not None else (1.0 if chosen else 0.0)
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing)
+    if white > 0.005:
+        s = r.height() * SLANT
+        first = widget is not None and widget.actions() and widget.actionGeometry(widget.actions()[0]).left() == option.rect.left()
+        left_top = r.left() if first else r.left() + s
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(255, 255, 255, round(255 * white)))
+        painter.drawPolygon(QPolygonF([QPointF(left_top, r.top()), QPointF(r.right(), r.top()),
+                                       QPointF(r.right() - s, r.bottom()), QPointF(r.left(), r.bottom())]))
+    base = option.palette.color(QPalette.Active if enabled else QPalette.Disabled, QPalette.WindowText)
+    painter.setPen(mix(base, BLACK, white) if enabled else base)
+    painter.drawText(r, Qt.AlignCenter | Qt.TextHideMnemonic, option.text)
+    painter.restore()

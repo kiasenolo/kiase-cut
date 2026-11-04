@@ -70,6 +70,19 @@ class PanelTests(unittest.TestCase):
     def tearDown(self):
         self.win.close()
 
+    def test_library_tabs_for_compounds_and_vfx_nodes_come_and_go_with_what_they_list(self):
+        for key in ("compounds", "vfxnodes"):
+            self.pn.set_usable(key, False)
+            QApplication.processEvents()
+            self.assertFalse(self.pn[key].isVisible(), key)
+            self.pn.set_usable(key, True)
+            QApplication.processEvents()
+            self.assertTrue(self.pn[key].isVisible(), key)
+        self.pn.set_usable("compounds", False)                       # (one closed on purpose stays closed)
+        self.pn["vfxnodes"].close()
+        self.pn.set_usable("vfxnodes", True)
+        self.assertFalse(self.pn["vfxnodes"].isVisible())
+
     def test_edit_layout_tabs(self):
         tabs = {d.key for d in self.win.tabifiedDockWidgets(self.pn["library"])}
         self.assertEqual(tabs, {"assets", "userlib", "vfx", "vfxnodes", "compounds"})

@@ -56,7 +56,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import appevents, exprdialog, icons, inplace, look, mapdialog, middledrag, wheel
+from . import appevents, exprdialog, icons, inplace, look, mapdialog, menuanim, middledrag, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -6306,6 +6306,7 @@ def run(argv):
     app = QApplication(argv)
     look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area
+    menuanim.install()                              # menus open from big and blurred to what they are
     # the logo (Icon.svg beside the package; Icon.free is its Lunacy source) on every window;
     # Wayland desktops take the icon from kiasecut.desktop instead, found by this name
     app.setDesktopFileName("kiasecut")

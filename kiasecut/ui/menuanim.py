@@ -7,6 +7,10 @@ QGraphicsEffect on it draws it clipped to the part from the top down that the an
 the animation ends. A QMenu window is made frameless and without the window manager's shadow (square, flat).
 install() watches for menus and combo lists being made ready and being shown.
 """
+import os
+import sys
+import time
+
 import shiboken6
 from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtWidgets import QApplication, QGraphicsEffect, QMenu, QWidget
@@ -14,6 +18,13 @@ from PySide6.QtWidgets import QApplication, QGraphicsEffect, QMenu, QWidget
 from . import appevents, motion
 
 DURATION_MS = 500
+DEBUG = bool(os.environ.get("KIASECUT_MENUANIM_DEBUG"))      # set it and run the program from a terminal: every opening is logged
+
+
+def log(menu, what):
+    if DEBUG:
+        title = menu.title() if hasattr(menu, "title") else type(menu).__name__
+        print(f"[menuanim {time.monotonic() % 1000:8.3f}] {what:<8} {title or type(menu).__name__} @{id(menu) & 0xffff:04x}", file=sys.stderr, flush=True)
 
 
 def curve():
@@ -45,12 +56,14 @@ class Pop(QGraphicsEffect):
                                QRectF(0, 0, pm.width(), pm.height() * t))
 
     def _begin(self):
+        log(self.parent(), "begin")
         if self.anim is not None and shiboken6.isValid(self.anim) and self.anim.state() != QVariantAnimation.Running:
             self.anim.start()
 
 
 def pop(menu):
     """Prepare the opening of menu (shown just now): it runs from the first time the menu is drawn."""
+    log(menu, "shown")
     old = menu.property("kcPop")
     if old is not None and shiboken6.isValid(old):         # (the one of an earlier opening that has not finished: gone, with its effect)
         old.stop()
@@ -73,6 +86,7 @@ def pop(menu):
             menu.setGraphicsEffect(None)
         if menu.property("kcPop") is anim:
             menu.setProperty("kcPop", None)
+        log(menu, "done")
         anim.deleteLater()                                 # (one animation made for each opening: none left behind on a menu that is opened often)
 
     anim.valueChanged.connect(step)

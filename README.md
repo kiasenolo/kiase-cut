@@ -7,7 +7,73 @@
 ### 哦對了 我不會python 所以這個專案裡面的東西我都不懂
 ### 出事了 你丟issues 我只會 自己復現 -> 給AI修
 ### 這東西不會有多少人工介入
-# 前言 （這段是KILO自己加的）
+# 目前各版本狀態 （上次更新：2026 11 05）
+## Arch Linux （主要 穩定）
+目前我確定 能用且相對穩定的版本  
+所有的功能都是在這裡測試的  
+所以我說能用 一般都是保證Linux能用  
+## Windows （不確定）
+通常都不會有太大的問題 穩定性和體驗可能都跟linux一樣  
+至少在節點功能出現之前 我是測試過的 他是沒問題的 之後我就沒有測試過了  
+但一切 都要等我禮拜五回家我測試過了 我才可以給標準答案  
+## Android （極度不穩定）
+絕對の不穩定性 隨便做幾件事情 然後就....謝謝....閃退了  
+但我實測過 他能開我還沒剪完的 The Looping Room  
+和 我已經剪完的 [GoreLabs 生命體狀態音樂](https://www.youtube.com/watch?v=_DzymJIKEag) （對 其實這部是KiaseCut剪的  
+沒認真測試過節點功能 所以這個東西絕對不穩定  
+然後隨便玩個效果器 誒嘿 卡了 就 反正 隨時閃退 這個叫 *常態*  
+雖然他的可用性真的超出我的想像就是了  
+# 如何使用
+## 第零步 // 前置條件
+### Windows
+先去裝 Git 你要把東西clone下來你需要他  
+連接：https://git-scm.com/install/windows  
+
+再來裝 kdenlive  
+連接：https://kdenlive.org/  
+我知道沒有人會去動 但 就是 裝預設的路徑就好  
+我的渲染核心是mlt 所以mlt是我爸爸  
+ffmpeg也會跟著kdenlive一起來 ffmpeg也是我爸爸  
+其實如果你有裝Shotcut也是可以的 但是你要額外配置ffmpeg  
+我這邊懶惰教 索性kdenlive 解決一切  
+
+然後去裝python 然後加到環境變數  
+連接：https://www.python.org/ftp/python/3.14.10/python-3.14.10-amd64.exe  
+**然後 切記 切記 切記**  
+**勾選下面的 `Add python.exe to PATH`**  
+**你不勾 用不了**  
+### Arch Linux
+裝這四個基礎套件  
+`sudo pacman -S git python mlt ffmpeg`  
+然後就...沒了 就這樣  
+## 第一步 // clone
+```
+cd 你喜歡的/資料夾//或者//你平時放/應用程式/的地方
+git clone https://github.com/kiasenolo/kiase-cut
+```
+## 第二步 // 打開
+### Windows
+點 `start_kiasecut.bat`
+### Arch Linux
+先 `chmod +x start_kiasecut.sh` ( 只需要做第一次 )  
+然後再 `./start_kiasecut.sh`
+### 初次啟動
+第一次開會等半年（開玩笑）  
+給他一點耐心 同時確保自己的網絡環境不會太差  
+就好了 他把所有東西裝好就基本沒事了  
+會吃掉你保守1.5GB的儲存空間  
+## 啊你的Android版本勒？
+上面也講過了 不穩定 而且我不熟悉他的build  
+所以我可能要跟AI大戰三百萬回合我才可以寫出android的build教學  
+因為這個東西會牽扯到一大堆 sdk java 什麼鬼的 而且我只用linux build過  
+windows沒測試 所以就 有興趣自己研究 我這邊暫時不提供  
+等到我覺得時機成熟 我再寫教學  
+但是這個禮拜我的AI使用限制爆了  
+所以要等下禮拜我繼續浪費token讓AI研究&優化android版本  
+# 檢查更新
+Windows : `update.bat`  
+Linux : `update.sh` ( 記得先 `chmod +x update.sh` 然後只需要做第一次 )  
+# 前言
 簡單來説 我的慣用系統是linux
 啊FL和我的那一堆VST 經過AI幫我部署後 幾乎全部都能在Linux用了（雖然有時不穩定）  
 唯獨剪映 他真的 我哭死 這東西似乎用了什麽特殊手段 導致用wine開 根本用不了  

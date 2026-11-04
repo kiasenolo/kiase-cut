@@ -110,6 +110,51 @@ class MenuAnimTest(unittest.TestCase):
         self.assertIsNone(m.graphicsEffect())
         host.close()
 
+    def test_a_menu_slow_to_come_up_still_plays_its_whole_animation(self):
+        host = QWidget()
+        host.resize(200, 100)
+        host.show()
+        m = QMenu(host)
+        m.addAction("復原")
+        m.popup(host.mapToGlobal(QPoint(10, 10)))
+        QTest.qSleep(menuanim.DURATION_MS + 300)                   # (the program is busy: nothing of the menu is drawn yet)
+        QTest.qWait(30)
+        self.assertIsNotNone(m.graphicsEffect())                   # (the half second began when it was first drawn)
+        self.assertLess(m.graphicsEffect().t, 0.95)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.assertIsNone(m.graphicsEffect())
+        m.close()
+        host.close()
+
+    def test_a_menu_opened_again_and_again_keeps_no_animations_behind(self):
+        host, m = opened()
+        for i in range(8):
+            QTest.qWait([0, 50, 600][i % 3])
+            m.close()
+            QTest.qWait(20)
+            m.popup(host.mapToGlobal(QPoint(10, 10)))
+        QTest.qWait(menuanim.DURATION_MS + 300)
+        from PySide6.QtCore import QVariantAnimation
+        self.assertEqual(len(m.findChildren(QVariantAnimation)), 0)
+        self.assertIsNone(m.graphicsEffect())
+        self.assertIsNone(m.property("kcPop"))
+        m.close()
+        host.close()
+
+    def test_opening_again_while_it_was_still_opening_starts_a_clean_one(self):
+        host, m = opened()
+        QTest.qWait(200)
+        m.close()
+        m.popup(host.mapToGlobal(QPoint(10, 10)))
+        eff = m.graphicsEffect()
+        self.assertEqual(eff.t, 0.0)
+        QTest.qWait(60)
+        self.assertGreater(eff.t, 0.0)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.assertIsNone(m.graphicsEffect())
+        m.close()
+        host.close()
+
     def test_opening_again_starts_over(self):
         host, m = opened()
         QTest.qWait(100)

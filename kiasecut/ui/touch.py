@@ -347,13 +347,26 @@ class _Gestures(QObject):
                                  at, at, QPointF(g), value, QPointF())
         QApplication.sendEvent(self.w, ev)
 
+    def _scroll_areas(self, pixels):
+        """Move the scroll area under the finger by pixels; what it cannot take (it fits, or it is at its end) goes to the scroll
+        area around it - the panels whose lists are as tall as their items are scrolled by the tab they are in."""
+        areas = []
+        w = self.w.parentWidget()
+        while w is not None:
+            if isinstance(w, QAbstractScrollArea):
+                areas.append(w)
+            w = w.parentWidget()
+        for d, bar_of in ((pixels.x(), QAbstractScrollArea.horizontalScrollBar), (pixels.y(), QAbstractScrollArea.verticalScrollBar)):
+            for area in areas if d else ():
+                bar = bar_of(area)
+                v = bar.value()
+                bar.setValue(v - d)
+                if bar.value() != v:
+                    break
+
     def _wheel(self, pixels, phase, at=None):
         if self.scroll:                                    # (a scroll area moves by the pixels, exactly: its wheel counts lines)
-            area = self.w.parentWidget()
-            if isinstance(area, QAbstractScrollArea):
-                for bar, d in ((area.horizontalScrollBar(), pixels.x()), (area.verticalScrollBar(), pixels.y())):
-                    if d:
-                        bar.setValue(bar.value() - d)
+            self._scroll_areas(pixels)
             return
         at = at if at is not None else QPointF(self.prev[0], self.prev[1])
         g = self.w.mapToGlobal(at.toPoint())

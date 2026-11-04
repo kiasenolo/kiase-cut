@@ -285,6 +285,33 @@ class ScrollAreaTest(unittest.TestCase):
             QTest.qWait(16)
         self.assertGreater(bar.value(), at_lift)
 
+    def test_a_list_that_cannot_scroll_leaves_it_to_the_area_around_it(self):
+        from PySide6.QtWidgets import QListWidget, QScrollArea, QVBoxLayout, QWidget
+        outer = QScrollArea()
+        outer.setWidgetResizable(True)
+        body = QWidget()
+        lay = QVBoxLayout(body)
+        inner = QListWidget()
+        for i in range(30):
+            inner.addItem(f"item {i}")
+        inner.setFixedHeight(900)                               # (as tall as its items: it has nothing to scroll)
+        inner.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        lay.addWidget(inner)
+        outer.setWidget(body)
+        outer.resize(300, 300)
+        outer.show()
+        g = touch.enable(inner.viewport(), scroll=True)
+        view = inner.viewport()
+        s = QTest.touchEvent(view, self.dev)
+        s.press(0, QPoint(100, 250), view).commit()
+        for y in (230, 200, 150, 100):
+            s.move(0, QPoint(100, y), view).commit()
+        s.release(0, QPoint(100, 100), view).commit()
+        g.glide.stop()
+        self.assertGreater(outer.verticalScrollBar().value(), 100)
+        view.removeEventFilter(g)
+        outer.close()
+
     def test_install_scrolling_covers_lists_shown_later_but_not_popups(self):
         from PySide6.QtWidgets import QListWidget
         touch.install_scrolling()

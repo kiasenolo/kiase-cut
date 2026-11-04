@@ -9,7 +9,8 @@ enabled) and moves both colours to what the new state asks, in the time that sta
 import shiboken6
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QSize, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
-from PySide6.QtWidgets import QPushButton, QToolButton
+from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QPushButton, QTextEdit,
+                               QToolButton, QWidget)
 
 REST = QColor("#262626")             # Color(.15)
 GREY = QColor("#808080")             # Color(.5): pressed, checked
@@ -173,3 +174,122 @@ def attach(widget):
     """Give a button its Fader (once)."""
     if isinstance(widget, (QPushButton, QToolButton)) and of(widget) is None:
         widget.setProperty("kcFader", Fader(widget))
+
+
+# -- input fields ---------------------------------------------------------------------------------------------------------
+# Kilo's input.scss: an outline of Color(.5), Color(.7) under the mouse; typing in it, the outline goes and a white line stays
+# under it, with a grey wash over the field - all moving in .3 s. The field keeps its style sheet's (invisible) 2 px border for room;
+# a Frame laid over it draws the real one from the two numbers a FieldFader moves: hover and focus, each 0 to 1.
+
+SIDE = QColor("#808080")             # Color(.5)
+SIDE_HOT = QColor("#b3b3b3")         # Color(.7)
+SIDE_OFF = QColor("#4d4d4d")         # (a disabled field's)
+WASH = 0.3                           # Color(.5, .3) over the field while it is typed in
+BORDER = 2
+IN_MS = 300                          # towards hover / focus
+
+
+class Frame(QWidget):
+    """The outline, line and wash of a field, over it (the mouse goes through)."""
+
+    def __init__(self, field):
+        super().__init__(field)
+        self.field = field
+        self.hover = self.focus = 0.0
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.setFocusPolicy(Qt.NoFocus)
+
+    def paintEvent(self, e):
+        r = self.rect()
+        p = QPainter(self)
+        side = mix(SIDE, SIDE_HOT, self.hover) if self.field.isEnabled() else SIDE_OFF
+        if self.focus > 0.01:
+            p.setCompositionMode(QPainter.CompositionMode_Lighten)    # (a wash that lightens the dark, leaves the text white)
+            p.setOpacity(WASH * self.focus)
+            p.fillRect(r, SIDE)
+            p.setOpacity(1.0)
+            p.setCompositionMode(QPainter.CompositionMode_SourceOver)
+        keep = QColor(side)
+        keep.setAlpha(round(side.alpha() * (1.0 - self.focus)))         # (the outline goes as the line comes)
+        w, h = r.width(), r.height()
+        p.fillRect(QRect(0, 0, w, BORDER), keep)
+        p.fillRect(QRect(0, BORDER, BORDER, h - 2 * BORDER), keep)
+        p.fillRect(QRect(w - BORDER, BORDER, BORDER, h - 2 * BORDER), keep)
+        p.fillRect(QRect(0, h - BORDER, w, BORDER), mix(side, WHITE, self.focus))
+        p.end()
+
+
+class FieldFader(QObject):
+    def __init__(self, field):
+        super().__init__(field)
+        self.field = field
+        self.frame = Frame(field)
+        self.anims = {}
+        for name in ("hover", "focus"):
+            a = QVariantAnimation(self)
+            a.setEasingCurve(out_curve())
+            a.valueChanged.connect(lambda v, n=name: self._set(n, float(v)))
+            self.anims[name] = a
+        field.installEventFilter(self)
+        QApplication.instance().focusChanged.connect(lambda *_: self.sync())
+        self._place()
+        self.frame.show()
+        self.frame.raise_()
+
+    def _place(self):
+        self.frame.setGeometry(self.field.rect())
+
+    def _set(self, name, v):
+        setattr(self.frame, name, v)
+        self.frame.update()
+
+    def wanted(self):
+        f = self.field
+        fw = QApplication.focusWidget()
+        focus = fw is not None and (fw is f or f.isAncestorOf(fw))
+        if isinstance(f, QComboBox) and f.view().isVisible():
+            focus = True
+        return f.underMouse() and f.isEnabled(), focus and f.isEnabled()
+
+    def sync(self):
+        if not shiboken6.isValid(self.field):
+            return
+        for name, want in zip(("hover", "focus"), self.wanted()):
+            a = self.anims[name]
+            target = 1.0 if want else 0.0
+            if a.endValue() == target and (a.state() == QVariantAnimation.Running or getattr(self.frame, name) == target):
+                continue
+            a.stop()
+            a.setStartValue(getattr(self.frame, name))
+            a.setEndValue(target)
+            a.setDuration(IN_MS if want else FADE_MS)
+            if self.field.isVisible():
+                a.start()
+            else:
+                self._set(name, target)
+
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if t == QEvent.Resize:
+            self._place()
+            self.frame.raise_()
+        elif t in (QEvent.Enter, QEvent.Leave, QEvent.EnabledChange, QEvent.Show, QEvent.FocusIn, QEvent.FocusOut):
+            QTimer.singleShot(0, self.sync)
+            if t == QEvent.Show:
+                self._place()
+                self.frame.raise_()
+        elif t == QEvent.ChildAdded:
+            QTimer.singleShot(0, self.frame.raise_)
+        return False
+
+
+def attach_field(widget):
+    """Give an input field its frame (once): line edits and text edits, spin boxes, combo boxes - not the line edit inside one."""
+    if not isinstance(widget, (QLineEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QTextEdit)):
+        return
+    if widget.property("kcField") is not None or isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox)):
+        return
+    if isinstance(widget, QLineEdit) and not widget.hasFrame():
+        return
+    widget.setProperty("kcField", FieldFader(widget))

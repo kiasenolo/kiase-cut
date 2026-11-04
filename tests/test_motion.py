@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QPushButton, QToolButton, QWidget, QHBoxLayout  # noqa: E402
+from PySide6.QtWidgets import QApplication, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QToolButton, QWidget  # noqa: E402
 
 from kiasecut.ui import icons, look, motion  # noqa: E402
 
@@ -99,6 +99,67 @@ class FaderTest(unittest.TestCase):
         push.setEnabled(False)
         QTest.qWait(motion.FADE_MS + 100)
         self.assertEqual(motion.of(push).bg, motion.FAINT)
+        host.close()
+
+
+def fields():
+    host = QWidget()
+    lay = QHBoxLayout(host)
+    line, spin, combo = QLineEdit("abc"), QDoubleSpinBox(), QComboBox()
+    combo.addItems(["一", "二"])
+    for w in (line, spin, combo):
+        lay.addWidget(w)
+    host.resize(420, 80)
+    host.show()
+    QTest.qWait(60)
+    QTest.mouseMove(host, QPoint(419, 79))
+    QTest.qWait(30)
+    return host, line, spin, combo
+
+
+class FieldTest(unittest.TestCase):
+    def test_every_kind_of_field_has_one_frame_and_the_line_edit_inside_a_spin_box_has_none(self):
+        host, line, spin, combo = fields()
+        for w in (line, spin, combo):
+            self.assertIsNotNone(w.property("kcField"))
+            self.assertEqual(w.property("kcField").frame.geometry(), w.rect())
+        self.assertIsNone(spin.lineEdit().property("kcField"))
+        host.close()
+
+    def test_the_outline_brightens_under_the_mouse_and_fades_back(self):
+        host, line, spin, _ = fields()
+        fr = line.property("kcField").frame
+        self.assertEqual(fr.hover, 0.0)
+        QTest.mouseMove(line, QPoint(10, 8))
+        QTest.qWait(motion.IN_MS + 150)
+        self.assertAlmostEqual(fr.hover, 1.0, places=2)
+        QTest.mouseMove(host, QPoint(419, 79))
+        QTest.qWait(motion.FADE_MS + 150)
+        self.assertAlmostEqual(fr.hover, 0.0, places=2)
+        QTest.mouseMove(spin.lineEdit(), QPoint(10, 8))             # (the mouse is on the line edit inside: the spin box is under it too)
+        QTest.qWait(motion.IN_MS + 150)
+        self.assertAlmostEqual(spin.property("kcField").frame.hover, 1.0, places=2)
+        host.close()
+
+    def test_typing_in_a_field_takes_the_outline_for_a_line_underneath(self):
+        host, line, spin, _ = fields()
+        fr = line.property("kcField").frame
+        line.setFocus()
+        QTest.qWait(motion.IN_MS + 150)
+        self.assertAlmostEqual(fr.focus, 1.0, places=2)
+        spin.lineEdit().setFocus()
+        QTest.qWait(motion.FADE_MS + 150)
+        self.assertAlmostEqual(fr.focus, 0.0, places=2)
+        self.assertAlmostEqual(spin.property("kcField").frame.focus, 1.0, places=2)
+        host.close()
+
+    def test_a_disabled_field_does_not_light_up(self):
+        host, line, _, _ = fields()
+        line.setEnabled(False)
+        QTest.qWait(60)
+        QTest.mouseMove(line, QPoint(10, 8))
+        QTest.qWait(motion.IN_MS + 100)
+        self.assertEqual(line.property("kcField").frame.hover, 0.0)
         host.close()
 
 

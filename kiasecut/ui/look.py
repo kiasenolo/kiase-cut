@@ -45,10 +45,8 @@ QToolBar::separator { background: @FRAME; width: 1px; height: 1px; margin: 4px; 
 QSplitter::handle { background: #000000; }
 QSplitter::handle:horizontal { width: 3px; }
 QSplitter::handle:vertical { height: 3px; }
-QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox { background: transparent; color: #ffffff; border: 2px solid #808080; border-radius: 0; padding: 0px 4px; selection-background-color: #808080; selection-color: #000000; placeholder-text-color: rgba(255, 255, 255, 128); }
-QDoubleSpinBox:hover, QSpinBox:hover, QPlainTextEdit:hover, QTextEdit:hover, QLineEdit:hover, QComboBox:hover { border-color: #b3b3b3; }
-QDoubleSpinBox:focus, QSpinBox:focus, QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus, QComboBox:focus, QComboBox:on { border: 2px solid transparent; border-bottom-color: #ffffff; background: rgba(128, 128, 128, 77); }
-QDoubleSpinBox:disabled, QSpinBox:disabled, QLineEdit:disabled, QComboBox:disabled { color: rgba(255, 255, 255, 128); border-color: #4d4d4d; }
+QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox { background: transparent; color: #ffffff; border: 2px solid transparent; border-radius: 0; padding: 0px 4px; selection-background-color: #808080; selection-color: #000000; placeholder-text-color: rgba(255, 255, 255, 128); }
+QDoubleSpinBox:disabled, QSpinBox:disabled, QLineEdit:disabled, QComboBox:disabled { color: rgba(255, 255, 255, 128); }
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; subcontrol-origin: border; }
 QSpinBox::up-button, QSpinBox::down-button { width: 16px; border: none; background: transparent; subcontrol-origin: border; }
 QSpinBox::up-button { subcontrol-position: top right; margin: 3px 3px 0 0; }
@@ -279,6 +277,7 @@ class Style(wheel.Style):
     def polish(self, widget):
         super().polish(widget)
         motion.attach(widget)                         # (a push or tool button paints itself from its Fader)
+        motion.attach_field(widget)                   # (an input field has its outline drawn over it)
 
     def drawPrimitive(self, element, option, painter, widget=None):
         side = SIDES.get(element)

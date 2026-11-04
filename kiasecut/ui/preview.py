@@ -106,7 +106,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineE
                                QWidget)
 
 from .. import components, curves, edit, fonts, nodegraph, project, render, textlayout, textvars
-from . import appevents, wheel
+from . import appevents, touch, wheel
 from .wrapdrag import WrapDrag
 
 US = 1_000_000
@@ -539,6 +539,7 @@ class Preview(QWidget):
         self.wrap = WrapDrag(self, lambda: QRectF(self.rect()))
         self.setMinimumSize(320, 180)
         self.setMouseTracking(True)
+        touch.enable(self)                      # (fingers: pinch zooms, two fingers move the view, a held one is a right click)
         self.accept_media = False               # media may be dropped on it (a static compound is open)
         self.drop_at = None                     # canvas point a drag from elsewhere is over
         self.drop_replace = []                  # boxes an Alt-drop there would give its media to
@@ -1115,7 +1116,7 @@ class Preview(QWidget):
                 p.drawLine(QPointF(0, g[1]), QPointF(self.W, g[1]))
 
     def _handle(self, p, pt, k, round_=False, color="#ffffff"):
-        s = HANDLE_PX * k
+        s = HANDLE_PX * touch.scale() * k
         p.setPen(QPen(QColor("#070707"), 1 * k))
         p.setBrush(QColor(color))
         if round_:
@@ -1249,7 +1250,7 @@ class Preview(QWidget):
         selected."""
         if not self.multi():
             return None
-        pad = PICK_PX * k
+        pad = PICK_PX * touch.scale() * k
         for axis, i, bars, _, width in self._gaps(self._live_boxes(), k):
             if any(QRectF(a, b).normalized().adjusted(-pad, -pad, pad, pad).contains(m) for a, b in bars):
                 return axis, i, width
@@ -1391,7 +1392,7 @@ class Preview(QWidget):
             elif name == "feather":
                 u, _ = g.down()
                 n = QPointF(-u.y(), u.x())
-                s = HANDLE_PX * k
+                s = HANDLE_PX * touch.scale() * k
                 p.setPen(QPen(QColor("#070707"), 1 * k))
                 p.setBrush(QColor("#ffb020"))
                 p.drawPolygon(QPolygonF([pt + u * s * 0.8, pt - u * s * 0.4 + n * s * 0.7, pt - u * s * 0.4 - n * s * 0.7]))
@@ -1416,7 +1417,7 @@ class Preview(QWidget):
 
     # -- mouse ------------------------------------------------------------------------------------
     def _near(self, a, b, k):
-        return math.hypot(a.x() - b.x(), a.y() - b.y()) <= PICK_PX * k
+        return math.hypot(a.x() - b.x(), a.y() - b.y()) <= PICK_PX * touch.scale() * k
 
     def mousePressEvent(self, e):
         if self.drag and self.drag.get("modal"):         # (the click that keeps a grab, or the right button that puts it back)
@@ -1924,7 +1925,7 @@ class Preview(QWidget):
         elif self.multi():
             boxes = self._live_boxes()
             l, r, t, b = self._union(boxes) if boxes else (0, 0, 0, 0)
-            pad = 2 * PICK_PX * k
+            pad = 2 * PICK_PX * touch.scale() * k
             if (gap := self._gap_at(m, k)) is not None:
                 cur, hover = (Qt.SizeHorCursor if gap[0] == "x" else Qt.SizeVerCursor), "handle"
             elif any(grabs(bx, x, y) for bx in boxes):
@@ -2008,6 +2009,8 @@ class Preview(QWidget):
         if hit is not None and hit.clip["type"] == "text" and not curves.is_animated(hit.clip["text"].get("content")):
             self.drag = None
             self.edit_text(hit)
+        elif hit is None:                                # (double click / tap on nothing: the whole picture)
+            self.view_fit()
 
     # -- typing a text clip's words on the canvas -------------------------------------------------
     def _screen_rect(self, box):

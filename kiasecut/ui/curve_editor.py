@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, components, curves, edit, fx, textvars
-from . import wheel
+from . import touch, wheel
 from .inspector import PARAMS, PLACE_ROWS, SpinBox
 from .wrapdrag import WrapDrag
 
@@ -111,6 +111,7 @@ class CurveCanvas(QWidget):
         super().__init__(parent)
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
+        touch.enable(self)
         self.setFocusPolicy(Qt.ClickFocus)
         self.curves = []             # [{label, factor, color(bool), keys, static, pen}]
         self.duration = 1
@@ -378,11 +379,11 @@ class CurveCanvas(QWidget):
         for ci in reversed(range(len(self.curves))):
             for i in range(len(self.curves[ci]["keys"])):
                 kp = self.key_point(ci, i)
-                if math.hypot(pos.x() - kp.x(), pos.y() - kp.y()) <= PICK_PX:
+                if math.hypot(pos.x() - kp.x(), pos.y() - kp.y()) <= PICK_PX * touch.scale():
                     return "key", (ci, i), None
         for ci, i in self._shown_handles():
             for side, hp in self._handle_points(ci, i):
-                if math.hypot(pos.x() - hp.x(), pos.y() - hp.y()) <= PICK_PX:
+                if math.hypot(pos.x() - hp.x(), pos.y() - hp.y()) <= PICK_PX * touch.scale():
                     return "handle", (ci, i), side
         return None, None, None
 

@@ -11,7 +11,8 @@ the CPU if that fails).
 Starting a stream takes 100-250 ms, more than the engine needs for one picture, so a
 stream is only started for a request that follows on from a recent one (playing, exporting,
 dragging forward); get() returns None for a jump, and when ffmpeg cannot read the file, and
-the caller then asks the engine for that one picture.
+the caller then asks the engine for that one picture (where there is no engine - Android -
+a jump starts a stream as well).
 
 Seek prefetch (Readers.prefetch): when the playhead stops after a jump, the player starts the
 streams it will need right there and decodes the next half second into memory, so pressing
@@ -24,6 +25,7 @@ import json
 import math
 import os
 import subprocess
+import sys
 import threading
 
 from PySide6.QtGui import QImage
@@ -35,6 +37,7 @@ US = 1_000_000
 AHEAD_S = 2.0                 # a request this far after the stream's position reads on to it
 FOLLOW_S = 0.5                # a request this soon after an earlier one (same file) starts a stream
 MAX_STREAMS = 6
+ENGINE = sys.platform != "android"      # (Android has no MLT engine: a jump starts a stream too)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _info = {}
@@ -183,7 +186,7 @@ class Readers:
             if img is not None:
                 s.used = self.clock
                 return img
-        if not follows:                          # a jump: the engine is quicker for one picture
+        if not follows and ENGINE:               # a jump: the engine is quicker for one picture
             return None
         return self._start(path, us, sw, sh, inf)
 

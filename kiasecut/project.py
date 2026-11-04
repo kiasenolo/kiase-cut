@@ -120,7 +120,8 @@ OLD_FORMATS = ("tesetoa",)        # the program's earlier name: those projects s
 VERSION = 5                     # 2: shared compounds; 3: several timelines; 4: project folder; 5: Glare 光源位置 y up
 DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
                                  "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
-                                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+                                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                                 "/system/fonts/NotoSansCJK-Regular.ttc")                 # (Android)
                      if os.path.exists(f)), None)
 
 

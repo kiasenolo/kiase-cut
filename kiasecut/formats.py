@@ -5,7 +5,10 @@ renderer (renderexport.py); MP4 / H.264 keeps the MLT export when the project al
 A format is a row of FORMATS; its video and audio encoder arguments come from video_args
 and audio_args. Quality is the export dialog's {crf, preset}: each codec maps it its way.
 """
+import subprocess
+
 from . import gpu
+from .build import find_ffmpeg
 
 STEM_FORMATS = ("wav", "flac", "mp3", "m4a")      # what a stem file (one track's sound) can be
 
@@ -51,6 +54,34 @@ FORMATS = (
 BY_KEY = {f.key: f for f in FORMATS}
 DEFAULT = "mp4_h264"
 EXTS = sorted({f.ext for f in FORMATS})
+
+
+# the encoders a format cannot do without (one of them): this ffmpeg may be built without some (Android's has no x265)
+NEEDS = {"mp4_h265": ("libx265", "hevc_nvenc"), "webm_vp9": ("libvpx-vp9",), "mp3": ("libmp3lame",),
+         "mov_prores": ("prores_ks",), "mov_prores4444": ("prores_ks",)}
+_encoders = []
+
+
+def encoders():
+    """The names of the encoders of this computer's ffmpeg (None when it cannot be asked)."""
+    if not _encoders:
+        found = None
+        ffmpeg = find_ffmpeg()
+        if ffmpeg:
+            try:
+                out = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=30,
+                                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)).stdout
+                found = {line.split()[1] for line in out.splitlines() if line.startswith(" V") or line.startswith(" A")}
+            except (OSError, subprocess.SubprocessError):
+                found = None
+        _encoders.append(found)
+    return _encoders[0]
+
+
+def usable(fmt):
+    """Whether this computer's ffmpeg can make the format (True when that cannot be told)."""
+    need, have = NEEDS.get(fmt.key), encoders()
+    return not need or have is None or any(e in have for e in need)
 
 
 def get(key):

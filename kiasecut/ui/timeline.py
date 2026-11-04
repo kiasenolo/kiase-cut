@@ -96,7 +96,7 @@ from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QIcon, QImage, QPainte
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QScrollBar, QTextEdit, QToolTip, QWidget
 
 from .. import build, components, curves, edit, project, waveform
-from . import appevents, wheel
+from . import appevents, touch, wheel
 from .params import param_menu
 from .menukeys import Menu
 from .wrapdrag import WrapDrag
@@ -323,6 +323,7 @@ class Timeline(QWidget):
         self.mark_in = self.mark_out = None        # export range, frames
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
+        touch.enable(self)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
@@ -576,6 +577,7 @@ class Timeline(QWidget):
         if row is None or pos.y() < self.tops[row] + self.base_h(row) or project.locked(self.rows[row]):
             return None, None, None
         sec = self._sec(pos.x()) * US
+        edge = EDGE_PX * touch.scale()
         for ln in self.lanes(row):
             g = ln["group"]
             if not (ln["y"] <= pos.y() < ln["y"] + ln["h"]) or not (ln["abs0"] <= sec <= ln["abs0"] + g["duration_us"]):
@@ -583,10 +585,10 @@ class Timeline(QWidget):
             for c in ln["track"]["clips"]:
                 x0 = self._x((ln["abs0"] + c["start_us"]) / US)
                 x1 = self._x((ln["abs0"] + c["start_us"] + c["duration_us"]) / US)
-                if x0 - EDGE_PX / 2 <= pos.x() <= x1 + EDGE_PX / 2:
-                    if x1 - x0 > 3 * EDGE_PX and pos.x() <= x0 + EDGE_PX:
+                if x0 - edge / 2 <= pos.x() <= x1 + edge / 2:
+                    if x1 - x0 > 3 * edge and pos.x() <= x0 + edge:
                         return ln, c, "start"
-                    if x1 - x0 > 3 * EDGE_PX and pos.x() >= x1 - EDGE_PX:
+                    if x1 - x0 > 3 * edge and pos.x() >= x1 - edge:
                         return ln, c, "end"
                     if x0 <= pos.x() <= x1:
                         return ln, c, "body"
@@ -801,14 +803,15 @@ class Timeline(QWidget):
             return row, None, None
         if pos.y() >= self.tops[row] + self.base_h(row):    # (the lanes of open groups)
             return row, None, None
+        edge = EDGE_PX * touch.scale()
         for c in self.rows[row]["clips"]:
             x0 = self._x(c["start_us"] / US)
             x1 = self._x((c["start_us"] + c["duration_us"]) / US)
-            if x0 - EDGE_PX / 2 <= pos.x() <= x1 + EDGE_PX / 2:
-                if x1 - x0 > 3 * EDGE_PX:
-                    if pos.x() <= x0 + EDGE_PX:
+            if x0 - edge / 2 <= pos.x() <= x1 + edge / 2:
+                if x1 - x0 > 3 * edge:
+                    if pos.x() <= x0 + edge:
                         return row, c, "start"
-                    if pos.x() >= x1 - EDGE_PX:
+                    if pos.x() >= x1 - edge:
                         return row, c, "end"
                 if x0 <= pos.x() <= x1:
                     return row, c, "body"

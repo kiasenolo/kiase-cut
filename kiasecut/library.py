@@ -16,6 +16,7 @@ import uuid
 from PIL import Image
 
 from . import assets, edit, project, svgimage, workspace
+from .build import find_ffprobe
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".svg"}
 IMAGE_DEFAULT_US = 5_000_000
@@ -56,7 +57,7 @@ def probe(path):
     if ext in IMAGE_EXT:
         with Image.open(path) as im:
             return {"kind": "image", "width": im.width, "height": im.height}
-    r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_format",
+    r = subprocess.run([find_ffprobe(), "-v", "error", "-print_format", "json", "-show_format",
                         "-show_streams", path], capture_output=True, text=True, timeout=60)
     if r.returncode != 0:
         raise edit.EditError(f"cannot read {os.path.basename(path)}")

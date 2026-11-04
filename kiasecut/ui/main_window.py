@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
+from .. import (androidfs, assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -56,7 +56,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import appevents, exprdialog, icons, inplace, look, mapdialog, menuanim, middledrag, wheel
+from . import androidfiles, appevents, dialogframe, exprdialog, icons, inplace, look, mapdialog, menuanim, middledrag, touch, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -957,6 +957,8 @@ class MainWindow(QMainWindow):
         m = keyed(self.menuBar().addMenu("編輯(&E)"))
         add(m, "復原", "Ctrl+Z", self.do_undo)
         add(m, "重做", "Ctrl+Y", self.do_redo)
+        touch.on_tap(2, self.do_undo)                  # (two fingers tap a view: undo; three: redo)
+        touch.on_tap(3, self.do_redo)
         m.addSeparator()
         add(m, "複製", "Ctrl+C", self.do_copy)
         add(m, "剪下", "Ctrl+X", lambda: self.do_copy(cut=True))
@@ -4856,6 +4858,8 @@ class MainWindow(QMainWindow):
         self.run_task(work, done, lambda m: QMessageBox.warning(self, "匯出目前畫面", m))
 
     def documents_dir(self):
+        if sys.platform == "android" and androidfs.documents():          # (the shared Documents folder, where the user can find projects)
+            return androidfs.documents()
         return QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or os.path.expanduser("~")
 
     def app_root(self):
@@ -6305,6 +6309,10 @@ def run(argv):
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
     QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)        # the menus are ours, in the window (a global menu cannot be animated)
     app = QApplication(argv)
+    if sys.platform == "android":
+        androidfiles.install()
+        dialogframe.install()                       # a title bar, a ✕ and an outline on every dialog (the system gives none)
+        touch.install_scrolling()                   # one finger scrolls every list and panel; a hold first, then it drags
     look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area
     menuanim.install()                              # menus open from big and blurred to what they are
@@ -6316,6 +6324,8 @@ def run(argv):
         app.setWindowIcon(QIcon(logo))
     win = MainWindow()
     win.show()
+    if sys.platform == "android" and not androidfs.can_read():
+        QMessageBox.information(win, "需要權限", androidfs.HOW_TO_ALLOW)
     win.begin_session()
     if win.offer_recovery():
         pass

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, 
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
-from . import appevents, motion
+from . import appevents, motion, touch
 from .wheel import pinch as wheel_pinch
 from .wrapdrag import WrapDrag
 
@@ -615,7 +615,7 @@ class NodeItem(QGraphicsItem):
 
     # -- mouse: a field takes the press (the rest of the node moves it) ------------------------------------
     def edge_at(self, pos):
-        return self.has_edge() and pos.x() >= self.w - EDGE
+        return self.has_edge() and pos.x() >= self.w - EDGE * touch.scale()
 
     def has_edge(self):
         return bool(self.flags() & QGraphicsItem.ItemIsMovable)
@@ -1014,6 +1014,7 @@ class GraphView(QGraphicsView):
         self.carrying = None                     # nodes just made, stuck to the pointer till a click: {ids, off, remove}
         self.wrap = WrapDrag(self.viewport(), lambda: self.viewport().rect())    # (G and dragged nodes: endless, the pointer wraps at the view's edges as in a middle-button drag)
         self.plain_pos = None                    # where a dragged node's pointer is, wraps counted
+        touch.enable(self.viewport())
         self.viewport().setMouseTracking(True)         # (carried nodes follow the pointer with no button down)
         self.setAcceptDrops(True)
 
@@ -1058,10 +1059,10 @@ class GraphView(QGraphicsView):
         """("out", node id, output name) / ("in", node id, socket) near scene point pos, else None."""
         for nid, it in self.items_by_id.items():
             for out, at in it.outputs():
-                if (at - pos).manhattanLength() <= HIT_R * 1.5:
+                if (at - pos).manhattanLength() <= HIT_R * 1.5 * touch.scale():
                     return "out", nid, out
             for sock, at in it.sockets():
-                if (at - pos).manhattanLength() <= HIT_R * 1.5:
+                if (at - pos).manhattanLength() <= HIT_R * 1.5 * touch.scale():
                     return "in", nid, sock
         return None
 

@@ -4,7 +4,6 @@ import json
 import os
 import subprocess
 import sys
-from multiprocessing import shared_memory
 
 from . import mltlib
 
@@ -24,6 +23,7 @@ class EngineClient:
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
                                      encoding="utf-8", bufsize=1,
                                      creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        from multiprocessing import shared_memory         # (Android has no shm_open)
         self.shm = shared_memory.SharedMemory(create=True, size=max_w * max_h * 4)
         hello = self._read()
         if not hello.get("ready"):

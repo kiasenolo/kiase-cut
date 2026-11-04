@@ -1083,6 +1083,30 @@ class NodeEditorTests(unittest.TestCase):
         ed.set_number("builtin_blender_glare1", row, 1, 5.0, final=False)         # dragged: the soft range
         self.assertEqual(ed.params["builtin_blender_glare1.sun_position"][1], 1.0)
 
+    def test_media_nodes_choose_their_picture_inside_the_node(self):
+        ed = self.make()
+        nid = ng.add_node(ed.graph, {"type": ng.SOURCE, "kind": "image"}, 0, 100)
+        kid = ng.add_node(ed.graph, {"type": ng.SOURCE, "kind": "compound"}, 0, 300)
+        ed.sources[nid] = {"kind": "image"}
+        ed.sources[kid] = {"kind": "compound"}
+        ed.set_media([("/m/a.png", "貓")], [], [("k1", "片頭")])
+        ed.rebuild()
+        item = ed.view.items_by_id[nid]
+        row = next(r for r in item.rows if r["kind"] == "media")
+        self.assertEqual((row["label"], ed.media_name("image", ed.sources[nid])), ("圖片", ""))
+        ed.sources[nid]["image"] = "/m/a.png"
+        ed.sources[kid]["compound_id"] = "k1"
+        self.assertEqual((ed.media_name("image", ed.sources[nid]), ed.media_name("compound", ed.sources[kid])), ("貓", "片頭"))
+        ed.sources[nid]["image"] = "/gone/b.png"
+        self.assertEqual(ed.media_name("image", ed.sources[nid]), "b.png")
+        menus, got = [], []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        ed.mediaChosen.connect(lambda *a: got.append(a))
+        ed.field_clicked(item, row, 0, QPoint(0, 0))
+        self.assertEqual([a.text() for a in menus[0].actions() if a.text()], ["貓", "瀏覽圖片檔…"])
+        menus[0].actions()[0].trigger()
+        self.assertEqual(got, [(ed.eid, nid, "/m/a.png")])
+
     def test_shape_ratio_field_is_its_own(self):
         ed = self.make()
         nid = ng.add_node(ed.graph, {"type": ng.SOURCE, "kind": "shape", "asset": {"key": "ring", "family": "ellipse"}}, 0, 100)

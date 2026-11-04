@@ -494,6 +494,7 @@ class MainWindow(QMainWindow):
         nd.paramLive.connect(lambda eid, group, key, v: self.node_clip() and self.on_fx_live_edit([self.node_clip()], group, key, v))
         nd.placeEdited.connect(lambda eid, nid, key, v: self.node_clip() and self.on_fx_param_edited(
             [self.node_clip()], f"fxsrc:{eid}:{nid}", key, v))
+        nd.mediaChosen.connect(lambda eid, nid, value: self.node_clip() and self.on_fx_source_media([self.node_clip()], eid, nid, value))
         nd.shapeEdited.connect(lambda eid, nid, shape, col: self.node_clip() and self.fx_each(
             "形狀", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_shape(lvl, cid, e, nid, shape, col)))
         nd.textEdited.connect(lambda eid, nid, content, font: self.node_clip() and self.fx_each(
@@ -2649,6 +2650,7 @@ class MainWindow(QMainWindow):
         self.inspector.show_clips(clips, t, self.fps, [times[c["id"]] for c in clips])
         if self.proj is not None:
             self.effects.set_media(self.mask_images(), self.mask_videos(), self.mask_compounds(), self.mask_tracks())
+            self.nodes.set_media(self.mask_images(), self.mask_videos(), self.mask_compounds(), self.mask_tracks())
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
             self.mask_panel.set_compounds(self.mask_compounds())

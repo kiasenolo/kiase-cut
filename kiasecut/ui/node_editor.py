@@ -103,6 +103,9 @@ class _ScreenMove:
         return QPointF(self.e.screenPos())
 
 
+MEDIA_LABELS = {"image": "圖片", "video": "影片", "compound": "複合片段", "track": "軌道"}
+
+
 class NodeItem(QGraphicsItem):
     """One node: head, an output row, a row for every picture it takes and a row for every parameter with
     its field in it (a number, a tick, a menu, a colour...) - or just its socket's name when a link feeds it.
@@ -241,6 +244,8 @@ class NodeItem(QGraphicsItem):
         elif node["type"] == ng.SOURCE and node.get("kind") == "shape":
             add("shape", "形狀")
             add("shapecolor", "顏色")
+        elif node["type"] == ng.SOURCE and node.get("kind") in MEDIA_LABELS:     # (which picture / video / compound / track: in the node)
+            add("media", MEDIA_LABELS[node["kind"]])
         if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.VIEWER, ng.PARAMS, ng.GROUP, "groupin", "groupout"):
             for name, _label in self.shown_outputs():
                 add("thumb", "", p=name, h=THUMB_H)
@@ -363,7 +368,7 @@ class NodeItem(QGraphicsItem):
             return not (r["socket"] and r["socket"] in self.linked) and r["p"].type not in ("curve", "gradient")
         if r["kind"] in ("text", "font"):
             return r["socket"] not in self.linked                 # (a string / font node's value replaces the box)
-        return r["kind"] in ("shape", "shapecolor", "plot", "string", "fontvalue")
+        return r["kind"] in ("shape", "shapecolor", "plot", "string", "fontvalue", "media")
 
     def field_at(self, pos):
         """(row, cell) of the field under pos (item coordinates), or the panel header row, else None."""
@@ -461,6 +466,16 @@ class NodeItem(QGraphicsItem):
             p.setPen(text)
             p.drawText(box.adjusted(6, 0, -14, 0), Qt.AlignVCenter | Qt.AlignLeft,
                        dict(ng.SHAPES).get(vals.shape, vals.shape))
+            p.drawText(box.adjusted(0, 0, -4, 0), Qt.AlignVCenter | Qt.AlignRight, "▾")
+            return
+        if kind == "media":
+            box = self.field_rect(r)
+            self._box(p, box, bg)
+            name = self.editor.media_name(self.node["kind"], self.editor.sources.get(self.nid) or {})
+            p.setPen(text if name else QColor(text.red(), text.green(), text.blue(), 130))
+            p.drawText(box.adjusted(6, 0, -14, 0), Qt.AlignVCenter | Qt.AlignLeft,
+                       p.fontMetrics().elidedText(name or "選擇…", Qt.ElideRight, int(box.width() - 20)))
+            p.setPen(text)
             p.drawText(box.adjusted(0, 0, -4, 0), Qt.AlignVCenter | Qt.AlignRight, "▾")
             return
         if kind == "shapecolor":
@@ -1751,6 +1766,7 @@ class NodeEditor(QWidget):
     paramEdited = Signal(str, str, object)                  # effect id, "<node>.<parameter>", value
     paramLive = Signal(str, str, str, object)               # effect id, group ("fx:<id>" / "fxsrc:<id>:<node>"), key, value: still being changed
     placeEdited = Signal(str, str, str, object)             # effect id, node id, where it sits (cx / cy / w / h / rotation), value
+    mediaChosen = Signal(str, str, str)                     # effect id, picture / video / compound / track node, file or id ("": browse)
     shapeEdited = Signal(str, str, object, object)          # effect id, shape node, shape id or None, colour or None
     stringEdited = Signal(str, str, str)                    # effect id, string node, its new words
     fontEdited = Signal(str, str, str)                      # effect id, font node, its new font file
@@ -1800,6 +1816,7 @@ class NodeEditor(QWidget):
         save.clicked.connect(lambda: self.eid and self.saveRequested.emit(self.eid))
         bar.addWidget(save)
         self.clip = None
+        self.media = {"image": [], "video": [], "compound": [], "track": []}     # [(path / id, name)] a source node can show
         self.level = ""                                     # the group being looked into ("": the effect's own level)
         self.pseudo = {}                                    # the 群組輸入 / 群組輸出 boxes shown inside a group
         self.here = QLabel("")
@@ -1879,6 +1896,21 @@ class NodeEditor(QWidget):
     # -- what it shows ---------------------------------------------------------------------------------
     def set_user_filters(self, filters):
         self.user_filters = list(filters)
+
+    def set_media(self, images, videos, compounds, tracks=()):
+        """What the picture / video / compound / track nodes can show (as the effects panel's source menus have)."""
+        media = {"image": list(images), "video": list(videos), "compound": list(compounds), "track": list(tracks)}
+        if media != self.media:
+            self.media = media
+            self.view.viewport().update()
+
+    def media_name(self, kind, src):
+        """The name of what source src (a node's) shows, "" when nothing is chosen."""
+        key = {"image": "image", "video": "video", "compound": "compound_id", "track": "track_id"}[kind]
+        value = src.get(key)
+        if not value:
+            return ""
+        return next((label for v, label in self.media.get(kind, []) if v == value), os.path.basename(str(value)) if kind in ("image", "video") else str(value))
 
     def view_state(self):
         """How the editor is looked at, to save with the project: the effect, the group looked into, the zoom and
@@ -2142,6 +2174,18 @@ class NodeEditor(QWidget):
             menu = QMenu(self)
             for sid, name in ng.SHAPES:
                 menu.addAction(name, lambda sid=sid: self.shapeEdited.emit(self.eid, nid, sid, None))
+            self.popup(menu, gp)
+            return
+        if kind == "media":
+            node_kind = self.graph["nodes"][nid]["kind"]
+            menu = QMenu(self)
+            for value, label in self.media.get(node_kind, []):
+                menu.addAction(label, lambda value=value: self.mediaChosen.emit(self.eid, nid, value))
+            if node_kind in ("image", "video"):
+                menu.addSeparator()
+                menu.addAction("瀏覽圖片檔…" if node_kind == "image" else "瀏覽影片檔…", lambda: self.mediaChosen.emit(self.eid, nid, ""))
+            if menu.isEmpty():
+                menu.addAction("（沒有可選的）").setEnabled(False)
             self.popup(menu, gp)
             return
         if kind == "shapecolor":

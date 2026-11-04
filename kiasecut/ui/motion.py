@@ -140,11 +140,14 @@ class Fader(QObject):
             p.fillRect(b.rect(), self.bg)
         tool = isinstance(b, QToolButton)
         text = b.text().replace("&&", "\0").replace("&", "").replace("\0", "&")
-        if tool and b.toolButtonStyle() == Qt.ToolButtonIconOnly and not b.icon().isNull():
+        if tool and b.toolButtonStyle() == Qt.ToolButtonIconOnly and (not b.icon().isNull() or b.arrowType() != Qt.NoArrow):
             text = ""
         has_menu = b.menu() is not None and (not tool or b.popupMode() != QToolButton.DelayedPopup)
         area = b.rect().adjusted(0, 0, -14 if has_menu else 0, 0)
         icon = b.icon()
+        if tool and icon.isNull() and b.arrowType() != Qt.NoArrow:        # (setArrowType: no icon of its own, the style's chevron)
+            from . import look
+            icon = look.arrow_icon({Qt.UpArrow: "-up", Qt.DownArrow: "-down", Qt.LeftArrow: "-left", Qt.RightArrow: "-right"}[b.arrowType()])
         enabled = b.isEnabled()
         size = b.iconSize() if b.iconSize().isValid() else QSize(16, 16)
         pm = None

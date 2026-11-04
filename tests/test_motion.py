@@ -590,5 +590,31 @@ class MenuBarTest(unittest.TestCase):
         bar.close()
 
 
+class ArrowButtonTest(unittest.TestCase):
+    def test_a_tool_button_with_an_arrow_type_draws_its_chevron_and_it_goes_black_on_the_white(self):
+        host = QWidget()
+        lay = QHBoxLayout(host)
+        b = QToolButton()
+        b.setAutoRaise(True)
+        b.setArrowType(Qt.DownArrow)
+        lay.addWidget(b)
+        host.resize(120, 60)
+        host.show()
+        QTest.qWait(60)
+        QTest.mouseMove(host, QPoint(119, 59))
+        QTest.qWait(30)
+        img = b.grab().toImage()
+        lit = [(x, y) for x in range(img.width()) for y in range(img.height()) if img.pixelColor(x, y).lightness() > 120]
+        self.assertTrue(lit)                                          # (at rest: a light chevron on the panel, not nothing)
+        QTest.mouseMove(b, QPoint(b.width() // 2, b.height() // 2))
+        QTest.qWait(40)
+        img = b.grab().toImage()
+        white = sum(1 for x in range(img.width()) for y in range(img.height()) if img.pixelColor(x, y).lightness() > 230)
+        dark = [(x, y) for x in range(img.width()) for y in range(img.height()) if img.pixelColor(x, y).lightness() < 60]
+        self.assertGreater(white, img.width() * img.height() // 2)    # (white under the mouse)
+        self.assertTrue(dark)                                         # (and the chevron is black on it)
+        host.close()
+
+
 if __name__ == "__main__":
     unittest.main()

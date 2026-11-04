@@ -1232,7 +1232,37 @@ class MainWindow(QMainWindow):
         tbs = {k: dict(tb) for k, tb in self.timebases.items() if tb != timebase_of(None)}
         if tbs:
             out["timebases"] = tbs
+        out["workspace"] = self.workspace_state()
         return out
+
+    def workspace_state(self):
+        """The workspace (工作區): the layout and where its panels are, the selected clips, how the node editor
+        is looked at - stored with the project, put back when it is opened."""
+        ws = {"nodes": self.nodes.view_state()}
+        if self.layout_key:
+            ws["layout"] = self.layout_key
+        ws["panels"] = layouts.pack(self.panels.state(), self.panels.closed())
+        ids = [c["id"] for c in self.timeline.selected_clips_primary_first()]
+        if ids:
+            ws["selected"] = ids
+        return ws
+
+    def restore_workspace(self, ws):
+        """Put the workspace back as workspace_state() left it (what is gone is left out)."""
+        if not isinstance(ws, dict):
+            return
+        key = ws.get("layout")
+        if isinstance(key, str) and key in self.layout_keys() and key != self.layout_key:
+            self.use_layout(key)
+        if isinstance(ws.get("panels"), dict):
+            try:
+                self.panels.restore(*layouts.unpack(ws["panels"]))
+            except ValueError:
+                pass
+        ids = ws.get("selected")
+        if isinstance(ids, list) and ids:
+            self.timeline.set_selection({str(i) for i in ids}, str(ids[0]))
+        self.nodes.set_view_state(ws.get("nodes"))
 
     def open_view(self, v):
         """Open the active timeline as level_view() left it (a compound that is gone opens
@@ -1796,6 +1826,7 @@ class MainWindow(QMainWindow):
             self._update_timeline_tabs()
         if isinstance(views.get(proj["active_timeline"]), dict):
             self.open_view(views[proj["active_timeline"]])
+        self.restore_workspace(saved.get("workspace"))
         self._last_tick = time.monotonic()
         self.watch_media()
         self.request_sync(0)

@@ -1799,6 +1799,7 @@ class NodeEditor(QWidget):
         save.setToolTip("把這個節點效果（節點、設定、圖片）存進 Library 的「效果預設」，之後可以套用到別的片段")
         save.clicked.connect(lambda: self.eid and self.saveRequested.emit(self.eid))
         bar.addWidget(save)
+        self.clip = None
         self.level = ""                                     # the group being looked into ("": the effect's own level)
         self.pseudo = {}                                    # the 群組輸入 / 群組輸出 boxes shown inside a group
         self.here = QLabel("")
@@ -1879,9 +1880,49 @@ class NodeEditor(QWidget):
     def set_user_filters(self, filters):
         self.user_filters = list(filters)
 
+    def view_state(self):
+        """How the editor is looked at, to save with the project: the effect, the group looked into, the zoom and
+        the centre of the graph, and the 參數 panel."""
+        out = {"panel": self.panel_btn.isChecked()}
+        if self.panel.isVisible():
+            out["panel_w"] = self.panel.width()
+        if self.eid is not None:
+            v = self.view
+            c = v.mapToScene(v.viewport().rect().center())
+            out.update(effect=self.eid, level=self.level, zoom=round(v.transform().m11(), 4),
+                       cx=round(c.x(), 1), cy=round(c.y(), 1))
+        return out
+
+    def set_view_state(self, d):
+        """Put the editor back as view_state() left it (what is gone is left out)."""
+        if not isinstance(d, dict):
+            return
+        self.set_panel(bool(d.get("panel", True)))
+        w = d.get("panel_w")
+        if isinstance(w, (int, float)) and self.panel.isVisible():
+            total = max(self.split.width(), 1000)
+            self.split.setSizes([max(100, total - int(w)), int(w)])
+        if self.eid is None or d.get("effect") not in {eid for eid, _ in self.effects}:
+            return
+        if d["effect"] != self.eid:
+            self.show_clip(self.clip, d["effect"], self.t)
+        level = d.get("level") or ""
+        if level != self.level and (self.graph["nodes"].get(level) or {}).get("type") == ng.GROUP:
+            self.level = level
+            self.rebuild(False)
+        try:
+            zoom, cx, cy = float(d["zoom"]), float(d["cx"]), float(d["cy"])
+        except (KeyError, TypeError, ValueError):
+            return
+        v = self.view
+        v.resetTransform()
+        v.scale(min(8.0, max(0.05, zoom)), min(8.0, max(0.05, zoom)))
+        v.centerOn(cx, cy)
+
     def show_clip(self, clip, want=None, t=0):
         """Show a node effect of clip (None: nothing): want, else the one shown before, else the first; its
         fields at clip time t."""
+        self.clip = clip
         es = [e for e in (clip or {}).get("effects") or [] if e.get("filter") == fx.GRAPH]
         names = [(e["id"], f"VFX：{self.vfx_names.get(e['vfx'], '')}" if e.get("vfx") else f"節點效果 {i + 1}") for i, e in enumerate(es)]
         if names != self.effects:

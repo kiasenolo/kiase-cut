@@ -212,7 +212,7 @@ class HopTest(unittest.TestCase):
         host, sp = self.make()
         hop = sp._hop
         hop.kick(1)
-        QTest.qWait(150)
+        QTest.qWait(int(motion.HOP_MS * 0.3) + 80)                   # (past the first third)
         late = hop.off
         hop.kick(1)                                          # (past the first third: a new hop)
         self.assertEqual(hop.off, motion.HOP_PX)

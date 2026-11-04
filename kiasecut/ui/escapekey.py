@@ -66,9 +66,18 @@ def install():
                 QTimer.singleShot(0, lambda w=w: leave(w))
         return False
 
+    def override(obj, e):
+        # (Esc is a shortcut of the window - 返回上一層 - and a shortcut is made before a key press is: the field says it takes the key)
+        if e.key() == Qt.Key_Escape and not e.modifiers():
+            w = QApplication.focusWidget()
+            if w is not None and is_field(w) and QApplication.activePopupWidget() is None:
+                e.accept()
+        return False
+
     def released(obj, e):
         return e.key() == Qt.Key_Back and back_is_esc()    # (its release goes with it)
 
     app = QApplication.instance()
     appevents.watch(app, [QEvent.KeyPress], pressed)
     appevents.watch(app, [QEvent.KeyRelease], released)
+    appevents.watch(app, [QEvent.ShortcutOverride], override)

@@ -88,6 +88,22 @@ class EscTest(unittest.TestCase):
         QTest.qWait(30)
         self.assertFalse(d.isVisible())
 
+    def test_a_shortcut_of_the_window_on_esc_does_not_take_the_key_from_a_field(self):
+        from PySide6.QtGui import QAction, QKeySequence
+        hits = []
+        act = QAction("leave", self.host)
+        act.setShortcut(QKeySequence("Esc"))
+        act.triggered.connect(lambda: hits.append(1))
+        self.host.addAction(act)
+        self.focus(self.host.line)
+        QTest.keyClick(self.host.line, Qt.Key_Escape)
+        QTest.qWait(30)
+        self.assertEqual(hits, [])                                       # (the field had the key)
+        self.assertIsNot(QApplication.focusWidget(), self.host.line)
+        QTest.keyClick(self.host.btn if False else self.host, Qt.Key_Escape)    # (and the next one is the shortcut's)
+        QTest.qWait(30)
+        self.assertEqual(hits, [1])
+
     def test_back_is_esc_where_it_is_asked_to_be(self):
         escapekey.FORCE = True
         try:

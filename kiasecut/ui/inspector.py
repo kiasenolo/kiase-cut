@@ -302,6 +302,9 @@ class SpinBox(QDoubleSpinBox):
 
     def _changed(self, v):
         self.mixed = self._typed = False
+        if self._scrub is not None and self.isVisible():
+            self.lineEdit().repaint()                    # the number is drawn before what reacts to it (a slow reaction, on a tablet,
+                                                         #  would leave the old number up until the finger lifts)
         self.edited.emit(v)
 
     def _finished(self):

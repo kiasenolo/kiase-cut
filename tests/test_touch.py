@@ -191,6 +191,34 @@ class TouchTest(unittest.TestCase):
                          ["press", "move", "move", "release"])
         self.assertNotIn(("menu",), self.w.log)
 
+    def test_moves_that_pile_up_while_the_program_is_busy_are_sent_as_one_to_where_the_finger_is(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.g._held()
+        s.move(0, QPoint(130, 100), self.w).commit()
+        QTest.qWait(10)
+        before = len([x for x in self.w.log if x[0] == "move"])
+        for x in (140, 150, 160, 170):                          # (the finger's moves, with no turn of the event loop between)
+            self.g._drag(QPointF(x, 100))
+        self.assertEqual(len([x for x in self.w.log if x[0] == "move"]), before)
+        QTest.qWait(10)
+        moves = [x for x in self.w.log if x[0] == "move"]
+        self.assertEqual(len(moves), before + 1)
+        self.assertEqual(moves[-1], ("move", 170.0, 100.0))
+        s.release(0, QPoint(170, 100), self.w).commit()
+
+    def test_a_move_not_yet_sent_goes_before_the_release(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.g._held()
+        s.move(0, QPoint(130, 100), self.w).commit()
+        QTest.qWait(10)
+        self.g._drag(QPointF(190, 100))
+        self.g._up(0.0)
+        kinds = [x[0] for x in self.w.log if x[0] in ("move", "release")]
+        self.assertEqual(kinds[-2:], ["move", "release"])
+        self.assertEqual([x for x in self.w.log if x[0] == "move"][-1], ("move", 190.0, 100.0))
+
     def test_moving_finger_is_not_a_hold(self):
         s = self.seq()
         s.press(0, QPoint(100, 100), self.w).commit()

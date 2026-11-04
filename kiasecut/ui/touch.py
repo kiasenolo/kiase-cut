@@ -94,6 +94,11 @@ class _Gestures(QObject):
         self.defer.setSingleShot(True)
         self.defer.setInterval(PRESS_MS)
         self.defer.timeout.connect(self._press)
+        self.flush = QTimer(self)                  # the finger's moves are sent once for each turn of the event loop (see _drag)
+        self.flush.setSingleShot(True)
+        self.flush.setInterval(0)
+        self.flush.timeout.connect(self._flush_move)
+        self.queued = None
         self.glide = QTimer(self)
         self.glide.setInterval(GLIDE_FRAME_MS)
         self.glide.timeout.connect(self._glide)
@@ -205,7 +210,14 @@ class _Gestures(QObject):
                 return
             self.moved, self.held = True, False
             self._press()
-        if self.moved:
+        if self.moved:                                     # (a move is sent when the event loop is next free: what a slow reaction to
+            self.queued = at                               #  one move - a preview drawn - would hold up, the finger's moves piling up behind
+            if not self.flush.isActive():                  #  it, comes as one move to where the finger is, and the screen is drawn between)
+                self.flush.start()
+
+    def _flush_move(self):
+        at, self.queued = self.queued, None
+        if at is not None and self.mode == "one" and self.moved and not self.swiping:
             self._mouse(QEvent.MouseMove, at, Qt.NoButton, Qt.LeftButton)
 
     def _swipe(self, at):
@@ -227,6 +239,7 @@ class _Gestures(QObject):
         self.hold.stop()
         self.defer.stop()
         self._press()
+        self._flush_move()
         self._mouse(QEvent.MouseButtonRelease, self.last, Qt.LeftButton, Qt.NoButton)
         self.pressed = False
 

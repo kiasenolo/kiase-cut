@@ -834,6 +834,27 @@ class Strip(QWidget):
         self.setGeometry(bar.rect())
         self.show()
         self.raise_()
+        self.timer = QTimer(self)
+        self.timer.setInterval(120)
+        self.timer.timeout.connect(self._stale)
+        self.timer.start()
+
+    def _stale(self):
+        """Qt leaves a title lit when the mouse left the bar without its Leave event (or the menu was closed with the mouse
+        elsewhere): nothing is chosen then, and nothing should stay white."""
+        bar = getattr(self, "bar", None)
+        if bar is None or not (shiboken6.isValid(self) and shiboken6.isValid(bar)) or not bar.isVisible():
+            return
+        a = bar.activeAction()
+        if a is None:                                          # (Alt navigation is off: no title is lit by the keyboard without its menu open)
+            return
+        menu = a.menu()
+        if menu is not None and menu.isVisible():
+            return
+        lean = menu_slant(bar)
+        over = bar.actionGeometry(a).adjusted(-lean, 0, lean, 0).contains(bar.mapFromGlobal(QCursor.pos()))
+        if not over:
+            bar.setActiveAction(None)
 
     def eventFilter(self, obj, e):
         bar = getattr(self, "bar", None)

@@ -379,6 +379,7 @@ class ScrollBarTest(unittest.TestCase):
         host, bar = self.make()
         t = bar.property("kcThumb")
         mid = t.rect_of_thumb().center()
+        QTest.mouseMove(bar, QPoint(0, 0))                          # (the offscreen mouse may be where we want it: send a move)
         QTest.mouseMove(bar, mid)
         QTest.qWait(40)
         self.assertEqual(t.colour, motion.BAR_HOT)
@@ -481,10 +482,15 @@ class MenuBarTest(unittest.TestCase):
         QTest.qWait(60)
         return bar
 
+    def choose(self, bar, action):
+        """As the mouse does: over the title, and it is the active one."""
+        QTest.mouseMove(bar, bar.actionGeometry(action).center())
+        bar.setActiveAction(action)
+
     def test_the_chosen_title_is_a_white_slanted_tab_and_the_first_is_flat_on_the_left(self):
         bar = self.make()
         first, second = bar.actions()[0], bar.actions()[1]
-        bar.setActiveAction(first)
+        self.choose(bar, first)
         QTest.qWait(60)
         img = bar.grab().toImage()
         r = bar.actionGeometry(first)
@@ -493,7 +499,7 @@ class MenuBarTest(unittest.TestCase):
         self.assertGreater(img.pixelColor(r.left() + 1, r.bottom() - 1).lightness(), 230)
         self.assertGreater(img.pixelColor(r.right() + half - 3, r.top() + 1).lightness(), 230)        # (the right side leans: wide at the top...)
         self.assertLess(img.pixelColor(r.right() + half - 3, r.bottom() - 1).lightness(), 100)        # (...and cut at the foot)
-        bar.setActiveAction(second)
+        self.choose(bar, second)
         QTest.qWait(60)
         img = bar.grab().toImage()
         r = bar.actionGeometry(second)
@@ -505,7 +511,7 @@ class MenuBarTest(unittest.TestCase):
 
     def test_a_tab_is_centred_on_its_box_so_what_opens_under_the_box_is_under_the_tab(self):
         bar = self.make()
-        bar.setActiveAction(bar.actions()[1])
+        self.choose(bar, bar.actions()[1])
         QTest.qWait(60)
         img = bar.grab().toImage()
         r = bar.actionGeometry(bar.actions()[1])
@@ -533,9 +539,10 @@ class MenuBarTest(unittest.TestCase):
         bar = self.make()
         f = bar.property("kcMenuBar")
         a = bar.actions()[1]
-        bar.setActiveAction(a)
+        self.choose(bar, a)
         QTest.qWait(30)
         self.assertEqual(f.v["編輯(&E)"], 1.0)
+        QTest.mouseMove(bar, QPoint(299, 39))
         bar.setActiveAction(None)
         QTest.qWait(60)
         self.assertTrue(0.0 < f.v["編輯(&E)"] < 1.0)
@@ -545,7 +552,7 @@ class MenuBarTest(unittest.TestCase):
 
     def test_the_text_of_the_chosen_title_is_black_and_has_room_round_it(self):
         bar = self.make()
-        bar.setActiveAction(bar.actions()[1])
+        self.choose(bar, bar.actions()[1])
         QTest.qWait(60)
         img = bar.grab().toImage()
         r = bar.actionGeometry(bar.actions()[1])
@@ -556,6 +563,30 @@ class MenuBarTest(unittest.TestCase):
         self.assertTrue(dark)
         self.assertGreater(min(dark) - left, 10)                                   # (room at the left)
         self.assertGreater(right - max(dark), 10)                                  # (and at the right)
+        bar.close()
+
+    def test_a_title_left_lit_when_the_mouse_went_is_put_out(self):
+        bar = self.make()
+        a, calls = bar.actions()[1], []
+        QTest.mouseMove(bar, QPoint(299, 39))
+        bar.activeAction = lambda: a                                          # (Qt says it is lit, as it does after a Leave that never came; no menu open)
+        bar.setActiveAction = lambda x: calls.append(x)
+        QTest.qWait(400)
+        self.assertEqual(calls, [None] * len(calls))
+        self.assertTrue(calls)
+        bar.close()
+
+    def test_a_title_stays_lit_while_the_mouse_is_on_it_or_its_menu_is_open(self):
+        bar = self.make()
+        a = bar.actions()[1]
+        self.choose(bar, a)
+        QTest.qWait(400)
+        self.assertIs(bar.activeAction(), a)
+        QTest.mouseMove(bar, QPoint(299, 39))
+        a.menu().popup(bar.mapToGlobal(QPoint(100, 40)))
+        QTest.qWait(400)
+        self.assertIs(bar.activeAction(), a)
+        a.menu().hide()
         bar.close()
 
 

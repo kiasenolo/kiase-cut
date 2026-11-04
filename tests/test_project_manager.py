@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import QSettings, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -20,6 +20,7 @@ from kiasecut.ui.project_manager import ProjectManager, label  # noqa: E402
 from test_edit import S, clip  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
+QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, tempfile.mkdtemp())      # (the manager remembers its folder: not in the real settings)
 
 
 class Base(unittest.TestCase):
@@ -47,6 +48,61 @@ class FindTests(Base):
         self.assertEqual(sorted(names), ["A", "B", "Far"])        # each once, missing ones left out
         self.assertEqual(names.index("B") < names.index("A"), True)      # newest first
         self.assertEqual(workspace.find_projects(os.path.join(self.dir, "nowhere")), [])
+
+
+class FileManagerTests(Base):
+    def names(self, pm):
+        return [pm.list.item(i).text().split("\n")[0] for i in range(pm.list.count())]
+
+    def test_only_what_is_in_the_folder_shows_and_the_recent_ones_have_their_own_node(self):
+        _, a = self.make("A")
+        sub = workspace.new_folder(self.home, "Sub")
+        _, inside = self.make("Inside", sub)
+        _, far = self.make("Far", self.dir)                       # lives elsewhere
+        pm = ProjectManager(None, self.home, [far, a])
+        self.assertEqual(self.names(pm), ["Sub", "A"])           # (Far is not in this folder: it is not listed here)
+        top = [pm.tree.topLevelItem(i).text(0) for i in range(pm.tree.topLevelItemCount())]
+        self.assertEqual(top, ["最近的專案", "KiaseCut"])
+        pm._tree_clicked(pm.tree.topLevelItem(0), 0)
+        self.assertEqual(sorted(self.names(pm)), ["A", "Far"])
+        pm._tree_clicked(pm.tree.topLevelItem(1).child(0), 0)    # Sub, from the tree
+        self.assertEqual(self.names(pm), ["上一層", "Inside"])
+        self.assertEqual(pm.tree.currentItem().text(0), "Sub")
+        crumbs = [pm.crumbs.itemAt(i).widget().text() for i in range(pm.crumbs.count()) if isinstance(pm.crumbs.itemAt(i).widget(), type(pm.up_btn))]
+        self.assertEqual(crumbs, ["KiaseCut", "Sub"])
+        pm.close()
+
+    def test_it_opens_in_the_folder_it_was_left_in(self):
+        from kiasecut.ui.project_manager import SETTINGS
+        sub = workspace.new_folder(self.home, "Sub")
+        self.make("Inside", sub)
+        QSettings(*SETTINGS).remove("pm_folder")
+        pm = ProjectManager(None, self.home)
+        self.assertEqual(os.path.abspath(pm.folder), os.path.abspath(self.home))
+        pm.open_folder(sub)
+        pm.accept()
+        again = ProjectManager(None, self.home)
+        self.assertEqual(os.path.abspath(again.folder), os.path.abspath(sub))
+        again.accept()
+        QSettings(*SETTINGS).remove("pm_folder")
+
+
+class ProjectsFolderTests(Base):
+    def host(self, **settings):
+        import types
+        from kiasecut.ui.main_window import MainWindow
+        h = types.SimpleNamespace(settings=lambda: types.SimpleNamespace(value=lambda k, d=None: settings.get(k, d)),
+                                  app_root=lambda: self.home)
+        h.projects_root = MainWindow.projects_root.__get__(h)
+        return h
+
+    def test_a_folder_the_old_way_drifted_into_goes_back_to_its_top_folder(self):
+        deep = os.path.join(self.home, "Projects", "_製圖")
+        self.assertEqual(self.host().projects_root(deep), os.path.join(self.home, "Projects"))
+        self.assertEqual(self.host().projects_root(os.path.join(self.home, "Projects")), os.path.join(self.home, "Projects"))
+        self.assertEqual(self.host(project_dir_chosen=True).projects_root(deep), deep)       # (chosen on purpose: as it is)
+        elsewhere = os.path.join(self.dir, "mine", "sub")
+        self.assertEqual(self.host().projects_root(elsewhere), elsewhere)
 
 
 class ThumbnailTests(Base):

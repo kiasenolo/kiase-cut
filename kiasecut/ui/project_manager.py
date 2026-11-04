@@ -1,11 +1,12 @@
 """Project manager: every project, as cards with their thumbnails (thumbnail.py), in folders.
 
 Shown when the program starts without a project (and from 檔案 > 專案管理器…). It works like a
-small file manager over the projects folder (the 新專案 location): folders that group
-projects show first as folder cards (double-click to go in, 上一層 or the path above to go
-back), then the projects there, newest first - a project folder shows as its project. At the
-top level the recent projects that live elsewhere show too. Typing in the search box looks
-through every folder. Under each card: the project's title (檔案 > 專案資訊), its folder's name
+file manager over the projects folder (the 新專案 location): the folders on the left as a tree
+(with 最近的專案 above it: the recent projects wherever they live, kept apart from the folders),
+the folder's path above as buttons that go back to any level, and on the right folders that
+group projects as cards first (double-click to go in, or 上一層), then the projects there, newest
+first - a project folder shows as its project. It opens in the folder it was left in. Typing in
+the search box looks through every folder. Under each card: the project's title (檔案 > 專案資訊), its folder's name
 and when it was last saved - without a title, just the folder and the time.
 Double-click (or 開啟) opens one; 新增專案… makes one in the folder shown, 新增資料夾 a folder,
 開啟其他專案… does what the 檔案 menu does. Right-click a card to rename it, copy it (建立副本),
@@ -25,8 +26,8 @@ import os
 from PySide6.QtCore import QFile, QSettings, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QFileDialog, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-                               QListView, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSizePolicy,
-                               QVBoxLayout)
+                               QListView, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSizePolicy, QSplitter,
+                               QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from .. import thumbnail, workspace
 from . import ask, inplace
@@ -153,6 +154,10 @@ class ProjectManager(QDialog):
         self.resize(900, 620)
         self.location, self.recent = location, list(recent)
         self.folder = location
+        self.show_recent = False                    # the 最近的專案 node is picked (not a folder)
+        last = str(QSettings(*SETTINGS).value("pm_folder") or "")
+        if last and os.path.isdir(last) and self.inside(last):
+            self.folder = last
         self.current = os.path.abspath(current) if current else None
         self.choice = None
         self.moved, self.removed = [], []
@@ -160,8 +165,10 @@ class ProjectManager(QDialog):
         top = QHBoxLayout()
         self.up_btn = QPushButton("上一層")
         self.up_btn.clicked.connect(self.go_up)
-        self.where = QLabel()
-        self.where.setStyleSheet("color: #9a9aa0;")
+        self.where = QWidget()                      # the path as buttons, one for each level
+        self.crumbs = QHBoxLayout(self.where)
+        self.crumbs.setContentsMargins(0, 0, 0, 0)
+        self.crumbs.setSpacing(2)
         self.where.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)     # a long path gives way
         self.search = QLineEdit()
         self.search.setMinimumWidth(220)
@@ -225,16 +232,101 @@ class ProjectManager(QDialog):
         bottom.addStretch(1)
         bottom.addWidget(self.open_btn)
         bottom.addWidget(close)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderHidden(True)
+        self.tree.setMinimumWidth(150)
+        self.tree.itemExpanded.connect(self._expanded)
+        self.tree.itemClicked.connect(self._tree_clicked)
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.addWidget(self.list, 1)
+        rl.addWidget(self.empty, 1)
+        self.split = QSplitter(Qt.Horizontal)
+        self.split.addWidget(self.tree)
+        self.split.addWidget(right)
+        self.split.setStretchFactor(1, 1)
+        self.split.setSizes([200, 700])
+        self.split.setChildrenCollapsible(False)
         lay = QVBoxLayout(self)
         lay.addLayout(top)
-        lay.addWidget(self.list, 1)
-        lay.addWidget(self.empty, 1)
+        lay.addWidget(self.split, 1)
         lay.addLayout(bottom)
+        self.build_tree()
         self.fill()
+
+    def done(self, r):
+        QSettings(*SETTINGS).setValue("pm_folder", self.folder)         # (it opens here next time)
+        super().done(r)
+
+    # -- the folder tree --------------------------------------------------------------------------
+    def inside(self, folder):
+        a, b = os.path.abspath(folder), os.path.abspath(self.location)
+        return a == b or a.startswith(b.rstrip(os.sep) + os.sep)
+
+    def build_tree(self):
+        """The tree again: 最近的專案, then the projects folder with the folders open on the way to the one shown."""
+        self.tree.blockSignals(True)
+        self.tree.clear()
+        rec = QTreeWidgetItem(["最近的專案"])
+        rec.setData(0, Qt.UserRole, None)
+        self.tree.addTopLevelItem(rec)
+        root = QTreeWidgetItem([os.path.basename(self.location.rstrip("/\\")) or self.location])
+        root.setData(0, Qt.UserRole, self.location)
+        root.setToolTip(0, self.location)
+        self.tree.addTopLevelItem(root)
+        self._load(root)
+        root.setExpanded(True)
+        self.tree.blockSignals(False)
+        self.sync_tree()
+
+    def _load(self, item):
+        """The folders under a tree item (a project folder is a project, not a folder here)."""
+        item.takeChildren()
+        for f in workspace.browse(item.data(0, Qt.UserRole))[0]:
+            sub = QTreeWidgetItem([os.path.basename(f)])
+            sub.setData(0, Qt.UserRole, f)
+            sub.setToolTip(0, f)
+            if workspace.browse(f)[0]:
+                sub.addChild(QTreeWidgetItem())              # (an arrow: its own folders load when it opens)
+            item.addChild(sub)
+
+    def _expanded(self, item):
+        if item.childCount() == 1 and item.child(0).data(0, Qt.UserRole) is None:
+            self._load(item)
+
+    def _tree_clicked(self, item, _col):
+        path = item.data(0, Qt.UserRole)
+        if path is None:
+            self.show_recent = True
+            self.search.blockSignals(True)
+            self.search.clear()
+            self.search.blockSignals(False)
+            self.fill()
+        else:
+            self.open_folder(path)
+
+    def sync_tree(self):
+        """Pick the node of what is shown, opening the folders on the way."""
+        self.tree.blockSignals(True)
+        if self.show_recent:
+            self.tree.setCurrentItem(self.tree.topLevelItem(0))
+        else:
+            item = self.tree.topLevelItem(1)
+            rel = os.path.relpath(self.folder, self.location)
+            for part in [] if rel == "." else rel.replace("\\", "/").split("/"):
+                self._expanded(item)
+                item.setExpanded(True)
+                item = next((item.child(i) for i in range(item.childCount()) if item.child(i).text(0) == part), None)
+                if item is None:
+                    break
+            if item is not None:
+                self.tree.setCurrentItem(item)
+        self.tree.blockSignals(False)
 
     # -- the cards --------------------------------------------------------------------------------
     def at_top(self):
-        return os.path.abspath(self.folder) == os.path.abspath(self.location)
+        return os.path.abspath(self.folder) == os.path.abspath(self.location) or self.show_recent
 
     def fill(self):
         self.list.clear()
@@ -243,11 +335,11 @@ class ProjectManager(QDialog):
         if searching:
             folders, projects = [], workspace.find_all(self.location)
             projects += [p for p in workspace.find_projects(self.location, self.recent) if p not in projects]
+        elif self.show_recent:              # the recent ones, wherever they live
+            folders, projects = [], [os.path.abspath(p).replace("\\", "/") for p in self.recent if os.path.isfile(p)]
         else:
             folders, projects = workspace.browse(self.folder)
-            if self.at_top():               # the recent ones that live elsewhere
-                projects += [p for p in workspace.find_projects(self.location, self.recent) if p not in projects]
-            else:
+            if not self.at_top():
                 it = QListWidgetItem(QIcon(folder_card(up=True)), "上一層")
                 it.setData(Qt.UserRole, os.path.dirname(self.folder))
                 it.setData(KIND, "up")
@@ -270,21 +362,54 @@ class ProjectManager(QDialog):
         has = self.list.count() > 0
         self.list.setVisible(has)
         self.empty.setVisible(not has)
-        self.empty.setText("沒有符合的專案" if searching else "這個資料夾是空的：按「新增專案…」或「新增資料夾」"
-                           if not self.at_top() else "還沒有專案：按「新增專案…」開始")
+        self.empty.setText("沒有符合的專案" if searching else "還沒有最近開過的專案" if self.show_recent
+                           else "這個資料夾是空的：按「新增專案…」或「新增資料夾」")
         if has:
             first = next((i for i in range(self.list.count()) if self.list.item(i).data(KIND) == "project"), 0)
             self.list.setCurrentRow(first)
-        rel = os.path.relpath(self.folder, self.location)
-        self.where.setText(f"專案資料夾：{self.location}" + ("" if rel == "." else f" / {rel.replace(os.sep, ' / ')}"))
-        self.where.setToolTip(self.folder)
+        self.fill_crumbs()
+        self.sync_tree()
         self.up_btn.setEnabled(not self.at_top() and not searching)
+
+    def fill_crumbs(self):
+        """The path above as buttons: each goes back to that level."""
+        while self.crumbs.count():
+            w = self.crumbs.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        if self.show_recent:
+            names = [("最近的專案", None)]
+        else:
+            rel = os.path.relpath(self.folder, self.location)
+            names = [(self.location, self.location)]
+            at = self.location
+            for part in [] if rel == "." else rel.replace("\\", "/").split("/"):
+                at = os.path.join(at, part).replace("\\", "/")
+                names.append((part, at))
+        for i, (text, path) in enumerate(names):
+            b = QPushButton(text if i else f"{os.path.basename(text.rstrip('/')) or text}")
+            b.setFlat(True)
+            b.setToolTip(path or "")
+            b.setEnabled(path is not None and i < len(names) - 1)
+            if path is not None:
+                b.clicked.connect(lambda _=False, p=path: self.open_folder(p))
+            self.crumbs.addWidget(b)
+            if i < len(names) - 1:
+                self.crumbs.addWidget(QLabel("›"))
+        self.crumbs.addStretch(1)
+        self.where.setToolTip(self.location if self.show_recent else self.folder)
+
+    def refresh(self):
+        """After folders were made, renamed, moved or deleted: the tree and the cards again."""
+        self.build_tree()
+        self.fill()
 
     def pick_location(self):
         """✎: browse another projects folder (and make it 新專案's place)."""
         d = QFileDialog.getExistingDirectory(self, "選擇專案資料夾", self.location)
         if d:
             self.location = self.new_location = d.replace("\\", "/")
+            self.build_tree()
             self.open_folder(self.location)
 
     def paths(self):
@@ -292,7 +417,7 @@ class ProjectManager(QDialog):
                 if self.list.item(i).data(KIND) == "project"]
 
     def open_folder(self, folder):
-        self.folder = folder
+        self.folder, self.show_recent = folder, False
         self.search.blockSignals(True)
         self.search.clear()
         self.search.blockSignals(False)
@@ -349,7 +474,7 @@ class ProjectManager(QDialog):
             workspace.new_folder(self.folder, name)
         except OSError as exc:
             QMessageBox.warning(self, "新增資料夾", str(exc))
-        self.fill()
+        self.refresh()
 
     def _on_current(self, fn):
         it = self.list.currentItem()
@@ -390,7 +515,7 @@ class ProjectManager(QDialog):
                 self._moved_folder(path, new)
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "重新命名", str(exc))
-        self.fill()
+        self.refresh()
 
     def duplicate(self, path):
         try:
@@ -410,7 +535,7 @@ class ProjectManager(QDialog):
                 self._moved_folder(path, new)
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "移動", str(exc))
-        self.fill()
+        self.refresh()
 
     def move_to(self, path):
         folder = QFileDialog.getExistingDirectory(self, "移到哪個資料夾", self.location)
@@ -439,7 +564,7 @@ class ProjectManager(QDialog):
         except OSError as exc:
             QMessageBox.warning(self, "刪除", str(exc))
         self.recent = [r for r in self.recent if r not in self.removed]
-        self.fill()
+        self.refresh()
 
     @staticmethod
     def trash(path):

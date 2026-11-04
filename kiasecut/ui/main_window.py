@@ -1453,13 +1453,25 @@ class MainWindow(QMainWindow):
     def default_location(self):
         s = self.settings().value("project_dir")
         if s and os.path.isdir(str(s)):
-            return str(s)
+            return self.projects_root(str(s))
         docs = QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or os.path.expanduser("~")
         old = os.path.join(docs, "tesetoa")                 # the program's earlier name
         if os.path.isdir(old) and not os.path.isdir(os.path.join(docs, "KiaseCut")) and \
                 not self.settings().value("root_dir"):
             return old.replace("\\", "/")
         return self.app_root()
+
+    def projects_root(self, folder):
+        """The projects folder: what 設定 or the manager's ✎ chose. A folder left behind by the old way (every opened project made its folder
+        the projects folder, so it drifted deeper) goes back up to its top folder under the root folder."""
+        if self.settings().value("project_dir_chosen") in (True, "true"):
+            return folder
+        root = os.path.abspath(self.app_root())
+        a = os.path.abspath(folder)
+        if a.startswith(root.rstrip(os.sep) + os.sep):
+            top = a[len(root.rstrip(os.sep)) + 1:].split(os.sep)[0]
+            return os.path.join(root, top).replace("\\", "/")
+        return folder
 
     def recent(self):
         v = self.settings().value("recent", [])
@@ -1469,7 +1481,6 @@ class MainWindow(QMainWindow):
     def remember(self, path):
         s = self.settings()
         s.setValue("recent", [path] + [p for p in self.recent() if p != path][:9])
-        s.setValue("project_dir", os.path.dirname(workspace.root_of(path)))
 
     def _fill_recent(self):
         m = self.recent_menu
@@ -1493,6 +1504,7 @@ class MainWindow(QMainWindow):
         accepted = dlg.exec() == QDialog.Accepted
         if dlg.new_location:                             # ✎: the projects folder changed there
             self.settings().setValue("project_dir", dlg.new_location)
+            self.settings().setValue("project_dir_chosen", True)
         if dlg.moved or dlg.removed:                     # projects moved, renamed or deleted there
             moved = dict(dlg.moved)
             rec = [moved.get(p, p) for p in self.recent() if p not in dlg.removed]
@@ -4906,6 +4918,8 @@ class MainWindow(QMainWindow):
         if v["root"] and v["root"] != self.app_root():
             s.setValue("root_dir", v["root"])
         s.setValue("autosave_dir", v["autosave_dir"])
+        if v["project_dir"] != str(s.value("project_dir") or ""):
+            s.setValue("project_dir_chosen", True)
         s.setValue("project_dir", v["project_dir"])
         s.setValue("autosave_min", v["autosave_min"])
         s.setValue("autosave_limit", v["autosave_limit"])

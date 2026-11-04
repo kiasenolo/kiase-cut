@@ -194,6 +194,20 @@ class HopTest(unittest.TestCase):
         self.assertEqual((sp.lineEdit().textMargins().top(), sp.lineEdit().textMargins().bottom()), (0, 0))
         host.close()
 
+    def test_a_hop_goes_straight_back_with_no_overshoot(self):
+        host, sp = self.make()
+        hop = sp._hop
+        seen = []
+        hop.kick(1)
+        for _ in range(20):
+            seen.append(hop.off)
+            QTest.qWait(30)
+        self.assertEqual(seen[0], motion.HOP_PX)
+        self.assertTrue(all(x >= -1e-9 for x in seen))                 # (never past where it was)
+        self.assertTrue(all(b <= a + 1e-9 for a, b in zip(seen, seen[1:])))
+        self.assertEqual(hop.off, 0.0)
+        host.close()
+
     def test_a_hop_that_has_just_begun_is_not_restarted_by_the_next_step_the_same_way(self):
         host, sp = self.make()
         hop = sp._hop

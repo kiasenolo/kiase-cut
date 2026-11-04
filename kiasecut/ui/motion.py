@@ -360,12 +360,12 @@ def attach_field(widget):
 
 
 # -- the hop of a number being dragged ------------------------------------------------------------------------------------
-# A number dragged up (bigger) hops up, dragged down (smaller) hops down: the text is kicked HOP_PX that way at once and springs
-# back past where it was (OutBack) and settles. A line edit has no offset for its text, but it has margins: more room under the
+# A number dragged up (bigger) hops up, dragged down (smaller) hops down: the text is put HOP_PX that way at once and goes back to
+# where it is (Kilo's `@keyframes 0% translate(+-offset) 100% translate(0)`, on the usual cubic-bezier(0, .5, 0, 1), no overshoot). A line edit has no offset for its text, but it has margins: more room under the
 # text lifts it, more above lowers it (by half the margin).
 
 HOP_PX = 1
-HOP_MS = 380
+HOP_MS = 500
 
 
 class Hop(QObject):
@@ -379,9 +379,7 @@ class Hop(QObject):
         self.dir = 0
         self.off = 0.0                        # pixels, up is positive
         self.anim = QVariantAnimation(self)
-        c = QEasingCurve(QEasingCurve.OutBack)
-        c.setOvershoot(2.5)
-        self.anim.setEasingCurve(c)
+        self.anim.setEasingCurve(out_curve())
         self.anim.setDuration(HOP_MS)
         self.anim.setStartValue(1.0)
         self.anim.setEndValue(0.0)

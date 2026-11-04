@@ -317,13 +317,17 @@ class Timeline(QWidget):
         self.selected_tracks = set()               # ids of the tracks picked by their headers
         self.track_anchor = None                   # the track a Shift+click selects from
         self.band = None                           # selection box (QRectF) while dragging
+        self.lit_id = None                         # the clip a finger has held, to be dragged: it is white
         self.snapping = True                       # 自動吸附: moves / trims snap to edges and the playhead
         self.rows = []
         self.drag = None
         self.mark_in = self.mark_out = None        # export range, frames
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
-        touch.enable(self, hold_right=lambda p: p.x() >= self.header_w and p.y() >= RULER_H)       # (held, then moved: the time is selected; on the ruler and the headers it is not)
+        # fingers: a clip is dragged once it has been held (it goes white from the hold), empty track space selects time once held,
+        # and a finger that moves first scrolls the view; on the ruler and the headers a drag is at once
+        touch.enable(self, hold_left=lambda p: self._tracks_at(p) and self._hit(p)[1] is not None,
+                     hold_right=lambda p: self._tracks_at(p) and self._hit(p)[1] is None, lit=self._light_clip)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
@@ -793,6 +797,20 @@ class Timeline(QWidget):
         y = self.tops[i] + (self.row_h(i) - 2 - BTN) / 2
         return [(f, QRectF(self.header_w - 6 - (len(flags) - k) * (BTN + 3), y, BTN, BTN))
                 for k, f in enumerate(flags)]
+
+    def _tracks_at(self, pos):
+        """Whether pos is in the tracks (below the ruler, right of the headers)."""
+        return pos.x() >= self.header_w and pos.y() >= RULER_H
+
+    def _light_clip(self, pos, on):
+        """The clip a finger holds goes white (on) until it is lifted."""
+        lit = None
+        if on and pos is not None:
+            c = self._hit(pos)[1]
+            lit = c["id"] if c is not None else None
+        if lit != self.lit_id:
+            self.lit_id = lit
+            self.update()
 
     def _hit(self, pos):
         """(row, clip, zone) under pos; zone is 'start', 'end' or 'body'."""
@@ -1331,6 +1349,13 @@ class Timeline(QWidget):
         else:
             p.setPen(QPen(edge, 2))
         p.drawRect(r.adjusted(1, 1, -1, -1))
+        if c["id"] == self.lit_id and not ghost:                 # (held by a finger: white, and it is let go to be dragged)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 120))
+            p.drawRect(r)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor("#ffffff"), 2))
+            p.drawRect(r.adjusted(1, 1, -1, -1))
         audio = c["type"] == "audio"
         wx0, wx1 = max(r.left() + 1, self.header_w), min(r.right() - 1, w)
         if wx1 - wx0 >= 2:

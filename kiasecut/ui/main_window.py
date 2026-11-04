@@ -56,7 +56,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import androidfiles, appevents, dialogframe, exprdialog, icons, inplace, look, mapdialog, menuanim, middledrag, softdrag, touch, wheel
+from . import androidfiles, appevents, dialogframe, exprdialog, icons, inplace, look, mapdialog, menuanim, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -6334,6 +6334,7 @@ def run(argv):
         touch.install_scrolling()                   # one finger scrolls every list and panel; a hold first, then it drags
     look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area
+    sashtouch.install()                             # the lines between panels are let go by a hold, with a finger (Android)
     softdrag.install()                              # a finger's drags (the library to the timeline) are made by the program on Android
     menuanim.install()                              # menus open from big and blurred to what they are
     # the logo (Icon.svg beside the package; Icon.free is its Lunacy source) on every window;

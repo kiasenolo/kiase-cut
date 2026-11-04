@@ -9,6 +9,9 @@ as well, and a second finger never arrives; so the touches are taken here and th
   * a finger held still (about half a second) and then lifted is a right click: the menu a right click opens, at the finger;
     a finger held and then moved is the drag it always was (the hold only matters if the finger comes up where it was) - but
     where enable()'s hold_right says so it is a drag with the right button (the timeline's selection of time).
+Where enable()'s hold_left says a thing there is only dragged once the finger has been held (the timeline's clips), the hold is
+what lets go of it: the finger lights it (the lit callback: it goes white) and buzzes, and from then on it is dragged; a finger
+that moves before that is a swipe of the view (as in a scroll area), not a drag. The same swipe comes before a right-button hold.
 Beyond that, for a widget given to enable():
   * two fingers pinch (a zoom, as a touchpad's pinch: a native gesture event) and move the view (a scroll, as a touchpad's
     two-finger scroll: a wheel event with pixel motion), both at once if the fingers do both - the views already read those;
@@ -79,10 +82,14 @@ def _dist(a, b):
 
 
 class _Gestures(QObject):
-    def __init__(self, widget, scroll=False, hold_right=None):
+    def __init__(self, widget, scroll=False, hold_right=None, hold_left=None, lit=None):
         super().__init__(widget)
         self.w = widget
         self.hold_right = hold_right           # f(point) -> whether a finger held at point and then moved drags with the RIGHT button
+        self.hold_left = hold_left             # f(point) -> whether what is at point is dragged (left button) only after a hold
+        self.lit = lit                         # f(point or None, on): what was held at point is lit (goes white) / is not any more
+        self.lit_on = False
+        self.gated = False                     # this finger came down where a hold comes first
         self.right = self.right_down = False   # ... the hold was such a one / the right button is down
         self.scroll = scroll                   # a scroll area's viewport: one finger swipes before it holds
         self.swiping = False                   # ... and has begun to
@@ -173,6 +180,7 @@ class _Gestures(QObject):
         return True
 
     def _finish(self):
+        self._light(None, False)
         self.fingers.clear()
         self.hold.stop()
         self.defer.stop()
@@ -186,9 +194,10 @@ class _Gestures(QObject):
         self.mode = "one"
         self.start = self.last = at
         self.pressed = self.moved = self.held = self.swiping = self.right = False
+        self.gated = self._kind(at) is not None
         self.double = now - self.tap_t < DOUBLE_S and _dist(at, self.tap_at) < DOUBLE_PX
-        if not self.scroll and self.hold_right is None:          # (what waits for the hold to say whether it is a left or a right drag
-            self.defer.start()                                  #  is pressed at the first move, as a scroll area's is)
+        if not self.scroll and not self.gated:                   # (what waits for the hold - a left or a right drag, or a swipe
+            self.defer.start()                                  #  - is pressed at the first move or the hold, as a scroll area's is)
         self.hold.start()
 
     def _press(self):
@@ -206,7 +215,7 @@ class _Gestures(QObject):
         if not self.moved and _dist(at, self.start) > SLOP_PX:
             self.hold.stop()
             self.defer.stop()
-            if self.scroll and not self.pressed:           # (before the hold: the area is scrolled, nothing is pressed)
+            if (self.scroll or self.gated) and not self.pressed and not self.held:    # (before the hold: the view is scrolled, nothing is pressed)
                 self.swiping, self.swipe_from = True, self.start
                 self.rest, self.samples, self.scrolling = QPointF(), [], False
                 self._swipe(at)
@@ -221,6 +230,22 @@ class _Gestures(QObject):
             self.queued = at                               #  one move - a preview drawn - would hold up, the finger's moves piling up behind
             if not self.flush.isActive():                  #  it, comes as one move to where the finger is, and the screen is drawn between)
                 self.flush.start()
+
+    def _kind(self, at):
+        """What a hold at `at` makes of the finger: "right" (a right-button drag), "left" (the thing there is let go to be dragged), or
+        None (nothing is waited for)."""
+        if self.hold_right is not None and self.hold_right(at):
+            return "right"
+        if self.hold_left is not None and self.hold_left(at):
+            return "left"
+        return None
+
+    def _light(self, at, on):
+        if on == self.lit_on:
+            return
+        self.lit_on = on
+        if self.lit is not None:
+            self.lit(at, on)
 
     def _flush_move(self):
         at, self.queued = self.queued, None
@@ -249,6 +274,7 @@ class _Gestures(QObject):
         self._flush_move()
         self._mouse(QEvent.MouseButtonRelease, self.last, Qt.RightButton if self.right_down else Qt.LeftButton, Qt.NoButton)
         self.pressed = self.right_down = self.right = False
+        self._light(None, False)
 
     def _up(self, now):
         if self.swiping:
@@ -275,9 +301,13 @@ class _Gestures(QObject):
     def _held(self):
         if self.mode == "one" and not self.moved and not self.swiping:
             self.held = True
-            if self.hold_right is not None and self.hold_right(self.start):
+            kind = self._kind(self.start)
+            if kind == "right":
                 self.right = True                          # (nothing is pressed yet: the first move presses the right button)
-            elif self.scroll or self.hold_right is not None:
+            elif kind == "left":
+                self._press()                              # (what was held is let go: pressed, and lit, and dragged by the moves)
+                self._light(self.start, True)
+            elif self.scroll:
                 self._press()                              # (the press a scroll area waited with)
             haptic.tick()
 
@@ -414,12 +444,14 @@ class _Gestures(QObject):
             self.grab = None
 
 
-def enable(widget, scroll=False, hold_right=None):
+def enable(widget, scroll=False, hold_right=None, hold_left=None, lit=None):
     """Fingers zoom, scroll and right-click on widget (see the module notes; scroll: widget is a scroll area's viewport;
     hold_right: f(point), true where a finger that is held and then moved drags with the right button, as the timeline's
-    selection of time - elsewhere on the widget a held finger is the left button's drag, as it is without it).
+    selection of time - elsewhere on the widget a held finger is the left button's drag, as it is without it); hold_left:
+    f(point), true where the thing is dragged only once held, and lit(point, on) lights it from the hold to the lifting
+    (a finger that moves first swipes the view).
     Returns the helper (kept alive by widget)."""
-    return _Gestures(widget, scroll, hold_right)
+    return _Gestures(widget, scroll, hold_right, hold_left, lit)
 
 
 def install_scrolling():

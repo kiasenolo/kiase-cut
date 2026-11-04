@@ -271,13 +271,21 @@ class HoldRightTest(unittest.TestCase):
         self.assertEqual(got, [Qt.LeftButton, Qt.LeftButton])
         self.assertTrue(all(b == Qt.LeftButton for b in self.w.move_buttons))
 
-    def test_moved_at_once_without_the_hold_is_the_left_button_drag(self):
+    def test_moved_at_once_without_the_hold_swipes_and_drags_nothing(self):
         s = self.seq()
         s.press(0, QPoint(100, 100), self.w).commit()
         s.move(0, QPoint(150, 100), self.w).commit()
-        s.release(0, QPoint(150, 100), self.w).commit()
-        got = [x[1] for x in self.kinds() if x[0] in ("press", "release")]
-        self.assertEqual(got, [Qt.LeftButton, Qt.LeftButton])
+        s.move(0, QPoint(190, 100), self.w).commit()
+        s.release(0, QPoint(190, 100), self.w).commit()
+        self.assertEqual([x for x in self.kinds()], [])                       # (nothing pressed)
+        self.assertTrue(any(x[0] == "wheel" for x in self.w.log))              # (the view is scrolled instead)
+
+    def test_on_the_ruler_a_move_at_once_is_still_the_left_button_drag(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 20), self.w).commit()
+        s.move(0, QPoint(150, 20), self.w).commit()
+        s.release(0, QPoint(150, 20), self.w).commit()
+        self.assertEqual([x[1] for x in self.kinds() if x[0] in ("press", "release")], [Qt.LeftButton, Qt.LeftButton])
 
     def test_held_still_and_lifted_is_a_click_and_the_menu(self):
         s = self.seq()
@@ -292,6 +300,71 @@ class HoldRightTest(unittest.TestCase):
         s.press(0, QPoint(100, 100), self.w).commit()
         s.release(0, QPoint(100, 100), self.w).commit()
         self.assertEqual([x for x in self.kinds()], [("press", Qt.LeftButton), ("release", Qt.LeftButton)])
+
+
+class HoldLeftTest(unittest.TestCase):
+    """The timeline's clips: they are dragged only once the finger has been held (and then they are white); a finger that moves
+    first swipes the view."""
+
+    def setUp(self):
+        self.w = Probe()
+        self.w.show()
+        self.lit = []
+        self.g = touch.enable(self.w, hold_left=lambda p: p.y() >= 40 and p.x() < 250, lit=lambda p, on: self.lit.append(on))
+        self.dev = QTest.createTouchDevice()
+        self.addCleanup(self.w.close)
+
+    def seq(self):
+        return QTest.touchEvent(self.w, self.dev)
+
+    def kinds(self):
+        return [(x[0], x[1]) if x[0] != "move" else "move" for x in self.w.log if x[0] in ("press", "release", "move")]
+
+    def test_held_it_lights_and_is_then_dragged_and_lights_off_when_lifted(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.assertEqual((self.kinds(), self.lit), ([], []))
+        self.g._held()
+        self.assertEqual(self.lit, [True])                       # (white from the hold)
+        self.assertEqual(self.kinds(), [("press", Qt.LeftButton)])
+        s.move(0, QPoint(150, 100), self.w).commit()
+        s.move(0, QPoint(190, 100), self.w).commit()
+        QTest.qWait(10)
+        s.release(0, QPoint(190, 100), self.w).commit()
+        self.assertEqual(self.kinds(), [("press", Qt.LeftButton), "move", "move", ("release", Qt.LeftButton)])
+        self.assertEqual(self.lit, [True, False])
+
+    def test_a_finger_that_moves_before_the_hold_swipes_and_lights_nothing(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        s.move(0, QPoint(150, 100), self.w).commit()
+        s.move(0, QPoint(190, 100), self.w).commit()
+        s.release(0, QPoint(190, 100), self.w).commit()
+        self.assertEqual(self.kinds(), [])
+        self.assertEqual(self.lit, [])
+        self.assertTrue(any(x[0] == "wheel" for x in self.w.log))
+
+    def test_where_nothing_waits_for_the_hold_the_drag_is_at_once(self):
+        s = self.seq()
+        s.press(0, QPoint(300, 100), self.w).commit()                          # (outside what is let go by a hold)
+        s.move(0, QPoint(340, 100), self.w).commit()
+        s.release(0, QPoint(340, 100), self.w).commit()
+        self.assertEqual(self.kinds()[0], ("press", Qt.LeftButton))
+        self.assertEqual(self.lit, [])
+
+    def test_a_tap_is_a_click_and_lights_nothing(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        s.release(0, QPoint(100, 100), self.w).commit()
+        self.assertEqual(self.kinds(), [("press", Qt.LeftButton), ("release", Qt.LeftButton)])
+        self.assertEqual(self.lit, [])
+
+    def test_a_second_finger_while_lit_puts_the_light_out(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.g._held()
+        s.press(1, QPoint(200, 100), self.w).commit()
+        self.assertEqual(self.lit[-1], False)
 
 
 class ScrollAreaTest(unittest.TestCase):

@@ -93,5 +93,70 @@ class MiddleDragTests(unittest.TestCase):
         self.assertIsNone(middledrag._area_at(Timeline()))
 
 
+class GlideTests(unittest.TestCase):
+    """The content goes on a little after the middle button is let go, slowing down; a pause before the release, or a touch, stops it."""
+
+    def setUp(self):
+        middledrag.install()
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.label = QLabel("tall")
+        self.label.setFixedHeight(5000)
+        self.scroll.setWidget(self.label)
+        self.scroll.resize(300, 400)
+        self.scroll.show()
+        QTest.qWaitForWindowExposed(self.scroll)
+        self.bar = self.scroll.verticalScrollBar()
+        self.bar.setValue(1000)
+
+    def tearDown(self):
+        self.scroll.close()
+
+    def flick(self, still=0):
+        y0 = self.bar.value() + 300                                # (a point in the middle of the view, in the label's coordinates)
+        QTest.mousePress(self.label, Qt.MiddleButton, NONE, QPoint(100, y0))
+        for i in range(1, 7):
+            QTest.qWait(15)
+            QTest.mouseMove(self.label, QPoint(100, y0 - i * 20))
+        if still:
+            QTest.qWait(still)
+        QTest.mouseRelease(self.label, Qt.MiddleButton, NONE, QPoint(100, y0 - 120))
+
+    def test_it_goes_on_a_while_and_comes_to_rest(self):
+        self.flick()
+        at_release = self.bar.value()
+        QTest.qWait(60)
+        mid = self.bar.value()
+        self.assertGreater(mid, at_release)                        # (going on, the way it was going)
+        QTest.qWait(1500)
+        end = self.bar.value()
+        self.assertGreater(end, mid)
+        QTest.qWait(200)
+        self.assertEqual(self.bar.value(), end)                    # (and it stopped)
+        self.assertLess(end - at_release, 600)                     # (a short glide)
+
+    def test_a_pause_before_letting_go_gives_none(self):
+        self.flick(still=150)
+        at = self.bar.value()
+        QTest.qWait(200)
+        self.assertEqual(self.bar.value(), at)
+
+    def test_the_wheel_stops_it(self):
+        from PySide6.QtGui import QWheelEvent
+        self.flick()
+        QTest.qWait(40)
+        e = QWheelEvent(QPointF(50, 50), QPointF(50, 50), QPoint(0, 0), QPoint(0, 0), Qt.NoButton, Qt.ShiftModifier, Qt.NoScrollPhase, False)
+        QApplication.sendEvent(self.scroll.viewport(), e)
+        at = self.bar.value()
+        QTest.qWait(200)
+        self.assertEqual(self.bar.value(), at)
+
+    def test_a_drag_at_the_end_of_the_content_does_not_run_past_it(self):
+        self.bar.setValue(self.bar.maximum() - 30)
+        self.flick()
+        QTest.qWait(800)
+        self.assertEqual(self.bar.value(), self.bar.maximum())
+
+
 if __name__ == "__main__":
     unittest.main()

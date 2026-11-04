@@ -17,7 +17,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QFrame, QMenu, QStyle, QStyleOptionButton,
                                QStyleOptionMenuItem, QStyleOptionProgressBar, QStyleOptionTab, QStyleOptionToolButton, QTabBar)
 
-from . import motion, wheel
+from . import motion, smoothscroll, wheel
 
 FILES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "look").replace("\\", "/")
 FRAME = "#404042"         # Breeze's frame around scroll areas, spin boxes and tool buttons
@@ -272,6 +272,7 @@ class Style(wheel.Style):
         super().polish(widget)
         motion.attach(widget)                         # (a push or tool button paints itself from its Fader)
         motion.attach_field(widget)                   # (an input field has its outline drawn over it)
+        smoothscroll.attach(widget)                   # (the wheel glides)
         motion.attach_bar(widget)                     # (a scroll bar's thumb is drawn over it)
         motion.attach_tabs(widget)                    # (a tab bar moves its tabs' colours)
         motion.attach_toggle(widget)                  # (a check box or radio button moves its indicator)

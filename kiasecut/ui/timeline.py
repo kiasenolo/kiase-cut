@@ -96,7 +96,7 @@ from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QIcon, QImage, QPainte
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QScrollBar, QTextEdit, QToolTip, QWidget
 
 from .. import build, components, curves, edit, project, waveform
-from . import appevents, wheel
+from . import appevents, touch, wheel
 from .params import param_menu
 from .menukeys import Menu
 from .wrapdrag import WrapDrag
@@ -323,6 +323,7 @@ class Timeline(QWidget):
         self.mark_in = self.mark_out = None        # export range, frames
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
+        touch.enable(self)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers

@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, components, curves, edit, fx, textvars
-from . import wheel
+from . import touch, wheel
 from .inspector import PARAMS, PLACE_ROWS, SpinBox
 from .wrapdrag import WrapDrag
 
@@ -111,6 +111,7 @@ class CurveCanvas(QWidget):
         super().__init__(parent)
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
+        touch.enable(self)
         self.setFocusPolicy(Qt.ClickFocus)
         self.curves = []             # [{label, factor, color(bool), keys, static, pen}]
         self.duration = 1

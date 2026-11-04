@@ -106,7 +106,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineE
                                QWidget)
 
 from .. import components, curves, edit, fonts, nodegraph, project, render, textlayout, textvars
-from . import appevents, wheel
+from . import appevents, touch, wheel
 from .wrapdrag import WrapDrag
 
 US = 1_000_000
@@ -539,6 +539,7 @@ class Preview(QWidget):
         self.wrap = WrapDrag(self, lambda: QRectF(self.rect()))
         self.setMinimumSize(320, 180)
         self.setMouseTracking(True)
+        touch.enable(self)                      # (fingers: pinch zooms, two fingers move the view, a held one is a right click)
         self.accept_media = False               # media may be dropped on it (a static compound is open)
         self.drop_at = None                     # canvas point a drag from elsewhere is over
         self.drop_replace = []                  # boxes an Alt-drop there would give its media to

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, 
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
-from . import appevents
+from . import appevents, touch
 from .wheel import pinch as wheel_pinch
 from .wrapdrag import WrapDrag
 
@@ -968,6 +968,7 @@ class GraphView(QGraphicsView):
         self.carrying = None                     # nodes just made, stuck to the pointer till a click: {ids, off, remove}
         self.wrap = WrapDrag(self.viewport(), lambda: self.viewport().rect())    # (G and dragged nodes: endless, the pointer wraps at the view's edges as in a middle-button drag)
         self.plain_pos = None                    # where a dragged node's pointer is, wraps counted
+        touch.enable(self.viewport())
         self.viewport().setMouseTracking(True)         # (carried nodes follow the pointer with no button down)
         self.setAcceptDrops(True)
 

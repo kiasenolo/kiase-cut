@@ -1595,6 +1595,14 @@ class MainWindow(QMainWindow):
             w = tools[kind] = (BezierTool if kind == "bezier" else PaletteTool)(self.app_root)
         else:
             w.fill()
+        if sys.platform == "android" or os.environ.get("KIASECUT_TOOL_COVER"):      # (fullscreen: over the window, not a window of its own)
+            from .tools import ToolCover
+            covers = self.__dict__.setdefault("_tool_covers", {})
+            cover = covers.get(kind)
+            if cover is None:
+                cover = covers[kind] = ToolCover(self, w)
+            cover.present()
+            return
         w.show()
         w.raise_()
         w.activateWindow()

@@ -10,7 +10,7 @@ its own that stays open beside the editor. What they keep is in toolsdata.py.
 import os
 import time
 
-from PySide6.QtCore import QPointF, QRectF, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QDoubleSpinBox, QFileDialog, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton, QSplitter,
@@ -23,6 +23,62 @@ from .menukeys import Menu
 
 
 SETTINGS = ("KiaseCut", "KiaseCut")
+
+
+class ToolCover(QWidget):
+    """A tool over the whole of the window (Android: fullscreen) with a title bar and a ✕ that puts it away: the tool is a widget
+    of this one, not a window of the program's own (a second window is a poor thing on Android)."""
+    BAR_H = 40
+
+    def __init__(self, cover, tool):
+        super().__init__(cover)
+        self.cover, self.tool = cover, tool
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        bar = QWidget()
+        bar.setObjectName("bar")
+        bar.setFixedHeight(self.BAR_H)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(12, 0, 0, 0)
+        row.setSpacing(0)
+        self.title = QLabel(tool.windowTitle())
+        self.title.setObjectName("crumb")
+        row.addWidget(self.title, 1)
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setObjectName("tool")
+        self.close_btn.setFixedSize(2 * self.BAR_H, self.BAR_H)
+        self.close_btn.clicked.connect(self.put_away)
+        row.addWidget(self.close_btn)
+        lay.addWidget(bar)
+        tool.setParent(self, Qt.Widget)                   # (a widget of this one now, no longer a window)
+        tool.setMinimumSize(0, 0)
+        lay.addWidget(tool, 1)
+        cover.installEventFilter(self)
+        self.hide()
+
+    def present(self):
+        self.title.setText(self.tool.windowTitle())
+        self.setGeometry(self.cover.rect())
+        self.show()
+        self.tool.show()
+        self.raise_()
+        self.setFocus()
+
+    def put_away(self):
+        self.hide()
+
+    def eventFilter(self, obj, e):
+        if obj is self.cover and e.type() == QEvent.Resize and self.isVisible():
+            self.setGeometry(self.cover.rect())          # (it goes on covering the window)
+        return False
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Escape, Qt.Key_Back):
+            self.put_away()
+        else:
+            super().keyPressEvent(e)
 
 
 def ease(v, x):

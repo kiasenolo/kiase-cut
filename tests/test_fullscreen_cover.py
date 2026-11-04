@@ -52,3 +52,31 @@ class CoverTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolCoverTest(unittest.TestCase):
+    def test_a_tool_is_a_widget_of_a_cover_over_the_whole_window_with_a_close_button(self):
+        from PySide6.QtWidgets import QLabel
+        from kiasecut.ui.tools import ToolCover
+        win = QWidget()
+        win.resize(500, 300)
+        win.show()
+        tool = QWidget(None, Qt.Window)
+        tool.setWindowTitle("調色盤")
+        tool.resize(200, 100)
+        QLabel("x", tool)
+        cover = ToolCover(win, tool)
+        self.assertFalse(cover.isVisible())
+        cover.present()
+        self.assertFalse(tool.isWindow())
+        self.assertEqual(cover.geometry(), win.rect())
+        win.resize(700, 400)
+        QTest.qWait(20)
+        self.assertEqual(cover.geometry(), win.rect())
+        cover.close_btn.click()
+        self.assertFalse(cover.isVisible())
+        cover.present()                                     # (and again)
+        self.assertTrue(tool.isVisible())
+        QTest.keyClick(cover, Qt.Key_Escape)
+        self.assertFalse(cover.isVisible())
+        win.close()

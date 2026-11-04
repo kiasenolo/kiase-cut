@@ -15,7 +15,7 @@ rename the same clip), else the `anchor` the caller passes, else the button unde
 else the pointer itself. An anchor is a widget (all of it) or (widget, QRect in its coordinates).
 """
 import shiboken6
-from PySide6.QtCore import QEvent, QEventLoop, QObject, QPoint, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QEventLoop, QObject, QPoint, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QAbstractButton, QApplication, QFrame, QLineEdit, QListView, QTreeWidget, QWidget
 
@@ -74,7 +74,7 @@ class Overlay(QFrame):
     """A frame over its window, run() until finish(): True kept, False not."""
 
     def __init__(self, widget):
-        super().__init__(widget.window())
+        super().__init__(real_window(widget))
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.loop, self.ok, self._done = QEventLoop(), False, False
 
@@ -128,9 +128,26 @@ class Overlay(QFrame):
         return False
 
 
+def real_window(widget):
+    """The window widget is in on the screen: a widget inside a graphics view (a proxy: the node editor's fields) is a
+    window of its own to Qt, but what it opens must not be cut off by the box it sits in."""
+    w = widget.window()
+    while w.graphicsProxyWidget() is not None and w.graphicsProxyWidget().scene().views():
+        w = w.graphicsProxyWidget().scene().views()[0].window()
+    return w
+
+
 def window_rect(widget, rect):
-    """rect of widget in its window's coordinates."""
-    return QRect(widget.mapTo(widget.window(), rect.topLeft()), rect.size())
+    """rect of widget in the coordinates of its real window (real_window)."""
+    win = widget.window()
+    r = QRect(widget.mapTo(win, rect.topLeft()), rect.size())
+    while win.graphicsProxyWidget() is not None and win.graphicsProxyWidget().scene().views():
+        proxy = win.graphicsProxyWidget()
+        view = proxy.scene().views()[0]
+        box = view.mapFromScene(proxy.mapToScene(QRectF(r))).boundingRect()
+        win = view.window()
+        r = QRect(view.viewport().mapTo(win, box.topLeft()), box.size())
+    return r
 
 
 def ask_name(parent, text, anchor=None):
@@ -139,7 +156,7 @@ def ask_name(parent, text, anchor=None):
     w, r = anchor_of(anchor)
     if w is None:
         return text, False
-    win = w.window()
+    win = real_window(w)
     r = window_rect(w, r.intersected(w.rect()) if w.rect().intersects(r) else r)
     ov = Overlay(w)
     ov.setObjectName("inplace")

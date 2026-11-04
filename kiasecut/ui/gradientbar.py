@@ -173,8 +173,8 @@ class GradientBar(QWidget):
         self.selected.emit()
         self.update()
 
-    def pick(self):
-        col = pick_color(self, qcolor(self._hex()), "漸變色的顏色", anchor=self)
+    def pick(self, anchor=None):
+        col = pick_color(self, qcolor(self._hex()), "漸變色的顏色", anchor=anchor or self)
         if col is not None:
             self.stops[self.sel][1] = rgba(col)
             self.changed.emit(copy.deepcopy(self.stops))
@@ -242,7 +242,7 @@ class GradientEditor(QWidget):
         self.bar.changed.connect(self.changed.emit)
         self.bar.committed.connect(self.changed.emit)
         self.place.edited.connect(self._typed)
-        self.color.clicked.connect(self.bar.pick)
+        self.color.clicked.connect(lambda: self.bar.pick(self.color))
         remove.clicked.connect(self.bar.remove)
         reverse.clicked.connect(self.bar.reverse)
         self._show_sel()

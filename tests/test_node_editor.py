@@ -770,6 +770,23 @@ class NodeEditorTests(unittest.TestCase):
         grad.bar.committed.emit([[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]])
         self.assertEqual(got[-1][1], nid + ".g")
 
+    def test_what_a_ramp_in_a_node_opens_is_not_cut_by_the_node(self):
+        from kiasecut.ui import inplace
+        made = []
+
+        def add(e):
+            made.append(ng.add_node(e["graph"], {"type": "filter", "ref": "builtin:blender_color_ramp"}, 300, 40))
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(add)
+        it = ed.view.items_by_id[made[0]]
+        w, = [w for q, w in it.inline if q.type == "gradient"]
+        self.assertIs(inplace.real_window(w), ed.window())
+        ed.view.centerOn(it)
+        r = inplace.window_rect(w.color, w.color.rect())
+        win = ed.window().rect()
+        self.assertTrue(win.contains(r.center()))
+        self.assertIs(inplace.real_window(ed), ed.window())
+
     def test_ramp_drag_is_live_and_its_end_is_the_edit(self):
         from kiasecut.ui.gradientbar import GradientEditor
         made = []

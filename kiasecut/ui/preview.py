@@ -1116,7 +1116,7 @@ class Preview(QWidget):
                 p.drawLine(QPointF(0, g[1]), QPointF(self.W, g[1]))
 
     def _handle(self, p, pt, k, round_=False, color="#ffffff"):
-        s = HANDLE_PX * k
+        s = HANDLE_PX * touch.scale() * k
         p.setPen(QPen(QColor("#111114"), 1 * k))
         p.setBrush(QColor(color))
         if round_:
@@ -1250,7 +1250,7 @@ class Preview(QWidget):
         selected."""
         if not self.multi():
             return None
-        pad = PICK_PX * k
+        pad = PICK_PX * touch.scale() * k
         for axis, i, bars, _, width in self._gaps(self._live_boxes(), k):
             if any(QRectF(a, b).normalized().adjusted(-pad, -pad, pad, pad).contains(m) for a, b in bars):
                 return axis, i, width
@@ -1392,7 +1392,7 @@ class Preview(QWidget):
             elif name == "feather":
                 u, _ = g.down()
                 n = QPointF(-u.y(), u.x())
-                s = HANDLE_PX * k
+                s = HANDLE_PX * touch.scale() * k
                 p.setPen(QPen(QColor("#111114"), 1 * k))
                 p.setBrush(QColor("#ffb020"))
                 p.drawPolygon(QPolygonF([pt + u * s * 0.8, pt - u * s * 0.4 + n * s * 0.7, pt - u * s * 0.4 - n * s * 0.7]))
@@ -1417,7 +1417,7 @@ class Preview(QWidget):
 
     # -- mouse ------------------------------------------------------------------------------------
     def _near(self, a, b, k):
-        return math.hypot(a.x() - b.x(), a.y() - b.y()) <= PICK_PX * k
+        return math.hypot(a.x() - b.x(), a.y() - b.y()) <= PICK_PX * touch.scale() * k
 
     def mousePressEvent(self, e):
         if self.drag and self.drag.get("modal"):         # (the click that keeps a grab, or the right button that puts it back)
@@ -1925,7 +1925,7 @@ class Preview(QWidget):
         elif self.multi():
             boxes = self._live_boxes()
             l, r, t, b = self._union(boxes) if boxes else (0, 0, 0, 0)
-            pad = 2 * PICK_PX * k
+            pad = 2 * PICK_PX * touch.scale() * k
             if (gap := self._gap_at(m, k)) is not None:
                 cur, hover = (Qt.SizeHorCursor if gap[0] == "x" else Qt.SizeVerCursor), "handle"
             elif any(grabs(bx, x, y) for bx in boxes):
@@ -2009,6 +2009,8 @@ class Preview(QWidget):
         if hit is not None and hit.clip["type"] == "text" and not curves.is_animated(hit.clip["text"].get("content")):
             self.drag = None
             self.edit_text(hit)
+        elif hit is None:                                # (double click / tap on nothing: the whole picture)
+            self.view_fit()
 
     # -- typing a text clip's words on the canvas -------------------------------------------------
     def _screen_rect(self, box):

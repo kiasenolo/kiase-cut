@@ -3,27 +3,59 @@
 One finger is the mouse: the widget is sent a left-button press, moves and release at the finger, so every drag, click and
 menu works as it does with a mouse. (Qt would make those itself from touches nobody takes, but then lets go of the touch
 as well, and a second finger never arrives; so the touches are taken here and the mouse is made here.)
+  * the press waits PRESS_MS, so a second finger that lands a moment after the first does not click under it; the finger must
+    leave a SLOP_PX circle before it moves anything (a tap is not a drag by a finger's tremble);
+  * a second tap on the same spot soon after the first is a double click (the widget gets MouseButtonDblClick);
+  * a finger held still (about half a second) and then lifted is a right click: the menu a right click opens, at the finger;
+    a finger held and then moved is the drag it always was (the hold only matters if the finger comes up where it was).
 Beyond that, for a widget given to enable():
   * two fingers pinch (a zoom, as a touchpad's pinch: a native gesture event) and move the view (a scroll, as a touchpad's
     two-finger scroll: a wheel event with pixel motion), both at once if the fingers do both - the views already read those;
-  * a finger held still (about half a second) and then lifted is a right click: the menu a right click opens, at the finger;
-    a finger held and then moved is the drag it always was (the hold only matters if the finger comes up where it was).
+    lifting them while still moving lets the scroll glide on and slow down (wheel events of the momentum phase);
+  * two or three fingers put down and lifted together, without moving, are a tap of that many fingers: on_tap(n, f) calls f
+    (the main window makes two undo and three redo).
+scale() tells the views how much bigger to make what is to be hit: 1 for a mouse, FINGER_SCALE after the last input was a finger.
 The first finger's mouse press is taken back as soon as a second finger comes: a mouse release goes to the widget, so a
 drag that had begun ends where it stands.
 """
 import math
+import time
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QPoint, Qt, QTimer
 from PySide6.QtGui import (QContextMenuEvent, QEventPoint, QMouseEvent, QNativeGestureEvent, QPointingDevice,
                            QWheelEvent)
 from PySide6.QtWidgets import QApplication
 
-HOLD_MS = 550            # a finger this long on the same spot is a right click
-SLOP_PX = 12             # ... and moves less than this
+from .. import haptic
+
+HOLD_MS = 550            # a finger this long on the same spot is a right click (when lifted there)
+PRESS_MS = 70            # the mouse press waits this long for a second finger
+SLOP_PX = 10             # a finger moves nothing until it has gone this far from where it came down
+DOUBLE_S, DOUBLE_PX = 0.35, 30      # a second tap this soon and this near the first is a double click
+TAP_S = 0.35             # fingers down and up within this long, without moving, are a tap
 MIN_ZOOM = 0.003         # a pinch step smaller than this (as a ratio) is not sent
+GLIDE_MIN = 120.0        # px/s: a scroll slower than this when the fingers lift does not glide
+GLIDE_STOP = 25.0        # px/s: a glide slower than this stops
+GLIDE_TAU = 0.35         # s: the glide's speed falls to 1/e this long after
+GLIDE_FRAME_MS = 16
+SAMPLE_S = 0.1           # the speed of a scroll is read over this last stretch
+FINGER_SCALE = 2.0       # how much bigger hit areas and handles are for a finger
 
 RELEASED = QEventPoint.State.Released
 _TOUCH = (QEvent.TouchBegin, QEvent.TouchUpdate, QEvent.TouchEnd, QEvent.TouchCancel)
+
+_finger = False          # the last input was a finger
+_taps = {}               # number of fingers -> what to call
+
+
+def scale():
+    """1 for the mouse, FINGER_SCALE when the last thing used was a finger: multiply the sizes that are hit (or drawn to be hit) by it."""
+    return FINGER_SCALE if _finger else 1.0
+
+
+def on_tap(fingers, func):
+    """Call func when `fingers` (2 or 3) tap a widget given to enable()."""
+    _taps[fingers] = func
 
 
 class Finger:
@@ -34,26 +66,54 @@ class Finger:
         return self._pos
 
 
+def _dist(a, b):
+    return math.hypot(a.x() - b.x(), a.y() - b.y())
+
+
 class _Gestures(QObject):
     def __init__(self, widget):
         super().__init__(widget)
         self.w = widget
-        self.mode = "idle"                      # idle, one (a finger down: the mouse), multi (pinch / scroll)
-        self.held = False                       # the finger has stayed on its spot for HOLD_MS (lifting it now is a right click)
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)
-        self.timer.setInterval(HOLD_MS)
-        self.timer.timeout.connect(self._held)
+        self.mode = "idle"                      # idle, one (a finger down: the mouse), multi (pinch / scroll / tap)
+        self.hold = QTimer(self)
+        self.hold.setSingleShot(True)
+        self.hold.setInterval(HOLD_MS)
+        self.hold.timeout.connect(self._held)
+        self.defer = QTimer(self)
+        self.defer.setSingleShot(True)
+        self.defer.setInterval(PRESS_MS)
+        self.defer.timeout.connect(self._press)
+        self.glide = QTimer(self)
+        self.glide.setInterval(GLIDE_FRAME_MS)
+        self.glide.timeout.connect(self._glide)
         self.start = self.last = QPointF()
         self.fingers = {}                       # touch point id -> where it is, for the fingers down
         self.rest = QPointF()                   # the scroll motion not yet sent (whole pixels only)
         self.scrolling = False
+        self.pressed = self.moved = self.held = self.double = False
+        self.tap_t, self.tap_at = 0.0, QPointF()          # the last tap of one finger (for a double click)
+        self.sending = False                    # a mouse event of ours is being sent
+        self.samples = []                       # (time, dx, dy) of the scroll sent lately
+        self.speed = (0.0, 0.0)
+        self.glide_at = QPointF()
+        self.glide_t = 0.0
+        self.prev = self.origin = (0.0, 0.0, 0.0)
+        self.t_multi, self.peak, self.tapping = 0.0, 0, False
         widget.setAttribute(Qt.WA_AcceptTouchEvents, True)
         widget.installEventFilter(self)
 
     def eventFilter(self, obj, e):
-        if obj is not self.w or e.type() not in _TOUCH:
+        global _finger
+        if obj is not self.w:
             return False
+        t = e.type()
+        if t in (QEvent.MouseButtonPress, QEvent.MouseMove) and not self.sending \
+                and e.source() == Qt.MouseEventNotSynthesized:
+            _finger = False                                # (a real mouse: the small hit areas again)
+            return False
+        if t not in _TOUCH:
+            return False
+        _finger = True
         taken = self._touch(e)
         if taken:
             e.accept()                      # (a TouchBegin counts as taken only when accepted: the following touches come to the widget then)
@@ -63,7 +123,7 @@ class _Gestures(QObject):
     def _touch(self, e):
         if e.type() == QEvent.TouchCancel:
             if self.mode == "one":
-                self._mouse(QEvent.MouseButtonRelease, self.last, Qt.LeftButton, Qt.NoButton)
+                self._lift()
             self._finish()
             return True
         for p in e.points():                               # (a finger may come as a TouchBegin of its own, or only the moved ones come)
@@ -72,60 +132,121 @@ class _Gestures(QObject):
             else:
                 self.fingers[p.id()] = p.position()
         down = [Finger(pos) for pos in self.fingers.values()]
-        began = False
+        now = time.monotonic()
         if self.mode == "idle" and down:
-            self.mode, began = "one", True
-            self.held = False
-            self.start = self.last = down[0].position()
-            self._mouse(QEvent.MouseButtonPress, self.last, Qt.LeftButton, Qt.LeftButton)
-            self.timer.start()
+            self.glide.stop()
+            self._begin(down[0].position(), now)
         if self.mode == "one":
             if len(down) >= 2:                             # a second finger: the first one's press is taken back
-                self.timer.stop()
-                self.held = False
-                self._mouse(QEvent.MouseButtonRelease, self.last, Qt.LeftButton, Qt.NoButton)
-                self.mode = "multi"
-                self.prev = self._measure(down)
-                self.rest = QPointF()
-                self.scrolling = False
+                self._to_multi(down, now)
             elif down:
-                if not began:
-                    self.last = down[0].position()
-                    if self._moved():
-                        self.timer.stop()
-                        self.held = False
-                    if not self.held:                      # (a held finger's tremble is not a drag)
-                        self._mouse(QEvent.MouseMove, self.last, Qt.NoButton, Qt.LeftButton)
+                self._drag(down[0].position())
             else:                                          # the finger is up
-                self.timer.stop()
-                self._mouse(QEvent.MouseButtonRelease, self.last, Qt.LeftButton, Qt.NoButton)
-                if self.held:
-                    self._right_click(self.last)
-                self.held = False
-                self.mode = "idle"
+                self._up(now)
         elif self.mode == "multi" and len(down) >= 2:
-            self._pinch(down)
+            self.peak = max(self.peak, len(down))
+            self._pinch(down, now)
         if self.mode == "multi" and not down:
+            self._tap_or_glide(now)
             self._finish()
         return True
 
-    def _finish(self, cancel=False):
+    def _finish(self):
         self.fingers.clear()
-        self.timer.stop()
+        self.hold.stop()
+        self.defer.stop()
         if self.scrolling:
             self._wheel(QPoint(0, 0), Qt.ScrollEnd)
         self.scrolling = False
         self.mode = "idle"
 
-    # -- pinch and two-finger scroll ----------------------------------------------------------------------------------------
+    # -- one finger: the mouse ----------------------------------------------------------------------------------------------
+    def _begin(self, at, now):
+        self.mode = "one"
+        self.start = self.last = at
+        self.pressed = self.moved = self.held = False
+        self.double = now - self.tap_t < DOUBLE_S and _dist(at, self.tap_at) < DOUBLE_PX
+        self.defer.start()
+        self.hold.start()
+
+    def _press(self):
+        """The mouse press at the finger (the second tap of a double click is sent as one)."""
+        if self.mode != "one" or self.pressed:
+            return
+        self.pressed = True
+        self._mouse(QEvent.MouseButtonDblClick if self.double else QEvent.MouseButtonPress, self.start, Qt.LeftButton, Qt.LeftButton)
+
+    def _drag(self, at):
+        self.last = at
+        if not self.moved and _dist(at, self.start) > SLOP_PX:
+            self.moved, self.held = True, False
+            self.hold.stop()
+            self.defer.stop()
+            self._press()
+        if self.moved:
+            self._mouse(QEvent.MouseMove, at, Qt.NoButton, Qt.LeftButton)
+
+    def _lift(self):
+        """The release that ends the press (made first if the finger was up before the press was due)."""
+        self.hold.stop()
+        self.defer.stop()
+        self._press()
+        self._mouse(QEvent.MouseButtonRelease, self.last, Qt.LeftButton, Qt.NoButton)
+        self.pressed = False
+
+    def _up(self, now):
+        self._lift()
+        if self.held and not self.moved:
+            self.tap_t = 0.0
+            self._right_click(self.last)
+        elif not self.moved:                               # a tap (what a double click may follow)
+            self.tap_t, self.tap_at = (0.0 if self.double else now), self.last
+        else:
+            self.tap_t = 0.0
+        self.held = False
+        self.mode = "idle"
+
+    # -- the hold: a right click when the finger is lifted where it was ----------------------------------------------------
+    def _held(self):
+        if self.mode == "one" and not self.moved:
+            self.held = True
+            haptic.tick()
+
+    def _right_click(self, at):
+        self._mouse(QEvent.MouseButtonPress, at, Qt.RightButton, Qt.RightButton)
+        target = self.w.childAt(at.toPoint()) or self.w
+        local = target.mapFrom(self.w, at.toPoint())
+        self._send(target, QContextMenuEvent(QContextMenuEvent.Mouse, local, target.mapToGlobal(local)))
+        self._mouse(QEvent.MouseButtonRelease, at, Qt.RightButton, Qt.NoButton)
+
+    # -- more fingers: pinch, two-finger scroll, taps ---------------------------------------------------------------------
+    def _to_multi(self, down, now):
+        self.hold.stop()
+        self.defer.stop()
+        if self.pressed:
+            self._lift()
+        self.held = False
+        self.tap_t = 0.0
+        self.mode = "multi"
+        self.prev = self.origin = self._measure(down)
+        self.rest = QPointF()
+        self.scrolling = False
+        self.samples = []
+        self.t_multi, self.peak, self.tapping = now, len(down), True
+
     @staticmethod
     def _measure(points):
         """(centre x, centre y, distance) of the first two fingers."""
         a, b = points[0].position(), points[1].position()
         return (a.x() + b.x()) / 2, (a.y() + b.y()) / 2, math.hypot(a.x() - b.x(), a.y() - b.y())
 
-    def _pinch(self, points):
+    def _pinch(self, points, now):
         cx, cy, dist = self._measure(points)
+        if self.tapping:                                   # (nothing is sent until the fingers have really moved)
+            ox, oy, od = self.origin
+            if math.hypot(cx - ox, cy - oy) <= SLOP_PX and abs(dist - od) <= SLOP_PX and now - self.t_multi < TAP_S:
+                return
+            self.tapping = False
         px, py, pdist = self.prev
         self.prev = (cx, cy, dist)
         centre = QPointF(cx, cy)
@@ -139,6 +260,38 @@ class _Gestures(QObject):
             self.rest -= QPointF(whole)
             self._wheel(whole, Qt.ScrollUpdate if self.scrolling else Qt.ScrollBegin, centre)
             self.scrolling = True
+            self.samples = [s for s in self.samples if now - s[0] <= SAMPLE_S] + [(now, whole.x(), whole.y())]
+
+    def _tap_or_glide(self, now):
+        if self.tapping:
+            if now - self.t_multi < TAP_S and self.peak in _taps:
+                _taps[self.peak]()
+            return
+        recent = [s for s in self.samples if now - s[0] <= SAMPLE_S]
+        if not self.scrolling or len(recent) < 2:
+            return
+        span = max(now - recent[0][0], 1e-3)
+        vx, vy = sum(s[1] for s in recent) / span, sum(s[2] for s in recent) / span
+        if math.hypot(vx, vy) >= GLIDE_MIN:
+            self.speed, self.glide_t = (vx, vy), now
+            self.glide_at = QPointF(self.prev[0], self.prev[1])
+            self.rest = QPointF()
+            self.glide.start()
+
+    def _glide(self):
+        now = time.monotonic()
+        dt, self.glide_t = now - self.glide_t, now
+        k = math.exp(-dt / GLIDE_TAU)
+        vx, vy = self.speed
+        self.rest += QPointF(vx * dt, vy * dt)
+        self.speed = (vx * k, vy * k)
+        whole = QPoint(int(self.rest.x()), int(self.rest.y()))
+        if whole.x() or whole.y():
+            self.rest -= QPointF(whole)
+            self._wheel(whole, Qt.ScrollMomentum, self.glide_at)
+        if math.hypot(*self.speed) < GLIDE_STOP:
+            self.glide.stop()
+            self._wheel(QPoint(0, 0), Qt.ScrollEnd, self.glide_at)
 
     def _native(self, at, value):
         g = self.w.mapToGlobal(at.toPoint())
@@ -152,26 +305,19 @@ class _Gestures(QObject):
         ev = QWheelEvent(at, QPointF(g), pixels, pixels, Qt.NoButton, Qt.NoModifier, phase, False)
         QApplication.sendEvent(self.w, ev)
 
-    # -- the hold: a right click when the finger is lifted where it was ----------------------------------------------------
-    def _moved(self):
-        return math.hypot(self.last.x() - self.start.x(), self.last.y() - self.start.y()) > SLOP_PX
-
-    def _held(self):
-        if self.mode == "one" and not self._moved():
-            self.held = True
-
-    def _right_click(self, at):
-        self._mouse(QEvent.MouseButtonPress, at, Qt.RightButton, Qt.RightButton)
-        target = self.w.childAt(at.toPoint()) or self.w
-        local = target.mapFrom(self.w, at.toPoint())
-        QApplication.sendEvent(target, QContextMenuEvent(QContextMenuEvent.Mouse, local, target.mapToGlobal(local)))
-        self._mouse(QEvent.MouseButtonRelease, at, Qt.RightButton, Qt.NoButton)
+    # -- sending ------------------------------------------------------------------------------------------------------------
+    def _send(self, target, ev):
+        self.sending = True
+        try:
+            QApplication.sendEvent(target, ev)
+        finally:
+            self.sending = False
 
     def _mouse(self, kind, at, button, buttons):
         target = self.w.childAt(at.toPoint()) or self.w            # (a box laid over the canvas gets its own clicks)
         local = QPointF(target.mapFrom(self.w, at.toPoint())) if target is not self.w else at
         g = QPointF(target.mapToGlobal(local.toPoint()))
-        QApplication.sendEvent(target, QMouseEvent(kind, local, g, button, buttons, Qt.NoModifier))
+        self._send(target, QMouseEvent(kind, local, g, button, buttons, Qt.NoModifier))
 
 
 def enable(widget):

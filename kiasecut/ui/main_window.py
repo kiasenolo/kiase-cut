@@ -56,7 +56,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import androidfiles, appevents, exprdialog, icons, inplace, look, mapdialog, middledrag, wheel
+from . import androidfiles, appevents, exprdialog, icons, inplace, look, mapdialog, middledrag, touch, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -957,6 +957,8 @@ class MainWindow(QMainWindow):
         m = keyed(self.menuBar().addMenu("編輯(&E)"))
         add(m, "復原", "Ctrl+Z", self.do_undo)
         add(m, "重做", "Ctrl+Y", self.do_redo)
+        touch.on_tap(2, self.do_undo)                  # (two fingers tap a view: undo; three: redo)
+        touch.on_tap(3, self.do_redo)
         m.addSeparator()
         add(m, "複製", "Ctrl+C", self.do_copy)
         add(m, "剪下", "Ctrl+X", lambda: self.do_copy(cut=True))

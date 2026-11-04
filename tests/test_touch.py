@@ -43,6 +43,12 @@ class TouchTest(unittest.TestCase):
         self.g = touch.enable(self.w)
         self.dev = QTest.createTouchDevice()
 
+    def tearDown(self):
+        self.g.glide.stop()
+        self.w.removeEventFilter(self.g)
+        self.w.close()
+        self.w.deleteLater()
+
     def seq(self):
         return QTest.touchEvent(self.w, self.dev)
 
@@ -61,12 +67,97 @@ class TouchTest(unittest.TestCase):
         s.release(0, QPoint(80, 130), self.w).release(1, QPoint(220, 130), self.w).commit()
         self.assertEqual(self.g.mode, "idle")
 
-    def test_second_finger_ends_the_first_ones_mouse_press(self):
+    def test_a_second_finger_soon_after_the_first_clicks_nothing(self):
         s = self.seq()
         s.press(0, QPoint(100, 100), self.w).commit()
         s.press(1, QPoint(200, 100), self.w).commit()
-        self.assertIn(("release", Qt.LeftButton), self.w.log)
+        self.assertEqual([x for x in self.w.log if x[0] in ("press", "release")], [])
         self.assertEqual(self.g.mode, "multi")
+
+    def test_a_second_finger_ends_the_first_ones_mouse_press(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.g._press()                                         # (the timer's work: the press was due)
+        s.press(1, QPoint(200, 100), self.w).commit()
+        self.assertEqual([x for x in self.w.log if x[0] in ("press", "release")],
+                         [("press", Qt.LeftButton), ("release", Qt.LeftButton)])
+        self.assertEqual(self.g.mode, "multi")
+
+    def test_a_tremble_moves_nothing_but_a_tap_is_a_click(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        s.move(0, QPoint(103, 102), self.w).commit()
+        s.release(0, QPoint(103, 102), self.w).commit()
+        self.assertEqual([x[0] for x in self.w.log if x[0] in ("press", "release", "move")], ["press", "release"])
+
+    def test_two_taps_are_a_double_click(self):
+        s = self.seq()
+        kinds = []
+        orig = self.w.event
+
+        def watch(e):
+            if e.type() == QEvent.MouseButtonDblClick:
+                kinds.append("dbl")
+            return orig(e)
+        self.w.event = watch
+        for _ in range(2):
+            s.press(0, QPoint(100, 100), self.w).commit()
+            s.release(0, QPoint(100, 100), self.w).commit()
+        self.assertEqual(kinds, ["dbl"])
+        s.press(0, QPoint(100, 100), self.w).commit()           # (a third tap starts over)
+        s.release(0, QPoint(100, 100), self.w).commit()
+        self.assertEqual(kinds, ["dbl"])
+
+    def test_taps_far_apart_are_not_a_double_click(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        s.release(0, QPoint(100, 100), self.w).commit()
+        s.press(0, QPoint(300, 200), self.w).commit()
+        self.assertFalse(self.g.double)
+
+    def test_two_and_three_finger_taps_call_what_was_set(self):
+        got = []
+        touch.on_tap(2, lambda: got.append(2))
+        touch.on_tap(3, lambda: got.append(3))
+        try:
+            s = self.seq()
+            s.press(0, QPoint(100, 100), self.w).press(1, QPoint(200, 100), self.w).commit()
+            s.release(0, QPoint(100, 100), self.w).release(1, QPoint(200, 100), self.w).commit()
+            s.press(0, QPoint(100, 100), self.w).press(1, QPoint(200, 100), self.w).press(2, QPoint(150, 150), self.w).commit()
+            s.release(0, QPoint(100, 100), self.w).release(1, QPoint(200, 100), self.w).release(2, QPoint(150, 150), self.w).commit()
+            self.assertEqual(got, [2, 3])
+            s.press(0, QPoint(100, 100), self.w).press(1, QPoint(200, 100), self.w).commit()      # fingers that moved are no tap
+            s.move(0, QPoint(100, 140), self.w).move(1, QPoint(200, 140), self.w).commit()
+            s.release(0, QPoint(100, 140), self.w).release(1, QPoint(200, 140), self.w).commit()
+            self.assertEqual(got, [2, 3])
+        finally:
+            touch._taps.clear()
+
+    def test_a_scroll_that_ends_moving_glides_and_dies_away(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).press(1, QPoint(200, 100), self.w).commit()
+        for y in (130, 160, 190, 220):
+            s.move(0, QPoint(100, y), self.w).move(1, QPoint(200, y), self.w).commit()
+        s.release(0, QPoint(100, 220), self.w).release(1, QPoint(200, 220), self.w).commit()
+        self.assertTrue(self.g.glide.isActive())
+        self.w.log.clear()
+        for _ in range(400):
+            if not self.g.glide.isActive():
+                break
+            QTest.qWait(16)
+        self.assertFalse(self.g.glide.isActive())
+        moved = [x for x in self.w.log if x[0] == "wheel" and x[2] > 0]
+        self.assertTrue(moved)
+
+    def test_fingers_make_the_targets_bigger_and_a_mouse_makes_them_small_again(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 100), self.w).commit()
+        self.assertEqual(touch.scale(), touch.FINGER_SCALE)
+        s.release(0, QPoint(100, 100), self.w).commit()
+        QTest.mouseMove(self.w, QPoint(50, 50))
+        QTest.mousePress(self.w, Qt.LeftButton, Qt.NoModifier, QPoint(50, 50))
+        QTest.mouseRelease(self.w, Qt.LeftButton, Qt.NoModifier, QPoint(50, 50))
+        self.assertEqual(touch.scale(), 1.0)
 
     def test_one_finger_is_press_move_release(self):
         s = self.seq()
@@ -104,7 +195,7 @@ class TouchTest(unittest.TestCase):
         s = self.seq()
         s.press(0, QPoint(100, 100), self.w).commit()
         s.move(0, QPoint(140, 100), self.w).commit()
-        self.assertFalse(self.g.timer.isActive())
+        self.assertFalse(self.g.hold.isActive())
         self.g._held()
         self.assertFalse(self.g.held)
 

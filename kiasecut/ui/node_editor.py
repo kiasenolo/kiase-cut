@@ -601,7 +601,7 @@ class NodeItem(QGraphicsItem):
 
     # -- mouse: a field takes the press (the rest of the node moves it) ------------------------------------
     def edge_at(self, pos):
-        return self.has_edge() and pos.x() >= self.w - EDGE
+        return self.has_edge() and pos.x() >= self.w - EDGE * touch.scale()
 
     def has_edge(self):
         return bool(self.flags() & QGraphicsItem.ItemIsMovable)
@@ -1013,10 +1013,10 @@ class GraphView(QGraphicsView):
         """("out", node id, output name) / ("in", node id, socket) near scene point pos, else None."""
         for nid, it in self.items_by_id.items():
             for out, at in it.outputs():
-                if (at - pos).manhattanLength() <= HIT_R * 1.5:
+                if (at - pos).manhattanLength() <= HIT_R * 1.5 * touch.scale():
                     return "out", nid, out
             for sock, at in it.sockets():
-                if (at - pos).manhattanLength() <= HIT_R * 1.5:
+                if (at - pos).manhattanLength() <= HIT_R * 1.5 * touch.scale():
                     return "in", nid, sock
         return None
 

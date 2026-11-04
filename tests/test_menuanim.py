@@ -1,4 +1,4 @@
-"""menuanim: a menu opens from big, blurred and see-through to what it is, then the effect is gone."""
+"""menuanim: a menu (or a combo box's list) is unrolled from its top down, then the effect is gone; closing is at once."""
 import os
 import sys
 import unittest
@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMenu, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QComboBox, QMenu, QWidget  # noqa: E402
 
 from kiasecut.ui import look, menuanim  # noqa: E402
 
@@ -39,23 +39,54 @@ class MenuAnimTest(unittest.TestCase):
         m.close()
         host.close()
 
-    def test_it_is_nearly_invisible_at_first_and_whole_at_the_end(self):
+    def test_it_shows_nothing_at_first_then_unrolls_from_the_top_to_the_whole_menu(self):
         host, m = opened()
         first = m.grab().toImage()
+        QTest.qWait(80)
+        mid = m.grab().toImage()
         QTest.qWait(menuanim.DURATION_MS + 150)
         last = m.grab().toImage()
 
-        def alpha(img):
-            return sum(img.pixelColor(x, y).alpha() for x in range(0, img.width(), 4) for y in range(0, img.height(), 4))
-        self.assertLess(alpha(first), alpha(last) * 0.1)
+        def rows(img):                                       # the rows (from the top) that have something in them
+            return [y for y in range(img.height()) if any(img.pixelColor(x, y).alpha() > 0 for x in range(0, img.width(), 4))]
+        self.assertLess(len(rows(first)), 4)
+        got = rows(mid)
+        self.assertTrue(0 < len(got) < len(rows(last)))
+        self.assertEqual(got, list(range(got[0], got[-1] + 1)))     # (a block from the top, no more)
+        self.assertEqual(got[0], rows(last)[0])
         m.close()
         host.close()
 
-    def test_the_curve_is_bezier_1_0_0_1(self):
+    def test_the_curve_is_bezier_0_point5_0_1(self):
         c = menuanim.curve()
-        self.assertLess(c.valueForProgress(0.1), 0.05)      # (almost nothing at first)
-        self.assertAlmostEqual(c.valueForProgress(0.5), 0.5, places=1)
-        self.assertGreater(c.valueForProgress(0.9), 0.95)
+        self.assertGreater(c.valueForProgress(0.1), 0.35)   # (most of it at once)
+        self.assertLess(c.valueForProgress(0.1), 0.8)
+        self.assertGreater(c.valueForProgress(0.5), 0.85)
+        self.assertGreater(c.valueForProgress(0.95), 0.98)
+
+    def test_a_combo_boxs_list_unrolls_too(self):
+        host = QWidget()
+        box = QComboBox(host)
+        box.addItems(["一", "二", "三"])
+        host.resize(200, 100)
+        host.show()
+        QTest.qWait(40)
+        box.showPopup()
+        QTest.qWait(20)
+        container = box.view().window()
+        self.assertIsInstance(container.graphicsEffect(), menuanim.Pop)
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        self.assertIsNone(container.graphicsEffect())
+        box.hidePopup()
+        host.close()
+
+    def test_closing_is_at_once_with_no_fade_effect_on_it(self):
+        host, m = opened()
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        m.close()
+        self.assertFalse(m.isVisible())
+        self.assertIsNone(m.graphicsEffect())
+        host.close()
 
     def test_opening_again_starts_over(self):
         host, m = opened()

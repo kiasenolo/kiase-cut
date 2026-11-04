@@ -1,30 +1,26 @@
-"""Menus open the way Kilo's do (data/components/ContextMenu/style.module.scss): from a little too big, blurred and clear to
-what they are, in half a second on cubic-bezier(1, 0, 0, 1) - nearly nothing for a moment, then most of it at once.
+"""Menus open the way Kilo's do: unrolled from the top, `clip-path: polygon(0 0, 100% 0, 100% 0, 0 0)` to
+`polygon(0 0, 100% 0, 100% 100%, 0 100%)` in half a second on cubic-bezier(0, .5, 0, 1) - most of it at once, a long soft end.
+They go away at once, without a fade.
 
-A menu is a window of its own, so it is not the page's transform: its picture is taken (a QGraphicsEffect on it) and drawn
-scaled about its middle, a little blurred (drawn small and scaled up) and see-through, the effect going when the animation ends.
-Menus are made translucent for their round corners (the style sheet's QMenu radius).
-install() watches for menus being made ready and being shown.
+A menu (the menu bar's, a context menu, a combo box's list) is a window of its own, so it is not the page's clip-path: a
+QGraphicsEffect on it draws it clipped to the part from the top down that the animation has got to, the effect going when
+the animation ends. QMenu windows are made translucent for their round corners (the style sheet's QMenu radius).
+install() watches for menus and combo lists being made ready and being shown.
 """
-from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QRectF, Qt, QVariantAnimation
-from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QApplication, QGraphicsEffect, QMenu
+from PySide6.QtCore import QEvent, QRectF, Qt, QVariantAnimation
+from PySide6.QtWidgets import QApplication, QGraphicsEffect, QMenu, QWidget
 
-from . import appevents
+from . import appevents, motion
 
 DURATION_MS = 500
-SCALE_FROM = 1.1          # the size a menu starts at
-BLUR_FROM = 6.0           # how many times smaller its picture is drawn at the start, before it is stretched back
 
 
 def curve():
-    c = QEasingCurve(QEasingCurve.BezierSpline)
-    c.addCubicBezierSegment(QPointF(1, 0), QPointF(0, 1), QPointF(1, 1))      # cubic-bezier(1, 0, 0, 1)
-    return c
+    return motion.out_curve()                         # cubic-bezier(0, .5, 0, 1)
 
 
 class Pop(QGraphicsEffect):
-    """The menu drawn at progress `t` (0: just begun, 1: as it is)."""
+    """The menu drawn from its top down to `t` of its height (0: nothing yet, 1: all of it)."""
 
     def __init__(self, menu):
         super().__init__(menu)
@@ -32,26 +28,15 @@ class Pop(QGraphicsEffect):
 
     def draw(self, painter):
         pm = self.sourcePixmap(Qt.LogicalCoordinates)
-        off = self.sourceBoundingRect(Qt.LogicalCoordinates).topLeft()
         if pm.isNull() or self.t >= 1.0:
             self.drawSource(painter)
             return
-        t = self.t
+        t = max(0.0, self.t)
+        off = self.sourceBoundingRect(Qt.LogicalCoordinates).topLeft()
         size = pm.deviceIndependentSize()
-        rect = QRectF(off.x(), off.y(), size.width(), size.height())
-        blur = 1.0 + (BLUR_FROM - 1.0) * (1.0 - t)
-        if blur > 1.05:                               # (drawn small, then stretched back: a cheap blur)
-            pm = pm.scaled(max(1, round(pm.width() / blur)), max(1, round(pm.height() / blur)),
-                           Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
-        k = SCALE_FROM - (SCALE_FROM - 1.0) * t
-        painter.save()
-        painter.setRenderHint(QPainter.SmoothPixmapTransform)
-        painter.setOpacity(t)
-        painter.translate(rect.center())
-        painter.scale(k, k)
-        painter.translate(-rect.center())
-        painter.drawPixmap(rect, pm, QRectF(pm.rect()))
-        painter.restore()
+        if t > 0.0:                                          # (the top part of the picture: a clip, drawn as a piece of it)
+            painter.drawPixmap(QRectF(off.x(), off.y(), size.width(), size.height() * t), pm,
+                               QRectF(0, 0, pm.width(), pm.height() * t))
 
 
 def pop(menu):
@@ -83,6 +68,15 @@ def pop(menu):
     anim.start()
 
 
+def popup_window(obj):
+    """Whether obj is a menu window or the window of a combo box's list."""
+    if not isinstance(obj, QWidget):                  # (Show events also come for a QWindow)
+        return False
+    if isinstance(obj, QMenu):
+        return obj.isWindow()
+    return obj.isWindow() and obj.metaObject().className() == "QComboBoxPrivateContainer"
+
+
 def install():
     def made(obj, e):
         if isinstance(obj, QMenu) and obj.isWindow() and not obj.testAttribute(Qt.WA_TranslucentBackground):
@@ -91,7 +85,7 @@ def install():
         return False
 
     def shown(obj, e):
-        if isinstance(obj, QMenu) and obj.isWindow():
+        if popup_window(obj):
             pop(obj)
         return False
 

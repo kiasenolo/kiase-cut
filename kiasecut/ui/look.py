@@ -11,7 +11,7 @@ import gc
 import os
 import re
 
-from PySide6.QtCore import QByteArray, QMargins, QRect, QRectF, Qt
+from PySide6.QtCore import QByteArray, QMargins, QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QAbstractScrollArea, QComboBox, QFrame, QMenu, QStyle, QStyleOptionMenuItem, QStyleOptionProgressBar
@@ -32,7 +32,7 @@ QMainWindow { background: #111113; }
 QMenuBar { background: #18181a; border-bottom: 1px solid #0e0e10; }
 QMenu { background: #26262a; border: 1px solid #0e0e10; }
 QMenu::item { padding: 4px 25px; }
-QMenu::item:selected, QMenuBar::item:selected { background: #3d3d43; }
+QMenu::item:selected { background: #3d3d43; }
 QMenu::separator { height: 1px; background: #3a3a40; margin: 3px 6px; }
 QMenu::indicator { width: 14px; height: 14px; left: 4px; }
 QMenu::indicator:checked { image: url(@/check.svg); }
@@ -319,6 +319,9 @@ class Style(wheel.Style):
             painter.restore()
             option = QStyleOptionMenuItem(option)
             option.state &= ~QStyle.State_Selected
+        if element == QStyle.CE_MenuBarItem and isinstance(option, QStyleOptionMenuItem):
+            self._draw_menubar_item(option, painter)
+            return
         if element in (QStyle.CE_ProgressBarGroove, QStyle.CE_ProgressBarContents) and self._line(option):
             self._draw_bar(element, option, painter)
             return
@@ -346,12 +349,32 @@ class Style(wheel.Style):
         size = super().sizeFromContents(kind, option, size, widget)
         if kind == QStyle.CT_SpinBox:                 # as tall as a text field: the style sheet
             size.setHeight(contents.height())         # adds the padding and border, not Fusion
+        elif kind == QStyle.CT_MenuBarItem:           # room for the tab drawn round the title
+            size = size.grownBy(QMargins(8, 3, 8, 3))
         elif kind == QStyle.CT_ItemViewItem:            # Breeze's rows are 3 px roomier all round
             size = size.grownBy(QMargins(3, 3, 3, 3))
         elif kind == QStyle.CT_MenuItem and not isinstance(widget, QMenu) \
                 and option.menuItemType != QStyleOptionMenuItem.Separator:
             size.setHeight(size.height() + 6)         # a combo box's list
         return size
+
+    @staticmethod
+    def _draw_menubar_item(option, painter):
+        """A menu bar's title: the one open (or under the finger / mouse) is a white tab with black text, its right edge slanted."""
+        r = QRectF(option.rect)
+        enabled = bool(option.state & QStyle.State_Enabled)
+        on = enabled and bool(option.state & (QStyle.State_Selected | QStyle.State_Sunken))
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        if on:
+            slant = r.height() * 0.22
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#f2f2f4"))
+            painter.drawPolygon([r.topLeft(), r.topRight(), QPointF(r.right() - slant, r.bottom()), r.bottomLeft()])
+        group = QPalette.Active if enabled else QPalette.Disabled
+        painter.setPen(QColor("#111114") if on else option.palette.color(group, QPalette.WindowText))
+        painter.drawText(r, Qt.AlignCenter | Qt.TextHideMnemonic, option.text)
+        painter.restore()
 
     @staticmethod
     def _line(option):

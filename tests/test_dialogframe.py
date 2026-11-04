@@ -58,7 +58,7 @@ class FrameTest(unittest.TestCase):
         bar = d.findChild(dialogframe.Bar)
         done = []
         d.rejected.connect(lambda: done.append(1))
-        QTest.mouseClick(bar, Qt.LeftButton, Qt.NoModifier, bar.close_rect().center())
+        QTest.mouseClick(bar, Qt.LeftButton, Qt.NoModifier, QPoint(bar.width() - 20, bar.height() // 2))
         self.assertEqual(done, [1])
 
     def test_dragging_the_bar_moves_the_dialog(self):

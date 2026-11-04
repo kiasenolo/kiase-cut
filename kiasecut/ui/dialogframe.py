@@ -1,69 +1,96 @@
-"""A window frame for dialogs where the system gives none (Android): a title bar with the title, a ✕ that closes the dialog, the
-bar dragged to move it, and an outline, so a question or the project manager is a window and not a patch of colour over the program.
+"""A window frame for dialogs where the system gives none (Android): a title bar (after Kilo's window: the title centred, a slanted ✕
+button) that closes the dialog, the bar dragged to move it, and an outline, so a question or the project manager is a window and not a patch of colour over the program.
 
 install() watches for dialogs being made ready to show: each top-level QDialog that is not frameless already (nor a popup) is made
 frameless, its contents moved down by the bar's height, and a Bar and an Outline laid over it as children (so nothing in the dialog's
 own layout changes).
 """
-from PySide6.QtCore import QEvent, QObject, QRect, Qt
-from PySide6.QtGui import QFont, QPainter, QPalette, QPen
+from PySide6.QtCore import QEvent, QObject, QPointF, QRect, Qt
+from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen, QPolygonF
 from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
 from . import appevents
 
-BAR_H = 48               # the title bar's height (a finger's)
-CLOSE_W = 64             # the ✕'s width
+BAR_H = 32               # the title bar's height
+BTN_W = 64               # the ✕ button's width at its top edge
+SKEW = 0.5774            # tan 30 degrees: the button's left edge leans this far per pixel of height
 OUTLINE = 2
+ICON = 6                 # half the width of the ✕
 
 
 class Bar(QWidget):
+    """The title bar after Kilo's window: the title centred, a slanted button at the right (it turns white under the finger or mouse)."""
+
     def __init__(self, dialog):
         super().__init__(dialog)
         self.dialog = dialog
         self.drag = None                                       # (global press, dialog position) while it is moved
+        self.down = self.over = False                          # the ✕ is pressed / under the mouse
         self.setFixedHeight(BAR_H)
+        self.setMouseTracking(True)
         dialog.windowTitleChanged.connect(lambda _t: self.update())
 
-    def close_rect(self):
-        return QRect(self.width() - CLOSE_W, 0, CLOSE_W, self.height())
+    def close_shape(self):
+        h, w = self.height(), self.width()
+        k = h * SKEW
+        return QPolygonF([QPointF(w - BTN_W, 0), QPointF(w, 0), QPointF(w, h), QPointF(w - BTN_W + k, h)])
+
+    def on_close(self, pos):
+        return self.close_shape().containsPoint(QPointF(pos), Qt.OddEvenFill)
 
     def paintEvent(self, e):
         pal = self.palette()
         p = QPainter(self)
-        p.fillRect(self.rect(), pal.color(QPalette.Button).darker(115))
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), pal.color(QPalette.Window).lighter(145))
         text = pal.color(QPalette.WindowText)
         font = QFont(self.font())
-        font.setBold(True)
         p.setFont(font)
         p.setPen(text)
         title = self.dialog.windowTitle() or QApplication.applicationDisplayName() or "KiaseCut"
-        room = self.width() - CLOSE_W - 24
-        p.drawText(QRect(16, 0, room, self.height()), Qt.AlignVCenter | Qt.AlignLeft,
+        room = self.width() - 2 * BTN_W - 8
+        p.drawText(QRect((self.width() - room) // 2, 0, room, self.height()), Qt.AlignCenter,
                    p.fontMetrics().elidedText(title, Qt.ElideRight, room))
-        c = self.close_rect().center()
-        d = 7
-        p.setPen(QPen(text, 2.2))
-        p.drawLine(c.x() - d, c.y() - d, c.x() + d, c.y() + d)
-        p.drawLine(c.x() - d, c.y() + d, c.x() + d, c.y() - d)
-        p.setPen(QPen(pal.color(QPalette.Mid), 1))
-        p.drawLine(0, self.height() - 1, self.width(), self.height() - 1)
+        hot = self.down or self.over
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255, 255 if hot else 30))
+        p.drawPolygon(self.close_shape())
+        c = QPointF(self.width() - BTN_W / 2 + self.height() * SKEW / 4, self.height() / 2)
+        p.setPen(QPen(QColor("#111114") if hot else text, 1.8, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(c.x() - ICON, c.y() - ICON), QPointF(c.x() + ICON, c.y() + ICON))
+        p.drawLine(QPointF(c.x() - ICON, c.y() + ICON), QPointF(c.x() + ICON, c.y() - ICON))
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton and not self.close_rect().contains(e.position().toPoint()):
+        if e.button() != Qt.LeftButton:
+            return
+        if self.on_close(e.position().toPoint()):
+            self.down = True
+            self.update()
+        else:
             self.drag = (e.globalPosition().toPoint(), self.dialog.pos())
 
     def mouseMoveEvent(self, e):
+        over = self.on_close(e.position().toPoint())
+        if over != self.over:
+            self.over = over
+            self.update()
         if self.drag is not None:
             start, pos = self.drag
             at = pos + e.globalPosition().toPoint() - start
             screen = self.dialog.screen().availableGeometry()
-            at.setX(max(screen.left() - self.dialog.width() + CLOSE_W, min(at.x(), screen.right() - CLOSE_W)))
+            at.setX(max(screen.left() - self.dialog.width() + BTN_W, min(at.x(), screen.right() - BTN_W)))
             at.setY(max(screen.top(), min(at.y(), screen.bottom() - BAR_H)))
             self.dialog.move(at)
 
+    def leaveEvent(self, e):
+        self.over = False
+        self.update()
+
     def mouseReleaseEvent(self, e):
-        moved, self.drag = self.drag is not None and e.globalPosition().toPoint() != self.drag[0], None
-        if not moved and e.button() == Qt.LeftButton and self.close_rect().contains(e.position().toPoint()):
+        closing = self.down and self.on_close(e.position().toPoint())
+        self.down, self.drag = False, None
+        self.update()
+        if closing and e.button() == Qt.LeftButton:
             self.dialog.reject()
 
 
@@ -76,7 +103,7 @@ class Outline(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
-        p.setPen(QPen(self.palette().color(QPalette.Mid).lighter(130), OUTLINE))
+        p.setPen(QPen(QColor(255, 255, 255, 60), OUTLINE))
         p.drawRect(self.rect().adjusted(OUTLINE // 2, OUTLINE // 2, -OUTLINE // 2 - 1, -OUTLINE // 2 - 1))
 
 

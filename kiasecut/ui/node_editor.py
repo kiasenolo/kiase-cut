@@ -2772,7 +2772,7 @@ class NodeEditor(QWidget):
                     if ref not in known:
                         continue
                     n = {"type": ng.FILTER, "ref": ref}
-                    name = fx.get(ref).name
+                    name = ng.short_name(fx.get(ref).name)
                     target.addAction(name, lambda _=False, n=n: ask(n))
                     entries.append((path, name, n))
                 elif it[0] == "node":
@@ -2793,7 +2793,7 @@ class NodeEditor(QWidget):
         for ref in sorted(known):
             if ref not in placed and ref != ng.PICTURE:
                 d = fx.get(ref)
-                cats.setdefault(d.category or "其他", []).append((d.name, ref))
+                cats.setdefault(d.category or "其他", []).append((ng.short_name(d.name), ref))
         for cat in sorted(cats):
             sub = effects.addMenu(cat)
             for name, ref in cats[cat]:

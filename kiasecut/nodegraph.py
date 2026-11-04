@@ -520,9 +520,15 @@ def outputs(node):
     return [("", "圖像")]
 
 
+def short_name(name):
+    """A filter's name as the node editor shows it: without the "[Blender] " mark the filter list has (a node
+    there is Blender's by its look, the mark in a row of Chinese is odd)."""
+    return name[len("[Blender] "):] if name.startswith("[Blender] ") else name
+
+
 def title(node):
     if node["type"] == FILTER:
-        return fx.for_node(node).name
+        return short_name(fx.for_node(node).name)
     if node["type"] == GROUP:
         return node.get("label") or "群組"
     if is_asset(node):

@@ -592,6 +592,22 @@ class NodeEditorTests(unittest.TestCase):
         self.assertAlmostEqual(x, 50, delta=2)
         self.assertAlmostEqual(y, 60, delta=2)
 
+    def test_blender_mark_is_not_shown_in_the_node_editor(self):
+        self.assertEqual(ng.short_name("[Blender] Color Ramp"), "Color Ramp")
+        self.assertEqual(ng.short_name("模糊"), "模糊")
+        self.assertEqual(ng.title({"type": ng.FILTER, "ref": "builtin:blender_color_ramp"}), "Color Ramp")
+        ed = self.make()
+        menus = []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        ed.add_menu(QPointF(0, 0), QPoint(0, 0))
+
+        def names(menu):
+            for a in menu.actions():
+                yield a.text()
+                if a.menu():
+                    yield from names(a.menu())
+        self.assertFalse([n for n in names(menus[0]) if "[Blender]" in n])
+
     def test_add_menu_follows_blenders_order(self):
         ed = self.make()
         menus = []

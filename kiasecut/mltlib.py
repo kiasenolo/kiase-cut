@@ -9,7 +9,6 @@ Two Windows quirks found while wiring this up:
     must be in place before the process starts; engine.py is always spawned with env().
 """
 import ctypes as C
-import ctypes.util
 import glob
 import os
 import sys
@@ -30,6 +29,7 @@ def locate():
                             "repository": os.path.join(root, "lib", "mlt"),
                             "data": os.path.join(root, "share", "mlt")}
         raise FileNotFoundError("MLT not found: install Kdenlive or Shotcut, or set KIASECUT_MLT")
+    import ctypes.util                     # (Android's ctypes.util wants its `android` module, and has no MLT)
     lib = ctypes.util.find_library("mlt-7") or "libmlt-7.so.7"
     repo = next((d for d in glob.glob("/usr/lib*/mlt-7") + glob.glob("/usr/lib/*/mlt-7")
                  + glob.glob("/usr/local/lib*/mlt-7") if os.path.isdir(d)), None)

@@ -74,6 +74,34 @@ class DockLineTests(unittest.TestCase):
         self.assertGreater(self.dock.width(), before + 40)
         self.assertIsNone(sashtouch._watch.light)                       # (the light goes out when the finger is lifted)
 
+    def test_the_light_goes_with_the_line_and_is_gone_when_the_finger_lifts(self):
+        seq = QTest.touchEvent(self.w, self.dev)
+        seq.press(0, QPoint(self.x, self.y), self.w).commit()
+        QTest.qWait(sashtouch.HOLD_MS + 150)
+        light = sashtouch._watch.light
+        self.assertIsNotNone(light)
+        x0 = light.geometry().left()
+        for i in (1, 2, 3, 4):
+            seq.move(0, QPoint(self.x + 20 * i, self.y), self.w).commit()
+            QTest.qWait(20)
+        QTest.qWait(150)                                               # (the light catches up when the layout has)
+        self.assertLessEqual(abs(light.geometry().left() - (self.dock.geometry().right() + 1)), 4)    # (on the line where it now is)
+        self.assertGreater(light.geometry().left(), x0 + 40)
+        seq.release(0, QPoint(self.x + 80, self.y), self.w).commit()
+        QTest.qWait(40)
+        self.assertIsNone(sashtouch._watch.light)
+        self.assertEqual([w for w in self.w.findChildren(sashtouch.Light) if w.isVisible()], [])
+
+    def test_a_light_left_up_when_no_release_came_goes_out(self):
+        seq = QTest.touchEvent(self.w, self.dev)
+        seq.press(0, QPoint(self.x, self.y), self.w).commit()
+        QTest.qWait(sashtouch.HOLD_MS + 150)
+        self.assertIsNotNone(sashtouch._watch.light)
+        sashtouch._watch.obj = None                                      # (the release will not be seen as the line's)
+        seq.release(0, QPoint(self.x, self.y), self.w).commit()
+        QTest.qWait(400)
+        self.assertIsNone(sashtouch._watch.light)
+
     def test_a_tap_moves_nothing_and_lights_nothing(self):
         before = self.dock.width()
         seq = QTest.touchEvent(self.w, self.dev)

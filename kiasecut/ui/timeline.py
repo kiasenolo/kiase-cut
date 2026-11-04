@@ -324,10 +324,10 @@ class Timeline(QWidget):
         self.mark_in = self.mark_out = None        # export range, frames
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
-        # fingers: a clip is dragged once it has been held (it goes white from the hold), empty track space selects time once held,
-        # and a finger that moves first scrolls the view (on the ruler: moves the playhead); the ruler selects time once held too
-        touch.enable(self, hold_left=lambda p: self._tracks_at(p) and self._hit(p)[1] is not None,
-                     hold_right=self._hold_selects_time, lit=self._light_clip)
+        # fingers: what is dragged in the tracks - a clip, or empty space (a box that picks clips) - is let go by a hold (a clip goes
+        # white from it), and a finger that moves first scrolls the view; the ruler selects time once held (and moves the playhead
+        # if the finger moves first)
+        touch.enable(self, hold_left=self._tracks_at, hold_right=self._hold_selects_time, lit=self._light_clip)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
@@ -799,13 +799,9 @@ class Timeline(QWidget):
                 for k, f in enumerate(flags)]
 
     def _hold_selects_time(self, pos):
-        """Where a finger that is held and then moved selects time: empty track space, and the ruler (where a finger that moves
-        at once still moves the playhead, and a tap puts it there: only the hold selects)."""
-        if pos.x() < self.header_w:
-            return False
-        if pos.y() < RULER_H:
-            return "late"
-        return self._hit(pos)[1] is None
+        """Where a finger that is held and then moved selects time: the ruler (a finger that moves there at once still moves the
+        playhead, and a tap puts it where the finger lifts: only the hold selects)."""
+        return "late" if pos.x() >= self.header_w and pos.y() < RULER_H else False
 
     def _tracks_at(self, pos):
         """Whether pos is in the tracks (below the ruler, right of the headers)."""

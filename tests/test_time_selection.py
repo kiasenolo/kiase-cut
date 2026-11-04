@@ -54,10 +54,10 @@ class TimeSelectionTests(unittest.TestCase):
             QTest.qWait(5)
         seq.release(0, QPoint(x1, y), self.tl).commit()
 
-    def test_a_finger_held_below_the_ruler_then_moved_selects_time(self):
+    def test_a_finger_held_below_the_ruler_then_moved_selects_no_time(self):
         fps = self.tl.fps
         self.finger(self.x(fps), self.x(3 * fps), 200)
-        self.assertEqual(self.marks(), (fps, 3 * fps - 1))
+        self.assertEqual(self.marks(), (None, None))                   # (the time is selected on the ruler)
 
     def test_a_finger_held_on_the_ruler_then_moved_selects_time_and_the_playhead_stays(self):
         fps = self.tl.fps

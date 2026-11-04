@@ -67,19 +67,36 @@ class TimelineTouchTests(unittest.TestCase):
         self.seq.release(0, self.on_clip + QPoint(-120, 0), self.tl).commit()
         self.assertNotEqual(self.tl.scroll_s, 0.0)             # (the view moved)
 
-    def test_held_on_empty_track_space_then_moved_selects_time(self):
-        fps = self.tl.fps
-        x0 = round(self.tl._x(10.0))
+    def test_held_on_empty_track_space_then_moved_draws_a_box_that_picks_clips(self):
         y = self.empty.y()
-        self.seq.press(0, QPoint(x0, y), self.tl).commit()
+        self.seq.press(0, self.empty, self.tl).commit()
         self.g._held()
         self.assertIsNone(self.tl.lit_id)                      # (nothing to light)
-        self.seq.move(0, QPoint(x0 + 100, y), self.tl).commit()
-        self.seq.move(0, QPoint(x0 + 200, y), self.tl).commit()
-        QTest.qWait(10)
-        self.seq.release(0, QPoint(x0 + 200, y), self.tl).commit()
+        for x in (self.tl._x(20.0), self.tl._x(5.0), self.tl._x(1.5), self.tl._x(0.5)):
+            self.seq.move(0, QPoint(round(x), y), self.tl).commit()
+            QTest.qWait(5)
+        self.assertIsNotNone(self.tl.band)
+        self.seq.release(0, QPoint(round(self.tl._x(0.5)), y), self.tl).commit()
+        self.assertIn("vid", self.tl.selected_ids)             # (the clip the box crossed)
+        self.assertIsNone(self.tl.mark_in)                     # (no time selected)
+
+    def test_a_finger_that_moves_first_on_empty_space_scrolls_and_picks_nothing(self):
+        self.seq.press(0, self.empty, self.tl).commit()
+        for dx in (-40, -80, -120):
+            self.seq.move(0, self.empty + QPoint(dx, 0), self.tl).commit()
+            QTest.qWait(5)
+        self.assertIsNone(self.tl.band)
+        self.seq.release(0, self.empty + QPoint(-120, 0), self.tl).commit()
+        self.assertNotIn("vid", self.tl.selected_ids)
+
+    def test_held_on_the_ruler_then_moved_selects_time(self):
+        self.seq.press(0, QPoint(round(self.tl._x(10.0)), 10), self.tl).commit()
+        self.g._held()
+        for dx in (100, 200):
+            self.seq.move(0, QPoint(round(self.tl._x(10.0)) + dx, 10), self.tl).commit()
+            QTest.qWait(5)
+        self.seq.release(0, QPoint(round(self.tl._x(10.0)) + 200, 10), self.tl).commit()
         self.assertIsNotNone(self.tl.mark_in)
-        self.assertGreater(self.tl.mark_out, self.tl.mark_in)
 
     def test_a_tap_on_a_clip_selects_it(self):
         self.seq.press(0, self.on_clip, self.tl).commit()

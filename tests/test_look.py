@@ -55,7 +55,7 @@ class LookTests(unittest.TestCase):
         APP.setPalette(p)
         look.apply(APP)
         self.assertEqual(APP.palette().color(QPalette.Highlight).name(), "#0078d4")
-        self.assertIn("border-color: #0078d4", APP.styleSheet())
+        self.assertNotIn("#0078d4", APP.styleSheet())           # (the style is grey: the accent is for the palette's selections only)
         self.assertEqual(APP.palette().color(QPalette.Window).name(), look.COLOURS["Window"])
 
     def test_standard_icons_are_breeze(self):

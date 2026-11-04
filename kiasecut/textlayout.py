@@ -41,6 +41,8 @@ MAX_FONTS = 24      # a CJK face is ~10 MB in memory: a size that is animated as
 
 
 def font(path, size):
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        path = None                             # (PIL's built-in font has no file: its .path is a BytesIO)
     path = fonts.resolve(path)                  # a font this system lacks: its stand-in (font map)
     size = max(size, 0.01)                      # (字號 0: FreeType wants more than nothing; draws nothing seen)
     key = (path, round(size * 100))

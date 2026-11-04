@@ -58,6 +58,18 @@ class FontMapTests(unittest.TestCase):
         self.assertIn(here, fonts.map_key())
         self.assertEqual(textlayout.font(GONE, 20).path.replace("\\", "/"), here)   # drawn with it
 
+    def test_built_in_font_when_no_file_is_found(self):
+        from unittest import mock
+        textlayout._fonts.clear()
+        with mock.patch.object(textlayout, "FALLBACK_FONTS", []):
+            f = textlayout.font(GONE, 20)                            # nothing to stand in: PIL's own font
+            self.assertNotIsInstance(f.path, str)                    # (it has no file: a BytesIO)
+            self.assertGreater(textlayout.font(f.path, 1000).getlength("a"), 0)   # layout asks for it again
+            _, c = with_text(GONE)
+            c["text"]["content"] = "字 abc"
+            self.assertIsNotNone(textlayout.render(c["text"], 0.45))
+        textlayout._fonts.clear()
+
     def test_used_and_missing(self):
         here = some_font() or __file__
         p, c = with_text(GONE, styles=[{"start": 0, "end": 1, "font_path": "D:/a.ttf"}])

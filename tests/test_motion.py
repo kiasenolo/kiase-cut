@@ -613,6 +613,8 @@ class ArrowButtonTest(unittest.TestCase):
         dark = [(x, y) for x in range(img.width()) for y in range(img.height()) if img.pixelColor(x, y).lightness() < 60]
         self.assertGreater(white, img.width() * img.height() // 2)    # (white under the mouse)
         self.assertTrue(dark)                                         # (and the chevron is black on it)
+        QTest.mouseMove(host, QPoint(119, 59))                        # (the offscreen mouse stays where it was left: give it back)
+        QTest.qWait(40)
         host.close()
 
 

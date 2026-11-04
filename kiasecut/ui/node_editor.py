@@ -53,7 +53,19 @@ PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 /
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
 SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0", "string": "#70b870", "font": "#b070b0",
                  "int": "#598c5c", "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a"}     # (Blender's socket colours for the numbers, switches and vectors)
-LINK_COLOR = "#d0d0d8"                           # (a link with no types to colour it)
+LINK_COLOR = "#b3b3b3"                           # (a link with no types to colour it)
+# the interface's greys (Color(n) is white times n): the canvas under everything, a node's body, its head, a field and its outline
+CANVAS = "#080808"
+NODE_BODY = "#1a1a1a"
+NODE_HEAD = "#262626"                            # (Color(.15): the colour of a button; the node's own colour is the bar at its left)
+HEAD_BAR = 3.0
+FIELD_BG = "#0a0a0a"
+FIELD_LINE = "#4d4d4d"                           # a field's outline, Color(.3) ...
+FIELD_HOT = "#808080"                            # ... and under the mouse, Color(.5)
+LABEL = "#cccccc"                                # Color(.8)
+INK = "#ffffff"                                  # what a field shows
+DASH = "#808080"                                 # an unlinked (ghost) socket
+SELECT = "#ffffff"                               # the outline of what is selected
 
 
 def type_color(t):
@@ -121,6 +133,7 @@ class NodeItem(QGraphicsItem):
             d = ng.node_def(node)
             self.linked |= {n for n, p in d.input_param.items() if ng.PARAM + p in self.linked}
         self.drag = None                                    # a field being dragged: {...}
+        self._hover = None                                  # where the mouse is over the node (a field under it has the lighter outline)
         self.hops = {}                                      # (row y, cell) -> motion.Hop: a number that hops as it is dragged
         self.w = max(MIN_WIDTH, float(node.get("width", WIDTH)))
         self.sizing = None                                  # while widened: (scene x at the press, width then)
@@ -407,20 +420,21 @@ class NodeItem(QGraphicsItem):
         return None
 
     def paint(self, p, option, widget=None):
-        pal = widget.palette() if widget else None
-        base = pal.window().color().lighter(125) if pal else QColor("#38383c")
-        text = pal.windowText().color() if pal else QColor("white")
-        field_bg = base.darker(150)
+        text = QColor(LABEL)
+        field_bg = QColor(FIELD_BG)
         p.setRenderHint(QPainter.Antialiasing)
         body = QPainterPath()
         body.addRect(QRectF(0, 0, self.w, self.h))
-        p.fillPath(body, base)
+        p.fillPath(body, QColor(NODE_BODY))
         head = QPainterPath()
         head.addRect(QRectF(0, 0, self.w, HEAD))
         muted = bool(self.node.get("mute"))
         col = head_colour(self.node)
-        p.fillPath(head.intersected(body), col.darker(160) if muted else col)
-        p.setPen(QPen(QColor("#f0a030") if self.isSelected() else QColor(0, 0, 0, 120), 2 if self.isSelected() else 1))
+        p.fillPath(head.intersected(body), QColor(NODE_HEAD))
+        bar = QPainterPath()
+        bar.addRect(QRectF(0, 0, HEAD_BAR, HEAD))                 # (the node's own colour, at the left of its head)
+        p.fillPath(bar.intersected(body), col.darker(160) if muted else col)
+        p.setPen(QPen(QColor(SELECT) if self.isSelected() else QColor("#000000"), 2 if self.isSelected() else 1))
         p.drawPath(body)
         f = QFont(p.font())
         f.setBold(True)
@@ -450,14 +464,14 @@ class NodeItem(QGraphicsItem):
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
                 at = QPointF(self.w, y + ROW / 2)
                 if ghost:
-                    p.setPen(QPen(QColor("#a0a0a8"), 1, Qt.DashLine))
+                    p.setPen(QPen(QColor(DASH), 1, Qt.DashLine))
                     p.setBrush(Qt.NoBrush)
                     p.drawEllipse(at, SOCKET_R, SOCKET_R)
                 else:
                     self._socket(p, at, type_color(r["p"]["type"]))
                 continue
             if kind == "panel":
-                p.setPen(QColor("#c8c8cc"))
+                p.setPen(QColor(LABEL))
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignLeft, ("▾ " if r["panel"] else "▸ ") + r["label"])
                 continue
             if kind == "thumb":
@@ -470,7 +484,7 @@ class NodeItem(QGraphicsItem):
             p.drawText(QRectF(10, y, self.w * LABEL_W - 6, ROW) if self.has_field(r) else row, Qt.AlignVCenter | Qt.AlignLeft,
                        fm_elide(p, r["label"], self.w * LABEL_W - 8 if self.has_field(r) else self.w - 20))
             if ghost:
-                p.setPen(QPen(QColor("#a0a0a8"), 1, Qt.DashLine))
+                p.setPen(QPen(QColor(DASH), 1, Qt.DashLine))
                 p.setBrush(Qt.NoBrush)
                 p.drawEllipse(QPointF(0, y + ROW / 2), SOCKET_R, SOCKET_R)
             elif r["socket"]:
@@ -480,6 +494,7 @@ class NodeItem(QGraphicsItem):
             self._field(p, r, vals, field_bg, text, dim)
 
     def _field(self, p, r, vals, bg, text, dim):
+        text = QColor(INK)                                   # (what a field shows is white, its label is not)
         kind = r["kind"]
         if kind == "shape":
             box = self.field_rect(r)
@@ -543,8 +558,9 @@ class NodeItem(QGraphicsItem):
         elif q.type == "bool":
             box = QRectF(self.w - 10 - ROW + 4, r["y"] + 4, ROW - 8, ROW - 8)
             self._box(p, box, bg)
-            if v:
-                p.setPen(QPen(QColor("#f0a030"), 2))
+            if v:                                            # (as a check box: white, with a black tick)
+                p.fillRect(box, QColor("#ffffff"))
+                p.setPen(QPen(QColor("#000000"), 2))
                 p.drawLine(box.topLeft() + QPointF(2, box.height() / 2), box.center() + QPointF(-1, 3))
                 p.drawLine(box.center() + QPointF(-1, 3), box.topRight() + QPointF(-2, 2))
         elif q.type == "menu":
@@ -560,9 +576,9 @@ class NodeItem(QGraphicsItem):
 
     @staticmethod
     def _thumb(p, box, img):
-        p.setPen(QPen(QColor(0, 0, 0, 90), 1))
-        p.setBrush(QColor("#1c1c1f"))
-        p.drawRoundedRect(box, 3, 3)
+        p.setPen(QPen(QColor(FIELD_LINE), 1))
+        p.setBrush(QColor(FIELD_BG))
+        p.drawRect(box)
         if img is None:
             return
         k = min((box.width() - 2) / img.width(), (box.height() - 2) / img.height())
@@ -588,11 +604,12 @@ class NodeItem(QGraphicsItem):
         idx = lambda n: next((max(0, q.items.index(vals.named[n])) if vals.named.get(n) in q.items else 0) for q in d.params if q.name == n)
         return (RAMP_INTERP[idx("interp")] if idx("interp") < len(RAMP_INTERP) else 2, idx("mode"), idx("hue"))
 
-    @staticmethod
-    def _box(p, box, colour):
-        p.setPen(QPen(QColor(0, 0, 0, 90), 1))
+    def _box(self, p, box, colour):
+        """A field's box: flat, 1 px outline that is lighter under the mouse."""
+        hot = self._hover is not None and box.contains(self._hover)
+        p.setPen(QPen(QColor(FIELD_HOT if hot else FIELD_LINE), 1))
         p.setBrush(colour)
-        p.drawRoundedRect(box, 3, 3)
+        p.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5))
 
     @staticmethod
     def _socket(p, at, colour):
@@ -609,7 +626,16 @@ class NodeItem(QGraphicsItem):
 
     def hoverMoveEvent(self, e):
         self.setCursor(Qt.SizeHorCursor if self.edge_at(e.pos()) else Qt.SizeVerCursor if self.grip_row(e.pos()) else Qt.ArrowCursor)
+        was, self._hover = self.field_at(self._hover) if self._hover is not None else None, e.pos()
+        if self.field_at(e.pos()) != was:                    # (repaint only when the field under the mouse changed)
+            self.update()
         super().hoverMoveEvent(e)
+
+    def hoverLeaveEvent(self, e):
+        had, self._hover = self._hover, None
+        if had is not None and self.field_at(had) is not None:
+            self.update()
+        super().hoverLeaveEvent(e)
 
     def mousePressEvent(self, e):
         row = self.grip_row(e.pos()) if e.button() == Qt.LeftButton else None
@@ -798,8 +824,8 @@ class RerouteItem(QGraphicsItem):
         p.setRenderHint(QPainter.Antialiasing)
         body = QPainterPath()
         body.addRoundedRect(QRectF(0, 0, self.W, self.H), self.H / 2, self.H / 2)
-        p.fillPath(body, QColor("#4a4a50"))
-        p.setPen(QPen(QColor("#f0a030") if self.isSelected() else QColor(0, 0, 0, 120), 2 if self.isSelected() else 1))
+        p.fillPath(body, QColor(NODE_HEAD))
+        p.setPen(QPen(QColor(SELECT) if self.isSelected() else QColor("#000000"), 2 if self.isSelected() else 1))
         p.drawPath(body)
         NodeItem._socket(p, QPointF(0, self.H / 2), self.colour)
         NodeItem._socket(p, QPointF(self.W, self.H / 2), self.colour)
@@ -897,7 +923,7 @@ class FrameItem(QGraphicsItem):
         fill = QColor(col)
         fill.setAlpha(70)
         p.setBrush(fill)
-        p.setPen(QPen(QColor("#f0a030") if self.isSelected() else col.lighter(130), 2 if self.isSelected() else 1))
+        p.setPen(QPen(QColor(SELECT) if self.isSelected() else col.lighter(130), 2 if self.isSelected() else 1))
         p.drawRect(box)
         p.setPen(QColor("white"))
         f = QFont(p.font())
@@ -972,6 +998,7 @@ class GraphView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.NoAnchor)       # (zoom_by keeps the point under the pointer itself)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.setBackgroundBrush(QColor(CANVAS))
         self.setFocusPolicy(Qt.StrongFocus)
         self.items_by_id = {}
         self.link_items = []                     # [(Link, from node, to node, socket, output name)]
@@ -1239,7 +1266,7 @@ class GraphView(QGraphicsView):
                 self.snap_ring = None
         else:
             if ring is None:
-                ring = self.snap_ring = self.scene().addEllipse(QRectF(), QPen(QColor("#ffb020"), 2))
+                ring = self.snap_ring = self.scene().addEllipse(QRectF(), QPen(QColor(SELECT), 2))
                 ring.setZValue(5)
             r = SOCKET_R + 3
             ring.setRect(QRectF(best[1][3].x() - r, best[1][3].y() - r, 2 * r, 2 * r))

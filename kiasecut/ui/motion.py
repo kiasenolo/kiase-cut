@@ -217,7 +217,8 @@ def of(widget):
 
 def attach(widget):
     """Give a button its Fader (once)."""
-    if isinstance(widget, (QPushButton, QToolButton)) and of(widget) is None:
+    if isinstance(widget, (QPushButton, QToolButton)) and of(widget) is None and not widget.property("kcMaking"):
+        widget.setProperty("kcMaking", True)                 # (making one polishes the widget again: not a second)
         widget.setProperty("kcFader", Fader(widget))
 
 
@@ -322,6 +323,9 @@ class FieldFader(QObject):
                 self._set(name, target)
 
     def eventFilter(self, obj, e):
+        field, frame = getattr(self, "field", None), getattr(self, "frame", None)      # (not made yet, or going)
+        if field is None or frame is None or not (shiboken6.isValid(field) and shiboken6.isValid(frame)):
+            return False
         t = e.type()
         if t == QEvent.Resize:
             self._place()
@@ -332,18 +336,23 @@ class FieldFader(QObject):
                 self._place()
                 self.frame.raise_()
         elif t == QEvent.ChildAdded:
-            QTimer.singleShot(0, self.frame.raise_)
+            QTimer.singleShot(0, self._raise)
         return False
+
+    def _raise(self):
+        if shiboken6.isValid(self.frame):
+            self.frame.raise_()
 
 
 def attach_field(widget):
     """Give an input field its frame (once): line edits and text edits, spin boxes, combo boxes - not the line edit inside one."""
     if not isinstance(widget, (QLineEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QTextEdit)):
         return
-    if widget.property("kcField") is not None or isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox)):
+    if widget.property("kcField") is not None or widget.property("kcMaking") or isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox)):
         return
     if isinstance(widget, QLineEdit) and not widget.hasFrame():
         return
+    widget.setProperty("kcMaking", True)
     widget.setProperty("kcField", FieldFader(widget))
 
 
@@ -459,7 +468,8 @@ class Toggle(QObject):
 
 
 def attach_toggle(widget):
-    if isinstance(widget, (QCheckBox, QRadioButton)) and widget.property("kcToggle") is None:
+    if isinstance(widget, (QCheckBox, QRadioButton)) and widget.property("kcToggle") is None and not widget.property("kcMaking"):
+        widget.setProperty("kcMaking", True)
         widget.setProperty("kcToggle", Toggle(widget))
 
 
@@ -602,7 +612,8 @@ class TabFader(QObject):
 
 
 def attach_tabs(widget):
-    if isinstance(widget, QTabBar) and widget.property("kcTabs") is None:
+    if isinstance(widget, QTabBar) and widget.property("kcTabs") is None and not widget.property("kcMaking"):
+        widget.setProperty("kcMaking", True)
         widget.setProperty("kcTabs", TabFader(widget))
 
 
@@ -656,11 +667,15 @@ class Thumb(QWidget):
         self.anim.valueChanged.connect(self._step)
         bar.installEventFilter(self)
         bar.setMouseTracking(True)
-        bar.valueChanged.connect(lambda *_: self.update())
-        bar.rangeChanged.connect(lambda *_: self.update())
+        bar.valueChanged.connect(lambda *_: self._refresh())
+        bar.rangeChanged.connect(lambda *_: self._refresh())
         self.setGeometry(bar.rect())
         self.show()
         self.raise_()
+
+    def _refresh(self, *_):
+        if shiboken6.isValid(self):
+            self.update()
 
     def rect_of_thumb(self):
         """Where the bar's handle is (the style sheet's layout), drawn BAR_THUMB thick in the middle of the bar."""
@@ -715,6 +730,9 @@ class Thumb(QWidget):
             self.go(BAR_REST, FADE_MS)
 
     def eventFilter(self, obj, e):
+        bar = getattr(self, "bar", None)                                      # (not yet made, or its bar is being deleted: events still come)
+        if bar is None or not (shiboken6.isValid(self) and shiboken6.isValid(bar)):
+            return False
         t = e.type()
         if t == QEvent.Resize:
             self.setGeometry(self.bar.rect())
@@ -742,7 +760,8 @@ class Thumb(QWidget):
 
 
 def attach_bar(widget):
-    if isinstance(widget, QScrollBar) and widget.property("kcThumb") is None:
+    if isinstance(widget, QScrollBar) and widget.property("kcThumb") is None and not widget.property("kcMaking"):
+        widget.setProperty("kcMaking", True)
         widget.setProperty("kcThumb", Thumb(widget))
 
 
@@ -752,7 +771,19 @@ def attach_bar(widget):
 # is the window's edge. White at once when it is chosen, back to nothing in .5 s when it is not, as a button.
 
 SLANT = 0.5773502691896257           # tan 30 degrees
-MENU_PAD = 14                        # room left and right of a title's text
+MENU_VPAD = 8                        # a title is the height of its text and this
+MENU_GAP = 10                        # room between a title's text and the slanted edge (at the middle of the tab's height)
+
+
+def menu_slant(widget):
+    """How far a title's slanted sides lean over the height of the bar's items, in pixels."""
+    text = widget.fontMetrics().height() if widget is not None else 16
+    return round((text + MENU_VPAD) * SLANT)
+
+
+def menu_pad(widget):
+    """Room added left and right of a title's text: half a lean (a tab's sides slant over its height) and the gap."""
+    return menu_slant(widget) // 2 + MENU_GAP
 
 
 class MenuBarFader(QObject):
@@ -761,6 +792,7 @@ class MenuBarFader(QObject):
         self.bar = bar
         self.v = {}                  # title -> how white it is, 0 to 1
         self.anims = {}
+        self.strip = Strip(bar, self)
 
     def go(self, key, target):
         cur = self.v.setdefault(key, 0.0)
@@ -786,31 +818,70 @@ class MenuBarFader(QObject):
     def _set(self, key, v):
         self.v[key] = v
         self.bar.update()
+        self.strip.update()
+
+
+class Strip(QWidget):
+    """The titles of a menu bar, drawn over it: a tab's slanted sides reach into the next title's room, which the style cannot
+    draw into (each title is clipped to its own box) and so cannot make tabs that meet with no space between."""
+
+    def __init__(self, bar, fader):
+        super().__init__(bar)
+        self.bar, self.fader = bar, fader
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        bar.installEventFilter(self)
+        self.setGeometry(bar.rect())
+        self.show()
+        self.raise_()
+
+    def eventFilter(self, obj, e):
+        bar = getattr(self, "bar", None)
+        if bar is None or not (shiboken6.isValid(self) and shiboken6.isValid(bar)):
+            return False
+        if e.type() == QEvent.Resize:
+            self.setGeometry(bar.rect())
+            self.raise_()
+        elif e.type() in (QEvent.ActionChanged, QEvent.ActionAdded, QEvent.ActionRemoved, QEvent.Show):
+            QTimer.singleShot(0, self._refresh)
+        return False
+
+    def _refresh(self):
+        if shiboken6.isValid(self):
+            self.raise_()
+            self.update()
+
+    def paintEvent(self, e):
+        from PySide6.QtGui import QPolygonF
+        bar = self.bar
+        actions = [a for a in bar.actions() if a.isVisible() and not a.isSeparator()]
+        if not actions:
+            return
+        s = menu_slant(bar)
+        active = bar.activeAction()
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        for n, a in enumerate(actions):
+            r = QRectF(bar.actionGeometry(a))
+            enabled = a.isEnabled()
+            white = self.fader.go(a.text(), 1.0 if enabled and a is active else 0.0)
+            first = n == 0
+            if white > 0.005:
+                foot = r.left() if first else r.left() - s                   # (the first is flat on its left, it is the window's edge)
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(255, 255, 255, round(255 * white)))
+                lap = 0.75                                                           # (a little over the joint: two edges of one line leave a faint seam)
+                p.drawPolygon(QPolygonF([QPointF(r.left(), r.top()), QPointF(r.right() + lap, r.top()),
+                                         QPointF(r.right() - s + lap, r.bottom()), QPointF(foot, r.bottom())]))
+            base = bar.palette().color(QPalette.Active if enabled else QPalette.Disabled, QPalette.WindowText)
+            p.setPen(BLACK if enabled and white > 0.5 else base)                 # (not mixed: half way the text would be the colour of the ground)
+            p.setFont(bar.font())
+            shift = 0.0 if first else -s / 2.0                               # (the tab is the box moved left by half its lean at the middle)
+            p.drawText(r.translated(shift + (-s / 4.0 if first else 0.0), 0), Qt.AlignCenter | Qt.TextHideMnemonic, a.text())
+        p.end()
 
 
 def attach_menubar(widget):
-    if isinstance(widget, QMenuBar) and widget.property("kcMenuBar") is None:
+    if isinstance(widget, QMenuBar) and widget.property("kcMenuBar") is None and not widget.property("kcMaking"):
+        widget.setProperty("kcMaking", True)
         widget.setProperty("kcMenuBar", MenuBarFader(widget))
-
-
-def paint_menubar_item(painter, option, widget):
-    from PySide6.QtGui import QPolygonF
-    r = QRectF(option.rect)
-    enabled = bool(option.state & QStyle.State_Enabled)
-    chosen = enabled and bool(option.state & (QStyle.State_Selected | QStyle.State_Sunken))
-    f = widget.property("kcMenuBar") if widget is not None else None
-    white = f.go(option.text, 1.0 if chosen else 0.0) if f is not None else (1.0 if chosen else 0.0)
-    painter.save()
-    painter.setRenderHint(QPainter.Antialiasing)
-    if white > 0.005:
-        s = r.height() * SLANT
-        first = widget is not None and widget.actions() and widget.actionGeometry(widget.actions()[0]).left() == option.rect.left()
-        left_top = r.left() if first else r.left() + s
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(255, 255, 255, round(255 * white)))
-        painter.drawPolygon(QPolygonF([QPointF(left_top, r.top()), QPointF(r.right(), r.top()),
-                                       QPointF(r.right() - s, r.bottom()), QPointF(r.left(), r.bottom())]))
-    base = option.palette.color(QPalette.Active if enabled else QPalette.Disabled, QPalette.WindowText)
-    painter.setPen(mix(base, BLACK, white) if enabled else base)
-    painter.drawText(r, Qt.AlignCenter | Qt.TextHideMnemonic, option.text)
-    painter.restore()

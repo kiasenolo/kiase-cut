@@ -474,16 +474,12 @@ class SwatchTest(unittest.TestCase):
 class MenuBarTest(unittest.TestCase):
     def make(self):
         bar = QMenuBar()
-        for t in ("檔案", "編輯", "檢視"):
+        for t in ("檔案(&F)", "編輯(&E)", "檢視(&V)"):
             bar.addMenu(t).addAction("項目")
         bar.resize(300, 40)
         bar.show()
         QTest.qWait(60)
         return bar
-
-    def at(self, img, bar, i, fx, y):
-        r = bar.actionGeometry(bar.actions()[i])
-        return img.pixelColor(r.left() + fx, r.top() + y).name()
 
     def test_the_chosen_title_is_a_white_slanted_tab_and_the_first_is_flat_on_the_left(self):
         bar = self.make()
@@ -494,14 +490,30 @@ class MenuBarTest(unittest.TestCase):
         r = bar.actionGeometry(first)
         self.assertGreater(img.pixelColor(r.left() + 1, r.top() + 1).lightness(), 230)                # (flat: white to the very corner)
         self.assertGreater(img.pixelColor(r.left() + 1, r.bottom() - 1).lightness(), 230)
-        self.assertLess(img.pixelColor(r.right() - 2, r.bottom() - 1).lightness(), 100)         # (slanted: the foot of the right side is cut)
+        self.assertLess(img.pixelColor(r.right() - 2, r.bottom() - 1).lightness(), 100)               # (slanted: the foot of the right side is cut)
         self.assertGreater(img.pixelColor(r.right() - 2, r.top() + 1).lightness(), 230)
         bar.setActiveAction(second)
         QTest.qWait(60)
         img = bar.grab().toImage()
         r = bar.actionGeometry(second)
-        self.assertLess(img.pixelColor(r.left() + 1, r.top() + 1).lightness(), 100)              # (slanted on the left too: the top corner is cut)
-        self.assertGreater(img.pixelColor(r.left() + 1, r.bottom() - 1).lightness(), 230)
+        self.assertGreater(img.pixelColor(r.left() + 1, r.top() + 1).lightness(), 230)                # (the top starts at its box, the foot reaches back into the first's)
+        self.assertGreater(img.pixelColor(r.left() - 2, r.bottom() - 1).lightness(), 230)
+        self.assertLess(img.pixelColor(r.left() - 2, r.top() + 1).lightness(), 100)
+        bar.close()
+
+    def test_two_titles_side_by_side_leave_no_space_between_them(self):
+        bar = self.make()
+        f = bar.property("kcMenuBar")
+        f.go = lambda key, target: 1.0                                   # (both white, as in the middle of a sweep of the mouse)
+        f.strip.update()
+        QTest.qWait(30)
+        img = bar.grab().toImage()
+        r = bar.actionGeometry(bar.actions()[1])
+        lean = motion.menu_slant(bar)
+        for y in range(r.top() + 1, r.bottom()):
+            joint = round(r.left() - lean * (y - r.top()) / r.height())      # (the shared edge, leaning "/" as it goes down)
+            row = [img.pixelColor(x, y).lightness() for x in range(joint - 4, joint + 5)]
+            self.assertTrue(all(v > 230 for v in row), (y, row))              # (white across the joint on every row: no seam, no space)
         bar.close()
 
     def test_a_title_goes_white_at_once_and_back_in_half_a_second(self):
@@ -510,23 +522,27 @@ class MenuBarTest(unittest.TestCase):
         a = bar.actions()[1]
         bar.setActiveAction(a)
         QTest.qWait(30)
-        self.assertEqual(f.v["編輯"], 1.0)
+        self.assertEqual(f.v["編輯(&E)"], 1.0)
         bar.setActiveAction(None)
         QTest.qWait(60)
-        self.assertTrue(0.0 < f.v["編輯"] < 1.0)
+        self.assertTrue(0.0 < f.v["編輯(&E)"] < 1.0)
         QTest.qWait(motion.FADE_MS + 150)
-        self.assertAlmostEqual(f.v["編輯"], 0.0, places=2)
+        self.assertAlmostEqual(f.v["編輯(&E)"], 0.0, places=2)
         bar.close()
 
-    def test_the_text_of_the_chosen_title_is_black(self):
+    def test_the_text_of_the_chosen_title_is_black_and_has_room_round_it(self):
         bar = self.make()
         bar.setActiveAction(bar.actions()[1])
         QTest.qWait(60)
         img = bar.grab().toImage()
         r = bar.actionGeometry(bar.actions()[1])
-        dark = [img.pixelColor(x, y) for x in range(r.left() + 10, r.right() - 10) for y in range(r.top() + 3, r.bottom() - 3)
-                if img.pixelColor(x, y).lightness() < 40]
+        lean = motion.menu_slant(bar)
+        left, right = r.left() - lean // 2, r.right() - lean // 2                 # (the tab at the middle of its height)
+        mid = r.center().y()
+        dark = [x for x in range(left + 4, right - 4) for y in range(mid - 4, mid + 5) if img.pixelColor(x, y).lightness() < 60]
         self.assertTrue(dark)
+        self.assertGreater(min(dark) - left, 10)                                   # (room at the left)
+        self.assertGreater(right - max(dark), 10)                                  # (and at the right)
         bar.close()
 
 

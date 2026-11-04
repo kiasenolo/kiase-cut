@@ -15,7 +15,7 @@ from PySide6.QtCore import QByteArray, QMargins, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QFrame, QMenu, QStyle, QStyleOptionButton,
-                               QStyleOptionMenuItem, QStyleOptionProgressBar, QStyleOptionTab, QStyleOptionToolButton, QTabBar)
+                               QStyleOptionMenuItem, QStyleOptionProgressBar, QStyleOptionTab, QStyleOptionToolButton, QMenuBar, QTabBar)
 
 from . import motion, smoothscroll, wheel
 
@@ -292,8 +292,7 @@ class Style(wheel.Style):
 
     def drawControl(self, element, option, painter, widget=None):
         if element == QStyle.CE_MenuBarItem and isinstance(option, QStyleOptionMenuItem):
-            motion.paint_menubar_item(painter, option, widget)
-            return
+            return                                    # (the titles are drawn over the bar: motion.Strip)
         if element == QStyle.CE_TabBarTabShape and isinstance(widget, QTabBar):
             motion.paint_tab(painter, option, widget)
             return
@@ -365,7 +364,7 @@ class Style(wheel.Style):
             if isinstance(option, QStyleOptionToolButton) and option.features & QStyleOptionToolButton.HasMenu:
                 size.setWidth(size.width() + 14)
         elif kind == QStyle.CT_MenuBarItem:           # room for the slanted tab drawn round the title
-            size = QSize(contents.width() + 2 * motion.MENU_PAD, contents.height() + 8)
+            size = QSize(contents.width() + 2 * motion.menu_pad(widget), contents.height() + motion.MENU_VPAD)
         elif kind == QStyle.CT_ItemViewItem:            # Breeze's rows are 3 px roomier all round
             size = size.grownBy(QMargins(3, 3, 3, 3))
         elif kind == QStyle.CT_MenuItem and not isinstance(widget, QMenu) \

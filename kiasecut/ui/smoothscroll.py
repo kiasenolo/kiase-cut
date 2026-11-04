@@ -9,6 +9,7 @@ and the event goes on to the area around it); at the end of the range it lets th
 """
 import time
 
+import shiboken6
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication
 
@@ -45,6 +46,9 @@ class Glide(QObject):
         return self.area.verticalScrollBar()
 
     def eventFilter(self, obj, e):
+        area = getattr(self, "area", None)
+        if area is None or not shiboken6.isValid(area):          # (not made yet, or the area is being deleted)
+            return False
         if e.type() != QEvent.Wheel or e.modifiers() != Qt.NoModifier or wheel.touchpad(e):
             return False
         a = e.angleDelta()
@@ -87,6 +91,8 @@ class Glide(QObject):
 
 def attach(area):
     """Make a scroll area glide under the wheel (once), if it scrolls as Qt does."""
-    if not isinstance(area, QAbstractScrollArea) or area.property("kcGlide") is not None or python_wheel(area):
+    if not isinstance(area, QAbstractScrollArea) or area.property("kcGlide") is not None or area.property("kcMaking") \
+            or python_wheel(area):
         return
+    area.setProperty("kcMaking", True)
     area.setProperty("kcGlide", Glide(area))

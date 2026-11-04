@@ -17,6 +17,12 @@ APP = QApplication.instance() or QApplication([])
 look.apply(APP)
 
 
+def setUpModule():
+    for w in QApplication.topLevelWidgets():              # (windows other test files left up, at the same corner, would take the mouse)
+        if w.isVisible():
+            w.hide()
+
+
 def shown():
     host = QWidget()
     lay = QHBoxLayout(host)

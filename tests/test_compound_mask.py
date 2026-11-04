@@ -210,6 +210,7 @@ class PreviewTests(unittest.TestCase):
         at = pv._rect().center()
         QTest.mousePress(pv, Qt.LeftButton, NONE, at.toPoint())
         self.assertIsNone(pv.drag)                                          # (and they cannot be dragged unseen)
+        QTest.mouseRelease(pv, Qt.LeftButton, NONE, at.toPoint())
 
 
 if __name__ == "__main__":

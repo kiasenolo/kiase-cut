@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
+from .. import (androidfs, assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -56,7 +56,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import appevents, exprdialog, icons, inplace, look, mapdialog, middledrag, wheel
+from . import androidfiles, appevents, exprdialog, icons, inplace, look, mapdialog, middledrag, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -4856,6 +4856,8 @@ class MainWindow(QMainWindow):
         self.run_task(work, done, lambda m: QMessageBox.warning(self, "匯出目前畫面", m))
 
     def documents_dir(self):
+        if sys.platform == "android" and androidfs.documents():          # (the shared Documents folder, where the user can find projects)
+            return androidfs.documents()
         return QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation) or os.path.expanduser("~")
 
     def app_root(self):
@@ -6304,6 +6306,8 @@ def run(argv):
         # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
     app = QApplication(argv)
+    if sys.platform == "android":
+        androidfiles.install()
     look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area
     # the logo (Icon.svg beside the package; Icon.free is its Lunacy source) on every window;
@@ -6314,6 +6318,8 @@ def run(argv):
         app.setWindowIcon(QIcon(logo))
     win = MainWindow()
     win.show()
+    if sys.platform == "android" and not androidfs.can_read():
+        QMessageBox.information(win, "需要權限", androidfs.HOW_TO_ALLOW)
     win.begin_session()
     if win.offer_recovery():
         pass

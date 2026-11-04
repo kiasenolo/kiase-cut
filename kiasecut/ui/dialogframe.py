@@ -25,6 +25,7 @@ class Bar(QWidget):
         super().__init__(dialog)
         self.dialog = dialog
         self.drag = None                                       # (global press, dialog position) while it is moved
+        self.last = None                                       # the finger's last reading
         self.down = self.over = False                          # the ✕ is pressed / under the mouse
         self.setFixedHeight(BAR_H)
         self.setMouseTracking(True)
@@ -67,7 +68,7 @@ class Bar(QWidget):
             self.down = True
             self.update()
         else:
-            self.drag = (e.globalPosition().toPoint(), self.dialog.pos())
+            self.drag, self.last = (e.globalPosition().toPoint(), self.dialog.pos()), None
 
     def mouseMoveEvent(self, e):
         over = self.on_close(e.position().toPoint())
@@ -76,7 +77,11 @@ class Bar(QWidget):
             self.update()
         if self.drag is not None:
             start, pos = self.drag
-            at = pos + e.globalPosition().toPoint() - start
+            # (where the finger is comes from the window's position when the event was made, which lags the one asked for, now
+            # by one step and then by none: the two last readings are averaged, or the window shakes as it follows the finger)
+            g = e.globalPosition()
+            seen, self.last = (g if self.last is None else (g + self.last) / 2), g
+            at = pos + seen.toPoint() - start
             screen = self.dialog.screen().availableGeometry()
             at.setX(max(screen.left() - self.dialog.width() + BTN_W, min(at.x(), screen.right() - BTN_W)))
             at.setY(max(screen.top(), min(at.y(), screen.bottom() - BAR_H)))

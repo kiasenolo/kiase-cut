@@ -56,7 +56,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import androidfiles, appevents, exprdialog, icons, inplace, look, mapdialog, middledrag, touch, wheel
+from . import androidfiles, appevents, dialogframe, exprdialog, icons, inplace, look, mapdialog, middledrag, touch, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -6307,9 +6307,12 @@ def run(argv):
         # pw_stream_connect); its PulseAudio one (PipeWire serves it too) does not.
         # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
+    if sys.platform == "android":
+        QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)       # the menus in the window, not behind the system's "..."
     app = QApplication(argv)
     if sys.platform == "android":
         androidfiles.install()
+        dialogframe.install()                       # a title bar, a ✕ and an outline on every dialog (the system gives none)
         touch.install_scrolling()                   # one finger scrolls every list and panel; a hold first, then it drags
     look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area

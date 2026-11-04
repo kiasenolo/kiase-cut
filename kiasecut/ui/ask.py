@@ -12,6 +12,7 @@ QUESTIONS = {                                    # key: what it asks, as the set
     "overwrite_project": "另存新檔時覆蓋同名的專案檔",
     "collect_media": "把專案資料夾外的素材複製進 Media",
     "delete_compound": "刪除複合片段（和使用它的片段）",
+    "delete_vfx_node": "刪除 VFX Node（使用它的片段保留各自的副本）",
     "unmake_component": "轉回複合片段時清掉片段自己設定的參數",
     "delete_param": "刪除元件參數時清掉片段自己設定的值",
     "delete_tracks": "刪除有片段的軌道",

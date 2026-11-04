@@ -108,6 +108,7 @@ In memory every compound clip also has "compound": the very dict in project.comp
 code can walk into it). On disk, and in undo snapshots, only compound_id is kept: dumps()
 leaves the links out and link() puts them back.
 """
+import copy
 import json
 import math
 import os
@@ -559,7 +560,7 @@ def locked(track):
 
 # -- shared compounds -------------------------------------------------------------------------------
 def _tracks_out(tracks):
-    """Tracks with compound clips reduced to their compound_id (shallow copies)."""
+    """Tracks with compound clips reduced to their compound_id, and the effects that use a VFX Node to its id (shallow copies)."""
     out = []
     for t in tracks:
         clips = []
@@ -568,6 +569,9 @@ def _tracks_out(tracks):
                 c = {k: v for k, v in c.items() if k != "compound"}
             elif is_group(c):
                 c = dict(c, tracks=_tracks_out(c["tracks"]))
+            if any(e.get("vfx") for e in c.get("effects") or ()):
+                c = dict(c, effects=[{k: v for k, v in e.items() if k not in ("graph", "sources")} if e.get("vfx") else e
+                                     for e in c["effects"]])
             clips.append(c)
         out.append(dict(t, clips=clips))
     return out
@@ -598,15 +602,87 @@ def dumps(p, **kw):
 def legacy_text_padding(tx):
     """A text saved with one background padding (bg_pad) gets it on each of the four sides (bg_pad_l / r / t / b)."""
     if tx and "bg_pad" in tx and not any(f"bg_pad_{k}" in tx for k in "lrtb"):
-        import copy
         for k in "lrtb":
             tx[f"bg_pad_{k}"] = copy.deepcopy(tx["bg_pad"])
+
+
+def _share_vfx(p, e):
+    """Effect e uses a VFX Node: its graph and sources are the node's own (one object, so editing it in one clip edits every
+    use), and the parameters the node has gained since get their defaults. A node the project lacks (an effect pasted
+    from another project) is made from the effect."""
+    nodes = p.setdefault("vfx_nodes", {})
+    m = nodes.get(e["vfx"])
+    if m is None:
+        if not e.get("graph"):
+            e.pop("vfx")
+            return
+        m = nodes[e["vfx"]] = {"id": e["vfx"], "name": "VFX Node", "graph": e["graph"], "sources": e.get("sources") or {}}
+    e["graph"], e["sources"] = m["graph"], m.setdefault("sources", {})
+    from . import nodegraph
+    for k, v in nodegraph.default_params(e["graph"]).items():
+        if k not in e["params"]:
+            e["params"][k] = copy.deepcopy(v)
+
+
+def sync_vfx(p, touched=()):
+    """After an edit: the effects of VFX Nodes it went through (touched) hand their graph and sources to the node, then every use
+    points at the node's again (an edit may have replaced the graph object)."""
+    nodes = p.get("vfx_nodes")
+    if not nodes:
+        return
+    for e in touched:
+        m = nodes.get(e.get("vfx"))
+        if m is not None and e.get("graph") is not None:
+            m["graph"], m["sources"] = e["graph"], e.get("sources") if e.get("sources") is not None else m.get("sources", {})
+    for c in all_clips(p):
+        for e in c.get("effects") or ():
+            if e.get("vfx"):
+                _share_vfx(p, e)
+
+
+def inline_vfx(comps, p):
+    """Stored compounds (the form dumps gives) with the VFX Nodes their effects use written into them, the effects on their
+    own: a compound kept for another project cannot count on this project's nodes."""
+    nodes = p.get("vfx_nodes") or {}
+
+    def visit(tracks):
+        for t in tracks:
+            for c in t["clips"]:
+                for e in c.get("effects") or ():
+                    m = nodes.get(e.get("vfx"))
+                    if m is not None:
+                        e["graph"], e["sources"] = copy.deepcopy(m["graph"]), copy.deepcopy(m.get("sources") or {})
+                    e.pop("vfx", None)
+                if is_group(c):
+                    visit(c["tracks"])
+    for comp in comps.values():
+        visit(comp["tracks"])
+    return comps
+
+
+def vfx_uses(p):
+    """{VFX Node id: [(clip, effect)]} of every use, in every timeline and compound."""
+    out = {vid: [] for vid in p.get("vfx_nodes") or {}}
+    for c in all_clips(p):
+        for e in c.get("effects") or ():
+            if e.get("vfx") in out:
+                out[e["vfx"]].append((c, e))
+    return out
+
+
+def new_vfx_id(p):
+    ids = set(p.get("vfx_nodes") or ())
+    n = len(ids) + 1
+    while f"vn{n}" in ids:
+        n += 1
+    return f"vn{n}"
 
 
 def link(p):
     """Point every compound clip at its shared entry and p.tracks at the open timeline (after
     loading or restoring a snapshot)."""
     comps = p.setdefault("compounds", {})
+    p.setdefault("vfx_nodes", {})
     _sync(p)
     tls = p.get("timelines") or []
     if tls:
@@ -627,6 +703,8 @@ def link(p):
                     from . import viz
                     viz.migrate(c)
                 for e in c.get("effects") or []:
+                    if e.get("vfx"):
+                        _share_vfx(p, e)
                     if e.get("graph"):
                         from . import nodegraph
                         nodegraph.migrate(e["graph"])

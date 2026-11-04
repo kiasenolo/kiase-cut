@@ -24,15 +24,16 @@ from PySide6.QtWidgets import (QApplication, QDockWidget, QHBoxLayout, QLabel, Q
 from . import appevents, icons
 
 STATE_VERSION = 1
-LEFT = ("library", "assets", "userlib", "vfx", "compounds")
+LEFT = ("library", "assets", "userlib", "vfx", "vfxnodes", "compounds")
 SIDE = ("inspector", "effects", "mask", "beats", "subtitles", "curves", "rack")
 WITH_TIMELINE = ("nodes",)                  # side panels that sit with the timeline: they want room
-TITLES = {"library": "專案素材", "assets": "內建素材", "userlib": "Library", "vfx": "VFX", "compounds": "複合片段",
+TITLES = {"library": "專案素材", "assets": "內建素材", "userlib": "Library", "vfx": "VFX", "vfxnodes": "VFX Node", "compounds": "複合片段",
           "preview": "預覽", "inspector": "屬性", "effects": "效果", "mask": "遮罩", "beats": "節拍",
           "subtitles": "字幕", "curves": "關鍵幀曲線", "rack": "全局參數架", "nodes": "節點", "timeline": "時間線"}
 ORDER = LEFT + ("preview",) + SIDE + WITH_TIMELINE + ("timeline",)
 USED = SIDE + WITH_TIMELINE                  # the panels the one in use (Panels.active) can be
-NOTES = {"effects": "選取的片段沒有效果可用", "mask": "選取的片段不能加遮罩", "beats": "選取一個有聲音的片段",
+NOTES = {"vfxnodes": "這個專案還沒有 VFX Node（在效果面板新增「節點效果」就會有）", "compounds": "這個專案沒有複合片段",
+         "effects": "選取的片段沒有效果可用", "mask": "選取的片段不能加遮罩", "beats": "選取一個有聲音的片段",
          "subtitles": "選取文字片段", "curves": "選取一個片段", "nodes": "選取有節點效果的片段"}
 
 
@@ -375,7 +376,7 @@ class Panels(QObject):
                 w.splitDockWidget(D["assets"], D["preview"], Qt.Horizontal)
                 w.splitDockWidget(D["preview"], D["inspector"], Qt.Horizontal)
                 w.splitDockWidget(D["assets"], D["compounds"], Qt.Vertical)
-                for k in ("library", "userlib", "vfx"):
+                for k in ("library", "userlib", "vfx", "vfxnodes"):
                     w.tabifyDockWidget(D["assets"], D[k])
                 for k in ("effects", "mask", "curves", "beats", "subtitles", "rack"):
                     w.tabifyDockWidget(D["inspector"], D[k])
@@ -423,9 +424,9 @@ class Panels(QObject):
         try:
             ok = self.win.restoreState(state, STATE_VERSION)
             if ok:
-                for k in USED:                          # a panel the layout was saved without goes in the 屬性 tabs (or the timeline's), last
+                for k in USED + ("vfxnodes",):          # a panel the layout was saved without goes in the 屬性 tabs (or the timeline's), last
                     if k != "inspector" and ("dock_" + k).encode("utf-16-be") not in bytes(state):
-                        mate = "timeline" if k in WITH_TIMELINE else "inspector"
+                        mate = "timeline" if k in WITH_TIMELINE else "library" if k == "vfxnodes" else "inspector"
                         self.win.removeDockWidget(self.docks[k])
                         self.win.addDockWidget(Qt.BottomDockWidgetArea if mate == "timeline" else Qt.TopDockWidgetArea, self.docks[k])
                         self.win.tabifyDockWidget(self.docks[mate], self.docks[k])

@@ -20,7 +20,7 @@ import time
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QPointF, QRect, QSettings, QSize,
                             QStandardPaths, Qt,
                             QThread, QTimer, QUrl, Signal, Slot)
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
                                QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTabBar, QToolBar,
@@ -55,6 +55,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
+from .vfxnodes import VfxNodePanel
 from . import appevents, exprdialog, icons, inplace, look, mapdialog, middledrag, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
@@ -303,6 +304,14 @@ class MainWindow(QMainWindow):
         lb.filesDropped.connect(lambda paths, folder: self.drop_files(paths, folder))
         lb.collectRequested.connect(lambda: self.collect_external(ask=False))
 
+        self.vfxnodes = VfxNodePanel()
+        self.vfxnodes.applyRequested.connect(self.apply_vfx_to_selected)
+        self.vfxnodes.selectRequested.connect(self.select_vfx_use)
+        self.vfxnodes.renameRequested.connect(self.rename_vfx)
+        self.vfxnodes.copyRequested.connect(lambda vid: self.apply_root("複製 VFX Node", edit.duplicate_vfx_node, vid))
+        self.vfxnodes.deleteRequested.connect(self.delete_vfx)
+        self.vfxnodes.libraryRequested.connect(self.save_vfx_to_library)
+        self.vfxnodes.importRequested.connect(self.import_vfx_from_library)
         self.compounds = CompoundPanel()
         self.compounds.showRequested.connect(self.show_compound)
         self.compounds.openRequested.connect(self.open_compound_path)
@@ -495,6 +504,9 @@ class MainWindow(QMainWindow):
             "字體", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_graph_font(lvl, cid, e, nid, path)))
         ef.nodesRequested.connect(self.open_node_editor)
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
+        ef.vfxRequested.connect(self.add_vfx_to)
+        nd.unshareRequested.connect(lambda eid: self.node_clip() and self.apply(
+            "取消共用", lambda lvl: edit.unshare_vfx(lvl, self.node_clip(), eid)))
         ef.browseRequested.connect(self.browse_effect)
         ef.removeRequested.connect(lambda ids, eid: self.fx_each(
             "移除效果", ids, eid, lambda lvl, cid, e: edit.remove_effect(lvl, cid, e, drop_empty=self.editing_static())))
@@ -835,7 +847,7 @@ class MainWindow(QMainWindow):
         # (佈局) is one arrangement of them (layouts.py)
         self.panels = Panels(self, {
             "library": self.library, "assets": self.assets, "userlib": self.ulpanel, "vfx": self.vfx,
-            "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_dock,
+            "vfxnodes": self.vfxnodes, "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_dock,
             "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "rack": self.rack_panel,
             "nodes": self.nodes, "timeline": lower})
         self.panels["rack"].visibilityChanged.connect(lambda on: on and self.show_rack())
@@ -1285,6 +1297,7 @@ class MainWindow(QMainWindow):
                 names.append(c.get("name") or "複合片段")
         self.crumb.setText(" › ".join(names) if self.path_ids else "")
         self.compounds.set_project(self.proj, self.path_ids)
+        self._update_library_tabs()
         self.back_btn.setVisible(bool(self.path_ids))
         key = self.level_key()
         if key != self.tb_key:                           # 時基 goes with the level shown
@@ -2620,6 +2633,20 @@ class MainWindow(QMainWindow):
         for key, dock in (("nodes", "nodes"), ("fx", "effects"), ("mask", "mask"), ("beat", "beats"), ("subtitle", "subtitles"),
                           ("curves", "curves")):
             self.panels.set_usable(dock, show[key])
+        self._update_library_tabs()
+
+    def _update_library_tabs(self):
+        """The project's VFX Nodes and compounds: their tabs are there only while the project has some (appearing when the first is
+        made, going when the last is deleted - docks.Panels.set_usable), and the panels that name VFX Nodes know them."""
+        p = self.proj
+        nodes = [(vid, m["name"]) for vid, m in (p.get("vfx_nodes") or {}).items()] if p else []
+        self.vfxnodes.set_project(p, project.vfx_uses(p) if p else {})
+        self.effects.set_vfx_nodes(nodes)
+        self.nodes.vfx_names = dict(nodes)
+        panels = getattr(self, "panels", None)
+        if panels is not None:
+            panels.set_usable("vfxnodes", bool(nodes))
+            panels.set_usable("compounds", bool(p and p.get("compounds")))
 
     def on_easing(self, ids, easing, groups):
         """Apply a curve preset to every parameter (of these groups) with a keyframe at the playhead."""
@@ -5296,7 +5323,7 @@ class MainWindow(QMainWindow):
             return c
         self.apply("新增濾鏡片段", fn, select=lambda c: c["id"])
 
-    def save_effect_preset(self, folder, effects=None):
+    def save_effect_preset(self, folder, effects=None, default_name="我的效果"):
         """存選取片段的效果: the selected clip's effects, as they are, as a 效果預設 in the Library (effects: these
         instead - a node effect saved from the node editor)."""
         if effects is None:
@@ -5308,7 +5335,7 @@ class MainWindow(QMainWindow):
         if not self.ulib:
             self.statusBar().showMessage("先開啟專案，Library 才找得到", 5000)
             return
-        name, ok = QInputDialog.getText(self, "存成效果預設", "名稱", text="我的效果")
+        name, ok = QInputDialog.getText(self, "存成效果預設", "名稱", text=default_name)
         if not ok or not name.strip():
             return
         base = library.folder_dir(self.ulib.proj("presets"), self.ulib.mirror("presets"), folder)
@@ -5339,6 +5366,107 @@ class MainWindow(QMainWindow):
             return
         self.apply("新增效果", lambda lvl: [edit.add_effect(lvl, cid, ref) for cid in ids])
         self.panels.show("effects")
+
+    # -- VFX Nodes (project.py _share_vfx): node effects many clips share ----------------------------------
+    def add_vfx_to(self, ids, vid):
+        """新增效果 > 節點效果 on clips ids: a use of VFX Node vid, or ("" ) of a new blank one, named first."""
+        if not self.proj:
+            return
+        name = None
+        if not vid:
+            name, ok = QInputDialog.getText(self, "新增 VFX Node", "名稱",
+                                            text=f"VFX Node {len(self.proj.get('vfx_nodes') or {}) + 1}")
+            if not ok or not name.strip():
+                return
+
+        def fn(root):
+            v = vid or edit.new_vfx_node(root, name)
+            level = self.container(root)
+            return [edit.add_vfx_effect(root, cid, v, level=level) for cid in ids]
+        self.apply_root("新增效果" + many(ids), fn)
+
+    def selected_visual_ids(self):
+        return [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]
+
+    def apply_vfx_to_selected(self, vid):
+        ids = self.selected_visual_ids()
+        if not ids:
+            self.statusBar().showMessage("先在時間軸選一個畫面片段（圖片、影片、文字、複合片段）", 4000)
+            return
+        self.add_vfx_to(ids, vid)
+        self.panels.show("effects")
+
+    def select_vfx_use(self, vid):
+        """Select the first clip that uses VFX Node vid, and open the node editor on it."""
+        use = next(iter(project.vfx_uses(self.proj).get(vid) or ()), None)
+        if use is None:
+            self.statusBar().showMessage("還沒有片段在用這個 VFX Node：先套用到一個片段", 4000)
+            return
+        c, e = use
+        level = self.container()
+        if all(k["id"] != c["id"] for k in project.walk_clips(level["tracks"])):
+            self.statusBar().showMessage("它用在別的時間線或複合片段裡：先打開那裡", 5000)
+            return
+        self.timeline.select(c)
+        self.open_node_editor(e["id"])
+
+    def rename_vfx(self, vid):
+        m = (self.proj.get("vfx_nodes") or {}).get(vid)
+        if m is None:
+            return
+        name, ok = QInputDialog.getText(self, "重新命名 VFX Node", "名稱", text=m["name"])
+        if ok and name.strip():
+            self.apply_root("重新命名 VFX Node", edit.rename_vfx_node, vid, name)
+
+    def delete_vfx(self, vid):
+        n = len(project.vfx_uses(self.proj).get(vid) or ())
+        if questions.question(self, "delete_vfx_node", "刪除 VFX Node",
+                              "刪除這個 VFX Node？" + (f"\n{n} 個使用它的片段會各自留下一份節點效果。" if n else "")):
+            self.apply_root("刪除 VFX Node", edit.delete_vfx_node, vid)
+
+    def vfx_effect(self, vid):
+        """VFX Node vid as an effect (what a 效果預設 file keeps): its graph, sources and the values uses start at."""
+        m = self.proj["vfx_nodes"][vid]
+        e = fx.new_effect(fx.GRAPH, "")
+        e.update(graph=m["graph"], sources=m.get("sources") or {})
+        e["params"].update(m.get("params") or {})
+        return e
+
+    def save_vfx_to_library(self, vid):
+        m = (self.proj.get("vfx_nodes") or {}).get(vid)
+        if m is not None:
+            self.save_effect_preset("", [self.vfx_effect(vid)], m["name"])
+
+    def import_vfx_from_library(self):
+        """從 Library 匯入: a node effect of a 效果預設 file becomes a VFX Node of the project."""
+        if not self.ulib or not self.proj:
+            self.statusBar().showMessage("先開啟專案，Library 才找得到", 5000)
+            return
+        items = sorted(self.ulib.lib("presets")["items"], key=lambda it: it["name"])
+        if not items:
+            self.statusBar().showMessage("Library 的「效果預設」還沒有檔案：先在 VFX Node 上按右鍵 > 存到 Library", 5000)
+            return
+        menu = QMenu(self)
+        for it in items:
+            menu.addAction(os.path.splitext(it["name"])[0], lambda _=False, it=it: self._import_vfx(it))
+        menu.exec(QCursor.pos())
+
+    def _import_vfx(self, it):
+        try:
+            nodes = [e for e in userlib.load_preset(it["path"]) if e.get("filter") == fx.GRAPH]
+        except (OSError, ValueError) as exc:
+            self.statusBar().showMessage(f"讀不到效果預設：{exc}", 5000)
+            return
+        if not nodes:
+            self.statusBar().showMessage("這個預設裡沒有節點效果", 4000)
+            return
+        base = os.path.splitext(it["name"])[0]
+
+        def fn(root):
+            for i, e in enumerate(nodes):
+                edit.new_vfx_node(root, base if len(nodes) == 1 else f"{base} {i + 1}", e["graph"], e.get("sources") or {}, e["params"])
+        self.apply_root("從 Library 匯入 VFX Node", fn)
+        self.panels.show("vfxnodes")
 
     def add_effects_to(self, ids, whats, label="新增效果"):
         """Filters or effects (put_effect's) added to each of clips ids (批量: the picture clips of

@@ -110,6 +110,7 @@ class Grip(QLabel):
 
 class EffectsPanel(QWidget):
     addRequested = Signal(list, str)                # clip ids, filter ref
+    vfxRequested = Signal(list, str)                # clip ids, VFX Node id ("": a new one): a node effect that uses it
     browseRequested = Signal(list)                  # clip ids: pick a filter file
     # the effect edits name the clips they apply to and the main clip's effect id (the others'
     # are the same filter at the same place)
@@ -140,6 +141,7 @@ class EffectsPanel(QWidget):
         super().__init__(parent)
         self.setMinimumWidth(300)
         self.user_filters = []                      # [(name, path)] from the user's Library
+        self.vfx_nodes = []                         # [(id, name)] of the project's VFX Nodes
         self.clip_id = None
         self.clip = None                            # the main clip of the form as last shown (what a drag copies)
         self.clips = []                             # the clips the form edits, the main one first
@@ -199,7 +201,14 @@ class EffectsPanel(QWidget):
     def _fill_menu(self):
         menu = self.add_btn.menu()
         menu.clear()
-        menu.addAction("節點效果（用節點編輯器組合）", lambda: self._add(fx.GRAPH)).setToolTip(fx.GRAPH_DEF.description)
+        if self.vfx_nodes:                                      # (the project's VFX Nodes: a use of one, or a new one)
+            mine = menu.addMenu("節點效果（VFX Node）")
+            for vid, name in self.vfx_nodes:
+                mine.addAction(name, lambda _=False, vid=vid: self._add_vfx(vid))
+            mine.addSeparator()
+            mine.addAction("新增…", lambda: self._add_vfx(""))
+        else:
+            menu.addAction("節點效果（用節點編輯器組合）", lambda: self._add_vfx("")).setToolTip(fx.GRAPH_DEF.description)
         menu.addSeparator()
         cats = {}
         for ref in fx.builtin_refs():
@@ -225,6 +234,16 @@ class EffectsPanel(QWidget):
         if self.targets():
             self.add_btn.menu().hide()
             self.addRequested.emit(self.targets(), ref)
+
+    def _add_vfx(self, vid):
+        if self.targets():
+            self.add_btn.menu().hide()
+            self.vfxRequested.emit(self.targets(), vid)
+
+    def set_vfx_nodes(self, nodes):
+        """The project's VFX Nodes, [(id, name)]: the 新增效果 menu lists them, and a node effect that uses one says which."""
+        nodes = list(nodes)
+        self.vfx_nodes = nodes
 
     # -- the form ---------------------------------------------------------------------------------
     def _build(self, c, count=0):
@@ -326,7 +345,7 @@ class EffectsPanel(QWidget):
         fold.setToolTip("摺疊／展開這個效果的屬性")
         head.addWidget(fold)
         es = [k["effects"][index] for k in self.clips]           # this effect of each clip
-        on = QCheckBox(d.name)
+        on = QCheckBox(d.name + (f"：{dict(self.vfx_nodes).get(e['vfx'], '')}" if e.get("vfx") else ""))
         set_checks(on, [not x.get("disabled") for x in es])
         on.setToolTip(d.description or "開／關這個效果")
         on.clicked.connect(lambda _=False, eid=e["id"]: self._now(self.enabledChosen, eid, on.checkState() == Qt.Checked))

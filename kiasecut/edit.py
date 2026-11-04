@@ -42,8 +42,10 @@ class History:
         """Apply fn(proj, *args, **kw) as one undoable step. Repeated edits with the same
         merge key within MERGE_S seconds (spinning a value, typing) share one step."""
         before = self.snap()                           # shared compounds stored once
+        TOUCHED.clear()
         try:
             result = fn(self.proj, *args, **kw)
+            project.sync_vfx(self.proj, TOUCHED)
         except Exception:
             self._restore(before)              # never leave a half-applied edit behind
             raise
@@ -947,9 +949,14 @@ EASINGS = {                        # CSS-style cubic-bezier control x positions
 }
 
 
+TOUCHED = []                      # the effects an edit went through (History.do hands those that use a VFX Node to the node)
+
+
 def _effect(c, effect_id):
     for e in c.get("effects") or []:
         if e["id"] == effect_id:
+            if e.get("vfx"):
+                TOUCHED.append(e)
             return e
     raise EditError("effect not found")
 
@@ -2331,6 +2338,84 @@ def remove_exposed_param(proj, clip_id, effect_id, name):
     _, c = find(proj, clip_id)
     e, g = _graph(c, effect_id)
     nodegraph.remove_exposed(g, e["params"], name)
+
+
+# -- VFX Nodes: node effects shared by link (project.py _share_vfx) --------------------------------------------
+def _vfx(proj, vid):
+    m = (proj.get("vfx_nodes") or {}).get(vid)
+    if m is None:
+        raise EditError("找不到這個 VFX Node")
+    return m
+
+
+def new_vfx_node(proj, name=None, graph=None, sources=None, params=None):
+    """A VFX Node of the project: blank unless given a graph (and its sources, and the parameters new uses start at). Returns its id."""
+    nodes = proj.setdefault("vfx_nodes", {})
+    vid = project.new_vfx_id(proj)
+    nodes[vid] = {"id": vid, "name": (name or "").strip() or f"VFX Node {len(nodes) + 1}",
+                  "graph": graph if graph is not None else nodegraph.new_graph(), "sources": sources if sources is not None else {}}
+    nodes[vid]["params"] = copy.deepcopy(params) if params is not None else nodegraph.default_params(nodes[vid]["graph"])
+    return vid
+
+
+def add_vfx_effect(proj, clip_id, vid, index=None, level=None):
+    """Put a use of VFX Node vid on a clip (of `level`, the open compound's content, else the project): the same graph as every
+    other use, parameter values of its own (the node's to start)."""
+    m = _vfx(proj, vid)
+    _, c = find(level or proj, clip_id)
+    if c["type"] not in VISUAL:
+        raise EditError("filters go on pictures, videos, texts, compound clips and filter clips")
+    e = fx.new_effect(fx.GRAPH, new_effect_id())
+    e["vfx"] = vid
+    e["params"].update(copy.deepcopy(m.get("params") or {}))
+    project._share_vfx(proj, e)
+    es = c.setdefault("effects", [])
+    es.insert(len(es) if index is None else max(0, min(index, len(es))), e)
+    return e
+
+
+def vfx_from_effect(proj, clip_id, effect_id, name=None, level=None):
+    """A node effect of a clip becomes a VFX Node (and this clip's use of it). Returns its id."""
+    _, c = find(level or proj, clip_id)
+    e = _effect(c, effect_id)
+    if e.get("filter") != fx.GRAPH:
+        raise EditError("這不是節點效果")
+    if e.get("vfx"):
+        raise EditError("這已經是 VFX Node")
+    vid = new_vfx_node(proj, name, e["graph"], e.setdefault("sources", {}), e["params"])
+    e["vfx"] = vid
+    return vid
+
+
+def unshare_vfx(proj, clip_id, effect_id):
+    """This use of a VFX Node gets a graph of its own (a copy): editing it no longer changes the others."""
+    _, c = find(proj, clip_id)
+    e = _effect(c, effect_id)
+    if not e.get("vfx"):
+        raise EditError("這不是 VFX Node")
+    e["graph"], e["sources"] = copy.deepcopy(e["graph"]), copy.deepcopy(e.get("sources") or {})
+    del e["vfx"]
+
+
+def rename_vfx_node(proj, vid, name):
+    name = (name or "").strip()
+    if not name:
+        raise EditError("名字不能是空的")
+    _vfx(proj, vid)["name"] = name
+
+
+def delete_vfx_node(proj, vid):
+    """Delete VFX Node vid; every clip that used it keeps the effect, as a copy of its own."""
+    _vfx(proj, vid)
+    for c, e in project.vfx_uses(proj)[vid]:
+        e["graph"], e["sources"] = copy.deepcopy(e["graph"]), copy.deepcopy(e.get("sources") or {})
+        del e["vfx"]
+    del proj["vfx_nodes"][vid]
+
+
+def duplicate_vfx_node(proj, vid):
+    m = _vfx(proj, vid)
+    return new_vfx_node(proj, m["name"] + " 副本", copy.deepcopy(m["graph"]), copy.deepcopy(m.get("sources") or {}), m.get("params"))
 
 
 def edit_exposed_param(proj, clip_id, effect_id, name, fields):

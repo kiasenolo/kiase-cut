@@ -247,7 +247,7 @@ def save_compound(root, folder, name, proj, kid):
     compounds/.media, so it works in any project and on another computer with the Library."""
     import hashlib
     root = library.norm(root)
-    stored = json.loads(project.dumps(proj))["compounds"]
+    stored = project.inline_vfx(json.loads(project.dumps(proj))["compounds"], proj)
     comps = {k: stored[k] for k in compound_deps(proj, kid)}
     store = os.path.join(category_dir(root, "compounds"), COMPOUND_MEDIA)
     copied = {}

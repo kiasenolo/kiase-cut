@@ -1718,6 +1718,7 @@ class NodeEditor(QWidget):
     nodeSelected = Signal(str, str)                         # effect id, the one node selected ("" none)
     effectChosen = Signal(str)                              # effect id: another node effect of the clip
     saveRequested = Signal(str)                             # effect id: keep it as a 效果預設 (a custom effect)
+    unshareRequested = Signal(str)                          # effect id: this clip's use of a VFX Node becomes a copy of its own
     paramEdited = Signal(str, str, object)                  # effect id, "<node>.<parameter>", value
     paramLive = Signal(str, str, str, object)               # effect id, group ("fx:<id>" / "fxsrc:<id>:<node>"), key, value: still being changed
     placeEdited = Signal(str, str, str, object)             # effect id, node id, where it sits (cx / cy / w / h / rotation), value
@@ -1731,6 +1732,7 @@ class NodeEditor(QWidget):
         self.eid = None
         self.graph = {"nodes": {}, "links": []}
         self.effects = []                                   # [(effect id, name)]
+        self.vfx_names = {}                                 # VFX Node id -> its name
         self.user_filters = []
         self._sig = None
         self._selected = ""
@@ -1752,6 +1754,12 @@ class NodeEditor(QWidget):
         fit = QPushButton("全部顯示 (Home)")
         fit.clicked.connect(lambda: self.view.fit())
         bar.addWidget(fit)
+        own = QPushButton("取消共用")
+        own.setToolTip("這個效果現在是共用的 VFX Node（改它會改到所有用它的片段）；按這裡讓這個片段改用自己的一份副本")
+        own.clicked.connect(lambda: self.eid and self.unshareRequested.emit(self.eid))
+        own.hide()
+        self.unshare_btn = own
+        bar.addWidget(own)
         save = QPushButton("存成自定效果")
         save.setToolTip("把這個節點效果（節點、設定、圖片）存進 Library 的「效果預設」，之後可以套用到別的片段")
         save.clicked.connect(lambda: self.eid and self.saveRequested.emit(self.eid))
@@ -1827,7 +1835,7 @@ class NodeEditor(QWidget):
         """Show a node effect of clip (None: nothing): want, else the one shown before, else the first; its
         fields at clip time t."""
         es = [e for e in (clip or {}).get("effects") or [] if e.get("filter") == fx.GRAPH]
-        names = [(e["id"], f"節點效果 {i + 1}") for i, e in enumerate(es)]
+        names = [(e["id"], f"VFX：{self.vfx_names.get(e['vfx'], '')}" if e.get("vfx") else f"節點效果 {i + 1}") for i, e in enumerate(es)]
         if names != self.effects:
             self.effects = names
             self.combo.blockSignals(True)
@@ -1839,6 +1847,7 @@ class NodeEditor(QWidget):
         if e is None:
             self.eid, self._sig = None, None
             self.note.show()
+            self.unshare_btn.hide()
             self.panel.hide()
             self.view.hide()
             self.view.scene().clear()
@@ -1847,6 +1856,7 @@ class NodeEditor(QWidget):
         self.combo.blockSignals(True)
         self.combo.setCurrentIndex(max(0, self.combo.findData(e["id"])))
         self.combo.blockSignals(False)
+        self.unshare_btn.setVisible(bool(e.get("vfx")))
         self.note.hide()
         self.view.show()
         self.panel.setVisible(self.panel_btn.isChecked())

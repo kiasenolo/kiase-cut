@@ -72,7 +72,7 @@ class PanelTests(unittest.TestCase):
 
     def test_edit_layout_tabs(self):
         tabs = {d.key for d in self.win.tabifiedDockWidgets(self.pn["library"])}
-        self.assertEqual(tabs, {"assets", "userlib", "vfx", "compounds"})
+        self.assertEqual(tabs, {"assets", "userlib", "vfx", "vfxnodes", "compounds"})
         self.assertEqual(self.win.dockWidgetArea(self.pn["timeline"]), Qt.BottomDockWidgetArea)
         self.assertFalse(self.pn["library"].isFloating())
         self.assertIs(self.pn["preview"].titleBarWidget(), self.pn["preview"].title)   # on its own: a title

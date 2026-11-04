@@ -319,15 +319,17 @@ class Style(wheel.Style):
                 painter.drawRect(QRectF(option.rect).adjusted(0.5, 0.5, -0.5, -0.5))
                 painter.restore()
             return                                    # a plain QFrame: no border
-        if element == QStyle.CE_MenuItem and isinstance(widget, QComboBox) and option.state & QStyle.State_Selected:
-            painter.save()                            # a combo box's list: the item under the mouse
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setPen(QColor(ACCENT))
-            painter.setBrush(QColor(dim(ACCENT, under="#1a1a1a")))
-            painter.drawRoundedRect(QRectF(option.rect).adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
-            painter.restore()
+        if element == QStyle.CE_MenuItem and isinstance(widget, QComboBox) and isinstance(option, QStyleOptionMenuItem):
+            # a combo box's list as the menus are: a faint white wash under the mouse, white text (grey at rest), room to the left
+            hot = bool(option.state & QStyle.State_Selected)
+            if hot:
+                painter.fillRect(option.rect, QColor(255, 255, 255, 26))
             option = QStyleOptionMenuItem(option)
             option.state &= ~QStyle.State_Selected
+            option.rect = option.rect.adjusted(motion.LIST_PAD, 0, 0, 0)               # (the text, not the wash, moves in)
+            ink = QColor("#ffffff" if hot else "#cccccc") if option.state & QStyle.State_Enabled else QColor(255, 255, 255, 77)
+            for role in (QPalette.Text, QPalette.WindowText, QPalette.ButtonText):
+                option.palette.setColor(role, ink)
         if element in (QStyle.CE_ProgressBarGroove, QStyle.CE_ProgressBarContents) and self._line(option):
             self._draw_bar(element, option, painter)
             return

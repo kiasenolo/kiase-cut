@@ -415,6 +415,7 @@ class Hop(QObject):
 # Toggle of the button: `on` and `hover`, each 0 to 1, moved by it.
 
 BOX = 16                             # the indicator's size
+LIST_PAD = 6                         # how far the text of a combo box's list is moved in (a menu's is its icon column)
 ON_MS = 300
 
 

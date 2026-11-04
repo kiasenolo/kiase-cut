@@ -79,9 +79,12 @@ def popup_window(obj):
 
 def install():
     def made(obj, e):
-        if isinstance(obj, QMenu) and obj.isWindow() and not obj.testAttribute(Qt.WA_TranslucentBackground):
+        if popup_window(obj) and not obj.testAttribute(Qt.WA_TranslucentBackground):
             obj.setWindowFlags(obj.windowFlags() | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint)
             obj.setAttribute(Qt.WA_TranslucentBackground)
+            if not isinstance(obj, QMenu):                # (a combo box's list: the rounded ground a menu has)
+                obj.setAttribute(Qt.WA_StyledBackground)
+                obj.setStyleSheet("QComboBoxPrivateContainer { background: #1a1a1a; border: none; border-radius: 5px; }")
         return False
 
     def shown(obj, e):

@@ -80,6 +80,28 @@ class MenuAnimTest(unittest.TestCase):
         box.hidePopup()
         host.close()
 
+    def test_a_combo_boxs_list_is_a_menus_ground_with_a_faint_white_wash_under_the_item_not_a_blue_frame(self):
+        host = QWidget()
+        box = QComboBox(host)
+        box.addItems(["一", "二", "三"])
+        host.resize(200, 100)
+        host.show()
+        QTest.qWait(40)
+        box.showPopup()
+        QTest.qWait(menuanim.DURATION_MS + 150)
+        view = box.view()
+        view.setCurrentIndex(view.model().index(1, 0))
+        QTest.qWait(40)
+        img = view.window().grab().toImage()
+        r = view.visualRect(view.model().index(1, 0))
+        wash = img.pixelColor(img.width() - 6, r.center().y())
+        ground = img.pixelColor(img.width() - 6, view.visualRect(view.model().index(0, 0)).center().y())
+        self.assertEqual(ground.name(), "#1a1a1a")
+        self.assertTrue(abs(wash.red() - wash.blue()) < 4 and wash.lightness() > ground.lightness() + 10)    # (a grey wash, no blue)
+        self.assertEqual(img.pixelColor(img.width() - 1, r.center().y()).name(), wash.name())               # (and no frame round it)
+        box.hidePopup()
+        host.close()
+
     def test_closing_is_at_once_with_no_fade_effect_on_it(self):
         host, m = opened()
         QTest.qWait(menuanim.DURATION_MS + 150)

@@ -17,6 +17,7 @@ import hashlib
 import os
 import re
 import shlex
+import sys
 import time
 
 import numpy as np
@@ -824,8 +825,20 @@ def shader_source(d, sampled=()):
     return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + EPILOGUE
 
 
+def use_gles():
+    """Whether filters run on OpenGL ES (gles.py): on Android, which has no desktop OpenGL and no moderngl,
+    or with KIASECUT_GLES=1 (how it is tried on a PC)."""
+    return sys.platform == "android" or os.environ.get("KIASECUT_GLES") == "1"
+
+
 def make_context():
-    """(moderngl, a hidden OpenGL 3.3 context of this thread); FilterError when there is none."""
+    """(moderngl or gles, a hidden OpenGL 3.3 / ES 3 context of this thread); FilterError when there is none."""
+    if use_gles():
+        from . import gles
+        try:
+            return gles, gles.create_standalone_context()
+        except Exception as exc:
+            raise FilterError(f"無法建立 OpenGL ES（{exc}）") from exc
     try:
         import moderngl
     except ImportError as exc:
@@ -860,7 +873,7 @@ class Engine:
         if prog is None:
             if d.error:
                 raise FilterError(d.error)
-            if len(d.code) > BIG:
+            if len(d.code) > BIG and not use_gles():          # (gles.py's calls already let go of Python's lock)
                 with self.ctx:
                     precompile(shader_source(d, sampled))
             try:
@@ -1147,6 +1160,9 @@ def precompile(source):
 
 def missing():
     """Why filters cannot run on this computer (the panels show it), or None."""
+    if use_gles():
+        from . import gles
+        return None if gles.available() else "這台裝置沒有 OpenGL ES 3，預覽和匯出都看不到效果。"
     try:
         import moderngl  # noqa: F401
     except ImportError:

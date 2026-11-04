@@ -57,8 +57,7 @@ LINK_COLOR = "#b3b3b3"                           # (a link with no types to colo
 # the interface's greys (Color(n) is white times n): the canvas under everything, a node's body, its head, a field and its outline
 CANVAS = "#080808"
 NODE_BODY = "#1a1a1a"
-NODE_HEAD = "#262626"                            # (Color(.15): the colour of a button; the node's own colour is the bar at its left)
-HEAD_BAR = 3.0
+NODE_HEAD = "#262626"                            # (Color(.15): a reroute's body; a node's head is filled with its own colour)
 FIELD_BG = "#0a0a0a"
 FIELD_LINE = "#4d4d4d"                           # a field's outline, Color(.3) ...
 FIELD_HOT = "#808080"                            # ... and under the mouse, Color(.5)
@@ -430,10 +429,7 @@ class NodeItem(QGraphicsItem):
         head.addRect(QRectF(0, 0, self.w, HEAD))
         muted = bool(self.node.get("mute"))
         col = head_colour(self.node)
-        p.fillPath(head.intersected(body), QColor(NODE_HEAD))
-        bar = QPainterPath()
-        bar.addRect(QRectF(0, 0, HEAD_BAR, HEAD))                 # (the node's own colour, at the left of its head)
-        p.fillPath(bar.intersected(body), col.darker(160) if muted else col)
+        p.fillPath(head.intersected(body), col.darker(160) if muted else col)       # (the head is filled with the node's colour)
         p.setPen(QPen(QColor(SELECT) if self.isSelected() else QColor("#000000"), 2 if self.isSelected() else 1))
         p.drawPath(body)
         f = QFont(p.font())

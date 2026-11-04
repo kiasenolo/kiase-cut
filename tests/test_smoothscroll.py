@@ -106,6 +106,25 @@ class SmoothScrollTests(unittest.TestCase):
         self.assertEqual(bar.value(), 500)
         sa.close()
 
+    def test_the_wheel_still_works_after_the_content_was_moved_by_something_else(self):
+        """(A middle-button drag, the scroll bar's own handle, a program: the wheel went dead until the bar was back where
+        the wheel had left it.)"""
+        sa = area()
+        bar = sa.verticalScrollBar()
+        goal = bar.singleStep() * APP.wheelScrollLines()
+        wheel(sa, -120)
+        QTest.qWait(500)
+        bar.setValue(1000)                                         # (moved by hand, nowhere near where the wheel left it)
+        QTest.qWait(50)
+        self.assertTrue(wheel(sa, -120))
+        QTest.qWait(500)
+        self.assertEqual(bar.value(), 1000 + goal)
+        bar.setValue(200)
+        self.assertTrue(wheel(sa, 120))
+        QTest.qWait(500)
+        self.assertEqual(bar.value(), 200 - goal)
+        sa.close()
+
 
 if __name__ == "__main__":
     unittest.main()

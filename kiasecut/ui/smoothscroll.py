@@ -59,6 +59,7 @@ class Glide(QObject):
             return False
         if bar.value() != self.shown:                            # (moved by something else since: start from there)
             self.pos = self.target = float(bar.value())
+            self.shown = bar.value()
         step = bar.singleStep() * QApplication.wheelScrollLines()
         step = min(step, bar.pageStep()) if bar.pageStep() > 0 else step
         goal = min(max(self.target - a.y() / 120.0 * step, bar.minimum()), bar.maximum())

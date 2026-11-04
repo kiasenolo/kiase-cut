@@ -866,18 +866,19 @@ class Strip(QWidget):
             enabled = a.isEnabled()
             white = self.fader.go(a.text(), 1.0 if enabled and a is active else 0.0)
             first = n == 0
-            if white > 0.005:
-                foot = r.left() if first else r.left() - s                   # (the first is flat on its left, it is the window's edge)
+            half = s / 2.0                                                   # (the tab is centred on its box: the lean is half either side of the middle,
+            if white > 0.005:                                                #  so the menu that opens under the box is under the tab, not off to one side)
+                foot = r.left() if first else r.left() - half                # (the first is flat on its left, it is the window's edge)
+                top = r.left() if first else r.left() + half
+                lap = 0.75                                                   # (a little over the joint: two edges of one line leave a faint seam)
                 p.setPen(Qt.NoPen)
                 p.setBrush(QColor(255, 255, 255, round(255 * white)))
-                lap = 0.75                                                           # (a little over the joint: two edges of one line leave a faint seam)
-                p.drawPolygon(QPolygonF([QPointF(r.left(), r.top()), QPointF(r.right() + lap, r.top()),
-                                         QPointF(r.right() - s + lap, r.bottom()), QPointF(foot, r.bottom())]))
+                p.drawPolygon(QPolygonF([QPointF(top, r.top()), QPointF(r.right() + half + lap, r.top()),
+                                         QPointF(r.right() - half + lap, r.bottom()), QPointF(foot, r.bottom())]))
             base = bar.palette().color(QPalette.Active if enabled else QPalette.Disabled, QPalette.WindowText)
             p.setPen(BLACK if enabled and white > 0.5 else base)                 # (not mixed: half way the text would be the colour of the ground)
             p.setFont(bar.font())
-            shift = 0.0 if first else -s / 2.0                               # (the tab is the box moved left by half its lean at the middle)
-            p.drawText(r.translated(shift + (-s / 4.0 if first else 0.0), 0), Qt.AlignCenter | Qt.TextHideMnemonic, a.text())
+            p.drawText(r, Qt.AlignCenter | Qt.TextHideMnemonic, a.text())
         p.end()
 
 

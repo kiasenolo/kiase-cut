@@ -488,17 +488,30 @@ class MenuBarTest(unittest.TestCase):
         QTest.qWait(60)
         img = bar.grab().toImage()
         r = bar.actionGeometry(first)
+        half = motion.menu_slant(bar) // 2
         self.assertGreater(img.pixelColor(r.left() + 1, r.top() + 1).lightness(), 230)                # (flat: white to the very corner)
         self.assertGreater(img.pixelColor(r.left() + 1, r.bottom() - 1).lightness(), 230)
-        self.assertLess(img.pixelColor(r.right() - 2, r.bottom() - 1).lightness(), 100)               # (slanted: the foot of the right side is cut)
-        self.assertGreater(img.pixelColor(r.right() - 2, r.top() + 1).lightness(), 230)
+        self.assertGreater(img.pixelColor(r.right() + half - 3, r.top() + 1).lightness(), 230)        # (the right side leans: wide at the top...)
+        self.assertLess(img.pixelColor(r.right() + half - 3, r.bottom() - 1).lightness(), 100)        # (...and cut at the foot)
         bar.setActiveAction(second)
         QTest.qWait(60)
         img = bar.grab().toImage()
         r = bar.actionGeometry(second)
-        self.assertGreater(img.pixelColor(r.left() + 1, r.top() + 1).lightness(), 230)                # (the top starts at its box, the foot reaches back into the first's)
-        self.assertGreater(img.pixelColor(r.left() - 2, r.bottom() - 1).lightness(), 230)
-        self.assertLess(img.pixelColor(r.left() - 2, r.top() + 1).lightness(), 100)
+        self.assertLess(img.pixelColor(r.left() + 1, r.top() + 1).lightness(), 100)                   # (the top starts half a lean in from its box...)
+        self.assertGreater(img.pixelColor(r.left() + half + 2, r.top() + 1).lightness(), 230)
+        self.assertGreater(img.pixelColor(r.left() - half + 2, r.bottom() - 1).lightness(), 230)      # (...and the foot reaches half a lean out)
+        self.assertLess(img.pixelColor(r.left() - half - 3, r.bottom() - 1).lightness(), 100)
+        bar.close()
+
+    def test_a_tab_is_centred_on_its_box_so_what_opens_under_the_box_is_under_the_tab(self):
+        bar = self.make()
+        bar.setActiveAction(bar.actions()[1])
+        QTest.qWait(60)
+        img = bar.grab().toImage()
+        r = bar.actionGeometry(bar.actions()[1])
+        mid = r.center().y()
+        white = [x for x in range(r.left() - 30, r.right() + 30) if img.pixelColor(x, mid).lightness() > 200]
+        self.assertAlmostEqual((min(white) + max(white)) / 2.0, (r.left() + r.right()) / 2.0, delta=3)
         bar.close()
 
     def test_two_titles_side_by_side_leave_no_space_between_them(self):
@@ -511,7 +524,7 @@ class MenuBarTest(unittest.TestCase):
         r = bar.actionGeometry(bar.actions()[1])
         lean = motion.menu_slant(bar)
         for y in range(r.top() + 1, r.bottom()):
-            joint = round(r.left() - lean * (y - r.top()) / r.height())      # (the shared edge, leaning "/" as it goes down)
+            joint = round(r.left() + lean / 2 - lean * (y - r.top()) / r.height())      # (the shared edge, leaning "/" as it goes down)
             row = [img.pixelColor(x, y).lightness() for x in range(joint - 4, joint + 5)]
             self.assertTrue(all(v > 230 for v in row), (y, row))              # (white across the joint on every row: no seam, no space)
         bar.close()
@@ -537,7 +550,7 @@ class MenuBarTest(unittest.TestCase):
         img = bar.grab().toImage()
         r = bar.actionGeometry(bar.actions()[1])
         lean = motion.menu_slant(bar)
-        left, right = r.left() - lean // 2, r.right() - lean // 2                 # (the tab at the middle of its height)
+        left, right = r.left(), r.right()                                          # (the tab at the middle of its height is the box)
         mid = r.center().y()
         dark = [x for x in range(left + 4, right - 4) for y in range(mid - 4, mid + 5) if img.pixelColor(x, y).lightness() < 60]
         self.assertTrue(dark)

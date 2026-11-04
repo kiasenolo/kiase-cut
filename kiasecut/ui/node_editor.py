@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, 
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
-from . import appevents, motion, touch
+from . import appevents, motion, touch, viewglide
 from .wheel import pinch as wheel_pinch
 from .wrapdrag import WrapDrag
 
@@ -56,6 +56,7 @@ SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "ot
 LINK_COLOR = "#b3b3b3"                           # (a link with no types to colour it)
 # the interface's greys (Color(n) is white times n): the canvas under everything, a node's body, its head, a field and its outline
 CANVAS = "#080808"
+GLIDE_SCALE = 0.5                                # how far the view goes on after a middle-button drag or two fingers (half of the other views')
 NODE_BODY = "#1a1a1a"
 NODE_HEAD = "#262626"                            # (Color(.15): a reroute's body; a node's head is filled with its own colour)
 FIELD_BG = "#0a0a0a"
@@ -1008,13 +1009,14 @@ class GraphView(QGraphicsView):
         self.over = None                         # the link a dragged node is over (it will go through the node)
         self.press_at = {}
         self.panning = None                      # the point of a middle-button drag moving the view
+        self.glide = viewglide.ViewGlide(self, self._glide_pan, scale=GLIDE_SCALE)    # (it goes on a little after the button is let go)
         self.snap = True                         # 吸附: dragged nodes land on the grid (Ctrl while dragging: the other way)
         self.grabbed = None                      # the id of the node the left button went down on
         self.swallow = False                     # the release after the click that put carried nodes down
         self.carrying = None                     # nodes just made, stuck to the pointer till a click: {ids, off, remove}
         self.wrap = WrapDrag(self.viewport(), lambda: self.viewport().rect())    # (G and dragged nodes: endless, the pointer wraps at the view's edges as in a middle-button drag)
         self.plain_pos = None                    # where a dragged node's pointer is, wraps counted
-        touch.enable(self.viewport())
+        touch.enable(self.viewport(), glide_scale=GLIDE_SCALE)
         self.viewport().setMouseTracking(True)         # (carried nodes follow the pointer with no button down)
         self.setAcceptDrops(True)
 
@@ -1131,6 +1133,11 @@ class GraphView(QGraphicsView):
             self.editor.moveRequested.emit(self.editor.eid, moved)
         self.editor.selection_changed()
 
+    def _glide_pan(self, dx, dy):
+        """The view goes on after a middle-button drag by the pixels the pointer would have moved it."""
+        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - dx)
+        self.verticalScrollBar().setValue(self.verticalScrollBar().value() - dy)
+
     def mousePressEvent(self, e):
         if self.carrying:                                  # (the click that puts the nodes down; the release after it is not a drag)
             self._put_down(e.button() != Qt.LeftButton)
@@ -1142,6 +1149,7 @@ class GraphView(QGraphicsView):
         if box is not None and not box.sceneBoundingRect().contains(pos) and self.editor.edit_finish is not None:
             self.editor.edit_finish(True)
             self.setFocus()
+        self.glide.stop()
         if e.button() == Qt.MiddleButton:                # (the wheel pressed and dragged moves the view)
             self.panning = e.position()
             self.setCursor(Qt.ClosedHandCursor)
@@ -1289,6 +1297,7 @@ class GraphView(QGraphicsView):
             self.panning = e.position()
             self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(d.x()))
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(d.y()))
+            self.glide.sample(e.position().x(), e.position().y())
             return
         pos = self.mapToScene(e.position().toPoint())
         if self.rubber:
@@ -1409,6 +1418,7 @@ class GraphView(QGraphicsView):
         if self.panning is not None and e.button() == Qt.MiddleButton:
             self.panning = None
             self.unsetCursor()
+            self.glide.release()
             return
         pos = self.mapToScene(e.position().toPoint())
         if self.reverse:

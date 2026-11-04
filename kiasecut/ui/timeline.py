@@ -96,12 +96,13 @@ from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QIcon, QImage, QPainte
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QScrollBar, QTextEdit, QToolTip, QWidget
 
 from .. import build, components, curves, edit, project, waveform
-from . import appevents, touch, wheel
+from . import appevents, touch, viewglide, wheel
 from .params import param_menu
 from .menukeys import Menu
 from .wrapdrag import WrapDrag
 
 US = 1_000_000
+GLIDE_SCALE = 0.5             # how far the view glides on after a middle-button drag or two fingers: half of what the other views do
 MEDIA_MIME = "application/x-kiasecut-media"
 FX_MIME = "application/x-kiasecut-fx"                # a filter dragged from the VFX tab: its ref
 COLORS = {"video": "#3f6585", "image": "#3f6585", "compound": "#5d5488",    # by type, muted as in
@@ -317,6 +318,7 @@ class Timeline(QWidget):
         self.selected_tracks = set()               # ids of the tracks picked by their headers
         self.track_anchor = None                   # the track a Shift+click selects from
         self.band = None                           # selection box (QRectF) while dragging
+        self.glide = viewglide.ViewGlide(self, self._glide_pan, scale=GLIDE_SCALE)    # (the view goes on a little after a middle-button drag)
         self.lit_id = None                         # the clip a finger has held, to be dragged: it is white
         self.snapping = True                       # 自動吸附: moves / trims snap to edges and the playhead
         self.rows = []
@@ -327,7 +329,7 @@ class Timeline(QWidget):
         # fingers: what is dragged in the tracks - a clip, or empty space (a box that picks clips) - is let go by a hold (a clip goes
         # white from it), and a finger that moves first scrolls the view; the ruler selects time once held (and moves the playhead
         # if the finger moves first)
-        touch.enable(self, hold_left=self._tracks_at, hold_right=self._hold_selects_time, lit=self._light_clip)
+        touch.enable(self, hold_left=self._tracks_at, hold_right=self._hold_selects_time, lit=self._light_clip, glide_scale=GLIDE_SCALE)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setAcceptDrops(True)
         self.drop_at = None                        # (row, us) while library media hovers
@@ -797,6 +799,12 @@ class Timeline(QWidget):
         y = self.tops[i] + (self.row_h(i) - 2 - BTN) / 2
         return [(f, QRectF(self.header_w - 6 - (len(flags) - k) * (BTN + 3), y, BTN, BTN))
                 for k, f in enumerate(flags)]
+
+    def _glide_pan(self, dx, dy):
+        """The view goes on after a middle-button drag by the pixels the pointer would have moved it."""
+        self.scroll_s = max(0.0, self.scroll_s - dx / self.px_per_s)
+        self.vbar.setValue(self.vbar.value() - dy)
+        self.update()
 
     def _hold_selects_time(self, pos):
         """Where a finger that is held and then moved selects time: the ruler (a finger that moves there at once still moves the
@@ -1681,6 +1689,7 @@ class Timeline(QWidget):
                 self.setCursor(Qt.SizeHorCursor)
             self.drag = {"clip": None, "mode": "region", "moved": False, "pos": e.position(), "t0": t0}
             return
+        self.glide.stop()
         if self.proj and e.button() == Qt.MiddleButton:     # drag the view (Ctrl: zoom it)
             zoom = bool(e.modifiers() & Qt.ControlModifier)
             self.drag = {"clip": None, "mode": "zoom" if zoom else "pan", "moved": False, "pos": e.position(),
@@ -1975,6 +1984,7 @@ class Timeline(QWidget):
         if d["mode"] == "pan":
             self.scroll_s = max(0.0, d["s"] - (pos.x() - d["pos"].x()) / self.px_per_s)
             self.vbar.setValue(round(d["y"] - (pos.y() - d["pos"].y())))
+            self.glide.sample(pos.x(), pos.y())
             self.update()
             return
         if d["mode"] == "zoom":                                 # around the press; right / up: in
@@ -2152,6 +2162,8 @@ class Timeline(QWidget):
             return
         if d and d["mode"] in ("pan", "zoom"):
             self.setCursor(Qt.ArrowCursor)
+            if d["mode"] == "pan":
+                self.glide.release()
         if d and d["mode"] == "seek":
             self.update()                               # (its guide line goes)
         if d and d["mode"] == "tracks":

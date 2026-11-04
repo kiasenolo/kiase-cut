@@ -91,9 +91,10 @@ def _dist(a, b):
 
 
 class _Gestures(QObject):
-    def __init__(self, widget, scroll=False, hold_right=None, hold_left=None, lit=None):
+    def __init__(self, widget, scroll=False, hold_right=None, hold_left=None, lit=None, glide_scale=1.0):
         super().__init__(widget)
         self.w = widget
+        self.glide_scale = glide_scale         # how far the scroll glides on when the fingers lift (0.5: half as far)
         self.hold_right = hold_right           # f(point) -> whether a finger held at point and then moved drags with the RIGHT button
         self.hold_left = hold_left             # f(point) -> whether what is at point is dragged (left button) only after a hold
         self.lit = lit                         # f(point or None, on): what was held at point is lit (goes white) / is not any more
@@ -387,7 +388,7 @@ class _Gestures(QObject):
         span = max(now - recent[0][0], 1e-3)
         vx, vy = sum(s[1] for s in recent) / span, sum(s[2] for s in recent) / span
         if math.hypot(vx, vy) >= GLIDE_MIN:
-            self.speed, self.glide_t = (vx, vy), now
+            self.speed, self.glide_t = (vx * self.glide_scale, vy * self.glide_scale), now
             self.glide_at = QPointF(at)
             self.rest = QPointF()
             self.glide.start()
@@ -458,14 +459,15 @@ class _Gestures(QObject):
             self.grab = None
 
 
-def enable(widget, scroll=False, hold_right=None, hold_left=None, lit=None):
+def enable(widget, scroll=False, hold_right=None, hold_left=None, lit=None, glide_scale=1.0):
     """Fingers zoom, scroll and right-click on widget (see the module notes; scroll: widget is a scroll area's viewport;
     hold_right: f(point), true where a finger that is held and then moved drags with the right button, as the timeline's
     selection of time ("late": a finger that moves first is the left button's drag at once, not a swipe - the ruler) - elsewhere on the widget a held finger is the left button's drag, as it is without it); hold_left:
     f(point), true where the thing is dragged only once held, and lit(point, on) lights it from the hold to the lifting
-    (a finger that moves first swipes the view).
+    (a finger that moves first swipes the view); glide_scale: how far the view glides on after two fingers lift (1: as the
+    others, 0.5: half as far).
     Returns the helper (kept alive by widget)."""
-    return _Gestures(widget, scroll, hold_right, hold_left, lit)
+    return _Gestures(widget, scroll, hold_right, hold_left, lit, glide_scale)
 
 
 def install_scrolling():

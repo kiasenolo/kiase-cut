@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QCombo
                                QWidget)
 
 REST = QColor("#262626")             # Color(.15)
-GREY = QColor("#808080")             # Color(.5): pressed, checked
+GREY = QColor("#808080")             # Color(.5): pressed
+ACTIVE = QColor("#666666")           # Color(.4): checked (a little darker than a press, so a button that is on is not as loud)
 WHITE = QColor("#ffffff")
 BLACK = QColor("#000000")
 GONE = QColor(0, 0, 0, 0)
@@ -77,7 +78,7 @@ class Fader(QObject):
         if b.underMouse():
             return WHITE, BLACK, 0
         if b.isCheckable() and b.isChecked():
-            return GREY, WHITE, FADE_MS
+            return ACTIVE, WHITE, FADE_MS
         return (GONE if self.flat else REST), WHITE, FADE_MS
 
     def swatch(self):

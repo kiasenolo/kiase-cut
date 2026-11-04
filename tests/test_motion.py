@@ -83,7 +83,7 @@ class FaderTest(unittest.TestCase):
         push.setCheckable(True)
         push.setChecked(True)
         QTest.qWait(motion.FADE_MS + 100)
-        self.assertEqual(motion.of(push).bg, motion.GREY)
+        self.assertEqual(motion.of(push).bg, motion.ACTIVE)
         host.close()
 
     def test_icons_are_drawn_black_on_a_white_button_and_left_alone_otherwise(self):
@@ -448,7 +448,7 @@ class CatchUpTest(unittest.TestCase):
         b.blockSignals(False)
         QTest.qWait(motion.FADE_MS + 200)
         self.assertEqual(motion.of(a).bg, motion.REST)
-        self.assertEqual(motion.of(b).bg, motion.GREY)
+        self.assertEqual(motion.of(b).bg, motion.ACTIVE)
         host.close()
 
     def test_a_box_ticked_with_its_signals_blocked_still_shows_it(self):

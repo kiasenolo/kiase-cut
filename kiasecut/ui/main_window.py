@@ -4593,7 +4593,7 @@ class MainWindow(QMainWindow):
         if self.fullscreen:
             self.fullscreen.close()
             return
-        fs = FullscreenPreview()
+        fs = FullscreenPreview(self if sys.platform == "android" or os.environ.get("KIASECUT_FULLSCREEN_COVER") else None)
         fs.canvas.W, fs.canvas.H = self.preview.W, self.preview.H
         fs.canvas.show_image(self.preview.img)
         fs.togglePlay.connect(self.toggle_play)
@@ -4603,11 +4603,15 @@ class MainWindow(QMainWindow):
         fs.closed.connect(self._fullscreen_closed)
         fs.set_position(self.pos, self.length, self.fps)
         self.fullscreen = fs
-        fs.showFullScreen()
+        fs.present()
 
     def _fullscreen_closed(self):
-        self.fullscreen = None
+        fs, self.fullscreen = self.fullscreen, None
         self.set_render_width("full", 0)
+        if fs is not None:
+            # (closed from its own closeEvent, or from the double click on its canvas: dropping the last reference here deleted the window
+            # - and the canvas - under the code that was still running in them, which ends the program on Android; deleted a turn later)
+            QTimer.singleShot(0, lambda fs=fs: fs.deleteLater())
 
     def set_render_width(self, who, w):
         """The preview (or the fullscreen one) shows frames w px wide: draw them that size."""

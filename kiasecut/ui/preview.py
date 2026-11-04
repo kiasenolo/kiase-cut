@@ -106,7 +106,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineE
                                QWidget)
 
 from .. import components, curves, edit, fonts, nodegraph, project, render, textlayout, textvars
-from . import appevents, touch, wheel
+from . import appevents, touch, viewglide, wheel
 from .wrapdrag import WrapDrag
 
 US = 1_000_000
@@ -537,6 +537,7 @@ class Preview(QWidget):
         self.pan = QPointF(0, 0)                # view offset, screen px
         self.box_zoom = False                   # Shift+B: the next left drag is a box to zoom into
         self.wrap = WrapDrag(self, lambda: QRectF(self.rect()))
+        self.glide = viewglide.ViewGlide(self, self._glide_pan)         # (the view goes on a little after a middle-button drag)
         self.setMinimumSize(320, 180)
         self.setMouseTracking(True)
         touch.enable(self)                      # (fingers: pinch zooms, two fingers move the view, a held one is a right click)
@@ -651,6 +652,11 @@ class Preview(QWidget):
             self.view_rect(*self._union(boxes))
         else:
             self.view_fit()
+
+    def _glide_pan(self, dx, dy):
+        """The view goes on after a middle-button drag by the pixels the pointer would have moved it."""
+        self.pan = self.pan + QPointF(dx, dy)
+        self._view_changed()
 
     def _view_changed(self):
         if self.text_box is not None:                    # it stays over its clip
@@ -1424,6 +1430,7 @@ class Preview(QWidget):
             if e.button() in (Qt.LeftButton, Qt.RightButton):
                 self._grab_end(e.button() == Qt.LeftButton)
             return
+        self.glide.stop()
         if self.interactive and e.button() == Qt.MiddleButton:       # Ctrl: zoom, else move the view
             zoom = bool(e.modifiers() & Qt.ControlModifier)
             self.drag = {"kind": "zoomdrag" if zoom else "pan", "pos": e.position(), "pan": QPointF(self.pan),
@@ -1870,6 +1877,7 @@ class Preview(QWidget):
         pos = self.wrap.pos(e)
         if d["kind"] == "pan":
             self.pan = d["pan"] + pos - d["pos"]
+            self.glide.sample(pos.x(), pos.y())
             self._view_changed()
             return
         if d["kind"] == "zoomdrag":                      # right / up: in
@@ -1964,6 +1972,8 @@ class Preview(QWidget):
         self.wrap.stop(d and d.get("live"))            # (the pointer where the drag ended up)
         if d and d["kind"] in ("pan", "zoomdrag"):
             self.setCursor(Qt.CrossCursor if self.box_zoom else Qt.ArrowCursor)
+            if d["kind"] == "pan":
+                self.glide.release()
             return
         if d and d["kind"] == "zoombox":
             self._arm_box_zoom(False)
@@ -2229,8 +2239,15 @@ class FullscreenPreview(QWidget):
     step = Signal(int)
     seekRequested = Signal(int)                 # frame, from the progress bar
 
-    def __init__(self):
-        super().__init__(None, Qt.Window | Qt.FramelessWindowHint)
+    def __init__(self, cover=None):
+        """cover: a window to cover, as a widget of its own - where a second window of the program is a poor thing (Android's: closing
+        it while the video plays ended the program); None: a window of its own, set fullscreen."""
+        if cover is None:
+            super().__init__(None, Qt.Window | Qt.FramelessWindowHint)
+        else:
+            super().__init__(cover)
+            cover.installEventFilter(self)
+        self.cover = cover
         self.setStyleSheet("background: black;")
         self.canvas = Preview(self, interactive=False)
         self.canvas.doubleClicked.connect(self.close)
@@ -2248,7 +2265,19 @@ class FullscreenPreview(QWidget):
     def eventFilter(self, obj, e):
         if e.type() == QEvent.MouseMove:
             self._show_bar()
+        elif obj is self.cover and e.type() == QEvent.Resize:
+            self.setGeometry(self.cover.rect())                  # (it goes on covering the window)
         return False
+
+    def present(self):
+        """Show it over the whole screen (or over the window it covers)."""
+        if self.cover is None:
+            self.showFullScreen()
+            return
+        self.setGeometry(self.cover.rect())
+        self.show()
+        self.raise_()
+        self.setFocus()
 
     def _show_bar(self):
         self.bar.show()

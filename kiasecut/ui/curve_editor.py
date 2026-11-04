@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
 from .. import assets, components, curves, edit, fx, textvars
-from . import touch, wheel
+from . import touch, viewglide, wheel
 from .inspector import PARAMS, PLACE_ROWS, SpinBox
 from .wrapdrag import WrapDrag
 
@@ -112,6 +112,7 @@ class CurveCanvas(QWidget):
         self.setMinimumHeight(220)
         self.setMouseTracking(True)
         touch.enable(self)
+        self.glide = viewglide.ViewGlide(self, self._glide_pan)         # (the view goes on a little after a middle-button drag)
         self.setFocusPolicy(Qt.ClickFocus)
         self.curves = []             # [{label, factor, color(bool), keys, static, pen}]
         self.duration = 1
@@ -409,8 +410,19 @@ class CurveCanvas(QWidget):
                 hi = min(hi, keys[i + 1][0] - frame - t)
         return lo, hi
 
+    def _glide_pan(self, dx, dy):
+        """The view goes on after a middle-button drag by the pixels the pointer would have moved it."""
+        dt = dx / max(1, self.width() - self.L - self.R) * (self.t1 - self.t0)
+        lo, hi = self.vrange
+        dv = dy / max(1, self.height() - self.T - self.B) * (hi - lo)
+        self.t0, self.t1 = self.t0 - dt, self.t1 - dt
+        self.vrange = (lo + dv, hi + dv)
+        self._paths = None
+        self.update()
+
     def mousePressEvent(self, e):
         pos = e.position()
+        self.glide.stop()
         if e.button() == Qt.MiddleButton:                    # Ctrl: zoom, else move the view
             zoom = bool(e.modifiers() & Qt.ControlModifier)
             self.drag = {"kind": "zoom" if zoom else "pan", "pos": pos, "t0": self.t0, "t1": self.t1,
@@ -476,6 +488,7 @@ class CurveCanvas(QWidget):
             self.t0, self.t1 = d["t0"] - dt, d["t1"] - dt
             self.vrange = (lo + dv, hi + dv)
             self._paths = None
+            self.glide.sample(pos.x(), pos.y())
             self.update()
             return
         if d["kind"] == "zoom":                              # around the press; right / up: in
@@ -570,6 +583,8 @@ class CurveCanvas(QWidget):
                     self._set_sel(set())
                 self.seekRequested.emit(min(max(self.t_of(e.position().x()), 0), self.duration))
             self.update()
+        elif d["kind"] == "pan":
+            self.glide.release()
         elif d["kind"] == "keys" and d["moved"]:
             self.keysCommitted.emit(self._changes(d["orig"].keys()))
         elif d["kind"] == "keys":

@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QRadioButton, QToolButton, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QRadioButton, QTabBar, QToolButton, QWidget  # noqa: E402
 
 from kiasecut.ui import icons, look, motion  # noqa: E402
 
@@ -280,6 +280,65 @@ class ToggleTest(unittest.TestCase):
         self.assertIn("#ffffff", colours)
         self.assertIn("#000000", colours)
         host.close()
+
+
+class TabsTest(unittest.TestCase):
+    def make(self, name=""):
+        bar = QTabBar()
+        bar.setObjectName(name)
+        for t in ("素材庫", "效果", "屬性"):
+            bar.addTab(t)
+        bar.setCurrentIndex(1)
+        bar.resize(240, 40)
+        bar.show()
+        QTest.qWait(60)
+        QTest.mouseMove(bar, QPoint(239, 39))
+        QTest.qWait(40)
+        return bar
+
+    def test_the_open_tab_has_its_numbers_at_one_and_the_others_at_zero(self):
+        bar = self.make()
+        f = bar.property("kcTabs")
+        self.assertEqual([f.get(i)[1] for i in range(3)], [0.0, 1.0, 0.0])
+        bar.close()
+
+    def test_a_tab_lights_under_the_mouse_and_fades_back(self):
+        bar = self.make()
+        f = bar.property("kcTabs")
+        QTest.mouseMove(bar, QPoint(bar.tabRect(0).center().x(), 10))
+        QTest.qWait(motion.ON_MS + 120)
+        self.assertAlmostEqual(f.get(0)[0], 1.0, places=2)
+        self.assertEqual(f.get(2)[0], 0.0)
+        QTest.mouseMove(bar, QPoint(bar.tabRect(2).center().x(), 10))
+        QTest.qWait(motion.FADE_MS + 120)
+        self.assertAlmostEqual(f.get(0)[0], 0.0, places=2)
+        self.assertAlmostEqual(f.get(2)[0], 1.0, places=2)
+        bar.close()
+
+    def test_choosing_a_tab_moves_the_line_over_to_it_in_a_moment(self):
+        bar = self.make()
+        f = bar.property("kcTabs")
+        bar.setCurrentIndex(2)
+        QTest.qWait(60)
+        self.assertTrue(0.0 < f.get(2)[1] < 1.0)
+        QTest.qWait(motion.FADE_MS + 120)
+        self.assertEqual([round(f.get(i)[1], 2) for i in range(3)], [0.0, 0.0, 1.0])
+        bar.close()
+
+    def test_tabs_are_as_big_as_they_were_in_the_style_sheet(self):
+        for name, h in (("", 31), ("layouts", 25), ("timelines", 27)):
+            bar = self.make(name)
+            self.assertEqual(bar.tabRect(0).height(), h)
+            bar.close()
+
+    def test_the_open_tab_is_drawn_with_a_white_line_along_its_foot(self):
+        bar = self.make()
+        QTest.qWait(motion.FADE_MS + 100)
+        img = bar.grab().toImage()
+        r = bar.tabRect(1)
+        self.assertEqual(img.pixelColor(r.center().x(), r.bottom()).name(), "#ffffff")
+        self.assertNotEqual(img.pixelColor(bar.tabRect(0).center().x(), bar.tabRect(0).bottom()).name(), "#ffffff")
+        bar.close()
 
 
 if __name__ == "__main__":

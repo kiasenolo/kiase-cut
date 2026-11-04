@@ -8,9 +8,9 @@ enabled) and moves both colours to what the new state asks, in the time that sta
 """
 import shiboken6
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation
-from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QLineEdit, QPlainTextEdit, QPushButton,
-                               QRadioButton, QTextEdit, QToolButton, QWidget)
+                               QRadioButton, QStyle, QTabBar, QTextEdit, QToolButton, QWidget)
 
 REST = QColor("#262626")             # Color(.15)
 GREY = QColor("#808080")             # Color(.5): pressed, checked
@@ -475,3 +475,104 @@ def paint_indicator(painter, option, widget, radio):
                 if on > 0.4:
                     painter.drawLine(b, b + (c - b) * min(1.0, (on - 0.4) / 0.6))
     painter.restore()
+
+
+# -- tabs -----------------------------------------------------------------------------------------------------------------
+# Grey text that goes white under the mouse, a faint white wash, and for the open tab its own ground and a white 2 px line that
+# grows from the middle - all moved in .3 s (back in .5 s). The TabFader of a tab bar keeps two numbers for every tab, hover and
+# selected; look.Style draws the tabs from them (the style sheet cannot move anything).
+
+TAB_TEXT = QColor("#808080")
+TAB_GROUND = {"": (QColor("#0b0b0b"), QColor("#161616")), "layouts": (None, None), "timelines": (QColor("#0b0b0b"), QColor("#1f1f1f"))}
+TAB_WASH = 13                        # alpha of the white wash under the mouse
+TAB_LINE = 2
+
+
+class TabFader(QObject):
+    def __init__(self, bar):
+        super().__init__(bar)
+        self.bar = bar
+        self.v = {}                  # tab -> [hover, selected]
+        self.anims = {}
+        self.count = bar.count()
+        bar.setMouseTracking(True)
+        bar.installEventFilter(self)
+        bar.currentChanged.connect(lambda *_: self.sync())
+
+    def reset(self):
+        for a in self.anims.values():
+            a.stop()
+        self.anims, self.v, self.count = {}, {}, self.bar.count()
+
+    def get(self, i):
+        """[hover, selected] of tab i, each 0 to 1."""
+        if self.bar.count() != self.count:                # (tabs came or went: the numbers start again, still)
+            self.reset()
+        return self.v.setdefault(i, [0.0, 1.0 if i == self.bar.currentIndex() else 0.0])
+
+    def _go(self, i, k, target):
+        cur = self.get(i)
+        a = self.anims.get((i, k))
+        if a is not None and a.state() == QVariantAnimation.Running and a.endValue() == target:
+            return
+        if a is not None:
+            a.stop()
+        if cur[k] == target:
+            return
+        if not self.bar.isVisible():
+            cur[k] = target
+            return
+        if a is None:
+            a = self.anims[(i, k)] = QVariantAnimation(self)
+            a.setEasingCurve(out_curve())
+            a.valueChanged.connect(lambda v, i=i, k=k: self._set(i, k, float(v)))
+        a.setStartValue(cur[k])
+        a.setEndValue(target)
+        a.setDuration(ON_MS if target else FADE_MS)
+        a.start()
+
+    def _set(self, i, k, v):
+        if i in self.v:
+            self.v[i][k] = v
+        self.bar.update()
+
+    def sync(self):
+        if not shiboken6.isValid(self.bar):
+            return
+        over = -1
+        if self.bar.underMouse():
+            over = self.bar.tabAt(self.bar.mapFromGlobal(QCursor.pos()))
+        for i in range(self.bar.count()):
+            self._go(i, 0, 1.0 if i == over and self.bar.isTabEnabled(i) else 0.0)
+            self._go(i, 1, 1.0 if i == self.bar.currentIndex() else 0.0)
+
+    def eventFilter(self, obj, e):
+        if e.type() in (QEvent.MouseMove, QEvent.Enter, QEvent.Leave, QEvent.Show, QEvent.EnabledChange):
+            QTimer.singleShot(0, self.sync)
+        return False
+
+
+def attach_tabs(widget):
+    if isinstance(widget, QTabBar) and widget.property("kcTabs") is None:
+        widget.setProperty("kcTabs", TabFader(widget))
+
+
+def tab_ink(hover, sel):
+    return mix(TAB_TEXT, WHITE, max(hover, sel))
+
+
+def paint_tab(painter, option, widget):
+    """The ground, wash and line of one tab (its text: tab_ink, drawn by the base style)."""
+    f = widget.property("kcTabs") if widget is not None else None
+    i = widget.tabAt(option.rect.center()) if f is not None else -1
+    hover, sel = f.get(i) if f is not None and i >= 0 else (0.0, 1.0 if option.state & QStyle.State_Selected else 0.0)
+    rest, chosen = TAB_GROUND.get(widget.objectName() if widget is not None else "", TAB_GROUND[""])
+    r = option.rect
+    if rest is not None:
+        painter.fillRect(r, mix(rest, chosen, sel))
+    if hover > 0.01 and sel < 0.99:
+        wash = QColor(255, 255, 255, round(TAB_WASH * hover * (1.0 - sel)))
+        painter.fillRect(r, wash)
+    if sel > 0.01:
+        w = round(r.width() * sel)
+        painter.fillRect(QRect(r.center().x() - w // 2, r.bottom() - TAB_LINE + 1, w, TAB_LINE), WHITE)

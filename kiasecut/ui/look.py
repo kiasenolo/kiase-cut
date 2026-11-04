@@ -15,7 +15,7 @@ from PySide6.QtCore import QByteArray, QMargins, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QFrame, QMenu, QStyle, QStyleOptionButton,
-                               QStyleOptionMenuItem, QStyleOptionProgressBar, QStyleOptionToolButton)
+                               QStyleOptionMenuItem, QStyleOptionProgressBar, QStyleOptionTab, QStyleOptionToolButton, QTabBar)
 
 from . import motion, wheel
 
@@ -76,14 +76,7 @@ QWidget#docktitle { background: #0b0b0b; border-bottom: 1px solid #000000; }
 QMainWindow::separator { background: #000000; width: 3px; height: 3px; }
 QMainWindow::separator:hover { background: #808080; }
 QTabBar#layouts { background: transparent; }
-QTabBar#layouts::tab { padding: 3px 12px; border: none; border-bottom: 2px solid transparent; background: transparent; }
-QTabBar#layouts::tab:selected { background: transparent; color: #ffffff; border-bottom: 2px solid #ffffff; }
 QTabBar { background: #0b0b0b; }
-QTabBar::tab { background: #0b0b0b; color: #808080; padding: 6px 14px; border: none; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { background: #161616; color: #ffffff; border-bottom: 2px solid #ffffff; }
-QTabBar::tab:hover:!selected { color: #ffffff; background: rgba(255, 255, 255, 13); }
-QTabBar#timelines::tab { padding: 4px 14px; }
-QTabBar#timelines::tab:selected { background: #1f1f1f; }
 QTabBar QToolButton { background: #0b0b0b; border: none; padding: 0; }
 QTabBar::tear { width: 0; border: none; }
 QMessageBox, QInputDialog, QColorDialog, QDialog { background: #111111; }
@@ -265,6 +258,9 @@ class Style(wheel.Style):
     def pixelMetric(self, metric, option=None, widget=None):
         if metric in METRICS:
             return METRICS[metric]
+        if metric in (QStyle.PM_TabBarTabHSpace, QStyle.PM_TabBarTabVSpace) and isinstance(widget, QTabBar):
+            wide, tall = {"layouts": (24, 8), "timelines": (28, 10)}.get(widget.objectName(), (28, 14))
+            return wide if metric == QStyle.PM_TabBarTabHSpace else tall
         if metric in (QStyle.PM_IndicatorWidth, QStyle.PM_IndicatorHeight, QStyle.PM_ExclusiveIndicatorWidth,
                       QStyle.PM_ExclusiveIndicatorHeight):
             return motion.BOX
@@ -278,6 +274,7 @@ class Style(wheel.Style):
         super().polish(widget)
         motion.attach(widget)                         # (a push or tool button paints itself from its Fader)
         motion.attach_field(widget)                   # (an input field has its outline drawn over it)
+        motion.attach_tabs(widget)                    # (a tab bar moves its tabs' colours)
         motion.attach_toggle(widget)                  # (a check box or radio button moves its indicator)
 
     def drawPrimitive(self, element, option, painter, widget=None):
@@ -294,6 +291,18 @@ class Style(wheel.Style):
         super().drawPrimitive(element, option, painter, widget)
 
     def drawControl(self, element, option, painter, widget=None):
+        if element == QStyle.CE_TabBarTabShape and isinstance(widget, QTabBar):
+            motion.paint_tab(painter, option, widget)
+            return
+        if element == QStyle.CE_TabBarTabLabel and isinstance(widget, QTabBar):
+            f = widget.property("kcTabs")
+            i = widget.tabAt(option.rect.center())
+            hover, sel = f.get(i) if f is not None and i >= 0 else (0.0, 1.0 if option.state & QStyle.State_Selected else 0.0)
+            option = QStyleOptionTab(option)
+            option.palette.setColor(QPalette.WindowText, motion.tab_ink(hover, sel))
+            option.palette.setColor(QPalette.ButtonText, motion.tab_ink(hover, sel))
+            super().drawControl(element, option, painter, widget)
+            return
         if element == QStyle.CE_ShapedFrame and option.frameShape in (QFrame.HLine, QFrame.VLine):
             painter.fillRect(QRect(option.rect.x(), option.rect.center().y(), option.rect.width(), 1)
                              if option.frameShape == QFrame.HLine else

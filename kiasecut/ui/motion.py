@@ -300,7 +300,7 @@ def attach_field(widget):
 # back past where it was (OutBack) and settles. A line edit has no offset for its text, but it has margins: more room under the
 # text lifts it, more above lowers it (by half the margin).
 
-HOP_PX = 3
+HOP_PX = 1
 HOP_MS = 380
 
 

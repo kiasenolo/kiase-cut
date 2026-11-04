@@ -181,11 +181,14 @@ def attach(widget):
 # under it, with a grey wash over the field - all moving in .3 s. The field keeps its style sheet's (invisible) 2 px border for room;
 # a Frame laid over it draws the real one from the two numbers a FieldFader moves: hover and focus, each 0 to 1.
 
-SIDE = QColor("#808080")             # Color(.5)
-SIDE_HOT = QColor("#b3b3b3")         # Color(.7)
-SIDE_OFF = QColor("#4d4d4d")         # (a disabled field's)
+SIDE = QColor("#4d4d4d")             # Color(.3): the outline of a field at rest
+SIDE_HOT = QColor("#808080")         # Color(.5): under the mouse
+SIDE_OFF = QColor("#2e2e2e")         # (a disabled field's)
+WASH_COLOUR = QColor("#808080")      # Color(.5)
 WASH = 0.3                           # Color(.5, .3) over the field while it is typed in
-BORDER = 2
+LINE = 1                             # the outline of a field
+UNDER = 2                            # the line under the one being typed in
+BORDER = 2                           # (a check box's)
 IN_MS = 300                          # towards hover / focus
 
 
@@ -207,16 +210,20 @@ class Frame(QWidget):
         if self.focus > 0.01:
             p.setCompositionMode(QPainter.CompositionMode_Lighten)    # (a wash that lightens the dark, leaves the text white)
             p.setOpacity(WASH * self.focus)
-            p.fillRect(r, SIDE)
+            p.fillRect(r, WASH_COLOUR)
             p.setOpacity(1.0)
             p.setCompositionMode(QPainter.CompositionMode_SourceOver)
         keep = QColor(side)
         keep.setAlpha(round(side.alpha() * (1.0 - self.focus)))         # (the outline goes as the line comes)
         w, h = r.width(), r.height()
-        p.fillRect(QRect(0, 0, w, BORDER), keep)
-        p.fillRect(QRect(0, BORDER, BORDER, h - 2 * BORDER), keep)
-        p.fillRect(QRect(w - BORDER, BORDER, BORDER, h - 2 * BORDER), keep)
-        p.fillRect(QRect(0, h - BORDER, w, BORDER), mix(side, WHITE, self.focus))
+        p.fillRect(QRect(0, 0, w, LINE), keep)
+        p.fillRect(QRect(0, LINE, LINE, h - 2 * LINE), keep)
+        p.fillRect(QRect(w - LINE, LINE, LINE, h - 2 * LINE), keep)
+        p.fillRect(QRect(0, h - LINE, w, LINE), keep)
+        if self.focus > 0.01:
+            line = QColor(WHITE)
+            line.setAlpha(round(255 * self.focus))
+            p.fillRect(QRect(0, h - UNDER, w, UNDER), line)
         p.end()
 
 

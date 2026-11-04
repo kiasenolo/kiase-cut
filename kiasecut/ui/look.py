@@ -45,7 +45,7 @@ QToolBar::separator { background: @FRAME; width: 1px; height: 1px; margin: 4px; 
 QSplitter::handle { background: #000000; }
 QSplitter::handle:horizontal { width: 3px; }
 QSplitter::handle:vertical { height: 3px; }
-QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox { background: transparent; color: #ffffff; border: 2px solid transparent; border-radius: 0; padding: 0px 4px; selection-background-color: #808080; selection-color: #000000; placeholder-text-color: rgba(255, 255, 255, 128); }
+QDoubleSpinBox, QSpinBox, QPlainTextEdit, QTextEdit, QLineEdit, QComboBox { background: transparent; color: #ffffff; border: 2px solid transparent; border-radius: 0; padding: 0px 6px; selection-background-color: #808080; selection-color: #000000; placeholder-text-color: rgba(255, 255, 255, 128); }
 QDoubleSpinBox:disabled, QSpinBox:disabled, QLineEdit:disabled, QComboBox:disabled { color: rgba(255, 255, 255, 128); }
 QDoubleSpinBox::up-button, QDoubleSpinBox::down-button { width: 0px; border: none; subcontrol-origin: border; }
 QSpinBox::up-button, QSpinBox::down-button { width: 16px; border: none; background: transparent; subcontrol-origin: border; }
@@ -54,7 +54,7 @@ QSpinBox::down-button { subcontrol-position: bottom right; margin: 0 3px 3px 0; 
 QSpinBox::up-arrow { image: url(@ARROW-up.svg); width: 14px; height: 14px; }
 QSpinBox::down-arrow { image: url(@ARROW-down.svg); width: 14px; height: 14px; }
 QComboBox { padding-right: 22px; }
-QComboBox:editable { padding-left: 5px; }
+QComboBox:editable { padding-left: 7px; }
 QComboBox::drop-down { width: 20px; border: none; subcontrol-origin: padding; subcontrol-position: top right; }
 QComboBox::down-arrow { image: url(@ARROW-down.svg); width: 14px; height: 14px; }
 QComboBox QAbstractItemView { background: #1a1a1a; border: none; outline: none; }

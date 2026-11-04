@@ -352,6 +352,7 @@ class MainWindow(QMainWindow):
         self.preview.movesCommitted.connect(self.on_preview_moves)
         self.preview.movesLive.connect(self.live_moves)
         self.preview.dupLive.connect(self.live_dup)
+        self.preview.grabCancelled.connect(lambda: (self.rebuild(), self.refresh_inspector()))
         self.preview.dupCommitted.connect(self.on_preview_dup)
         self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
         self.preview.sourceTextEdited.connect(lambda cid, eid, nid, words: self.fx_each(
@@ -637,6 +638,7 @@ class MainWindow(QMainWindow):
         tl.markerMoved.connect(lambda mid, t: self.apply("移動標記", edit.move_marker, mid, t))
         tl.markerAction.connect(self.on_marker_action)
         tl.clipDragging.connect(lambda cid, start, dur: self.inspector.show_live_time(cid, start, dur, self.fps))
+        tl.grabCancelled.connect(lambda: self.refresh_inspector())
         tl.volumeEdited.connect(self.on_volume_line)
         tl.keyMoveRequested.connect(lambda cid, a, b: self.apply("移動關鍵幀", edit.move_keys_at, cid, a, b))
         tl.trackAction.connect(self.on_track_action)

@@ -83,6 +83,8 @@ tracks clears the clip selection and picking clips clears the tracks'.
 Drag the headers' right edge to make them wider (longer track names) or narrower; the
 width (header_w) is kept in view_state with the scroll and zoom. The edge is grabbed up in the
 ruler, so a clip at the very start can still be grabbed by its edge down on the tracks.
+G with the mouse over the timeline (Blender's grab): the selected clips move with the pointer as when dragged, till a click
+or Enter keeps them; Esc or the right button puts them back.
 """
 import copy
 import math
@@ -90,11 +92,11 @@ from collections import OrderedDict
 
 import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import QApplication, QScrollBar, QToolTip, QWidget
+from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QScrollBar, QTextEdit, QToolTip, QWidget
 
 from .. import build, components, curves, edit, project, waveform
-from . import wheel
+from . import appevents, wheel
 from .params import param_menu
 from .menukeys import Menu
 from .wrapdrag import WrapDrag
@@ -296,6 +298,7 @@ class Timeline(QWidget):
     replaceDropped = Signal(str, str)                # media id (library item, "cmp:<id>" or "asset:…"), clip id: Alt + drop
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
     clipDragging = Signal(str, int, int)             # clip id, start us, duration us: while dragging
+    grabCancelled = Signal()                         # a G grab was put back (Esc / right button)
     peaksReady = Signal(str)                         # emitted from the waveform thread
     vzoomChanged = Signal(float)
 
@@ -339,6 +342,7 @@ class Timeline(QWidget):
         self.vbar.hide()
         self.vbar.valueChanged.connect(self._on_vscroll)
         self.wrap = WrapDrag(self, self._wrap_area)
+        appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress), self._grab_filter)    # (G: see _grab_target)
         self.rows_end = RULER_H
         self.peaks = None                          # waveform.Peaks
         self._waves = OrderedDict()                # waveform tiles, least recently drawn first
@@ -1568,7 +1572,73 @@ class Timeline(QWidget):
         dx, other = min(ends, key=lambda d: d[0])
         return other * US if dx <= SNAP_PX else None
 
+    # -- G: Blender's grab ---------------------------------------------------------------------------
+    def _grab_target(self):
+        """(the selected clip, its row) when G, with the mouse over the timeline, would grab, else None."""
+        c = self.selected
+        if not (self.proj and c and self.isVisible() and self.underMouse() and self.drag is None):
+            return None
+        w = QApplication.focusWidget()
+        if isinstance(w, (QLineEdit, QAbstractSpinBox, QPlainTextEdit, QTextEdit)) or (isinstance(w, QComboBox) and w.isEditable()):
+            return None
+        row = next((i for i, t in enumerate(self.rows) if any(k["id"] == c["id"] for k in t["clips"])), None)
+        return None if row is None or project.locked(self.rows[row]) else (c, row)
+
+    def _grab_filter(self, obj, e):
+        if not isinstance(obj, QWidget) or obj.window() is not self.window():
+            return False
+        act = e.type() == QEvent.KeyPress
+        k, mods = e.key(), e.modifiers() & ~Qt.KeypadModifier
+        d = self.drag
+        if d and d.get("modal"):
+            if mods & (Qt.ControlModifier | Qt.AltModifier) or k not in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter, Qt.Key_G):
+                return False
+            if act and k != Qt.Key_G:
+                self._grab_end(k != Qt.Key_Escape)
+            e.accept()
+            return True
+        if k != Qt.Key_G or mods != Qt.NoModifier or (target := self._grab_target()) is None:
+            return False
+        if act:
+            self._grab_begin(*target)
+        e.accept()                                       # (ShortcutOverride: no menu shortcut takes it)
+        return True
+
+    def _grab_begin(self, c, row):
+        """G: the selected clips move along time (and tracks) with the pointer, as when dragged, till a click or Enter keeps
+        them; Esc or the right button puts them back."""
+        pos = self.mapFromGlobal(QCursor.pos())
+        prow = self._row_at(pos.y())
+        if len(self.selected_ids) > 1:
+            d = {"clip": c, "mode": "group", "x0": pos.x(), "moved": False, "shift": 0, "ids": set(self.selected_ids),
+                 "adding": False, "row0": row if prow is None else prow, "drow": 0}
+        else:
+            d = {"clip": c, "mode": "body", "x0": pos.x(), "row0": row, "row": row, "start": c["start_us"],
+                 "end": c["start_us"] + c["duration_us"], "moved": False}
+            if prow is not None:
+                d["prow0"] = prow                        # (the pointer's row: the clip changes rows as the pointer does)
+        d["modal"] = True
+        self.drag = d
+        self.update()
+
+    def _grab_end(self, keep):
+        d = self.drag
+        if keep:
+            del d["modal"]
+            self.mouseReleaseEvent(None)                 # (as the button let go of a drag)
+            return
+        self.drag, self.into_lane = None, None
+        self.wrap.stop(d.get("live"))
+        self.setCursor(Qt.ArrowCursor)
+        if d["moved"]:
+            self.grabCancelled.emit()
+        self.update()
+
     def mousePressEvent(self, e):
+        if self.drag and self.drag.get("modal"):         # (the click that keeps a grab, the right button that puts it back)
+            if e.button() in (Qt.LeftButton, Qt.RightButton):
+                self._grab_end(e.button() == Qt.LeftButton)
+            return
         if self.proj and e.button() == Qt.RightButton and e.position().x() >= self.header_w:
             # right-drag selects time; a right click without moving opens the menu (on release)
             t0 = self._region_edge(e.position().x())
@@ -1942,7 +2012,7 @@ class Timeline(QWidget):
             d["shift"] = self._snap_span(c["start_us"] + dt, c["duration_us"], d["ids"]) - c["start_us"]
             self.update()
             return
-        if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX and self._row_at(pos.y()) == d["row0"]:
+        if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX and self._row_at(pos.y()) == d.get("prow0", d["row0"]):
             return
         d["moved"] = True
         c = d["clip"]
@@ -1952,6 +2022,9 @@ class Timeline(QWidget):
             start = self._snap_span(max(0.0, s0 + dt), e0 - s0, c)
             d["start"], d["end"] = start, start + (e0 - s0)
             row = self._row_at(pos.y())
+            if row is not None and "prow0" in d:         # (a grab: by how many rows the pointer went, not which it is on)
+                row += d["row0"] - d["prow0"]
+                row = row if 0 <= row < len(self.rows) else None
             audio = self.rows[d["row0"]]["kind"] == "audio"
             d["new"] = None
             if row is not None and (self.rows[row]["kind"] == "audio") == audio and \
@@ -1989,6 +2062,8 @@ class Timeline(QWidget):
         return drow
 
     def mouseReleaseEvent(self, e):
+        if self.drag and self.drag.get("modal"):
+            return
         d, self.drag = self.drag, None
         self.wrap.stop(d and d.get("live"))            # (the pointer where the drag ended up)
         into, self.into_lane = self.into_lane, None

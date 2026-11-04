@@ -979,6 +979,34 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(gone, [["math1"]])
         self.assertIsNone(v.carrying)
 
+    def test_g_grabs_the_selected_nodes_by_how_far_the_pointer_goes(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 160)
+        ed = self.make(build)
+        v = ed.view
+        moved, gone = [], []
+        ed.moveRequested.connect(lambda eid, m: moved.append(m))
+        ed.removeRequested.connect(lambda eid, ids: gone.append(ids))
+        ed.select("math1")
+        QTest.keyClick(v, Qt.Key_G)
+        self.assertIsNotNone(v.carrying)
+        it = v.items_by_id["math1"]
+        at = it.pos()
+        here = v.mapToScene(v.mapFromGlobal(v.cursor().pos()))
+        v._carry_to(here, False)                                     # (the pointer has not moved: nothing jumps)
+        self.assertEqual(it.pos().x() % 20, 0)
+        self.assertLess((it.pos() - at).manhattanLength(), 20)
+        v._carry_to(here + QPointF(100, 60), False)
+        self.assertGreater(it.pos().x(), at.x() + 60)
+        QTest.keyClick(v, Qt.Key_Return)                             # Enter keeps it where it is
+        self.assertIsNone(v.carrying)
+        self.assertEqual(list(moved[-1]), ["math1"])
+        QTest.keyClick(v, Qt.Key_G)
+        v._carry_to(here + QPointF(400, 200), False)
+        QTest.keyClick(v, Qt.Key_Escape)                             # Esc puts it back, and it was not taken away
+        self.assertEqual(gone, [])
+        self.assertEqual(it.pos(), QPointF(*moved[-1]["math1"]))
+
     def test_width_is_kept(self):
         def g(e):
             e["graph"]["nodes"]["output"]["width"] = 300.0

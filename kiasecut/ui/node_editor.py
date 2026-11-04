@@ -1014,17 +1014,21 @@ class GraphView(QGraphicsView):
         return None
 
     # -- mouse ---------------------------------------------------------------------------------------
-    def carry(self, ids, remove):
+    def carry(self, ids, remove, grab=False):
         """Blender's grab: nodes just made (added, pasted, duplicated) follow the pointer till a click puts them down (Esc or the
-        right button: pasted / added ones are taken back, duplicates stay where they were made)."""
+        right button: pasted / added ones are taken back, duplicates stay where they were made). grab (the G key): the nodes
+        already there are moved by how far the pointer goes, not hung on it; Esc puts them back."""
         ids = [i for i in ids if i in self.items_by_id]
         if not ids:
             return
         for i, it in self.items_by_id.items():
             it.setSelected(i in ids)
         first = self.items_by_id[ids[0]]
-        self.carrying = {"ids": ids, "remove": remove, "start": {i: self.items_by_id[i].pos() for i in ids},
-                         "off": QPointF(first.boundingRect().width() / 2 - SOCKET_R, HEAD / 2)}
+        off = QPointF(first.boundingRect().width() / 2 - SOCKET_R, HEAD / 2)
+        if grab:
+            off = self.mapToScene(self.mapFromGlobal(QCursor.pos())) - first.pos()
+        self.carrying = {"ids": ids, "remove": remove, "grab": grab, "start": {i: self.items_by_id[i].pos() for i in ids},
+                         "off": off}
         self.press_at = {i: (p.x(), p.y()) for i, p in self.carrying["start"].items()}
         self.setFocus()
         self._carry_to(self.mapToScene(self.mapFromGlobal(QCursor.pos())), False)
@@ -1460,7 +1464,7 @@ class GraphView(QGraphicsView):
         if key in (Qt.Key_J, Qt.Key_C, Qt.Key_V):
             return mods == Qt.ControlModifier
         if key == Qt.Key_G:
-            return mods in (Qt.ControlModifier, Qt.ControlModifier | Qt.AltModifier)
+            return mods in (Qt.NoModifier, Qt.ControlModifier, Qt.ControlModifier | Qt.AltModifier)
         if key == Qt.Key_Tab:
             return mods == Qt.NoModifier
         if key in (Qt.Key_A, Qt.Key_D):
@@ -1491,6 +1495,8 @@ class GraphView(QGraphicsView):
             self.editor.copy_selected()
         elif key == Qt.Key_V and mods == Qt.ControlModifier:
             self.editor.paste_here()
+        elif key == Qt.Key_G and mods == Qt.NoModifier:
+            self.editor.grab_selected()
         elif key == Qt.Key_G and mods == Qt.ControlModifier:
             self.editor.group_selected()
         elif key == Qt.Key_G and mods == Qt.ControlModifier | Qt.AltModifier:
@@ -1802,7 +1808,7 @@ class NodeEditor(QWidget):
         if fit:
             v.fit()
         if hold:                                            # (nodes held by the pointer stay held)
-            v.carry([i for i in hold["ids"]], hold["remove"])
+            v.carry([i for i in hold["ids"]], hold["remove"], hold.get("grab", False))
             if v.carrying:
                 v.carrying["start"] = {i: p for i, p in hold["start"].items() if i in v.items_by_id}
 
@@ -2035,6 +2041,12 @@ class NodeEditor(QWidget):
         """Nodes made now (ids) are stuck to the pointer till a click."""
         self.view.carry(list(ids), remove)
         self.selection_changed()
+
+    def grab_selected(self):
+        """G: the selected nodes follow the pointer till a click or Enter (Esc puts them back)."""
+        ids = [i for i in self.selected() if i not in (PORT_IN, PORT_OUT)]
+        if ids and self.eid:
+            self.view.carry(ids, False, True)
 
     def select(self, nid):
         for i, it in self.view.items_by_id.items():

@@ -91,12 +91,17 @@ and the lines it has snapped to are drawn. With Alt
 held, media dropped on a picture clip replace its source (replaceDropped; on one of several
 selected clips, all of them: 批量替換), and the clips that would change are outlined. Dropped
 on a group (its box lit while they would), they go into it instead (移入群組).
+
+G, R and S with the mouse over the preview (Blender's grab, rotate, scale): the selected clip (G: the whole selection)
+follows the pointer - R turns about the pivot, S scales by how far the pointer is from it - till a click or Enter keeps
+it; Esc or the right button puts it back. X / Y keep a G to one way; a typed number (px, degrees, times) says how much.
 """
 import json
 import math
+import types
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
+from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
@@ -508,6 +513,7 @@ class Preview(QWidget):
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
     mediaDropped = Signal(list, list, float, float, str)  # idents, file paths, transform x / y there, group id or ""
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
+    grabCancelled = Signal()                    # a G / R / S grab was put back (Esc / right button): draw the clips as they were
 
     def __init__(self, parent=None, interactive=True):
         super().__init__(parent)
@@ -697,14 +703,117 @@ class Preview(QWidget):
             return lambda: self.view_ratio(n if ctrl else 1 / n)
         if pad and k in (Qt.Key_Plus, Qt.Key_Minus):
             return lambda: self.zoom_to(self.zoom * (ZOOM_STEP if k == Qt.Key_Plus else 1 / ZOOM_STEP))
+        grab = {Qt.Key_G: "move", Qt.Key_R: "rotate", Qt.Key_S: "gscale"}.get(k)
+        if grab and not pad and not ctrl and not shift and not mods & Qt.AltModifier and self._can_grab(grab):
+            return lambda: self._grab_begin(grab)
         if k == Qt.Key_B and shift and not ctrl:
             return self._arm_box_zoom
         if k == Qt.Key_Escape and self.box_zoom:
             return lambda: self._arm_box_zoom(False)
         return None
 
+    # -- G / R / S: Blender's grab, rotate and scale: the selected clip follows the pointer till a click --------------
+    def _can_grab(self, kind):
+        box = self.selected_box()
+        if (not self.interactive or not self.show_guides or self.mask_mode or self.drag is not None or self.text_box is not None
+                or box is None or box.locked):
+            return False
+        return kind == "move" or (not self.multi() and not getattr(box, "group", False))
+
+    def _grab_begin(self, kind):
+        """G (move, the whole selection), R (rotate) or S (scale) of the selected clip: it follows the pointer, X / Y
+        keep a move to one way, a typed number says how much (px, degrees, times); a click or Enter keeps it, Esc or the
+        right button puts it back."""
+        box = self.selected_box()
+        m = QPointF(*self._to_canvas(QPointF(self.mapFromGlobal(QCursor.pos()))))
+        boxes = [b for b in self.visible_boxes() if b.clip["id"] in self.selected_ids and not b.locked]
+        d = {"kind": kind, "box": box, "m0": m, "m": m, "moved": True, "modal": True, "axis": None, "num": "",
+             "mods": Qt.NoModifier}
+        if kind == "move":
+            d.update(boxes=boxes, x0=m.x(), y0=m.y(), others=[b for b in self.visible_boxes() if b.clip["id"] not in self.selected_ids])
+        self.drag = d
+        self.setCursor(Qt.SizeAllCursor)
+        self.update()
+
+    def _grab_update(self):
+        d = self.drag
+        group, vals = self._values(types.SimpleNamespace(modifiers=lambda: d["mods"]), d["m"])
+        self._live(d, group, vals)
+
+    def _live(self, d, group, vals):
+        if group == "mask":
+            group = self.mask_group
+        self.live = (group, vals)
+        if group == "moves" and d.get("dup"):
+            self.dupLive.emit(vals)
+        elif group == "moves":
+            self.movesLive.emit(vals)
+        else:
+            self.paramsLive.emit(d["box"].clip["id"], group, vals)
+        self.update()
+
+    def _grab_end(self, keep):
+        d, self.drag = self.drag, None
+        live, self.live = self.live, None
+        self.guides = []
+        self.setCursor(Qt.ArrowCursor)
+        if keep and live:
+            self._commit(d, live)
+        elif live:
+            self.grabCancelled.emit()
+        self.update()
+
+    def _grab_key(self, e, act):
+        """A key while a grab is on; True when the grab takes it."""
+        d, k = self.drag, e.key()
+        if e.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
+            return False
+        if k == Qt.Key_Escape:
+            if act:
+                self._grab_end(False)
+            return True
+        if k in (Qt.Key_Return, Qt.Key_Enter):
+            if act:
+                self._grab_end(True)
+            return True
+        text = e.text()
+        if k in (Qt.Key_X, Qt.Key_Y):
+            if act and d["kind"] == "move":
+                axis = "x" if k == Qt.Key_X else "y"
+                d["axis"] = None if d["axis"] == axis else axis
+                self._grab_update()
+            return True
+        if k in (Qt.Key_G, Qt.Key_R, Qt.Key_S):
+            return True
+        if k == Qt.Key_Backspace or (len(text) == 1 and text in "0123456789.-"):
+            if act:
+                n = d["num"]
+                if k == Qt.Key_Backspace:
+                    n = n[:-1]
+                elif text == "-":
+                    n = n[1:] if n.startswith("-") else "-" + n
+                elif text != "." or "." not in n:
+                    n += text
+                d["num"] = n
+                self._grab_update()
+            return True
+        return False
+
+    @staticmethod
+    def _typed(d):
+        """The number typed during a grab, or None."""
+        try:
+            return float(d["num"]) if d.get("num") else None
+        except ValueError:
+            return 0.0
+
     def eventFilter(self, obj, e):
         t = e.type()
+        if (self.drag and self.drag.get("modal") and t in (QEvent.ShortcutOverride, QEvent.KeyPress)
+                and isinstance(obj, QWidget) and obj.window() is self.window()):
+            if self._grab_key(e, t == QEvent.KeyPress):
+                e.accept()
+                return True
         if t in (QEvent.ShortcutOverride, QEvent.KeyPress) and isinstance(obj, QWidget) and obj.window() is self.window():
             act = self._view_key(e)
             if act is not None:
@@ -1308,6 +1417,10 @@ class Preview(QWidget):
         return math.hypot(a.x() - b.x(), a.y() - b.y()) <= PICK_PX * k
 
     def mousePressEvent(self, e):
+        if self.drag and self.drag.get("modal"):         # (the click that keeps a grab, or the right button that puts it back)
+            if e.button() in (Qt.LeftButton, Qt.RightButton):
+                self._grab_end(e.button() == Qt.LeftButton)
+            return
         if self.interactive and e.button() == Qt.MiddleButton:       # Ctrl: zoom, else move the view
             zoom = bool(e.modifiers() & Qt.ControlModifier)
             self.drag = {"kind": "zoomdrag" if zoom else "pan", "pos": e.position(), "pan": QPointF(self.pan),
@@ -1501,11 +1614,18 @@ class Preview(QWidget):
             dx, dy = m.x() - d["x0"], m.y() - d["y0"]
             boxes = d.get("boxes") or [box]
             d["dup"] = bool(e.modifiers() & Qt.AltModifier)    # Alt: copies move, the clips stay
-            if e.modifiers() & Qt.ControlModifier:             # Ctrl: move freely
+            typed = self._typed(d)
+            if e.modifiers() & Qt.ControlModifier or typed is not None:    # Ctrl: move freely
                 self.guides = []
             else:
                 dx, dy, self.guides = self._snap(self._union(boxes), dx, dy, [o.extents() for o in d["others"]],
                                                  SNAP_PX * self._k())
+            if d.get("modal"):                                 # (G: X / Y keep it to one way, a typed number is the way)
+                axis = d["axis"]
+                if typed is not None:
+                    dx, dy = (0.0, typed) if axis == "y" else (typed, 0.0)
+                elif axis:
+                    dx, dy = (dx, 0.0) if axis == "x" else (0.0, dy)
             at = {b.clip["id"]: {"x": b.x_at(b.cx + dx), "y": b.y_at(b.cy + dy)} for b in boxes}
             return ("moves", at) if len(boxes) > 1 or d["dup"] else ("transform", at[box.clip["id"]])
         if kind == "gap":
@@ -1522,7 +1642,17 @@ class Preview(QWidget):
             c = box.pivot_pt()                                 # (中心點: it turns about its pivot)
             a0 = math.degrees(math.atan2(d["m0"].y() - c.y(), d["m0"].x() - c.x()))
             a1 = math.degrees(math.atan2(m.y() - c.y(), m.x() - c.x()))
+            if d.get("modal") and self._typed(d) is not None:
+                return "transform", {"rotation": round(box.deg + self._typed(d), 2)}
             return "transform", {"rotation": round(snap_angle(box.deg + a1 - a0, free), 2)}
+        if kind == "gscale":                                   # S: the scale follows how far the pointer is from the pivot
+            c = box.pivot_pt()
+            r0 = max(math.hypot(d["m0"].x() - c.x(), d["m0"].y() - c.y()), 30 * self._k())
+            f = self._typed(d)
+            if f is None:
+                f = math.hypot(m.x() - c.x(), m.y() - c.y()) / r0
+            scale = lambda s: math.copysign(max(0.01, abs(s * f)), s or 1.0)
+            return "transform", {"scale": round(scale(box.s), 4), "scale_y": round(scale(box.sy), 4)}
         # mask handles work in the clip's own frame (they move and turn with the clip)
         g = d["geo"]
         inv, _ = box.xf().inverted()
@@ -1726,6 +1856,10 @@ class Preview(QWidget):
         if d is None:
             self._hover(e)
             return
+        if d.get("modal"):
+            d["m"], d["mods"] = QPointF(*self._to_canvas(e.position())), e.modifiers()
+            self._grab_update()
+            return
         if "wrap_pan" not in d:                          # (this drag's first move)
             self.wrap.start()
             d["wrap_pan"] = QPointF(self.pan)
@@ -1761,16 +1895,7 @@ class Preview(QWidget):
             self.update()
             return
         group, vals = self._values(e, m)
-        if group == "mask":
-            group = self.mask_group
-        self.live = (group, vals)
-        if group == "moves" and d.get("dup"):
-            self.dupLive.emit(vals)
-        elif group == "moves":
-            self.movesLive.emit(vals)
-        else:
-            self.paramsLive.emit(d["box"].clip["id"], group, vals)
-        self.update()
+        self._live(d, group, vals)
 
     def leaveEvent(self, e):
         if self.gap_hover:
@@ -1820,7 +1945,17 @@ class Preview(QWidget):
             self.update()
         self.setCursor(cur)
 
+    def _commit(self, d, live):
+        if live[0] == "moves" and d.get("dup"):
+            self.dupCommitted.emit(live[1])
+        elif live[0] == "moves":
+            self.movesCommitted.emit(live[1])
+        else:
+            self.paramsCommitted.emit(d["box"].clip["id"], *live)
+
     def mouseReleaseEvent(self, e):
+        if self.drag and self.drag.get("modal"):
+            return
         d, self.drag = self.drag, None
         self.wrap.stop(d and d.get("live"))            # (the pointer where the drag ended up)
         if d and d["kind"] in ("pan", "zoomdrag"):
@@ -1843,12 +1978,7 @@ class Preview(QWidget):
             if d["moved"] or not d["adding"]:             # (a plain click on nothing selects nothing)
                 self._select(ids, primary)
         elif d and d["moved"] and live:
-            if live[0] == "moves" and d.get("dup"):
-                self.dupCommitted.emit(live[1])
-            elif live[0] == "moves":
-                self.movesCommitted.emit(live[1])
-            else:
-                self.paramsCommitted.emit(d["box"].clip["id"], *live)
+            self._commit(d, live)
         self.update()
 
     def mouseDoubleClickEvent(self, e):

@@ -10,7 +10,8 @@ import shiboken6
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QLineEdit, QPlainTextEdit, QPushButton,
-                               QRadioButton, QStyle, QTabBar, QTextEdit, QToolButton, QWidget)
+                               QRadioButton, QScrollBar, QStyle, QStyleOptionSlider, QTabBar, QTextEdit, QToolButton,
+                               QWidget)
 
 REST = QColor("#262626")             # Color(.15)
 GREY = QColor("#808080")             # Color(.5): pressed, checked
@@ -576,3 +577,122 @@ def paint_tab(painter, option, widget):
     if sel > 0.01:
         w = round(r.width() * sel)
         painter.fillRect(QRect(r.center().x() - w // 2, r.bottom() - TAB_LINE + 1, w, TAB_LINE), WHITE)
+
+
+# -- scroll bars ----------------------------------------------------------------------------------------------------------
+# Kilo's: a 15 px track that shows nothing, in it a flat thumb 5 px thick (BasColor(.7), white under the mouse, BasColor(.3) held).
+# The style sheet lays the bar out (its handle is see-through); a Thumb laid over the bar draws the real one in a colour that
+# follows what the bar is doing, as the other fades do.
+
+BAR_THUMB = 5
+BAR_REST = QColor("#b3b3b3")
+BAR_HOT = WHITE
+BAR_HELD = QColor("#4d4d4d")
+
+
+class Thumb(QWidget):
+    """The thumb of a scroll bar, drawn over it (the mouse goes through) and moved by the bar's own events."""
+
+    def __init__(self, bar):
+        super().__init__(bar)
+        self.bar = bar
+        self.colour = BAR_REST
+        self.goal = BAR_REST
+        self.start = BAR_REST
+        self.held = False
+        self.over = False
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.anim = QVariantAnimation(self)
+        self.anim.setEasingCurve(out_curve())
+        self.anim.valueChanged.connect(self._step)
+        bar.installEventFilter(self)
+        bar.setMouseTracking(True)
+        bar.valueChanged.connect(lambda *_: self.update())
+        bar.rangeChanged.connect(lambda *_: self.update())
+        self.setGeometry(bar.rect())
+        self.show()
+        self.raise_()
+
+    def rect_of_thumb(self):
+        """Where the bar's handle is (the style sheet's layout), drawn BAR_THUMB thick in the middle of the bar."""
+        bar = self.bar
+        o = QStyleOptionSlider()
+        o.initFrom(bar)
+        o.orientation = bar.orientation()
+        o.minimum, o.maximum, o.pageStep, o.singleStep = bar.minimum(), bar.maximum(), bar.pageStep(), bar.singleStep()
+        o.sliderPosition, o.sliderValue = bar.sliderPosition(), bar.value()
+        o.upsideDown = bar.invertedAppearance()
+        o.subControls = QStyle.SC_All
+        return bar.style().subControlRect(QStyle.CC_ScrollBar, o, QStyle.SC_ScrollBarSlider, bar)
+
+    def paintEvent(self, e):
+        if self.bar.maximum() <= self.bar.minimum():
+            return
+        r = self.rect_of_thumb()
+        if r.isEmpty():
+            return
+        if self.bar.orientation() == Qt.Horizontal:
+            r = QRect(r.x(), (self.height() - BAR_THUMB) // 2, r.width(), BAR_THUMB)
+        else:
+            r = QRect((self.width() - BAR_THUMB) // 2, r.y(), BAR_THUMB, r.height())
+        p = QPainter(self)
+        p.fillRect(r, self.colour)
+        p.end()
+
+    def _step(self, v):
+        self.colour = mix(self.start, self.goal, float(v))
+        self.update()
+
+    def go(self, goal, ms):
+        if goal == self.goal:
+            return
+        self.anim.stop()
+        self.start, self.goal = self.colour, goal
+        if ms and self.bar.isVisible():
+            self.anim.setDuration(ms)
+            self.anim.setStartValue(0.0)
+            self.anim.setEndValue(1.0)
+            self.anim.start()
+        else:
+            self.colour = goal
+            self.update()
+
+    def sync(self):
+        if self.held:
+            self.go(BAR_HELD, PRESS_MS)
+        elif self.over:
+            self.go(BAR_HOT, 0)
+        else:
+            self.go(BAR_REST, FADE_MS)
+
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if t == QEvent.Resize:
+            self.setGeometry(self.bar.rect())
+            self.raise_()
+        elif t in (QEvent.MouseMove, QEvent.HoverMove, QEvent.Enter):
+            pos = e.position().toPoint() if hasattr(e, "position") else self.bar.mapFromGlobal(QCursor.pos())
+            was, self.over = self.over, self.rect_of_thumb().contains(pos) and self.bar.maximum() > self.bar.minimum()
+            if self.over != was:
+                self.sync()
+        elif t == QEvent.Leave:
+            if self.over or self.held:
+                self.over = False
+                self.sync()
+        elif t == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
+            if self.rect_of_thumb().contains(e.position().toPoint()):
+                self.held = True
+                self.sync()
+        elif t == QEvent.MouseButtonRelease and self.held:
+            self.held = False
+            self.over = self.rect_of_thumb().contains(e.position().toPoint())
+            self.sync()
+        elif t == QEvent.ChildAdded or t == QEvent.Show:
+            QTimer.singleShot(0, self.raise_)
+        return False
+
+
+def attach_bar(widget):
+    if isinstance(widget, QScrollBar) and widget.property("kcThumb") is None:
+        widget.setProperty("kcThumb", Thumb(widget))

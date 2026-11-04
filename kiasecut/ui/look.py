@@ -96,10 +96,8 @@ QSlider::add-page:vertical { background: #808080; }
 QSlider::handle:vertical { background: #cccccc; height: 8px; margin: 0 -7px; }
 QSlider::handle:vertical:hover { background: #ffffff; }
 QScrollBar { background: transparent; width: 15px; height: 15px; }
-QScrollBar::handle:vertical { background: #b3b3b3; margin: 0 5px; min-height: 30px; }
-QScrollBar::handle:horizontal { background: #b3b3b3; margin: 5px 0; min-width: 30px; }
-QScrollBar::handle:hover { background: #ffffff; }
-QScrollBar::handle:pressed { background: #4d4d4d; }
+QScrollBar::handle:vertical { background: transparent; margin: 0 5px; min-height: 30px; }
+QScrollBar::handle:horizontal { background: transparent; margin: 5px 0; min-width: 30px; }
 QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { width: 0; height: 0; background: none; }
 QAbstractScrollArea::corner { background: transparent; border: none; }
 QRadioButton { min-height: 22px; }
@@ -274,6 +272,7 @@ class Style(wheel.Style):
         super().polish(widget)
         motion.attach(widget)                         # (a push or tool button paints itself from its Fader)
         motion.attach_field(widget)                   # (an input field has its outline drawn over it)
+        motion.attach_bar(widget)                     # (a scroll bar's thumb is drawn over it)
         motion.attach_tabs(widget)                    # (a tab bar moves its tabs' colours)
         motion.attach_toggle(widget)                  # (a check box or radio button moves its indicator)
 

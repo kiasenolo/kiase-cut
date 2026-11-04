@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QPoint, QSize, Qt  # noqa: E402
 from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QRadioButton, QTabBar, QToolButton, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLineEdit, QPushButton, QRadioButton, QScrollBar, QTabBar, QToolButton, QWidget  # noqa: E402
 
 from kiasecut.ui import icons, look, motion  # noqa: E402
 
@@ -339,6 +339,69 @@ class TabsTest(unittest.TestCase):
         self.assertEqual(img.pixelColor(r.center().x(), r.bottom()).name(), "#ffffff")
         self.assertNotEqual(img.pixelColor(bar.tabRect(0).center().x(), bar.tabRect(0).bottom()).name(), "#ffffff")
         bar.close()
+
+
+class ScrollBarTest(unittest.TestCase):
+    def make(self):
+        host = QWidget()
+        lay = QHBoxLayout(host)
+        bar = QScrollBar(Qt.Vertical)
+        bar.setRange(0, 100)
+        bar.setPageStep(50)
+        lay.addWidget(bar)
+        host.resize(60, 200)
+        host.show()
+        QTest.qWait(60)
+        QTest.mouseMove(host, QPoint(0, 199))
+        QTest.qWait(30)
+        t = bar.property("kcThumb")                                 # (the offscreen mouse of an earlier test may be on the new bar: start at rest)
+        t.anim.stop()
+        t.over = t.held = False
+        t.colour = t.goal = t.start = motion.BAR_REST
+        return host, bar
+
+    def thumb_at(self, bar, y):
+        return bar.property("kcThumb").grab().toImage().pixelColor(bar.width() // 2, y).name()
+
+    def test_the_thumb_is_light_grey_at_rest_and_follows_the_value(self):
+        host, bar = self.make()
+        r = bar.property("kcThumb").rect_of_thumb()
+        self.assertGreater(r.height(), 30)
+        mid = r.center().y()
+        self.assertEqual(self.thumb_at(bar, mid), motion.BAR_REST.name())
+        self.assertNotEqual(bar.property("kcThumb").grab().toImage().pixelColor(1, mid).name(), motion.BAR_REST.name())   # (only 5 px of the 15 are thumb)
+        bar.setValue(100)
+        QTest.qWait(30)
+        self.assertGreater(bar.property("kcThumb").rect_of_thumb().y(), r.y())
+        host.close()
+
+    def test_the_thumb_goes_white_under_the_mouse_and_fades_back(self):
+        host, bar = self.make()
+        t = bar.property("kcThumb")
+        mid = t.rect_of_thumb().center()
+        QTest.mouseMove(bar, mid)
+        QTest.qWait(40)
+        self.assertEqual(t.colour, motion.BAR_HOT)
+        QTest.mouseMove(host, QPoint(0, 199))
+        QTest.qWait(60)
+        self.assertNotEqual(t.colour, motion.BAR_HOT)
+        QTest.qWait(motion.FADE_MS + 150)
+        self.assertEqual(t.colour, motion.BAR_REST)
+        host.close()
+
+    def test_the_thumb_is_dark_grey_while_held(self):
+        host, bar = self.make()
+        t = bar.property("kcThumb")
+        mid = t.rect_of_thumb().center()
+        QTest.mouseMove(bar, mid)
+        QTest.qWait(30)
+        QTest.mousePress(bar, Qt.LeftButton, Qt.NoModifier, mid)
+        QTest.qWait(motion.PRESS_MS + 100)
+        self.assertEqual(t.colour, motion.BAR_HELD)
+        QTest.mouseRelease(bar, Qt.LeftButton, Qt.NoModifier, mid)
+        QTest.qWait(40)
+        self.assertEqual(t.colour, motion.BAR_HOT)
+        host.close()
 
 
 if __name__ == "__main__":

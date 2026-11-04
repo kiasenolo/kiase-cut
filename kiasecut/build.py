@@ -14,6 +14,7 @@ Effect keyframe positions are media frames (entry in point + offset). MLT keyfra
 offer fixed easings, so the bezier curves are sampled per frame where they move.
 Rendered texts and mattes are cached by content hash in the project's cache folder.
 """
+import functools
 import hashlib
 import json
 import math
@@ -21,6 +22,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from xml.sax.saxutils import escape
 
 import numpy as np
@@ -41,8 +43,33 @@ def _hash(*parts):
 _ffmpeg = []
 
 
+@functools.lru_cache(maxsize=None)
+def android_program(name):
+    """On Android the path of a program the app ships, or None. An app may only run files from its native library
+    directory, so the program is lib<name>.so there (packaging/android)."""
+    if sys.platform != "android":
+        return None
+    dirs = [os.environ.get("KIASECUT_BIN_DIR")]
+    try:
+        with open("/proc/self/maps") as f:          # (the directory the app's own libraries are loaded from)
+            dirs += [os.path.dirname(cols[5].strip()) for cols in (line.split(None, 5) for line in f) if len(cols) == 6]
+    except OSError:
+        pass
+    for d in dict.fromkeys(dirs):
+        if d and os.path.exists(os.path.join(d, f"lib{name}.so")):
+            return os.path.join(d, f"lib{name}.so")
+    return None
+
+
+def find_ffprobe():
+    """What to run as ffprobe: the app's own on Android, else the one on PATH."""
+    return android_program("ffprobe") or "ffprobe"
+
+
 def find_ffmpeg():
     """ffmpeg's path, or None. Searching PATH takes ~30 ms on Windows, so a find is kept."""
+    if not _ffmpeg and android_program("ffmpeg"):
+        _ffmpeg.append(android_program("ffmpeg"))
     if not _ffmpeg:
         over = os.environ.get("KIASECUT_MLT")       # (Kdenlive's copy built in: build_exec.bat --bundle-mlt)
         for c in ("ffmpeg", *([os.path.join(over, "bin", "ffmpeg.exe")] if over else []),
@@ -62,7 +89,7 @@ def media_start(p, stream=0):
     key = (p, stream)
     if key not in _starts:
         try:
-            r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", f"a:{stream}", "-show_entries",
+            r = subprocess.run([find_ffprobe(), "-v", "error", "-select_streams", f"a:{stream}", "-show_entries",
                                 "stream=start_time", "-of", "csv=p=0", p],
                                capture_output=True, text=True, timeout=30)
             _starts[key] = float(r.stdout.strip() or 0)
@@ -79,7 +106,7 @@ def audio_streams(p):
     of their own has several): [{index (in the whole file), title, lang, channels}], cached."""
     if p not in _streams:
         try:
-            r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-print_format", "json",
+            r = subprocess.run([find_ffprobe(), "-v", "error", "-select_streams", "a", "-print_format", "json",
                                 "-show_entries", "stream=index,channels:stream_tags=title,name,language,handler_name",
                                 p],
                                capture_output=True, text=True, timeout=30)

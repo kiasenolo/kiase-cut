@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
@@ -198,6 +198,105 @@ class TouchTest(unittest.TestCase):
         self.assertFalse(self.g.hold.isActive())
         self.g._held()
         self.assertFalse(self.g.held)
+
+
+class ScrollAreaTest(unittest.TestCase):
+    """A list: one finger swipes it; held first, it drags (the press is made at the hold)."""
+
+    def setUp(self):
+        from PySide6.QtWidgets import QListWidget
+        self.list = QListWidget()
+        for i in range(200):
+            self.list.addItem(f"item {i}")
+        self.list.setVerticalScrollMode(QListWidget.ScrollPerPixel)       # (as wheel.Style makes every list)
+        self.list.resize(200, 300)
+        self.list.show()
+        self.view = self.list.viewport()
+        self.g = touch.enable(self.view, scroll=True)
+        self.dev = QTest.createTouchDevice()
+        self.log = []
+        log = self.log
+
+        class Watch(QObject):
+            def eventFilter(self, obj, e):
+                if e.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease, QEvent.MouseMove, QEvent.ContextMenu):
+                    log.append(e.type())
+                return False
+        self.watch = Watch(self.view)
+        self.view.installEventFilter(self.watch)
+
+    def tearDown(self):
+        self.g.glide.stop()
+        self.view.removeEventFilter(self.g)
+        self.list.close()
+        self.list.deleteLater()
+
+    def seq(self):
+        return QTest.touchEvent(self.view, self.dev)
+
+    def test_a_swipe_scrolls_and_presses_nothing(self):
+        s = self.seq()
+        bar = self.list.verticalScrollBar()
+        s.press(0, QPoint(100, 250), self.view).commit()
+        for y in (230, 200, 150, 100):
+            s.move(0, QPoint(100, y), self.view).commit()
+        s.release(0, QPoint(100, 100), self.view).commit()
+        self.assertGreater(bar.value(), 100)
+        self.assertEqual(self.log, [])
+
+    def test_a_tap_is_a_click(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 50), self.view).commit()
+        s.release(0, QPoint(100, 50), self.view).commit()
+        self.assertEqual(self.log, [QEvent.MouseButtonPress, QEvent.MouseButtonRelease])
+        self.assertEqual(self.list.currentRow(), 2)
+
+    def test_hold_then_move_is_a_drag_not_a_scroll(self):
+        s = self.seq()
+        bar = self.list.verticalScrollBar()
+        s.press(0, QPoint(100, 250), self.view).commit()
+        self.g._held()                                          # (the timer's work)
+        s.move(0, QPoint(100, 200), self.view).commit()
+        s.move(0, QPoint(100, 150), self.view).commit()
+        self.assertEqual(bar.value(), 0)
+        self.assertEqual(self.log[0], QEvent.MouseButtonPress)
+        self.assertIn(QEvent.MouseMove, self.log)
+
+    def test_hold_then_lift_is_a_right_click(self):
+        s = self.seq()
+        s.press(0, QPoint(100, 50), self.view).commit()
+        self.g._held()
+        s.release(0, QPoint(100, 50), self.view).commit()
+        self.assertEqual(self.log, [QEvent.MouseButtonPress, QEvent.MouseButtonRelease, QEvent.MouseButtonPress,
+                                    QEvent.ContextMenu, QEvent.MouseButtonRelease])
+
+    def test_a_flick_glides(self):
+        s = self.seq()
+        bar = self.list.verticalScrollBar()
+        s.press(0, QPoint(100, 280), self.view).commit()
+        for y in (250, 220, 190, 160, 130):
+            s.move(0, QPoint(100, y), self.view).commit()
+        s.release(0, QPoint(100, 130), self.view).commit()
+        at_lift = bar.value()
+        self.assertTrue(self.g.glide.isActive())
+        for _ in range(400):
+            if not self.g.glide.isActive():
+                break
+            QTest.qWait(16)
+        self.assertGreater(bar.value(), at_lift)
+
+    def test_install_scrolling_covers_lists_shown_later_but_not_popups(self):
+        from PySide6.QtWidgets import QListWidget
+        touch.install_scrolling()
+        late = QListWidget()
+        late.show()
+        self.assertTrue(late.viewport().property("kcTouch"))
+        popup = QListWidget()
+        popup.setWindowFlags(Qt.Popup)
+        popup.show()
+        self.assertFalse(popup.viewport().property("kcTouch"))
+        late.close()
+        popup.close()
 
 
 class OnTheViews(unittest.TestCase):

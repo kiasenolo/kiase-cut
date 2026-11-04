@@ -14,6 +14,10 @@ Beyond that, for a widget given to enable():
     lifting them while still moving lets the scroll glide on and slow down (wheel events of the momentum phase);
   * two or three fingers put down and lifted together, without moving, are a tap of that many fingers: on_tap(n, f) calls f
     (the main window makes two undo and three redo).
+For a scroll area (enable(viewport, scroll=True); install_scrolling() does that for every one in the program) one finger that
+moves before the hold is a swipe: the area scrolls (wheel events, and it glides on after the finger lifts); the mouse press
+is made only when the finger is lifted, or held for HOLD_MS - then a move is the drag it is with a mouse (dragging an item
+out of a list, scrubbing a number) and lifting in place is the right click.
 scale() tells the views how much bigger to make what is to be hit: 1 for a mouse, FINGER_SCALE after the last input was a finger.
 The first finger's mouse press is taken back as soon as a second finger comes: a mouse release goes to the widget, so a
 drag that had begun ends where it stands.
@@ -21,12 +25,15 @@ drag that had begun ends where it stands.
 import math
 import time
 
+import shiboken6
+
 from PySide6.QtCore import QEvent, QObject, QPointF, QPoint, Qt, QTimer
 from PySide6.QtGui import (QContextMenuEvent, QEventPoint, QMouseEvent, QNativeGestureEvent, QPointingDevice,
                            QWheelEvent)
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QAbstractScrollArea, QApplication
 
 from .. import haptic
+from . import appevents
 
 HOLD_MS = 550            # a finger this long on the same spot is a right click (when lifted there)
 PRESS_MS = 70            # the mouse press waits this long for a second finger
@@ -71,9 +78,13 @@ def _dist(a, b):
 
 
 class _Gestures(QObject):
-    def __init__(self, widget):
+    def __init__(self, widget, scroll=False):
         super().__init__(widget)
         self.w = widget
+        self.scroll = scroll                   # a scroll area's viewport: one finger swipes before it holds
+        self.swiping = False                   # ... and has begun to
+        self.swipe_from = QPointF()
+        self.grab = None                       # the widget that got the press (it gets the moves and the release too)
         self.mode = "idle"                      # idle, one (a finger down: the mouse), multi (pinch / scroll / tap)
         self.hold = QTimer(self)
         self.hold.setSingleShot(True)
@@ -100,6 +111,7 @@ class _Gestures(QObject):
         self.prev = self.origin = (0.0, 0.0, 0.0)
         self.t_multi, self.peak, self.tapping = 0.0, 0, False
         widget.setAttribute(Qt.WA_AcceptTouchEvents, True)
+        widget.setProperty("kcTouch", True)
         widget.installEventFilter(self)
 
     def eventFilter(self, obj, e):
@@ -122,8 +134,9 @@ class _Gestures(QObject):
     # -- the touch event ------------------------------------------------------------------------------------------------
     def _touch(self, e):
         if e.type() == QEvent.TouchCancel:
-            if self.mode == "one":
+            if self.mode == "one" and not self.swiping:
                 self._lift()
+            self.swiping = False
             self._finish()
             return True
         for p in e.points():                               # (a finger may come as a TouchBegin of its own, or only the moved ones come)
@@ -164,9 +177,10 @@ class _Gestures(QObject):
     def _begin(self, at, now):
         self.mode = "one"
         self.start = self.last = at
-        self.pressed = self.moved = self.held = False
+        self.pressed = self.moved = self.held = self.swiping = False
         self.double = now - self.tap_t < DOUBLE_S and _dist(at, self.tap_at) < DOUBLE_PX
-        self.defer.start()
+        if not self.scroll:
+            self.defer.start()
         self.hold.start()
 
     def _press(self):
@@ -178,13 +192,35 @@ class _Gestures(QObject):
 
     def _drag(self, at):
         self.last = at
+        if self.swiping:
+            self._swipe(at)
+            return
         if not self.moved and _dist(at, self.start) > SLOP_PX:
-            self.moved, self.held = True, False
             self.hold.stop()
             self.defer.stop()
+            if self.scroll and not self.pressed:           # (before the hold: the area is scrolled, nothing is pressed)
+                self.swiping, self.swipe_from = True, self.start
+                self.rest, self.samples, self.scrolling = QPointF(), [], False
+                self._swipe(at)
+                return
+            self.moved, self.held = True, False
             self._press()
         if self.moved:
             self._mouse(QEvent.MouseMove, at, Qt.NoButton, Qt.LeftButton)
+
+    def _swipe(self, at):
+        self.rest += QPointF(at.x() - self.swipe_from.x(), at.y() - self.swipe_from.y())
+        self.swipe_from = at
+        self._scroll_by(time.monotonic(), at)
+
+    def _scroll_by(self, now, centre):
+        """Send the whole pixels of self.rest as a scroll at centre."""
+        whole = QPoint(int(self.rest.x()), int(self.rest.y()))
+        if whole.x() or whole.y():
+            self.rest -= QPointF(whole)
+            self._wheel(whole, Qt.ScrollUpdate if self.scrolling else Qt.ScrollBegin, centre)
+            self.scrolling = True
+            self.samples = [s for s in self.samples if now - s[0] <= SAMPLE_S] + [(now, whole.x(), whole.y())]
 
     def _lift(self):
         """The release that ends the press (made first if the finger was up before the press was due)."""
@@ -195,6 +231,15 @@ class _Gestures(QObject):
         self.pressed = False
 
     def _up(self, now):
+        if self.swiping:
+            self.swiping, self.tap_t = False, 0.0
+            self.mode = "idle"
+            self.hold.stop()
+            self._glide_from(now, self.last)
+            if self.scrolling:
+                self._wheel(QPoint(0, 0), Qt.ScrollEnd, self.last)
+            self.scrolling = False
+            return
         self._lift()
         if self.held and not self.moved:
             self.tap_t = 0.0
@@ -208,8 +253,10 @@ class _Gestures(QObject):
 
     # -- the hold: a right click when the finger is lifted where it was ----------------------------------------------------
     def _held(self):
-        if self.mode == "one" and not self.moved:
+        if self.mode == "one" and not self.moved and not self.swiping:
             self.held = True
+            if self.scroll:
+                self._press()                              # (the press a scroll area waited with)
             haptic.tick()
 
     def _right_click(self, at):
@@ -225,7 +272,9 @@ class _Gestures(QObject):
         self.defer.stop()
         if self.pressed:
             self._lift()
-        self.held = False
+        if self.swiping and self.scrolling:
+            self._wheel(QPoint(0, 0), Qt.ScrollEnd, self.last)
+        self.swiping = self.held = False
         self.tap_t = 0.0
         self.mode = "multi"
         self.prev = self.origin = self._measure(down)
@@ -255,18 +304,17 @@ class _Gestures(QObject):
             if abs(f - 1.0) >= MIN_ZOOM:
                 self._native(centre, math.log(f))
         self.rest += QPointF(cx - px, cy - py)
-        whole = QPoint(int(self.rest.x()), int(self.rest.y()))
-        if whole.x() or whole.y():
-            self.rest -= QPointF(whole)
-            self._wheel(whole, Qt.ScrollUpdate if self.scrolling else Qt.ScrollBegin, centre)
-            self.scrolling = True
-            self.samples = [s for s in self.samples if now - s[0] <= SAMPLE_S] + [(now, whole.x(), whole.y())]
+        self._scroll_by(now, centre)
 
     def _tap_or_glide(self, now):
         if self.tapping:
             if now - self.t_multi < TAP_S and self.peak in _taps:
                 _taps[self.peak]()
             return
+        self._glide_from(now, QPointF(self.prev[0], self.prev[1]))
+
+    def _glide_from(self, now, at):
+        """Let the scroll go on after the fingers lift, at the speed they had (if they were still moving)."""
         recent = [s for s in self.samples if now - s[0] <= SAMPLE_S]
         if not self.scrolling or len(recent) < 2:
             return
@@ -274,7 +322,7 @@ class _Gestures(QObject):
         vx, vy = sum(s[1] for s in recent) / span, sum(s[2] for s in recent) / span
         if math.hypot(vx, vy) >= GLIDE_MIN:
             self.speed, self.glide_t = (vx, vy), now
-            self.glide_at = QPointF(self.prev[0], self.prev[1])
+            self.glide_at = QPointF(at)
             self.rest = QPointF()
             self.glide.start()
 
@@ -300,6 +348,13 @@ class _Gestures(QObject):
         QApplication.sendEvent(self.w, ev)
 
     def _wheel(self, pixels, phase, at=None):
+        if self.scroll:                                    # (a scroll area moves by the pixels, exactly: its wheel counts lines)
+            area = self.w.parentWidget()
+            if isinstance(area, QAbstractScrollArea):
+                for bar, d in ((area.horizontalScrollBar(), pixels.x()), (area.verticalScrollBar(), pixels.y())):
+                    if d:
+                        bar.setValue(bar.value() - d)
+            return
         at = at if at is not None else QPointF(self.prev[0], self.prev[1])
         g = self.w.mapToGlobal(at.toPoint())
         ev = QWheelEvent(at, QPointF(g), pixels, pixels, Qt.NoButton, Qt.NoModifier, phase, False)
@@ -314,12 +369,29 @@ class _Gestures(QObject):
             self.sending = False
 
     def _mouse(self, kind, at, button, buttons):
-        target = self.w.childAt(at.toPoint()) or self.w            # (a box laid over the canvas gets its own clicks)
+        if kind in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick) or self.grab is None or not shiboken6.isValid(self.grab):
+            self.grab = self.w.childAt(at.toPoint()) or self.w     # (a box laid over the canvas gets its own clicks)
+        target = self.grab                                         # (and keeps the moves and the release, as under a mouse)
         local = QPointF(target.mapFrom(self.w, at.toPoint())) if target is not self.w else at
         g = QPointF(target.mapToGlobal(local.toPoint()))
         self._send(target, QMouseEvent(kind, local, g, button, buttons, Qt.NoModifier))
+        if kind == QEvent.MouseButtonRelease:
+            self.grab = None
 
 
-def enable(widget):
-    """Fingers zoom, scroll and right-click on widget (see the module notes). Returns the helper (kept alive by widget)."""
-    return _Gestures(widget)
+def enable(widget, scroll=False):
+    """Fingers zoom, scroll and right-click on widget (see the module notes; scroll: widget is a scroll area's viewport).
+    Returns the helper (kept alive by widget)."""
+    return _Gestures(widget, scroll)
+
+
+def install_scrolling():
+    """Every scroll area in the program (lists, trees, panels; not a menu's or a combo box's popup) is scrolled by one finger
+    and its items dragged after a hold, once it is shown."""
+    def shown(obj, e):
+        if isinstance(obj, QAbstractScrollArea):
+            view = obj.viewport()
+            if view is not None and not view.property("kcTouch") and obj.window().windowType() != Qt.Popup:
+                enable(view, scroll=True)
+        return False
+    appevents.watch(QApplication.instance(), [QEvent.Show], shown)

@@ -6310,6 +6310,7 @@ def run(argv):
     app = QApplication(argv)
     if sys.platform == "android":
         androidfiles.install()
+        touch.install_scrolling()                   # one finger scrolls every list and panel; a hold first, then it drags
     look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area
     # the logo (Icon.svg beside the package; Icon.free is its Lunacy source) on every window;

@@ -31,6 +31,8 @@ def font_dirs():
             out.append(os.path.join(local, "Microsoft", "Windows", "Fonts"))
     elif sys.platform == "darwin":
         out += ["/System/Library/Fonts", "/Library/Fonts", os.path.expanduser("~/Library/Fonts")]
+    elif sys.platform == "android":
+        out.append("/system/fonts")
     else:
         out += ["/usr/share/fonts", "/usr/local/share/fonts", os.path.expanduser("~/.fonts"),
                 os.path.expanduser("~/.local/share/fonts")]

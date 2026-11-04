@@ -35,6 +35,7 @@ FALLBACK_FONTS = [
     r"C:\Windows\Fonts\GenSekiGothic2-M.ttc", r"C:\Windows\Fonts\msjh.ttc",
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/system/fonts/NotoSansCJK-Regular.ttc",       # Android
 ]
 _fonts = {}
 MAX_FONTS = 24      # a CJK face is ~10 MB in memory: a size that is animated asks for a new one every frame

@@ -62,7 +62,8 @@ class ExportDialog(QDialog):
         form.addRow("檔案", row)
         self.format_box = QComboBox()
         for f in formats.FORMATS:
-            self.format_box.addItem(f.label, f.key)
+            if formats.usable(f):                         # (not the ones this ffmpeg has no encoder for)
+                self.format_box.addItem(f.label, f.key)
         self.format_box.setCurrentIndex(max(0, self.format_box.findData(formats.get(spec.get("format")).key)))
         form.addRow("格式", self.format_box)
         self.whole = QRadioButton(f"整部影片（{self._tc(0)} – {self._tc(length)}）")

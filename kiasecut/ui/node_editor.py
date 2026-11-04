@@ -41,7 +41,7 @@ SNAP_R = 28.0                                              # (a dragged link thi
 LINK_W = 5.0                                               # (the width of a placed link)
 DRAG_W = 7.0                                               # (and of one being dragged)
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
-PLOT_H = {"curve": 190.0, "gradient": 30.0}          # the height of a curve / gradient parameter in a node (a curve is edited right there: its plot and buttons)
+PLOT_H = {"curve": 190.0, "gradient": 96.0}          # the height of a curve / gradient parameter in a node (a curve is edited right there: its plot and buttons)
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
 HEADS = {ng.STRING: "#a8473f", ng.FONT: "#a8473f", ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
          "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
@@ -252,12 +252,17 @@ class NodeItem(QGraphicsItem):
         self.h = y + PAD
 
     def _inline_curves(self):
-        """A curve parameter is edited in place: the keyframe editor's plot and its buttons, over the row of its picture."""
+        """A curve or gradient parameter is edited in place: the keyframe editor's plot and its buttons, the ramp's bar and
+        its stop's fields, over the row of its picture."""
         from .curvefield import CurveField
+        from .gradientbar import GradientEditor
         for r in self.rows:
-            if r["kind"] != "plot" or r["p"] is None or r["p"].type != "curve":
+            if r["kind"] != "plot" or r["p"] is None:
                 continue
             q = r["p"]
+            if q.type == "gradient":
+                self._inline_gradient(r, q, GradientEditor(compact=True))
+                continue
             w = CurveField(compact=True)
             box = self.field_rect(r)
             proxy = QGraphicsProxyWidget(self)
@@ -268,11 +273,26 @@ class NodeItem(QGraphicsItem):
             w.finished.connect(lambda keys, q=q: self.editor.curve_done(self.nid, q, keys))
             self.inline.append((q, w))
 
+    def _inline_gradient(self, r, q, w):
+        box = self.field_rect(r)
+        proxy = QGraphicsProxyWidget(self)
+        proxy.setWidget(w)
+        proxy.setGeometry(box.adjusted(-4, 0, 4, 0))
+        w.set_stops(fx.gradient_stops(self.editor.node_values(self.nid).get(q.name)))
+        w.bar.sampler = self.ramp_sampler                  # (the bar shows the node's own interpolation)
+        w.bar.changed.connect(lambda stops, q=q: self.editor.curve_live(self.nid, q, stops))      # (a drag: the node and the preview follow)
+        w.bar.committed.connect(lambda stops, q=q: self.editor.curve_done(self.nid, q, stops))
+        self.inline.append((q, w))
+
     def refresh_inline(self):
         """The curves again from the parameters (an undo, a keyframe, another view of the same node changed them)."""
         vals = self.editor.node_values(self.nid)
         for q, w in self.inline:
-            w.set_value(vals.get(q.name))
+            if q.type == "gradient":
+                w.set_stops(fx.gradient_stops(vals.get(q.name)))
+                w.bar.update()
+            else:
+                w.set_value(vals.get(q.name))
 
     def shown_outputs(self):
         """[(name, label)] of the outputs the node shows (@show on an @output: Blender's sockets that depend on the settings)."""
@@ -505,9 +525,7 @@ class NodeItem(QGraphicsItem):
             return
         q = r["p"]
         v = vals.get(q.name)
-        if kind == "plot":                                  # a gradient: drawn, click to edit it (a curve is its own widget)
-            if q.type != "curve":
-                self._plot(p, self.field_rect(r), q, v, bg, self.ramp_options(vals))
+        if kind == "plot":                                  # (a curve or a gradient is its own widget)
             return
         if q.type in ("float", "int"):
             box = self.field_rect(r)
@@ -556,6 +574,11 @@ class NodeItem(QGraphicsItem):
                            QColor("#9a9a9a") if (i + j) % 2 else QColor("#6a6a6a"))
         p.drawImage(at, img)
 
+    def ramp_sampler(self, stops, x):
+        """The colour at x of stops as the node's interpolation makes it; None while it is the plain linear one."""
+        opts = self.ramp_options(self.editor.node_values(self.nid))
+        return None if opts == (2, 0, 0) else fx.gradient_color(stops, x, *opts)
+
     def ramp_options(self, vals):
         """(interp, mode, hue) the node's own choices make its gradient picture go by (a Color Ramp's), as the shader's numbers."""
         d = vals.d
@@ -563,39 +586,6 @@ class NodeItem(QGraphicsItem):
             return (2, 0, 0)
         idx = lambda n: next((max(0, q.items.index(vals.named[n])) if vals.named.get(n) in q.items else 0) for q in d.params if q.name == n)
         return (RAMP_INTERP[idx("interp")] if idx("interp") < len(RAMP_INTERP) else 2, idx("mode"), idx("hue"))
-
-    @staticmethod
-    def _plot(p, box, q, v, bg, opts=(2, 0, 0)):
-        p.setPen(QPen(QColor(0, 0, 0, 90), 1))
-        if q.type == "gradient":
-            from PySide6.QtGui import QLinearGradient
-            n = 6
-            for i in range(int(box.width() // n) + 1):                    # (the checkerboard that shows opacity)
-                for j in range(int(box.height() // n) + 1):
-                    p.fillRect(QRectF(box.left() + i * n, box.top() + j * n, n, n).intersected(box),
-                               QColor("#cfcfcf") if (i + j) % 2 else QColor("#8a8a8a"))
-            g = QLinearGradient(box.left(), 0, box.right(), 0)
-            stops = fx.gradient_stops(v)
-            if opts == (2, 0, 0):
-                for x, c in stops:
-                    g.setColorAt(x, QColor.fromRgbF(*c))
-            else:                                                       # (the node's interpolation: sampled along the bar)
-                for i in range(65):
-                    g.setColorAt(i / 64, QColor.fromRgbF(*fx.gradient_color(stops, i / 64, *opts)))
-            p.setBrush(g)
-            p.drawRoundedRect(box, 3, 3)
-            return
-        p.setBrush(bg)
-        p.drawRoundedRect(box, 3, 3)
-        ys = fx.curve_samples(v, 48)
-        lo, hi = min(0.0, min(ys)), max(1.0, max(ys))
-        pts = QPainterPath()
-        for i, y in enumerate(ys):
-            pt = QPointF(box.left() + 3 + (box.width() - 6) * i / (len(ys) - 1), box.bottom() - 3 - (box.height() - 6) * (y - lo) / (hi - lo))
-            pts.moveTo(pt) if i == 0 else pts.lineTo(pt)
-        p.setPen(QPen(QColor("#f0a030"), 1.5))
-        p.setBrush(Qt.NoBrush)
-        p.drawPath(pts)
 
     @staticmethod
     def _box(p, box, colour):
@@ -1594,37 +1584,6 @@ class WordsEdit(QPlainTextEdit):
         self.lost.emit()
 
 
-class EditorFrame(QFrame):
-    """A small editor (curve / gradient) over the window, closed by a click outside it or Esc. It is a child of the
-    window, not a popup of its own, so what it opens - the colour picker - is not cut off by its edges."""
-
-    def __init__(self, window):
-        super().__init__(window)
-        self.setAutoFillBackground(True)
-        self.setFocusPolicy(Qt.StrongFocus)
-
-    def arm(self):
-        QApplication.instance().installEventFilter(self)
-
-    def close_editor(self):
-        QApplication.instance().removeEventFilter(self)
-        self.hide()
-        self.deleteLater()
-
-    def eventFilter(self, obj, e):
-        from .inplace import Overlay
-        if e.type() == QEvent.MouseButtonPress and isinstance(obj, QWidget):
-            w = obj
-            while w is not None and w is not self and not isinstance(w, Overlay):
-                w = w.parentWidget()
-            if w is None and self.isVisible():                 # (outside it and outside what it opened)
-                self.close_editor()
-        elif e.type() == QEvent.KeyPress and e.key() == Qt.Key_Escape and self.isVisible() and not QApplication.activePopupWidget():
-            self.close_editor()
-            return True
-        return False
-
-
 class ParamPanel(QWidget):
     """The 參數 panel (N), as Blender's group interface: the effect's own parameters in a list - name, type (a number: 浮點 /
     整數), range and default - to edit, move up / down and delete. Dragging a link out of a 參數輸入 socket still adds one."""
@@ -1728,7 +1687,6 @@ class ParamPanel(QWidget):
 
 
 class NodeEditor(QWidget):
-    _popup_editor = None
     addRequested = Signal(str, dict, float, float)          # effect id, node ({"type", "ref" / "kind"}), x, y
     removeRequested = Signal(str, list)                     # effect id, node ids
     connectRequested = Signal(str, str, str, str, str)      # effect id, from node, to node, socket, the output (a parameter's name; "": picture)
@@ -2208,14 +2166,6 @@ class NodeEditor(QWidget):
         q = row["p"]
         key = ng.param_key(nid, q.name)
         v = self.node_values(nid).get(q.name)
-        if kind == "plot":
-            def live(value):                                   # (dragging a stop: the node's picture and the preview follow at once)
-                if not curves.is_animated(self.params.get(key)):
-                    self.params[key] = value
-                self.view.viewport().update()
-                self.paramLive.emit(self.eid, "fx:" + self.eid, key, value)
-            self.edit_popup(q, v, lambda value: self.paramEdited.emit(self.eid, key, value), gp, live)
-            return
         if q.type == "bool":
             self.paramEdited.emit(self.eid, key, not bool(v))
         elif q.type == "menu":
@@ -2228,40 +2178,6 @@ class NodeEditor(QWidget):
                        live=lambda c: self.paramLive.emit(self.eid, "fx:" + self.eid, key, c))
         elif q.type in ("float", "int", "vec2", "vec3"):
             self._type_number(item, row, cell)
-
-    def edit_popup(self, q, v, done, pos, live=None):
-        """The curve or gradient editor of the 效果 panel in a small window at pos; done(value) hears every change."""
-        from PySide6.QtWidgets import QFrame
-        from .curvefield import CurveField
-        from .gradientbar import GradientEditor
-        if self._popup_editor is not None and shiboken6.isValid(self._popup_editor):
-            self._popup_editor.close_editor()
-        frame = EditorFrame(self.window())
-        frame.setFrameShape(QFrame.StyledPanel)
-        lay = QVBoxLayout(frame)
-        lay.setContentsMargins(6, 6, 6, 6)
-        if q.type == "curve":
-            w = CurveField()
-            w.set_value(v)
-            frame.setMinimumWidth(320)
-        else:
-            w = GradientEditor()
-            w.set_stops(fx.gradient_stops(v))
-            frame.setMinimumWidth(360)
-        if live is not None and q.type == "gradient":         # (the bar tells a drag from its end: the drag only shows, the end is the edit)
-            w.bar.changed.connect(live)
-            w.bar.committed.connect(done)
-        else:
-            w.changed.connect(done)
-        lay.addWidget(w)
-        frame.adjustSize()
-        win = self.window()
-        at = win.mapFromGlobal(pos)
-        frame.move(max(0, min(at.x(), win.width() - frame.width())), max(0, min(at.y(), win.height() - frame.height())))
-        frame.show()
-        frame.raise_()
-        frame.arm()
-        self._popup_editor = frame
 
     def _pick(self, nid, colour, done, item, row, live=None):
         from .colorpick import pick_color, qcolor, rgba

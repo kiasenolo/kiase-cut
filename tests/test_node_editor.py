@@ -763,14 +763,11 @@ class NodeEditorTests(unittest.TestCase):
         plots = [r for r in it.rows if r["kind"] == "plot"]
         self.assertEqual([r["p"].type for r in plots], ["curve", "gradient"])
         self.assertGreater(plots[0]["h"], plots[1]["h"])
-        popups, got = [], []
-        ed.edit_popup = lambda q, v, done, pos, live=None: popups.append((q.type, done))
+        got = []
         ed.paramEdited.connect(lambda *a: got.append(a))
-        self.assertEqual([q.name for q, _w in it.inline], ["c"])                  # (a curve is edited right in the node)
-        at = ed.view.mapFromScene(it.mapToScene(it.field_rect(plots[1]).center()))
-        QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, Qt.NoModifier, at)     # (a gradient in a popup)
-        self.assertEqual([t for t, _ in popups], ["gradient"])
-        popups[0][1]([[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]])
+        self.assertEqual([q.name for q, _w in it.inline], ["c", "g"])             # (both are edited right in the node)
+        grad = dict((q.name, w) for q, w in it.inline)["g"]
+        grad.bar.committed.emit([[0.0, [1, 0, 0, 1]], [1.0, [0, 0, 1, 1]]])
         self.assertEqual(got[-1][1], nid + ".g")
 
     def test_ramp_drag_is_live_and_its_end_is_the_edit(self):
@@ -783,13 +780,11 @@ class NodeEditorTests(unittest.TestCase):
         ed = self.make(add)
         nid = made[0]
         it = ed.view.items_by_id[nid]
-        row = next(r for r in it.rows if r["kind"] == "plot")
         live, done = [], []
         ed.paramLive.connect(lambda *a: live.append(a))
         ed.paramEdited.connect(lambda *a: done.append(a))
-        at = ed.view.mapFromScene(it.mapToScene(it.field_rect(row).center()))
-        QTest.mouseClick(ed.view.viewport(), Qt.LeftButton, Qt.NoModifier, at)
-        w = ed._popup_editor.findChild(GradientEditor)
+        w, = [w for q, w in it.inline if q.type == "gradient"]
+        self.assertIsInstance(w, GradientEditor)
         stops = [[0.0, [1, 0, 0, 1]], [0.4, [0, 1, 0, 1]], [1.0, [0, 0, 1, 1]]]
         w.bar.changed.emit(stops)                                    # (dragging)
         self.assertEqual((len(live), len(done)), (1, 0))

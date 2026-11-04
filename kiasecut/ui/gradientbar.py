@@ -43,6 +43,7 @@ class GradientBar(QWidget):
         self.stops = [[0.0, [1, 1, 1, 1]], [1.0, [0, 0, 0, 1]]]
         self.sel = 0
         self.dragging = False
+        self.sampler = None            # (stops, x) -> rgba or None: a node's own interpolation drawn instead of the plain one
         self.setFixedHeight(BAR_H + MARK * 2 + 14)
         self.setFocusPolicy(Qt.ClickFocus)
         self.setMouseTracking(True)
@@ -88,8 +89,12 @@ class GradientBar(QWidget):
                 p.fillRect(QRectF(b.left() + i * n, b.top() + j * n, n, n).intersected(b),
                            QColor("#cfcfcf") if (i + j) % 2 else QColor("#8a8a8a"))
         g = QLinearGradient(b.left(), 0, b.right(), 0)
-        for x, c in self.stops:
-            g.setColorAt(x, _color(c))
+        if self.sampler is not None and self.sampler(self.stops, 0.0) is not None:
+            for i in range(65):
+                g.setColorAt(i / 64, _color(self.sampler(self.stops, i / 64)))
+        else:
+            for x, c in self.stops:
+                g.setColorAt(x, _color(c))
         p.fillRect(b, QBrush(g))
         p.setPen(QPen(QColor("#555"), 1))
         p.setBrush(Qt.NoBrush)
@@ -202,7 +207,8 @@ class GradientEditor(QWidget):
     """The bar with the selected stop's 位置 / 顏色 / 刪除 and 反轉 under it."""
     changed = Signal(list)
 
-    def __init__(self):
+    def __init__(self, compact=False):
+        """compact: for inside a node - the buttons are marks and the place box is narrow."""
         super().__init__()
         from .inspector import SpinBox                 # (the inspector builds this editor: imported late)
         lay = QVBoxLayout(self)
@@ -220,8 +226,15 @@ class GradientEditor(QWidget):
         self.place.setToolTip("選取的色標的位置")
         self.color = QPushButton()
         self.color.setToolTip("選取的色標的顏色和透明度")
-        remove = QPushButton("刪除")
-        reverse = QPushButton("反轉")
+        remove = QPushButton("✕" if compact else "刪除")
+        reverse = QPushButton("⇄" if compact else "反轉")
+        if compact:
+            self.place.setFixedWidth(62)
+            self.color.setMinimumWidth(40)
+            for b, tip in ((remove, "刪除選取的色標"), (reverse, "反轉色標的順序")):
+                b.setToolTip(tip)
+                b.setFixedWidth(26)
+                b.setStyleSheet("padding: 4px 0;")
         for w in (self.place, self.color, remove, reverse):
             row.addWidget(w, 1 if w is self.color else 0)
         lay.addLayout(row)

@@ -22,7 +22,7 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
-                               QInputDialog, QLabel, QLineEdit, QMainWindow, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
+                               QInputDialog, QLabel, QLineEdit, QMainWindow, QMenuBar, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
                                QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTabBar, QToolBar,
                                QVBoxLayout,
                                QWidget)
@@ -917,6 +917,7 @@ class MainWindow(QMainWindow):
         self.apply_library_root(self.library_root())
         self.start_font_scan()
         self._menus()
+        self._global_menu()
         self.start_layout()
         self._update_title()
         self._update_crumb()
@@ -924,6 +925,23 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("檔案 > 新專案…（或開啟最近的專案、匯入剪映草稿）")
 
     # -- menus ------------------------------------------------------------------------------------
+    def _global_menu(self):
+        """The same menus in the desktop's global menu bar too (KDE's at the top of the screen), as well as in the window:
+        a second menu bar of the window's, made native, with the actions of the first. Where the platform has no
+        global menu it is not native, and is not kept."""
+        self.menuBar().setNativeMenuBar(False)                    # (the one in the window stays here, and animated)
+        self.global_bar = None
+        if sys.platform == "android":
+            return
+        bar = QMenuBar(self)
+        bar.setNativeMenuBar(True)
+        if not bar.isNativeMenuBar():
+            bar.deleteLater()
+            return
+        for a in self.menuBar().actions():
+            bar.addAction(a)
+        self.global_bar = bar
+
     def _menus(self):
         def add(menu, text, key, fn):
             a = QAction(text, self)
@@ -6307,7 +6325,8 @@ def run(argv):
         # pw_stream_connect); its PulseAudio one (PipeWire serves it too) does not.
         # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
-    QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)        # the menus are ours, in the window (a global menu cannot be animated)
+    if sys.platform == "android":
+        QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)       # the menus in the window, not behind the system's "..."
     app = QApplication(argv)
     if sys.platform == "android":
         androidfiles.install()

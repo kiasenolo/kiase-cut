@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
 
 from .. import assets, textures, build, components, curves, edit, mapping, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
-from . import icons
+from . import icons, motion
 from .colorpick import pick_color, qcolor, rgba
 from .library import PictureDrop
 from . import ask
@@ -175,6 +175,7 @@ class SpinBox(QDoubleSpinBox):
         self._typed = False              # the user typed over "--" and has not finished yet
         self._scrub = None               # press position / value while dragging the number
         self._wrap = WrapDrag(self.lineEdit(), axes="y")
+        self._hop = motion.Hop(self.lineEdit())          # (the number hops up as it grows, down as it shrinks)
         self.editing = False             # typing (after a click), until Enter / leaving
         self.valueChanged.connect(self._changed)
         self.lineEdit().textEdited.connect(self._typing)
@@ -216,6 +217,7 @@ class SpinBox(QDoubleSpinBox):
                 hi = min(hi, max(self.soft[1], self._scrub["v"]))
             v = min(max(v, lo), hi)
             if abs(v - self.value()) > 1e-12 or self.mixed:
+                self._hop.kick(1 if v > self.value() else -1)
                 self.mixed = False
                 self.setValue(v)
             return True

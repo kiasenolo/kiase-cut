@@ -163,5 +163,64 @@ class FieldTest(unittest.TestCase):
         host.close()
 
 
+class HopTest(unittest.TestCase):
+    def make(self):
+        from kiasecut.ui.inspector import SpinBox
+        host = QWidget()
+        lay = QHBoxLayout(host)
+        sp = SpinBox()
+        sp.setRange(0, 100)
+        sp.setValue(42)
+        lay.addWidget(sp)
+        host.resize(120, 50)
+        host.show()
+        QTest.qWait(60)
+        return host, sp
+
+    def test_a_number_that_grows_hops_up_and_one_that_shrinks_hops_down_and_both_come_to_rest(self):
+        host, sp = self.make()
+        hop = sp._hop
+        hop.kick(1)
+        self.assertEqual(hop.off, motion.HOP_PX)
+        m = sp.lineEdit().textMargins()
+        self.assertGreater(m.bottom(), 0)
+        self.assertEqual(m.top(), 0)
+        QTest.qWait(motion.HOP_MS + 100)
+        self.assertEqual(sp.lineEdit().textMargins().bottom(), 0)
+        hop.kick(-1)
+        self.assertEqual(hop.off, -motion.HOP_PX)
+        self.assertGreater(sp.lineEdit().textMargins().top(), 0)
+        QTest.qWait(motion.HOP_MS + 100)
+        self.assertEqual((sp.lineEdit().textMargins().top(), sp.lineEdit().textMargins().bottom()), (0, 0))
+        host.close()
+
+    def test_a_hop_that_has_just_begun_is_not_restarted_by_the_next_step_the_same_way(self):
+        host, sp = self.make()
+        hop = sp._hop
+        hop.kick(1)
+        QTest.qWait(150)
+        late = hop.off
+        hop.kick(1)                                          # (past the first third: a new hop)
+        self.assertEqual(hop.off, motion.HOP_PX)
+        hop.kick(1)
+        QTest.qWait(10)
+        self.assertLess(hop.off, motion.HOP_PX)              # (the one that began just now runs on)
+        hop.kick(-1)                                         # (the other way: at once)
+        self.assertEqual(hop.off, -motion.HOP_PX)
+        host.close()
+
+    def test_dragging_the_number_kicks_it_the_way_the_value_goes(self):
+        host, sp = self.make()
+        QTest.mousePress(sp.lineEdit(), Qt.LeftButton, Qt.NoModifier, QPoint(20, 10))
+        sp._hop.kick = lambda d: seen.append(d)
+        seen = []
+        QTest.mouseMove(sp.lineEdit(), QPoint(20, 2))
+        QTest.mouseMove(sp.lineEdit(), QPoint(20, 14))
+        QTest.mouseRelease(sp.lineEdit(), Qt.LeftButton, Qt.NoModifier, QPoint(20, 14))
+        self.assertIn(1, seen)
+        self.assertIn(-1, seen)
+        host.close()
+
+
 if __name__ == "__main__":
     unittest.main()

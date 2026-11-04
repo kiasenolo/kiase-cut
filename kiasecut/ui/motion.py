@@ -293,3 +293,46 @@ def attach_field(widget):
     if isinstance(widget, QLineEdit) and not widget.hasFrame():
         return
     widget.setProperty("kcField", FieldFader(widget))
+
+
+# -- the hop of a number being dragged ------------------------------------------------------------------------------------
+# A number dragged up (bigger) hops up, dragged down (smaller) hops down: the text is kicked HOP_PX that way at once and springs
+# back past where it was (OutBack) and settles. A line edit has no offset for its text, but it has margins: more room under the
+# text lifts it, more above lowers it (by half the margin).
+
+HOP_PX = 3
+HOP_MS = 380
+
+
+class Hop(QObject):
+    def __init__(self, edit):
+        super().__init__(edit)
+        self.edit = edit
+        self.dir = 0
+        self.off = 0.0                        # pixels, up is positive
+        self.anim = QVariantAnimation(self)
+        c = QEasingCurve(QEasingCurve.OutBack)
+        c.setOvershoot(2.5)
+        self.anim.setEasingCurve(c)
+        self.anim.setDuration(HOP_MS)
+        self.anim.setStartValue(1.0)
+        self.anim.setEndValue(0.0)
+        self.anim.valueChanged.connect(lambda v: self._set(self.dir * HOP_PX * float(v)))
+        self.anim.finished.connect(lambda: self._set(0.0))
+
+    def _set(self, off):
+        self.off = off
+        n = round(2 * abs(off))
+        self.edit.setTextMargins(0, n if off < 0 else 0, 0, n if off > 0 else 0)
+
+    def kick(self, direction):
+        """The number went up (1) or down (-1)."""
+        if not direction or not self.edit.isVisible():
+            return
+        running = self.anim.state() == QVariantAnimation.Running
+        if running and direction == self.dir and self.anim.currentTime() < HOP_MS * 0.3:
+            return                            # (a hop that has only just begun goes on: a fast drag is not a shiver)
+        self.anim.stop()
+        self.dir = 1 if direction > 0 else -1
+        self._set(self.dir * HOP_PX)
+        self.anim.start()

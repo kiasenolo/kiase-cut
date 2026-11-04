@@ -6,6 +6,8 @@ itself, in that colour), so a push or tool button paints itself: its Fader takes
 text from the two colours it keeps, the fill and the ink. The Fader watches the button (mouse in and out, press, release, checked,
 enabled) and moves both colours to what the new state asks, in the time that state asks (0 for the mouse arriving: no tween).
 """
+import re
+
 import shiboken6
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPen, QPixmap
@@ -56,6 +58,7 @@ class Fader(QObject):
         self.flat = isinstance(button, QToolButton) or button.objectName() == "tool"       # (no fill at rest: an icon on the panel)
         self.bg, self.ink = self.want()[:2]
         self.src = self.dst = (self.bg, self.ink)
+        self._sheet, self._swatch = "", None
         self.anim = QVariantAnimation(self)
         self.anim.setStartValue(0.0)
         self.anim.setEndValue(1.0)
@@ -76,6 +79,17 @@ class Fader(QObject):
         if b.isCheckable() and b.isChecked():
             return GREY, WHITE, FADE_MS
         return (GONE if self.flat else REST), WHITE, FADE_MS
+
+    def swatch(self):
+        """(fill, ink) a button asks for in its own style sheet ("background: #rrggbb; color: #000" - the colour buttons), or None."""
+        sheet = self.button.styleSheet()
+        if not sheet:
+            return None
+        if sheet != self._sheet:
+            self._sheet = sheet
+            fill = _sheet_colour(sheet, r"background(?:-color)?")
+            self._swatch = None if fill is None else (fill, _sheet_colour(sheet, r"color"))
+        return self._swatch
 
     def sync(self, jump=False):
         if not shiboken6.isValid(self.button):               # (the button went before a deferred sync came)
@@ -104,9 +118,26 @@ class Fader(QObject):
     def paint(self):
         """The whole button: fill, then icon and text in the ink."""
         b = self.button
+        if self.want()[:2] != self.dst and self.anim.state() != QVariantAnimation.Running:
+            QTimer.singleShot(0, self.sync)                  # (a state changed without a signal, a blocked toggled: catch up)
         p = QPainter(b)
         p.setRenderHint(QPainter.Antialiasing)
-        p.fillRect(b.rect(), self.bg)
+        swatch = self.swatch()
+        ink = self.ink
+        if swatch is not None:                               # a colour button: its colour, in a frame that lights as a button does
+            fill, own = swatch
+            p.fillRect(b.rect(), fill)
+            ink = own if own is not None else (BLACK if fill.lightness() > 140 else WHITE)
+            if self.bg.alpha():
+                frame = QPen(self.bg, 2)
+                frame.setJoinStyle(Qt.MiterJoin)
+                p.setPen(frame)
+                p.setBrush(Qt.NoBrush)
+                p.setRenderHint(QPainter.Antialiasing, False)
+                p.drawRect(b.rect().adjusted(1, 1, -1, -1))
+                p.setRenderHint(QPainter.Antialiasing)
+        else:
+            p.fillRect(b.rect(), self.bg)
         tool = isinstance(b, QToolButton)
         text = b.text().replace("&&", "\0").replace("&", "").replace("\0", "&")
         if tool and b.toolButtonStyle() == Qt.ToolButtonIconOnly and not b.icon().isNull():
@@ -122,8 +153,8 @@ class Fader(QObject):
             state = QIcon.On if b.isChecked() else QIcon.Off
             if not enabled:
                 pm = icon.pixmap(size, dpr, QIcon.Disabled, state)
-            elif self.dark():
-                pm = tinted(icon, size, self.ink, dpr, state)
+            elif (ink.alpha() == 255 and ink.lightness() < 250):
+                pm = tinted(icon, size, ink, dpr, state)
             else:
                 pm = icon.pixmap(size, dpr, QIcon.Normal, state)
         fm = b.fontMetrics()
@@ -134,7 +165,7 @@ class Fader(QObject):
             total_h = size.height() + 2 + fm.height()
             top = area.center().y() - total_h // 2
             p.drawPixmap(QRect(area.center().x() - size.width() // 2, top, size.width(), size.height()), pm)
-            p.setPen(self.ink)
+            p.setPen(ink)
             p.drawText(QRect(area.left(), top + size.height() + 2, area.width(), fm.height()), Qt.AlignHCenter | Qt.AlignTop, text)
         else:
             total = (size.width() if pm is not None else 0) + gap + tw
@@ -143,14 +174,14 @@ class Fader(QObject):
                 p.drawPixmap(QRect(x, area.center().y() - size.height() // 2, size.width(), size.height()), pm)
                 x += size.width() + gap
             if text:
-                p.setPen(self.ink)
+                p.setPen(ink)
                 p.drawText(QRect(x, area.top(), tw + 2, area.height()), Qt.AlignVCenter | Qt.AlignLeft, text)
         if has_menu:                                  # (the chevron of a button that opens a menu)
             from . import look
             chevron = look.arrow_icon("-down")
             at = QRect(b.rect().right() - 15 + 1, b.height() // 2 - 6, 12, 12)
-            if self.dark():
-                p.drawPixmap(at, tinted(chevron, QSize(12, 12), self.ink, b.devicePixelRatioF()))
+            if (ink.alpha() == 255 and ink.lightness() < 250):
+                p.drawPixmap(at, tinted(chevron, QSize(12, 12), ink, b.devicePixelRatioF()))
             else:
                 chevron.paint(p, at)
         p.end()
@@ -163,6 +194,19 @@ class Fader(QObject):
                         QEvent.MouseButtonDblClick, QEvent.EnabledChange, QEvent.Show, QEvent.KeyPress, QEvent.KeyRelease):
             QTimer.singleShot(0, self.sync)          # (after the button has handled it: isDown and the rest are then true)
         return False
+
+
+def _sheet_colour(sheet, prop):
+    """The colour a style sheet gives for prop ("background", "color"), or None."""
+    m = re.search(r"(?<![-\w])" + prop + r"\s*:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|[a-zA-Z]+)", sheet)
+    if m is None:
+        return None
+    text = m.group(1)
+    if text.startswith("rgb"):
+        nums = [float(x) for x in re.findall(r"[\d.]+", text)]
+        return QColor(*(int(x) for x in nums[:3])) if len(nums) >= 3 else None
+    c = QColor(text)
+    return c if c.isValid() else None
 
 
 def of(widget):
@@ -368,6 +412,7 @@ class Toggle(QObject):
         self.button = button
         self.on = 1.0 if button.isChecked() else 0.0
         self.hover = 0.0
+        self.goal = self.want()
         self.anims = {}
         for name in ("on", "hover"):
             a = QVariantAnimation(self)
@@ -391,7 +436,8 @@ class Toggle(QObject):
     def sync(self):
         if not shiboken6.isValid(self.button):
             return
-        for name, target in zip(("on", "hover"), self.want()):
+        self.goal = self.want()
+        for name, target in zip(("on", "hover"), self.goal):
             a = self.anims[name]
             if a.state() == QVariantAnimation.Running and a.endValue() == target:
                 continue
@@ -423,6 +469,8 @@ def paint_indicator(painter, option, widget, radio):
     st = option.state
     t = widget.property("kcToggle") if widget is not None else None
     if t is not None:
+        if t.want() != t.goal:
+            QTimer.singleShot(0, t.sync)                      # (it was ticked without a signal: catch up)
         on, hover = t.on, t.hover
     else:
         on = 1.0 if st & (QStyle.State_On | QStyle.State_NoChange) else 0.0

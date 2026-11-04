@@ -404,5 +404,72 @@ class ScrollBarTest(unittest.TestCase):
         host.close()
 
 
+class CatchUpTest(unittest.TestCase):
+    def test_a_button_checked_with_its_signals_blocked_still_shows_it(self):
+        host = QWidget()
+        lay = QHBoxLayout(host)
+        a, b = QPushButton("自動寬度"), QPushButton("自動高度")
+        for x in (a, b):
+            x.setCheckable(True)
+            lay.addWidget(x)
+        host.resize(300, 60)
+        host.show()
+        QTest.qWait(60)
+        QTest.mouseMove(host, QPoint(299, 59))
+        QTest.qWait(30)
+        a.setChecked(True)
+        QTest.qWait(motion.FADE_MS + 100)
+        a.blockSignals(True)                                  # (a panel showing another value: one goes off, the other on, silently)
+        b.blockSignals(True)
+        a.setChecked(False)
+        b.setChecked(True)
+        a.blockSignals(False)
+        b.blockSignals(False)
+        QTest.qWait(motion.FADE_MS + 200)
+        self.assertEqual(motion.of(a).bg, motion.REST)
+        self.assertEqual(motion.of(b).bg, motion.GREY)
+        host.close()
+
+    def test_a_box_ticked_with_its_signals_blocked_still_shows_it(self):
+        host = QWidget()
+        lay = QHBoxLayout(host)
+        cb = QCheckBox("勾")
+        lay.addWidget(cb)
+        host.resize(120, 60)
+        host.show()
+        QTest.qWait(60)
+        cb.blockSignals(True)
+        cb.setChecked(True)
+        cb.blockSignals(False)
+        QTest.qWait(motion.ON_MS + 200)
+        self.assertAlmostEqual(cb.property("kcToggle").on, 1.0, places=2)
+        host.close()
+
+
+class SwatchTest(unittest.TestCase):
+    def test_a_colour_button_shows_its_colour_and_keeps_it_under_the_mouse(self):
+        host = QWidget()
+        lay = QHBoxLayout(host)
+        a, b = QPushButton("#336699"), QPushButton("x")
+        a.setStyleSheet("background: #336699; color: #fff;")
+        b.setStyleSheet("background: rgb(200,100,50); color: #000;")
+        lay.addWidget(a)
+        lay.addWidget(b)
+        host.resize(300, 60)
+        host.show()
+        QTest.qWait(60)
+        QTest.mouseMove(host, QPoint(299, 59))
+        QTest.qWait(30)
+        img = a.grab().toImage()
+        self.assertEqual(img.pixelColor(a.width() // 2, 6).name(), "#336699")
+        self.assertEqual(b.grab().toImage().pixelColor(b.width() // 2, 6).name(), "#c86432")
+        QTest.mouseMove(a, QPoint(a.width() // 2, a.height() // 2))
+        QTest.qWait(40)
+        img = a.grab().toImage()
+        self.assertEqual(img.pixelColor(a.width() // 2, 6).name(), "#336699")             # (still its colour)
+        self.assertEqual(img.pixelColor(a.width() // 2, 0).name(), "#ffffff")              # (in a frame that went white)
+        host.close()
+
+
 if __name__ == "__main__":
     unittest.main()

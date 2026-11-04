@@ -990,6 +990,7 @@ class NodeEditorTests(unittest.TestCase):
         ed.select("math1")
         QTest.keyClick(v, Qt.Key_G)
         self.assertIsNotNone(v.carrying)
+        self.assertTrue(v.wrap.on)                                   # (endless: the pointer wraps at the edges)
         it = v.items_by_id["math1"]
         at = it.pos()
         here = v.mapToScene(v.mapFromGlobal(v.cursor().pos()))
@@ -1000,6 +1001,7 @@ class NodeEditorTests(unittest.TestCase):
         self.assertGreater(it.pos().x(), at.x() + 60)
         QTest.keyClick(v, Qt.Key_Return)                             # Enter keeps it where it is
         self.assertIsNone(v.carrying)
+        self.assertFalse(v.wrap.on)
         self.assertEqual(list(moved[-1]), ["math1"])
         QTest.keyClick(v, Qt.Key_G)
         v._carry_to(here + QPointF(400, 200), False)

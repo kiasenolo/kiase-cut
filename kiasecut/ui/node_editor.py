@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, 
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
+from . import appevents
 from .wheel import pinch as wheel_pinch
 from .wrapdrag import WrapDrag
 
@@ -962,6 +963,7 @@ class GraphView(QGraphicsView):
         self.grabbed = None                      # the id of the node the left button went down on
         self.swallow = False                     # the release after the click that put carried nodes down
         self.carrying = None                     # nodes just made, stuck to the pointer till a click: {ids, off, remove}
+        self.wrap = WrapDrag(self.viewport())    # (G: endless, the pointer wraps at the edges as in a middle-button drag)
         self.viewport().setMouseTracking(True)         # (carried nodes follow the pointer with no button down)
         self.setAcceptDrops(True)
 
@@ -1030,6 +1032,8 @@ class GraphView(QGraphicsView):
         self.carrying = {"ids": ids, "remove": remove, "grab": grab, "start": {i: self.items_by_id[i].pos() for i in ids},
                          "off": off}
         self.press_at = {i: (p.x(), p.y()) for i, p in self.carrying["start"].items()}
+        if grab and not self.wrap.on:
+            self.wrap.start()
         self.setFocus()
         self._carry_to(self.mapToScene(self.mapFromGlobal(QCursor.pos())), False)
 
@@ -1050,6 +1054,8 @@ class GraphView(QGraphicsView):
 
     def _put_down(self, cancel):
         c, self.carrying = self.carrying, None
+        if self.wrap.on:
+            self.wrap.stop(c.get("pos"))                     # (the pointer where the grab ended up)
         for ln, *_ in self.link_items:
             ln.normal()
         if cancel and c["remove"]:
@@ -1223,7 +1229,9 @@ class GraphView(QGraphicsView):
 
     def mouseMoveEvent(self, e):
         if self.carrying:
-            self._carry_to(self.mapToScene(e.position().toPoint()), bool(e.modifiers() & Qt.ControlModifier))
+            at = self.wrap.pos(e) if self.wrap.on else e.position()
+            self.carrying["pos"] = at
+            self._carry_to(self.mapToScene(at.toPoint()), bool(e.modifiers() & Qt.ControlModifier))
             return
         if self.panning is not None:
             d = e.position() - self.panning
@@ -1747,6 +1755,12 @@ class NodeEditor(QWidget):
         self.combo = QComboBox()
         self.combo.activated.connect(lambda i: self.effectChosen.emit(self.combo.itemData(i)))
         bar.addWidget(self.combo)
+        side = QPushButton("參數面板 (N)")
+        side.setCheckable(True)
+        side.setToolTip("右邊的參數面板：這個效果的參數（名字、種類、最小、最大、預設）可以改、排序、刪除；滑鼠在節點編輯器上按 N 也行")
+        side.toggled.connect(self.set_panel)
+        self.panel_btn = side
+        bar.addWidget(side)
         add = QPushButton("新增節點 (Shift+A)")
         add.clicked.connect(lambda: self.add_menu(self.view.mapToScene(self.view.viewport().rect().center()),
                                                   add.mapToGlobal(add.rect().bottomLeft())))
@@ -1790,12 +1804,6 @@ class NodeEditor(QWidget):
         snap.setToolTip("拖動節點時對齊網格（按住 Ctrl 暫時反過來）")
         snap.toggled.connect(lambda on: setattr(self.view, "snap", on))
         bar.addWidget(snap)
-        side = QPushButton("參數 (N)")
-        side.setCheckable(True)
-        side.setToolTip("右邊的參數面板：這個效果的參數（名字、種類、最小、最大、預設）可以改、排序、刪除")
-        side.toggled.connect(self.set_panel)
-        self.panel_btn = side
-        bar.addWidget(side)
         tidy = QPushButton("整理 ▾")
         tidy.setToolTip("對齊、均分、自動排列選取的節點")
         tidy.clicked.connect(lambda: self.tidy_menu(tidy.mapToGlobal(tidy.rect().bottomLeft())))
@@ -1817,6 +1825,20 @@ class NodeEditor(QWidget):
         lay.addLayout(body, 1)
         self.view.hide()
         self.setFocusProxy(self.view)
+        appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress), self._panel_key)
+
+    def _panel_key(self, obj, e):
+        """N toggles the 參數 panel while the mouse is over the node editor (whatever has the focus, unless a field is being typed in)."""
+        if (e.key() != Qt.Key_N or e.modifiers() & ~Qt.KeypadModifier or self.eid is None or not self.isVisible()
+                or not self.underMouse() or not isinstance(obj, QWidget) or obj.window() is not self.window()):
+            return False
+        w = QApplication.focusWidget()
+        if isinstance(w, (QLineEdit, QPlainTextEdit, QDoubleSpinBox)) or (isinstance(w, QComboBox) and w.isEditable()):
+            return False
+        if e.type() == QEvent.KeyPress:
+            self.set_panel(not self.panel_btn.isChecked())
+        e.accept()
+        return True
 
     def set_panel(self, on):
         """Show or hide the 參數 panel (N)."""
@@ -1951,6 +1973,8 @@ class NodeEditor(QWidget):
             v.carry([i for i in hold["ids"]], hold["remove"], hold.get("grab", False))
             if v.carrying:
                 v.carrying["start"] = {i: p for i, p in hold["start"].items() if i in v.items_by_id}
+                if hold.get("grab"):                        # (a grab goes on from where the pointer is, wraps included)
+                    v.carrying["off"], v.carrying["pos"] = hold["off"], hold.get("pos")
 
     # -- the fields of the nodes -------------------------------------------------------------------------
     class Values:

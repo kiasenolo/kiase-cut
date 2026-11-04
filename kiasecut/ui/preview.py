@@ -732,6 +732,7 @@ class Preview(QWidget):
         if kind == "move":
             d.update(boxes=boxes, x0=m.x(), y0=m.y(), others=[b for b in self.visible_boxes() if b.clip["id"] not in self.selected_ids])
         self.drag = d
+        self.wrap.start()                                # (endless, as a middle-button drag: the pointer wraps at the edges)
         self.setCursor(Qt.SizeAllCursor)
         self.update()
 
@@ -755,6 +756,7 @@ class Preview(QWidget):
     def _grab_end(self, keep):
         d, self.drag = self.drag, None
         live, self.live = self.live, None
+        self.wrap.stop(d.get("pos"))                     # (the pointer where the grab ended up)
         self.guides = []
         self.setCursor(Qt.ArrowCursor)
         if keep and live:
@@ -1857,7 +1859,8 @@ class Preview(QWidget):
             self._hover(e)
             return
         if d.get("modal"):
-            d["m"], d["mods"] = QPointF(*self._to_canvas(e.position())), e.modifiers()
+            d["pos"] = self.wrap.pos(e)
+            d["m"], d["mods"] = QPointF(*self._to_canvas(d["pos"])), e.modifiers()
             self._grab_update()
             return
         if "wrap_pan" not in d:                          # (this drag's first move)

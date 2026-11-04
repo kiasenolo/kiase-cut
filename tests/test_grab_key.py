@@ -48,6 +48,12 @@ class PreviewGrab(unittest.TestCase):
         self.assertEqual(self.kept[-1][1], self.live[-1][1])
         self.assertIsNone(self.pv.drag)
 
+    def test_the_grab_is_endless_like_a_middle_drag(self):
+        self.pv._grab_begin("move")
+        self.assertTrue(self.pv.wrap.on)
+        self.pv._grab_end(False)
+        self.assertFalse(self.pv.wrap.on)
+
     def test_x_y_and_typed_numbers(self):
         self.grab("move", (100, 80))
         self.assertNotEqual(self.live[-1][1]["y"], 0)

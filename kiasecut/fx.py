@@ -777,7 +777,8 @@ vec4 %(n)s_at_() {
 # a number parameter fed by a picture (使用遮罩): from its minimum (black) to its maximum (white) by
 # the picture's brightness at this pixel (Rec. 709 weights, as a 明度 mask's) - 0 and the number
 # itself unless the source says otherwise - and its own number where the picture does not reach,
-# fading to it where the picture is see-through
+# fading to it where the picture is see-through. The brightness is not clamped: a node's number can be
+# more than 1 (or less than 0) and goes on past the maximum (or the minimum)
 SAMPLED_NUMBER = """uniform float %(n)s_val_;
 uniform float %(n)s_min_;
 uniform float %(n)s_max_;
@@ -787,7 +788,7 @@ float %(n)s_at_() {
     vec3 q = %(n)s_map_ * vec3(uv_, 1.0);
     vec4 s = (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) ? vec4(0.0) : texture(%(n)s_tex_, q.xy);
     float k = s.a > 0.0 ? dot(s.rgb, vec3(0.2126, 0.7152, 0.0722)) / s.a : 0.0;
-    return mix(%(n)s_val_, mix(%(n)s_min_, %(n)s_max_, clamp(k, 0.0, 1.0)), s.a);
+    return mix(%(n)s_val_, mix(%(n)s_min_, %(n)s_max_, k), s.a);
 }
 #define %(n)s %(n)s_at_()"""
 SOURCE_TYPES = ("color", "float")              # parameters that can read a picture

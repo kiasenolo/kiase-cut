@@ -1622,8 +1622,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                     pt = take(n, PARAM + p.name)
                     if pt is not None and p.type in fx.SOURCE_TYPES:
                         srcs[p.name] = (pt, IDENTITY)
-                        if p.type == "float":
-                            vals[p.name + fx.RANGE_MIN], vals[p.name + fx.RANGE_MAX] = fx.source_range({}, vals[p.name], t)
+                        if p.type == "float":                 # (a node's number is the number: 0 gives 0 and 1 gives 1, and 5 gives 5)
+                            vals[p.name + fx.RANGE_MIN], vals[p.name + fx.RANGE_MAX] = 0.0, 1.0
                 ins = {name: take(n, name) for name, _ in d.inputs}
                 wanted = [(k, o) for k, o in enumerate(names) if (n, o) in miss]     # (an output nothing reads, or has kept, is not drawn)
                 dests = [alloc(w, h) for _ in wanted]

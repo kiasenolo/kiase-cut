@@ -84,6 +84,7 @@ class Task(QObject):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+OVERFLOW = 0.5                 # 顯示畫布外: how much round the canvas is drawn too, as a fraction of the canvas on each side
 PLAYING_PROPS_MS = 100         # while playing, the selection's panels show its values this often
 OPEN_PREFIX = "cmp:"            # path_ids[0] = OPEN_PREFIX + compound id: that compound opened by itself
 
@@ -573,6 +574,9 @@ class MainWindow(QMainWindow):
         self.guides_btn = tool("guides", "顯示 / 隱藏預覽上的外框和控制點（只看畫面）", self.toggle_guides, True)
         self.guides_btn.setChecked(str(self.settings().value("show_guides", "true")).lower() not in ("false", "0"))
         self.preview.set_show_guides(self.guides_btn.isChecked())
+        self.overflow_btn = tool("outside", "顯示 / 隱藏畫布外的畫面（開：超出畫布的內容也畫出來，畫布外的部分壓暗；只影響預覽，不影響匯出）",
+                                 self.toggle_overflow, True)
+        self.overflow_btn.setChecked(str(self.settings().value("show_outside", "false")).lower() in ("true", "1"))
         self.time_lbl = QLabel("00:00.00")
         self.time_lbl.setObjectName("time")
         self.dur_lbl = QLabel("")
@@ -616,6 +620,7 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.pitch_btn)
         self.transport += [self.rate_box, self.pitch_btn]
         bar.addWidget(self.guides_btn)
+        bar.addWidget(self.overflow_btn)
         bar.addWidget(full_btn)
         head = QHBoxLayout()
         head.setContentsMargins(8, 3, 8, 3)
@@ -885,6 +890,7 @@ class MainWindow(QMainWindow):
         self.player = Player(self)
         self.player.worker.set_rate(self.rate_box.currentData())     # (the 播放速度 used last time)
         self.player.worker.set_keep_pitch(self.pitch_btn.isChecked())
+        self.player.worker.set_overflow(OVERFLOW if self.overflow_btn.isChecked() else 0.0)       # (the 畫布外 button as it was left)
         w = self.player.worker
         w.frameReady.connect(self.on_frame)
         w.thumbsReady.connect(self.nodes.set_thumbs)
@@ -4586,6 +4592,11 @@ class MainWindow(QMainWindow):
         on = self.guides_btn.isChecked()
         self.preview.set_show_guides(on)
         self.settings().setValue("show_guides", "true" if on else "false")
+
+    def toggle_overflow(self):
+        on = self.overflow_btn.isChecked()
+        self.player.worker.set_overflow(OVERFLOW if on else 0.0)
+        self.settings().setValue("show_outside", "true" if on else "false")
 
     def toggle_fullscreen(self):
         if self.fullscreen:

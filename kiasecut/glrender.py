@@ -450,25 +450,29 @@ class GLRenderer(render.Renderer):
         self.gl_stills = {}            # still key -> Layer (static compounds)
         self.graph_cache = nodegraph.Cache(GRAPH_CACHE_BYTES)
 
-    def render(self, view, frame, width, height, alpha=False):
+    def render(self, view, frame, width, height, alpha=False, margin=0.0):
         """RGBA frame `frame` of a project-like view, drawn at width x height (RGBA8888); on a
-        transparent background instead of black with alpha (premultiplied RGBA8888 then)."""
+        transparent background instead of black with alpha (premultiplied RGBA8888 then).
+        margin: the picture is given that fraction of width / height more on every side, the
+        canvas in the middle (what lies outside the canvas, for the preview)."""
         gl = self.gl
+        mx, my = round(width * margin), round(height * margin)
+        full_w, full_h = width + 2 * mx, height + 2 * my
         with gl.ctx:                    # (another renderer's filters may have made theirs current)
             gl.new_frame()
             self.graph_cache.frame()
-            tgt = gl.layer(width, height, (0.0, 0.0, 0.0, 0.0 if alpha else 1.0))
+            tgt = gl.layer(full_w, full_h, (0.0, 0.0, 0.0, 0.0 if alpha else 1.0))
             self.begin(view)
             self.names = rack.values(view, frame / view["fps"] * US)
             try:
-                base = QTransform.fromScale(width / view["width"], height / view["height"])
+                base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(mx, my)
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
                                frame / view["fps"] * US, width / view["width"])
                 data = tgt.fbo.read(components=4)
             finally:
                 gl.release(tgt)
         fmt = QImage.Format_RGBA8888_Premultiplied if alpha else QImage.Format_RGBA8888
-        return QImage(data, width, height, width * 4, fmt).copy()
+        return QImage(data, full_w, full_h, full_w * 4, fmt).copy()
 
     def gl_content(self, tgt, base, comp, W, H, fps, t_us, ppu, through=False):
         """A compound's or a group's tracks (as render.draw_content: a group's matte); through

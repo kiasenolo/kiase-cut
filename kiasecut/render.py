@@ -434,13 +434,17 @@ class Renderer:
         p.restore()
 
     # -- frames -----------------------------------------------------------------------------------
-    def render(self, view, frame, width, height, alpha=False):
+    def render(self, view, frame, width, height, alpha=False, margin=0.0):
         """RGB frame `frame` of a project-like view, drawn at width x height; on a transparent
-        background instead of black with alpha (transparent exports)."""
-        img = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+        background instead of black with alpha (transparent exports). margin: the picture is
+        given that fraction of width / height more on every side, the canvas in the middle
+        (what lies outside the canvas, for the preview)."""
+        mx, my = round(width * margin), round(height * margin)
+        img = QImage(width + 2 * mx, height + 2 * my, QImage.Format_ARGB32_Premultiplied)
         img.fill(Qt.transparent if alpha else QColor("black"))
         p = QPainter(img)
         p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        p.translate(mx, my)
         p.scale(width / view["width"], height / view["height"])
         self.begin(view)
         self.names = rack.values(view, frame / view["fps"] * US)

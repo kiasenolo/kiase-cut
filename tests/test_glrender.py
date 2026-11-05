@@ -114,6 +114,18 @@ class GpuMatchesCpu(unittest.TestCase):
         self.check("see-through", self.view([self.bg()], [self.top(transform=tf(scale=0.7, x=-0.3, opacity=0.8))]))
         self.check("svg", self.view([self.bg()], [self.pic("s", self.svg, 100, 100, transform=tf(scale=0.5))]))
 
+    def test_a_margin_draws_what_is_outside_the_canvas_round_it(self):
+        view = self.view([self.bg(transform=tf(x=0.3, scale=1.4))])                  # (runs over the canvas on the right and the top and bottom)
+        for name, r in (("cpu", self.cpu), ("gpu", self.gpu)):
+            plain = r.render(copy.deepcopy(view), 0, W, H)
+            wide = r.render(copy.deepcopy(view), 0, W, H, margin=0.5)
+            self.assertEqual((wide.width(), wide.height()), (2 * W, 2 * H), name)
+            inner = pixels(wide.copy(W // 2, H // 2, W, H))
+            self.assertLessEqual(float(np.abs(inner - pixels(plain)).mean()), 1.0, name)      # (the canvas is where it was, in the middle)
+            outside = pixels(wide.copy(W // 2 + W, H // 2, W // 2, H))                        # (right of the canvas)
+            self.assertGreater(float(outside.mean()), 20.0, name)                              # (the picture goes on there)
+        self.assertEqual(self.gpu.render(copy.deepcopy(view), 0, W, H, margin=0.0).width(), W)
+
     def test_blend_modes(self):
         for mode in glrender.BLEND_INDEX:
             self.check(f"blend {mode}", self.view([self.bg()], [self.top(blend=mode, transform=tf(scale=0.9))]))

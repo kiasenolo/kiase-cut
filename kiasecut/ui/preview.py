@@ -522,6 +522,7 @@ class Preview(QWidget):
     def __init__(self, parent=None, interactive=True):
         super().__init__(parent)
         self.img = None
+        self.margin = 0.0                  # (the fraction of the canvas that self.img holds on every side of it)
         self.W, self.H = 1920, 1080
         self.view = None
         self.t_us = 0
@@ -559,7 +560,18 @@ class Preview(QWidget):
 
     # -- state ------------------------------------------------------------------------------------
     def show_image(self, img):
+        """img: the frame; when it holds what lies round the canvas too (its text "margin": the fraction of the canvas on
+        every side), a preview that edits shows all of it, the other ones only the canvas."""
         self.img = img
+        self.margin = 0.0
+        try:
+            self.margin = max(0.0, float(img.text("margin") or 0.0)) if img is not None else 0.0
+        except ValueError:
+            pass
+        if self.margin and not self.interactive:
+            mx, my = round(img.width() * self.margin / (1 + 2 * self.margin)), round(img.height() * self.margin / (1 + 2 * self.margin))
+            self.img = img.copy(mx, my, img.width() - 2 * mx, img.height() - 2 * my)
+            self.margin = 0.0
         self.update()
 
     def set_scene(self, view, t_us, selected_id, selected_ids=None):
@@ -1080,7 +1092,15 @@ class Preview(QWidget):
         p.fillRect(self.rect(), QColor(SURROUND))
         r = self._rect()
         p.fillRect(r, QColor("black"))
-        if self.img is not None:
+        if self.img is not None and self.margin:       # (what lies outside the canvas: drawn dimmed)
+            m = QRectF(r.x() - r.width() * self.margin, r.y() - r.height() * self.margin,
+                       r.width() * (1 + 2 * self.margin), r.height() * (1 + 2 * self.margin))
+            p.drawImage(m, self.img)
+            outside = QPainterPath()
+            outside.addRect(m)
+            outside.addRect(r)
+            p.fillPath(outside, QColor(42, 42, 47, 150))
+        elif self.img is not None:
             p.drawImage(r, self.img)                   # (no smoothing: zoomed in, the pixels stay square)
         if self.interactive:                           # (a hair line round the canvas: where it ends, even where the picture is as dark as the surround)
             p.setPen(QPen(QColor(CANVAS_EDGE), 1))

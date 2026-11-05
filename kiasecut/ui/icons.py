@@ -38,6 +38,12 @@ def _draw(p, name):
         p.setBrush(pen.color())
         for x, y in ((5, 6), (19, 6), (5, 18), (19, 18)):
             p.drawRect(QRectF(x - 2, y - 2, 4, 4))
+    elif name == "outside":                             # (a picture running over the edge of the canvas frame)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(pen.color(), 1.6))
+        p.drawRect(QRectF(7, 7, 10, 10))
+        p.setPen(QPen(pen.color(), 1.6, Qt.DashLine))
+        p.drawRect(QRectF(3, 3, 18, 18))
     elif name == "fullscreen":
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(pen.color(), 2))

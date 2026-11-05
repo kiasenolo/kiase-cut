@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QWheelEvent  # noqa: E402
+from PySide6.QtGui import QColor, QImage, QWheelEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -109,3 +109,46 @@ class ViewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class OutsideTests(unittest.TestCase):
+    """A frame drawn with the margin round the canvas (the 畫布外 button): the preview that edits shows all of it, dimmed outside."""
+    def frame(self, margin):
+        w, h = 200, 100
+        mx, my = round(w * margin), round(h * margin)
+        img = QImage(w + 2 * mx, h + 2 * my, QImage.Format_RGBA8888)
+        img.fill(QColor("#ff0000"))
+        for x in range(mx, mx + w):                  # (the canvas itself is green)
+            for y in range(my, my + h):
+                img.setPixelColor(x, y, QColor("#00ff00"))
+        img.setText("margin", repr(margin))
+        return img
+
+    def test_the_editing_preview_keeps_it_and_dims_what_is_outside(self):
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.set_scene(proj(), S // 2, "c1")
+        pv.zoom = 0.5                                  # (zoomed out: there is room round the canvas)
+        pv.show_image(self.frame(0.5))
+        self.assertEqual(pv.margin, 0.5)
+        shot = pv.grab().toImage()
+        r = pv._rect()
+        inside = shot.pixelColor(int(r.center().x()), int(r.center().y()))
+        outside = shot.pixelColor(int(r.left() - r.width() * 0.25), int(r.center().y()))
+        self.assertGreater(inside.green(), 200)                              # (the canvas: the picture)
+        self.assertGreater(outside.red(), outside.green())                   # (outside it: the red part of the frame ...
+        self.assertLess(outside.red(), 200)                                  # ... dimmed)
+
+    def test_a_preview_that_does_not_edit_shows_the_canvas_alone(self):
+        pv = Preview(interactive=False)
+        pv.show_image(self.frame(0.5))
+        self.assertEqual(pv.margin, 0.0)
+        self.assertEqual((pv.img.width(), pv.img.height()), (200, 100))
+        self.assertEqual(pv.img.pixelColor(0, 0).green(), 255)
+
+    def test_a_frame_without_a_margin_is_as_before(self):
+        pv = Preview()
+        pv.show_image(self.frame(0.0))
+        self.assertEqual(pv.margin, 0.0)
+        pv.show_image(None)
+        self.assertEqual(pv.margin, 0.0)

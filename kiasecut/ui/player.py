@@ -83,6 +83,7 @@ class Worker(QObject):
         self.engine = None          # started on first use, for video pictures only
         self.loop = None            # (first, last) frame: playback stays inside (time selection)
         self.render_w = PREVIEW_W   # width in px the frames are drawn at (the preview's own size)
+        self.overflow = 0.0         # the fraction of the canvas drawn round it too (what lies outside the canvas)
         self.t0 = 0.0               # playback clock: when the first picture was due
         self.shown_n = self.audio_n = 0     # pictures shown / sound frames queued since playing began
         self.audio_f = None         # next frame whose sound is to be queued
@@ -116,6 +117,16 @@ class Worker(QObject):
             if abs(w - self.render_w) < 8:
                 return
             self.render_w = w
+            if not self.playing and self.view is not None and self.want is None:
+                self.want = self.pos
+                self.cv.notify()
+
+    def set_overflow(self, margin):
+        """Draw margin (a fraction of the canvas) more round the canvas, or 0 for the canvas alone. A stopped picture is redrawn at once."""
+        with self.cv:
+            if margin == self.overflow:
+                return
+            self.overflow = margin
             if not self.playing and self.view is not None and self.want is None:
                 self.want = self.pos
                 self.cv.notify()
@@ -301,7 +312,10 @@ class Worker(QObject):
         w = max(2, min(self.render_w, v["width"]))
         h = max(2, round(w * v["height"] / v["width"]))
         self.asked = []
-        self.frameReady.emit(self.renderer.render(v, pos, w, h), pos)
+        margin = self.overflow
+        img = self.renderer.render(v, pos, w, h, margin=margin) if margin else self.renderer.render(v, pos, w, h)
+        img.setText("margin", repr(margin))              # (the preview needs to know where the canvas is in it)
+        self.frameReady.emit(img, pos)
         if self.renderer.thumbs:
             self.thumbsReady.emit(self.renderer.thumbs)
         if not self.playing:

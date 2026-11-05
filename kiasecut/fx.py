@@ -83,6 +83,12 @@ class FilterDef:
         return self.socket_types.get((way, name), "image")
 
     def key(self):
+        got = getattr(self, "_key", None)
+        if got is None:
+            got = self._key = self._make_key()
+        return got
+
+    def _make_key(self):
         return hashlib.sha1((self.code + "|" + str(self.passes) + "|" + ",".join(n for n, _ in self.inputs) + "|" +
                              ",".join(f"{p.name}:{p.type}" for p in self.params)).encode()).hexdigest()
 

@@ -2152,7 +2152,7 @@ class NodeEditor(QWidget):
             self.level = ""
         self.eid = e["id"]
         self.params, self.sources, self.t = e["params"], e.get("sources") or {}, t
-        gsig = json.dumps(e["graph"], sort_keys=True)
+        gsig = json.dumps(e["graph"])
         sig = gsig + self.shown_sig(e, gsig)
         if sig != self._sig:
             self._sig = sig

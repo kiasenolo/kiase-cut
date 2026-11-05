@@ -1428,11 +1428,14 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
     bound = binds(graph)
     ctrl = {}                                                 # (node, parameter) -> what a picture linked into its tick / menu socket says
     reach, todo = set(), [view[0] if view else out]
+    feeds_of = {}                                             # consumer -> the pictures that feed it
+    for (to, _s), f in feed.items():
+        feeds_of.setdefault(to, []).append(f)
     while todo:                                               # (only the nodes the result comes from: a control of any other is not read)
         n = todo.pop()
         if n not in reach:
             reach.add(n)
-            todo += [f[0] for (to, _s), f in feed.items() if to == n]
+            todo += [f[0] for f in feeds_of.get(n, ())]
     for (to, sock), f in list(feed.items()):
         p = param_of(graph, to, sock) if sock.startswith(PARAM) else None
         if p is not None and p.type in CONTROL_TYPES + VECTOR_TYPES:
@@ -1453,9 +1456,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         if state.get(n) == 1:
             raise GraphError("節點連成了迴圈")
         state[n] = 1
-        for (to, _s), f in feed.items():
-            if to == n:
-                visit(f[0])
+        for f in feeds_of.get(n, ()):
+            visit(f[0])
         state[n] = 2
         order.append(n)
 
@@ -1483,6 +1485,9 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             if conds is not None and not fx._holds(conds, fx.named(d, values(to, d))):
                 del feed[(to, sock)]
 
+    feeds_of = {}                                             # (again: the controls and the pictures a setting does not read are gone)
+    for (to, _s), f in feed.items():
+        feeds_of.setdefault(to, []).append(f)
     # what each picture depends on (None: something that changes whatever is set), and which are kept from before
     sigs = {}
     if cache is not None:
@@ -1510,9 +1515,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         if f[0] in needed:
             return
         needed.add(f[0])
-        for (to, _s), g in list(feed.items()):
-            if to == f[0]:
-                demand(g)
+        for g in feeds_of.get(f[0], ()):
+            demand(g)
 
     if tap is not None:                                       # (every picture goes to the editor's thumbnails)
         for (to, _s), f in feed.items():
@@ -1557,8 +1561,8 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         return made[f][0] if f in made else None
 
     def done_with(n):
-        for (to, _s), f in feed.items():
-            if to == n and f in made:
+        for f in feeds_of.get(n, ()):
+            if f in made:
                 owner = made[f][1]
                 if owner is not None:
                     left[id(owner)] -= 1

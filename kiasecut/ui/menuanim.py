@@ -22,7 +22,7 @@ import time
 import shiboken6
 from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QApplication, QGraphicsEffect, QMenu, QMenuBar, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QGraphicsEffect, QMenu, QMenuBar, QWidget
 
 from . import appevents, motion
 
@@ -281,6 +281,9 @@ def install():
     def hidden(obj, e):
         if popup_window(obj):
             try:
+                box = obj.parentWidget()
+                if isinstance(box, QComboBox) and not box.isEditable():
+                    box.clearFocus()                          # (list closed, chosen or not: the box is not left focused)
                 closed(obj)
             except RuntimeError:                              # (the menu is being deleted: a Hide comes as its window goes)
                 pass

@@ -75,7 +75,7 @@ UTILITIES = [
     SEP,
     "nodes/normalize",
     SEP,
-    "nodes/switch", "nodes/index_switch", "nodes/menu_switch",
+    "nodes/split", "nodes/switch", "nodes/index_switch", "nodes/menu_switch",
 ]
 
 LAYOUT = [node("繞線點", type=ng.REROUTE), node("框架／註解", type=ng.FRAME)]

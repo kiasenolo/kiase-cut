@@ -14,7 +14,12 @@ from . import appevents
 
 KINDS = {QEvent.MouseButtonPress: "press", QEvent.MouseButtonRelease: "release", QEvent.MouseMove: "move",
          QEvent.TouchBegin: "touch-begin", QEvent.TouchEnd: "touch-end", QEvent.TouchCancel: "touch-cancel",
-         QEvent.Show: "show", QEvent.Hide: "hide"}
+         QEvent.Show: "show", QEvent.Hide: "hide", QEvent.WindowActivate: "win-activate", QEvent.WindowDeactivate: "win-deactivate",
+         QEvent.FocusOut: "focus-out", QEvent.FocusIn: "focus-in", QEvent.Close: "close", QEvent.ApplicationDeactivate: "app-deactivate",
+         QEvent.ApplicationActivate: "app-activate", QEvent.Leave: "leave", QEvent.ContextMenu: "context-menu",
+         QEvent.HoverLeave: "hover-leave", QEvent.ShortcutOverride: "shortcut-override", QEvent.KeyPress: "key"}
+OTHER = (QEvent.WindowActivate, QEvent.WindowDeactivate, QEvent.FocusOut, QEvent.FocusIn, QEvent.Close, QEvent.ApplicationDeactivate,
+         QEvent.ApplicationActivate, QEvent.Leave, QEvent.ContextMenu, QEvent.HoverLeave, QEvent.KeyPress)
 _last_move = [0.0]
 
 
@@ -35,6 +40,10 @@ def name(w):
     return f"{n}@{id(w) & 0xffff:04x}"
 
 
+def popup_up():
+    return QApplication.activePopupWidget() is not None
+
+
 def watched(obj):
     return isinstance(obj, (QMenu, QMenuBar))
 
@@ -42,6 +51,13 @@ def watched(obj):
 def handler(obj, e):
     t = e.type()
     if not isinstance(obj, __import__("PySide6.QtWidgets", fromlist=["QWidget"]).QWidget) or not shiboken6.isValid(obj):
+        return False
+    if t in OTHER:
+        if popup_up() or isinstance(obj, (QMenu, QMenuBar)):
+            log(f"{KINDS[t]:<14} on {name(obj)} popup={name(QApplication.activePopupWidget())}")
+        return False
+    if t in (QEvent.TouchBegin, QEvent.TouchEnd, QEvent.TouchCancel) and popup_up():
+        log(f"{KINDS[t]:<11} on {name(obj)} popup={name(QApplication.activePopupWidget())}")
         return False
     if t in (QEvent.Show, QEvent.Hide):
         if isinstance(obj, QMenu):
@@ -71,5 +87,5 @@ def install():
         return
     app = QApplication.instance()
     appevents.watch(app, [QEvent.MouseButtonPress, QEvent.MouseButtonRelease, QEvent.MouseMove, QEvent.TouchBegin, QEvent.TouchEnd,
-                          QEvent.TouchCancel, QEvent.Show, QEvent.Hide], handler)
+                          QEvent.TouchCancel, QEvent.Show, QEvent.Hide, *OTHER], handler)
     log("menu debug on")

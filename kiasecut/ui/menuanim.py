@@ -1,5 +1,5 @@
 """Menus open and close the way Kilo's (the e621 app's) do: unrolled from the top, `clip-path: polygon(0 0, 100% 0, 100% 0, 0 0)`
-to `polygon(0 0, 100% 0, 100% 100%, 0 100%)`, and faded in, in half a second on cubic-bezier(0, .5, 0, 1) - most of it at once,
+to `polygon(0 0, 100% 0, 100% 100%, 0 100%)`, and faded in, in a quarter of a second on cubic-bezier(0, .5, 0, 1) - most of it at once,
 a long soft end - and rolled up and faded out the same way when they close.
 
 There the menu is one element shared by all that open: going from one to another is no animation, only the opening of the
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import QApplication, QGraphicsEffect, QMenu, QMenuBar, QW
 
 from . import appevents, motion
 
-DURATION_MS = 500
+DURATION_MS = 250
 DEBUG = bool(os.environ.get("KIASECUT_MENUANIM_DEBUG"))      # set it and run the program from a terminal: every opening is logged
 
 

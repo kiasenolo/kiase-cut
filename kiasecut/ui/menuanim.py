@@ -36,6 +36,12 @@ def log(menu, what):
         print(f"[menuanim {time.monotonic() % 1000:8.3f}] {what:<8} {title or type(menu).__name__} @{id(menu) & 0xffff:04x}", file=sys.stderr, flush=True)
 
 
+def animated():
+    """Menus animate on a desktop only: on the tablet a menu under a graphics effect went invisible (still there, and still working
+    under the finger) and a submenu closing, grabbed for its roll-up, brought the program down."""
+    return sys.platform != "android" or bool(os.environ.get("KIASECUT_MENUANIM"))
+
+
 def curve():
     return motion.out_curve()                         # cubic-bezier(0, .5, 0, 1)
 
@@ -215,7 +221,7 @@ def close_ghost(menu, picture, rect, t0):
 
 def closed(menu):
     """menu has just been hidden: its picture rolls up (unless another menu of its bar takes its place)."""
-    if QApplication.closingDown():
+    if QApplication.closingDown() or not animated():
         return
     if bar_menu(menu) and others_open(menu):
         settle(menu)
@@ -243,6 +249,8 @@ def closed(menu):
 
 def opened(menu):
     """menu has just been shown."""
+    if not animated():
+        return
     if bar_menu(menu):
         swapped = bool(_pending) or others_open(menu)
         del _pending[:]                                   # (a menu of the bar closed just before: this one takes its place)

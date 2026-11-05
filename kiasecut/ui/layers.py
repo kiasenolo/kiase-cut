@@ -36,6 +36,7 @@ from .. import assets, components, edit, project
 from .params import ParamList, bound_tip, clip_name, param_menu
 from .timeline import FX_MIME, MEDIA_MIME, group_menu
 from . import inplace
+from .dupkey import DuplicateKey
 from .menukeys import Menu
 
 ROLE = Qt.UserRole
@@ -360,6 +361,7 @@ class LayerPanel(QWidget):
         self.list.fxDropped.connect(self.fxDropped)
         self.list.replaceDropped.connect(self.replaceDropped)
         self.list.menuRequested.connect(self._menu)
+        DuplicateKey(self.list, lambda: self.list.selectedItems() and self.actionRequested.emit("copy"))
         lay.addWidget(self.list, 1)
         bar = QHBoxLayout()
         bar.setSpacing(3)

@@ -989,7 +989,7 @@ class MainWindow(QMainWindow):
         add(m, "複製", "Ctrl+C", self.do_copy)
         add(m, "剪下", "Ctrl+X", lambda: self.do_copy(cut=True))
         add(m, "貼上", "Ctrl+V", self.do_paste)
-        add(m, "建立副本", "Ctrl+Shift+C", self.do_duplicate)
+        add(m, "建立副本", ("Ctrl+Shift+C", "Shift+D"), self.do_duplicate)
         m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "向左裁剪（刪掉播放頭之前）", "Q", lambda: self.do_trim_to_playhead("start"))

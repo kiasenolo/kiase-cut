@@ -56,6 +56,32 @@ class CtrlDTests(unittest.TestCase):
             QTest.keyClick(w, Qt.Key_D, Qt.ControlModifier)
             self.assertEqual(len(w.selectedItems()), 0)
 
+    def test_shift_d_runs_the_lists_copy(self):
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication, QListWidgetItem
+        from kiasecut.ui.layers import LayerPanel
+        from kiasecut.ui.vfxnodes import VfxNodePanel
+        QApplication.instance() or QApplication([])
+        got = []
+        vp = VfxNodePanel()
+        vp.copyRequested.connect(got.append)
+        it = QListWidgetItem("n")
+        it.setData(Qt.UserRole, "v1")
+        vp.list.addItem(it)
+        vp.list.setCurrentItem(it)
+        QTest.keyClick(vp.list, Qt.Key_D, Qt.ShiftModifier)
+        self.assertEqual(got, ["v1"])
+        lp = LayerPanel()
+        acts = []
+        lp.actionRequested.connect(acts.append)
+        QTest.keyClick(lp.list, Qt.Key_D, Qt.ShiftModifier)
+        self.assertEqual(acts, [])                                  # (no layer selected: nothing to copy)
+        lp.list.addItem(QListWidgetItem("x"))
+        lp.list.item(0).setSelected(True)
+        QTest.keyClick(lp.list, Qt.Key_D, Qt.ShiftModifier)
+        self.assertEqual(acts, ["copy"])
+
 
 if __name__ == "__main__":
     unittest.main()

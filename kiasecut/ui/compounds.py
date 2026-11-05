@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QTreeWidg
 from .. import components, edit, project
 from .library import MIME
 from . import inplace
+from .dupkey import DuplicateKey
 from .menukeys import Menu
 from .viewmode import TreeView
 
@@ -73,6 +74,7 @@ class CompoundPanel(QWidget):
         super().__init__(parent)
         self.tree = CompoundTree()
         self.tree.itemClicked.connect(self._clicked)
+        DuplicateKey(self.tree, self.clone_current)
         self.tree.itemDoubleClicked.connect(self._double)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
@@ -172,6 +174,13 @@ class CompoundPanel(QWidget):
             self.openRequested.emit(tl, path + [c["id"]])
         else:                                            # no clip shows it: open it by itself
             self.entryRequested.emit(d[1])
+
+    def clone_current(self):
+        """Shift+D: a copy of the current compound or timeline of its own."""
+        it = self.tree.currentItem()
+        d = it.data(0, Qt.UserRole) if it is not None and it.isSelected() else None
+        if d and d[0] != "use":
+            self.cloneRequested.emit(d[1])
 
     def rename_current(self):
         """F2: rename the current compound or timeline; False when there is none."""

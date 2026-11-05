@@ -6,6 +6,7 @@ many clips use each; right-click (or the buttons) to apply one to the selected c
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
 
+from .dupkey import DuplicateKey
 from .menukeys import Menu
 
 
@@ -30,6 +31,7 @@ class VfxNodePanel(QWidget):
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
         self.list.itemDoubleClicked.connect(lambda it: self.selectRequested.emit(it.data(Qt.UserRole)))
+        DuplicateKey(self.list, lambda: self.current() and self.copyRequested.emit(self.current()))
         lay.addWidget(self.list, 1)
         row = QHBoxLayout()
         use = QPushButton("套用到選取的片段")

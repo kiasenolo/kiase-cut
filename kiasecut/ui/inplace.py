@@ -161,8 +161,7 @@ def ask_name(parent, text, anchor=None):
     ov = Overlay(w)
     ov.setObjectName("inplace")
     ov.setStyleSheet("QFrame#inplace { background: transparent; }"
-                     "QLineEdit { background: #141416; color: #f2f2f2; border: 1px solid #5b8cff;"
-                     " border-radius: 2px; padding: 1px 4px; selection-background-color: #3d5fb0; }")
+                     "QLineEdit { background: #1a1a1a; }")
     field = QLineEdit(text, ov)
     fm = field.fontMetrics()
     h = max(fm.height() + 8, min(r.height(), fm.height() + 12))

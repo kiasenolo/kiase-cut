@@ -275,7 +275,7 @@ class LayerRow(QWidget):
             m = QLabel("反轉遮罩" if mask.get("invert") else "遮罩")
             m.setToolTip("群組的遮罩：在它上面的圖層挖掉它的形狀" if mask.get("invert")
                          else "群組的遮罩：裁切它上面的圖層")
-            m.setStyleSheet("color: #c9a0ff; border: 1px solid #6a5090; border-radius: 3px; padding: 0 3px;")
+            m.setStyleSheet("color: #c9a0ff; border: 1px solid #6a5090; border-radius: 0; padding: 0 3px;")
             lay.addWidget(m)
         elif opened is not None and (c.get("matte") or {}).get("on"):
             m = QLabel("◐")

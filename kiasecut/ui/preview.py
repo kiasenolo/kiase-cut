@@ -2152,7 +2152,7 @@ class TextBox(QPlainTextEdit):
         self.setPlainText(words)
         self.setToolTip("Ctrl+Enter 或點別的地方完成，Esc 還原")
         self.setStyleSheet("QPlainTextEdit { background: rgba(20, 20, 24, 225); color: #ffffff;"
-                           " border: 2px solid #4da3ff; border-radius: 4px; font-size: 15px; }")
+                           " border: 2px solid #4da3ff; border-radius: 0; font-size: 15px; }")
         self.timer = QTimer(self, singleShot=True, interval=300)
         self.timer.timeout.connect(self.flush)
         self.textChanged.connect(self.timer.start)

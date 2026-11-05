@@ -42,7 +42,7 @@ class TimebasePopup(inplace.Overlay):
         super().__init__(widget)
         self.tb = dict(tb)
         self.setObjectName("timebase")
-        self.setStyleSheet("QFrame#timebase { background: #26262a; border: 1px solid #45454c; border-radius: 4px; }")
+        self.setStyleSheet("QFrame#timebase { background: #1a1a1a; border: 1px solid #4d4d4d; border-radius: 0; }")
         form = QFormLayout(self)
         form.setContentsMargins(10, 8, 10, 8)
         self.kind = ComboBox()

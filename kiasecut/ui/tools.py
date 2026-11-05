@@ -355,7 +355,7 @@ class Swatch(QPushButton):
         self.setFixedSize(40, 40)
         self.setToolTip(col + "（按一下複製；右鍵：修改、刪除）")
         c = qcolor(col)
-        self.setStyleSheet(f"background: {c.name()}; border: 1px solid #555; border-radius: 3px;")
+        self.setStyleSheet(f"background: {c.name()}; border: 1px solid #555; border-radius: 0;")
 
 
 class PaletteTool(QWidget):

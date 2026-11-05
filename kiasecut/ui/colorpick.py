@@ -153,10 +153,8 @@ class ColorPopup(inplace.Overlay):
     def __init__(self, widget, initial, title, alpha=True):
         super().__init__(widget)
         self.setObjectName("colorpop")
-        self.setStyleSheet("QFrame#colorpop { background: #232326; border: 1px solid #4a4a52; border-radius: 4px; }"
-                           "QLabel { color: #8e8e94; background: transparent; }"
-                           "QLineEdit { background: #141416; color: #e0e0e2; border: 1px solid #3a3a40;"
-                           " border-radius: 2px; padding: 1px 4px; }")
+        self.setStyleSheet("QFrame#colorpop { background: #1a1a1a; border: 1px solid #4d4d4d; border-radius: 0; }"
+                           "QLabel { color: #8e8e94; }")
         self.alpha, self.initial = alpha, QColor(initial)
         if not alpha:
             self.initial.setAlpha(255)

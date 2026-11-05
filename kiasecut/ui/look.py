@@ -30,6 +30,7 @@ ARROW = f"{FILES}/arrow"  # its chevrons: arrow-down.svg, arrow-up.svg ...
 # text; colour is left to clips, keyframes, the playhead and the meter
 STYLE = """
 QWidget { background: #111111; color: #d0d0d2; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC', sans-serif; font-size: 12px; }
+QLabel { background: transparent; }
 QMainWindow { background: #050505; }
 QMenuBar { background: #0b0b0b; border-bottom: 1px solid #000000; }
 QMenu { background: #1a1a1a; border: none; border-radius: 0; padding: 0; }

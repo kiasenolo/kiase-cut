@@ -12,7 +12,7 @@ import os
 import re
 import sys
 
-from PySide6.QtCore import QByteArray, QMargins, QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QByteArray, QMargins, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QFrame, QMenu, QStyle, QStyleOptionButton,
@@ -196,7 +196,7 @@ HINTS = {
     S.SH_Menu_Scrollable: 1, S.SH_Menu_SubMenuPopupDelay: 150, S.SH_Menu_SubMenuSloppyCloseTimeout: 300,
     S.SH_MenuBar_AltKeyNavigation: 0, S.SH_ScrollBar_LeftClickAbsolutePosition: 1,
     S.SH_Slider_SnapToValue: 0, S.SH_Slider_StopMouseOverSlider: 0, S.SH_DockWidget_ButtonsHaveFrame: 0,
-    S.SH_TitleBar_AutoRaise: 0,
+    S.SH_TitleBar_AutoRaise: 0, S.SH_ComboBox_Popup: 1,      # (a combo box list opens over the box, the current item on it)
 }
 
 
@@ -256,25 +256,9 @@ class Style(wheel.Style):
     def styleHint(self, hint, option=None, widget=None, data=None):
         if hint in HINTS:
             return HINTS[hint]
-        if hint == QStyle.SH_ComboBox_Popup:
-            return int(self.list_over_box(widget))
         if hint == QStyle.SH_Menu_SloppySubMenus and sys.platform == "android":
             return 0                       # (a finger makes no moves toward a submenu: the sloppy-close timer shut the submenu 300 ms after a tap)
         return super().styleHint(hint, option, widget, data)
-
-    @staticmethod
-    def list_over_box(box):
-        """Whether the list of combo box opens over it with the current item on the box. Under
-        Wayland a window knows no place on the screen, so a list that would stick out of the
-        window (Qt keeps it at the window's top, the compositor flips it below the box) is
-        left to open below the box as a drop-down."""
-        if not isinstance(box, QComboBox) or QGuiApplication.platformName() != "wayland":
-            return True
-        view = box.view()
-        n, row = box.count(), max(view.sizeHintForRow(0), 24) + 2
-        above = box.mapTo(box.window(), QPoint(0, 0)).y()
-        below = box.window().height() - above - box.height()
-        return above >= max(box.currentIndex(), 0) * row + 8 and below >= (n - max(box.currentIndex(), 0)) * row
 
     def pixelMetric(self, metric, option=None, widget=None):
         if metric in METRICS:

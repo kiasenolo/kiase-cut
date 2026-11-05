@@ -38,6 +38,7 @@ MIN_WIDTH, EDGE = 140.0, 7.0                              # (narrowest node; the
 SOCKET_R = 5.5
 GRID = 20.0                                                # (Blender's NODE_GRID_STEP_SIZE: what a dragged node snaps to)
 HIT_R = 9.0
+FAR = 0.3                                                  # (a node drawn smaller than this (zoom) is only a box: no rows, no text)
 SNAP_R = 28.0                                              # (a dragged link this near (screen px) to a socket it can go into jumps onto it)
 LINK_W = 5.0                                               # (the width of a placed link)
 DRAG_W = 7.0                                               # (and of one being dragged)
@@ -165,7 +166,7 @@ class NodeItem(QGraphicsItem):
         self._layout()
         self.update()
         for view in self.scene().views() if self.scene() else ():
-            view.reroute()
+            view.reroute(self.nid)
 
     def grip_row(self, pos):
         """The words row whose corner grip is under pos (item coordinates), or None."""
@@ -381,7 +382,7 @@ class NodeItem(QGraphicsItem):
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene() is not None:
             for view in self.scene().views():
-                view.reroute()
+                view.reroute(self.nid)
         return super().itemChange(change, value)
 
     def boundingRect(self):
@@ -421,6 +422,16 @@ class NodeItem(QGraphicsItem):
         return None
 
     def paint(self, p, option, widget=None):
+        lod = option.levelOfDetailFromTransform(p.worldTransform())
+        if lod < FAR:                                       # (zoomed far out: a box in the node's colour, its rows are too small to read)
+            col = head_colour(self.node)
+            p.fillRect(QRectF(0, 0, self.w, self.h), QColor(NODE_BODY))
+            p.fillRect(QRectF(0, 0, self.w, min(self.h, HEAD * 2 if lod < FAR / 2 else HEAD)), col.darker(160) if self.node.get("mute") else col)
+            if self.isSelected():
+                p.setPen(QPen(QColor(SELECT), 2 / max(lod, 0.05)))
+                p.setBrush(Qt.NoBrush)
+                p.drawRect(QRectF(0, 0, self.w, self.h))
+            return
         text = QColor(LABEL)
         field_bg = QColor(FIELD_BG)
         p.setRenderHint(QPainter.Antialiasing)
@@ -687,7 +698,7 @@ class NodeItem(QGraphicsItem):
             self.w = max(MIN_WIDTH, round(w))
             self.update()
             for view in self.scene().views():
-                view.reroute()
+                view.reroute(self.nid)
             return
         d = self.drag
         if d is None:
@@ -793,7 +804,7 @@ class RerouteItem(QGraphicsItem):
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene() is not None:
             for view in self.scene().views():
-                view.reroute()
+                view.reroute(self.nid)
         return super().itemChange(change, value)
 
     def row_of(self, socket):
@@ -910,7 +921,7 @@ class FrameItem(QGraphicsItem):
                 for it in items:
                     it.setPos(it.pos() + d)
             for view in self.scene().views():
-                view.reroute()
+                view.reroute(self.nid)
         return super().itemChange(change, value)
 
     def paint(self, p, option, widget=None):
@@ -1001,6 +1012,7 @@ class GraphView(QGraphicsView):
         self.setFocusPolicy(Qt.StrongFocus)
         self.items_by_id = {}
         self.link_items = []                     # [(Link, from node, to node, socket, output name)]
+        self.links_of = {}                       # node id -> its link_items (index_links)
         self.pseudo_links = []                   # [(from, to, socket, output)] the links to and from a group's own sockets, inside it
         self.lifted = []                         # the placed link a dragged one picked up, hidden meanwhile
         self.snapped = None                      # the socket a dragged link has jumped onto: (kind, node id, socket, point)
@@ -1251,9 +1263,21 @@ class GraphView(QGraphicsView):
         for ln, a, b, sock, out in self.link_items:
             ln.style(self.colour_up(a, out), self.items_by_id[b].in_colour(sock))
 
-    def reroute(self):
-        """Draw the links again (a node moved)."""
-        for ln, a, b, sock, out in self.link_items:
+    def index_links(self):
+        """Which links touch each node (reroute draws only those of the node that moved: a graph of hundreds of nodes
+        dragged together stays O(links), not O(nodes x links))."""
+        self.links_of = {}
+        for l in self.link_items:
+            self.links_of.setdefault(l[1], []).append(l)
+            if l[2] != l[1]:
+                self.links_of.setdefault(l[2], []).append(l)
+
+    def reroute(self, nid=None):
+        """Draw the links again (a node moved: nid; None: every one)."""
+        links = self.link_items if nid is None or nid not in self.links_of else self.links_of[nid]
+        if nid is not None and nid not in self.links_of:
+            return
+        for ln, a, b, sock, out in links:
             ln.route(self.items_by_id[a].output_pos(out), self.items_by_id[b].input_pos(sock))
 
     def _route_temp(self, pos):
@@ -1901,6 +1925,7 @@ class NodeEditor(QWidget):
         self.vfx_names = {}                                 # VFX Node id -> its name
         self.user_filters = []
         self._sig = None
+        self._showers_of, self._showers = None, []          # (the nodes with @show rows: shown_sig)
         self._selected = ""
         self.params, self.sources, self.t = {}, {}, 0         # what the fields show: the effect's, at clip time t
         self._scrub = None                                   # the field being scrubbed: (node, row, cell, value)
@@ -2113,7 +2138,7 @@ class NodeEditor(QWidget):
             self.panel.hide()
             self.view.hide()
             self.view.scene().clear()
-            self.view.items_by_id, self.view.link_items = {}, []
+            self.view.items_by_id, self.view.link_items, self.view.links_of = {}, [], {}
             return
         self.combo.blockSignals(True)
         self.combo.setCurrentIndex(max(0, self.combo.findData(e["id"])))
@@ -2127,7 +2152,8 @@ class NodeEditor(QWidget):
             self.level = ""
         self.eid = e["id"]
         self.params, self.sources, self.t = e["params"], e.get("sources") or {}, t
-        sig = json.dumps(e["graph"], sort_keys=True) + self.shown_sig(e)
+        gsig = json.dumps(e["graph"], sort_keys=True)
+        sig = gsig + self.shown_sig(e, gsig)
         if sig != self._sig:
             self._sig = sig
             self.graph = e["graph"]
@@ -2151,15 +2177,22 @@ class NodeEditor(QWidget):
     def curve_done(self, nid, q, keys):
         self.paramEdited.emit(self.eid, ng.param_key(nid, q.name), keys)
 
-    def shown_sig(self, e):
-        """Which rows of the nodes (@show) the settings hide: when it changes, the boxes are laid out again."""
+    def shown_sig(self, e, gsig):
+        """Which rows of the nodes (@show) the settings hide: when it changes, the boxes are laid out again. Only the
+        nodes whose filter has an @show are looked at (found once per graph: gsig is the graph as text), not every node on
+        every tick of the playhead."""
+        if self._showers_of != (e["id"], gsig):
+            self._showers_of = (e["id"], gsig)
+            self._showers = []
+            for nid, node in e["graph"]["nodes"].items():
+                if node.get("type") == ng.FILTER:
+                    d = ng.node_def(node)
+                    if d.input_show or any(p.show for p in d.params):
+                        self._showers.append((nid, d))
         out = []
-        for nid, node in e["graph"]["nodes"].items():
-            if node.get("type") == ng.FILTER:
-                d = ng.node_def(node)
-                if d.input_show or any(p.show for p in d.params):
-                    named = fx.named(d, {p.name: curves.value(e["params"].get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params})
-                    out.append((nid, [n for n in [x for x, _ in d.inputs] + [o for o, _ in d.outputs] + ["src"] + [p.name for p in d.params] if not fx.shown(d, n, named)]))
+        for nid, d in self._showers:
+            named = fx.named(d, {p.name: curves.value(e["params"].get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params})
+            out.append((nid, [n for n in [x for x, _ in d.inputs] + [o for o, _ in d.outputs] + ["src"] + [p.name for p in d.params] if not fx.shown(d, n, named)]))
         return json.dumps(out)
 
     def rebuild(self, fit=False):
@@ -2168,7 +2201,7 @@ class NodeEditor(QWidget):
         sc = v.scene()
         sc.clear()
         self.edit_proxy = None
-        v.items_by_id, v.link_items = {}, []
+        v.items_by_id, v.link_items, v.links_of = {}, [], {}
         v.over = v.grabbed = None                          # (they pointed at items the clear just deleted)
         hold = v.carrying
         nodes = self.graph["nodes"]
@@ -2202,6 +2235,7 @@ class NodeEditor(QWidget):
             ln.route(a.output_pos(out), b.input_pos(socket))
             sc.addItem(ln)
             v.link_items.append((ln, a_id, b_id, socket, out))
+        v.index_links()
         v.colour_links()
         self.here.setText(("位置：根 › " + (nodes[self.level].get("label") or "群組")) if self.level else "")
         self.leave_btn.setVisible(bool(self.level))

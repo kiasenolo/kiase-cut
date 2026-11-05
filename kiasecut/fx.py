@@ -411,14 +411,21 @@ def parse(text, ref, fallback_name="濾鏡"):
 _cache = {}
 
 
+STAT_EVERY = 0.5                  # (s: a filter file is looked at for changes this often at most - the node editor asks for the same few hundred every paint)
+
+
 def _file_def(path, ref, fallback):
+    now = time.monotonic()
+    hit = _cache.get(path)
+    if hit and now - hit[2] < STAT_EVERY:
+        return hit[1]
     try:
         st = os.stat(path)
     except OSError:
         return FilterDef(ref, fallback, "", error="找不到濾鏡檔案")
     key = (path, st.st_mtime_ns, st.st_size)
-    hit = _cache.get(path)
     if hit and hit[0] == key:
+        _cache[path] = (key, hit[1], now)
         return hit[1]
     try:
         with open(path, encoding="utf-8") as fh:
@@ -427,7 +434,7 @@ def _file_def(path, ref, fallback):
         d = FilterDef(ref, fallback, "", error=f"讀不到檔案：{exc}")
     else:
         d = parse(text, ref, fallback)
-    _cache[path] = (key, d)
+    _cache[path] = (key, d, now)
     return d
 
 
@@ -435,14 +442,24 @@ GRAPH = "nodes:graph"            # the filter of an effect that is a node graph 
 GRAPH_DEF = FilterDef(GRAPH, "節點效果", "", category="節點", description="用節點編輯器組出來的效果")
 
 
+_paths = {}                       # ref -> (file path, name when the file has none)
+
+
 def get(ref):
     """FilterDef of "builtin:name" or of a filter file's path."""
     if ref == GRAPH:
         return GRAPH_DEF
-    if ref.startswith(BUILTIN):
-        name = ref[len(BUILTIN):]
-        return _file_def(os.path.join(PKG, name + ".glsl"), ref, name)
-    return _file_def(ref, ref, os.path.splitext(os.path.basename(ref))[0])
+    got = _paths.get(ref)
+    if got is None:
+        if len(_paths) > 4096:
+            _paths.clear()
+        if ref.startswith(BUILTIN):
+            name = ref[len(BUILTIN):]
+            got = (os.path.join(PKG, name + ".glsl"), name)
+        else:
+            got = (ref, os.path.splitext(os.path.basename(ref))[0])
+        _paths[ref] = got
+    return _file_def(got[0], ref, got[1])
 
 
 _special = {}

@@ -41,6 +41,37 @@ class NodeEditorTests(unittest.TestCase):
         APP.processEvents()
         return ed
 
+    def test_moving_a_node_draws_only_its_own_links_again(self):
+        def build(e):
+            a = ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/exposure"}, 0, 0, base="a")
+            b = ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/exposure"}, 300, 0, base="b")
+            c = ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/exposure"}, 600, 0, base="c")
+            ng.connect(e["graph"], a, b, "src")
+            ng.connect(e["graph"], b, c, "src")
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        v = ed.view
+        far = next(l for l in v.link_items if l[2] == "c1")[0]
+        before = far.path().currentPosition()
+        v.items_by_id["a1"].setPos(0, 200)
+        near = next(l for l in v.link_items if l[1] == "a1")[0]
+        self.assertAlmostEqual(near.path().elementAt(0).y, v.items_by_id["a1"].output_pos().y(), places=3)
+        self.assertEqual(far.path().currentPosition(), before)
+        v.items_by_id["c1"].setPos(600, 100)                    # (the link into it follows)
+        self.assertAlmostEqual(far.path().currentPosition().y(), v.items_by_id["c1"].input_pos("src").y(), places=3)
+
+    def test_a_far_away_node_is_drawn_as_a_box(self):
+        ed = self.make(lambda e: ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/exposure"}, 0, 0, base="a"))
+        v = ed.view
+        v.scale(0.1, 0.1)
+        img = QImage(v.viewport().size(), QImage.Format_ARGB32)
+        img.fill(QColor("black"))
+        from PySide6.QtGui import QPainter
+        p = QPainter(img)
+        v.render(p)
+        p.end()
+        self.assertIsNotNone(v.items_by_id["a1"])
+
     def test_a_words_box_is_as_tall_as_it_was_dragged_to_and_shows_a_line_each(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.STRING, "value": "one\ntwo\nthree"}, 0, 150, base="s")

@@ -413,6 +413,22 @@ class ExposedParamTests(unittest.TestCase):
             for r in (render.Renderer(), glrender.GLRenderer()):
                 self.assertEqual(rgb(r.render(v, 0, W, H), 12, 18), RED, type(r).__name__)
 
+    def test_links_from_one_output_share_a_reroute(self):
+        g = self.e["graph"]
+        a = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/exposure"}, 0, 0)
+        b = edit.add_graph_node(self.p, "c1", self.eid, {"type": "filter", "ref": "builtin:nodes/exposure"}, 0, 50)
+        for n in (a, b):
+            edit.connect_graph(self.p, "c1", self.eid, "input", n, "src")
+        edit.connect_graph(self.p, "c1", self.eid, a, "output", "src")
+        spots = [(10, 10, "input", a, "src", ""), (30, 50, "input", b, "src", "")]
+        edit.add_graph_reroutes(self.p, "c1", self.eid, spots)
+        rer = [k for k, n in g["nodes"].items() if n["type"] == "reroute"]
+        self.assertEqual(len(rer), 1)
+        self.assertEqual((g["nodes"][rer[0]]["x"], g["nodes"][rer[0]]["y"]), (20, 30))
+        fed = {l["to"] for l in g["links"] if l["from"] == rer[0]}
+        self.assertEqual(fed, {a, b})
+        self.assertIsNone(ng.check(g))
+
     def test_frame_is_a_note_that_changes_nothing(self):
         edit.connect_graph(self.p, "c1", self.eid, "input", "output", "src")
         fid = edit.add_graph_node(self.p, "c1", self.eid, {"type": "frame", "w": 100, "h": 80}, 5, 6)

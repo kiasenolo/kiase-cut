@@ -1215,7 +1215,7 @@ class GraphView(QGraphicsView):
             self.grabbed = next((i for i, it in self.items_by_id.items() if it.sceneBoundingRect().contains(pos)), None)
         elif e.button() == Qt.RightButton:
             if e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier):
-                # Ctrl + right button: drag across links to cut them; Shift + right button: to put a bend (繞線) in each
+                # Ctrl + right button: drag across links to cut them; Shift + right button: to put a bend (繞線) in the links (those from one output share one)
                 line = QGraphicsPathItem()
                 reroute = bool(e.modifiers() & Qt.ShiftModifier) and not e.modifiers() & Qt.ControlModifier
                 line.setPen(QPen(QColor("#5fbf6a" if reroute else "#e0605a"), 2, Qt.DashLine))

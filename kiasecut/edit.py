@@ -2448,11 +2448,20 @@ def insert_graph_node(proj, clip_id, effect_id, nid, src, dst, socket, out=None)
 
 
 def add_graph_reroutes(proj, clip_id, effect_id, spots):
-    """Bends put in links (Shift + right drag across them): spots [(x, y, from node, to node, socket, output)]."""
-    for x, y, src, dst, socket, out in spots:
-        grp = (_graph(find(proj, clip_id)[1], effect_id)[1]["nodes"].get(dst) or {}).get("group")
+    """Bends put in links (Shift + right drag across them): spots [(x, y, from node, to node, socket, output)]. The links that
+    start at the same output are merged: they share one bend, put where the drag crossed them on average."""
+    byout = {}
+    for spot in spots:
+        byout.setdefault((spot[2], spot[5]), []).append(spot)
+    for (src, out), group in byout.items():
+        x = sum(g[0] for g in group) / len(group)
+        y = sum(g[1] for g in group) / len(group)
+        first = group[0]
+        grp = (_graph(find(proj, clip_id)[1], effect_id)[1]["nodes"].get(first[3]) or {}).get("group")
         nid = add_graph_node(proj, clip_id, effect_id, {"type": nodegraph.REROUTE, **({"group": grp} if grp else {})}, x, y)
-        insert_graph_node(proj, clip_id, effect_id, nid, src, dst, socket, out)
+        insert_graph_node(proj, clip_id, effect_id, nid, src, first[3], first[4], out)
+        for _x, _y, _src, dst, socket, _out in group[1:]:
+            connect_graph(proj, clip_id, effect_id, nid, dst, socket)
 
 
 def dissolve_graph_node(proj, clip_id, effect_id, nid):

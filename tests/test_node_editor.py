@@ -168,11 +168,11 @@ class NodeEditorTests(unittest.TestCase):
         self.assertIs(ed.view.backdrop, image)
         self.assertTrue(ed.view.backdrop_visible)
         start = ed.view.backdrop_zoom
-        QTest.keyClick(ed.view, Qt.Key_V)
+        QTest.keyClick(ed.view, Qt.Key_V, Qt.AltModifier)
         self.assertAlmostEqual(ed.view.backdrop_zoom, start / 1.2)
         QTest.keyClick(ed.view, Qt.Key_V, Qt.ShiftModifier)
         self.assertAlmostEqual(ed.view.backdrop_zoom, start)
-        self.assertTrue(ed.view.claims(Qt.Key_V, Qt.NoModifier))
+        self.assertTrue(ed.view.claims(Qt.Key_V, Qt.AltModifier))
         self.assertTrue(ed.view.claims(Qt.Key_V, Qt.ShiftModifier))
         ed.backdrop_btn.setChecked(False)
         self.assertFalse(ed.view.backdrop_visible)

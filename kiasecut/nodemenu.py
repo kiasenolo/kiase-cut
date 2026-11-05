@@ -66,7 +66,7 @@ MASK = ["nodes/rounded_square_mask"]
 TEXTURE = ["nodes/tex_brick", "nodes/tex_checker", "nodes/tex_gabor", "nodes/tex_gradient", "nodes/tex_magic", "nodes/tex_noise",
            "nodes/tex_voronoi", "nodes/tex_wave", "nodes/tex_white_noise", "blender_sensor_noise"]
 
-TRANSFORM = ["scale", "nodes/transform", "translate", SEP, "blender_lens_distortion"]
+TRANSFORM = ["scale", "nodes/transform", "translate", SEP, "nodes/flip", SEP, "blender_lens_distortion"]
 
 UTILITIES = [
     menu("數學", ["nodes/clamp", "nodes/float_curve", "nodes/map_range", "nodes/math", "nodes/mix"]),

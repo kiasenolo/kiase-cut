@@ -23,10 +23,14 @@ MAX_EXTERNAL = 6                                    # pictures from outside a gr
 
 _COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 _EFFECT = re.compile(r"\bvec4\s+effect\s*\(\s*vec2\s+(\w+)\s*\)\s*\{")
+_UVFUNC = re.compile(r"\b(?:vec4|vec3|vec2|float|int|bool|void)\s+(\w+)\s*\(\s*vec2\s+(\w+)\s*\)\s*\{")
 _CALL = re.compile(r"(?<![\w.])(src|input_\w+)\s*\(")
 _FORBIDDEN = re.compile(r"(?<![\w.])(original|extra|texture|textureLod|texelFetch|textureSize|pass_index|pass_px|src_px|extra_px|"
-                        r"source|original_|extra_|fragColor)\b|^\s*#|\bstruct\b|\bdiscard\b|\bin\s+vec|\bout\s+vec", re.M)
-_DECL = re.compile(r"(?:^|[;}])\s*(?:const\s+)?(?:float|int|bool|uint|void|vec[234]|ivec[234]|bvec[234]|mat[234])\s+(\w+)\s*(?=[(\[=;,])")
+                        r"source|original_|extra_|fragColor)\b|^\s*#\s*(?!define\b|undef\b)|\bdiscard\b|##", re.M)
+_GLOBAL_IO = re.compile(r"(?:^|[;}])\s*(?:in|out|uniform|layout|varying|attribute)\b")
+_MACRO = re.compile(r"^\s*#\s*define\s+(\w+)", re.M)
+_STRUCT = re.compile(r"\bstruct\s+(\w+)")
+_DECL = re.compile(r"(?:^|[;}])[ \t]*(?:const\s+)?(?:float|int|bool|uint|void|vec[234]|ivec[234]|bvec[234]|mat[234])\s+(\w+)\s*(?=[(\[=;,])", re.M)
 
 
 def strip(code):
@@ -79,22 +83,51 @@ def analyse(d):
     if m is None:
         return None
     uv = m.group(1)
-    start, end = m.end() - 1, _match(code, m.end() - 1, "{", "}")
-    if end < 0:
+    funcs = {}                                                      # name -> (its vec2 parameter, start, end) of the functions that take only a uv
+    for f in _UVFUNC.finditer(code):
+        end = _match(code, f.end() - 1, "{", "}")
+        if end > 0:
+            funcs[f.group(1)] = (f.group(2), f.end() - 1, end)
+    if "effect" not in funcs:
         return None
-    body = code[start:end]
-    if re.search(r"(?<![\w.])%s(\.\w+)?\s*[-+*/]?=(?!=)" % re.escape(uv), body):          # (uv itself must stay the pixel's)
+
+    def inside(pos):
+        """(name, parameter) of the one-uv function pos is in, or None."""
+        return next(((n, v[0]) for n, v in funcs.items() if v[1] <= pos < v[2]), None)
+
+    def arg_at(open_paren):
+        close = _match(code, open_paren, "(", ")")
+        return code[open_paren + 1:close - 1].strip() if close > 0 else None
+    reading = set()                                                 # the functions that read a picture, and the ones that call them: all at their own uv
+    todo = []
+    for c in _CALL.finditer(code):                                  # (every picture is read at the uv a function was given)
+        at = inside(c.start())
+        if at is None or arg_at(c.end() - 1) != at[1]:
+            return None
+        todo.append(at[0])
+    while todo:
+        name = todo.pop()
+        if name in reading:
+            continue
+        reading.add(name)
+        for c in re.finditer(r"(?<![\w.])%s\s*\(" % re.escape(name), code):
+            if re.search(r"\b(?:vec4|vec3|vec2|float|int|bool|void)\s+$", code[:c.start()]):
+                continue                                            # (its own definition)
+            at = inside(c.start())
+            if at is None or arg_at(c.end() - 1) != at[1]:
+                return None
+            todo.append(at[0])
+    for name in reading:                                            # (a uv that is changed is no longer the pixel's)
+        par, st, en = funcs[name]
+        if re.search(r"(?<![\w.])%s(\.\w+)?\s*[-+*/]?=(?!=)" % re.escape(par), code[st:en]):
+            return None
+    top = re.sub(r"^\s*#.*$", ";", _top_level(code), flags=re.M)
+    if _GLOBAL_IO.search(top):
         return None
-    for c in _CALL.finditer(code):                                  # (every picture is read at uv, inside effect())
-        if not (start <= c.start() < end):
-            return None
-        close = _match(code, c.end() - 1, "(", ")")
-        if close < 0 or code[c.end():close - 1].strip() != uv:
-            return None
-    top = _top_level(code)
     if re.search(r"(?:float|int|bool|uint|vec[234]|ivec[234]|mat[234])\s+\w+\s*(?:\[\s*\w*\s*\])?\s*,", top):         # (float a, b; is not read)
         return None
-    names = set(_DECL.findall(top))
+    names = set(_DECL.findall(top)) | set(_MACRO.findall(code)) | set(_STRUCT.findall(code))
+    names -= set(re.findall(r"^\s*#\s*undef\s+(\w+)", code, re.M))             # (a macro that is undone again - rot, mix - only lives inside its own text)
     names.discard("main")
     d._fuse = (uv, names)
     return d._fuse
@@ -128,6 +161,18 @@ def _rename(code, r):
     return pattern.sub(lambda m: r[m.group(1)], code)
 
 
+# the picture a node gives is stored as 16-bit floats (the targets are), so what the node after it reads is rounded to them; a fused
+# group rounds at the same places, or a node that is chaotic in its input (white noise of a coordinate) would give another picture
+# than the same nodes drawn one by one (nearest even, normals by their bits, the small ones on the 2^-24 grid)
+HALF = """vec4 half_(vec4 v) {
+    ivec4 b = floatBitsToInt(v);
+    vec4 r = intBitsToFloat((b + 0x0FFF + ((b >> 13) & 1)) & ~0x1FFF);
+    vec4 small = floor(v * 16777216.0 + 0.5) / 16777216.0;
+    vec4 a = abs(v);
+    return vec4(a.x < 6.103515625e-5 ? small.x : r.x, a.y < 6.103515625e-5 ? small.y : r.y,
+                a.z < 6.103515625e-5 ? small.z : r.z, a.w < 6.103515625e-5 ? small.w : r.w);
+}"""
+
 _built = {}
 
 
@@ -140,7 +185,7 @@ def build(members):
     got = _built.get(key)
     if got is not None:
         return got
-    code, params, names = [], [], []
+    code, params, names = [HALF], [], []
     ext = 0
     for i, (d, wiring, out) in enumerate(members):
         uv, declared = analyse(d)
@@ -148,7 +193,7 @@ def build(members):
 
         def read(socket):
             kind, k = wiring.get(socket, ("none", 0))
-            return f"n{k}_effect(uv)" if kind == "node" else f"input_e{k}(uv)" if kind == "ext" else "vec4(0.0)"
+            return f"half_(n{k}_effect(uv))" if kind == "node" else f"input_e{k}(uv)" if kind == "ext" else "vec4(0.0)"
         glue = [f"const int n{i}_output_index = {int(out)};",
                 f"vec4 n{i}_src(vec2 uv) {{ return {read('src')}; }}",
                 f"bool n{i}_has_src() {{ return {'true' if wiring.get('src', ('none', 0))[0] != 'none' else 'false'}; }}"]
@@ -163,7 +208,7 @@ def build(members):
             params.append(q)
             names.append((i, p.name, q.name))
     last = len(members) - 1
-    code.append(f"vec4 effect(vec2 uv) {{ return n{last}_effect(uv); }}")
+    code.append(f"vec4 effect(vec2 uv) {{ return half_(n{last}_effect(uv)); }}")
     fused = fx.FilterDef("fused:" + key[:12], "fused", "\n".join(code), params)
     n_ext = 1 + max([k for _d, w, _o in members for kind, k in w.values() if kind == "ext"] or [-1])
     fused.inputs = [(f"e{k}", "") for k in range(n_ext)]

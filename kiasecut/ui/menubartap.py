@@ -67,11 +67,14 @@ class _Watch(QObject):
     def _redraw(menu):
         """A menu hidden and another shown within a few milliseconds (a slide over the titles) left the last one up for Qt and blank on the
         screen: its first drawing was made before the system's surface for it was there and Qt never drew it again. Drawn again here, a few
-        times while it is up, it is on the screen whenever the surface comes."""
+        times while it is up, it is on the screen whenever the surface comes. And raised: the menu's surface can be put behind the window's (it is up for Qt, takes
+        the finger, and is not seen), and a raise puts it back on top."""
         if shiboken6.isValid(menu) and menu.isVisible():
+            menu.raise_()
             menu.update()
             handle = menu.windowHandle()
             if handle is not None:
+                handle.raise_()
                 handle.requestUpdate()
 
     @staticmethod

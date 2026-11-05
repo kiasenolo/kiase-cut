@@ -1371,7 +1371,7 @@ class Timeline(QWidget):
                 p.setPen(QPen(faded, 2))
             p.drawRect(r.adjusted(1, 1, -1, -1))
 
-        cut_l, cut_r = x0 < self.header_w, x1 > w          # (it goes on out of view: that side's edge is fainter)
+        cut_l, cut_r = x0 < self.header_w, x1 > w          # (it goes on out of view: that side has no edge)
         if cut_l or cut_r:
             strip = 5.0
             top, tall = r.top() - 4, r.height() + 8
@@ -1388,7 +1388,7 @@ class Timeline(QWidget):
             only(QRectF(left, top, right - left, tall))
             for on, sx, inner in ((cut_l, r.left(), r.left() + strip), (cut_r, r.right() - strip, r.right() - strip - bw - 0.5)):
                 if on:
-                    only(QRectF(sx, top, strip, tall), 0.35)
+                    only(QRectF(sx, top, strip, tall), 0.0)
                     bx, ex = (sx + bw + 0.5, sx + strip) if sx == r.left() else (sx, sx + strip - bw - 0.5)
                     only(QRectF(bx, top, ex - bx, bw + 3))                    # (the top and bottom lines stay whole:
                     only(QRectF(bx, r.bottom() - bw - 2, ex - bx, bw + 6))    # only the side is fainter)

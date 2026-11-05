@@ -283,7 +283,7 @@ class Panels(QObject):
         self.docks[key].close()
 
     def toggle_fullscreen(self, key):
-        """Temporarily show one dock full screen, keeping its entire dock layout to restore."""
+        """Temporarily let one dock fill the whole window (the others hidden), keeping its entire dock layout to restore."""
         if self._maximized is not None:
             if self._maximized[0] == key:
                 self.restore_fullscreen()
@@ -301,12 +301,12 @@ class Panels(QObject):
         self.restoring = True
         try:
             dock.user_closed = dock.auto_hidden = False
+            if dock.isFloating():
+                dock.setFloating(False)           # (in the window, as Blender's Ctrl + Space: the other panels go, this one fills the room)
             dock.show()
-            dock.setFloating(True)
             for other_key, other in self.docks.items():
                 if other_key != key:
                     other.hide()
-            dock.showFullScreen()
         finally:
             self.restoring = False
         self.refresh_titles()
@@ -318,8 +318,6 @@ class Panels(QObject):
             return
         key, snapshot = self._maximized
         self._maximized = None
-        dock = self.docks[key]
-        dock.showNormal()
         self.restore(snapshot["state"], snapshot["closed"])
         self.restoring = True
         try:

@@ -145,8 +145,9 @@ class PanelTests(unittest.TestCase):
 
         self.pn.toggle_fullscreen("nodes")
         QApplication.processEvents()
-        self.assertTrue(self.pn["nodes"].isFloating())
-        self.assertTrue(self.pn["nodes"].isFullScreen())
+        self.assertFalse(self.pn["nodes"].isFloating())                  # (in the window, filling it: not a window of its own)
+        self.assertFalse(self.pn["nodes"].isFullScreen())
+        self.assertGreater(self.pn["nodes"].width(), self.pn.win.width() * 0.9)
         self.assertTrue(all(not d.isVisible() for k, d in self.pn.docks.items() if k != "nodes"))
 
         self.pn.toggle_fullscreen("nodes")

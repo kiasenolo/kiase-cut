@@ -61,6 +61,13 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(lst.verticalScrollMode(), QAbstractItemView.ScrollPerPixel)
 
 
+def glided(tl):
+    """Let a mouse wheel's glide run to its end."""
+    while tl.__dict__.get("_wheel_queue"):
+        tl._wheel_last -= 1.0
+        tl._wheel_step()
+
+
 class TimelineTests(unittest.TestCase):
     def setUp(self):
         self.tl = Timeline()
@@ -80,6 +87,7 @@ class TimelineTests(unittest.TestCase):
         pad(self.tl, 0, 100, Qt.ControlModifier)                 # a notch's worth, in ten events
         self.assertAlmostEqual(self.tl.px_per_s, 125.0, places=6)
         send(self.tl, (0, 120), mods=Qt.ControlModifier)          # a wheel notch: the same
+        glided(self.tl)
         self.assertAlmostEqual(self.tl.px_per_s, 125.0 * 1.25, places=6)
 
     def test_two_finger_scroll_moves_both_ways(self):
@@ -93,8 +101,11 @@ class TimelineTests(unittest.TestCase):
         self.tl.set_vzoom(4.0)
         self.tl.scroll_y = 0
         send(self.tl, (0, -120))
+        self.assertEqual(self.tl.scroll_y, 0)                     # (it glides: not there at once)
+        glided(self.tl)
         self.assertEqual(self.tl.scroll_y, 40)
         send(self.tl, (0, 120), mods=Qt.ShiftModifier)
+        glided(self.tl)
         self.assertAlmostEqual(self.tl.scroll_s, 5.0 - 0.8, places=6)
 
     def test_pinch_zooms_time_around_the_mouse(self):

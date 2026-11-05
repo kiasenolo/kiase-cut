@@ -88,10 +88,11 @@ or Enter keeps them; Esc or the right button puts them back.
 """
 import copy
 import math
+import time
 from collections import OrderedDict
 
 import numpy as np
-from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QIcon, QImage, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QScrollBar, QTextEdit, QToolTip, QWidget
 
@@ -2546,24 +2547,70 @@ class Timeline(QWidget):
             elif lc is not None and lc["type"] == "compound":
                 self.clipAction.emit("enter", lc["id"])
 
+    WHEEL_HALF_LIFE_MS = 55.0                            # (as smoothscroll: a notch glides in about 0.2 s)
+
     def wheelEvent(self, e):
         if not self.proj:
             return
         n = wheel.notch(e)                               # Alt / Shift may turn the wheel sideways
         mods = e.modifiers()
+        part = {}
         if mods & Qt.AltModifier:                        # track height
-            if n:
-                self.set_vzoom(self.vzoom * 1.15 ** n)
+            part["alt"] = n
         elif mods & Qt.ControlModifier:                  # zoom time around the mouse
-            self.zoom_time(1.25 ** n, e.position().x())
+            part["ctrl"] = n
+            self._wheel_x = e.position().x()
         else:                                            # a notch: 80 px sideways, 40 px up / down
             shift = mods & Qt.ShiftModifier
             dx, dy = wheel.pixels(e, 80, 80 if shift else 40)
             if shift:                                    # left / right
                 dx, dy = dy if abs(dy) >= abs(dx) else dx, 0.0
-            self.scroll_s = max(0.0, self.scroll_s - dx / self.px_per_s)
-            self.vbar.setValue(self.scroll_y - round(dy))   # (a touchpad moves both ways at once)
+            part["dx"], part["dy"] = dx, dy              # (a touchpad moves both ways at once)
+        if wheel.touchpad(e):                            # its fingers already move it smoothly
+            self._wheel_apply(part)
+        else:
+            queue = self.__dict__.setdefault("_wheel_queue", {})
+            for k, v in part.items():
+                queue[k] = queue.get(k, 0.0) + v
+            if not hasattr(self, "_wheel_timer"):
+                self._wheel_timer = QTimer(self, interval=8)
+                self._wheel_timer.timeout.connect(self._wheel_step)
+            if not self._wheel_timer.isActive():
+                self._wheel_last = time.monotonic()
+                self._wheel_timer.start()
         self.update()
+
+    def _wheel_step(self):
+        now = time.monotonic()
+        k = 1.0 - 0.5 ** ((now - self._wheel_last) * 1000.0 / self.WHEEL_HALF_LIFE_MS)
+        self._wheel_last = now
+        queue = self._wheel_queue
+        part = {}
+        for key, left in list(queue.items()):
+            small = 0.5 if key in ("dx", "dy") else 0.01
+            take = left if abs(left) * (1 - k) < small else left * k
+            part[key] = take
+            if take == left:
+                del queue[key]
+            else:
+                queue[key] = left - take
+        if not queue:
+            self._wheel_timer.stop()
+        self._wheel_apply(part)
+        self.update()
+
+    def _wheel_apply(self, part):
+        if "alt" in part:
+            self.set_vzoom(self.vzoom * 1.15 ** part["alt"])
+        if "ctrl" in part:
+            self.zoom_time(1.25 ** part["ctrl"], self._wheel_x)
+        if "dx" in part:
+            self.scroll_s = max(0.0, self.scroll_s - part["dx"] / self.px_per_s)
+        if "dy" in part:
+            self._wheel_y = getattr(self, "_wheel_y", 0.0) + part["dy"]
+            whole = round(self._wheel_y)
+            self._wheel_y -= whole                       # (the bar takes whole pixels: the rest waits for the next step)
+            self.vbar.setValue(self.scroll_y - whole)
 
     def zoom_time(self, f, x):
         """Zoom time by f around x."""

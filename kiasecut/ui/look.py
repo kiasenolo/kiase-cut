@@ -196,7 +196,7 @@ HINTS = {
     S.SH_Menu_Scrollable: 1, S.SH_Menu_SubMenuPopupDelay: 150, S.SH_Menu_SubMenuSloppyCloseTimeout: 300,
     S.SH_MenuBar_AltKeyNavigation: 0, S.SH_ScrollBar_LeftClickAbsolutePosition: 1,
     S.SH_Slider_SnapToValue: 0, S.SH_Slider_StopMouseOverSlider: 0, S.SH_DockWidget_ButtonsHaveFrame: 0,
-    S.SH_TitleBar_AutoRaise: 0,
+    S.SH_TitleBar_AutoRaise: 0, S.SH_ComboBox_Popup: 1,      # (a combo box list opens over the box, the current item on it)
 }
 
 

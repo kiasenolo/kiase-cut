@@ -22,7 +22,7 @@ import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen
-from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
@@ -1010,6 +1010,11 @@ class GraphView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.setBackgroundBrush(QColor(CANVAS))
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)       # (the bars take no room: the view's own stay hidden and keep the ranges,
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)         # the ones drawn over its edges follow them)
+        self.overlay = {}
+        for orient, own in ((Qt.Horizontal, self.horizontalScrollBar()), (Qt.Vertical, self.verticalScrollBar())):
+            self.overlay[orient] = self._overlay_bar(orient, own)
         self.items_by_id = {}
         self.link_items = []                     # [(Link, from node, to node, socket, output name)]
         self.links_of = {}                       # node id -> its link_items (index_links)
@@ -1607,8 +1612,33 @@ class GraphView(QGraphicsView):
             self.backdrop_w = w
             self.backdropWidth.emit(w)
 
+    def _overlay_bar(self, orient, own):
+        bar = QScrollBar(orient, self)
+        bar.hide()
+
+        def from_own(*_):
+            bar.setRange(own.minimum(), own.maximum())
+            bar.setPageStep(own.pageStep())
+            bar.setSingleStep(own.singleStep())
+            bar.setValue(own.value())
+            bar.setVisible(own.maximum() > own.minimum())
+            self._place_bars()
+        own.rangeChanged.connect(from_own)
+        own.valueChanged.connect(lambda v: bar.setValue(v))
+        bar.valueChanged.connect(lambda v: own.setValue(v))
+        return bar
+
+    def _place_bars(self):
+        h, v = self.overlay[Qt.Horizontal], self.overlay[Qt.Vertical]
+        w, ht, t = self.width(), self.height(), h.sizeHint().height()
+        h.setGeometry(0, ht - t, w - (t if v.isVisible() else 0), t)
+        v.setGeometry(w - t, 0, t, ht - (t if h.isVisible() else 0))
+        h.raise_()
+        v.raise_()
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        self._place_bars()
         self._report_backdrop()
 
     def showEvent(self, e):

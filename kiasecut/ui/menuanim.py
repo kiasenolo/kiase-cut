@@ -22,7 +22,7 @@ import time
 import shiboken6
 from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QApplication, QComboBox, QGraphicsEffect, QMenu, QMenuBar, QWidget
+from PySide6.QtWidgets import QApplication, QGraphicsEffect, QMenu, QMenuBar, QWidget
 
 from . import appevents, motion
 
@@ -264,28 +264,6 @@ def opened(menu):
     pop(menu)
 
 
-def align_combo(container):
-    """A combo box's list that was kept lower than the box (Qt keeps it inside the screen, and
-    under Wayland a window's top is taken as the screen's: a box near the top of the window
-    got a list that began at the top, its current item far below the box): the list is cut at
-    its foot and scrolled so that the current item is over the box again."""
-    combo = container.parentWidget()
-    if not isinstance(combo, QComboBox) or combo.currentIndex() < 0 or container.property("kcAligned"):
-        return
-    view = combo.view()
-    container.setProperty("kcAligned", True)
-    for _ in range(4):                                # (the viewport shrinks with the list: each pass leaves less over)
-        row = view.visualRect(view.model().index(combo.currentIndex(), 0, view.rootIndex()))
-        delta = view.viewport().mapToGlobal(row.topLeft()).y() - combo.mapToGlobal(QPoint(0, 0)).y()
-        if delta <= 0 or container.height() - delta < 3 * row.height():
-            break
-        container.resize(container.width(), container.height() - delta)
-        container.layout().activate()
-        bar = view.verticalScrollBar()
-        bar.setValue(bar.value() + delta)
-    QTimer.singleShot(0, lambda: container.setProperty("kcAligned", None) if shiboken6.isValid(container) else None)
-
-
 def install():
     def made(obj, e):
         if isinstance(obj, QMenu) and obj.isWindow() and not obj.windowFlags() & Qt.FramelessWindowHint:
@@ -295,8 +273,6 @@ def install():
     def shown(obj, e):
         if popup_window(obj):
             try:
-                if not isinstance(obj, QMenu):
-                    align_combo(obj)
                 opened(obj)
             except RuntimeError:
                 pass

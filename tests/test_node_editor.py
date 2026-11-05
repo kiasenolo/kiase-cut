@@ -375,6 +375,27 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, out.input_pos("src"), out.input_pos("src") + QPointF(-30, 200))
         self.assertEqual(got, [("e1", "output", "src")])
 
+    def test_esc_cancels_a_dragged_link_and_nothing_is_asked(self):
+        ed = self.make()
+        v = ed.view
+        got = []
+        for sig in (ed.disconnectRequested, ed.connectRequested):
+            sig.connect(lambda *a: got.append(a))
+        ed.add_menu = lambda *a, **k: None
+        out = v.items_by_id["output"]
+        placed = [l for l, _a, b, sk, _o in v.link_items if (b, sk) == ("output", "src")]
+        a = out.input_pos("src")
+        QTest.mousePress(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(a))
+        QTest.mouseMove(v.viewport(), v.mapFromScene(a + QPointF(-30, 200)))
+        self.assertIsNotNone(v.rubber)
+        self.assertTrue(v.claims(Qt.Key_Escape, Qt.NoModifier))             # (the window's Esc is not taken for it)
+        QTest.keyClick(v, Qt.Key_Escape)
+        self.assertIsNone(v.rubber)
+        self.assertTrue(all(l.isVisible() for l in placed))                  # (the picked up link is back)
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(a + QPointF(-30, 200)))
+        self.assertEqual(got, [])
+        self.assertFalse(v.cancelled)
+
     def test_moving_a_node_asks_for_the_move(self):
         ed = self.make()
         got = []

@@ -1050,6 +1050,7 @@ class GraphView(QGraphicsView):
         self.links_of = {}                       # node id -> its link_items (index_links)
         self.pseudo_links = []                   # [(from, to, socket, output)] the links to and from a group's own sockets, inside it
         self.lifted = []                         # the placed link a dragged one picked up, hidden meanwhile
+        self.cancelled = False                   # Esc ended a drag: the button's release is not one
         self.snapped = None                      # the socket a dragged link has jumped onto: (kind, node id, socket, point)
         self.snap_ring = None
         self.rubber = None                       # a link being dragged: (Link, source node, old (dst, socket) or None, output name)
@@ -1349,6 +1350,27 @@ class GraphView(QGraphicsView):
             ring.setRect(QRectF(best[1][3].x() - r, best[1][3].y() - r, 2 * r, 2 * r))
         return self.snapped
 
+    def cancel_drag(self):
+        """Esc while a link is dragged (from an output, from an input, or a cut across links): it is let go of, nothing changes, and the
+        release that ends the drag does nothing. Whether there was a drag."""
+        if not (self.rubber or self.reverse or self.cut):
+            return False
+        if self.rubber:
+            self.scene().removeItem(self.rubber[0])
+            self.rubber = None
+        if self.reverse:
+            self.scene().removeItem(self.reverse[0])
+            self.reverse = None
+        if self.cut:
+            self.scene().removeItem(self.cut[0])
+            self.cut = None
+        for l in self.lifted:                            # (a link picked up stays where it was)
+            l.setVisible(True)
+        self.lifted = []
+        self.end_snap()
+        self.cancelled = True
+        return True
+
     def end_snap(self):
         """The socket the link was snapped to as it is let go (None: not snapped); the ring goes."""
         hit, self.snapped = self.snapped, None
@@ -1510,6 +1532,9 @@ class GraphView(QGraphicsView):
             self.panning = None
             self.unsetCursor()
             self.glide.release()
+            return
+        if self.cancelled:
+            self.cancelled = False
             return
         pos = self.mapToScene(e.position().toPoint())
         if self.reverse:
@@ -1736,6 +1761,8 @@ class GraphView(QGraphicsView):
             return mods in (Qt.NoModifier, Qt.ControlModifier) if key == Qt.Key_X else mods == Qt.NoModifier
         if key in (Qt.Key_J, Qt.Key_C):
             return mods == Qt.ControlModifier
+        if key == Qt.Key_Escape:
+            return mods == Qt.NoModifier
         if key == Qt.Key_V:
             return mods in (Qt.NoModifier, Qt.AltModifier, Qt.ControlModifier)
         if key == Qt.Key_G:
@@ -1754,6 +1781,9 @@ class GraphView(QGraphicsView):
         if self.carrying:
             if key in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter):
                 self._put_down(key == Qt.Key_Escape)
+            return
+        if key == Qt.Key_Escape:                           # (it cancels a dragged link; it leaves nothing: the window's Esc - 返回上一層 - is not for here)
+            self.cancel_drag()
             return
         if key == Qt.Key_A and mods == Qt.NoModifier:
             for it in self.items_by_id.values():

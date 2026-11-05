@@ -877,7 +877,7 @@ def takes_picture(graph, nid, socket):
     p = param_of(graph, nid, socket)
     if p is None:
         return True
-    return not (is_asset(node) or is_text(node)) and p.type in fx.SOURCE_TYPES + CONTROL_TYPES
+    return not (is_asset(node) or is_text(node)) and p.type in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES
 
 
 CONSTANTS = {"float": "builtin:nodes/value", "int": "builtin:nodes/integer", "bool": "builtin:nodes/boolean",
@@ -961,7 +961,7 @@ def connect(graph, src, dst, socket, out=None):
             out = outputs(nodes[src])[0][0]
         if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst])):
             raise GraphError("形狀和文字的數值只能接效果自己的參數（參數輸入節點）")
-        if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES:
+        if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):
         raise GraphError("節點不能連成迴圈")
@@ -1176,12 +1176,13 @@ def source_nodes(graph):
 
 
 CONTROL_TYPES = ("bool", "int", "menu")        # parameters a number can set: a picture linked into one is read as a number (Blender's implicit conversions)
+VECTOR_TYPES = ("vec2", "vec3")                # a picture linked into one is read as its colour at the middle: R, G (, B) (a grey one gives
+                                               # the same number to each: Blender's float to vector)
 
 
-def _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors):
-    """The value a picture (node f[0]'s output f[1]) says for a tick or a menu: its brightness at the middle (as a number node's
-    picture is a float). True when above 0.5; a menu takes the number as the index of its choice. Worked out small (a number
-    does not care how big its picture is)."""
+def _centre(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors):
+    """The colour (R, G, B) a picture (node f[0]'s output f[1]) has at the middle. Worked out small (a number does not care how big
+    its picture is)."""
     import numpy as np
     g = {"nodes": {**graph["nodes"], "\0control": {"type": VIEWER}},
          "links": [l for l in graph["links"] if graph["nodes"][l["to"]]["type"] != VIEWER] +
@@ -1189,15 +1190,21 @@ def _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit
     tex, owner = evaluate(eng, g, params, src_tex, 4, 4, alloc, free, t=t, duration=duration, fps=fps, unit=unit, picture=picture,
                           errors=errors, viewer=True)
     if tex is None:
-        return 0.0
+        return 0.0, 0.0, 0.0
     a = np.frombuffer(tex.read(), np.float16 if tex.dtype == "f2" else np.float32 if tex.dtype == "f4" else np.uint8).reshape(
         tex.size[1], tex.size[0], 4).astype(np.float64)
     if tex.dtype == "f1":
         a /= 255.0
     if owner is not None:
         free(owner)
-    r, gg, b = a[tex.size[1] // 2, tex.size[0] // 2, :3]
-    return float(0.2126 * r + 0.7152 * gg + 0.0722 * b)
+    return tuple(float(x) for x in a[tex.size[1] // 2, tex.size[0] // 2, :3])
+
+
+def _control(*args):
+    """The value a picture says for a tick or a menu: its brightness at the middle (as a number node's picture is a float). True when
+    above 0.5; a menu takes the number as the index of its choice."""
+    r, g, b = _centre(*args)
+    return float(0.2126 * r + 0.7152 * g + 0.0722 * b)
 
 
 def read_rgba8(tex):
@@ -1428,9 +1435,13 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             todo += [f[0] for (to, _s), f in feed.items() if to == n]
     for (to, sock), f in list(feed.items()):
         p = param_of(graph, to, sock) if sock.startswith(PARAM) else None
-        if p is not None and p.type in CONTROL_TYPES:
+        if p is not None and p.type in CONTROL_TYPES + VECTOR_TYPES:
             del feed[(to, sock)]                              # (read once, a number: the picture itself is not drawn for it)
             if to not in reach:
+                continue
+            if p.type in VECTOR_TYPES:
+                c = _centre(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
+                ctrl[(to, p.name)] = list(c[:2 if p.type == "vec2" else 3])
                 continue
             v = _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
             ctrl[(to, p.name)] = v > 0.5 if p.type == "bool" else v         # (a whole number: rounded where it is used)

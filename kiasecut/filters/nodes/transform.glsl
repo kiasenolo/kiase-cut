@@ -21,7 +21,7 @@ vec4 cubic_tap(vec2 q) {                            // (Catmull-Rom over the 16 
     for (int y = 0; y < 4; y++)
         for (int x = 0; x < 4; x++)
             acc += src((i + vec2(float(x) - 1.0, float(y) - 1.0) + 0.5) / px) * ws[x].x * ws[y].y;
-    return clamp(acc, 0.0, 1.0);
+    return vec4(max(acc.rgb, 0.0), clamp(acc.a, 0.0, 1.0));      // (the overshoot of the curve is cut below 0 and in the alpha, not in the colour: a number can be more than 1)
 }
 
 vec4 effect(vec2 uv) {

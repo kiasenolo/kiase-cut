@@ -18,7 +18,7 @@ import threading
 import time
 
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QPointF, QRect, QSettings, QSize,
-                            QStandardPaths, Qt,
+                            QStandardPaths, Qt, QProcess,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
@@ -4993,6 +4993,7 @@ class MainWindow(QMainWindow):
         s.setValue("autosave_min", v["autosave_min"])
         s.setValue("autosave_limit", v["autosave_limit"])
         s.setValue("gpu", v["gpu"])
+        scale_changed = v["ui_scale"] != ui_scale()
         s.setValue("ui_scale", v["ui_scale"])
         inertia.state.update(v["inertia"])
         inertia.save(s)
@@ -5005,6 +5006,27 @@ class MainWindow(QMainWindow):
             recovery.prune(self.autosave_dir, v["autosave_limit"])
         if v["library"] != (self.ulib.root if self.ulib else None):
             self.change_library_root(v["library"], v["copy_library"])
+        if scale_changed:
+            self.restart_for_scale()
+
+    def restart_for_scale(self):
+        """界面縮放 only takes hold as the program starts: offer to start it again now, with the project that is open."""
+        if self.tasks:
+            QMessageBox.information(self, "界面縮放", "有工作正在進行（匯出、載入…），所以沒有重新開啟。\n"
+                                    "新的縮放比例下次開啟程式時生效。")
+            return
+        ans = QMessageBox.question(self, "界面縮放", "要現在重新開啟程式，讓新的縮放比例生效嗎？\n"
+                                   "（未儲存的修改會先問你要不要儲存，開著的專案會再開起來。）")
+        if ans != QMessageBox.Yes:
+            return
+        if self.dirty:
+            if not self.maybe_save():
+                return
+            self.dirty = False                           # (the answer was 不儲存: closing is not asked again)
+        args = ["-m", "kiasecut"] + ([self.path] if self.path and os.path.exists(self.path) else [])
+        self.close()
+        if self.closing:                                 # (closed: the new program starts when this one is gone)
+            QProcess.startDetached(sys.executable, args)
 
     def change_library_root(self, new, copy):
         old = self.ulib.root if self.ulib else None

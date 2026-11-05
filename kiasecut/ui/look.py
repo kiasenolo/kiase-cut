@@ -255,6 +255,8 @@ class Style(wheel.Style):
     def styleHint(self, hint, option=None, widget=None, data=None):
         if hint in HINTS:
             return HINTS[hint]
+        if hint == QStyle.SH_Menu_SloppySubMenus and sys.platform == "android":
+            return 0                       # (a finger makes no moves toward a submenu: the sloppy-close timer shut the submenu 300 ms after a tap)
         return super().styleHint(hint, option, widget, data)
 
     def pixelMetric(self, metric, option=None, widget=None):

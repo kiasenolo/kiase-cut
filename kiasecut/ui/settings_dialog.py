@@ -20,7 +20,7 @@ CACHE_CHOICES = ((workspace.CACHE_DEFAULT, "預設（使用者的緩存資料夾
 class SettingsDialog(QDialog):
     def __init__(self, parent, library_dir, default_library, project_dir, autosave_min, use_gpu=True,
                  autosave_limit=30, autosave_dir="", cache_mode=workspace.CACHE_DEFAULT, cache_custom="",
-                 default_cache="", root_dir="", autosave_custom=""):
+                 default_cache="", root_dir="", autosave_custom="", ui_scale=100):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(600)
@@ -133,6 +133,18 @@ class SettingsDialog(QDialog):
         row.addWidget(self.engine, 1)
         row.addWidget(test)
         form.addRow("濾鏡引擎", row)
+
+        self.ui_scale = QSpinBox()
+        self.ui_scale.setRange(50, 300)
+        self.ui_scale.setSingleStep(10)
+        self.ui_scale.setSuffix(" %")
+        self.ui_scale.setValue(ui_scale)
+        self.ui_scale_was = ui_scale
+        form.addRow("界面縮放", self.ui_scale)
+        self.ui_scale_note = QLabel("整個界面（文字、按鈕、間距）一起放大縮小；重新開啟程式後生效。")
+        self.ui_scale_note.setStyleSheet("color: #9a9aa0;")
+        self.ui_scale_note.setWordWrap(True)
+        form.addRow("", self.ui_scale_note)
 
         self.inertia_mode = QComboBox()
         self.inertia_mode.addItem("全局：全部用同一個值", False)
@@ -264,6 +276,7 @@ class SettingsDialog(QDialog):
                 "copy_library": self.copy.isVisible() and self.copy.isChecked(),
                 "project_dir": self.projects.text().strip(), "autosave_min": self.autosave.value(),
                 "autosave_limit": self.autosave_limit.value(),
+                "ui_scale": self.ui_scale.value(),
                 "inertia": {"separate": bool(self.inertia_mode.currentData()), "all": self.inertia_all.value(),
                             **{key: box.value() for key, box in self.inertia_each.items()}},
                 "gpu": self.gpu.isChecked(), "cache_mode": self.cache_mode.currentData(),

@@ -4978,7 +4978,8 @@ class MainWindow(QMainWindow):
                              self.default_location(), self.autosave_min(), gpu.enabled, self.autosave_limit(),
                              self.autosave_dir or self.autosave_folder(),
                              self.cache_mode(), self.cache_custom(), self.default_cache_base(),
-                             root_dir=self.app_root(), autosave_custom=str(self.settings().value("autosave_dir") or ""))
+                             root_dir=self.app_root(), autosave_custom=str(self.settings().value("autosave_dir") or ""),
+                             ui_scale=ui_scale())
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
@@ -4992,6 +4993,7 @@ class MainWindow(QMainWindow):
         s.setValue("autosave_min", v["autosave_min"])
         s.setValue("autosave_limit", v["autosave_limit"])
         s.setValue("gpu", v["gpu"])
+        s.setValue("ui_scale", v["ui_scale"])
         inertia.state.update(v["inertia"])
         inertia.save(s)
         s.setValue("cache_mode", v["cache_mode"])
@@ -6334,12 +6336,23 @@ class MainWindow(QMainWindow):
         super().closeEvent(e)
 
 
+def ui_scale():
+    """界面縮放 in percent, as saved in the settings (100 without one)."""
+    try:
+        return max(50, min(300, int(QSettings(*MainWindow.SETTINGS).value("ui_scale", 100))))
+    except (TypeError, ValueError):
+        return 100
+
+
 def run(argv):
     if sys.platform.startswith("linux"):
         # Qt 6.12's own PipeWire sound output crashed the program as playing started (in
         # pw_stream_connect); its PulseAudio one (PipeWire serves it too) does not.
         # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
+    scale = ui_scale()
+    if scale != 100 and sys.platform != "android":
+        os.environ.setdefault("QT_SCALE_FACTOR", f"{scale / 100:g}")   # 界面縮放 (設定): the whole interface, at start
     if sys.platform == "android":
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)       # the menus in the window, not behind the system's "..."
     app = QApplication(argv)

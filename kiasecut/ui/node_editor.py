@@ -8,7 +8,7 @@ link drag search does - a constant (數值, 顏色...) starts at the value the i
 parameters can feed gets a 參數輸入 node that makes the value a parameter), on a node moves it, on the empty part selects with a box. Wheel zooms, the
 middle button drags the view (middledrag.py), Shift+A (or the right button) adds a node where the pointer
 is, X / Delete removes the selected ones, M mutes them (the picture goes through unchanged), Home shows
-everything. Every parameter of a node has its field in the node as in Blender's compositor (drag a number to
+everything, Ctrl+Space makes the editor full screen and toggles back. The preview is a backdrop behind the graph: Alt + middle-drag moves it, V zooms it out and Shift + V zooms it in. Every parameter of a node has its field in the node as in Blender's compositor (drag a number to
 change it, click it to type, click a tick, a menu or a colour); a number or colour parameter also has a socket:
 link a picture to it and the field gives way to the link. Selecting a picture / video / compound / track node shows it on the preview to place it, as a
 mask is (the main window follows nodeSelected).
@@ -20,8 +20,8 @@ import os
 
 import shiboken6
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
@@ -986,6 +986,8 @@ class Link(QGraphicsPathItem):
 
 
 class GraphView(QGraphicsView):
+    backdropWidth = Signal(int)                  # px the preview picture is wide on screen (0: not seen)
+
     def __init__(self, editor):
         super().__init__()
         self.editor = editor
@@ -1009,6 +1011,12 @@ class GraphView(QGraphicsView):
         self.over = None                         # the link a dragged node is over (it will go through the node)
         self.press_at = {}
         self.panning = None                      # the point of a middle-button drag moving the view
+        self.backdrop = None                      # preview image shown behind the nodes
+        self.backdrop_visible = True
+        self.backdrop_w = 0
+        self.backdrop_zoom = 1.0
+        self.backdrop_offset = QPointF()
+        self.backdrop_panning = None
         self.glide = viewglide.ViewGlide(self, self._glide_pan, scale=GLIDE_SCALE)    # (it goes on a little after the button is let go)
         self.snap = True                         # 吸附: dragged nodes land on the grid (Ctrl while dragging: the other way)
         self.grabbed = None                      # the id of the node the left button went down on
@@ -1150,6 +1158,11 @@ class GraphView(QGraphicsView):
             self.editor.edit_finish(True)
             self.setFocus()
         self.glide.stop()
+        if e.button() == Qt.MiddleButton and e.modifiers() & Qt.AltModifier:
+            self.backdrop_panning = e.position()
+            self.setCursor(Qt.ClosedHandCursor)
+            e.accept()
+            return
         if e.button() == Qt.MiddleButton:                # (the wheel pressed and dragged moves the view)
             self.panning = e.position()
             self.setCursor(Qt.ClosedHandCursor)
@@ -1292,6 +1305,11 @@ class GraphView(QGraphicsView):
             self.carrying["pos"] = at
             self._carry_to(self.mapToScene(at.toPoint()), bool(e.modifiers() & Qt.ControlModifier))
             return
+        if self.backdrop_panning is not None:
+            self.backdrop_offset += e.position() - self.backdrop_panning
+            self.backdrop_panning = e.position()
+            self.viewport().update()
+            return
         if self.panning is not None:
             d = e.position() - self.panning
             self.panning = e.position()
@@ -1362,6 +1380,15 @@ class GraphView(QGraphicsView):
     def drawBackground(self, painter, rect):
         """The grid the nodes snap to: fine lines every GRID, stronger every five, fading out as the view zooms away."""
         super().drawBackground(painter, rect)
+        self._draw_grid(painter, rect)
+        size = self.backdrop_size()                      # (the picture over the grid, opaque, the nodes over it)
+        if size is not None:
+            z = max(self.transform().m11(), 1e-6)
+            center = self.mapToScene(self.viewport().rect().center()) + self.backdrop_offset / z
+            painter.drawImage(QRectF(center.x() - size.width() / 2 / z, center.y() - size.height() / 2 / z,
+                                     size.width() / z, size.height() / z), self.backdrop)
+
+    def _draw_grid(self, painter, rect):
         z = self.transform().m11()
         if z * GRID < 6:
             return
@@ -1413,6 +1440,11 @@ class GraphView(QGraphicsView):
     def mouseReleaseEvent(self, e):
         if self.swallow:
             self.swallow = False
+            e.accept()
+            return
+        if self.backdrop_panning is not None and e.button() == Qt.MiddleButton:
+            self.backdrop_panning = None
+            self.unsetCursor()
             e.accept()
             return
         if self.panning is not None and e.button() == Qt.MiddleButton:
@@ -1508,6 +1540,64 @@ class GraphView(QGraphicsView):
             d = self.mapToScene(at) - before
             self.translate(d.x(), d.y())
 
+    def set_backdrop(self, image):
+        """Set the preview image drawn behind nodes without changing the graph view (a frame that holds what lies
+        round the canvas too - its text "margin" - is cut to the canvas, as the other previews that do not edit)."""
+        try:
+            margin = max(0.0, float(image.text("margin") or 0.0)) if image is not None else 0.0
+        except ValueError:
+            margin = 0.0
+        if margin and image is not None and not image.isNull():
+            mx, my = (round(image.width() * margin / (1 + 2 * margin)), round(image.height() * margin / (1 + 2 * margin)))
+            image = image.copy(mx, my, image.width() - 2 * mx, image.height() - 2 * my)
+        self.backdrop = image
+        self.viewport().update()
+        self._report_backdrop()
+
+    def set_backdrop_visible(self, on):
+        self.backdrop_visible = bool(on)
+        self.viewport().update()
+        self._report_backdrop()
+
+    def zoom_backdrop(self, k):
+        """Scale only the preview backdrop, keeping the node graph's zoom unchanged."""
+        self.backdrop_zoom = min(8.0, max(0.125, self.backdrop_zoom * k))
+        self.viewport().update()
+        self._report_backdrop()
+
+    def backdrop_size(self):
+        """(w, h) px the preview picture is drawn at on the viewport (it fits the view, then its own zoom), or None."""
+        img = self.backdrop
+        if not self.backdrop_visible or img is None or img.isNull():
+            return None
+        view = self.viewport().rect()
+        fit = min(view.width() / img.width(), view.height() / img.height()) * self.backdrop_zoom
+        return QSizeF(img.width() * fit, img.height() * fit)
+
+    def _report_backdrop(self):
+        """The width the preview picture has on screen, for the player to draw its frames that size (0: it is not seen)."""
+        size = self.backdrop_size() if self.isVisible() else None
+        w = round(size.width() * self.devicePixelRatioF()) if size is not None else 0
+        if w != self.backdrop_w:
+            self.backdrop_w = w
+            self.backdropWidth.emit(w)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._report_backdrop()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._report_backdrop()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
+        self._report_backdrop()
+
+    def keeps_middle(self, e):
+        """Alt + the middle button moves the preview picture: middledrag.py leaves that press to this view."""
+        return bool(e.modifiers() & Qt.AltModifier)
+
     def wheelEvent(self, e):
         """As Blender's 2D views: the wheel zooms (towards the pointer), Ctrl+wheel scrolls sideways, Shift+wheel
         up / down; a touchpad's two fingers scroll both ways (Ctrl zooms them)."""
@@ -1554,8 +1644,10 @@ class GraphView(QGraphicsView):
         mods &= ~Qt.KeypadModifier
         if key in (Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_Home, Qt.Key_M, Qt.Key_X):
             return mods in (Qt.NoModifier, Qt.ControlModifier) if key == Qt.Key_X else mods == Qt.NoModifier
-        if key in (Qt.Key_J, Qt.Key_C, Qt.Key_V):
+        if key in (Qt.Key_J, Qt.Key_C):
             return mods == Qt.ControlModifier
+        if key == Qt.Key_V:
+            return mods in (Qt.NoModifier, Qt.ShiftModifier, Qt.ControlModifier)
         if key == Qt.Key_G:
             return mods in (Qt.NoModifier, Qt.ControlModifier, Qt.ControlModifier | Qt.AltModifier)
         if key in (Qt.Key_Tab, Qt.Key_N):
@@ -1606,6 +1698,10 @@ class GraphView(QGraphicsView):
             self.editor.frame_selected()
         elif key == Qt.Key_Home:
             self.fit()
+        elif key == Qt.Key_V and mods == Qt.NoModifier:
+            self.zoom_backdrop(1 / 1.2)
+        elif key == Qt.Key_V and mods == Qt.ShiftModifier:
+            self.zoom_backdrop(1.2)
         elif key == Qt.Key_A and mods & Qt.ShiftModifier:
             pos = self.mapFromGlobal(self.cursor().pos())
             self.editor.add_menu(self.mapToScene(pos), self.cursor().pos())
@@ -1753,6 +1849,7 @@ class ParamPanel(QWidget):
 
 
 class NodeEditor(QWidget):
+    fullscreenRequested = Signal()                       # toggle this node editor's dock to fullscreen
     addRequested = Signal(str, dict, float, float)          # effect id, node ({"type", "ref" / "kind"}), x, y
     removeRequested = Signal(str, list)                     # effect id, node ids
     connectRequested = Signal(str, str, str, str, str)      # effect id, from node, to node, socket, the output (a parameter's name; "": picture)
@@ -1829,6 +1926,22 @@ class NodeEditor(QWidget):
         fit = QPushButton("全部顯示 (Home)")
         fit.clicked.connect(lambda: self.view.fit())
         bar.addWidget(fit)
+        self.fullscreen_btn = QPushButton("全螢幕 (Ctrl+Space)")
+        self.fullscreen_btn.setToolTip("全螢幕顯示節點編輯器；再按一次或按 Ctrl+Space 返回原本版面")
+        self.fullscreen_btn.clicked.connect(self.fullscreenRequested.emit)
+        bar.addWidget(self.fullscreen_btn)
+        backdrop = QPushButton("背景預覽")
+        backdrop.setCheckable(True)
+        backdrop.setChecked(True)
+        backdrop.setToolTip("顯示或隱藏節點編輯器背景中的預覽影像")
+        backdrop.toggled.connect(lambda on: self.view.set_backdrop_visible(on))
+        self.backdrop_btn = backdrop
+        bar.addWidget(backdrop)
+        fullscreen = QAction(self)
+        fullscreen.setShortcut(QKeySequence("Ctrl+Space"))
+        fullscreen.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        fullscreen.triggered.connect(self.fullscreenRequested.emit)
+        self.addAction(fullscreen)
         own = QPushButton("取消共用")
         own.setToolTip("這個效果現在是共用的 VFX Node（改它會改到所有用它的片段）；按這裡讓這個片段改用自己的一份副本")
         own.clicked.connect(lambda: self.eid and self.unshareRequested.emit(self.eid))
@@ -1916,6 +2029,10 @@ class NodeEditor(QWidget):
         self.panel.setVisible(bool(on) and self.eid is not None)
         if on:
             self.panel.fill(ng.exposed(self.graph) if self.eid else [])
+
+    def set_fullscreen_mode(self, on):
+        """Update the full-screen toggle to show the action it will take."""
+        self.fullscreen_btn.setText("返回原本版面 (Ctrl+Space)" if on else "全螢幕 (Ctrl+Space)")
 
     # -- what it shows ---------------------------------------------------------------------------------
     def set_user_filters(self, filters):

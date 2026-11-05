@@ -618,10 +618,18 @@ class Preview(QWidget):
         return box
 
     def _report_size(self):
-        self.renderWidth.emit(round(self._rect().width() * self.devicePixelRatioF()))
+        self.renderWidth.emit(round(self._rect().width() * self.devicePixelRatioF()) if self.isVisible() else 0)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        self._report_size()
+
+    def showEvent(self, e):                     # (a preview that is not seen - its panel hidden, a full screen panel over it - asks for no size)
+        super().showEvent(e)
+        self._report_size()
+
+    def hideEvent(self, e):
+        super().hideEvent(e)
         self._report_size()
 
     def _rect(self):

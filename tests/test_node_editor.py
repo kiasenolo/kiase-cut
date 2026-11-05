@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QDropEvent  # noqa: E402
+from PySide6.QtGui import QColor, QDropEvent, QImage  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 
@@ -118,6 +118,82 @@ class NodeEditorTests(unittest.TestCase):
         ed = self.make()
         self.assertEqual(set(ed.view.items_by_id), {"input", "output"})
         self.assertEqual(len(ed.view.link_items), 1)
+
+    def test_fullscreen_button_requests_the_toggle(self):
+        ed = self.make()
+        got = []
+        ed.fullscreenRequested.connect(lambda: got.append(True))
+        ed.fullscreen_btn.click()
+        self.assertEqual(got, [True])
+        ed.set_fullscreen_mode(True)
+        self.assertEqual(ed.fullscreen_btn.text(), "返回原本版面 (Ctrl+Space)")
+
+    def test_preview_backdrop_zoom_and_visibility(self):
+        ed = self.make()
+        image = QImage(320, 180, QImage.Format_ARGB32_Premultiplied)
+        ed.view.set_backdrop(image)
+        self.assertIs(ed.view.backdrop, image)
+        self.assertTrue(ed.view.backdrop_visible)
+        start = ed.view.backdrop_zoom
+        QTest.keyClick(ed.view, Qt.Key_V)
+        self.assertAlmostEqual(ed.view.backdrop_zoom, start / 1.2)
+        QTest.keyClick(ed.view, Qt.Key_V, Qt.ShiftModifier)
+        self.assertAlmostEqual(ed.view.backdrop_zoom, start)
+        self.assertTrue(ed.view.claims(Qt.Key_V, Qt.NoModifier))
+        self.assertTrue(ed.view.claims(Qt.Key_V, Qt.ShiftModifier))
+        ed.backdrop_btn.setChecked(False)
+        self.assertFalse(ed.view.backdrop_visible)
+
+    def test_alt_middle_drag_moves_only_the_preview_backdrop(self):
+        ed = self.make()
+        v = ed.view
+        start = QPoint(80, 80)
+        end = QPoint(110, 95)
+        scroll = (v.horizontalScrollBar().value(), v.verticalScrollBar().value())
+        QTest.mousePress(v.viewport(), Qt.MiddleButton, Qt.AltModifier, start)
+        QTest.mouseMove(v.viewport(), end)
+        QTest.mouseRelease(v.viewport(), Qt.MiddleButton, Qt.AltModifier, end)
+        self.assertEqual(v.backdrop_offset, QPointF(30, 15))
+        self.assertEqual((v.horizontalScrollBar().value(), v.verticalScrollBar().value()), scroll)
+
+    def test_alt_middle_drag_reaches_the_view_through_the_middle_drag_watcher(self):
+        from kiasecut.ui import middledrag
+        middledrag.install()
+        ed = self.make()
+        v = ed.view
+        QTest.mousePress(v.viewport(), Qt.MiddleButton, Qt.AltModifier, QPoint(80, 80))
+        QTest.mouseMove(v.viewport(), QPoint(110, 95))
+        QTest.mouseRelease(v.viewport(), Qt.MiddleButton, Qt.AltModifier, QPoint(110, 95))
+        self.assertEqual(v.backdrop_offset, QPointF(30, 15))
+
+    def test_the_preview_backdrop_is_opaque_and_over_the_grid(self):
+        ed = self.make()
+        v = ed.view
+        image = QImage(320, 180, QImage.Format_ARGB32_Premultiplied)
+        image.fill(QColor(200, 60, 60))
+        v.fit()
+        v.set_backdrop(image)
+        APP.processEvents()
+        shot = v.viewport().grab().toImage()
+        size = v.backdrop_size()
+        y = round(v.viewport().height() / 2 + size.height() / 2 - 3)         # (a strip near the picture's foot, off the nodes)
+        x0 = round(v.viewport().width() / 2 - size.width() / 2) + 4
+        strip = {shot.pixelColor(x, y).getRgb()[:3] for x in range(x0, x0 + 60)}
+        self.assertEqual(strip, {(200, 60, 60)})
+
+    def test_the_preview_asks_for_frames_as_wide_as_it_shows_them(self):
+        ed = self.make()
+        got = []
+        ed.view.backdropWidth.connect(got.append)
+        image = QImage(320, 180, QImage.Format_ARGB32_Premultiplied)
+        ed.view.set_backdrop(image)
+        size = ed.view.backdrop_size()
+        self.assertEqual(got[-1], round(size.width() * ed.view.devicePixelRatioF()))
+        ed.resize(600, 400)
+        APP.processEvents()
+        self.assertEqual(got[-1], round(ed.view.backdrop_size().width() * ed.view.devicePixelRatioF()))
+        ed.backdrop_btn.setChecked(False)
+        self.assertEqual(got[-1], 0)
 
     def drag(self, ed, a, b):
         v = ed.view

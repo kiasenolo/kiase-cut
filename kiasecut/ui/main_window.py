@@ -367,7 +367,7 @@ class MainWindow(QMainWindow):
         self.preview.textEdited.connect(lambda cid, words: self.on_text_edited([cid], {"content": words}))
         self.preview.sourceTextEdited.connect(lambda cid, eid, nid, words: self.fx_each(
             "文字", [cid], eid, lambda lvl, c, e: edit.set_effect_text(lvl, c, e, nid, words)))
-        self.render_w = {"main": 0, "full": 0}       # width each view shows frames at; the player draws the largest
+        self.render_w = {"main": 0, "full": 0, "nodes": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
         self.preview.mediaDropped.connect(self.preview_drop)
         self.preview.replaceDropped.connect(self.replace_source)
@@ -856,6 +856,10 @@ class MainWindow(QMainWindow):
             "vfxnodes": self.vfxnodes, "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_dock,
             "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "rack": self.rack_panel,
             "nodes": self.nodes, "timeline": lower})
+        nd.fullscreenRequested.connect(lambda: self.panels.toggle_fullscreen("nodes"))
+        nd.view.backdropWidth.connect(lambda w: self.set_render_width("nodes", w))
+        self.panels.maximizedChanged.connect(
+            lambda key, on: nd.set_fullscreen_mode(on) if key == "nodes" else None)
         self.panels["rack"].visibilityChanged.connect(lambda on: on and self.show_rack())
         for key, split in (("split/curves", cv.split), ("split/component", self.tl_split),
                            ("split/layers", self.layers.split)):     # where their lines were dragged to
@@ -4438,6 +4442,7 @@ class MainWindow(QMainWindow):
         self.pos = pos
         self.show_rack()
         self.preview.show_image(img)
+        self.nodes.view.set_backdrop(img)
         if self.fullscreen:
             self.fullscreen.canvas.show_image(img)
             self.fullscreen.set_position(pos, self.length, self.fps)
@@ -6344,6 +6349,7 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self.closing = True
+        self.panels.restore_fullscreen()
         self.keep_layout()
         if self.autosave_dir:                            # closed normally: nothing to bring back
             recovery.end(self.autosave_dir)

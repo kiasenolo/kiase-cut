@@ -5,7 +5,8 @@ One watcher on the whole program does it for every scroll area - panels, lists, 
 dialogs - so none needs code of its own. The area dragged is the nearest one around the press
 that can scroll at all: a text box or list with nothing to scroll hands it on to the panel it
 sits in. Widgets that drag their own view with the middle button (the timeline, the preview, the
-curve editor) are not in a scroll area and keep it. A press on a scroll bar is left to it.
+curve editor) are not in a scroll area and keep it, as does a scroll area whose keeps_middle(event) says yes (the node editor,
+on Alt). A press on a scroll bar is left to it.
 
 The drag is endless (無邊界, wrapdrag.py), as number fields and the timeline are: the pointer
 reaching an edge of the area's view jumps to the other side (the ways it scrolls) and the
@@ -103,7 +104,7 @@ class _Drag(QObject):
         if self.area is not None or e.button() != Qt.MiddleButton or not isinstance(obj, QWidget):
             return False
         area = _area_at(obj)
-        if area is None:
+        if area is None or (hasattr(area, "keeps_middle") and area.keeps_middle(e)):     # (a view with a drag of its own, on a modifier)
             return False
         vp = area.viewport()
         h, v = area.horizontalScrollBar(), area.verticalScrollBar()

@@ -199,11 +199,13 @@ class Panels(QObject):
     """The dock widgets of a QMainWindow (see the module notes)."""
     activeChanged = Signal(str)               # the side panel used last
     changed = Signal()                        # a panel shown, hidden, moved, floated
+    maximizedChanged = Signal(str, bool)      # a dock temporarily shown full screen
 
     def __init__(self, win: QMainWindow, widgets):
         super().__init__(win)
         self.win = win
         self.restoring = False
+        self._maximized = None
         self.active = "inspector"
         win.setDockOptions(QMainWindow.AllowNestedDocks | QMainWindow.AllowTabbedDocks
                            | QMainWindow.GroupedDragging)       # (not animated: see wheel.Style)
@@ -236,6 +238,9 @@ class Panels(QObject):
         if self.restoring:
             return
         d = self.docks[key]
+        if on and self._maximized is not None and key != self._maximized[0]:     # (a panel the selection brought back: not over the full screen one)
+            QTimer.singleShot(0, lambda: self._maximized is not None and key != self._maximized[0] and d.hide())
+            return
         # a tab switched to (side by side ones become the one in use by a click in them)
         if on and key in USED and self.tabbed(d):
             self.set_active(key)
@@ -276,6 +281,56 @@ class Panels(QObject):
 
     def close(self, key):
         self.docks[key].close()
+
+    def toggle_fullscreen(self, key):
+        """Temporarily show one dock full screen, keeping its entire dock layout to restore."""
+        if self._maximized is not None:
+            if self._maximized[0] == key:
+                self.restore_fullscreen()
+                return
+            self.restore_fullscreen()
+
+        snapshot = {
+            "state": self.state(),
+            "closed": self.closed(),
+            "visible": {k: d.isVisible() for k, d in self.docks.items()},
+            "auto_hidden": {k: d.auto_hidden for k, d in self.docks.items()},
+        }
+        self._maximized = (key, snapshot)
+        dock = self.docks[key]
+        self.restoring = True
+        try:
+            dock.user_closed = dock.auto_hidden = False
+            dock.show()
+            dock.setFloating(True)
+            for other_key, other in self.docks.items():
+                if other_key != key:
+                    other.hide()
+            dock.showFullScreen()
+        finally:
+            self.restoring = False
+        self.refresh_titles()
+        self.maximizedChanged.emit(key, True)
+
+    def restore_fullscreen(self):
+        """Return from a temporary full-screen dock to the exact previous panel arrangement."""
+        if self._maximized is None:
+            return
+        key, snapshot = self._maximized
+        self._maximized = None
+        dock = self.docks[key]
+        dock.showNormal()
+        self.restore(snapshot["state"], snapshot["closed"])
+        self.restoring = True
+        try:
+            for name, panel in self.docks.items():
+                panel.auto_hidden = snapshot["auto_hidden"][name]
+                panel.setVisible(snapshot["visible"][name])
+        finally:
+            self.restoring = False
+        self.refresh_titles()
+        self.changed.emit()
+        self.maximizedChanged.emit(key, False)
 
     def set_usable(self, key, on):
         """Whether the selection has use for the side panel."""

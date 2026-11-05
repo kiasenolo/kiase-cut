@@ -135,6 +135,26 @@ class PanelTests(unittest.TestCase):
         self.assertFalse(self.pn["beats"].user_closed)
         self.assertFalse(self.pn.restore(b"nonsense", []))
 
+    def test_fullscreen_dock_restores_the_original_layout_and_visibility(self):
+        self.pn["curves"].setFloating(True)
+        self.pn["subtitles"].close()
+        QApplication.processEvents()
+        floating = {k: d.isFloating() for k, d in self.pn.docks.items()}
+        visible = {k: d.isVisible() for k, d in self.pn.docks.items()}
+        closed = self.pn.closed()
+
+        self.pn.toggle_fullscreen("nodes")
+        QApplication.processEvents()
+        self.assertTrue(self.pn["nodes"].isFloating())
+        self.assertTrue(self.pn["nodes"].isFullScreen())
+        self.assertTrue(all(not d.isVisible() for k, d in self.pn.docks.items() if k != "nodes"))
+
+        self.pn.toggle_fullscreen("nodes")
+        QApplication.processEvents()
+        self.assertEqual({k: d.isFloating() for k, d in self.pn.docks.items()}, floating)
+        self.assertEqual({k: d.isVisible() for k, d in self.pn.docks.items()}, visible)
+        self.assertEqual(self.pn.closed(), closed)
+
     def test_side_panel_in_use(self):
         got = []
         self.pn.activeChanged.connect(got.append)

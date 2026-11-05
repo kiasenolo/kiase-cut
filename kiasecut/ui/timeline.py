@@ -1356,13 +1356,44 @@ class Timeline(QWidget):
         p.setPen(Qt.NoPen)
         p.drawRect(r)
         p.setBrush(Qt.NoBrush)
-        if sel:
-            p.setPen(QPen(edge, 4))
+        def outline(fade=1.0):
+            if sel:
+                faded = QColor(edge)
+                faded.setAlpha(round(edge.alpha() * fade))
+                p.setPen(QPen(faded, 4))
+                p.drawRect(r.adjusted(1, 1, -1, -1))
+                white = QColor("#ffffff")
+                white.setAlpha(round(255 * fade))
+                p.setPen(QPen(white, 1.5))
+            else:
+                faded = QColor(edge)
+                faded.setAlpha(round(edge.alpha() * fade))
+                p.setPen(QPen(faded, 2))
             p.drawRect(r.adjusted(1, 1, -1, -1))
-            p.setPen(QPen(QColor("#ffffff"), 1.5))
+
+        cut_l, cut_r = x0 < self.header_w, x1 > w          # (it goes on out of view: that side's edge is fainter)
+        if cut_l or cut_r:
+            strip = 5.0
+            top, tall = r.top() - 4, r.height() + 8
+            left = r.left() + (strip if cut_l else 0)
+            right = r.right() - (strip if cut_r else 0)
+            bw = 4.0 if sel else 2.0
+
+            def only(rect, fade=1.0):                      # (outline() inside rect alone)
+                p.save()
+                p.setClipRect(rect, Qt.IntersectClip)
+                outline(fade)
+                p.restore()
+
+            only(QRectF(left, top, right - left, tall))
+            for on, sx, inner in ((cut_l, r.left(), r.left() + strip), (cut_r, r.right() - strip, r.right() - strip - bw - 0.5)):
+                if on:
+                    only(QRectF(sx, top, strip, tall), 0.35)
+                    bx, ex = (sx + bw + 0.5, sx + strip) if sx == r.left() else (sx, sx + strip - bw - 0.5)
+                    only(QRectF(bx, top, ex - bx, bw + 3))                    # (the top and bottom lines stay whole:
+                    only(QRectF(bx, r.bottom() - bw - 2, ex - bx, bw + 6))    # only the side is fainter)
         else:
-            p.setPen(QPen(edge, 2))
-        p.drawRect(r.adjusted(1, 1, -1, -1))
+            outline()
         if c["id"] == self.lit_id and not ghost:                 # (held by a finger: white, and it is let go to be dragged)
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(255, 255, 255, 120))

@@ -22,7 +22,7 @@ import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen
-from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
@@ -555,12 +555,11 @@ class NodeItem(QGraphicsItem):
                 self._number_text(p, box, self.hopped(box, r, i), number_text(q, (list(v) + [0.0] * 3)[i]))
         elif q.type == "bool":
             box = QRectF(self.w - 10 - ROW + 4, r["y"] + 4, ROW - 8, ROW - 8)
-            self._box(p, box, bg)
-            if v:                                            # (as a check box: white, with a black tick)
-                p.fillRect(box, QColor("#ffffff"))
-                p.setPen(QPen(QColor("#000000"), 2))
-                p.drawLine(box.topLeft() + QPointF(2, box.height() / 2), box.center() + QPointF(-1, 3))
-                p.drawLine(box.center() + QPointF(-1, 3), box.topRight() + QPointF(-2, 2))
+            hot = self._hover is not None and box.contains(self._hover)
+            opt = QStyleOptionButton()                       # (the app's own check box: the same painter, so it looks like the others)
+            opt.rect = box.toAlignedRect()
+            opt.state = QStyle.State_Enabled | (QStyle.State_On if v else QStyle.State_Off) | (QStyle.State_MouseOver if hot else QStyle.State_None)
+            motion.paint_indicator(p, opt, None, False)
         elif q.type == "menu":
             box = self.field_rect(r)
             self._box(p, box, bg)

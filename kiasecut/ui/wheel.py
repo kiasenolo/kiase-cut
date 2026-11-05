@@ -10,6 +10,7 @@ view by its own pixels.
 import math
 
 from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QAbstractItemView, QDockWidget, QMainWindow, QProxyStyle, QStyle
 
 TOUCHPAD_NOTCH_PX = 100   # how far two fingers move for one notch's zoom
@@ -58,7 +59,20 @@ class Style(QProxyStyle):
     finishes an animated drop only when the animation is deleted, later, and by then the
     floating window of tabs it reparents them from may be gone - under Wayland a crash.)"""
 
+    def drawControl(self, element, option, painter, widget=None):
+        if element == QStyle.CE_RubberBand:                   # (a selection box as the preview's and the timeline's: a dashed edge, a faint fill)
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing, False)
+            painter.setPen(QPen(QColor("#e6e6e6"), 1, Qt.DashLine))
+            painter.setBrush(QColor(255, 255, 255, 35))
+            painter.drawRect(option.rect.adjusted(0, 0, -1, -1))
+            painter.restore()
+            return
+        super().drawControl(element, option, painter, widget)
+
     def styleHint(self, hint, option=None, widget=None, data=None):
+        if hint == QStyle.SH_RubberBand_Mask:
+            return 0
         if hint == QStyle.SH_ItemView_ScrollMode:
             return QAbstractItemView.ScrollPerPixel.value
         if hint == QStyle.SH_Widget_Animation_Duration and widget is not None and (

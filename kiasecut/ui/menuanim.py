@@ -6,7 +6,9 @@ There the menu is one element shared by all that open: going from one to another
 first and the closing of the last are. Here the menus of a menu bar are windows of their own, so moving from one to another
 (one is hidden and the next shown in the same turn of the event loop, or the next shown while the last is still up) is only
 a swap, with nothing animated; every other opening (a lone menu, a context menu, a submenu, a combo box's list) is unrolled,
-and every other closing is a picture of the menu, in a window of its own that lets the mouse through, rolled up and gone.
+and every other closing is a picture of the menu, a child widget of the window it was over that lets the mouse through, rolled up
+and gone. (Not a window of its own: on Wayland a window of the popup kind, made and destroyed while the next menu's popup is up,
+makes the compositor dismiss that popup - clicking from one title to the next, or to the same one, made the menu vanish.)
 
 A menu (the menu bar's, a context menu, a combo box's list) is a window of its own, so it is not the page's clip-path: a
 QGraphicsEffect on it draws it clipped to the part from the top down that the animation has got to, the effect going when
@@ -141,17 +143,15 @@ def settle(menu):
 
 
 class Ghost(QWidget):
-    """What a closed menu was, rolled up and faded out: a picture in a window that lets the mouse through."""
+    """What a closed menu was, rolled up and faded out: a picture over the window, a child of it that lets the mouse through."""
 
     def __init__(self, parent, picture, rect, t0):
-        super().__init__(parent, Qt.ToolTip | Qt.FramelessWindowHint | Qt.NoDropShadowWindowHint | Qt.WindowTransparentForInput)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.picture = picture
         self.t = t0
         self.source = None
-        self.setGeometry(rect)
+        self.setGeometry(QRect(parent.mapFromGlobal(rect.topLeft()), rect.size()))     # (rect: the menu's, on the screen)
         self.anim = QVariantAnimation(self)
         self.anim.setDuration(DURATION_MS)
         self.anim.setStartValue(t0)
@@ -176,6 +176,7 @@ class Ghost(QWidget):
 
     def start(self):
         self.show()
+        self.raise_()
         self.anim.start()
 
     def end(self):
@@ -199,6 +200,8 @@ def drop_ghosts(source=None):
 def close_ghost(menu, picture, rect, t0):
     parent = menu.parentWidget()
     parent = parent.window() if parent is not None else QApplication.activeWindow()
+    if parent is None or not QRect(parent.mapToGlobal(QPoint(0, 0)), parent.size()).contains(rect):
+        return                                            # (a menu out over the edge of its window has no picture to roll up: it only goes)
     g = Ghost(parent, picture, rect, t0)
     g.source = menu
     _ghosts.append(g)

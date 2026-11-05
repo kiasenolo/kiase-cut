@@ -97,7 +97,7 @@ from PySide6.QtGui import QBrush, QColor, QCursor, QFont, QIcon, QImage, QPainte
 from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QScrollBar, QTextEdit, QToolTip, QWidget
 
 from .. import build, components, curves, edit, project, waveform
-from . import appevents, touch, viewglide, wheel
+from . import appevents, inertia, touch, viewglide, wheel
 from .params import param_menu
 from .menukeys import Menu
 from .wrapdrag import WrapDrag
@@ -2578,7 +2578,7 @@ class Timeline(QWidget):
             elif lc is not None and lc["type"] == "compound":
                 self.clipAction.emit("enter", lc["id"])
 
-    WHEEL_HALF_LIFE_MS = 55.0                            # (as smoothscroll: a notch glides in about 0.2 s)
+    WHEEL_CHANNEL = {"dx": "timeline_scroll", "dy": "timeline_scroll", "ctrl": "timeline_zoom", "alt": "timeline_zoom"}   # (inertia.py)
 
     def wheelEvent(self, e):
         if not self.proj:
@@ -2597,11 +2597,11 @@ class Timeline(QWidget):
             if shift:                                    # left / right
                 dx, dy = dy if abs(dy) >= abs(dx) else dx, 0.0
             part["dx"], part["dy"] = dx, dy              # (a touchpad moves both ways at once)
-        if wheel.touchpad(e):                            # its fingers already move it smoothly
-            self._wheel_apply(part)
-        else:
+        glide = {k: v for k, v in part.items() if not wheel.touchpad(e) and inertia.percent(self.WHEEL_CHANNEL[k])}
+        self._wheel_apply({k: v for k, v in part.items() if k not in glide})   # (a touchpad's fingers already move it smoothly)
+        if glide:
             queue = self.__dict__.setdefault("_wheel_queue", {})
-            for k, v in part.items():
+            for k, v in glide.items():
                 queue[k] = queue.get(k, 0.0) + v
             if not hasattr(self, "_wheel_timer"):
                 self._wheel_timer = QTimer(self, interval=8)
@@ -2613,11 +2613,12 @@ class Timeline(QWidget):
 
     def _wheel_step(self):
         now = time.monotonic()
-        k = 1.0 - 0.5 ** ((now - self._wheel_last) * 1000.0 / self.WHEEL_HALF_LIFE_MS)
+        dt = (now - self._wheel_last) * 1000.0
         self._wheel_last = now
         queue = self._wheel_queue
         part = {}
         for key, left in list(queue.items()):
+            k = 1.0 - 0.5 ** (dt / max(inertia.half_life_ms(self.WHEEL_CHANNEL[key]), 1.0))
             small = 0.5 if key in ("dx", "dy") else 0.01
             take = left if abs(left) * (1 - k) < small else left * k
             part[key] = take

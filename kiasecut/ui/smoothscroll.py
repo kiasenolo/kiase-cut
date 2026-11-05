@@ -13,7 +13,7 @@ import shiboken6
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication
 
-from . import wheel
+from . import inertia, wheel
 
 TICK_MS = 8
 HALF_LIFE_MS = 55.0       # the distance still to go halves in this long: about 0.2 s to come to rest
@@ -55,8 +55,8 @@ class Glide(QObject):
         if a.y() == 0 or abs(a.x()) > abs(a.y()):
             return False
         bar = self.bar()
-        if bar.maximum() <= bar.minimum():
-            return False
+        if bar.maximum() <= bar.minimum() or inertia.percent("scroll") == 0:
+            return False                                         # (no glide: Qt scrolls as it always did)
         if bar.value() != self.shown:                            # (moved by something else since: start from there)
             self.pos = self.target = float(bar.value())
             self.shown = bar.value()
@@ -80,7 +80,7 @@ class Glide(QObject):
         if bar.value() != self.shown:
             self.timer.stop()
             return
-        k = 0.5 ** (dt / HALF_LIFE_MS)
+        k = 0.5 ** (dt / max(inertia.half_life_ms("scroll"), 1.0))
         self.pos = self.target + (self.pos - self.target) * k
         if abs(self.target - self.pos) < 0.5:
             self.pos = self.target

@@ -18,7 +18,7 @@ from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QPlainTextEdit, QWidget
 
-from . import appevents
+from . import appevents, inertia
 from .wrapdrag import WrapDrag
 
 
@@ -51,7 +51,7 @@ class Glide(QObject):
         now = time.monotonic()
         dt, self.last = now - self.last, now
         bars = (self.area.horizontalScrollBar(), self.area.verticalScrollBar())
-        k = math.exp(-FRICTION * dt)
+        k = math.exp(-FRICTION * dt * 100.0 / max(inertia.percent("drag"), 1))
         for i, bar in enumerate(bars):
             if bar.value() != self.shown[i]:                 # (moved by something else: not ours any more)
                 self.v[i] = 0.0
@@ -160,7 +160,7 @@ class _Drag(QObject):
             h, v = self.area.horizontalScrollBar(), self.area.verticalScrollBar()
             vx = vx if h.maximum() > h.minimum() else 0.0
             vy = vy if v.maximum() > v.minimum() else 0.0
-            if max(abs(vx), abs(vy)) >= MIN_SPEED:
+            if max(abs(vx), abs(vy)) >= MIN_SPEED and inertia.percent("drag"):
                 self._stop_glide()
                 self.glide = Glide(self.area, vx, vy, self.unit)
         try:

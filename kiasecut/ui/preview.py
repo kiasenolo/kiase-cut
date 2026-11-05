@@ -718,7 +718,7 @@ class Preview(QWidget):
         n = wheel.notch(e)
         if n:
             if not hasattr(self, "_zoom_glide"):
-                self._zoom_glide = ZoomGlide(self, lambda k, at: self.zoom_to(self.zoom * ZOOM_STEP ** k, at))
+                self._zoom_glide = ZoomGlide(self, lambda k, at: self.zoom_to(self.zoom * ZOOM_STEP ** k, at), "preview_zoom")
             if wheel.touchpad(e):
                 self.zoom_to(self.zoom * ZOOM_STEP ** n, e.position())
             else:

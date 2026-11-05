@@ -1526,7 +1526,7 @@ class GraphView(QGraphicsView):
                 self.zoom_by(1.15 ** wheel.notch(e), e.position().toPoint())
                 return
             if not hasattr(self, "_zoom_glide"):
-                self._zoom_glide = ZoomGlide(self, lambda k, at: self.zoom_by(1.15 ** k, at))
+                self._zoom_glide = ZoomGlide(self, lambda k, at: self.zoom_by(1.15 ** k, at), "node_zoom")
             self._zoom_glide.add(wheel.notch(e), e.position().toPoint())
             return
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(dx))

@@ -12,6 +12,8 @@ import time
 
 from PySide6.QtCore import QObject, QPointF, QTimer
 
+from . import inertia
+
 TAU = 0.35               # s: the speed falls to 1/e this long after (the same as the fingers' glide, touch.GLIDE_TAU)
 MIN_SPEED = 25.0         # px / s: slower than this when the button is let go is no glide, and the glide ends below it
 MAX_SPEED = 6000.0
@@ -44,6 +46,9 @@ class ViewGlide(QObject):
         self.samples = [s for s in self.samples if now - s[0] <= SPAN_S] + [(now, x, y)]
 
     def release(self):
+        if inertia.percent("drag") == 0:
+            self.samples = []
+            return
         now = time.monotonic()
         recent = [s for s in self.samples if now - s[0] <= SPAN_S]
         self.samples = []
@@ -63,7 +68,7 @@ class ViewGlide(QObject):
     def _step(self):
         now = time.monotonic()
         dt, self.last = now - self.last, now
-        k = math.exp(-dt / self.tau)
+        k = math.exp(-dt / (self.tau * inertia.percent("drag") / 100.0))
         self.rest += QPointF(self.v.x() * dt, self.v.y() * dt)
         self.v = QPointF(self.v.x() * k, self.v.y() * k)
         whole = QPointF(int(self.rest.x()), int(self.rest.y()))

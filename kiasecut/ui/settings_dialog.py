@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import fx, gpu, library, workspace
-from . import ask
+from . import ask, inertia
 
 CACHE_CHOICES = ((workspace.CACHE_DEFAULT, "預設（使用者的緩存資料夾）"),
                  (workspace.CACHE_PROJECT, "專案內"),
@@ -134,6 +134,24 @@ class SettingsDialog(QDialog):
         row.addWidget(test)
         form.addRow("濾鏡引擎", row)
 
+        self.inertia_mode = QComboBox()
+        self.inertia_mode.addItem("全局：全部用同一個值", False)
+        self.inertia_mode.addItem("分開設定：每一種各自設定", True)
+        self.inertia_mode.setCurrentIndex(int(inertia.state["separate"]))
+        form.addRow("慣性設定", self.inertia_mode)
+        self.inertia_all = self._percent(inertia.state["all"])
+        form.addRow("　全局", self.inertia_all)
+        self.inertia_each = {}
+        for key, name in inertia.CHANNELS:
+            self.inertia_each[key] = self._percent(inertia.state[key])
+            form.addRow("　" + name, self.inertia_each[key])
+        note = QLabel("滾輪捲動、縮放和中鍵拖曳放開後會滑一小段。100% 是預設，0% 是不要慣性（直接到位），越大滑得越久。")
+        note.setStyleSheet("color: #9a9aa0;")
+        note.setWordWrap(True)
+        form.addRow("", note)
+        self.inertia_mode.currentIndexChanged.connect(self._inertia_changed)
+        self._inertia_changed()
+
         row = QHBoxLayout()
         reset_all = QPushButton("重置所有的「不再詢問」")
         reset_all.clicked.connect(self._reset_questions)
@@ -155,6 +173,21 @@ class SettingsDialog(QDialog):
         self.library.textChanged.connect(self._library_changed)
         self._library_changed()
         self._cache_changed()
+
+    @staticmethod
+    def _percent(value):
+        box = QSpinBox()
+        box.setRange(0, inertia.MAX_PERCENT)
+        box.setSingleStep(10)
+        box.setSuffix(" %")
+        box.setValue(value)
+        return box
+
+    def _inertia_changed(self):
+        separate = bool(self.inertia_mode.currentData())
+        self.inertia_all.setEnabled(not separate)
+        for box in self.inertia_each.values():
+            box.setEnabled(separate)
 
     def _root_changed(self, text):
         """Fields that were the old root's own places follow it to the new one."""
@@ -231,6 +264,8 @@ class SettingsDialog(QDialog):
                 "copy_library": self.copy.isVisible() and self.copy.isChecked(),
                 "project_dir": self.projects.text().strip(), "autosave_min": self.autosave.value(),
                 "autosave_limit": self.autosave_limit.value(),
+                "inertia": {"separate": bool(self.inertia_mode.currentData()), "all": self.inertia_all.value(),
+                            **{key: box.value() for key, box in self.inertia_each.items()}},
                 "gpu": self.gpu.isChecked(), "cache_mode": self.cache_mode.currentData(),
                 "cache_custom": library.norm(self.cache_custom.text().strip()) if self.cache_custom.text().strip() else ""}
 

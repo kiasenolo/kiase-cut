@@ -56,7 +56,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, icons, inplace, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
+from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, icons, inertia, inplace, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -910,6 +910,7 @@ class MainWindow(QMainWindow):
         self.clock.timeout.connect(self._tick)
         self.clock.start()
         gpu.enabled = str(self.settings().value("gpu", True)).lower() not in ("false", "0")
+        inertia.load(self.settings())
         self.cache_base = self.cache_base_of(self.cache_mode(), self.cache_custom())
         self.autosave_timer = QTimer(self, interval=self.autosave_min() * 60 * 1000)
         self.autosave_timer.timeout.connect(self._autosave)
@@ -4991,6 +4992,8 @@ class MainWindow(QMainWindow):
         s.setValue("autosave_min", v["autosave_min"])
         s.setValue("autosave_limit", v["autosave_limit"])
         s.setValue("gpu", v["gpu"])
+        inertia.state.update(v["inertia"])
+        inertia.save(s)
         s.setValue("cache_mode", v["cache_mode"])
         s.setValue("cache_custom_dir", v["cache_custom"])
         self.set_cache_base(self.cache_base_of(v["cache_mode"], v["cache_custom"]))

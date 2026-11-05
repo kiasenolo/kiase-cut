@@ -540,7 +540,11 @@ class Preview(QWidget):
         self.glide = viewglide.ViewGlide(self, self._glide_pan)         # (the view goes on a little after a middle-button drag)
         self.setMinimumSize(320, 180)
         self.setMouseTracking(True)
-        touch.enable(self)                      # (fingers: pinch zooms, two fingers move the view, a held one is a right click)
+        self.lit_id = None                      # the clip a finger has held, to be dragged: it is white
+        if interactive:                         # (a finger swipes the view; what is on it is picked and dragged only once held)
+            touch.enable(self, hold_left=self._holds, lit=self._light_box)
+        else:
+            touch.enable(self)                  # (fingers: pinch zooms, two fingers move the view)
         self.accept_media = False               # media may be dropped on it (a static compound is open)
         self.drop_at = None                     # canvas point a drag from elsewhere is over
         self.drop_replace = []                  # boxes an Alt-drop there would give its media to
@@ -652,6 +656,23 @@ class Preview(QWidget):
             self.view_rect(*self._union(boxes))
         else:
             self.view_fit()
+
+    def _holds(self, pos):
+        """Whether a finger at pos is held before it picks or drags (not while the view is boxed or a grab is on)."""
+        return self.show_guides and not self.box_zoom and not (self.drag and self.drag.get("modal"))
+
+    def _light_box(self, pos, on):
+        """The clip a finger holds goes white (on) until it is lifted: the selected one if it is on it, else the one under it."""
+        lit = None
+        if on and pos is not None:
+            x, y = self._to_canvas(QPointF(pos))
+            boxes = [b for b in self.visible_boxes() if not b.locked]
+            hit = next((b for b in boxes if b.clip["id"] in self.selected_ids and grabs(b, x, y)), None) \
+                or next((b for b in boxes if b.contains(x, y)), None)
+            lit = hit.clip["id"] if hit is not None else None
+        if lit != self.lit_id:
+            self.lit_id = lit
+            self.update()
 
     def _glide_pan(self, dx, dy):
         """The view goes on after a middle-button drag by the pixels the pointer would have moved it."""
@@ -1085,6 +1106,14 @@ class Preview(QWidget):
                 p.setPen(QColor("#ffd34d"))
                 p.drawText(b.corners()[0] + QPointF(6 * k, -6 * k), "替換素材" + (f"（{n} 個）" if n > 1 else ""))
         p.setBrush(Qt.NoBrush)
+        if self.lit_id is not None:                      # held by a finger: white, and it is let go to be dragged
+            for b in self.visible_boxes():
+                if b.clip["id"] == self.lit_id:
+                    p.setPen(QPen(QColor("#ffffff"), 3 * k))
+                    p.setBrush(QColor(255, 255, 255, 90))
+                    p.drawPolygon(QPolygonF(b.corners()))
+                    p.setBrush(Qt.NoBrush)
+                    break
         if self.drop_group is not None:                  # dropped media go into this group
             b = self.drop_group
             p.setPen(QPen(QColor("#b48ee0"), 2 * k))

@@ -37,9 +37,9 @@ def log(menu, what):
 
 
 def animated():
-    """Menus animate on a desktop only: on the tablet a menu under a graphics effect went invisible (still there, and still working
-    under the finger) and a submenu closing, grabbed for its roll-up, brought the program down."""
-    return sys.platform != "android" or bool(os.environ.get("KIASECUT_MENUANIM"))
+    """Whether menus animate: everywhere, the tablet too (KIASECUT_MENUANIM=0 turns it off). The invisible menus and the crashes the tablet
+    had with it were found elsewhere - a slide over the titles switching menus faster than Android could show them (menubartap.py)."""
+    return os.environ.get("KIASECUT_MENUANIM") != "0"
 
 
 def curve():

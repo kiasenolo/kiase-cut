@@ -56,7 +56,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, icons, inplace, look, mapdialog, menuanim, menubartap, middledrag, sashtouch, softdrag, touch, wheel
+from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, icons, inplace, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -6347,6 +6347,7 @@ def run(argv):
     look.apply(app)                                 # the same on every platform
     middledrag.install()                            # 中鍵拖拽 on every scroll area
     escapekey.install()                             # Esc leaves a field; on Android the Back key is Esc
+    menudebug.install()                             # (a log of the menus' events, for the tablet)
     menubartap.install()                            # a finger from one title of the menu bar to the next swaps the menus (Android)
     sashtouch.install()                             # the lines between panels are let go by a hold, with a finger (Android)
     softdrag.install()                              # a finger's drags (the library to the timeline) are made by the program on Android

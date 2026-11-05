@@ -6,3 +6,4 @@ __pycache__/
 /out/
 .venv/
 /app-build-exec/
+.debug-tablet/

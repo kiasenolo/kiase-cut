@@ -199,7 +199,11 @@ def drop_ghosts(source=None):
 
 def close_ghost(menu, picture, rect, t0):
     parent = menu.parentWidget()
+    while parent is not None and parent.windowType() == Qt.Popup:      # (a submenu's parent is a menu: the picture goes on the window under them,
+        parent = parent.parentWidget()                                 #  a popup is no place for a child widget - it brought the program down)
     parent = parent.window() if parent is not None else QApplication.activeWindow()
+    if parent is not None and parent.windowType() == Qt.Popup:
+        parent = None
     if parent is None or not QRect(parent.mapToGlobal(QPoint(0, 0)), parent.size()).contains(rect):
         return                                            # (a menu out over the edge of its window has no picture to roll up: it only goes)
     g = Ghost(parent, picture, rect, t0)

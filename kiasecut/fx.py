@@ -47,6 +47,7 @@ class Param:
         self.panel = None                        # the @panel it is in (None: the effect's own rows)
         self.enable = []                         # @enable conditions: (other param, negate, values or None)
         self.show = []                           # @show conditions (the same): a node shows the row only while they hold
+        self.step = None                         # @step: how much one step of the number box is (None: by the size of the range)
 
     def __repr__(self):
         return f"Param({self.name}, {self.type}, {self.default})"
@@ -272,7 +273,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     head = {}
     params, error = [], None
     panels, panel, enables, inputs, outputs = [], None, [], [], []
-    input_param, alone, skips = {}, [], []
+    input_param, alone, skips, steps = {}, [], [], []
     sockets = []
     for line in text.splitlines():
         m = HEADER.match(line)
@@ -320,6 +321,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                 alone += shlex.split(rest)
             elif key == "skip":                           # (read once every @param is known)
                 skips.append((line, rest))
+            elif key == "step":                           # @step amount name...: the step of those number parameters
+                steps.append((line, rest))
             elif key in ("enable", "show", "use"):         # (read once every @param is known)
                 enables.append((line, rest, key))
             elif key in ("filter", "category", "description"):
@@ -336,6 +339,16 @@ def parse(text, ref, fallback_name="濾鏡"):
                 if rest.lower() not in ("float", "8bit"):
                     raise ValueError("@precision 要寫 float 或 8bit")
                 head["precise"] = rest.lower() == "float"
+        except ValueError as exc:
+            error = error or f"{line.strip()}\n{exc}"
+    for line, rest in steps:
+        try:
+            words = rest.split()
+            by = {p.name: p for p in params}
+            if len(words) < 2 or float(words[0]) <= 0 or any(w not in by or by[w].type not in ("float", "vec2", "vec3") for w in words[1:]):
+                raise ValueError("@step 要寫：每一步的大小（大於 0）、數字參數的名稱…")
+            for w in words[1:]:
+                by[w].step = float(words[0])
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
     input_show, input_use = {}, {}

@@ -7,6 +7,7 @@
 // @param x float 0 -1000000 1000000 "X"
 // @param y float 0 -1000000 1000000 "Y"
 // @param z float 0 -1000000 1000000 "Z"
+// @step 0.001 x y z
 // @socket out - vector
 
 // Reimplementation of Blender's Combine XYZ compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).

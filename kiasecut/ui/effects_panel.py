@@ -46,6 +46,8 @@ SOURCE_NAMES = (("顏色", None), ("圖片", "image"), ("影片", "video"), ("�
 
 
 def step_for(p):
+    if getattr(p, "step", None):
+        return p.step
     span = p.hi - p.lo
     if p.type == "int":
         return 1.0

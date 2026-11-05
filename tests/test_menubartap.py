@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
-from PySide6.QtGui import QMouseEvent  # noqa: E402
+from PySide6.QtGui import QHoverEvent, QMouseEvent  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMainWindow  # noqa: E402
 
@@ -80,6 +80,10 @@ class MenuBarTapTests(unittest.TestCase):
         g = self.title(1)
         QApplication.sendEvent(self.menus[0], QMouseEvent(QEvent.MouseMove, QPointF(self.menus[0].mapFromGlobal(g)), QPointF(g),
                                                           Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+        QTest.qWait(20)
+        self.assertEqual(self.shown(), [True, False, False])
+        at = QPointF(self.bar.mapFromGlobal(g))
+        QApplication.sendEvent(self.bar, QHoverEvent(QEvent.HoverMove, at, QPointF(g), QPointF(0, 0)))
         QTest.qWait(20)
         self.assertEqual(self.shown(), [True, False, False])
 

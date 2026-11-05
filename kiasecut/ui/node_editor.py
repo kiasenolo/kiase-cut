@@ -1782,8 +1782,10 @@ class GraphView(QGraphicsView):
             if key in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter):
                 self._put_down(key == Qt.Key_Escape)
             return
-        if key == Qt.Key_Escape:                           # (it cancels a dragged link; it leaves nothing: the window's Esc - 返回上一層 - is not for here)
-            self.cancel_drag()
+        if key == Qt.Key_Escape:                           # (it cancels a dragged link, else the selection goes; the window's Esc - 返回上一層 - is not for here)
+            if not self.cancel_drag():
+                self.scene().clearSelection()
+                self.editor.selection_changed()
             return
         if key == Qt.Key_A and mods == Qt.NoModifier:
             for it in self.items_by_id.values():

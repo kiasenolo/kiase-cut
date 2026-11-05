@@ -395,6 +395,10 @@ class NodeEditorTests(unittest.TestCase):
         QTest.mouseRelease(v.viewport(), Qt.LeftButton, Qt.NoModifier, v.mapFromScene(a + QPointF(-30, 200)))
         self.assertEqual(got, [])
         self.assertFalse(v.cancelled)
+        ed.select("output")
+        self.assertTrue(v.items_by_id["output"].isSelected())
+        QTest.keyClick(v, Qt.Key_Escape)                                      # (nothing to cancel: the selection goes)
+        self.assertFalse(v.items_by_id["output"].isSelected())
 
     def test_moving_a_node_asks_for_the_move(self):
         ed = self.make()

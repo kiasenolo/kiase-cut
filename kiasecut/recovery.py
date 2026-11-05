@@ -11,8 +11,8 @@ Closing normally removes it. One left behind by a program that is no longer runn
 that program ended unexpectedly: when its autosave is there, the next start offers to bring
 it back (crashed()).
 
-Python's own record of a crash (faulthandler: every thread's stack) is appended to
-crash.log beside the autosaves.
+Python's own record of a crash (faulthandler: every thread's stack) goes to a report of its own
+in ~/Documents/KiaseCut/crashReport (crashreport.py); crash.log beside the autosaves records the starts.
 """
 import datetime
 import faulthandler
@@ -20,7 +20,7 @@ import json
 import os
 import sys
 
-from . import project
+from . import crashreport, project
 
 SUBDIR = os.path.join("KiaseCut", "auto-save")
 EXT = ".kiasecut.json"
@@ -87,6 +87,7 @@ def begin(where):
         faulthandler.enable(_log, all_threads=True)
     except OSError:
         _log = None
+    crashreport.begin(where)                             # (its file takes faulthandler over: a crash report of its own per run)
 
 
 def note(where, **fields):
@@ -99,6 +100,8 @@ def note(where, **fields):
         data = {"pid": os.getpid(), "started": datetime.datetime.now().isoformat(timespec="seconds"),
                 "project": None, "autosave": None}
     data.update(fields)
+    if "project" in fields:
+        crashreport.event(f"project: {fields['project'] or '(none)'}")
     try:
         _write_json(path, data)
     except OSError:
@@ -112,6 +115,7 @@ def end(where):
         os.remove(_session_file(where))
     except OSError:
         pass
+    crashreport.end()
     if _log is not None:
         faulthandler.disable()
         _log.close()

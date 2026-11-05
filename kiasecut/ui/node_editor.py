@@ -8,7 +8,7 @@ link drag search does - a constant (數值, 顏色...) starts at the value the i
 parameters can feed gets a 參數輸入 node that makes the value a parameter), on a node moves it, on the empty part selects with a box. Wheel zooms, the
 middle button drags the view (middledrag.py), Shift+A (or the right button) adds a node where the pointer
 is, X / Delete removes the selected ones, M mutes them (the picture goes through unchanged), Home shows
-everything, Ctrl+Space makes the editor full screen and toggles back. The preview is a backdrop behind the graph: Alt + middle-drag moves it, Alt + V zooms it out and Shift + V zooms it in. Every parameter of a node has its field in the node as in Blender's compositor (drag a number to
+everything, Ctrl+Space makes the editor full screen and toggles back. The preview is a backdrop behind the graph: Alt + middle-drag moves it, V zooms it out and Alt + V zooms it in. Every parameter of a node has its field in the node as in Blender's compositor (drag a number to
 change it, click it to type, click a tick, a menu or a colour); a number or colour parameter also has a socket:
 link a picture to it and the field gives way to the link. Selecting a picture / video / compound / track node shows it on the preview to place it, as a
 mask is (the main window follows nodeSelected).
@@ -1702,7 +1702,7 @@ class GraphView(QGraphicsView):
         if key in (Qt.Key_J, Qt.Key_C):
             return mods == Qt.ControlModifier
         if key == Qt.Key_V:
-            return mods in (Qt.AltModifier, Qt.ShiftModifier, Qt.ControlModifier)
+            return mods in (Qt.NoModifier, Qt.AltModifier, Qt.ControlModifier)
         if key == Qt.Key_G:
             return mods in (Qt.NoModifier, Qt.ControlModifier, Qt.ControlModifier | Qt.AltModifier)
         if key in (Qt.Key_Tab, Qt.Key_N):
@@ -1753,9 +1753,9 @@ class GraphView(QGraphicsView):
             self.editor.frame_selected()
         elif key == Qt.Key_Home:
             self.fit()
-        elif key == Qt.Key_V and mods == Qt.AltModifier:
+        elif key == Qt.Key_V and mods == Qt.NoModifier:
             self.zoom_backdrop(1 / 1.2)
-        elif key == Qt.Key_V and mods == Qt.ShiftModifier:
+        elif key == Qt.Key_V and mods == Qt.AltModifier:
             self.zoom_backdrop(1.2)
         elif key == Qt.Key_A and mods & Qt.ShiftModifier:
             pos = self.mapFromGlobal(self.cursor().pos())

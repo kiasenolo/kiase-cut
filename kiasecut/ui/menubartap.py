@@ -29,6 +29,9 @@ class _Watch(QObject):
         if t in (QEvent.MouseMove, QEvent.HoverMove, QEvent.HoverEnter) and isinstance(obj, (QMenu, QMenuBar)):
             return True               # (a finger sliding over the titles is no hover: it opened and shut the menus a hundred times a
                                       #  second - a submenu open under another title among them - and the program crashed)
+        if t in (QEvent.Leave, QEvent.HoverLeave) and isinstance(obj, QMenu):
+            return True               # (a menu that a submenu has come up over gets a Leave, and its sloppy-submenu timer then shut the submenu
+                                      #  300 ms after a tap - there is no pointer to leave on a touch screen)
         if t == QEvent.MouseButtonRelease and self.eat and e.button() == Qt.LeftButton:
             self.eat = False
             return True

@@ -1513,7 +1513,8 @@ class GraphView(QGraphicsView):
                 for ln, a, b, sock, out in self.link_items:
                     if not ln.path().intersects(hit):
                         continue
-                    near = [ln.path().pointAtPercent(i / 80) for i in range(81)]
+                    steps = max(80, int(ln.path().length() / 2))          # (a point every 2 px: a long link is not stepped over by the stroke)
+                    near = [ln.path().pointAtPercent(i / steps) for i in range(steps + 1)]
                     near = [q for q in near if hit.contains(q)]
                     if near:
                         x = sum(q.x() for q in near) / len(near) - RerouteItem.W / 2

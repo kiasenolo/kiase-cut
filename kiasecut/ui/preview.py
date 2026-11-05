@@ -111,7 +111,7 @@ from .wrapdrag import WrapDrag
 
 US = 1_000_000
 SNAP_PX = 7
-HANDLE_PX = 9                 # handle size on screen
+HANDLE_PX = 4.5               # handle size on screen
 ROT_PX = 34                   # rotation handle distance from the outline
 PICK_PX = 9
 ANGLE_SNAP = 3.0              # degrees within which rotation settles on a right angle
@@ -659,7 +659,24 @@ class Preview(QWidget):
 
     def _holds(self, pos):
         """Whether a finger at pos is held before it picks or drags (not while the view is boxed or a grab is on)."""
-        return self.show_guides and not self.box_zoom and not (self.drag and self.drag.get("modal"))
+        return self.show_guides and not self.box_zoom and not (self.drag and self.drag.get("modal")) and not self._on_handle(pos)
+
+    def _on_handle(self, pos):
+        """Whether pos is on a handle of what is selected (they are taken at once, without a hold - they are small and are no part of the view)."""
+        if not self.view:
+            return False
+        x, y = self._to_canvas(QPointF(pos))
+        m, k = QPointF(x, y), self._k()
+        box = self.selected_box()
+        mbox = self.mask_box(box)
+        if mbox is not None and self.masking(mbox):
+            g = MaskGeo(mbox, self.mask_of(box.clip))
+            return any(self._near(pt, m, k) for _n, pt in g.handles(k))
+        if box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False):
+            return (self._near(box.rot_handle(k), m, k) or self._grabs_anchor(box, m, k, Qt.NoModifier)
+                    or self._grabs_pivot(box, m, k, Qt.NoModifier)
+                    or any(self._near(pt, m, k) for _sx, _sy, pt in box.handles()))
+        return self._gap_at(m, k) is not None
 
     def _light_box(self, pos, on):
         """The clip a finger holds goes white (on) until it is lifted: the selected one if it is on it, else the one under it."""

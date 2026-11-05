@@ -60,6 +60,15 @@ class PreviewTouchTests(unittest.TestCase):
         self.assertIsNone(self.pv.drag)
         self.assertNotEqual(self.pv.pan, pan)
 
+    def test_a_handle_is_taken_at_once_without_a_hold(self):
+        self.pv.selected_id, self.pv.selected_ids = self.cid, {self.cid}
+        box = self.pv.selected_box()
+        r, k = self.pv._rect(), self.pv._k()
+        pt = box.rot_handle(k)
+        at = QPoint(round(r.x() + pt.x() / self.pv.W * r.width()), round(r.y() + pt.y() / self.pv.H * r.height()))
+        self.assertFalse(self.g.hold_left(at))
+        self.assertTrue(self.g.hold_left(self.on))
+
     def test_a_tap_still_picks(self):
         self.seq.press(0, self.on, self.pv).commit()
         self.seq.release(0, self.on, self.pv).commit()

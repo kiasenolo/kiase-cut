@@ -72,7 +72,7 @@ vec4 tap(vec2 uv) {
 
 vec4 result(vec4 s) {
     float a = clamp(s.a, 0.0, 1.0);
-    vec3 rgb = clamp(s.rgb, 0.0, a);
+    vec3 rgb = max(s.rgb, 0.0);                  // (not held to the alpha or to 1: a node's picture can be brighter)
     if (linear_light && a > 0.0) rgb = to_enc(rgb / a) * a;
     return vec4(rgb, a);
 }

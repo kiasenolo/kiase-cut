@@ -43,7 +43,7 @@
 vec2 res() { return resolution; }
 
 vec3 srgb_to_lin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
-vec3 lin_to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
+vec3 lin_to_srgb(vec3 c) { c = max(c, 0.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
 
 vec4 input_tex(vec2 uv) {
     if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return vec4(0.0);
@@ -582,5 +582,5 @@ vec4 effect(vec2 uv_in) {
 #if LINEARIZE
     rgb = (a > 0.0) ? lin_to_srgb(rgb / a) * a : vec3(0.0);
 #endif
-    return vec4(min(clamp(rgb, 0.0, 1.0), vec3(a)), a);
+    return vec4(max(rgb, vec3(0.0)), a);          // (not held to the alpha or to 1: a node's picture can be brighter)
 }

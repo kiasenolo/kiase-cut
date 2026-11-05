@@ -996,6 +996,36 @@ class Link(QGraphicsPathItem):
             self.normal()
 
 
+class DragButton(QPushButton):
+    """A button that is held down and dragged (for those who cannot do a middle-button drag or a key + wheel): while it is down,
+    every move of the pointer calls moved(dx, dy) in px."""
+
+    def __init__(self, text, moved, tip=""):
+        super().__init__(text)
+        self.moved = moved
+        self.last = None
+        self.setToolTip(tip)
+        self.setCursor(Qt.SizeAllCursor)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.last = e.globalPosition()
+            self.setDown(True)
+
+    def mouseMoveEvent(self, e):
+        if self.last is not None:
+            now = e.globalPosition()
+            d = now - self.last
+            self.last = now
+            if d.x() or d.y():
+                self.moved(d.x(), d.y())
+
+    def mouseReleaseEvent(self, e):
+        if self.last is not None:
+            self.last = None
+            self.setDown(False)
+
+
 class GraphView(QGraphicsView):
     backdropWidth = Signal(int)                  # px the preview picture is wide on screen (0: not seen)
 
@@ -1595,6 +1625,11 @@ class GraphView(QGraphicsView):
         self.viewport().update()
         self._report_backdrop()
 
+    def pan_backdrop(self, dx, dy):
+        """Move only the preview backdrop (what Alt + middle-drag does) by (dx, dy) px."""
+        self.backdrop_offset += QPointF(dx, dy)
+        self.viewport().update()
+
     def backdrop_size(self):
         """(w, h) px the preview picture is drawn at on the viewport (it fits the view, then its own zoom), or None."""
         img = self.backdrop
@@ -1993,6 +2028,21 @@ class NodeEditor(QWidget):
         backdrop.toggled.connect(lambda on: self.view.set_backdrop_visible(on))
         self.backdrop_btn = backdrop
         bar.addWidget(backdrop)
+        pan = DragButton("位移預覽", lambda dx, dy: self.view.pan_backdrop(dx, dy),
+                         "按住這個按鈕再拖曳：移動背景預覽（等於 Alt + 中鍵拖曳）")
+        zoom = DragButton("縮放預覽", lambda dx, dy: self.view.zoom_backdrop(1.01 ** (-dy)),
+                          "按住這個按鈕再上下拖曳：往上放大、往下縮小背景預覽（縮小 V、放大 Alt + V）")
+        self.backdrop_pan_btn, self.backdrop_zoom_btn = pan, zoom
+        for b in (pan, zoom):
+            b.setEnabled(False)
+            bar.addWidget(b)
+        backdrop.toggled.connect(pan.setEnabled)
+        backdrop.toggled.connect(zoom.setEnabled)
+        delete = QPushButton("刪除節點 (X)")
+        delete.setToolTip("刪除選取的節點（Ctrl + X：刪除但保留連線）")
+        delete.clicked.connect(self.remove_selected)
+        self.delete_btn = delete
+        bar.addWidget(delete)
         fullscreen = QAction(self)
         fullscreen.setShortcut(QKeySequence("Ctrl+Space"))
         fullscreen.setShortcutContext(Qt.WidgetWithChildrenShortcut)

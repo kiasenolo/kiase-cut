@@ -177,6 +177,28 @@ class NodeEditorTests(unittest.TestCase):
         ed.backdrop_btn.setChecked(False)
         self.assertFalse(ed.view.backdrop_visible)
 
+    def test_buttons_for_the_backdrop_and_for_deleting(self):
+        ed = self.make()
+        self.assertFalse(ed.backdrop_pan_btn.isEnabled())
+        ed.backdrop_btn.setChecked(True)
+        self.assertTrue(ed.backdrop_zoom_btn.isEnabled())
+        v = ed.view
+        start, off = v.backdrop_zoom, QPointF(v.backdrop_offset)
+        ed.backdrop_zoom_btn.moved(0, -20)                        # (dragged up: in)
+        self.assertGreater(v.backdrop_zoom, start)
+        ed.backdrop_pan_btn.moved(12, 7)
+        self.assertEqual(v.backdrop_offset, off + QPointF(12, 7))
+
+    def test_the_delete_button_removes_the_selected_nodes(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+        ed = self.make(build)
+        removed = []
+        ed.removeRequested.connect(lambda *a: removed.append(a))
+        ed.select("math1")
+        ed.delete_btn.click()
+        self.assertEqual(removed, [("e1", ["math1"])])
+
     def test_alt_middle_drag_moves_only_the_preview_backdrop(self):
         ed = self.make()
         ed.backdrop_btn.setChecked(True)

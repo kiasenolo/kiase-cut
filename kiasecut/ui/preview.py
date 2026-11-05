@@ -110,6 +110,9 @@ from . import appevents, touch, viewglide, wheel
 from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
 
+SURROUND = "#2a2a2f"               # (what is round the canvas: lighter than a black picture, so the canvas shows)
+CANVAS_EDGE = "#5a5a62"             # (and the line along the canvas edge)
+
 US = 1_000_000
 SNAP_PX = 7
 HANDLE_PX = 4.5               # handle size on screen
@@ -1074,11 +1077,15 @@ class Preview(QWidget):
     # -- painting ---------------------------------------------------------------------------------
     def paintEvent(self, _):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor("#070707"))
+        p.fillRect(self.rect(), QColor(SURROUND))
         r = self._rect()
         p.fillRect(r, QColor("black"))
         if self.img is not None:
             p.drawImage(r, self.img)                   # (no smoothing: zoomed in, the pixels stay square)
+        if self.interactive:                           # (a hair line round the canvas: where it ends, even where the picture is as dark as the surround)
+            p.setPen(QPen(QColor(CANVAS_EDGE), 1))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(r.adjusted(-0.5, -0.5, 0.5, 0.5))
         if not self.interactive or not self.show_guides:
             return
         if self.zoom != 1.0 or self.pan != QPointF(0, 0):

@@ -1,5 +1,4 @@
-"""A log of what happens to the menu bar and its menus (on Android it goes to logcat, tag `python`; KIASECUT_MENUDEBUG=1 on a desktop
-prints it to stderr): every mouse press / release (and moves, thinned out) and touch that goes to a menu, a menu bar or the widget
+"""A log of what happens to the menu bar and its menus (KIASECUT_MENUDEBUG=1 prints it to stderr; on Android that is logcat, tag `python`): every mouse press / release (and moves, thinned out) and touch that goes to a menu, a menu bar or the widget
 under it, and every menu shown or hidden, with where, what made the mouse event (a real mouse or the program's touch) and which
 popup is up. Taken out once the menu trouble on the tablet is found."""
 import os
@@ -24,7 +23,7 @@ _last_move = [0.0]
 
 
 def active():
-    return sys.platform == "android" or bool(os.environ.get("KIASECUT_MENUDEBUG"))
+    return bool(os.environ.get("KIASECUT_MENUDEBUG"))
 
 
 def log(text):

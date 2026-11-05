@@ -23,7 +23,7 @@ import hashlib
 import math
 import re
 
-from . import assets, curves, dynamic, fx
+from . import fuse, assets, curves, dynamic, fx
 
 US = 1_000_000
 INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output", "source", "filter", "params", "reroute", "frame", "group"
@@ -1569,6 +1569,81 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
         tex, owner = made[f] if f in made else (empty(), None)
         put(n, tex, owner, o)
 
+    def filter_node(n, node):
+        d = fx.for_node(node)
+        main = feed.get((n, "src"))
+        names = [o for o, _ in outputs(node)]
+        if node.get("mute") or d.error:
+            if d.error:
+                errors.append(f"{d.name}：{d.error}")
+            for o in names:
+                alias(n, main, o)
+        else:
+            vals = dict(values(n, d))
+            srcs = {}
+            for p in d.params:
+                pt = take(n, PARAM + p.name)
+                if pt is not None and p.type in fx.SOURCE_TYPES:
+                    srcs[p.name] = (pt, IDENTITY)
+                    if p.type == "float":                 # (a node's number is the number: 0 gives 0 and 1 gives 1, and 5 gives 5)
+                        vals[p.name + fx.RANGE_MIN], vals[p.name + fx.RANGE_MAX] = 0.0, 1.0
+            ins = {name: take(n, name) for name, _ in d.inputs}
+            wanted = [(k, o) for k, o in enumerate(names) if (n, o) in miss]     # (an output nothing reads, or has kept, is not drawn)
+            dests = [alloc(w, h) for _ in wanted]
+            if not _run(eng, d, vals, take(n, "src") or empty(), w, h, [(k, dest) for (k, _o), dest in zip(wanted, dests)], time,
+                        prog, frame, unit, srcs, ins, errors, src_on=take(n, "src") is not None):
+                for dest, (_k, o) in zip(dests, wanted):
+                    free(dest)
+                    alias(n, main, o)
+            else:                                                 # (one run for all of them: see Engine.run_outputs)
+                for dest, (_k, o) in zip(dests, wanted):
+                    put(n, dest.tex, None if keep(n, o, dest) else dest, o)
+
+    groups, absorbed = ({}, set()) if tap is not None or not fuse.enabled else _plan_fusion(nodes, feed, order, needed, miss, users, final, cached, fx, ctrl)
+
+    def fused_group(members):
+        """Draw the nodes of a group (see fuse.py) in one pass; False when that cannot be done (they are drawn one by one then)."""
+        rank = {m: i for i, m in enumerate(members)}
+        wanted_out = next(o for o, _ in outputs(nodes[members[-1]]) if (members[-1], o) in miss)
+        wirings, ext, exts, defs, outs = [], [], {}, [], []
+        for m in members:
+            d = fx.for_node(nodes[m])
+            names = [o for o, _ in outputs(nodes[m])]
+            wiring = {}
+            for sock in ["src"] + [name for name, _ in d.inputs]:
+                f = feed.get((m, sock))
+                if f is None:
+                    continue
+                if f[0] in rank:
+                    wiring[sock] = ("node", rank[f[0]])
+                elif f in made:
+                    if f not in exts:
+                        exts[f] = len(ext)
+                        ext.append(f)
+                    wiring[sock] = ("ext", exts[f])
+            o = wanted_out if m == members[-1] else next(o for o, _ in outputs(nodes[m]) if (m, o) in miss)
+            outs.append(names.index(o) if o in names else 0)
+            defs.append((d, wiring, outs[-1]))
+            wirings.append(wiring)
+        if len(ext) > fuse.MAX_EXTERNAL:
+            return False
+        built = fuse.build(defs)
+        if built is None or built[0].key() in fuse.bad:
+            return False
+        fused, mapping = built
+        vals = {}
+        for i, pname, new in mapping:
+            vals[new] = values(members[i], defs[i][0])[pname]
+        dest = alloc(w, h)
+        mine = []
+        if not _run(eng, fused, vals, empty(), w, h, [(0, dest)], time, prog, frame, unit, None,
+                    {f"e{k}": made[f][0] for k, f in enumerate(ext)}, mine, src_on=False):
+            free(dest)
+            fuse.bad.add(fused.key())
+            return False
+        put(members[-1], dest.tex, dest, wanted_out)
+        return True
+
     for f, item in hits.items():
         put(f[0], item.tex, None, f[1])
     for n in order:
@@ -1618,34 +1693,16 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
                     free(where)
             put(n, dest.tex, dest)
         else:
-            d = fx.for_node(node)
-            main = feed.get((n, "src"))
-            names = [o for o, _ in outputs(node)]
-            if node.get("mute") or d.error:
-                if d.error:
-                    errors.append(f"{d.name}：{d.error}")
-                for o in names:
-                    alias(n, main, o)
-            else:
-                vals = dict(values(n, d))
-                srcs = {}
-                for p in d.params:
-                    pt = take(n, PARAM + p.name)
-                    if pt is not None and p.type in fx.SOURCE_TYPES:
-                        srcs[p.name] = (pt, IDENTITY)
-                        if p.type == "float":                 # (a node's number is the number: 0 gives 0 and 1 gives 1, and 5 gives 5)
-                            vals[p.name + fx.RANGE_MIN], vals[p.name + fx.RANGE_MAX] = 0.0, 1.0
-                ins = {name: take(n, name) for name, _ in d.inputs}
-                wanted = [(k, o) for k, o in enumerate(names) if (n, o) in miss]     # (an output nothing reads, or has kept, is not drawn)
-                dests = [alloc(w, h) for _ in wanted]
-                if not _run(eng, d, vals, take(n, "src") or empty(), w, h, [(k, dest) for (k, _o), dest in zip(wanted, dests)], time,
-                            prog, frame, unit, srcs, ins, errors, src_on=take(n, "src") is not None):
-                    for dest, (_k, o) in zip(dests, wanted):
-                        free(dest)
-                        alias(n, main, o)
-                else:                                                 # (one run for all of them: see Engine.run_outputs)
-                    for dest, (_k, o) in zip(dests, wanted):
-                        put(n, dest.tex, None if keep(n, o, dest) else dest, o)
+            if n in absorbed:                                     # (drawn inside the group it belongs to, see below)
+                continue
+            if n in groups:
+                if not fused_group(groups[n]):
+                    for m in groups[n]:
+                        filter_node(m, nodes[m])
+                for m in groups[n]:
+                    done_with(m)
+                continue
+            filter_node(n, node)
         done_with(n)
     if cache is not None:
         cache.sweep(scope)
@@ -1655,6 +1712,44 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             return tex, blank[0]
         free(blank[0])
     return tex, owner
+
+
+def _plan_fusion(nodes, feed, order, needed, miss, users, final, cached, fx_, ctrl):
+    """({last node id: [member ids, drawn first to last]}, the ids of the members that are not the last): the nodes drawn in
+    one pass (fuse.py). A group is a pointwise node and the pointwise nodes before it whose picture only it reads."""
+    def fusable(n):
+        node = nodes[n]
+        if node["type"] != FILTER or node.get("mute") or n not in needed:
+            return None
+        d = fx_.for_node(node)
+        if not fuse.can_fuse(d) or any((n, PARAM + p.name) in feed for p in d.params):
+            return None
+        names = [o for o, _ in outputs(node)]
+        if len([o for o in names if (n, o) in miss]) != 1 or any(cached((n, o)) for o in names):
+            return None
+        return d
+    ok = {n: fusable(n) for n in order}
+    absorbed, groups = set(), {}
+    for root in reversed(order):
+        if root in absorbed or ok.get(root) is None:
+            continue
+        members, todo = [root], [root]
+        while todo and len(members) < fuse.MAX_NODES:
+            c = todo.pop()
+            for sock in ["src"] + [name for name, _ in ok[c].inputs]:
+                f = feed.get((c, sock))
+                if f is None or len(members) >= fuse.MAX_NODES:
+                    continue
+                p = f[0]
+                if p in members or p in absorbed or ok.get(p) is None or users.get(f) != 1 or f == final or (p, f[1]) not in miss:
+                    continue
+                members.append(p)
+                todo.append(p)
+        if len(members) < 2:
+            continue
+        absorbed.update(members[1:])
+        groups[root] = sorted(members, key=order.index)
+    return groups, absorbed
 
 
 def _sign(n, node, feed, sigs, values, w, h, unit, time, prog, frame, stamp, input_stamp):

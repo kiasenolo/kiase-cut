@@ -24,7 +24,10 @@ p4a.commit = 58d21141f17c889bf8585f5665921d72028f8831
 android.permissions = android.permission.MANAGE_EXTERNAL_STORAGE, android.permission.READ_EXTERNAL_STORAGE, android.permission.WRITE_EXTERNAL_STORAGE, android.permission.READ_MEDIA_VIDEO, android.permission.READ_MEDIA_IMAGES, android.permission.READ_MEDIA_AUDIO, android.permission.INTERNET, android.permission.VIBRATE
 android.add_jars = /mnt/kstore/kiasecut-android/deployment/jar/PySide6/jar/Qt6AndroidBindings.jar,/mnt/kstore/kiasecut-android/deployment/jar/PySide6/jar/Qt6Android.jar,/mnt/kstore/kiasecut-android/deployment/jar/PySide6/jar/Qt6AndroidMultimedia.jar
 p4a.extra_args = --qt-libs=Core,Widgets,Gui,Svg,Multimedia --load-local-libs=plugins_platforms_qtforandroid,plugins_imageformats_qjpeg,plugins_imageformats_qsvg,plugins_imageformats_qwebp,plugins_imageformats_qgif,plugins_multimedia_androidmediaplugin --init-classes=
+android.add_resources = /mnt/kstore/kiasecut-android/res-anydpi:mipmap-anydpi-v26
 icon.filename = /mnt/kstore/kiasecut-android/src/Icon.png
+icon.adaptive_foreground.filename = /mnt/kstore/kiasecut-android/src/Icon-fg.png
+icon.adaptive_background.filename = /mnt/kstore/kiasecut-android/src/Icon-bg.png
 
 [buildozer]
 log_level = 2

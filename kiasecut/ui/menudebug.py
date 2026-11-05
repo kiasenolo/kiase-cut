@@ -23,7 +23,7 @@ _last_move = [0.0]
 
 
 def active():
-    return bool(os.environ.get("KIASECUT_MENUDEBUG"))
+    return sys.platform == "android" or bool(os.environ.get("KIASECUT_MENUDEBUG"))
 
 
 def log(text):
@@ -81,9 +81,32 @@ def handler(obj, e):
     return False
 
 
+def dump():
+    """Every popup menu Qt thinks is up: where it is, how opaque, whether something draws it through an effect."""
+    ups = [w for w in QApplication.topLevelWidgets() if isinstance(w, QMenu) and w.isVisible()]
+    if not ups:
+        return
+    parts = []
+    for w in ups:
+        g = w.geometry()
+        parts.append(f"{name(w)} {g.x()},{g.y()} {g.width()}x{g.height()} op={w.windowOpacity():.2f} fx={type(w.graphicsEffect()).__name__ if w.graphicsEffect() else '-'} "
+                     f"flags={int(w.windowFlags().value):x} active={w.isActiveWindow()} hidden={w.isHidden()} vis={w.isVisible()} "
+                     f"win={w.windowHandle().isVisible() if w.windowHandle() else '-'}")
+    log("up: " + " | ".join(parts) + f" | popup={name(QApplication.activePopupWidget())}")
+
+
+_timer = None
+
+
 def install():
+    global _timer
     if not active():
         return
+    from PySide6.QtCore import QTimer
+    _timer = QTimer()
+    _timer.setInterval(1000)
+    _timer.timeout.connect(dump)
+    _timer.start()
     app = QApplication.instance()
     appevents.watch(app, [QEvent.MouseButtonPress, QEvent.MouseButtonRelease, QEvent.MouseMove, QEvent.TouchBegin, QEvent.TouchEnd,
                           QEvent.TouchCancel, QEvent.Show, QEvent.Hide, *OTHER], handler)

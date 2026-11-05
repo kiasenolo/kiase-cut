@@ -3,7 +3,7 @@
 With a menu up, a press outside it goes to the menu (it has the grab) and closes it; a desktop's window system then lets the press
 through to the menu bar, which opens the title it was on. Android does not: the press only closes the menu, so a finger that went
 from one title to the next - or tapped the open one - left no menu at all, or the menu came up and was shut by the release.
-Moves (and the hover that follows them) over a menu or the menu bar are not let through at all (see eventFilter). Here the press on a title of the bar, while one of its menus is up, is taken by the program: the same title closes the menu,
+Moves and hover over a menu or the menu bar are let through only with the finger down (a slide; see eventFilter). Here the press on a title of the bar, while one of its menus is up, is taken by the program: the same title closes the menu,
 another title swaps it for its own; the release that follows is eaten.
 """
 import sys
@@ -27,8 +27,10 @@ class _Watch(QObject):
     def eventFilter(self, obj, e):
         t = e.type()
         if t in (QEvent.MouseMove, QEvent.HoverMove, QEvent.HoverEnter) and isinstance(obj, (QMenu, QMenuBar)):
-            return True               # (a finger sliding over the titles is no hover: it opened and shut the menus a hundred times a
-                                      #  second - a submenu open under another title among them - and the program crashed)
+            if t == QEvent.MouseMove and e.buttons() & Qt.LeftButton:
+                return False          # (a finger held down and slid over the titles or the items: that is a slide, as with a mouse)
+            return True               # (but a hover - a finger lifted, or moved over before any press - opened and shut the menus a hundred
+                                      #  times a second, a submenu open under another title among them, and the program crashed)
         if t in (QEvent.Leave, QEvent.HoverLeave) and isinstance(obj, QMenu):
             return True               # (a menu that a submenu has come up over gets a Leave, and its sloppy-submenu timer then shut the submenu
                                       #  300 ms after a tap - there is no pointer to leave on a touch screen)

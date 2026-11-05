@@ -79,7 +79,7 @@ class MenuBarTapTests(unittest.TestCase):
         QTest.qWait(20)
         g = self.title(1)
         QApplication.sendEvent(self.menus[0], QMouseEvent(QEvent.MouseMove, QPointF(self.menus[0].mapFromGlobal(g)), QPointF(g),
-                                                          Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+                                                          Qt.NoButton, Qt.NoButton, Qt.NoModifier))      # (no button down: a hover)
         QTest.qWait(20)
         self.assertEqual(self.shown(), [True, False, False])
         at = QPointF(self.bar.mapFromGlobal(g))

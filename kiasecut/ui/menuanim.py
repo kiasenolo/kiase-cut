@@ -1,5 +1,5 @@
 """Menus open and close the way Kilo's (the e621 app's) do: unrolled from the top, `clip-path: polygon(0 0, 100% 0, 100% 0, 0 0)`
-to `polygon(0 0, 100% 0, 100% 100%, 0 100%)`, and faded in, in a quarter of a second on cubic-bezier(0, .5, 0, 1) - most of it at once,
+to `polygon(0 0, 100% 0, 100% 100%, 0 100%)`, in a quarter of a second on cubic-bezier(0, .5, 0, 1) - most of it at once,
 a long soft end - and rolled up and faded out the same way when they close.
 
 There the menu is one element shared by all that open: going from one to another is no animation, only the opening of the
@@ -67,7 +67,6 @@ class Pop(QGraphicsEffect):
         off = self.sourceBoundingRect(Qt.LogicalCoordinates).topLeft()
         size = pm.deviceIndependentSize()
         if t > 0.0:                                          # (the top part of the picture: a clip, drawn as a piece of it)
-            painter.setOpacity(t)                            # (and faded in with it, as the page's `transition: all`)
             painter.drawPixmap(QRectF(off.x(), off.y(), size.width(), size.height() * t), pm,
                                QRectF(0, 0, pm.width(), pm.height() * t))
 

@@ -7,11 +7,13 @@ Moves and hover over a menu or the menu bar are let through only with the finger
 another title swaps it for its own; the release that follows is eaten.
 """
 import sys
+import time
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMenu, QMenuBar
 
+SETTLE_S = 0.35            # a menu of the bar that came up this recently is let be: the next one may come up after it has been drawn
 FORCE = False              # on for a desktop too (tests)
 
 
@@ -23,14 +25,20 @@ class _Watch(QObject):
     def __init__(self):
         super().__init__()
         self.eat = False           # the release of a press taken here
+        self.shown_at = 0.0        # when a menu of the bar last came up
 
     def eventFilter(self, obj, e):
         t = e.type()
         if t in (QEvent.MouseMove, QEvent.HoverMove, QEvent.HoverEnter) and isinstance(obj, (QMenu, QMenuBar)):
             if t == QEvent.MouseMove and e.buttons() & Qt.LeftButton:
-                return False          # (a finger held down and slid over the titles or the items: that is a slide, as with a mouse)
+                # (a finger held down and slid over the titles or the items: a slide, as with a mouse - but not within SETTLE_S of a menu
+                #  coming up: a slide that switched menus faster than they could be drawn left the last one up for Qt and not on the screen)
+                return time.monotonic() - self.shown_at < SETTLE_S
             return True               # (but a hover - a finger lifted, or moved over before any press - opened and shut the menus a hundred
                                       #  times a second, a submenu open under another title among them, and the program crashed)
+        if t == QEvent.Show and isinstance(obj, QMenu) and isinstance(obj.parent(), QMenuBar):
+            self.shown_at = time.monotonic()
+            return False
         if t in (QEvent.Leave, QEvent.HoverLeave) and isinstance(obj, QMenu):
             return True               # (a menu that a submenu has come up over gets a Leave, and its sloppy-submenu timer then shut the submenu
                                       #  300 ms after a tap - there is no pointer to leave on a touch screen)

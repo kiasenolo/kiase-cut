@@ -2,6 +2,7 @@
 // @category 模糊
 // @description 只有一條帶子是清楚的，離它越遠越模糊，看起來像微縮模型
 // @passes 2
+// @precision float
 // @param focus float 0.5 0 1 "清楚的位置"
 // @param width float 0.15 0 1 "清楚的寬度"
 // @param falloff float 0.3 0.01 1 "漸變距離"

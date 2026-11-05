@@ -2,6 +2,7 @@
 // @category 模糊
 // @description 照 Blender 的「模糊」節點（Blur）：大小是像素（X、Y 可以不同），類型有平坦、帳篷、二次、三次、高斯、快速高斯、Catrom、Mitch，權重和 Blender 的一樣；預設分離（先橫向、再縱向），關掉分離就是圓形（橢圓）的核；延伸邊界讓畫面外算透明，不然邊緣的顏色會延伸出去。線性光：在線性光裡運算（Blender 合成器是線性的），關著就直接糊顏色的數值
 // @passes 2
+// @precision float
 // @param radius float 10 0 1000 "大小 X"
 // @param radius_y float 10 0 1000 "大小 Y"
 // @param link_xy bool true "XY 相同"

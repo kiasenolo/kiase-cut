@@ -330,6 +330,10 @@ class NodeEditorTests(unittest.TestCase):
 
         def wheel(delta, mods):
             v.wheelEvent(QWheelEvent(pos, v.mapToGlobal(pos.toPoint()), QPoint(0, 0), QPoint(0, delta), Qt.NoButton, mods, Qt.NoScrollPhase, False))
+            glide = getattr(v, "_zoom_glide", None)
+            while glide is not None and glide.left:       # (the wheel's zoom glides: let it end)
+                glide.last -= 1.0
+                glide.step()
         k0, under = v.transform().m11(), v.mapToScene(pos.toPoint())
         wheel(120, Qt.NoModifier)
         self.assertGreater(v.transform().m11(), k0)                     # up: zoom in

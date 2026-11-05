@@ -25,6 +25,10 @@ def wheel(pv, at, notches, mods=NONE):
     e = QWheelEvent(QPointF(at), QPointF(pv.mapToGlobal(at)), QPoint(), QPoint(0, 120 * notches),
                     Qt.NoButton, mods, Qt.NoScrollPhase, False)
     QApplication.sendEvent(pv, e)
+    glide = getattr(pv, "_zoom_glide", None)
+    while glide is not None and glide.left:           # (the wheel's zoom glides: let it end)
+        glide.last -= 1.0
+        glide.step()
 
 
 class ViewTests(unittest.TestCase):

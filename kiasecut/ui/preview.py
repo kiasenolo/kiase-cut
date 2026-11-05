@@ -107,6 +107,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineE
 
 from .. import components, curves, edit, fonts, nodegraph, project, render, textlayout, textvars
 from . import appevents, touch, viewglide, wheel
+from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
 
 US = 1_000_000
@@ -716,7 +717,12 @@ class Preview(QWidget):
             return
         n = wheel.notch(e)
         if n:
-            self.zoom_to(self.zoom * ZOOM_STEP ** n, e.position())
+            if not hasattr(self, "_zoom_glide"):
+                self._zoom_glide = ZoomGlide(self, lambda k, at: self.zoom_to(self.zoom * ZOOM_STEP ** k, at))
+            if wheel.touchpad(e):
+                self.zoom_to(self.zoom * ZOOM_STEP ** n, e.position())
+            else:
+                self._zoom_glide.add(n, e.position())
 
     def event(self, e):
         f = wheel.pinch(e) if self.interactive else None

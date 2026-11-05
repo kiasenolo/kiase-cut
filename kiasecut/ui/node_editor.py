@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (QApplication, QComboBox, QFrame, QPlainTextEdit, 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from . import appevents, motion, touch, viewglide
 from .wheel import pinch as wheel_pinch
+from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
@@ -1521,7 +1522,12 @@ class GraphView(QGraphicsView):
             n = wheel.notch(e) * 60                        # (Ctrl: the picture moves with the wheel's top going left)
             dx, dy = (n, 0.0) if ctrl else (0.0, n)
         else:
-            self.zoom_by(1.15 ** wheel.notch(e), e.position().toPoint())
+            if wheel.touchpad(e):
+                self.zoom_by(1.15 ** wheel.notch(e), e.position().toPoint())
+                return
+            if not hasattr(self, "_zoom_glide"):
+                self._zoom_glide = ZoomGlide(self, lambda k, at: self.zoom_by(1.15 ** k, at))
+            self._zoom_glide.add(wheel.notch(e), e.position().toPoint())
             return
         self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - round(dx))
         self.verticalScrollBar().setValue(self.verticalScrollBar().value() - round(dy))

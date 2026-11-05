@@ -883,6 +883,41 @@ def make_context():
             raise FilterError(f"無法建立 OpenGL（{exc}）") from exc
 
 
+_UNSET = object()
+
+
+class Prog:
+    """A compiled program with its uniform names and objects kept: `name in prog` is a set lookup (moderngl walks all of
+    the program's members for it) and put() skips a write of what the uniform already holds - every node of a graph used to
+    pay for both, a few dozen times per frame, before the card had anything to do."""
+    __slots__ = ("p", "names", "objs", "last")
+
+    def __init__(self, p):
+        self.p, self.objs, self.last = p, {}, {}
+        self.names = set(p.uniforms) if hasattr(p, "uniforms") else set(p)       # (gles.py's program is no iterable)
+
+    def __contains__(self, name):
+        return name in self.names
+
+    def __getitem__(self, name):
+        u = self.objs.get(name)
+        if u is None:
+            u = self.objs[name] = self.p[name]
+            self.last.pop(name, None)
+        return u
+
+    def put(self, name, v):
+        """prog[name].value = v, when the uniform is there and not already v (only values set through put are remembered)."""
+        if name in self.names:
+            key = tuple(v) if isinstance(v, (list, tuple)) else v
+            if self.last.get(name, _UNSET) != key:
+                self[name].value = v
+                self.last[name] = key
+
+    def forget(self, name):
+        self.last.pop(name, None)
+
+
 class Engine:
     """Runs filters on the GPU (any OpenGL 3.3 context; a hidden one is made, or the GPU
     compositor's own is shared: glrender.py)."""
@@ -914,7 +949,7 @@ class Engine:
             vao = self.ctx.vertex_array(prog, [(self.quad, "2f", "pos")])
             if len(self.programs) > 64:
                 self.programs.clear()
-            self.programs[key] = prog = (prog, vao)
+            self.programs[key] = prog = (Prog(prog), vao)
         return prog
 
     def blank_texture(self):
@@ -1024,22 +1059,18 @@ class Engine:
         unit = unit if unit > 1e-9 else 1.0
         for name, v in (("resolution", (w / unit, h / unit)), ("time", float(time)), ("progress", float(progress)),
                         ("frame", int(frame)), ("scale", 1.0)):
-            if name in prog:
-                prog[name].value = v
+            prog.put(name, v)
         for p in d.params:
             if p.type == "gradient" and p.name in values:
                 pos, col, n = values[p.name]
                 for u, v in ((p.name + "_p", np.array(pos, "f4")), (p.name + "_c", np.array(col, "f4"))):
                     if u in prog:
                         prog[u].write(v.tobytes())
-                if p.name + "_n" in prog:
-                    prog[p.name + "_n"].value = n
-            elif p.name in prog and p.name in values:
-                prog[p.name].value = values[p.name]
-        if "source" in prog:
-            prog["source"].value = 0
-        if "original_" in prog:
-            prog["original_"].value = 1
+                prog.put(p.name + "_n", n)
+            elif p.name in values:
+                prog.put(p.name, values[p.name])
+        prog.put("source", 0)
+        prog.put("original_", 1)
         for i, (name, (tex, m)) in enumerate(sorted(sources.items())):
             tex.use(2 + i)
             own = ((name + "_col_", tuple(values.get(name, (1.0, 1.0, 1.0, 1.0)))) if types[name] == "color"
@@ -1048,21 +1079,16 @@ class Engine:
                 (name + "_min_", float(values.get(name + RANGE_MIN, 0.0))),
                 (name + "_max_", float(values.get(name + RANGE_MAX, values.get(name, 0.0))))]
             for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)), own, *more):
-                if u in prog:
-                    prog[u].value = v
+                prog.put(u, v)
         for k, (name, _label) in enumerate(d.inputs):
             tex = (inputs or {}).get(name)
             if tex is None:
                 tex = self.blank_texture()
             tex.use(8 + k)
-            if "inp_" + name + "_" in prog:
-                prog["inp_" + name + "_"].value = 8 + k
-            if "inp_" + name + "_on_" in prog:
-                prog["inp_" + name + "_on_"].value = (inputs or {}).get(name) is not None
-        if "src_on_" in prog:
-            prog["src_on_"].value = bool(src_on)
-        if "extra_" in prog:
-            prog["extra_"].value = 7
+            prog.put("inp_" + name + "_", 8 + k)
+            prog.put("inp_" + name + "_on_", (inputs or {}).get(name) is not None)
+        prog.put("src_on_", bool(src_on))
+        prog.put("extra_", 7)
         self.ctx.disable(self.mgl.BLEND)
         run = (d, prog, vao, values, src, w, h, (w / unit, h / unit), targets, self._skipped(d, values))
         last = d.passes - 1
@@ -1092,11 +1118,10 @@ class Engine:
         dest: where the last pass of the filter goes. Returns the texture holding the result - or, with whole False,
         (that, made)."""
         d, prog, vao, values, src, w, h, canvas, targets, skip = run
-        if output is not None and "output_index" in prog:
-            prog["output_index"].value = int(output)
+        if output is not None:
+            prog.put("output_index", int(output))
         for i in range(first, stop):
-            if "pass_index" in prog:
-                prog["pass_index"].value = i
+            prog.put("pass_index", i)
             if i < len(d.levels):
                 tw, th = self.level_size(d, i, values, w, h, canvas)
                 if i in skip:                          # (not drawn: it keeps its place in made, and what the pass after reads)
@@ -1117,8 +1142,7 @@ class Engine:
             ex = d.extras[i] if i < len(d.extras) else None
             for name, v in (("pass_px", (float(tw), float(th))), ("src_px", (float(sw), float(sh))),
                             ("extra_px", (float(made[ex][1]), float(made[ex][2])) if ex is not None else (1.0, 1.0))):
-                if name in prog:
-                    prog[name].value = v
+                prog.put(name, v)
             dst_fbo.use()
             self.ctx.viewport = (0, 0, tw, th)
             read.use(0)

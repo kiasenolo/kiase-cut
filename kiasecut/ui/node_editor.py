@@ -1029,7 +1029,7 @@ class GraphView(QGraphicsView):
         self.press_at = {}
         self.panning = None                      # the point of a middle-button drag moving the view
         self.backdrop = None                      # preview image shown behind the nodes
-        self.backdrop_visible = True
+        self.backdrop_visible = False
         self.backdrop_w = 0
         self.backdrop_zoom = 1.0
         self.backdrop_offset = QPointF()
@@ -1988,7 +1988,7 @@ class NodeEditor(QWidget):
         bar.addWidget(self.fullscreen_btn)
         backdrop = QPushButton("背景預覽")
         backdrop.setCheckable(True)
-        backdrop.setChecked(True)
+        backdrop.setChecked(False)
         backdrop.setToolTip("顯示或隱藏節點編輯器背景中的預覽影像")
         backdrop.toggled.connect(lambda on: self.view.set_backdrop_visible(on))
         self.backdrop_btn = backdrop

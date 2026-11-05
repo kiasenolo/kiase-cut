@@ -161,6 +161,8 @@ class NodeEditorTests(unittest.TestCase):
 
     def test_preview_backdrop_zoom_and_visibility(self):
         ed = self.make()
+        self.assertFalse(ed.view.backdrop_visible)                        # (off until 背景預覽 is pressed)
+        ed.backdrop_btn.setChecked(True)
         image = QImage(320, 180, QImage.Format_ARGB32_Premultiplied)
         ed.view.set_backdrop(image)
         self.assertIs(ed.view.backdrop, image)
@@ -177,6 +179,7 @@ class NodeEditorTests(unittest.TestCase):
 
     def test_alt_middle_drag_moves_only_the_preview_backdrop(self):
         ed = self.make()
+        ed.backdrop_btn.setChecked(True)
         v = ed.view
         start = QPoint(80, 80)
         end = QPoint(110, 95)
@@ -199,6 +202,7 @@ class NodeEditorTests(unittest.TestCase):
 
     def test_the_preview_backdrop_is_opaque_and_over_the_grid(self):
         ed = self.make()
+        ed.backdrop_btn.setChecked(True)
         v = ed.view
         image = QImage(320, 180, QImage.Format_ARGB32_Premultiplied)
         image.fill(QColor(200, 60, 60))
@@ -214,6 +218,7 @@ class NodeEditorTests(unittest.TestCase):
 
     def test_the_preview_asks_for_frames_as_wide_as_it_shows_them(self):
         ed = self.make()
+        ed.backdrop_btn.setChecked(True)
         got = []
         ed.view.backdropWidth.connect(got.append)
         image = QImage(320, 180, QImage.Format_ARGB32_Premultiplied)

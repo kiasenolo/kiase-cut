@@ -74,6 +74,15 @@ class MenuBarTapTests(unittest.TestCase):
         self.tap(1)
         self.assertEqual(self.shown(), [False, False, False])
 
+    def test_a_move_over_the_bar_does_not_switch_menus(self):
+        self.menus[0].popup(self.below(0))
+        QTest.qWait(20)
+        g = self.title(1)
+        QApplication.sendEvent(self.menus[0], QMouseEvent(QEvent.MouseMove, QPointF(self.menus[0].mapFromGlobal(g)), QPointF(g),
+                                                          Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+        QTest.qWait(20)
+        self.assertEqual(self.shown(), [True, False, False])
+
 
 if __name__ == "__main__":
     unittest.main()

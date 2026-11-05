@@ -180,6 +180,20 @@ class Tree(QTreeWidget):
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)     # Shift / Ctrl pick several
 
+    def event(self, e):
+        # Ctrl+D (nothing selected) is this list's own while it has the focus: the window's would clear the clips
+        if e.type() == QEvent.ShortcutOverride and e.key() == Qt.Key_D and e.modifiers() == Qt.ControlModifier:
+            e.accept()
+            return True
+        return super().event(e)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_D and e.modifiers() == Qt.ControlModifier:
+            self.clearSelection()
+            e.accept()
+        else:
+            super().keyPressEvent(e)
+
     def mimeTypes(self):
         return [MIME]
 

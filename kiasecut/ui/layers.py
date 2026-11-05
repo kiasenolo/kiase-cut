@@ -27,7 +27,7 @@ of their properties (文字內容, 文字顏色, a shape's colours, 圖片, 顯�
 parameter that is there (one parameter can set several layers), 解除參數 lets it go; a layer a
 parameter sets is marked ❖. A plain static compound has 轉為元件 at the top.
 """
-from PySide6.QtCore import QItemSelectionModel, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QItemSelectionModel, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
                                QPushButton, QSplitter, QVBoxLayout, QWidget)
@@ -64,6 +64,20 @@ class LayerList(QListWidget):
         self.setDragDropMode(QAbstractItemView.InternalMove)
         self.setDefaultDropAction(Qt.MoveAction)
         self.setSpacing(1)
+
+    def event(self, e):
+        # Ctrl+D (nothing selected) is this list's own while it has the focus: the window's would clear the clips
+        if e.type() == QEvent.ShortcutOverride and e.key() == Qt.Key_D and e.modifiers() == Qt.ControlModifier:
+            e.accept()
+            return True
+        return super().event(e)
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key_D and e.modifiers() == Qt.ControlModifier:
+            self.clearSelection()
+            e.accept()
+        else:
+            super().keyPressEvent(e)
 
     @staticmethod
     def _outside(e):

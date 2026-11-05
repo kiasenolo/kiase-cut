@@ -972,7 +972,7 @@ class NodeEditorTests(unittest.TestCase):
         ed = self.make()
         for key, mods in ((Qt.Key_X, Qt.ControlModifier), (Qt.Key_X, Qt.NoModifier), (Qt.Key_Delete, Qt.NoModifier),
                           (Qt.Key_M, Qt.NoModifier), (Qt.Key_Home, Qt.NoModifier), (Qt.Key_A, Qt.ShiftModifier),
-                          (Qt.Key_D, Qt.ShiftModifier), (Qt.Key_A, Qt.NoModifier)):
+                          (Qt.Key_D, Qt.ShiftModifier), (Qt.Key_A, Qt.NoModifier), (Qt.Key_D, Qt.ControlModifier)):
             e = QKeyEvent(QEvent.ShortcutOverride, key, mods)
             e.ignore()
             ed.view.event(e)
@@ -981,6 +981,15 @@ class NodeEditorTests(unittest.TestCase):
         e.ignore()
         ed.view.event(e)
         self.assertFalse(e.isAccepted())
+
+    def test_ctrl_d_deselects_the_nodes(self):
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+        ed = self.make()
+        QTest.keyClick(ed.view, Qt.Key_A)
+        self.assertTrue(ed.selected())
+        QTest.keyClick(ed.view, Qt.Key_D, Qt.ControlModifier)
+        self.assertEqual(ed.selected(), [])
 
     def test_edge_widens_a_node(self):
         ed = self.make()

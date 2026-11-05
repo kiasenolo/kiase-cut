@@ -32,6 +32,31 @@ class LayerTests(unittest.TestCase):
             edit.set_layer_order(p, ["c2", "c4"])               # every layer, or none
 
 
+class CtrlDTests(unittest.TestCase):
+    """Ctrl+D clears the selection of the list that has the focus (the layers, the media library)."""
+    def test_lists_deselect(self):
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QApplication, QListWidgetItem, QTreeWidgetItem
+        from kiasecut.ui.layers import LayerList
+        from kiasecut.ui.library import Tree
+        QApplication.instance() or QApplication([])
+        lst, tree = LayerList(), Tree()
+        for _ in range(3):
+            lst.addItem(QListWidgetItem("x"))
+            tree.addTopLevelItem(QTreeWidgetItem(["x"]))
+        for w, items in ((lst, [lst.item(i) for i in range(3)]), (tree, [tree.topLevelItem(i) for i in range(3)])):
+            for it in items:
+                it.setSelected(True)
+            e = QKeyEvent(QEvent.ShortcutOverride, Qt.Key_D, Qt.ControlModifier)
+            e.ignore()
+            w.event(e)
+            self.assertTrue(e.isAccepted())
+            QTest.keyClick(w, Qt.Key_D, Qt.ControlModifier)
+            self.assertEqual(len(w.selectedItems()), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
 

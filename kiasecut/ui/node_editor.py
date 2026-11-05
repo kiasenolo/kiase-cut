@@ -1561,7 +1561,8 @@ class GraphView(QGraphicsView):
         if key in (Qt.Key_Tab, Qt.Key_N):
             return mods == Qt.NoModifier
         if key in (Qt.Key_A, Qt.Key_D):
-            return mods == Qt.ShiftModifier or (key == Qt.Key_A and mods == Qt.NoModifier)
+            return mods == Qt.ShiftModifier or (key == Qt.Key_A and mods == Qt.NoModifier) \
+                or (key == Qt.Key_D and mods == Qt.ControlModifier)
         return False
 
     def keyPressEvent(self, e):
@@ -1575,6 +1576,9 @@ class GraphView(QGraphicsView):
         if key == Qt.Key_A and mods == Qt.NoModifier:
             for it in self.items_by_id.values():
                 it.setSelected(True)
+            self.editor.selection_changed()
+        elif key == Qt.Key_D and mods == Qt.ControlModifier:           # (as the timeline's: nothing selected)
+            self.scene().clearSelection()
             self.editor.selection_changed()
         elif key == Qt.Key_X and mods & Qt.ControlModifier:
             self.editor.dissolve_selected()

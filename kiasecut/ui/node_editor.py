@@ -20,7 +20,7 @@ import os
 
 import shiboken6
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSettings, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QColorDialog, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
@@ -241,7 +241,7 @@ class NodeItem(QGraphicsItem):
                 else:
                     for _part, sock, label in ng.ASSET_PAINTS:
                         add("image", label, sock)
-                opened = self.editor.panel_open.get((self.nid, "位置"), True)
+                opened = self.editor.panel_opened(self.nid, "位置", True)
                 add("panel", "位置", panel=opened)
                 if opened:
                     for p in (ng.text_place_params() if ng.is_text(node) else ng.place_params()):
@@ -250,7 +250,7 @@ class NodeItem(QGraphicsItem):
             for p in (q for q in d.params if q.panel is None and shown(q.name) and q.name not in paired):
                 add("param", p.label, socket(p), p)
             for name, closed in d.panels:
-                opened = self.editor.panel_open.get((self.nid, name), not closed)
+                opened = self.editor.panel_opened(self.nid, name, not closed)
                 add("panel", name, panel=opened)
                 if opened:
                     for p in (q for q in d.params if q.panel == name and shown(q.name) and q.name not in paired):
@@ -2082,7 +2082,6 @@ class NodeEditor(QWidget):
         self.params, self.sources, self.t = {}, {}, 0         # what the fields show: the effect's, at clip time t
         self._scrub = None                                   # the field being scrubbed: (node, row, cell, value)
         self.edit_finish = None                              # ends the number box being typed in: finish(keep)
-        self.panel_open = {}                                  # (node id, panel name) -> opened or shut by the user
         self.edit_proxy = None                                # the text box of a number being typed
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
@@ -2196,7 +2195,7 @@ class NodeEditor(QWidget):
         self.split.setStretchFactor(1, 0)
         self.split.setSizes([900, 300])
         lay.addWidget(self.split, 1)
-        self.panel_btn.setChecked(True)                      # (open from the start)
+        self.panel_btn.setChecked(self._side_open())         # (as it was left)
         self.view.hide()
         self.setFocusProxy(self.view)
         appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress), self._panel_key)
@@ -2214,12 +2213,32 @@ class NodeEditor(QWidget):
         e.accept()
         return True
 
+    @staticmethod
+    def _side_open():
+        try:
+            return str(QSettings("KiaseCut", "KiaseCut").value("node_param_panel", True)).lower() not in ("false", "0")
+        except Exception:
+            return True
+
+    def panel_opened(self, nid, name, default):
+        """Whether the panel `name` of node nid is open: as the user left it (kept in the node, so it is saved with the project)."""
+        return bool(((self.graph["nodes"].get(nid) or {}).get("open") or {}).get(name, default))
+
+    def set_panel_opened(self, nid, name, on):
+        node = self.graph["nodes"].get(nid)
+        if node is not None:
+            node.setdefault("open", {})[name] = bool(on)
+
     def set_panel(self, on):
         """Show or hide the 參數 panel (N)."""
         self.panel_btn.blockSignals(True)
         self.panel_btn.setChecked(on)
         self.panel_btn.blockSignals(False)
         self.panel.setVisible(bool(on) and self.eid is not None)
+        try:
+            QSettings("KiaseCut", "KiaseCut").setValue("node_param_panel", "true" if on else "false")
+        except Exception:
+            pass
         if on:
             self.panel.fill(ng.exposed(self.graph) if self.eid else [])
 
@@ -2509,8 +2528,7 @@ class NodeEditor(QWidget):
         nid, kind = item.nid, row["kind"]
         gp = global_pos.toPoint() if hasattr(global_pos, "toPoint") else global_pos
         if kind == "panel":
-            key = (nid, row["label"])
-            self.panel_open[key] = not row["panel"]
+            self.set_panel_opened(nid, row["label"], not row["panel"])
             QTimer.singleShot(0, self.rebuild)
             return
         if kind == "shape":

@@ -8,6 +8,8 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("KIASECUT_PREVIEW_GL", "0")           # (the tests read pixels back from the widgets: an offscreen GL widget cannot give them)
+os.environ.setdefault("KIASECUT_NODE_GL", "0")
 
 from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtGui import QColor, QImage, QWheelEvent  # noqa: E402

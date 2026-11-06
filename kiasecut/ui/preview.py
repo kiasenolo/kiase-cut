@@ -102,11 +102,11 @@ import os
 import types
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QPainter, QPainterPath, QPen, QPolygonF, QTransform
+from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPainterPath, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
-from .. import components, curves, edit, fonts, nodegraph, project, render, textlayout, textvars
+from .. import components, curves, edit, fonts, nodegraph, project, render, sharedgl, textlayout, textvars
 from . import appevents, touch, viewglide, wheel
 from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
@@ -502,6 +502,14 @@ def gap_snaps(lo, hi, clo, chi, rects, tol):
     return out
 
 
+QUAD_VERT = """#version 330
+in vec2 pos; in vec2 uv; out vec2 v_uv;
+void main() { v_uv = uv; gl_Position = vec4(pos, 0.0, 1.0); }"""
+QUAD_FRAG = """#version 330
+uniform sampler2D t; in vec2 v_uv; out vec4 c;
+void main() { c = vec4(texture(t, v_uv).rgb, 1.0); }"""
+
+
 def _gl_wanted():
     """Whether the preview is drawn on the GPU (a QOpenGLWidget; 設定 > 預覽用 GPU 繪圖, read once at start - it fixes the base class)."""
     if os.environ.get("KIASECUT_PREVIEW_GL", "1") == "0":
@@ -537,17 +545,18 @@ class Preview(_Surface):
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
     mediaDropped = Signal(list, list, float, float, str)  # idents, file paths, transform x / y there, group id or ""
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
+    textureFailed = Signal(str)                 # the GpuFrame could not be drawn: the player sends pictures from now on
     grabCancelled = Signal()                    # a G / R / S grab was put back (Esc / right button): draw the clips as they were
 
     def __init__(self, parent=None, interactive=True):
         super().__init__(parent)
         if GL_PREVIEW:
-            from PySide6.QtGui import QSurfaceFormat
-            fmt = QSurfaceFormat()
-            fmt.setSamples(4)                          # (smooth edges for the handles and guides, as the software painter's antialiasing)
-            self.setFormat(fmt)
+            self.setFormat(sharedgl.widget_format())     # (4 samples: smooth edges for the handles and guides, as the software painter's antialiasing)
             self.setUpdateBehavior(QOpenGLWidget.NoPartialUpdate)
         self.img = None
+        self._frame_img = None
+        self.frame = None                  # a glrender.GpuFrame instead of img while the player keeps frames in the GPU (show_texture)
+        self._mgl = None                   # (moderngl, its context of this widget's GL context, the program, the quad, its GL context)
         self.margin = 0.0                  # (the fraction of the canvas that self.img holds on every side of it)
         self.W, self.H = 1920, 1080
         self.view = None
@@ -589,6 +598,7 @@ class Preview(_Surface):
         """img: the frame; when it holds what lies round the canvas too (its text "margin": the fraction of the canvas on
         every side), a preview that edits shows all of it, the other ones only the canvas."""
         self.img = img
+        self.frame = None
         self.margin = 0.0
         try:
             self.margin = max(0.0, float(img.text("margin") or 0.0)) if img is not None else 0.0
@@ -599,6 +609,74 @@ class Preview(_Surface):
             self.img = img.copy(mx, my, img.width() - 2 * mx, img.height() - 2 * my)
             self.margin = 0.0
         self.update()
+
+    def show_texture(self, frame):
+        """frame: a glrender.GpuFrame, drawn from its texture without a trip through the CPU (image() reads it when it is wanted)."""
+        self.frame, self.img, self._frame_img = frame, None, None
+        self.margin = frame.margin
+        self.update()
+
+    def image(self):
+        """The frame shown as a QImage (read back from the GPU when it is a texture), or None."""
+        if self.img is not None or self.frame is None:
+            return self.img
+        fr = self.frame
+        if getattr(self, "_frame_img", None) is None:
+            self.makeCurrent()
+            try:
+                mgl = self._gl_objects()
+                tex = mgl[0].external_texture(fr.glo, (fr.w, fr.h), 4, 0, "f1")
+                img = QImage(tex.read(), fr.w, fr.h, fr.w * 4, QImage.Format_RGBA8888).copy()
+            except Exception:
+                return None
+            finally:
+                self.doneCurrent()
+            img.setText("margin", repr(fr.margin))
+            self._frame_img = img
+        return self._frame_img
+
+    def _gl_objects(self):
+        """(moderngl context, program, quad) of this widget's GL context (made when first wanted; made current by the caller)."""
+        cur = self.context()
+        if self._mgl is None or self._mgl[3] is not cur:
+            import moderngl
+            import numpy as np
+            ctx = moderngl.create_context()
+            prog = ctx.program(vertex_shader=QUAD_VERT, fragment_shader=QUAD_FRAG)
+            vbo = ctx.buffer(reserve=4 * 4 * 4, dynamic=True)
+            self._mgl = (ctx, prog, ctx.vertex_array(prog, [(vbo, "2f 2f", "pos", "uv")]), cur, vbo, {})
+        return self._mgl
+
+    def _paint_texture(self, p, dest):
+        """Draw the GpuFrame's texture into dest (QRectF, widget px) under the painter p (native painting)."""
+        import numpy as np
+        import moderngl
+        fr = self.frame
+        p.beginNativePainting()
+        try:
+            ctx, prog, vao, _cur, vbo, samplers = self._gl_objects()
+            dpr = self.devicePixelRatioF()
+            W, H = max(1, round(self.width() * dpr)), max(1, round(self.height() * dpr))
+            fb = ctx.detect_framebuffer(self.defaultFramebufferObject())
+            fb.use()
+            ctx.viewport = (0, 0, W, H)
+            fb.scissor = None
+            ctx.disable(moderngl.BLEND | moderngl.DEPTH_TEST | moderngl.CULL_FACE)
+            x0, x1 = dest.left() * dpr / W * 2 - 1, dest.right() * dpr / W * 2 - 1
+            y0, y1 = 1 - dest.top() * dpr / H * 2, 1 - dest.bottom() * dpr / H * 2
+            vbo.write(np.array([x0, y0, 0, 0, x1, y0, 1, 0, x0, y1, 0, 1, x1, y1, 1, 1], "f4").tobytes())
+            tex = ctx.external_texture(fr.glo, (fr.w, fr.h), 4, 0, "f1")
+            smooth = dest.width() * dpr < fr.w                  # (shown smaller: smoothed; zoomed in, the pixels stay square)
+            sm = samplers.get(smooth)
+            if sm is None:
+                sm = samplers[smooth] = ctx.sampler(filter=(moderngl.LINEAR, moderngl.LINEAR) if smooth else (moderngl.NEAREST, moderngl.NEAREST),
+                                                    repeat_x=False, repeat_y=False)
+            tex.use(0)
+            sm.use(0)
+            prog["t"].value = 0
+            vao.render(moderngl.TRIANGLE_STRIP)
+        finally:
+            p.endNativePainting()
 
     def set_scene(self, view, t_us, selected_id, selected_ids=None):
         self.view = view
@@ -1121,21 +1199,33 @@ class Preview(_Surface):
         return self.mask_group != "mask" or box.clip["type"] in edit.MASKABLE
 
     # -- painting ---------------------------------------------------------------------------------
+    def _draw_picture(self, p, dest):
+        if self.frame is None:
+            p.drawImage(dest, self.img)
+            return
+        try:
+            self._paint_texture(p, dest)
+        except Exception as exc:                       # (this computer cannot show the texture: the player is told to send pictures)
+            self.frame = None
+            sharedgl.ENABLED = False
+            self.textureFailed.emit(str(exc))
+
     def paintEvent(self, _):
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(SURROUND))
         r = self._rect()
         p.fillRect(r, QColor("black"))
-        if self.img is not None and self.margin:       # (what lies outside the canvas: drawn dimmed)
+        shown = self.img is not None or self.frame is not None
+        if shown and self.margin:       # (what lies outside the canvas: drawn dimmed)
             m = QRectF(r.x() - r.width() * self.margin, r.y() - r.height() * self.margin,
                        r.width() * (1 + 2 * self.margin), r.height() * (1 + 2 * self.margin))
-            p.drawImage(m, self.img)
+            self._draw_picture(p, m)
             outside = QPainterPath()
             outside.addRect(m)
             outside.addRect(r)
             p.fillPath(outside, QColor(42, 42, 47, 150))
-        elif self.img is not None:
-            p.drawImage(r, self.img)                   # (no smoothing: zoomed in, the pixels stay square)
+        elif shown:
+            self._draw_picture(p, r)                   # (no smoothing: zoomed in, the pixels stay square)
         if self.interactive:                           # (a hair line round the canvas: where it ends, even where the picture is as dark as the surround)
             p.setPen(QPen(QColor(CANVAS_EDGE), 1))
             p.setBrush(Qt.NoBrush)

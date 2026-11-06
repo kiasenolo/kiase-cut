@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, components, curves, fx, nodegraph, project, propexpr, rack, render, textlayout, textvars
+from . import assets, components, curves, fx, nodegraph, project, propexpr, rack, render, sharedgl, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -228,8 +228,9 @@ class Layer:
 class GL:
     """The OpenGL side: a context of this thread, the two programs, textures and layers."""
 
-    def __init__(self):
-        self.mgl, self.ctx = fx.make_context()
+    def __init__(self, shared=False):
+        self.shared = shared                # the context is in Qt's share group (sharedgl.py): frames can be shown without leaving the GPU
+        self.mgl, self.ctx = sharedgl.make_context() if shared else fx.make_context()
         mgl, ctx = self.mgl, self.ctx
         self.composite = ctx.program(vertex_shader=VERTEX, fragment_shader=COMPOSITE)
         self.mixer = ctx.program(vertex_shader=VERTEX, fragment_shader=MIX)
@@ -441,12 +442,25 @@ class GL:
         self.vao[id(prog)].render(self.mgl.TRIANGLE_STRIP)
 
 
+class GpuFrame:
+    """A frame left in a texture of the GPU compositor's context (render_gpu): the preview draws it from there.
+    glo: the texture's name (valid in any context of Qt's share group), w x h: its size, margin: as the text "margin" of a QImage frame."""
+    __slots__ = ("layer", "glo", "w", "h", "margin")
+
+    def __init__(self, layer, w, h, margin):
+        self.layer, self.glo, self.w, self.h, self.margin = layer, layer.tex.glo, w, h, margin
+
+
+SHOWN = 4                             # frames kept out of the layer pool: the preview may still be drawing one of the last few
+
+
 class GLRenderer(render.Renderer):
     """render.Renderer's pictures, composited on the GPU (same interface)."""
 
-    def __init__(self, video_frame=None, cache_limit=600):
+    def __init__(self, video_frame=None, cache_limit=600, shared=False):
         super().__init__(video_frame, cache_limit)
-        self.gl = GL()
+        self.gl = GL(shared)
+        self.shown = []                # the GpuFrames not yet given back
         self.gl_stills = {}            # still key -> Layer (static compounds)
         self.graph_cache = nodegraph.Cache(GRAPH_CACHE_BYTES)
 
@@ -473,6 +487,32 @@ class GLRenderer(render.Renderer):
                 gl.release(tgt)
         fmt = QImage.Format_RGBA8888_Premultiplied if alpha else QImage.Format_RGBA8888
         return QImage(data, full_w, full_h, full_w * 4, fmt).copy()
+
+    def render_gpu(self, view, frame, width, height, margin=0.0):
+        """render() (on black) without the read back: a GpuFrame of the texture the picture was drawn in (the renderer must be
+        shared: GL(shared=True)). The texture stays out of the layer pool until SHOWN newer frames have been made."""
+        gl = self.gl
+        mx, my = round(width * margin), round(height * margin)
+        full_w, full_h = width + 2 * mx, height + 2 * my
+        with gl.ctx:
+            gl.new_frame()
+            self.graph_cache.frame()
+            tgt = gl.layer(full_w, full_h, (0.0, 0.0, 0.0, 1.0))
+            self.begin(view)
+            self.names = rack.values(view, frame / view["fps"] * US)
+            try:
+                base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(mx, my)
+                self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
+                               frame / view["fps"] * US, width / view["width"])
+                gl.ctx.finish()                       # (what the preview's context draws from must be complete)
+            except BaseException:
+                gl.release(tgt)
+                raise
+        out = GpuFrame(tgt, full_w, full_h, margin)
+        self.shown.append(out)
+        while len(self.shown) > SHOWN:
+            gl.release(self.shown.pop(0).layer)
+        return out
 
     def gl_content(self, tgt, base, comp, W, H, fps, t_us, ppu, through=False):
         """A compound's or a group's tracks (as render.draw_content: a group's matte); through
@@ -989,8 +1029,14 @@ class GLRenderer(render.Renderer):
             gl.release(snap)
 
 
-def make(video_frame=None):
-    """A GPU renderer, or the CPU one when this computer has no OpenGL 3.3 (or moderngl)."""
+def make(video_frame=None, shared=False):
+    """A GPU renderer, or the CPU one when this computer has no OpenGL 3.3 (or moderngl). shared: in Qt's share group
+    (sharedgl.py; render_gpu) - an ordinary one when that cannot be made."""
+    if shared:
+        try:
+            return GLRenderer(video_frame, shared=True)
+        except Exception:
+            pass
     try:
         return GLRenderer(video_frame)
     except Exception:

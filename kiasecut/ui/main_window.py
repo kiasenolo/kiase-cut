@@ -42,6 +42,7 @@ from .curve_editor import CurveEditor, param_rows as curve_param_rows
 from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
 from . import node_editor
+from .. import sharedgl
 from .node_editor import NodeEditor
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
 from .inspector import Inspector
@@ -898,6 +899,9 @@ class MainWindow(QMainWindow):
         self.player.worker.set_overflow(OVERFLOW if self.overflow_btn.isChecked() else 0.0)       # (the 畫布外 button as it was left)
         w = self.player.worker
         w.frameReady.connect(self.on_frame)
+        w.textureReady.connect(self.on_texture)
+        self.preview.textureFailed.connect(self.texture_failed)
+        self.nodes.view.backdropToggled.connect(lambda: self.nodes.view.set_backdrop(self.preview.image()))
         w.thumbsReady.connect(self.nodes.set_thumbs)
         w.loaded.connect(self.on_loaded)
         w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))  # never modal
@@ -1582,7 +1586,7 @@ class MainWindow(QMainWindow):
                                                     f"要改用目前的畫面，先把它改名或刪掉。")
             return
         try:
-            thumbnail.save_image(self.preview.img, self.path)
+            thumbnail.save_image(self.preview.image(), self.path)
         except (OSError, ValueError) as exc:
             QMessageBox.warning(self, "專案縮圖", str(exc))
             return
@@ -4441,12 +4445,28 @@ class MainWindow(QMainWindow):
                                          f"長度 {timecode(self.length / self.fps * US, self.fps)}", 3000)
 
     def on_frame(self, img, pos):
+        self.preview.show_image(img)
+        self.after_frame(img, pos)
+
+    def on_texture(self, frame, pos):
+        """A frame that stays in the GPU (sharedgl.py): the preview draws its texture; a picture is read back only for what
+        shows one too (the node editor's backdrop, the fullscreen preview)."""
+        self.preview.show_texture(frame)
+        seen = bool(self.fullscreen) or (self.nodes.view.backdrop_visible and self.nodes.view.isVisible())
+        self.after_frame(self.preview.image() if seen else None, pos)
+
+    def texture_failed(self, why):
+        self.statusBar().showMessage(f"預覽直接用 GPU 貼圖失敗，改用一般方式：{why}", 10000)
+        self.seek(self.pos)                              # (the frame again, as a picture)
+
+    def after_frame(self, img, pos):
         self.pos = pos
         self.show_rack()
-        self.preview.show_image(img)
-        self.nodes.view.set_backdrop(img)
+        if img is not None:
+            self.nodes.view.set_backdrop(img)
         if self.fullscreen:
-            self.fullscreen.canvas.show_image(img)
+            if img is not None:
+                self.fullscreen.canvas.show_image(img)
             self.fullscreen.set_position(pos, self.length, self.fps)
         self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True))
         self.show_time()
@@ -4611,7 +4631,7 @@ class MainWindow(QMainWindow):
             return
         fs = FullscreenPreview(self if sys.platform == "android" or os.environ.get("KIASECUT_FULLSCREEN_COVER") else None)
         fs.canvas.W, fs.canvas.H = self.preview.W, self.preview.H
-        fs.canvas.show_image(self.preview.img)
+        fs.canvas.show_image(self.preview.image())
         fs.togglePlay.connect(self.toggle_play)
         fs.step.connect(self.step)
         fs.seekRequested.connect(self.seek)
@@ -4987,7 +5007,8 @@ class MainWindow(QMainWindow):
                              self.cache_mode(), self.cache_custom(), self.default_cache_base(),
                              root_dir=self.app_root(), autosave_custom=str(self.settings().value("autosave_dir") or ""),
                              ui_scale=ui_scale(), node_gl=str(self.settings().value("node_gl", True)).lower() not in ("false", "0"),
-                             preview_gl=str(self.settings().value("preview_gl", True)).lower() not in ("false", "0"))
+                             preview_gl=str(self.settings().value("preview_gl", True)).lower() not in ("false", "0"),
+                             preview_direct=str(self.settings().value("preview_direct", True)).lower() not in ("false", "0"))
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
@@ -5003,6 +5024,7 @@ class MainWindow(QMainWindow):
         s.setValue("gpu", v["gpu"])
         s.setValue("node_gl", v["node_gl"])
         s.setValue("preview_gl", v["preview_gl"])
+        s.setValue("preview_direct", v["preview_direct"])
         scale_changed = v["ui_scale"] != ui_scale()
         s.setValue("ui_scale", v["ui_scale"])
         inertia.state.update(v["inertia"])
@@ -6388,7 +6410,20 @@ def run(argv):
         os.environ.setdefault("QT_SCALE_FACTOR", f"{scale / 100:g}")   # 界面縮放 (設定): the whole interface, at start
     if sys.platform == "android":
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)       # the menus in the window, not behind the system's "..."
+    direct = False
+    if sys.platform != "android":                               # 預覽直接用 GPU 貼圖 (sharedgl.py): Qt's GL contexts share one group
+        st = QSettings(*MainWindow.SETTINGS)
+        on = lambda key: str(st.value(key, True)).lower() not in ("false", "0")
+        if on("preview_gl") and on("preview_direct") and sharedgl.wanted():
+            sharedgl.configure_application()
+            direct = True
     app = QApplication(argv)
+    if direct:
+        try:
+            sharedgl.prepare()
+            sharedgl.ENABLED = True
+        except Exception:
+            sharedgl.ENABLED = False
     if sys.platform == "android":
         androidfiles.install()
         dialogframe.install()                       # a title bar, a ✕ and an outline on every dialog (the system gives none)

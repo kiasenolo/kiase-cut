@@ -35,7 +35,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 
-from .. import glrender, gpu, render, stretch, videoreader
+from .. import glrender, gpu, render, sharedgl, stretch, videoreader
 from ..audiomix import CHANNELS, RATE, Mixer
 
 PREVIEW_W = 960            # until the preview reports its size
@@ -64,6 +64,7 @@ def speed_pcm(pcm, rate, carry=0.0):
 
 class Worker(QObject):
     frameReady = Signal(QImage, int)
+    textureReady = Signal(object, int)       # a glrender.GpuFrame, position: the frame stays in the GPU (sharedgl.py)
     thumbsReady = Signal(dict)                      # {effect id: {node id: {output: (w, h, RGBA bytes)}}} the node editor shows
     loaded = Signal(dict)
     failed = Signal(str)
@@ -276,7 +277,7 @@ class Worker(QObject):
 
     def _renderer(self):
         """The GPU compositor when GPU acceleration is on (and works here), else QPainter."""
-        r = glrender.make(self._video) if gpu.enabled else render.Renderer(self._video)
+        r = glrender.make(self._video, shared=sharedgl.ENABLED) if gpu.enabled else render.Renderer(self._video)
         r.cache_dir = getattr(self, "cache_dir", None)           # (the sound an Audio Visualizer looks at)
         return r
 
@@ -313,9 +314,19 @@ class Worker(QObject):
         h = max(2, round(w * v["height"] / v["width"]))
         self.asked = []
         margin = self.overflow
-        img = self.renderer.render(v, pos, w, h, margin=margin) if margin else self.renderer.render(v, pos, w, h)
-        img.setText("margin", repr(margin))              # (the preview needs to know where the canvas is in it)
-        self.frameReady.emit(img, pos)
+        shown = None
+        if sharedgl.ENABLED and getattr(getattr(self.renderer, "gl", None), "shared", False):
+            try:
+                shown = self.renderer.render_gpu(v, pos, w, h, margin)
+            except Exception as exc:                     # (no way to show textures here: pictures from now on)
+                sharedgl.ENABLED = False
+                self.failed.emit(f"預覽直接用 GPU 貼圖失敗，改用一般方式：{exc}")
+        if shown is not None:
+            self.textureReady.emit(shown, pos)
+        else:
+            img = self.renderer.render(v, pos, w, h, margin=margin) if margin else self.renderer.render(v, pos, w, h)
+            img.setText("margin", repr(margin))              # (the preview needs to know where the canvas is in it)
+            self.frameReady.emit(img, pos)
         if self.renderer.thumbs:
             self.thumbsReady.emit(self.renderer.thumbs)
         if not self.playing:

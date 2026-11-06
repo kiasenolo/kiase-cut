@@ -1029,6 +1029,7 @@ class DragButton(QPushButton):
 
 
 class GraphView(QGraphicsView):
+    backdropToggled = Signal()                   # the preview picture behind the nodes was shown or hidden
     backdropWidth = Signal(int)                  # px the preview picture is wide on screen (0: not seen)
 
     def __init__(self, editor):
@@ -1646,6 +1647,7 @@ class GraphView(QGraphicsView):
         self.backdrop_visible = bool(on)
         self.viewport().update()
         self._report_backdrop()
+        self.backdropToggled.emit()
 
     def zoom_backdrop(self, k):
         """Scale only the preview backdrop, keeping the node graph's zoom unchanged."""
@@ -1679,12 +1681,10 @@ class GraphView(QGraphicsView):
         """Draw the graph with OpenGL (Qt composes it on the GPU, so many nodes and zooming cost the CPU less); False
         when this computer cannot (the ordinary viewport stays)."""
         try:
-            from PySide6.QtGui import QSurfaceFormat
             from PySide6.QtOpenGLWidgets import QOpenGLWidget
+            from .. import sharedgl
             w = QOpenGLWidget()
-            fmt = QSurfaceFormat()
-            fmt.setSamples(4)                                # (smooth edges, as the antialiasing of the software viewport)
-            w.setFormat(fmt)
+            w.setFormat(sharedgl.widget_format())            # (4 samples: smooth edges, as the antialiasing of the software viewport)
             w.setUpdateBehavior(QOpenGLWidget.NoPartialUpdate)
             self.setViewport(w)
             self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)

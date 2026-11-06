@@ -124,6 +124,25 @@ def resolve(path):
     return _map.get(norm(path), path)
 
 
+def node_fonts(proj):
+    """Where node graphs name a font file, as (dict, key): a text node's own font (its source's font_path) and
+    a font node's value - of every clip's effects and of the shared VFX Nodes."""
+    from . import project
+    seen = set()
+    holders = [(e.get("graph"), e.get("sources")) for c in project.all_clips(proj) for e in c.get("effects") or ()]
+    holders += [(m.get("graph"), m.get("sources")) for m in (proj.get("vfx_nodes") or {}).values()]
+    for graph, sources in holders:
+        if id(graph) in seen or not graph:
+            continue
+        seen.add(id(graph))
+        for src in (sources or {}).values():
+            if isinstance(src.get("font_path"), str) and src["font_path"]:
+                yield src, "font_path"
+        for n in graph["nodes"].values():
+            if n.get("type") == "font" and isinstance(n.get("value"), str) and n["value"]:
+                yield n, "value"
+
+
 def of_clip(c):
     """The font files a text clip names (keyframes and styled ranges too), as written with
     forward slashes."""
@@ -140,7 +159,7 @@ def of_clip(c):
 def used(proj):
     """Every font file the project's texts name."""
     from . import project
-    return set().union(*map(of_clip, project.all_clips(proj)))
+    return set().union(*map(of_clip, project.all_clips(proj))) | {norm(d[k]) for d, k in node_fonts(proj)}
 
 
 def usage(proj):
@@ -150,6 +169,8 @@ def usage(proj):
     for c in project.all_clips(proj):
         for f in of_clip(c):
             out[f] = out.get(f, 0) + 1
+    for d, k in node_fonts(proj):
+        out[norm(d[k])] = out.get(norm(d[k]), 0) + 1
     return out
 
 

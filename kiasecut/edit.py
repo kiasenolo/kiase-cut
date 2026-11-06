@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fx, mapping, nodegraph, project, rack, textlayout, textvars, viz
+from . import assets, components, curves, expr, fonts, fx, mapping, nodegraph, project, rack, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -715,7 +715,7 @@ def set_texts(proj, contents):
 
 
 def replace_fonts(proj, mapping):
-    """字體對應's 換成: every text of the project (all timelines and compounds, keyframes and
+    """字體對應's 換成: every text and node font of the project (all timelines and compounds, keyframes and
     styled ranges too) that uses a font file of mapping {old file: new file} uses the new one
     instead. Returns how many texts changed."""
     want = {k.replace("\\", "/"): v for k, v in mapping.items() if v}
@@ -736,6 +736,10 @@ def replace_fonts(proj, mapping):
             if "font_path" in st:
                 st["font_path"] = swap(st["font_path"])
         n += json.dumps(tx, sort_keys=True) != before
+    for d, k in fonts.node_fonts(proj):                     # the fonts of text nodes and font nodes
+        new = swap(d[k])
+        n += new != d[k]
+        d[k] = new
     if not n:
         raise EditError("沒有文字用到這些字體")
     return n

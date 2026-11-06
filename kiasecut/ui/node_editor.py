@@ -32,6 +32,7 @@ from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
+SCENE_EXTENT = QRectF(-100000, -100000, 200000, 200000)         # the scene's extent: the view pans freely inside it
 UNBOUNDED = 1e6                                            # (a number with no limit still stays finite)
 RAMP_INTERP = (2, 0, 4, 1, 3)                              # (a Color Ramp's 插值 choices as the shader's numbers: linear, ease, constant, cardinal, b-spline)
 MIN_WIDTH, EDGE = 140.0, 7.0                              # (narrowest node; the strip of its right edge that widens it)
@@ -1681,7 +1682,7 @@ class GraphView(QGraphicsView):
             bar.setPageStep(own.pageStep())
             bar.setSingleStep(own.singleStep())
             bar.setValue(own.value())
-            bar.setVisible(own.maximum() > own.minimum())
+            bar.setVisible(False)                           # (the canvas is huge: a bar would say nothing)
             self._place_bars()
         own.rangeChanged.connect(from_own)
         own.valueChanged.connect(lambda v: bar.setValue(v))
@@ -2353,7 +2354,7 @@ class NodeEditor(QWidget):
         self.here.setText(("位置：根 › " + (nodes[self.level].get("label") or "群組")) if self.level else "")
         self.leave_btn.setVisible(bool(self.level))
         r = sc.itemsBoundingRect()
-        sc.setSceneRect(r.adjusted(-1500, -1500, 1500, 1500))
+        sc.setSceneRect(SCENE_EXTENT.united(r.adjusted(-1500, -1500, 1500, 1500)))      # (a huge fixed canvas, so the view can be dragged far out as in Blender)
         if fit:
             v.fit()
         if hold:                                            # (nodes held by the pointer stay held)

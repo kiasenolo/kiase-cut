@@ -194,12 +194,21 @@ def to_abs(path, root):
     return path if is_abs(path) else _slash(root).rstrip("/") + "/" + _slash(path)
 
 
+def _map_sources(sources, fn):
+    for src in (sources or {}).values():
+        for k in ("image", "video"):
+            if src.get(k):
+                src[k] = fn(src[k])
+
+
 def _map_paths(data, fn):
     """Apply fn to every media path of a stored project: library items and clips (timelines
     and compounds)."""
     for it in data.get("library", {}).get("items", []):
         if it.get("path"):
             it["path"] = fn(it["path"])
+    for m in (data.get("vfx_nodes") or {}).values():          # a shared VFX Node's pictures and videos (its effects keep none of their own)
+        _map_sources(m.get("sources"), fn)
     comps = data.get("compounds", {})
     holders = [tl["tracks"] for tl in data.get("timelines", [])]
     holders += [c["tracks"] for c in comps.values()]
@@ -217,10 +226,7 @@ def _map_paths(data, fn):
                 for e in c.get("effects") or []:              # filter files (the built-in ones are not paths)
                     if e.get("filter") and not e["filter"].startswith("builtin:") and e["filter"] != GRAPH_FILTER:
                         e["filter"] = fn(e["filter"])
-                    for src in (e.get("sources") or {}).values():      # its colours' pictures and videos
-                        for k in ("image", "video"):
-                            if src.get(k):
-                                src[k] = fn(src[k])
+                    _map_sources(e.get("sources"), fn)             # its colours' pictures and videos
                 own = c.get("params") or {}                    # a component clip's own pictures
                 for p in (comps.get(c.get("compound_id")) or {}).get("params") or []:
                     v = own.get(p["id"])

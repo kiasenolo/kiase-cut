@@ -98,6 +98,7 @@ it; Esc or the right button puts it back. X / Y keep a G to one way; a typed num
 """
 import json
 import math
+import os
 import types
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
@@ -501,7 +502,26 @@ def gap_snaps(lo, hi, clo, chi, rects, tol):
     return out
 
 
-class Preview(QWidget):
+def _gl_wanted():
+    """Whether the preview is drawn on the GPU (a QOpenGLWidget; 設定 > 預覽用 GPU 繪圖, read once at start - it fixes the base class)."""
+    if os.environ.get("KIASECUT_PREVIEW_GL", "1") == "0":
+        return False
+    try:
+        from PySide6.QtCore import QSettings
+        return str(QSettings("KiaseCut", "KiaseCut").value("preview_gl", True)).lower() not in ("false", "0")
+    except Exception:
+        return False
+
+
+try:
+    from PySide6.QtOpenGLWidgets import QOpenGLWidget
+    GL_PREVIEW = _gl_wanted()
+except ImportError:
+    GL_PREVIEW = False
+_Surface = QOpenGLWidget if GL_PREVIEW else QWidget
+
+
+class Preview(_Surface):
     clipPicked = Signal(object)                 # clip dict
     selectionPicked = Signal(object, object)    # {clip ids}, the primary one (or None): Shift / Ctrl+click, a box
     paramsLive = Signal(str, str, dict)         # clip id, group, {key: value} while dragging
@@ -521,6 +541,12 @@ class Preview(QWidget):
 
     def __init__(self, parent=None, interactive=True):
         super().__init__(parent)
+        if GL_PREVIEW:
+            from PySide6.QtGui import QSurfaceFormat
+            fmt = QSurfaceFormat()
+            fmt.setSamples(4)                          # (smooth edges for the handles and guides, as the software painter's antialiasing)
+            self.setFormat(fmt)
+            self.setUpdateBehavior(QOpenGLWidget.NoPartialUpdate)
         self.img = None
         self.margin = 0.0                  # (the fraction of the canvas that self.img holds on every side of it)
         self.W, self.H = 1920, 1080

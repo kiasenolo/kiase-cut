@@ -4986,7 +4986,8 @@ class MainWindow(QMainWindow):
                              self.autosave_dir or self.autosave_folder(),
                              self.cache_mode(), self.cache_custom(), self.default_cache_base(),
                              root_dir=self.app_root(), autosave_custom=str(self.settings().value("autosave_dir") or ""),
-                             ui_scale=ui_scale(), node_gl=str(self.settings().value("node_gl", True)).lower() not in ("false", "0"))
+                             ui_scale=ui_scale(), node_gl=str(self.settings().value("node_gl", True)).lower() not in ("false", "0"),
+                             preview_gl=str(self.settings().value("preview_gl", True)).lower() not in ("false", "0"))
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
@@ -5001,6 +5002,7 @@ class MainWindow(QMainWindow):
         s.setValue("autosave_limit", v["autosave_limit"])
         s.setValue("gpu", v["gpu"])
         s.setValue("node_gl", v["node_gl"])
+        s.setValue("preview_gl", v["preview_gl"])
         scale_changed = v["ui_scale"] != ui_scale()
         s.setValue("ui_scale", v["ui_scale"])
         inertia.state.update(v["inertia"])

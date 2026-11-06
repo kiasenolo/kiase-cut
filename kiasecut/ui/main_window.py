@@ -41,6 +41,7 @@ from .docks import Panels
 from .curve_editor import CurveEditor, param_rows as curve_param_rows
 from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
+from . import node_editor
 from .node_editor import NodeEditor
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
 from .inspector import Inspector
@@ -920,6 +921,7 @@ class MainWindow(QMainWindow):
         self.clock.timeout.connect(self._tick)
         self.clock.start()
         gpu.enabled = str(self.settings().value("gpu", True)).lower() not in ("false", "0")
+        node_editor.GL_VIEW = node_editor.GL_VIEW and str(self.settings().value("node_gl", True)).lower() not in ("false", "0")   # (the node editor's GPU drawing)
         inertia.load(self.settings())
         self.cache_base = self.cache_base_of(self.cache_mode(), self.cache_custom())
         self.autosave_timer = QTimer(self, interval=self.autosave_min() * 60 * 1000)
@@ -4984,7 +4986,7 @@ class MainWindow(QMainWindow):
                              self.autosave_dir or self.autosave_folder(),
                              self.cache_mode(), self.cache_custom(), self.default_cache_base(),
                              root_dir=self.app_root(), autosave_custom=str(self.settings().value("autosave_dir") or ""),
-                             ui_scale=ui_scale())
+                             ui_scale=ui_scale(), node_gl=str(self.settings().value("node_gl", True)).lower() not in ("false", "0"))
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
@@ -4998,6 +5000,7 @@ class MainWindow(QMainWindow):
         s.setValue("autosave_min", v["autosave_min"])
         s.setValue("autosave_limit", v["autosave_limit"])
         s.setValue("gpu", v["gpu"])
+        s.setValue("node_gl", v["node_gl"])
         scale_changed = v["ui_scale"] != ui_scale()
         s.setValue("ui_scale", v["ui_scale"])
         inertia.state.update(v["inertia"])

@@ -20,7 +20,7 @@ CACHE_CHOICES = ((workspace.CACHE_DEFAULT, "預設（使用者的緩存資料夾
 class SettingsDialog(QDialog):
     def __init__(self, parent, library_dir, default_library, project_dir, autosave_min, use_gpu=True,
                  autosave_limit=30, autosave_dir="", cache_mode=workspace.CACHE_DEFAULT, cache_custom="",
-                 default_cache="", root_dir="", autosave_custom="", ui_scale=100):
+                 default_cache="", root_dir="", autosave_custom="", ui_scale=100, node_gl=True):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(600)
@@ -124,6 +124,9 @@ class SettingsDialog(QDialog):
         self.gpu.toggled.connect(self._gpu_toggled)
         form.addRow("GPU 加速", self.gpu)
         form.addRow("", self.gpu_note)
+        self.node_gl = QCheckBox("節點編輯器用 GPU 繪圖（重新開啟後生效）")
+        self.node_gl.setChecked(node_gl)
+        form.addRow("節點編輯器", self.node_gl)
 
         row = QHBoxLayout()
         self.engine = QLabel("")
@@ -279,7 +282,7 @@ class SettingsDialog(QDialog):
                 "ui_scale": self.ui_scale.value(),
                 "inertia": {"separate": bool(self.inertia_mode.currentData()), "all": self.inertia_all.value(),
                             **{key: box.value() for key, box in self.inertia_each.items()}},
-                "gpu": self.gpu.isChecked(), "cache_mode": self.cache_mode.currentData(),
+                "gpu": self.gpu.isChecked(), "node_gl": self.node_gl.isChecked(), "cache_mode": self.cache_mode.currentData(),
                 "cache_custom": library.norm(self.cache_custom.text().strip()) if self.cache_custom.text().strip() else ""}
 
 

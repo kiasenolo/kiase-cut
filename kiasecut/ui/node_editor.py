@@ -33,6 +33,7 @@ from .wrapdrag import WrapDrag
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
 SCENE_EXTENT = QRectF(-100000, -100000, 200000, 200000)         # the scene's extent: the view pans freely inside it
+GL_VIEW = os.environ.get("KIASECUT_NODE_GL", "1") != "0"      # the graph is drawn on the GPU (a QOpenGLWidget viewport); 設定 turns it off (main_window sets this)
 UNBOUNDED = 1e6                                            # (a number with no limit still stays finite)
 RAMP_INTERP = (2, 0, 4, 1, 3)                              # (a Color Ramp's 插值 choices as the shader's numbers: linear, ease, constant, cardinal, b-spline)
 MIN_WIDTH, EDGE = 140.0, 7.0                              # (narrowest node; the strip of its right edge that widens it)
@@ -1041,6 +1042,7 @@ class GraphView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.setBackgroundBrush(QColor(CANVAS))
         self.setFocusPolicy(Qt.StrongFocus)
+        self.gl = self._gl_viewport() if GL_VIEW else False
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)       # (the bars take no room: the view's own stay hidden and keep the ranges,
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)         # the ones drawn over its edges follow them)
         self.overlay = {}
@@ -1672,6 +1674,23 @@ class GraphView(QGraphicsView):
         if w != self.backdrop_w:
             self.backdrop_w = w
             self.backdropWidth.emit(w)
+
+    def _gl_viewport(self):
+        """Draw the graph with OpenGL (Qt composes it on the GPU, so many nodes and zooming cost the CPU less); False
+        when this computer cannot (the ordinary viewport stays)."""
+        try:
+            from PySide6.QtGui import QSurfaceFormat
+            from PySide6.QtOpenGLWidgets import QOpenGLWidget
+            w = QOpenGLWidget()
+            fmt = QSurfaceFormat()
+            fmt.setSamples(4)                                # (smooth edges, as the antialiasing of the software viewport)
+            w.setFormat(fmt)
+            w.setUpdateBehavior(QOpenGLWidget.NoPartialUpdate)
+            self.setViewport(w)
+            self.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+            return True
+        except Exception:
+            return False
 
     def _overlay_bar(self, orient, own):
         bar = QScrollBar(orient, self)

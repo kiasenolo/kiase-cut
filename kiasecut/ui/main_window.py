@@ -466,6 +466,7 @@ class MainWindow(QMainWindow):
         nd.connectRequested.connect(self.on_node_connect)
         nd.exposeRequested.connect(self.on_node_expose)
         nd.itemRequested.connect(self.on_node_item)
+        nd.addExposedRequested.connect(self.on_node_add_exposed)
         nd.removeExposedRequested.connect(self.on_node_remove_exposed)
         nd.exposedEdited.connect(self.on_node_exposed_edited)
         nd.exposedMoved.connect(self.on_node_exposed_moved)
@@ -804,6 +805,7 @@ class MainWindow(QMainWindow):
         self.tl_params.paramAction.connect(self.layer_param_action)
         self.tl_params.defaultDropped.connect(self.param_default_dropped)
         self.tl_params.paramExpr.connect(self.layer_param_expr)
+        self.tl_params.paramAdd.connect(self.layer_param_add)
         self.tl_params.picture_of = self.dropped_picture
         self.tl_split.addWidget(self.tl_params)
         self.tl_split.setStretchFactor(0, 1)
@@ -835,6 +837,7 @@ class MainWindow(QMainWindow):
         lp.paramAction.connect(self.layer_param_action)
         lp.defaultDropped.connect(self.param_default_dropped)
         lp.paramExpr.connect(self.layer_param_expr)
+        lp.paramAdd.connect(self.layer_param_add)
         lp.params_box.picture_of = self.dropped_picture
         lp.componentRequested.connect(lambda: self.open_kid() and self.component_kind(self.open_kid(), True))
         lp.shapeRequested.connect(lambda key: self.place_asset(assets.ident(key, *self.assets.colors), "", 0))
@@ -3101,6 +3104,16 @@ class MainWindow(QMainWindow):
         if pid and components.prop_kind(prop) == "number":
             self.ask_bind_mapping(pid, ids, prop)
 
+    def layer_param_add(self, kind):
+        """新增參數: a parameter of the open compound made by hand, of kind (the compound becomes a component if it is not one)."""
+        kid = self.open_kid()
+        comp = self.proj["compounds"].get(kid) if kid and self.proj else None
+        if comp is None:
+            return
+        name, ok = QInputDialog.getText(self, "新參數", "參數名稱：", text=components.KINDS[kind])
+        if ok:
+            self.apply_root("新增參數", lambda root: edit.add_param(root, kid, kind, name, [], make=True))
+
     def layer_param_action(self, action, pid):
         """The 參數 list: set a parameter's default, rename, restack or delete it."""
         kid = self.open_kid()
@@ -3108,7 +3121,9 @@ class MainWindow(QMainWindow):
         p = components.param(comp, pid)
         if p is None:
             return
-        if action == "rename":
+        if action.startswith("kind:"):
+            self.apply_root("改參數種類", edit.set_param_kind, kid, pid, action[5:])
+        elif action == "rename":
             name, ok = inplace.ask_name(self, p["name"])
             if ok:
                 self.apply_root("重新命名參數", edit.rename_param, kid, pid, name)
@@ -3206,7 +3221,7 @@ class MainWindow(QMainWindow):
         static = self.editing_static()
         kid = self.open_kid()
         comp = self.proj["compounds"].get(kid) if kid and self.proj else None
-        live = components.is_component(comp) and not static
+        live = comp is not None and not static               # (a plain compound too: a parameter added there makes it a component)
         self.tl_params.setVisible(live)
         if live:
             self.tl_params.set_component(comp)
@@ -5685,6 +5700,11 @@ class MainWindow(QMainWindow):
         if cid:
             label = {"add": "新增選項", "rename": "重新命名選項", "remove": "刪除選項"}.get(action, "移動選項")
             self.apply(label, lambda lvl: edit.node_item(lvl, cid, eid, nid, action, sock, name, src, out))
+
+    def on_node_add_exposed(self, eid, kind):
+        cid = self.node_clip()
+        if cid:
+            self.apply("新增效果參數", lambda lvl: edit.add_exposed_param(lvl, cid, eid, kind))
 
     def on_node_remove_exposed(self, eid, name):
         cid = self.node_clip()

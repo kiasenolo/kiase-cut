@@ -25,6 +25,21 @@ class DataTest(unittest.TestCase):
         m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
         self.assertEqual(ng.default_params(g)[m + ".value"], 0.5)
 
+    def test_parameters_made_by_hand_have_a_type_the_user_defines(self):
+        g, params = ng.new_graph(), {}
+        a = ng.add_exposed(g, params, "color", "主色")
+        b = ng.add_exposed(g, params, "float")
+        self.assertEqual((params["expose." + a], [x["type"] for x in ng.exposed(g)]), ([1.0, 1.0, 1.0, 1.0], ["color", "float"]))
+        ng.edit_exposed(g, params, b, {"type": "vec3"})                     # any type, while nothing is linked to it
+        self.assertEqual(params["expose." + b], [0.0, 0.0, 0.0])
+        ng.edit_exposed(g, params, b, {"type": "int"})
+        self.assertEqual([x["type"] for x in ng.exposed(g)], ["color", "int"])
+        g["links"].append({"from": "x", "to": "y", "socket": "param:k", "out": b})
+        with self.assertRaises(ng.GraphError):
+            ng.edit_exposed(g, params, b, {"type": "bool"})
+        with self.assertRaises(ng.GraphError):
+            ng.add_exposed(g, params, "menu")
+
     def test_new_graph_is_valid(self):
         g = ng.new_graph()
         self.assertIsNone(ng.check(g))

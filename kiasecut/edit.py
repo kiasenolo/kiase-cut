@@ -2338,6 +2338,16 @@ def expose_graph_param(proj, clip_id, effect_id, src, dst, socket):
         raise EditError(str(exc)) from exc
 
 
+def add_exposed_param(proj, clip_id, effect_id, kind, label=None):
+    """The 參數 panel's 新增參數: a parameter of the effect made by hand, of type kind. Returns its name."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    try:
+        return nodegraph.add_exposed(g, e["params"], kind, label)
+    except nodegraph.GraphError as exc:
+        raise EditError(str(exc)) from exc
+
+
 def remove_exposed_param(proj, clip_id, effect_id, name):
     _, c = find(proj, clip_id)
     e, g = _graph(c, effect_id)
@@ -3738,10 +3748,13 @@ def _unbind(comp, binds):
             del p["exprs"]
 
 
-def add_param(root, kid, kind, name, binds):
+def add_param(root, kid, kind, name, binds, make=False):
     """A new parameter of component kid setting prop of each layer of binds [(clip id,
-    prop)] (taken from any parameter that set it before: one parameter per property).
-    Returns it."""
+    prop)] (taken from any parameter that set it before: one parameter per property); no
+    binds: one made by hand, of the given kind, to be handed layers later. make: kid is
+    made a component first when it is a plain compound. Returns it."""
+    if make and not components.is_component((root.get("compounds") or {}).get(kid)):
+        make_component(root, kid)
     comp = _component(root, kid)
     if kind not in components.KINDS:
         raise EditError(f"unknown parameter kind {kind}")
@@ -3750,8 +3763,34 @@ def add_param(root, kid, kind, name, binds):
     ids = {p["id"] for p in components.params(comp)}
     pid = next(f"p{i}" for i in range(1, len(ids) + 2) if f"p{i}" not in ids)
     p = {"id": pid, "name": str(name).strip() or components.KINDS[kind], "kind": kind, "binds": binds}
+    if not binds:
+        p["default"] = components.clean(p, components.FALLBACK[kind])
     comp.setdefault("params", []).append(p)
     return p
+
+
+def set_param_kind(root, kid, pid, kind):
+    """A parameter made by hand takes another kind: its default starts again, and what clips set for it goes. One that
+    sets layers keeps its kind (the layers' props are of it): let go of them first."""
+    comp = _component(root, kid)
+    p = components.param(comp, pid)
+    if p is None:
+        raise EditError("元件沒有這個參數")
+    if kind not in components.KINDS:
+        raise EditError(f"unknown parameter kind {kind}")
+    if kind == p["kind"]:
+        return
+    if p.get("binds"):
+        raise EditError("這個參數還在控制片段：先解除片段，才能改種類")
+    p["kind"] = kind
+    p["default"] = components.clean(p, components.FALLBACK[kind])
+    p.pop("exprs", None)
+    for _tl, _path, c in project.compound_uses(root).get(kid) or []:
+        for held in ("params", "places"):
+            own = c.get(held) or {}
+            own.pop(pid, None)
+            if not own:
+                c.pop(held, None)
 
 
 def bind_param(root, kid, pid, binds):
@@ -4013,6 +4052,7 @@ def set_param_default(root, kid, pid, value):
     if p is None:
         raise EditError("元件沒有這個參數")
     value = components.clean(p, value)
+    p["default"] = value                                 # (what it shows while no layer is set by it)
     index = components.layer_index(comp)
     for cid, prop in p.get("binds") or []:
         if cid not in index:

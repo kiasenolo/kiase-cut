@@ -997,6 +997,29 @@ def expose(graph, params, src, dst, socket, sources=None):
     return name
 
 
+# the parameter types made by hand in the 參數 panel: type -> (label, default, lo, hi); a link needs the very type of the socket
+MANUAL_TYPES = {"float": ("浮點", 0.0, 0.0, 1.0), "int": ("整數", 0, 0, 10), "bool": ("開關", False, 0, 1),
+                "color": ("顏色", [1.0, 1.0, 1.0, 1.0], 0.0, 1.0), "vec2": ("二維向量", [0.0, 0.0], -1000.0, 1000.0),
+                "vec3": ("三維向量", [0.0, 0.0, 0.0], -1000.0, 1000.0)}
+
+
+def add_exposed(graph, params, kind, label=None):
+    """A new effect parameter made by hand (the 參數 panel's 新增參數) of type kind (MANUAL_TYPES); it is bound to nothing
+    until a link from the 參數輸入 node's row of it goes into a socket of that type. Returns its name."""
+    if kind not in MANUAL_TYPES:
+        raise GraphError("不能新增這種參數")
+    text, default, lo, hi = MANUAL_TYPES[kind]
+    names = {x["name"] for x in exposed(graph)}
+    n = 1
+    while f"param{n}" in names:
+        n += 1
+    name = f"param{n}"
+    graph.setdefault("exposed", []).append({"name": name, "label": (label or "").strip() or f"{text} {n}", "type": kind,
+                                            "default": copy.deepcopy(default), "lo": lo, "hi": hi, "items": []})
+    params[expose_key(name)] = copy.deepcopy(default)
+    return name
+
+
 def remove_exposed(graph, params, name):
     graph["exposed"] = [x for x in exposed(graph) if x["name"] != name]
     graph["links"] = [l for l in graph["links"] if l.get("out") != name]
@@ -1014,8 +1037,17 @@ def edit_exposed(graph, params, name, fields):
         fields["label"] = str(fields["label"]).strip() or x["label"]
     number = x["type"] in ("float", "int")
     if "type" in fields and fields["type"] != x["type"]:
-        if not (number and fields["type"] in ("float", "int")):
-            raise GraphError("只有數字可以改成浮點或整數")
+        if number and fields["type"] in ("float", "int"):
+            pass
+        elif x["type"] in MANUAL_TYPES and fields["type"] in MANUAL_TYPES:
+            if any(l.get("out") == name for l in graph["links"]):
+                raise GraphError("這個參數已經接在節點上，先斷開連線才能改種類")
+            _t, default, lo, hi = MANUAL_TYPES[fields["type"]]
+            x.update({"type": fields.pop("type"), "default": copy.deepcopy(default), "lo": lo, "hi": hi})
+            params[expose_key(name)] = copy.deepcopy(default)
+            number = x["type"] in ("float", "int")
+        else:
+            raise GraphError("這種參數不能改種類")
     if not number and {"lo", "hi"} & fields.keys():
         raise GraphError("這個參數沒有範圍")
     x.update({k: v for k, v in fields.items() if k in ("label", "type", "lo", "hi", "default")})

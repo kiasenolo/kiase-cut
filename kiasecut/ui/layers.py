@@ -324,6 +324,7 @@ class LayerPanel(QWidget):
     paramAction = Signal(str, str)                 # "default" / "rename" / "up" / "down" / "delete", parameter id
     defaultDropped = Signal(str, str)              # parameter id, a picture dropped on it
     paramExpr = Signal(str, str, str)              # parameter id, layer id, prop: edit the expression it sets that through
+    paramAdd = Signal(str)                         # kind: a parameter made by hand
     componentRequested = Signal()                  # 轉為元件: the open static compound becomes a component
 
     def __init__(self, parent=None):
@@ -396,6 +397,7 @@ class LayerPanel(QWidget):
         self.params_box.paramAction.connect(self.paramAction)
         self.params_box.defaultDropped.connect(self.defaultDropped)
         self.params_box.paramExpr.connect(self.paramExpr)
+        self.params_box.paramAdd.connect(self.paramAdd)
         self.params = self.params_box.list
         self.split.addWidget(self.params_box)
         self.split.setStretchFactor(0, 3)
@@ -461,10 +463,9 @@ class LayerPanel(QWidget):
         self._shown = (level, set(selected_ids), primary)
         comp = components.is_component(level)
         self.to_component.setVisible(bool(level.get("static")) and not comp)
-        self.params_box.setVisible(comp)
+        self.params_box.setVisible(True)                  # (a plain compound too: a parameter added there makes it a component)
         bound = components.bound(level) if comp else {}
-        if comp:
-            self.params_box.set_component(level)
+        self.params_box.set_component(level)
         self._filling = True
         bar = self.list.verticalScrollBar().value()
         self.list.clear()

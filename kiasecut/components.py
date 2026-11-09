@@ -245,13 +245,14 @@ def number_at(c, prop, t):
 
 
 def default(comp, p, index=None):
-    """A parameter's default: what its first (still there) layer has."""
+    """A parameter's default: what its first (still there) layer has; a parameter that sets no layer (made by hand, or all its
+    layers gone) has the one it was given (p["default"])."""
     index = layer_index(comp) if index is None else index
     for cid, prop in p.get("binds") or []:
         if cid in index:
             t, c = index[cid]
             return layer_value(t, c, prop)
-    return FALLBACK[p["kind"]]
+    return clean(p, p["default"]) if "default" in p else FALLBACK[p["kind"]]
 
 
 def value(c, p, t, index=None):

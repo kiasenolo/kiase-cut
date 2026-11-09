@@ -56,6 +56,28 @@ class ComponentTests(unittest.TestCase):
         self.assertNotEqual(cid, "c1")
         self.assertEqual([(q["id"], k) for q, k in components.bound(comp)[cid]], [(pr["id"], "color")])
 
+    def test_a_parameter_made_by_hand_has_its_own_kind_and_default(self):
+        p = edit.add_param(self.p, self.kid, "number", "速度", [])
+        self.assertEqual((p["kind"], p["binds"], components.default(self.comp, p)), ("number", [], 0.0))
+        edit.set_param_default(self.p, self.kid, p["id"], 2.5)
+        self.assertEqual(components.default(self.comp, p), 2.5)
+        edit.set_param_kind(self.p, self.kid, p["id"], "color")           # the kind is the user's to define
+        self.assertEqual((p["kind"], components.default(self.comp, p)), ("color", [1.0, 1.0, 1.0, 1.0]))
+        edit.set_param_default(self.p, self.kid, p["id"], BLUE)
+        self.assertEqual(components.default(self.comp, p), BLUE)
+
+    def test_a_parameter_that_sets_a_layer_keeps_its_kind(self):
+        p = edit.add_param(self.p, self.kid, "color", "主色", [("c1", "color")])
+        with self.assertRaises(edit.EditError):
+            edit.set_param_kind(self.p, self.kid, p["id"], "text")
+
+    def test_a_plain_compound_becomes_a_component_with_its_first_parameter(self):
+        edit.unmake_component(self.p, self.kid)
+        self.assertFalse(components.is_component(self.p["compounds"][self.kid]))
+        p = edit.add_param(self.p, self.kid, "text", "標題", [], make=True)
+        self.assertTrue(components.is_component(self.p["compounds"][self.kid]))
+        self.assertEqual(components.default(self.p["compounds"][self.kid], p), "")
+
     def test_made_as_a_component(self):
         self.assertTrue(components.is_component(self.comp))
         self.assertTrue(self.comp["name"].startswith("靜態元件"))
@@ -296,7 +318,7 @@ class ComponentUiTests(unittest.TestCase):
         self.assertEqual(got, [(self.pr["id"], "stroke_color", ["c1"]), [("c1", "color")]])
         edit.unmake_component(self.p, self.kid)
         panel.set_layers(self.comp, set(), None)
-        self.assertTrue(panel.params_box.isHidden())
+        self.assertFalse(panel.params_box.isHidden())            # (a plain compound can be given a parameter by hand: it becomes a component)
         self.assertFalse(panel.to_component.isHidden())
 
     def placed_picture(self):

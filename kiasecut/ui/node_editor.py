@@ -23,7 +23,7 @@ import shiboken6
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen
 from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
-                               QCheckBox, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
+                               QCheckBox, QColorDialog, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from . import appevents, motion, touch, viewglide
@@ -1894,6 +1894,7 @@ class ParamPanel(QWidget):
     edited = Signal(str, dict)                              # parameter name, what changed (label / type / lo / hi / default)
     moved = Signal(str, int)                                # parameter name, -1 up / 1 down
     removed = Signal(str)                                   # parameter name
+    added = Signal(str)                                     # type of a parameter to make by hand (新增參數)
     TYPES = (("float", "浮點"), ("int", "整數"))
     KINDS = {"bool": "開關", "color": "顏色", "menu": "選單", "curve": "曲線", "gradient": "漸層", "vec2": "二維向量",
              "vec3": "三維向量", "string": "字串"}
@@ -1906,6 +1907,13 @@ class ParamPanel(QWidget):
         title = QLabel("效果參數（N 開關）")
         title.setStyleSheet("font-weight: bold; padding: 2px 4px;")
         lay.addWidget(title)
+        add = QPushButton("＋ 新增參數")
+        add.setToolTip("自己新增一個參數並選它的種類；再從「參數輸入」節點拉線到同種類的插槽")
+        menu = QMenu(add)
+        for t, (text, *_rest) in ng.MANUAL_TYPES.items():
+            menu.addAction(text, lambda t=t: self.added.emit(t))
+        add.setMenu(menu)
+        lay.addWidget(add)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
@@ -1923,7 +1931,7 @@ class ParamPanel(QWidget):
         col = QVBoxLayout(body)
         col.setContentsMargins(4, 4, 4, 4)
         if not xs:
-            hint = QLabel("還沒有參數。\n從「參數輸入」節點的空插槽拉一條線到另一個節點的參數上，就會新增一個。")
+            hint = QLabel("還沒有參數。\n按上面的「新增參數」選種類，或從「參數輸入」節點的空插槽拉一條線到另一個節點的參數上。")
             hint.setWordWrap(True)
             col.addWidget(hint)
         for i, x in enumerate(xs):
@@ -1955,13 +1963,14 @@ class ParamPanel(QWidget):
         gone.clicked.connect(lambda: self.removed.emit(name))
         top.addWidget(gone)
         v.addLayout(top)
-        if x["type"] in ("float", "int"):
+        if x["type"] in ng.MANUAL_TYPES:                           # (the type is the user's to define)
             kind = QComboBox()
-            for t, text in self.TYPES:
+            for t, (text, *_rest) in ng.MANUAL_TYPES.items():
                 kind.addItem(text, t)
-            kind.setCurrentIndex(0 if x["type"] == "float" else 1)
+            kind.setCurrentIndex(list(ng.MANUAL_TYPES).index(x["type"]))
             kind.activated.connect(lambda _i: self.edited.emit(name, {"type": kind.currentData()}))
             v.addWidget(kind)
+        if x["type"] in ("float", "int"):
             row = QHBoxLayout()                                 # (a label above each number: they share the width)
             for key, text in (("lo", "最小"), ("hi", "最大"), ("default", "預設")):
                 col = QVBoxLayout()
@@ -1969,6 +1978,24 @@ class ParamPanel(QWidget):
                 col.addWidget(QLabel(text))
                 col.addWidget(self.number(x, key, name))
                 row.addLayout(col, 1)
+            v.addLayout(row)
+        elif x["type"] == "color":
+            b = QPushButton("預設顏色")
+            col = x["default"]
+            b.setStyleSheet("background: rgb(%d,%d,%d);" % tuple(round(max(0.0, min(1.0, c)) * 255) for c in col[:3]))
+            b.clicked.connect(lambda: self.pick_color(name, x["default"]))
+            v.addWidget(b)
+        elif x["type"] in ("vec2", "vec3"):
+            row = QHBoxLayout()
+            for i in range(2 if x["type"] == "vec2" else 3):
+                sp = QDoubleSpinBox()
+                sp.setRange(-1e9, 1e9)
+                sp.setDecimals(3)
+                sp.setButtonSymbols(QDoubleSpinBox.NoButtons)
+                sp.setMinimumWidth(30)
+                sp.setValue(float(x["default"][i]))
+                sp.editingFinished.connect(lambda i=i, sp=sp: self.edited.emit(name, {"default": [sp.value() if j == i else c for j, c in enumerate(x["default"])]}))
+                row.addWidget(sp, 1)
             v.addLayout(row)
         elif x["type"] == "bool":
             on = QCheckBox("預設：開")
@@ -1978,6 +2005,12 @@ class ParamPanel(QWidget):
         else:
             v.addWidget(QLabel("種類：" + self.KINDS.get(x["type"], x["type"])))
         return box
+
+    def pick_color(self, name, current):
+        c = QColorDialog.getColor(QColor.fromRgbF(*[max(0.0, min(1.0, v)) for v in current[:4]]), self, "預設顏色",
+                                  QColorDialog.ShowAlphaChannel)
+        if c.isValid():
+            self.edited.emit(name, {"default": [c.redF(), c.greenF(), c.blueF(), c.alphaF()]})
 
     def number(self, x, key, name):
         sp = QDoubleSpinBox()
@@ -2015,6 +2048,7 @@ class NodeEditor(QWidget):
     frameEdited = Signal(str, str, dict)                    # effect id, frame id, what changed (label / text / color / w / h)
     duplicateRequested = Signal(str, list)                  # effect id, node ids
     dissolveRequested = Signal(str, list)                   # effect id, node ids: delete but keep the picture going through
+    addExposedRequested = Signal(str, str)                  # effect id, type: a parameter made by hand
     removeExposedRequested = Signal(str, str)               # effect id, parameter name
     exposedEdited = Signal(str, str, dict)                  # effect id, parameter name, what changed (label / type / lo / hi / default)
     exposedMoved = Signal(str, str, int)                    # effect id, parameter name, -1 up / 1 down
@@ -2155,6 +2189,7 @@ class NodeEditor(QWidget):
         self.panel.edited.connect(lambda name, f: self.eid and self.exposedEdited.emit(self.eid, name, f))
         self.panel.moved.connect(lambda name, d: self.eid and self.exposedMoved.emit(self.eid, name, d))
         self.panel.removed.connect(lambda name: self.eid and self.removeExposedRequested.emit(self.eid, name))
+        self.panel.added.connect(lambda kind: self.eid and self.addExposedRequested.emit(self.eid, kind))
         self.panel.hide()
         self.split.addWidget(self.panel)
         self.split.setStretchFactor(0, 1)

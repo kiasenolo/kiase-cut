@@ -8,7 +8,7 @@ rename, restack, unbind a clip or delete it.
 """
 from PySide6.QtCore import QMimeData, Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
 
 from .. import assets, components, mapping
 from .library import PictureDrop
@@ -106,6 +106,7 @@ class ParamList(QWidget):
     paramAction = Signal(str, str)                 # "default" / "rename" / "up" / "down" / "delete", parameter id
     paramExpr = Signal(str, str, str)              # parameter id, clip id, prop: edit the expression it sets that through
     defaultDropped = Signal(str, str)              # parameter id, the picture dropped on it (its new default)
+    paramAdd = Signal(str)                         # kind (components.KINDS): a parameter to make by hand
 
     def __init__(self, hint="", parent=None):
         super().__init__(parent)
@@ -121,6 +122,13 @@ class ParamList(QWidget):
         tip.setWordWrap(True)
         tip.setVisible(bool(hint))
         head.addWidget(tip, 1)
+        add = QPushButton("＋ 新增參數")
+        add.setToolTip("自己新增一個參數並選它的種類（文字、數字、顏色、圖片、顯示）；之後在圖層上按右鍵 > 設為參數 > 交給它")
+        menu = Menu(add)
+        for kind, text in components.KINDS.items():
+            menu.addAction(text, lambda k=kind: self.paramAdd.emit(k))
+        add.setMenu(menu)
+        head.addWidget(add)
         lay.addLayout(head)
         self.list = DragList()
         self.list.itemClicked.connect(self._clicked)
@@ -182,6 +190,12 @@ class ParamList(QWidget):
             return
         pid = p["id"]
         menu = Menu(self)
+        if not p.get("binds"):                         # (a parameter that sets no layer takes the kind it is given)
+            kinds = menu.addMenu("改種類")
+            for kind, text in components.KINDS.items():
+                if kind != p["kind"]:
+                    kinds.addAction(text, lambda k=kind: self.paramAction.emit("kind:" + k, pid))
+            menu.addSeparator()
         for text, action in (("設定預設值…", "default"), ("重新命名…", "rename"), (None, None),
                              ("上移", "up"), ("下移", "down"), (None, None), ("刪除參數", "delete")):
             if text is None:

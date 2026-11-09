@@ -2718,8 +2718,9 @@ class MainWindow(QMainWindow):
         self._update_library_tabs()
 
     def _update_library_tabs(self):
-        """The project's VFX Nodes and compounds: their tabs are there only while the project has some (appearing when the first is
-        made, going when the last is deleted - docks.Panels.set_usable), and the panels that name VFX Nodes know them."""
+        """The project's VFX Nodes and compounds: the VFX Node tab is there only while the project has some (appearing when the
+        first is made, going when the last is deleted - docks.Panels.set_usable), the compound tab while a project is open, and
+        the panels that name VFX Nodes know them."""
         p = self.proj
         nodes = [(vid, m["name"]) for vid, m in (p.get("vfx_nodes") or {}).items()] if p else []
         self.vfxnodes.set_project(p, project.vfx_uses(p) if p else {})
@@ -2728,7 +2729,7 @@ class MainWindow(QMainWindow):
         panels = getattr(self, "panels", None)
         if panels is not None:
             panels.set_usable("vfxnodes", bool(nodes))
-            panels.set_usable("compounds", bool(p and p.get("compounds")))
+            panels.set_usable("compounds", bool(p))      # (always there while a project is open: 時間線 are listed in it too)
 
     def on_easing(self, ids, easing, groups):
         """Apply a curve preset to every parameter (of these groups) with a keyframe at the playhead."""

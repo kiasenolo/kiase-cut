@@ -92,6 +92,52 @@ class OpenByItselfTests(unittest.TestCase):
         self.assertTrue(row.font(0).bold())
 
 
+class PanelRefreshTests(unittest.TestCase):
+    """Every edit hands the project to the list again: it is filled again only when what it shows has changed."""
+
+    def test_the_list_is_left_alone_by_edits_that_change_nothing_in_it(self):
+        p = proj()
+        a = edit.new_compound(p, p, 3 * S)
+        inner = edit.place_compound(p, p["compounds"][a["compound_id"]], edit.add_compound(p), None, 0)   # one in the other
+        project.refresh_duration(p)
+        panel = CompoundPanel()
+        panel.set_project(p, [])
+        first = panel.tree.topLevelItem(1)
+        self.assertEqual(panel.uses, project.compound_uses(p))
+        edit.set_param(p, "c1", "transform", "x", 0.5)                 # nothing of the list
+        edit.move(p, "c2", 4 * S)                                       # (the timeline is as long as before)
+        h = edit.History(p)
+        h.do("x", edit.set_param, "c1", "transform", "y", 0.5)
+        h.undo()                                                        # (the project's dicts are new ones now)
+        panel.set_project(p, [])
+        self.assertIs(panel.tree.topLevelItem(1), first)                # the very rows
+        self.assertIs(panel.comps, p["compounds"])
+        self.assertEqual({k: [(tl, path, c["id"]) for tl, path, c in v] for k, v in panel.uses.items()},
+                         {k: [(tl, path, c["id"]) for tl, path, c in v] for k, v in project.compound_uses(p).items()})
+        self.assertIs(panel.uses[a["compound_id"]][0][2], edit.find(p, a["id"])[1])   # (and the project's own clips)
+        for change in (lambda: edit.move(p, a["id"], 9 * S), lambda: edit.rename_compound(p, a["compound_id"], "新名字"),
+                       lambda: edit.delete(p, a["id"]), lambda: edit.delete(p["compounds"][a["compound_id"]], inner["id"])):
+            change()
+            was = panel.tree.topLevelItem(1)
+            panel.set_project(p, [])
+            self.assertIsNot(panel.tree.topLevelItem(1), was)
+        panel.set_project(p, ["cmp:" + a["compound_id"]])                # another one open (bold): shown anew too
+        self.assertTrue(any(panel.tree.topLevelItem(i).font(0).bold() for i in range(panel.tree.topLevelItemCount())))
+
+    def test_holders_of_is_contains(self):
+        p = proj()
+        a = edit.new_compound(p, p, 3 * S)
+        ka = a["compound_id"]
+        kb = edit.add_compound(p)
+        kc = edit.add_compound(p)
+        edit.place_compound(p, p["compounds"][ka], kb, None, 0)         # tl1 > a > b; c alone
+        ids = [t["id"] for t in p["timelines"]] + list(p["compounds"])
+        for inner in ids:
+            self.assertEqual(project.holders_of(p, inner), {o for o in ids if project.contains(p, o, inner)}, inner)
+        self.assertEqual(project.holders_of(p, kb), {"tl1", ka, kb})
+        self.assertEqual(project.holders_of(p, kc), {kc})
+
+
 class PanelMenuTests(unittest.TestCase):
     def test_menu_offers_them_all(self):
         panel = CompoundPanel()

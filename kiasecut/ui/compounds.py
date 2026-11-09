@@ -94,17 +94,47 @@ class CompoundPanel(QWidget):
         lay.addWidget(self.empty)
         self.open_path = []
         self.comps = {}
-        self.uses = {}
+        self.proj = None
+        self._uses = {}
+        self._shown = None
         self.tl_count = 1
+
+    @property
+    def uses(self):
+        """project.compound_uses of the project shown (worked out when asked for, after an edit that left the list as it was)."""
+        if self._uses is None:
+            self._uses = project.compound_uses(self.proj) if self.proj else {}
+        return self._uses
+
+    @staticmethod
+    def shown(proj, open_path):
+        """What the list is made from: the timelines and compounds (name, kind, length) and, in each, the clips that show one.
+        The same as last time: the list is left as it is - every edit of the project comes through set_project, and filling
+        the list again (compound_uses walks every use of every compound, nested ones once per use) took more of an edit than
+        the edit."""
+        if not proj:
+            return None
+        holders = [(t["id"], t) for t in proj.get("timelines", [])] + list(proj.get("compounds", {}).items())
+        return (tuple(open_path), proj.get("active_timeline"),
+                tuple((kid, h.get("name"), bool(h.get("static")), components.is_component(h), h.get("duration_us"),
+                       tuple((c["id"], c.get("name"), c["start_us"], c["duration_us"], project.ref_of(c))
+                             for t in project.all_tracks(h["tracks"]) for c in t["clips"] if project.ref_of(c)))
+                      for kid, h in holders))
 
     def set_project(self, proj, open_path=()):
         """Fill the list; the compound being edited (open_path) is shown in bold."""
         self.open_path = list(open_path)
         self.tl_count = len(proj.get("timelines", [])) if proj else 1
+        self.proj = proj
+        shown = self.shown(proj, open_path)
+        if shown is not None and shown == self._shown:
+            self.comps, self._uses = proj.get("compounds", {}), None      # (the project's own dicts may be new ones: an undo)
+            return
+        self._shown = shown
         expanded = {it.data(0, Qt.UserRole)[1] for it in self._items() if it.isExpanded()}
         self.tree.clear()
         comps = self.comps = proj.get("compounds", {}) if proj else {}
-        self.uses = project.compound_uses(proj) if proj else {}
+        self._uses = project.compound_uses(proj) if proj else {}
         open_ids = set()
         if self.open_path and self.open_path[0].startswith("cmp:"):          # opened by itself
             open_ids.add(self.open_path[0][4:])

@@ -2802,21 +2802,23 @@ class MainWindow(QMainWindow):
         starts = edit.abs_starts(self.container()) if self.proj else {}
         clips, t = [self.placed(c, starts) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
         times = self.key_times([c["id"] for c in clips])
+        if self.proj is not None:                            # (the lists the panels choose from, made once for all of them)
+            images, videos, comps, tracks = self.mask_images(), self.mask_videos(), self.mask_compounds(), self.mask_tracks()
         if self.proj is not None and any(c.get("viz") for c in clips):       # (what an Audio Visualizer can listen to)
             self.inspector.set_sound_tracks([(tr["id"], tr.get("name") or tr["id"])
                                              for tr in reversed(self.container()["tracks"]) if self.sound_track(tr)])
-            self.inspector.set_compounds(self.mask_compounds())
+            self.inspector.set_compounds(comps)
         self.inspector.show_clips(clips, t, self.fps, [times[c["id"]] for c in clips])
         if self.proj is not None:
-            self.effects.set_media(self.mask_images(), self.mask_videos(), self.mask_compounds(), self.mask_tracks())
-            self.nodes.set_media(self.mask_images(), self.mask_videos(), self.mask_compounds(), self.mask_tracks())
+            self.effects.set_media(images, videos, comps, tracks)
+            self.nodes.set_media(images, videos, comps, tracks)
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
-            self.mask_panel.set_compounds(self.mask_compounds())
-            self.mask_panel.set_images(self.mask_images())
-            self.mask_panel.set_videos(self.mask_videos())
-            self.mask_panel.set_tracks(self.mask_tracks())
-            self.inspector.set_images(self.mask_images())          # (a component's picture parameters)
+            self.mask_panel.set_compounds(comps)
+            self.mask_panel.set_images(images)
+            self.mask_panel.set_videos(videos)
+            self.mask_panel.set_tracks(tracks)
+            self.inspector.set_images(images)                      # (a component's picture parameters)
         self.mask_panel.show_clips(clips, t, self.fps)
         kept = self._nodes_kept(clips)
         self.nodes.show_clip(clips[0] if len(clips) == 1 else kept, t=times[clips[0]["id"]] if len(clips) == 1 else 0)
@@ -4535,11 +4537,9 @@ class MainWindow(QMainWindow):
         that shows this level (it would cut with itself)."""
         steps = walk_path(self.proj, self.path_ids)      # (the open level: the last compound's content)
         here = steps[-1][2] if steps else self.proj["active_timeline"]
-        out = []
-        for kid, comp in self.proj.get("compounds", {}).items():
-            if not project.contains(self.proj, kid, here):
-                out.append((kid, ("◧ " if comp.get("static") else "") + (comp.get("name") or kid)))
-        return out
+        around = project.holders_of(self.proj, here)
+        return [(kid, ("◧ " if comp.get("static") else "") + (comp.get("name") or kid))
+                for kid, comp in self.proj.get("compounds", {}).items() if kid not in around]
 
     def rebuild(self):
         """Hand the current project state to the live renderer: it shows on the next frame.

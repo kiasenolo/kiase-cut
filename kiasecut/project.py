@@ -921,6 +921,29 @@ def compound_uses(p):
     return uses
 
 
+def holders_of(p, inner_id):
+    """The ids of every compound and timeline that contains() inner_id (itself too), found in one pass over the project
+    (contains() of each compound walks what it shows again for every one asked about)."""
+    shown_in = {}                                          # id -> the ids of what shows it
+    for tl in p.get("timelines", []):
+        for t in all_tracks(tl["tracks"]):
+            for c in t["clips"]:
+                if ref_of(c):
+                    shown_in.setdefault(ref_of(c), set()).add(tl["id"])
+    for kid, comp in p.get("compounds", {}).items():
+        for t in all_tracks(comp["tracks"]):
+            for c in t["clips"]:
+                if ref_of(c):
+                    shown_in.setdefault(ref_of(c), set()).add(kid)
+    out, stack = set(), [inner_id]
+    while stack:
+        k = stack.pop()
+        if k not in out:
+            out.add(k)
+            stack.extend(shown_in.get(k, ()))
+    return out
+
+
 def contains(p, outer_id, inner_id):
     """Whether compound / timeline outer_id shows inner_id (at any depth), or is it."""
     if outer_id == inner_id:

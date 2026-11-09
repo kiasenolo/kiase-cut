@@ -33,6 +33,7 @@ from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
 from . import colorpick
+from .toolbarscroll import ToolbarScroll
 from .colorpick import pick_color, qcolor, rgba
 from .font_dialog import FontMapDialog
 from . import ask as questions
@@ -654,11 +655,10 @@ class MainWindow(QMainWindow):
         center = QWidget()
         cl = QVBoxLayout(center)
         cl.setContentsMargins(4, 4, 4, 4)
-        head_w, bar_w = QWidget(), QWidget()
+        head_w = QWidget()
         head_w.setObjectName("bar")
-        bar_w.setObjectName("bar")
         head_w.setLayout(head)
-        bar_w.setLayout(bar)
+        bar_w = ToolbarScroll(bar, "bar")               # (the transport row scrolls sideways when the panel is narrower than it)
         cl.addWidget(head_w)
         cl.addWidget(self.preview, 1)
         cl.addWidget(bar_w)
@@ -6588,7 +6588,7 @@ def run(argv):
         # QT_AUDIO_BACKEND=pipewire in the environment still picks the former.
         os.environ.setdefault("QT_AUDIO_BACKEND", "pulseaudio")
     scale = ui_scale()
-    if scale != 100 and sys.platform != "android":
+    if scale != 100:
         os.environ.setdefault("QT_SCALE_FACTOR", f"{scale / 100:g}")   # 界面縮放 (設定): the whole interface, at start
     if sys.platform == "android":
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)       # the menus in the window, not behind the system's "..."

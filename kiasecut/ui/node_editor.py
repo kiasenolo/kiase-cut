@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboB
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from . import appevents, motion, touch, viewglide
+from .toolbarscroll import ToolbarScroll
 from .wheel import pinch as wheel_pinch
 from .zoomglide import ZoomGlide
 
@@ -2243,7 +2244,7 @@ class NodeEditor(QWidget):
         tidy.clicked.connect(lambda: self.tidy_menu(tidy.mapToGlobal(tidy.rect().bottomLeft())))
         bar.addWidget(tidy)
         bar.addStretch()
-        lay.addLayout(bar)
+        lay.addWidget(ToolbarScroll(bar))                  # (narrower than its buttons: scrolled sideways, not a wider window)
         self.note = QLabel("選取有節點效果的片段（效果面板 → 新增效果 → 節點效果）")
         self.note.setAlignment(Qt.AlignCenter)
         self.view = GraphView(self)

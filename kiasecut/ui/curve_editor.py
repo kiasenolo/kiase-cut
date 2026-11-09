@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout,
 from .. import assets, components, curves, edit, fx, textvars
 from . import touch, viewglide, wheel
 from .inspector import PARAMS, PLACE_ROWS, SpinBox
+from .toolbarscroll import ToolbarScroll
 from .wrapdrag import WrapDrag
 
 US = 1_000_000
@@ -731,7 +732,7 @@ class CurveEditor(QWidget):
         top.addStretch()
         top.addWidget(only)
         top.addWidget(fit)
-        lay.addLayout(top)
+        lay.addWidget(ToolbarScroll(top))               # (the rows of buttons scroll sideways in a narrow panel)
         self.canvas = CurveCanvas()
         self.canvas.keysLive.connect(lambda ch: self._emit(ch, False))
         self.canvas.keysCommitted.connect(lambda ch: self._emit(ch, True))
@@ -776,7 +777,7 @@ class CurveEditor(QWidget):
         mine.setMenu(QMenu(mine))
         mine.menu().aboutToShow.connect(lambda: self._fill_mine(mine.menu()))
         grid.addWidget(mine, 0, len(PRESETS))
-        form.addRow("", grid)
+        form.addRow("", ToolbarScroll(grid))
         lay.addLayout(form)
         acts = QHBoxLayout()
         for text, d, tip in (("◀", -1, "上一個關鍵幀"), ("▶", 1, "下一個關鍵幀")):
@@ -793,7 +794,7 @@ class CurveEditor(QWidget):
         delete.clicked.connect(self.canvas.delete_selected)
         acts.addWidget(add)
         acts.addWidget(delete)
-        lay.addLayout(acts)
+        lay.addWidget(ToolbarScroll(acts))
         self.hint = QLabel("")
         self.hint.setWordWrap(True)
         self.hint.setStyleSheet("color: #9a9aa0;")

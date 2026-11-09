@@ -755,6 +755,30 @@ class NodeEditorTests(unittest.TestCase):
         ed.option_menu("menu_switch1", "i2", QPoint(0, 0))
         self.assertEqual(popped, [["往上移", "往下移", "刪除選項"]])
 
+    def test_vector_node_takes_outlines_in_the_empty_socket(self):
+        from kiasecut.ui import node_editor
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.SOURCE, "kind": "vector", "op": "boolean"}, 300, 150, base="vec")
+            ng.add_node(e["graph"], {"type": ng.SOURCE, "kind": "shape", "asset": {"key": "shape.rect", "family": "rect"}}, -300, 150, base="rect")
+            e["params"].update(ng.default_params(e["graph"]))
+            e.setdefault("sources", {})["vec1"] = {"kind": "vector", "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
+        ed = self.make(build)
+        v = ed.view
+        got = []
+        ed.itemRequested.connect(lambda *a: got.append(a))
+        it = v.items_by_id["vec1"]
+        self.assertEqual([r["label"] for r in it.rows if r["kind"] == "image"], ["矢量 1", "矢量 2", "（拉一條線進來新增輸入）"])
+        self.assertEqual(it.out_colour(), node_editor.SOCKET_COLORS["outline"])
+        self.assertEqual(it.in_colour("v1"), node_editor.SOCKET_COLORS["outline"])
+        self.assertEqual(v.items_by_id["rect1"].out_colour(), node_editor.SOCKET_COLORS["outline"])
+        self.drag(ed, v.items_by_id["rect1"].output_pos(""), it.input_pos(node_editor.GHOST_ITEM))
+        self.assertEqual(got, [("e1", "vec1", "add", "", "", "rect1", "")])
+        ed.popup = lambda menu, pos: popped.append([a.text() for a in menu.actions() if a.text()])
+        popped = []
+        ed.option_menu("vec1", "v2", QPoint(0, 0))
+        self.assertEqual(popped, [["往上移", "往下移", "刪除選項"]])                      # (the inputs are only numbered)
+        self.assertTrue(any(r["kind"] == "param" and r["label"] == "運算" for r in it.rows))
+
     def test_free_input_dragged_to_an_output_links_and_makes_a_parameter(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 300, 150)
@@ -840,8 +864,9 @@ class NodeEditorTests(unittest.TestCase):
         def tree(menu):
             return {a.text(): (tree(a.menu()) if a.menu() else None) for a in menu.actions() if a.text()}
         top = tree(menus[0])
-        self.assertEqual([k for k in top if k != "搜尋節點…"][:12],
-                         ["輸入", "輸出", "色彩", "創意", "濾鏡", "去背", "遮罩", "紋理", "變換", "工具", "KiaseCut 效果", "佈局"][:12])
+        self.assertEqual([k for k in top if k != "搜尋節點…"][:13],
+                         ["輸入", "輸出", "矢量", "色彩", "創意", "濾鏡", "去背", "遮罩", "紋理", "變換", "工具", "KiaseCut 效果", "佈局"][:13])   # (矢量: KiaseCut's own)
+        self.assertEqual(list(top["矢量"]), ["形狀", "文字", "SVG 圖片", "相加（把多個矢量疊在一起）", "布林運算（聯集、差集、交集、排除）"])
         self.assertEqual(list(top["輸入"])[:2], ["常數", "輸入（片段的畫面）"])
         self.assertEqual(list(top["輸入"]["常數"]), ["布林", "顏色", "字體", "整數", "整數向量", "選單", "字串", "數值", "向量"])
         self.assertEqual(list(top["色彩"])[0], "調整")

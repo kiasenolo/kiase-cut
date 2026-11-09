@@ -58,7 +58,8 @@ GHOST_IN = "\0newsocket"                       # the empty input of a 群組輸�
 PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 / 群組輸出 boxes drawn inside a group
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
 SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0", "string": "#70b870", "font": "#b070b0",
-                 "int": "#598c5c", "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a"}     # (Blender's socket colours for the numbers, switches and vectors)
+                 "int": "#598c5c", "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a",
+                 "outline": "#3fc7a8"}     # (an outline - a shape, a text, an SVG, a vector node: what 相加 and 布林 take)     # (Blender's socket colours for the numbers, switches and vectors)
 LINK_COLOR = "#b3b3b3"                           # (a link with no types to colour it)
 # the interface's greys (Color(n) is white times n): the canvas under everything, a node's body, its head, a field and its outline
 CANVAS = "#080808"
@@ -218,7 +219,7 @@ class NodeItem(QGraphicsItem):
             add("image", "結果", "src")
         elif node["type"] == ng.VIEWER:
             add("image", "圖像", "src")
-        elif node["type"] == ng.FILTER or ng.is_asset(node) or ng.is_text(node):         # (a built-in shape or a text: its fields, no sockets)
+        elif node["type"] == ng.FILTER or ng.is_asset(node) or ng.is_text(node) or ng.is_vecop(node):         # (a built-in shape, a text or a vector node: its fields, no sockets)
             d = ng.node_def(node)
             socket = lambda p: ng.PARAM + p.name if ng.has_socket(p) else None
             named = self.editor.node_values(self.nid).named
@@ -236,6 +237,11 @@ class NodeItem(QGraphicsItem):
                             add("image", label, name)
                 if ng.is_dynamic(node):                            # (Blender's empty socket: a link let go on it makes an option)
                     add("image", "（拉一條線進來新增選項）", GHOST_ITEM)
+            elif ng.is_vecop(node):                                    # (a vector node: the outlines it takes, then the empty one to drag a link into)
+                for sock, label in ng.sockets(node):
+                    if not sock.startswith(ng.PARAM):
+                        add("image", label, sock)
+                add("image", "（拉一條線進來新增輸入）", GHOST_ITEM)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
                 if ng.is_text(node):                                   # (a text: its words - or a string node's - and font first)
                     add("text", "文字", ng.TEXT_SOCKET, h=ROW * self.lines() if ng.TEXT_SOCKET not in self.linked else ROW)
@@ -361,10 +367,14 @@ class NodeItem(QGraphicsItem):
                 return type_color(r["p"]["type"])
         if t == ng.FILTER:
             return type_color(fx.for_node(self.node).socket_type("out", out))
+        if ng.is_asset(self.node) or ng.is_text(self.node) or ng.is_vecop(self.node) or (t == ng.SOURCE and self.node.get("kind") == "image"):
+            return SOCKET_COLORS["outline"]
         return SOCKET_COLORS["image"]
 
     def in_colour(self, sock):
         """The colour of input `sock`."""
+        if ng.is_vecop(self.node) and (sock == GHOST_ITEM or sock in ng.vecop_sockets(self.node)):
+            return SOCKET_COLORS["outline"]
         r = self.row_of(sock)
         if not r:
             return SOCKET_COLORS["image"]
@@ -2716,12 +2726,12 @@ class NodeEditor(QWidget):
     def option_menu(self, nid, sock, pos):
         """Right click on an option of a Menu Switch: rename, delete, move."""
         node = self.graph["nodes"][nid]
-        items = [i for i in node.get("items") or []]
+        items = ng.vecop_items(node) if ng.is_vecop(node) else [i for i in node.get("items") or []]
         at = next((k for k, i in enumerate(items) if i["sock"] == sock), None)
         if at is None or not self.eid:
             return
         menu = QMenu(self)
-        if dynamic.renamable(fx.get(node["ref"]).dynamic):
+        if not ng.is_vecop(node) and dynamic.renamable(fx.get(node["ref"]).dynamic):
             menu.addAction("重新命名選項…", lambda: self._rename_option(nid, sock, items[at]["name"]))
         up = menu.addAction("往上移", lambda: self.itemRequested.emit(self.eid, nid, "up", sock, "", "", ""))
         up.setEnabled(at > 0)

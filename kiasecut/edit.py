@@ -2315,6 +2315,8 @@ def node_item(proj, clip_id, effect_id, nid, action, sock="", name="", src="", o
         raise EditError("找不到這個節點")
     try:
         if action == "add":
+            if src and nodegraph.is_vecop(g["nodes"][nid]) and src in g["nodes"] and not nodegraph.gives_vector(g["nodes"][src], (e.get("sources") or {}).get(src)):
+                raise EditError("矢量節點只能接形狀、文字、SVG 圖片或別的矢量節點")
             sock = nodegraph.add_item(g, e["params"], nid, name or None)
             if src:
                 nodegraph.connect(g, src, nid, sock, out or None)

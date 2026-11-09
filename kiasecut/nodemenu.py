@@ -33,6 +33,11 @@ INPUT = [
     menu("場景", ["nodes/time"]),
 ]
 
+VECTOR = [SHAPES, node("文字", type=ng.SOURCE, kind="text"), node("SVG 圖片", type=ng.SOURCE, kind="image"),
+          SEP,
+          node("相加（把多個矢量疊在一起）", type=ng.SOURCE, kind="vector", op="add"),
+          node("布林運算（聯集、差集、交集、排除）", type=ng.SOURCE, kind="vector", op="boolean")]
+
 OUTPUT = [node("預覽（編輯器的預覽看這裡）", type=ng.VIEWER)]
 
 COLOR = [
@@ -82,7 +87,7 @@ LAYOUT = [node("繞線點", type=ng.REROUTE), node("框架／註解", type=ng.FR
 
 # The root, as Blender's NODE_MT_compositor_node_all_base (Tracking has no node here, the empty menus are left out)
 ROOT = [
-    menu("輸入", INPUT), menu("輸出", OUTPUT),
+    menu("輸入", INPUT), menu("輸出", OUTPUT), menu("矢量", VECTOR),
     SEP,
     menu("色彩", COLOR), menu("創意", CREATIVE), menu("濾鏡", FILTER),
     SEP,

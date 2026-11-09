@@ -38,6 +38,23 @@ class WikiTests(unittest.TestCase):
         for ref in wiki.nodemenu.placed():
             self.assertIn(ref, wiki.known_refs(), ref)
 
+    def test_every_menu_node_says_how_it_is_used(self):
+        for _, entries in wiki.categories():
+            for e in entries:
+                if e[0] == "node" and e[1] != "shapes":
+                    with self.subTest(node=e[1]):
+                        self.assertIn(e[1].replace("builtin:", "", 1), wiki.wikidata.USAGE)
+
+    def test_usage_is_for_pages_that_exist(self):
+        keys = {e[1].replace("builtin:", "", 1) for _, entries in wiki.categories() for e in entries if e[0] == "node"}
+        for k in wiki.wikidata.USAGE:
+            self.assertIn(k, keys)
+
+    def test_a_node_page_has_its_wiring(self):
+        text = wiki.node_page("builtin:nodes/mix")
+        for word in ("怎麼用", "接法範例", "怎麼接", "係數（向量）"):
+            self.assertIn(word, text)
+
     def test_legend_colours_are_the_node_editors(self):
         try:
             from kiasecut.ui.node_editor import SOCKET_COLORS

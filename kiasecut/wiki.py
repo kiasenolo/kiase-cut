@@ -9,7 +9,7 @@ import html
 import os
 from urllib.parse import quote, unquote
 
-from . import assets, fx, nodegraph as ng, nodemenu
+from . import assets, fx, nodegraph as ng, nodemenu, wikidata
 
 SCHEME = "wiki:"
 
@@ -58,6 +58,7 @@ HOME = """<h1>KiaseCut 說明</h1>
 <p>這裡的頁面大多是從程式自己的資料產生的：節點的說明、插槽、參數都和你現在用的版本一致。</p>
 <ul>
 <li><a href="wiki:types">資料類型</a>：插槽上的點是什麼顏色、什麼形狀</li>
+<li><a href="wiki:rules">連線規則</a>：怎麼把節點接起來、什麼能接什麼</li>
 <li><a href="wiki:nodes">節點</a>：節點編輯器的 Add 選單，照選單的順序，每個節點的輸入、輸出和參數</li>
 <li><a href="wiki:fx">KiaseCut 效果</a>：Blender 沒有的、「效果」清單裡的其他效果（它們也是節點）</li>
 <li><a href="wiki:format">濾鏡寫法</a>：自己用 .glsl 寫濾鏡</li>
@@ -153,7 +154,7 @@ def tree():
     nodes = [("cat:" + label, label, [("node:" + e[1], e[2], []) for e in entries if e[0] == "node"])
              for label, entries in categories()]
     effects = [("fxcat:" + cat, cat, [("node:" + ref, name, []) for ref, name in items]) for cat, items in effect_categories()]
-    return [("home", "首頁", []), ("types", "資料類型", []), ("nodes", "節點", nodes), ("fx", "KiaseCut 效果", effects), ("format", "濾鏡寫法", [])]
+    return [("home", "首頁", []), ("types", "資料類型", []), ("rules", "連線規則", []), ("nodes", "節點", nodes), ("fx", "KiaseCut 效果", effects), ("format", "濾鏡寫法", [])]
 
 
 # -- the pages ---------------------------------------------------------------------------------------
@@ -196,13 +197,52 @@ def params_table(d):
             + "".join(rows) + "</table>")
 
 
-def sockets_table(d):
-    rows = [f"<tr><td>輸入</td><td>{dot(d.socket_type('in', 'src'))} {esc(d.src_label)}</td></tr>"]
-    for name, label in d.inputs:
-        rows.append(f"<tr><td>輸入</td><td>{dot(d.socket_type('in', name))} {esc(label)}</td></tr>")
+ACCEPTS = {"image": "任何圖片（顏色、影片、遮罩都行）", "float": "數值：圖讀成明度，逐像素各讀自己那一點", "color": "顏色：一張圖，或顏色常數",
+           "vector": "向量：圖的紅、綠、藍當 X、Y、Z", "int": "整數", "bool": "開關", "menu": "選單的編號"}
+LINKABLE = (("逐像素（圖讀成明度或顏色）", ("color", "float")), ("單一值（只讀圖的中心一點）", ("bool", "int", "menu")),
+            ("向量（讀圖中心的 R、G、B）", ("vec2", "vec3")))
+
+
+def wiring(d):
+    """怎麼接: the sockets of a filter, what each takes, and which parameters take a link too - from the filter's header."""
+    inputs = [("src", d.src_label)] + list(d.inputs)
+    by_param = {n: pn for n, pn in d.input_param.items()}
+    labels = {p.name: p.label for p in d.params}
+    rows = []
+    for name, label in inputs:
+        kind = d.socket_type("in", name)
+        notes = [ACCEPTS.get(kind, "")]
+        if name in by_param:
+            notes.append(f"沒接線就用欄位「{labels.get(by_param[name], by_param[name])}」")
+        if name in d.input_use:
+            notes.append("沒被選到時這條線不運算")
+        rows.append(f"<tr><td>輸入</td><td>{dot(kind)} {esc(label)}</td><td>{esc('；'.join(n for n in notes if n))}</td></tr>")
     for name, label in (d.outputs or [("", d.out_label)]):
-        rows.append(f"<tr><td>輸出</td><td>{dot(d.socket_type('out', name))} {esc(label)}</td></tr>")
-    return '<table border="1" cellspacing="0" cellpadding="4"><tr><th></th><th>插槽</th></tr>' + "".join(rows) + "</table>"
+        kind = d.socket_type("out", name)
+        rows.append(f"<tr><td>輸出</td><td>{dot(kind)} {esc(label)}</td><td>{esc(ACCEPTS.get(kind, '')) if kind != 'image' else '一張圖片'}</td></tr>")
+    out = ('<table border="1" cellspacing="0" cellpadding="4"><tr><th></th><th>插槽</th><th>接什麼</th></tr>' + "".join(rows) + "</table>")
+    if len(d.outputs) > 1:
+        out += "<p><small>每個輸出可以分別拉線；只有被接出去的輸出才會被運算。</small></p>"
+    extra = []
+    for title, types in LINKABLE:
+        names = [p.label for p in d.params if p.type in types and p.name not in by_param.values()]
+        if names:
+            extra.append(f"<li><b>{title}</b>：{esc('、'.join(names))}</li>")
+    if extra:
+        out += "<p>參數欄位也有自己的插槽，可以接線（接上後欄位由線決定）：</p><ul>" + "".join(extra) + "</ul>"
+    return out
+
+
+def recipes(key, name):
+    """用法 and 接法範例 of a page from wikidata.USAGE (html; "" if it has none)."""
+    got = wikidata.USAGE.get(key.replace("builtin:", "", 1))
+    if not got:
+        return ""
+    how, chains = got
+    out = f"<h3>怎麼用</h3><p>{esc(how)}</p>"
+    if chains:
+        out += "<h3>接法範例</h3><ul>" + "".join(f"<li>{esc(c).replace('＊', '<b>' + esc(name) + '</b>')}</li>" for c in chains) + "</ul>"
+    return out + f'<p><small>連線的通則見{link("rules", "連線規則")}。</small></p>'
 
 
 def filter_page(ref):
@@ -212,7 +252,7 @@ def filter_page(ref):
     desc = esc(d.description).replace("\n", "<br>")
     return (f"<h1>{esc(name)}</h1><p><small>{where}"
             + (f" ・ 類別：{esc(d.category)}" if d.category else "") + f" ・ <code>{esc(ref)}</code></small></p>"
-            f"<p>{desc or '（沒有說明）'}</p><h3>插槽</h3>{sockets_table(d)}<h3>參數</h3>{params_table(d)}")
+            f"<p>{desc or '（沒有說明）'}</p>{recipes(ref, name)}<h3>怎麼接</h3>{wiring(d)}<h3>參數</h3>{params_table(d)}")
 
 
 def special_page(key):
@@ -224,7 +264,7 @@ def special_page(key):
         ins = "<p>輸入：矢量輪廓（%s）</p>" % dot("outline")
     return (f"<h1>{esc(label)}</h1><p>{esc(SPECIAL.get((t, kind, op), ''))}</p>{ins}"
             f"<p>輸出：{dot(out)} {esc(dict((k, n) for k, n, _ in TYPES).get(out, out))}"
-            + ("（也可以當圖片用）" if out == "outline" else "") + "</p>")
+            + ("（也可以當圖片用）" if out == "outline" else "") + f"</p>{recipes(key, label)}")
 
 
 def shapes_page():
@@ -312,6 +352,8 @@ def render(page):
         return "html", HOME
     if page == "types":
         return "html", types_page()
+    if page == "rules":
+        return "html", wikidata.RULES
     if page == "nodes":
         return "html", "<h1>節點</h1><p>照 Blender 5.2 合成器 Add 選單的順序。</p>" + "".join(
             f"<p>{link('cat:' + lab, lab)}（{sum(1 for k, *_ in entries if k == 'node')}）</p>" for lab, entries in categories())
@@ -346,7 +388,7 @@ def search(text, limit=60):
             hay.append(_summary(key))
         else:
             d = fx.get(key)
-            hay += [d.description] + [p.label for p in d.params] + [lbl for _, lbl in d.inputs]
+            hay += [d.description] + [p.label for p in d.params] + [lbl for _, lbl in d.inputs] + list(wikidata.USAGE.get(key.replace("builtin:", "", 1), ("", ()))[:1])
         hit = next((h for h in hay if text in h.lower()), None)
         if hit is not None:
             out.append(("node:" + key, f"{name}　（{where}）", hit if hit != name else ""))

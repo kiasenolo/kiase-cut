@@ -6663,10 +6663,10 @@ def run(argv):
     sashtouch.install()                             # the lines between panels are let go by a hold, with a finger (Android)
     softdrag.install()                              # a finger's drags (the library to the timeline) are made by the program on Android
     menuanim.install()                              # menus open from big and blurred to what they are
-    # the logo (Icon.svg beside the package; Icon.free is its Lunacy source) on every window;
+    # the logo (images/app-Icon.svg beside the package; images.free is its Lunacy source) on every window;
     # Wayland desktops take the icon from kiasecut.desktop instead, found by this name
     app.setDesktopFileName("kiasecut")
-    logo = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "Icon.svg")
+    logo = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "images", "app-Icon.svg")
     if os.path.exists(logo):
         app.setWindowIcon(QIcon(logo))
     win = MainWindow()

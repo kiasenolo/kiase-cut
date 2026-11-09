@@ -1,7 +1,7 @@
 """說明 Wiki (說明 menu, F1): a window with the pages of wiki.py - a tree of them and a search field at the left, the page at the right
 (links between pages, 上一頁 / 下一頁). The window is made when first wanted and keeps its place."""
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSplitter, QTextBrowser, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -33,47 +33,67 @@ def socket_image(colour, shape, size=64):
 
 
 def diagram_image(name, scale=2):
-    """A little node graph, drawn as the node editor draws one: dark boxes with a title, sockets down the sides, links between them."""
+    """A little node graph drawn as the node editor draws one (its colours, sockets and links): square nodes with a head in the node's
+    colour, a socket at the side of a row (a circle, a diamond for a picture), links in the sockets' colours with a dark edge."""
+    from . import node_editor as ne
     w, h, nodes, links = wikidata.DIAGRAMS[name]
     img = QImage(w * scale, h * scale, QImage.Format_ARGB32)
     img.fill(Qt.transparent)
     p = QPainter(img)
     p.setRenderHint(QPainter.Antialiasing)
     p.scale(scale, scale)
-    NW, HEAD, ROW = 120, 22, 22
+    NW = 130
     font = QFont(p.font())
     font.setPixelSize(12)
     p.setFont(font)
-    pos = {}
-    for nid, (title, x, y, ins, outs) in nodes.items():
-        pos[nid] = ([QPointF(x, y + HEAD + ROW * (i + .5)) for i in range(len(ins))],
-                    [QPointF(x + NW, y + HEAD + ROW * (i + .5)) for i in range(len(outs))])
-    p.setBrush(Qt.NoBrush)
+    rows_at, sockets = {}, {}
+    for nid, (kind, ref, title, x, y, rows) in nodes.items():
+        for i, r in enumerate(rows):
+            sockets[nid, i] = QPointF(x + (NW if r[0] == "out" else 0), y + ne.HEAD + ne.PAD + ne.ROW * (i + .5))
     for a, o, b, i in links:
-        s, e = pos[a][1][o], pos[b][0][i]
+        s, e = sockets[a, o], sockets[b, i]
         path = QPainterPath(s)
-        d = max(30, abs(e.x() - s.x()) / 2)
-        path.cubicTo(s + QPointF(d, 0), e - QPointF(d, 0), e)
-        p.setPen(QPen(QColor("#b3b3b3"), 2))
+        dx = max(40.0, abs(e.x() - s.x()) * 0.5)
+        path.cubicTo(s + QPointF(dx, 0), e - QPointF(dx, 0), e)
+        ne.draw_border(p, path, ne.LINK_W)
+        grad = QLinearGradient(s, e)
+        grad.setColorAt(0, QColor(ne.SOCKET_COLORS["image"]))
+        grad.setColorAt(1, QColor(ne.SOCKET_COLORS["image"]))
+        p.setPen(QPen(QBrush(grad), ne.LINK_W))
         p.drawPath(path)
-    for nid, (title, x, y, ins, outs) in nodes.items():
-        rows = max(len(ins), len(outs), 0)
-        body = QRectF(x, y, NW, HEAD + ROW * max(rows, 1))
-        p.setPen(QPen(QColor(0, 0, 0, 160), 1))
-        p.setBrush(QColor("#1a1a1a"))
-        p.drawRoundedRect(body, 5, 5)
-        p.setBrush(QColor("#6c696f"))
-        p.drawRoundedRect(QRectF(x, y, NW, HEAD), 5, 5)
-        p.setPen(QColor("#f0f0f0"))
-        p.drawText(QRectF(x + 8, y, NW - 16, HEAD), Qt.AlignVCenter, title)
-        for k, (names, pts) in enumerate(((ins, pos[nid][0]), (outs, pos[nid][1]))):
-            for n, pt in zip(names, pts):
-                p.setPen(QColor("#d0d0d0"))
-                box = QRectF(pt.x() + 8, pt.y() - 10, NW - 20, 20) if k == 0 else QRectF(pt.x() - NW + 12, pt.y() - 10, NW - 20, 20)
-                p.drawText(box, Qt.AlignVCenter | (Qt.AlignLeft if k == 0 else Qt.AlignRight), n)
-                p.setPen(QPen(QColor(0, 0, 0, 160), 1))
-                p.setBrush(QColor("#c8c85a"))
-                p.drawEllipse(pt, 5, 5)
+    for nid, (kind, ref, title, x, y, rows) in nodes.items():
+        height = ne.HEAD + 2 * ne.PAD + ne.ROW * len(rows)
+        node = {"type": kind, "ref": ref}
+        p.fillRect(QRectF(x, y, NW, height), QColor(ne.NODE_BODY))
+        p.fillRect(QRectF(x, y, NW, ne.HEAD), ne.head_colour(node))
+        p.setPen(QPen(QColor("#000000"), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(x, y, NW, height))
+        bold = QFont(font)
+        bold.setBold(True)
+        p.setFont(bold)
+        p.setPen(QColor("white"))
+        p.drawText(QRectF(x + 8, y, NW - 16, ne.HEAD), Qt.AlignVCenter | Qt.AlignLeft, title)
+        p.setFont(font)
+        for i, r in enumerate(rows):
+            ry = y + ne.HEAD + ne.PAD + ne.ROW * i
+            p.setPen(QColor(ne.LABEL))
+            if r[0] == "out":
+                p.drawText(QRectF(x + 10, ry, NW - 20, ne.ROW), Qt.AlignVCenter | Qt.AlignRight, r[1])
+            elif r[0] == "in":
+                p.drawText(QRectF(x + 10, ry, NW - 20, ne.ROW), Qt.AlignVCenter | Qt.AlignLeft, r[1])
+            else:
+                p.drawText(QRectF(x + 10, ry, NW * ne.LABEL_W + 4, ne.ROW), Qt.AlignVCenter | Qt.AlignLeft, r[1])
+                box = QRectF(x + NW * ne.LABEL_W + 10, ry + 3, NW * (1 - ne.LABEL_W) - 20, ne.ROW - 6)
+                p.setPen(QPen(QColor(ne.FIELD_LINE), 1))
+                p.setBrush(QColor(ne.FIELD_BG))
+                p.drawRect(box.adjusted(.5, .5, -.5, -.5))
+                p.setPen(QColor(ne.INK))
+                p.drawText(box, Qt.AlignCenter, r[2])
+    for nid, (kind, ref, title, x, y, rows) in nodes.items():
+        for i, r in enumerate(rows):
+            if r[0] != "field":
+                ne.NodeItem._socket(p, sockets[nid, i], ne.SOCKET_COLORS["image"], r[2] if r[0] == "in" else "field")
     p.end()
     return img
 

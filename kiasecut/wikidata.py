@@ -319,7 +319,7 @@ GUIDES = {
 <li>把「混合」接到「輸出」。</li>
 </ol>
 <p>連好是這樣：</p>
-<img src="diagram:blur_mask" width="600" height="210">
+<img src="diagram:blur_mask" width="660" height="250">
 <h3>4. 看中間的結果</h3>
 <p>按住 Ctrl+Shift 點一個節點，預覽就改看那個節點的結果（再點會換它的下一個輸出，最後回到效果的結果）。檢查「遮罩到底長什麼樣」時很好用。按「縮圖」按鈕，每個節點下面會直接顯示它輸出的圖。</p>
 <h3>5. 讓參數出現在效果面板</h3>
@@ -396,13 +396,16 @@ GUIDES = {
 }
 
 
-# Drawn node diagrams (ui/wiki_window.py): {name: (width, height, {id: (title, x, y, [inputs], [outputs])}, [(from id, output, to id, input)])}
+# Drawn node diagrams (ui/wiki_window.py draws them as the node editor does): {name: (width, height, {id: node}, links)}. A node is
+# (type, ref, title, x, y, rows); a row is ("out", label), ("in", label, shape) - shape "field" (a picture), "either" or "single" -
+# or ("field", label, value) for a box with a value; links are (from id, row of the output, to id, row of the input), counted over all the rows.
 DIAGRAMS = {
-    "blur_mask": (600, 210, {
-        "in": ("輸入", 5, 50, [], ["圖像"]),
-        "blur": ("模糊", 165, 10, ["圖像"], ["圖像"]),
-        "mask": ("圓角方形遮罩", 165, 140, [], ["圖像"]),
-        "mix": ("混合", 330, 60, ["圖像", "B", "係數"], ["圖像"]),
-        "out": ("輸出", 470, 70, ["圖像"], []),
-    }, [("in", 0, "blur", 0), ("in", 0, "mix", 0), ("blur", 0, "mix", 1), ("mask", 0, "mix", 2), ("mix", 0, "out", 0)]),
+    "blur_mask": (660, 250, {
+        "in": ("input", "", "輸入", 0, 70, [("out", "圖像")]),
+        "blur": ("filter", "builtin:blur", "模糊", 175, 0, [("out", "圖像"), ("in", "圖像", "field"), ("field", "大小 X", "10")]),
+        "mask": ("filter", "builtin:nodes/rounded_square_mask", "圓角方形遮罩", 175, 150, [("out", "圖像"), ("in", "圖像", "field")]),
+        "mix": ("filter", "builtin:nodes/mix", "混合", 350, 50,
+                [("out", "圖像"), ("in", "圖像", "field"), ("in", "B", "field"), ("in", "係數", "either")]),
+        "out": ("output", "", "輸出", 525, 85, [("in", "圖像", "field")]),
+    }, [("in", 0, "blur", 1), ("in", 0, "mix", 1), ("blur", 0, "mix", 2), ("mask", 0, "mix", 3), ("mix", 0, "out", 0)]),
 }

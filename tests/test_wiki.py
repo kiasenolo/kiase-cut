@@ -74,8 +74,8 @@ class WikiTests(unittest.TestCase):
                 self.assertIn(name, wiki.wikidata.DIAGRAMS)
                 w, h, nodes, links = wiki.wikidata.DIAGRAMS[name]
                 for a, o, b, i in links:
-                    self.assertLess(o, len(nodes[a][4]))
-                    self.assertLess(i, len(nodes[b][3]))
+                    self.assertEqual(nodes[a][5][o][0], "out")
+                    self.assertEqual(nodes[b][5][i][0], "in")
 
     def test_search_finds_guides(self):
         self.assertTrue(any(p.startswith("guide:") for p, _, _ in wiki.search("節點效果")))

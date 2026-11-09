@@ -4,6 +4,7 @@ QTextBrowser (ui/wiki_window.py shows them); nothing here needs Qt, so it is tes
 
 Page ids: "home", "types" (the data types and their socket dots), "nodes" and "cat:<menu>" (a menu of the node editor's Add menu),
 "node:<ref or key>" (one node), "fx" and "fxcat:<category>" (KiaseCut's own effects, which are nodes too), "format" (濾鏡寫法)."""
+import glob
 import html
 import os
 from urllib.parse import quote, unquote
@@ -99,9 +100,19 @@ def node_key(node):
     return "special:%s|%s|%s" % _key(node)
 
 
+def node_refs():
+    """Refs of the filters made for graphs (filters/nodes/*.glsl): fx.builtin_refs() has not got them, as the node editor's own list."""
+    refs = ["builtin:nodes/" + os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(fx.PKG, "nodes", "*.glsl"))]
+    return sorted(r for r in refs if r != ng.PICTURE)
+
+
+def known_refs():
+    return set(fx.builtin_refs()) | set(node_refs())
+
+
 def categories():
     """[(menu label, [entries])] of the Add menu; an entry is ("node", ref or special key, name) or ("sub", label) for a nested menu's heading."""
-    known = set(fx.builtin_refs())
+    known = known_refs()
     out = []
 
     def walk(items, entries, sub=None):
@@ -130,7 +141,7 @@ def effect_categories():
     """[(category, [(ref, name)])] of the built-in filters the Add menu has no place for."""
     placed = nodemenu.placed()
     cats = {}
-    for ref in sorted(fx.builtin_refs()):
+    for ref in sorted(known_refs()):
         if ref not in placed and ref != ng.PICTURE:
             d = fx.get(ref)
             cats.setdefault(d.category or "其他", []).append((ref, ng.short_name(d.name)))

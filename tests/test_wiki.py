@@ -30,9 +30,13 @@ class WikiTests(unittest.TestCase):
     def test_every_builtin_filter_is_in_the_wiki(self):
         listed = {e[1] for _, entries in wiki.categories() for e in entries if e[0] == "node"}
         listed |= {ref for _, items in wiki.effect_categories() for ref, _ in items}
-        for ref in fx.builtin_refs():
+        for ref in wiki.known_refs():
             if ref != "builtin:nodes/picture":
                 self.assertIn(ref, listed, ref)
+
+    def test_the_menu_has_no_node_that_is_missing(self):
+        for ref in wiki.nodemenu.placed():
+            self.assertIn(ref, wiki.known_refs(), ref)
 
     def test_legend_colours_are_the_node_editors(self):
         try:

@@ -387,7 +387,7 @@ float negate_if(float value, uint condition)
 float noise_grad(uint hash, float x)
 {
   uint h = hash & 15u;
-  float g = 1u + (h & 7u);
+  float g = float(1u + (h & 7u));
   return negate_if(g, h & 8u) * x;
 }
 float noise_grad(uint hash, float x, float y)
@@ -449,13 +449,13 @@ float noise_perlin(vec3 vec)
   float v = fade(fy);
   float w = fade(fz);
   float r = tri_mix(noise_grad(hash_int3(X, Y, Z), fx, fy, fz),
-                    noise_grad(hash_int3(X + 1, Y, Z), fx - 1, fy, fz),
-                    noise_grad(hash_int3(X, Y + 1, Z), fx, fy - 1, fz),
-                    noise_grad(hash_int3(X + 1, Y + 1, Z), fx - 1, fy - 1, fz),
-                    noise_grad(hash_int3(X, Y, Z + 1), fx, fy, fz - 1),
-                    noise_grad(hash_int3(X + 1, Y, Z + 1), fx - 1, fy, fz - 1),
-                    noise_grad(hash_int3(X, Y + 1, Z + 1), fx, fy - 1, fz - 1),
-                    noise_grad(hash_int3(X + 1, Y + 1, Z + 1), fx - 1, fy - 1, fz - 1),
+                    noise_grad(hash_int3(X + 1, Y, Z), fx - 1.0, fy, fz),
+                    noise_grad(hash_int3(X, Y + 1, Z), fx, fy - 1.0, fz),
+                    noise_grad(hash_int3(X + 1, Y + 1, Z), fx - 1.0, fy - 1.0, fz),
+                    noise_grad(hash_int3(X, Y, Z + 1), fx, fy, fz - 1.0),
+                    noise_grad(hash_int3(X + 1, Y, Z + 1), fx - 1.0, fy, fz - 1.0),
+                    noise_grad(hash_int3(X, Y + 1, Z + 1), fx, fy - 1.0, fz - 1.0),
+                    noise_grad(hash_int3(X + 1, Y + 1, Z + 1), fx - 1.0, fy - 1.0, fz - 1.0),
                     u,
                     v,
                     w);

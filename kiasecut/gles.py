@@ -96,6 +96,26 @@ def _floats_in_array_constructors(text):
     return "".join(out) + text[pos:]
 
 
+# gradient_eval(float p[32], vec4 c[32], ...) takes two arrays by value, which the Adreno compiler gets wrong the same way
+# (colour ramps come out in steps). Each gradient it is called with gets its own copy that reads the uniforms itself.
+GRADIENT_FN = re.compile(r"vec4 gradient_eval\(float p\[32\], vec4 c\[32\], (.*?)\) \{(.*?)\n\}\n", re.S)
+GRADIENT_CALL = re.compile(r"\bgradient_eval\((\w+), (\w+), ")
+
+
+def _gradient_per_uniform(text):
+    fn = GRADIENT_FN.search(text)
+    if not fn:
+        return text
+    pairs = list(dict.fromkeys(GRADIENT_CALL.findall(text[:fn.start()] + text[fn.end():])))
+    copies = []
+    for i, (pos, col) in enumerate(pairs):
+        body = re.sub(r"\bc\[", col + "[", re.sub(r"\bp\[", pos + "[", fn.group(2)))
+        copies.append(f"vec4 gradient_eval_{i}_({fn.group(1)}) {{{body}\n}}\n")
+        text = re.sub(r"\bgradient_eval\(%s, %s, " % (pos, col), f"gradient_eval_{i}_(", text)
+    fn = GRADIENT_FN.search(text)
+    return text[:fn.end()] + "".join(copies) + text[fn.end():]
+
+
 # Blender's compatible_mod: an int times a float
 INT_TIMES_FLOAT = ("return a - N * b;", "return a - float(N) * b;")
 PASTE_MACRO = re.compile(r"^#define[ \t]+(\w+)\(\s*(\w+)\s*\)[ \t]*(.*##.*)$", re.M)
@@ -120,7 +140,7 @@ def converted(source):
     if not first.startswith("#version 330"):
         raise GLError(f"expected a #version 330 shader, got {first!r}")
     rest = CURVE_EASE_FN.sub(lambda m: CURVE_EASE_MACRO, rest, count=1).replace(*INT_TIMES_FLOAT)
-    rest = _paste_macros(rest)
+    rest = _gradient_per_uniform(_paste_macros(rest))
     return ES_HEAD + _floats_in_array_constructors(_undefined_as_zero(rest))
 
 

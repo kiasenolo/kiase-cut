@@ -33,6 +33,13 @@ class ConvertTest(unittest.TestCase):
         self.assertIn("#if 0", out)
         self.assertEqual(out.count("#if LINEARIZE"), 1)
 
+    def test_gradient_eval_reads_the_uniforms_not_array_arguments(self):
+        src = ("#version 330\nvec4 gradient_eval(float p[32], vec4 c[32], int n, float x) {\n    return c[n] * p[0];\n}\n"
+               "uniform float a_p[32]; uniform vec4 a_c[32];\nvec4 f() { return gradient_eval(a_p, a_c, 2, 0.5); }\n")
+        out = gles.converted(src)
+        self.assertIn("vec4 gradient_eval_0_(int n, float x) {\n    return a_c[n] * a_p[0];", out)
+        self.assertIn("return gradient_eval_0_(2, 0.5);", out)
+
     def test_integers_in_float_array_constructors_are_floats(self):
         out = gles.converted("#version 330\nconst float A[4] = float[4](0, -755.9907, 4.87202079e-06, 12);\nint k = 3;\n")
         self.assertIn("float[4](0.0, -755.9907, 4.87202079e-06, 12.0)", out)

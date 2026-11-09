@@ -55,6 +55,14 @@ class ExprTests(unittest.TestCase):
         self.assertEqual(self.v("1 / 0"), math.inf)
         self.assertEqual(expr.safe("1 / 0", default=7.0), 7.0)
 
+    def test_what_has_no_number_is_not_an_error_either(self):
+        """sin(Infinity), floor(1 / 0)…: Python's math raises there (ValueError, OverflowError), which safe() does not catch -
+        the renderers would have stopped on it. As in JavaScript they are NaN, so safe() gives its default."""
+        for text in ("sin(1 / 0)", "floor(1 / 0)", "round(0 / 0)", "noise(1 / 0)", "random(1 / 0)", "(1 / 0) % 2", "[1, 2][1 / 0]",
+                     "[1, 2][0 / 0]", "wiggle(1 / 0, 1)", "trunc(0 / 0)"):
+            self.assertEqual(expr.safe(text, {"time": 1.0}, default=7.0), 7.0 if text[0] != "[" else 0.0, text)
+        self.assertEqual(expr.evaluate("'x' + 1 / 0"), "xinf")
+
     def test_names(self):
         self.assertEqual(expr.names("input * k + Math.sin(time) + pi"), {"input", "k", "time"})
 

@@ -368,7 +368,7 @@ def _div(a, b):
 
 def _js_mod(a, b):
     a, b = _num(a), _num(b)
-    return math.nan if b == 0 else math.fmod(a, b)
+    return math.nan if b == 0 or math.isinf(a) else math.fmod(a, b)
 
 
 def _add(a, b):
@@ -380,7 +380,7 @@ def _add(a, b):
 
 
 def _text(v):
-    if isinstance(v, float) and v == int(v) and abs(v) < 1e15:
+    if isinstance(v, float) and abs(v) < 1e15 and v == int(v):
         return str(int(v))
     return str(v)
 
@@ -435,8 +435,8 @@ def run(tree, env):
         a, i = run(tree[1], env), run(tree[2], env)
         if not isinstance(a, list):
             raise ExprError("[編號] 只能用在清單上")
-        i = int(_num(i))
-        return a[i] if 0 <= i < len(a) else 0.0
+        i = _num(i)
+        return a[int(i)] if 0 <= i < len(a) else 0.0             # (NaN and Infinity are no place in it)
     if k == "call":
         name, args = tree[1], [run(x, env) for x in tree[2]]
         try:
@@ -450,8 +450,12 @@ def run(tree, env):
             if name not in ("len",):
                 args = [_num(a) for a in args]
             return fn(*args)
+        except ExprError:
+            raise
         except TypeError:
             raise ExprError(f"{name}() 的引數數量不對") from None
+        except (ValueError, OverflowError, ZeroDivisionError):   # sin(Infinity), floor(1 / 0), noise(NaN): not a number, as in JavaScript
+            return math.nan
     raise ExprError("表達式有讀不懂的東西")
 
 

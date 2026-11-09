@@ -835,6 +835,12 @@ KiaseCut is free software under the GNU General Public License, version 3 or (at
 option) any later version: see `LICENSE`. This covers every version published so far, from
 the first commit on. It comes with no warranty.
 
+The exception is the pictures drawn by hand for the wiki's demos: `images/` and `images.free`
+(the Lunacy document they are drawn in), and `kiasecut/wikiimg/` (those pictures run through the
+filters, made by `tools/make_wiki_demos.py`). They are © 2026 KIASENOLO under CC BY 4.0
+(`LICENSES/CC-BY-4.0.txt`): use, change and share them, also commercially, with credit to
+"KIASENOLO". `REUSE.toml` says it for each file.
+
 Taken from elsewhere:
 
 | In KiaseCut | From | License |
@@ -853,7 +859,7 @@ Taken from elsewhere:
 Each was exported with `compositor_to_hyprshade.py` or read from Blender's shaders, then rewritten by
 hand; its header names the Blender files. GPL-2.0-or-later code can be used under GPL-3.0, which is
 how KiaseCut carries it. The license texts are in `LICENSES/` (`GPL-2.0-or-later.txt`,
-`CC0-1.0.txt`; KiaseCut's own is `LICENSE`). Blender: <https://www.blender.org>, source at
+`CC0-1.0.txt`, `CC-BY-4.0.txt`; KiaseCut's own is `LICENSE`). Blender: <https://www.blender.org>, source at
 <https://projects.blender.org/blender/blender>, © Blender Authors.
 
 Used, not included: PySide6 / Qt (LGPL-3.0), MLT (LGPL-2.1), FFmpeg (LGPL or GPL, by

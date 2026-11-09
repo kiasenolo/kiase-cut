@@ -12,7 +12,7 @@ import shiboken6
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation
 from PySide6.QtGui import QColor, QCursor, QIcon, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QLineEdit, QPlainTextEdit, QPushButton,
-                               QMenuBar, QRadioButton, QScrollBar, QStyle, QStyleOptionSlider, QTabBar, QTextEdit, QToolButton,
+                               QMenuBar, QRadioButton, QScrollBar, QStyle, QStyleOptionSlider, QTabBar, QTextBrowser, QTextEdit, QToolButton,
                                QWidget)
 
 REST = QColor("#262626")             # Color(.15)
@@ -351,6 +351,8 @@ class FieldFader(QObject):
 def attach_field(widget):
     """Give an input field its frame (once): line edits and text edits, spin boxes, combo boxes - not the line edit inside one."""
     if not isinstance(widget, (QLineEdit, QAbstractSpinBox, QComboBox, QPlainTextEdit, QTextEdit)):
+        return
+    if isinstance(widget, QTextBrowser):             # (a page to read - the wiki, the filter document - is not a field to type in: it does not light up)
         return
     if widget.property("kcField") is not None or widget.property("kcMaking") or isinstance(widget.parentWidget(), (QAbstractSpinBox, QComboBox)):
         return

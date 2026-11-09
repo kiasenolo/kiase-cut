@@ -87,6 +87,11 @@ class _Drag(QObject):
         self.area = None
         self.glide = None
         appevents.watch(self, (QEvent.MouseButtonPress, QEvent.Wheel), self._press)
+        # a drag whose release never comes (a screen plugged in or out, the window losing the focus under it) must not go on
+        # holding every press of the program: it ends there
+        for sig in (app.screenAdded, app.screenRemoved, app.primaryScreenChanged, app.focusWindowChanged):
+            sig.connect(lambda *_a: self._end(None))
+        app.applicationStateChanged.connect(lambda st: self._end(None) if st != Qt.ApplicationActive else None)
 
     def _stop_glide(self):
         if self.glide is not None:
@@ -148,7 +153,9 @@ class _Drag(QObject):
         if t == QEvent.MouseButtonRelease and e.button() == Qt.MiddleButton:
             self._end(glide=True)
             return True
-        return t in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick)   # other buttons wait
+        if t in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick, QEvent.KeyPress):    # (any other press: the drag is over,
+            self._end()                                                                    #  and the press is not lost)
+        return False
 
     def _scroll(self, dx, dy):
         """Move the content by (dx, dy) scroll units; the fractions wait for the next move."""

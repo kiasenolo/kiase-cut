@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QPlainTextEdit, QScrollArea, QVBoxLayout, QWidget  # noqa: E402
 
@@ -25,6 +25,17 @@ def drag(w, a, b, button=Qt.MiddleButton):
     QTest.mousePress(w, button, NONE, a)
     QTest.mouseMove(w, b)
     QTest.mouseRelease(w, button, NONE, b)
+
+
+class _Count(QObject):
+    def __init__(self, parent, got):
+        super().__init__(parent)
+        self.got = got
+
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.MouseButtonPress:
+            self.got.append(e)
+        return False
 
 
 class MiddleDragTests(unittest.TestCase):
@@ -69,6 +80,18 @@ class MiddleDragTests(unittest.TestCase):
         QTest.mouseMove(vp, QPoint(150, 220))                     # +10 more, on top of the wheel
         QTest.mouseRelease(vp, Qt.MiddleButton, NONE, QPoint(150, 220))
         self.assertEqual(self.bar.value(), 500 + 20 + 3 * self.bar.singleStep() + 10)
+
+    def test_a_drag_that_lost_its_release_ends_and_keeps_the_next_press(self):
+        vp = self.scroll.viewport()
+        QTest.mousePress(vp, Qt.MiddleButton, NONE, QPoint(150, 250))
+        QTest.mouseMove(vp, QPoint(150, 230))
+        self.assertIsNotNone(QApplication.overrideCursor())
+        got = []
+        self.label.installEventFilter(_Count(self.label, got))
+        QTest.mousePress(self.label, Qt.LeftButton, NONE, QPoint(10, 10))      # (the release never came)
+        QTest.mouseRelease(self.label, Qt.LeftButton, NONE, QPoint(10, 10))
+        self.assertIsNone(QApplication.overrideCursor())
+        self.assertTrue(got)                                                   # (the press reached its widget)
 
     def test_box_without_scroll_hands_it_on(self):
         self.bar.setValue(0)

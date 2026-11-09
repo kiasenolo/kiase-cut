@@ -50,6 +50,17 @@ class EditTests(unittest.TestCase):
         with self.assertRaises(edit.EditError):
             edit.move(p, "c1", 0, "t2")
 
+    def test_split_leaves_no_fade_at_the_cut(self):
+        p = proj()
+        c3 = edit.find(p, "c3")[1]
+        c3["fade_in_us"] = S // 2                                         # only a fade in: the right half got a copy of it
+        right = edit.split(p, "c3", 4 * S)
+        self.assertEqual((c3["fade_in_us"], right.get("fade_in_us", 0)), (S // 2, 0))
+        c3["fade_out_us"] = 0
+        right["fade_out_us"] = S // 4
+        last = edit.split(p, right["id"], 5 * S)
+        self.assertEqual((right["fade_out_us"], last["fade_in_us"] if "fade_in_us" in last else 0, last["fade_out_us"]), (0, 0, S // 4))
+
     def test_split_keeps_animation_in_place(self):
         p = proj()
         c1 = animated(edit.find(p, "c1")[1])

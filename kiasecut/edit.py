@@ -342,8 +342,9 @@ def split(proj, clip_id, at_us):
     right["source_start_us"] = round(c.get("source_start_us", 0) + d * project.speed(c))
     shift_keys(right, d)
     c["duration_us"] = d
-    if c.get("fade_out_us"):                  # fades belong to the outer ends
+    if right.get("fade_in_us"):               # fades belong to the outer ends
         right["fade_in_us"] = 0
+    if c.get("fade_out_us"):
         c["fade_out_us"] = 0
     t["clips"].append(right)
     _sort(t)
@@ -606,24 +607,40 @@ def duplicate_moved(root, level, clip_ids, d_us=0, d_rows=0, moves=None, t_of=No
     (d_us 0) each copy goes just above its original (the free row above, else a new one) and
     gets moves[original id] ({x, y}) at clip time t_of(original id). Returns the new clips."""
     payload = copy_clips(level, clip_ids)
-    pictures, sound = display_groups(level)
+    held = {}                                            # a group's clips are copied inside it, among its tracks
     for item in payload["items"]:
-        c = item["clip"]
-        src = track_by_id(level, item["track"])
-        group = sound if src["kind"] == "audio" else pictures
-        i = next(j for j, x in enumerate(group) if x is src)
-        s, e = c["start_us"] + d_us, end(c) + d_us
-        if d_us == 0 and not d_rows:                     # in place: on top of the original
-            above = group[i - 1] if i > 0 and src["kind"] != "audio" else None
-            if above is None or above["kind"] != src["kind"] or free_range(above, s, e) is None:
-                above = add_track(level, src["kind"], near_id=src["id"])
-                pictures, sound = display_groups(level)
-            item["track"] = above["id"]
-        elif 0 <= i + int(d_rows) < len(group):
-            dst = group[i + int(d_rows)]
-            if dst["kind"] == src["kind"]:
-                item["track"] = dst["id"]
-    new = paste_clips(root, level, payload, max(0, payload["anchor_us"] + int(d_us)))
+        g = group_of(level, track_by_id(level, item["track"]))
+        held.setdefault(id(g), (level if g is None else g, []))[1].append(item)
+    made = {}
+    for holder, items in held.values():
+        pictures, sound = display_groups(holder)
+        for item in items:
+            c = item["clip"]
+            src = track_by_id(holder, item["track"])
+            group = sound if src["kind"] == "audio" else pictures
+            i = next(j for j, x in enumerate(group) if x is src)
+            s, e = c["start_us"] + d_us, end(c) + d_us
+            if d_us == 0 and not d_rows:                 # in place: on top of the original
+                above = group[i - 1] if i > 0 and src["kind"] != "audio" else None
+                if above is None or above["kind"] != src["kind"] or free_range(above, s, e) is None:
+                    above = add_track(holder, src["kind"], near_id=src["id"])
+                    pictures, sound = display_groups(holder)
+                item["track"] = above["id"]
+            elif 0 <= i + int(d_rows) < len(group):
+                dst = group[i + int(d_rows)]
+                if dst["kind"] == src["kind"]:
+                    item["track"] = dst["id"]
+        anchor = items[0]["clip"]["start_us"]            # (the items are in the order of their starts)
+        at = max(0, anchor + int(d_us))
+        if holder is not level:                          # the group grows to hold them, as far as it can
+            last = max(end(item["clip"]) for item in items) + at - anchor
+            if last > holder["duration_us"]:
+                trim_end(level, holder["id"], holder["start_us"] + last)
+            if last > holder["duration_us"]:
+                raise EditError("群組後面沒有空間放這些片段")
+        copies = paste_clips(root, holder, {"anchor_us": anchor, "items": items}, at)
+        made.update((id(item), c) for item, c in zip(items, copies))
+    new = [made[id(item)] for item in payload["items"]]
     for item, c in zip(payload["items"], new):
         old = item["clip"]["id"]
         for key, v in ((moves or {}).get(old) or {}).items():
@@ -1575,6 +1592,19 @@ def set_speed(proj, clip_id, value):
     return _set_speed(proj, clip_id, value)
 
 
+def _room_after(proj, t, c, want):
+    """How long clip c of track t can get when it is to last `want`: up to the next clip of its track and, in a group,
+    the group's end - the group grows for it as far as it can itself (as trim_end's)."""
+    room = free_range(t, c["start_us"], end(c), ignore=c)[1] - c["start_us"]
+    g = group_of(proj, t)
+    if g is not None:
+        last = c["start_us"] + min(want, room)
+        if last > g["duration_us"]:
+            trim_end(proj, g["id"], g["start_us"] + last)
+        room = min(room, g["duration_us"] - c["start_us"])
+    return room
+
+
 def _set_speed(proj, clip_id, value):
     """A clip's speed: its source plays value times as fast. The clip keeps the same stretch
     of its source, so it gets shorter or longer - as far as the room after it allows (and its
@@ -1585,11 +1615,10 @@ def _set_speed(proj, clip_id, value):
     old = project.speed(c)
     k = old / value                                      # the clip's new length / its old one
     dur = c["duration_us"] * k
-    room = free_range(t, c["start_us"], end(c), ignore=c)[1] - c["start_us"]
     src_len = source_length(c)
     if src_len is not None and project.frozen(c) is None:
-        room = min(room, (src_len - c.get("source_start_us", 0)) / value)
-    new_dur = int(max(MIN_US, min(dur, room)))
+        dur = min(dur, (src_len - c.get("source_start_us", 0)) / value)
+    new_dur = int(max(MIN_US, min(dur, _room_after(proj, t, c, dur))))
     scale_keys(c, new_dur / c["duration_us"] if c["duration_us"] else k)
     for f in ("fade_in_us", "fade_out_us"):
         if c.get(f):
@@ -1641,8 +1670,7 @@ def set_speed_curve(proj, clip_id, points):
     span = c["duration_us"] * project.speed(c)          # (the part of the source it plays)
     pts = _clean_curve(points if points is not None else (old or {}).get("points") or CURVE_DEFAULT)
     mean = project.curve_mean(pts)
-    room = free_range(t, c["start_us"], end(c), ignore=c)[1] - c["start_us"]
-    new_dur = int(max(MIN_US, min(span / mean, room)))
+    new_dur = int(max(MIN_US, min(span / mean, _room_after(proj, t, c, span / mean))))
     scale_keys(c, new_dur / c["duration_us"] if c["duration_us"] else 1.0)
     for f in ("fade_in_us", "fade_out_us"):
         if c.get(f):
@@ -3241,7 +3269,8 @@ def add_track(proj, kind, near_id=None):
     if kind not in ("video", "text", "audio"):
         raise EditError(f"unknown track kind {kind}")
     n = sum(1 for t in proj["tracks"] if t["kind"] == kind) + 1
-    track = {"id": new_track_id(proj), "kind": kind, "name": f"{kind} {n}", "clips": []}
+    tid = "g" + uuid.uuid4().hex[:8] if project.is_group(proj) else new_track_id(proj)   # (a group's tracks: as make_group names them)
+    track = {"id": tid, "kind": kind, "name": f"{kind} {n}", "clips": []}
     near = next((i for i, t in enumerate(proj["tracks"]) if t["id"] == near_id), None)
     if near is not None and (proj["tracks"][near]["kind"] == "audio") == (kind == "audio"):
         # pictures: a later index is a higher layer (higher on screen); audio rows go down

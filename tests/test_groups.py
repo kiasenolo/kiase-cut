@@ -43,6 +43,37 @@ class GroupTests(unittest.TestCase):
         c2t, c2 = edit.find(p, "c2")
         self.assertAlmostEqual(c2["transform"]["x"] + project.anchored(g, c2t, c2["start_us"])[0], 0.9)
 
+    def test_copies_of_a_groups_clips_stay_in_it(self):
+        """Alt+drag / 複製圖層 of a clip inside a group: the copy goes onto the group's tracks (it used to end in StopIteration)."""
+        p = scene()
+        g = edit.make_group(p, p, ["c1", "c4"])                           # c1 0-2, c4 1-4: the group lasts 4 s
+        new = edit.duplicate_moved(p, p, ["c4"], moves={})                # in place: right above c4
+        self.assertEqual(len(new), 1)
+        tracks = [t for t in g["tracks"] if any(k is new[0] for k in t["clips"])]
+        self.assertEqual(len(tracks), 1)
+        self.assertTrue(tracks[0]["id"].startswith("g"))                  # (a group's track, named as make_group's)
+        self.assertEqual(new[0]["start_us"], edit.find(p, "c4")[1]["start_us"])
+        new = edit.duplicate_moved(p, p, ["c1"], d_us=S)                  # 1 s later: still inside it
+        self.assertIs(edit.group_of(p, edit.find(p, new[0]["id"])[0]), g)
+        edit.duplicate_moved(p, p, ["c4"], d_us=2 * S)                    # past its end: the group grows...
+        self.assertEqual(g["duration_us"], 6 * S)
+        edit.move(p, "c2", 6 * S, edit.find(p, g["id"])[0]["id"])         # ...as far as the next clip of its track lets it
+        with self.assertRaises(edit.EditError):
+            edit.duplicate_moved(p, p, ["c4"], d_us=3 * S)
+        self.assertEqual(g["duration_us"], 6 * S)
+
+    def test_a_slowed_clip_stays_inside_its_group(self):
+        p = scene()
+        v = clip("v1", 0, 2 * S, type="video", media={"path": "v.mp4", "width": 1920, "height": 1080, "duration_us": 20 * S})
+        p["tracks"][1]["clips"] = [v]
+        g = edit.make_group(p, p, ["v1"])                                 # on t1, c2 of t0 is not in its way
+        edit.set_speed(p, "v1", 0.5)                                      # twice as long: the group grows with it
+        self.assertEqual((v["duration_us"], g["duration_us"]), (4 * S, 4 * S))
+        edit.move(p, "c2", 5 * S, "t1")                                   # a clip right after the group...
+        edit.trim_end(p, g["id"], 5 * S)
+        edit.set_speed(p, "v1", 0.25)                                     # ...stops it, and the clip with it
+        self.assertEqual((v["duration_us"], g["duration_us"]), (5 * S, 5 * S))
+
     def test_ungroup_many(self):
         p = scene()
         g1 = edit.make_group(p, p, ["c1", "c4"])

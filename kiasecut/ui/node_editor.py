@@ -25,8 +25,9 @@ from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence,
 from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QColorDialog, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
-from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
+from .. import assets, curves, dynamic, fx, menugroups, nodegraph as ng, nodemenu
 from . import appevents, motion, touch, viewglide
+from .groupmenu import GroupMenu
 from .searchbox import SearchBox
 from .toolbarscroll import ToolbarScroll
 from .wheel import pinch as wheel_pinch
@@ -2659,6 +2660,12 @@ class NodeEditor(QWidget):
         if q.type == "bool":
             self.paramEdited.emit(self.eid, key, not bool(v))
         elif q.type == "menu":
+            groups = menugroups.of(q.items)
+            if groups:                                          # (a Math node's 運算, a Mix node's 混合模式: groups side by side)
+                self.group_menu = GroupMenu(self, groups, q.items[fx.menu_index(q, v)] if q.items else None,
+                                            lambda name: self.paramEdited.emit(self.eid, key, name))
+                self.group_menu.show_at(gp)
+                return
             menu = QMenu(self)
             for name in q.items:
                 menu.addAction(name, lambda name=name: self.paramEdited.emit(self.eid, key, name))

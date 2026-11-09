@@ -693,8 +693,12 @@ class NodeEditorTests(unittest.TestCase):
         shown = []
         ed.popup = lambda menu, pos: shown.append([x.text() for x in menu.actions()])
         self.click(ed, field("op"))
-        self.assertEqual(len(shown), 1)
-        self.assertIn("相乘", shown[0])
+        self.assertEqual(shown, [])                                     # (the long menus open their choices in groups side by side, not as a plain menu)
+        menu = ed.group_menu
+        self.assertEqual([lst.item(0).text() for lst in menu.lists][:2], ["相加", "最小"])
+        lst = menu.lists[0]
+        lst.itemClicked.emit(lst.item(2))
+        self.assertEqual(got[-1], ("e1", "math1.op", "相乘"))
         self.click(ed, field("value"))                                  # (a click: a box to type in)
         self.assertIsNotNone(ed.edit_proxy)
         ed.edit_proxy.widget().setText("2.5")

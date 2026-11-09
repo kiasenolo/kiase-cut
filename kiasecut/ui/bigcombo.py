@@ -1,10 +1,11 @@
 """A combo box with many items (the fonts: hundreds) opens a search box over a list with a scroll bar of its own, in place of Qt's list of
 every item, which has to size them all each time and scrolls by arrows only. Any combo box (not editable: those have a search of their own, the
 completer) with more than BIG items; polish() in look.py calls watch()."""
-import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QAbstractItemView, QComboBox, QFrame, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout
+
+from .groupmenu import GroupMenu
 
 BIG = 24                                           # items: more than this opens the list below
 ROWS = 14                                          # the list shows this many at a time
@@ -93,12 +94,17 @@ class Opener(QObject):
     """Watches the combo boxes: a press (or the keys that open the list) on a big one opens a Popup instead of Qt's list."""
 
     def eventFilter(self, o, ev):
-        if not isinstance(o, QComboBox) or o.isEditable() or o.count() <= BIG or not o.isEnabled():
+        groups = o.property("kcGroups") if isinstance(o, QComboBox) else None
+        if not isinstance(o, QComboBox) or o.isEditable() or not (groups or o.count() > BIG) or not o.isEnabled():
             return False
         t = ev.type()
         if t == QEvent.MouseButtonPress and ev.button() == Qt.LeftButton or (
                 t == QEvent.KeyPress and (ev.key() in (Qt.Key_Space, Qt.Key_F4) or ev.key() == Qt.Key_Down and ev.modifiers() & Qt.AltModifier)):
-            o.popup = Popup(o)
+            if groups:                                  # (menugroups: the choices in groups side by side)
+                o.popup = GroupMenu(o, groups, o.currentText(), lambda name, o=o: (o.setCurrentIndex(o.findText(name)), o.activated.emit(o.currentIndex())))
+                o.popup.show_at(o.mapToGlobal(QPoint(0, o.height())))
+            else:
+                o.popup = Popup(o)
             return True
         return False
 

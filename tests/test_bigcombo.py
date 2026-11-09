@@ -10,7 +10,9 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QComboBox, QMenu  # noqa: E402
 
+from kiasecut import fx, menugroups  # noqa: E402
 from kiasecut.ui import bigcombo, searchbox  # noqa: E402
+from kiasecut.ui.groupmenu import GroupMenu  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
@@ -61,6 +63,33 @@ class BigComboTests(unittest.TestCase):
         self.assertEqual(picked, ["builtin:item5"])
         box.search.setText("zzz")
         self.assertFalse(box.results.item(0).flags() & Qt.ItemIsEnabled)
+
+
+class GroupTests(unittest.TestCase):
+    def test_the_long_node_menus_have_groups_that_hold_every_choice_once(self):
+        for ref, name in (("builtin:nodes/math", "op"), ("builtin:nodes/mix", "blend"), ("builtin:nodes/vector_math", "op")):
+            q = next(p for p in fx.get(ref).params if p.name == name)
+            groups = menugroups.of(q.items)
+            self.assertIsNotNone(groups, ref)
+            flat = [n for _t, g in groups for n in g]
+            self.assertEqual(sorted(flat), sorted(q.items), ref)
+        self.assertIsNone(menugroups.of(["a", "b"]))
+
+    def test_a_clip_s_blend_modes_are_grouped_and_a_click_picks(self):
+        c = QComboBox()
+        names = ["正常", "正片疊底", "濾色", "疊加", "變暗", "變亮", "顏色減淡", "顏色加深", "強光", "柔光", "差值", "排除", "相加"]
+        c.addItems(names)
+        c.setProperty("kcGroups", menugroups.of(names))
+        c.show()
+        bigcombo.watch(c)
+        got = []
+        c.activated.connect(got.append)
+        QTest.mouseClick(c, Qt.LeftButton)
+        pop = c.popup
+        self.assertIsInstance(pop, GroupMenu)
+        lst = pop.lists[1]
+        lst.itemClicked.emit(lst.item(1))
+        self.assertEqual((c.currentText(), got), ("正片疊底", [c.currentIndex()]))
 
 
 if __name__ == "__main__":

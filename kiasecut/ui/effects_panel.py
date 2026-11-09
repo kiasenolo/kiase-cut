@@ -32,7 +32,7 @@ from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
                                QPushButton, QToolButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, fx, gizmos, nodegraph
+from .. import curves, edit, fx, gizmos, menugroups, nodegraph
 from .colorpick import pick_color, qcolor, rgba
 from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, key_button, kind_tag,
                         section)
@@ -577,6 +577,7 @@ class EffectsPanel(QWidget):
         elif p.type == "menu":
             box = ComboBox()
             box.addItems(p.items)
+            box.setProperty("kcGroups", menugroups.of(p.items))      # (a long menu with groups opens them side by side: bigcombo)
             box.activated.connect(lambda i, g=group, k=p.name, items=p.items: (self._queue(g, k, items[i]), self._flush()))
             self.widgets[(group, p.name)] = box
             row.addWidget(box, 1)

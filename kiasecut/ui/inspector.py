@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, textures, build, components, curves, edit, mapping, normalize, project, textlayout, textvars, viz
+from .. import assets, textures, build, components, curves, edit, mapping, menugroups, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons, motion
 from .colorpick import pick_color, qcolor, rgba
@@ -596,6 +596,7 @@ class Inspector(QWidget):
                 blend.setPlaceholderText("--")
                 for name, k in ((PASS_THROUGH,) if c["type"] == "group" else ()) + BLEND_NAMES:
                     blend.addItem(name, k)
+                blend.setProperty("kcGroups", menugroups.of([blend.itemText(i) for i in range(blend.count())]))     # (groups side by side: bigcombo)
                 blend.setToolTip("這個片段和下面的畫面怎麼混合" + ("。穿透：群組裡的片段直接和群組下面的畫面混合"
                                                               "（像 Photoshop 的群組；群組有特效時當作正常）"
                                                               if c["type"] == "group" else ""))

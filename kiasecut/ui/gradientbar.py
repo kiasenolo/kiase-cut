@@ -1,6 +1,6 @@
 """A gradient editor like Photoshop's: a bar showing the gradient with a marker under it for each
-colour stop. Click under the bar to add a stop (it takes the colour the gradient has there), drag a
-marker to move it, double-click it (or 顏色) to change its colour and opacity, Delete or 刪除 removes it
+colour stop. Click on or under the bar to add a stop (it takes the colour the gradient has there), drag a
+marker to move it (it goes on past the others, which stay; the stops are in order of place again), double-click it (or 顏色) to change its colour and opacity, Delete or 刪除 removes it
 (two stay). 位置 types the selected stop's place; 反轉 flips the gradient.
 
 The value is a list of stops [[position 0 - 1, [r, g, b, a]], ...] in order (assets.stops_of).
@@ -118,7 +118,7 @@ class GradientBar(QWidget):
         pos = e.position()
         i = self.marker_at(pos)
         if i is None:
-            if pos.y() < self.bar().bottom() - 2 or pos.y() > self.bar().bottom() + MARK * 2 + 6:
+            if pos.y() < self.bar().top() or pos.y() > self.bar().bottom() + MARK * 2 + 6:
                 return
             x = self.pos_of(pos.x())                           # a new stop, with the gradient's colour there
             self.stops.append([x, _at(self.stops, x)])
@@ -137,13 +137,17 @@ class GradientBar(QWidget):
         if not self.dragging:
             self.setCursor(Qt.PointingHandCursor if self.marker_at(e.position()) is not None else Qt.ArrowCursor)
             return
-        x = round(self.pos_of(e.position().x()), 3)
-        lo = self.stops[self.sel - 1][0] if self.sel > 0 else 0.0
-        hi = self.stops[self.sel + 1][0] if self.sel + 1 < len(self.stops) else 1.0
-        self.stops[self.sel][0] = min(max(x, lo), hi)          # (a stop does not pass its neighbours)
+        self._place(round(self.pos_of(e.position().x()), 3))
         self.changed.emit(copy.deepcopy(self.stops))
         self.selected.emit()
         self.update()
+
+    def _place(self, x):
+        """The selected stop at x (0 - 1): it goes on past the others, which stay; the stops sort by place again."""
+        stop = self.stops[self.sel]
+        stop[0] = min(max(x, 0.0), 1.0)
+        self.stops.sort(key=lambda s: s[0])                    # (a stable sort: a stop at another's place keeps its side)
+        self.sel = next(i for i, s in enumerate(self.stops) if s is stop)
 
     def mouseReleaseEvent(self, _e):
         if self.dragging:
@@ -195,11 +199,10 @@ class GradientBar(QWidget):
         self.update()
 
     def move_selected(self, pct):
-        lo = self.stops[self.sel - 1][0] if self.sel > 0 else 0.0
-        hi = self.stops[self.sel + 1][0] if self.sel + 1 < len(self.stops) else 1.0
-        self.stops[self.sel][0] = min(max(pct / 100, lo), hi)
+        self._place(pct / 100)
         self.changed.emit(copy.deepcopy(self.stops))
         self.committed.emit(copy.deepcopy(self.stops))
+        self.selected.emit()
         self.update()
 
 

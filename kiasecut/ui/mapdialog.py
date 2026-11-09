@@ -165,7 +165,7 @@ class MapDialog(QDialog):
         self.cfield = CurveField()                         # (a curve of any number of points: its own mode, and what curve(x) reads)
         self.cfield.set_value(m["curve"])
         self.cfield.setMinimumWidth(240)
-        self.cfield.setToolTip("拖曳點調整曲線，雙擊新增點，Delete 刪除；點可以拖過其他的點，其他的點會留著")
+        self.cfield.setToolTip("拖曳點調整曲線，點一下新增點，Delete 刪除；點可以拖過其他的點，其他的點會留著")
         pic = QHBoxLayout()
         pic.addWidget(self.preview, 1)
         pic.addWidget(self.field, 1)

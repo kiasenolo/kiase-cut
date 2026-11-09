@@ -6,7 +6,7 @@ after the selected keys (all of them when none is selected) like the keyframe ed
 import copy
 import math
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 from .. import curves, fx
@@ -56,7 +56,25 @@ class UnitCanvas(CurveCanvas):
         self.sel = {(0, n) for n, r in enumerate(rows) if r[1]}
         d["ref"] = (0, next(n for n, r in enumerate(rows) if r[2]))
 
+    def mousePressEvent(self, e):
+        """One click on the plot where there is no key adds one there (and a drag goes on with it)."""
+        pos = e.position()
+        plain = not e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)
+        if (e.button() == Qt.LeftButton and plain and self.curves and pos.y() <= self.height() - self.B
+                and self._hit(pos)[0] is None):
+            before = [list(map(tuple, c["keys"])) for c in self.curves]
+            self.mouseDoubleClickEvent(e)                       # (adds the key and selects it)
+            if [list(map(tuple, c["keys"])) for c in self.curves] != before and len(self.sel) == 1:
+                ref = next(iter(self.sel))
+                self.drag = {"kind": "keys", "pos": pos, "moved": False, "bounds": self._bounds(),
+                             "orig": {ci: copy.deepcopy(self.curves[ci]["keys"]) for ci, _ in self.sel},
+                             "sel": set(self.sel), "ref": ref}
+                return
+        super().mousePressEvent(e)
+
     def mouseDoubleClickEvent(self, e):
+        if e.type() == QEvent.MouseButtonDblClick:                 # (a second click of a pair lands on the key the first added)
+            return
         super().mouseDoubleClickEvent(e)
 
 

@@ -78,6 +78,19 @@ class DragPastTests(unittest.TestCase):
         QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, QPointF(x0 + 4, 0).toPoint())
         self.assertEqual(len(f.keys), 4)
 
+    def test_one_click_on_the_plot_adds_a_key_and_a_drag_moves_it(self):
+        f = self.field()
+        cv = f.canvas
+        a, b = cv.key_point(0, 1), cv.key_point(0, 2)
+        at = QPointF((a.x() + b.x()) / 2, a.y() - 20)
+        QTest.mousePress(cv, Qt.LeftButton, Qt.NoModifier, at.toPoint())
+        self.assertEqual(len(f.keys), 5)                                       # (at once, not after a second click)
+        QTest.mouseMove(cv, (at + QPointF(10, 0)).toPoint())
+        QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, (at + QPointF(10, 0)).toPoint())
+        self.assertEqual(len(f.keys), 5)
+        xs = [k[0] for k in f.keys]
+        self.assertEqual(xs, sorted(xs))
+
     def test_two_keys_stay_two(self):
         f = self.field(keys=[[0.0, 0.0, 0, 0, 0, 0], [1.0, 1.0, 0, 0, 0, 0]])
         cv = f.canvas
@@ -105,7 +118,7 @@ class InlineTests(unittest.TestCase):
         self.assertEqual(q.name, "curve")
         cv = w.canvas
         a, b = cv.key_point(0, 0), cv.key_point(0, 1)
-        QTest.mouseDClick(cv, Qt.LeftButton, Qt.NoModifier, QPointF((a.x() + b.x()) / 2, a.y() - 30).toPoint())      # (a key added)
+        QTest.mouseClick(cv, Qt.LeftButton, Qt.NoModifier, QPointF((a.x() + b.x()) / 2, a.y() - 30).toPoint())       # (a key added by one click)
         self.assertEqual(edited[-1][0], ng.param_key(n, "curve"))
         self.assertEqual(len(edited[-1][1]), 3)
         mid = cv.key_point(0, 1)                                                                                      # (and dragged)

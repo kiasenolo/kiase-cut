@@ -830,7 +830,7 @@ class RerouteItem(QGraphicsItem):
         self.has_out, self.rows, self.linked, self.drag = True, [], set(), None
         self.title = ""
         self.colour = SOCKET_COLORS["image"]               # (of what feeds it: set by the view as it draws the links)
-        self.shape = "field"                               # (and its shape)
+        self.sock_shape = "field"                          # (and its shape; not "shape": that is QGraphicsItem.shape(), which Qt calls)
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
         self.setPos(node.get("x", 0.0), node.get("y", 0.0))
         self.setZValue(1)
@@ -854,10 +854,10 @@ class RerouteItem(QGraphicsItem):
         return self.colour
 
     def out_shape(self, out=""):
-        return self.shape
+        return self.sock_shape
 
     def in_shape(self, sock="src"):
-        return self.shape
+        return self.sock_shape
 
     def input_pos(self, socket="src"):
         return self.mapToScene(QPointF(0, self.H / 2))
@@ -878,8 +878,8 @@ class RerouteItem(QGraphicsItem):
         p.fillPath(body, QColor(NODE_HEAD))
         p.setPen(QPen(QColor(SELECT) if self.isSelected() else QColor("#000000"), 2 if self.isSelected() else 1))
         p.drawPath(body)
-        NodeItem._socket(p, QPointF(0, self.H / 2), self.colour, self.shape)
-        NodeItem._socket(p, QPointF(self.W, self.H / 2), self.colour, self.shape)
+        NodeItem._socket(p, QPointF(0, self.H / 2), self.colour, self.sock_shape)
+        NodeItem._socket(p, QPointF(self.W, self.H / 2), self.colour, self.sock_shape)
 
 
 class FrameItem(QGraphicsItem):
@@ -1374,7 +1374,7 @@ class GraphView(QGraphicsView):
         for nid, it in self.items_by_id.items():
             if isinstance(it, RerouteItem):
                 it.colour = self.colour_up(nid)
-                it.shape = self.shape_up(nid)
+                it.sock_shape = self.shape_up(nid)
                 it.update()
         for ln, a, b, sock, out in self.link_items:
             ln.style(self.colour_up(a, out), self.items_by_id[b].in_colour(sock))

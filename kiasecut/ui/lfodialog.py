@@ -123,10 +123,10 @@ class LfoDialog(QDialog):
         self.fade.setSuffix(" 秒")
         self.fade.setToolTip("從開始起，擺動的幅度花這麼久慢慢長到完整（0：一開始就是完整的）")
         self.form.addRow("漸入", self.fade)
-        self.width = spin(s["width"], 2)
-        self.width.setRange(0.0, 1.0)
-        self.width.setSingleStep(0.05)
-        self.form.addRow("脈衝寬度（方波高的部分）", self.width)
+        self.pulse = spin(s["width"], 2)
+        self.pulse.setRange(0.0, 1.0)
+        self.pulse.setSingleStep(0.05)
+        self.form.addRow("脈衝寬度（方波高的部分）", self.pulse)
         self.seed = QSpinBox()
         self.seed.setRange(0, 99999)
         self.seed.setValue(s.get("seed", 0))
@@ -149,7 +149,7 @@ class LfoDialog(QDialog):
             self.presets.addItem("我的：" + c["name"], tuple(c["value"]))
         self.form.addRow("曲線預設", self.presets)
         self.form.addRow("cubic-bezier (x1, y1, x2, y2)", box)
-        self.rows = {"loop": self.loop, "width": self.width, "seed": self.seed, "presets": self.presets, "bezier": box}
+        self.rows = {"loop": self.loop, "width": self.pulse, "seed": self.seed, "presets": self.presets, "bezier": box}
         lay.addLayout(self.form)
         self.preview = WavePreview()
         self.field = BezierField()
@@ -173,7 +173,7 @@ class LfoDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         lay.addWidget(self.buttons)
-        for w in (self.rate, self.amp, self.offset, self.phase, self.fade, self.width, self.seed, *self.bz):
+        for w in (self.rate, self.amp, self.offset, self.phase, self.fade, self.pulse, self.seed, *self.bz):
             w.valueChanged.connect(self._changed)
         for w in (self.wave, self.loop, self.unit):
             w.currentIndexChanged.connect(self._changed)
@@ -199,7 +199,7 @@ class LfoDialog(QDialog):
     def spec(self):
         return {"wave": self.wave.currentData(), "unit": self.unit.currentData(), "rate": self.rate.value(),
                 "amp": self.amp.value(), "offset": self.offset.value(), "phase": self.phase.value(),
-                "fade": self.fade.value(), "loop": self.loop.currentData(), "width": self.width.value(),
+                "fade": self.fade.value(), "loop": self.loop.currentData(), "width": self.pulse.value(),
                 "bezier": [b.value() for b in self.bz], "curve": [list(k) for k in self.cfield.keys],
                 "bipolar": self.bipolar.isChecked(), "rel": self.rel.isChecked(), "seed": self.seed.value()}
 

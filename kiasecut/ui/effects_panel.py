@@ -40,7 +40,7 @@ from .mediapick import pick_button
 from .curvefield import CurveField
 from .gradientbar import GradientEditor
 from .vfx_panel import FX_MIME, effect_mime
-from . import searchbox, softdrag
+from . import look, searchbox, softdrag
 
 DEBOUNCE_MS = 350
 SOURCE_NAMES = (("顏色", None), ("圖片", "image"), ("影片", "video"), ("複合片段", "compound"), ("軌道", "track"))
@@ -1049,7 +1049,7 @@ class EffectsPanel(QWidget):
         if btn is not None and srcs:
             r, g, b, *_ = [int(round(x * 255)) for x in (list(srcs[0].get("color") or [1, 1, 1, 1]) + [1])[:4]]
             btn.setProperty("hex", "#%02x%02x%02x" % (r, g, b))
-            btn.setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
+            look.set_sheet(btn, f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
         for key, field in ((("source", group, name), "kind"), (("source_media", group, name), None)):
             box = self.widgets.get(key)
             if box is None:
@@ -1097,11 +1097,11 @@ class EffectsPanel(QWidget):
             btn = w.get((group, p.name))
             if btn is not None and v is MIXED:
                 btn.setText("--")
-                btn.setStyleSheet("")
+                look.set_sheet(btn, "")
             elif btn is not None:
                 r, g, b, a = (int(round(min(1, max(0, x)) * 255)) for x in (list(v) + [1.0] * 4)[:4])
                 btn.setText(f"#{r:02x}{g:02x}{b:02x}" + (f"{a:02x}" if a < 255 else ""))
-                btn.setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
+                look.set_sheet(btn, f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
         else:
             for i in range(3 if p.type == "vec3" else 2):
                 s = w.get((group, p.name, i))

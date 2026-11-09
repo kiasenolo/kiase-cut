@@ -410,6 +410,14 @@ class Style(wheel.Style):
         painter.restore()
 
 
+def set_sheet(widget, sheet):
+    """widget.setStyleSheet(sheet) when it is another one. Qt does not look: the same sheet again polishes the widget again
+    (its metrics and sizes asked of the style, a few dozen calls into Python), and the panels show their values - a colour
+    button's colour among them - at every frame of a scrub and every edit."""
+    if widget.styleSheet() != sheet:
+        widget.setStyleSheet(sheet)
+
+
 def apply(app):
     """Give `app` the look: the style, KDE's colours with the system's accent colour, the style
     sheet (and dark title bars)."""

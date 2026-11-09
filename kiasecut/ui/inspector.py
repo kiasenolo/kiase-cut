@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
 
 from .. import assets, textures, build, components, curves, edit, mapping, menugroups, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
-from . import icons, motion
+from . import icons, look, motion
 from .colorpick import pick_color, qcolor, rgba
 from .library import PictureDrop
 from . import ask
@@ -1122,8 +1122,8 @@ class Inspector(QWidget):
             if (names, text) == getattr(w, "bound_names", None):
                 continue
             w.bound_names = (names, text)
-            w.setStyleSheet("QDoubleSpinBox { border: 1px solid #e0a030; }" if text else
-                            "QDoubleSpinBox { border: 1px solid #b07cff; }" if names else "")
+            look.set_sheet(w, "QDoubleSpinBox { border: 1px solid #e0a030; }" if text else
+                           "QDoubleSpinBox { border: 1px solid #b07cff; }" if names else "")
             w.setToolTip(("表達式：" + text if text else "") + ("\n" if text and names else "") +
                          ("元件參數：" + "、".join(names) if names else ""))
 
@@ -1484,7 +1484,7 @@ class Inspector(QWidget):
             elif f in ("color", "color2"):
                 hx = assets.hex_of(v[f])
                 wid.setText(hx)
-                wid.setStyleSheet(f"background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'};")
+                look.set_sheet(wid, f"background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'};")
             elif isinstance(wid, QCheckBox):
                 wid.blockSignals(True)
                 wid.setChecked(bool(v[f]))
@@ -1585,11 +1585,11 @@ class Inspector(QWidget):
             elif kind == "color":
                 if v is None:
                     wid.setText("--")
-                    wid.setStyleSheet("")
+                    look.set_sheet(wid, "")
                 else:
                     rgb = QColor(v[:7])
                     wid.setText(v)
-                    wid.setStyleSheet(f"background: {v[:7]}; color: {'#000' if rgb.lightness() > 140 else '#fff'};")
+                    look.set_sheet(wid, f"background: {v[:7]}; color: {'#000' if rgb.lightness() > 140 else '#fff'};")
             elif kind == "choice":
                 opts = [x for _n, x in assets.FIELD_INFO[f][2]]
                 self._set_combo(wid, opts.index(v) if v in opts else "--")
@@ -1723,11 +1723,11 @@ class Inspector(QWidget):
             elif kind == "color":
                 if v is None:
                     wid.setText("--")
-                    wid.setStyleSheet("")
+                    look.set_sheet(wid, "")
                 else:
                     hx = assets.hex_of(v)
                     wid.setText(hx)
-                    wid.setStyleSheet(f"background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'};")
+                    look.set_sheet(wid, f"background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'};")
             elif kind == "image":
                 i = wid.findData(v) if v else -1
                 if i < 0 and v:                          # a picture that is not in the media library
@@ -1755,7 +1755,7 @@ class Inspector(QWidget):
                 own = own or any((k.get("places") or {}).get(p["id"]) for k in clips)
             reset = self.widgets[("reset", p["id"])]
             reset.setEnabled(own)
-            reset.setStyleSheet("color: #6fb3ff;" if own else "")
+            look.set_sheet(reset, "color: #6fb3ff;" if own else "")
             self._key_state(self.widgets[("key", "params", p["id"])], ps, clips, ts)
 
     def set_place_edit(self, pid):
@@ -2106,10 +2106,10 @@ class Inspector(QWidget):
             r, g, b = cols[0][:3]
             a = f"{cols[0][3]:02x}" if len(cols[0]) > 3 and cols[0][3] < 255 else ""
             button.setText(f"#{r:02x}{g:02x}{b:02x}{a}")
-            button.setStyleSheet(f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
+            look.set_sheet(button, f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
         else:
             button.setText("--")
-            button.setStyleSheet("")
+            look.set_sheet(button, "")
         self._key_state(self.widgets[("key", "text", key)],
                         [c["text"].get(key) for c in clips], clips, ts)
 

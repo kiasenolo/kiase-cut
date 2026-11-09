@@ -5,7 +5,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
 from .. import curves, edit, lfo, rack
-from . import icons
+from . import icons, look
 from .inspector import KEY_ANIMATED, KEY_ON, SpinBox, key_button
 from .menukeys import Menu
 
@@ -53,11 +53,11 @@ class RackRow(QWidget):
         on = animated and edit.key_at(p["value"], t_us) is not None
         self.key.setIcon(icons.key_icon("on" if on else "off", KEY_ON if on else KEY_ANIMATED if animated else icons.INK))
         driven = lfo.is_lfo(p.get("lfo"))
-        self.lfo.setStyleSheet("color: #6fb3ff;" if driven else "")
+        look.set_sheet(self.lfo, "color: #6fb3ff;" if driven else "")
         self.lfo.setToolTip(lfo.label(p["lfo"]) if driven else "加上 LFO（低頻振盪器）")
         self.spin.setEnabled(not driven)
         has = bool(p.get("expr"))
-        self.expr.setStyleSheet("color: #e0a030;" if has else "")
+        look.set_sheet(self.expr, "color: #e0a030;" if has else "")
         self.expr.setToolTip(("表達式：" + p["expr"]) if has else "加上表達式")
         self.result.setText(f"= {now.get(p['name'], 0.0):.4g}　{p['expr']}" if has else "")
         self.result.setToolTip(p.get("expr", ""))

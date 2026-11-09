@@ -179,10 +179,13 @@ class Tree(QTreeWidget):
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDrop)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)     # Shift / Ctrl pick several
+        self.owner = None                                # the LibraryPanel (Delete asks it)
 
     def event(self, e):
         # Ctrl+D (nothing selected) is this list's own while it has the focus: the window's would clear the clips
-        if e.type() == QEvent.ShortcutOverride and e.key() == Qt.Key_D and e.modifiers() == Qt.ControlModifier:
+        if e.type() == QEvent.ShortcutOverride and (
+                (e.key() == Qt.Key_D and e.modifiers() == Qt.ControlModifier)
+                or (e.key() == Qt.Key_Delete and e.modifiers() == Qt.NoModifier and self.owner is not None)):
             e.accept()
             return True
         return super().event(e)
@@ -190,6 +193,9 @@ class Tree(QTreeWidget):
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_D and e.modifiers() == Qt.ControlModifier:
             self.clearSelection()
+            e.accept()
+        elif e.key() == Qt.Key_Delete and e.modifiers() == Qt.NoModifier and self.owner is not None:
+            self.owner.delete_current()
             e.accept()
         else:
             super().keyPressEvent(e)
@@ -245,7 +251,7 @@ class LibraryPanel(QWidget):
     importRequested = Signal(object)          # folder id or None
     newFolderRequested = Signal(object)       # parent folder id or None
     renameRequested = Signal(str)
-    deleteRequested = Signal(str)
+    deleteRequested = Signal(list)            # item / folder ids (the whole selection when the clicked one is in it)
     moveRequested = Signal(str, object)
     addRequested = Signal(str)                # item id -> add at the playhead
     filesDropped = Signal(list, object)       # paths, folder id or None (dragged in from outside)
@@ -278,6 +284,7 @@ class LibraryPanel(QWidget):
         self.collect_btn.hide()                 # shown while some media sit elsewhere: set_external()
         lay.addWidget(self.collect_btn)
         self.tree = Tree()
+        self.tree.owner = self
         self.tree.moved.connect(self.moveRequested)
         self.tree.filesDropped.connect(self.filesDropped)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -382,6 +389,26 @@ class LibraryPanel(QWidget):
         if not ident.startswith("f"):
             self.addRequested.emit(ident)
 
+    def delete_targets(self, node):
+        """The ids a delete started on node takes: the selection when node is in it (a picked
+        folder already takes what is inside it), else node alone."""
+        if node is None or not node.isSelected():
+            return [node.data(0, ROLE_ID)] if node is not None else []
+        picked = self.tree.selectedItems()
+        out = []
+        for it in picked:
+            up = it.parent()
+            while up is not None and up not in picked:
+                up = up.parent()
+            if up is None:
+                out.append(it.data(0, ROLE_ID))
+        return out
+
+    def delete_current(self):
+        it = self.tree.currentItem()
+        if it is not None and it.isSelected():
+            self.deleteRequested.emit(self.delete_targets(it))
+
     def rename_current(self):
         """F2: rename the current item; False when there is none."""
         it = self.tree.currentItem()
@@ -402,7 +429,7 @@ class LibraryPanel(QWidget):
             if not ident.startswith("f"):
                 menu.addAction("加到播放頭位置", lambda: self.addRequested.emit(ident))
             menu.addAction("重新命名…", lambda: (inplace.item_hint(self.tree, node), self.renameRequested.emit(ident)))
-            menu.addAction("刪除（移到資源回收筒）", lambda: self.deleteRequested.emit(ident))
+            menu.addAction("刪除（移到資源回收筒）", lambda: self.deleteRequested.emit(self.delete_targets(node)))
             menu.addAction("在檔案總管中顯示", lambda: self.revealRequested.emit(ident))
             menu.addSeparator()
         menu.addAction("新資料夾", lambda: self.newFolderRequested.emit(self.current_folder()))

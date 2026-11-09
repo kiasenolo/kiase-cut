@@ -239,6 +239,15 @@ class CopyPasteTests(unittest.TestCase):
         self.assertEqual(p["compounds"], {})
         self.assertFalse(any(c["type"] == "compound" for t in tl2["tracks"] for c in t["clips"]))
 
+    def test_deleting_the_open_timeline_keeps_the_first(self):
+        p = proj()
+        first = p["timelines"][0]["id"]
+        edit.add_timeline(p)                                    # open; the first is not
+        second = p["active_timeline"]
+        edit.delete_timeline(p, second)
+        self.assertEqual(p["active_timeline"], first)
+        self.assertEqual([c["id"] for c in p["tracks"][0]["clips"]], ["c1", "c2"])   # (not the deleted one's empty tracks)
+
     def test_shuffle_keeps_the_places(self):
         import random
         p = proj()

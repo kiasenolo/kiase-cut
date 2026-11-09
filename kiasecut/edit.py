@@ -4167,9 +4167,9 @@ def delete_timeline(proj, tl_id):
         raise EditError("this timeline is used inside another one")
     tl = project.timeline(proj, tl_id)
     i = proj["timelines"].index(tl)
+    if proj["active_timeline"] == tl_id:                 # leave it first: proj["tracks"] is its tracks, and
+        open_timeline(proj, proj["timelines"][i - 1 if i else 1]["id"])   # linking without it would put them in the first timeline
     proj["timelines"].remove(tl)
-    if proj["active_timeline"] == tl_id:
-        open_timeline(proj, proj["timelines"][max(0, i - 1)]["id"])
 
 
 # -- markers (時間線標記) ----------------------------------------------------------------------------

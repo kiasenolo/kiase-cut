@@ -342,7 +342,7 @@ class MainWindow(QMainWindow):
             panel.importRequested.connect(lambda folder, k=key: self.ul_import(k, folder))
             panel.newFolderRequested.connect(lambda parent, k=key: self.ul_new_folder(k, parent))
             panel.renameRequested.connect(lambda ident, k=key: self.ul_rename(k, ident))
-            panel.deleteRequested.connect(lambda ident, k=key: self.ul_delete(k, ident))
+            panel.deleteRequested.connect(lambda idents, k=key: self.ul_delete(k, idents))
             panel.moveRequested.connect(lambda ident, to, k=key: self.ul_move(k, ident, to))
             panel.revealRequested.connect(lambda ident, k=key: self.ul_reveal(k, ident))
             panel.addRequested.connect(lambda ident: self.place_media(ident, "", self.playhead_us()))
@@ -3914,17 +3914,23 @@ class MainWindow(QMainWindow):
             raise OSError("已取消")
         shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
 
-    def delete_library(self, ident):
-        if ident.startswith("f"):
-            what = "資料夾和裡面所有的檔案"
-            gone = {it["path"] for it in library.lib(self.proj)["items"] if it.get("folder") in library.descendants(self.proj, ident)}
-        else:
-            what = "素材檔案"
-            gone = {library.item(self.proj, ident)["path"]}
+    def delete_library(self, idents):
+        folders = any(i.startswith("f") for i in idents)
+        what = "資料夾和裡面所有的檔案" if folders else "素材檔案"
+        gone = set()
+        for ident in idents:
+            if ident.startswith("f"):
+                gone |= {it["path"] for it in library.lib(self.proj)["items"] if it.get("folder") in library.descendants(self.proj, ident)}
+            else:
+                gone.add(library.item(self.proj, ident)["path"])
         used = sum(1 for c in project.all_clips(self.proj) if c.get("media") and c["media"]["path"] in gone)
         note = f"\n\n時間軸上有 {used} 個片段用到，刪除後它們會找不到素材。" if used else ""
-        if questions.question(self, "delete_media", "刪除", f"要刪除這個{what}嗎？它們會被移到資源回收筒。{note}"):
-            ok, _ = self.library_do("刪除", lambda: library.delete_on_disk(self.proj, self.root, ident, self.trash))
+        text = f"要刪除{this}{what}嗎？" if len(idents) == 1 else f"要刪除這 {len(idents)} 個項目（{what}）嗎？"
+        if questions.question(self, "delete_media", "刪除", f"{text}它們會被移到資源回收筒。{note}"):
+            def run():
+                for ident in idents:
+                    library.delete_on_disk(self.proj, self.root, ident, self.trash)
+            ok, _ = self.library_do("刪除", run)
             if ok:
                 self.after_edit("刪除素材")
                 self.request_sync(300)
@@ -5229,24 +5235,31 @@ class MainWindow(QMainWindow):
         _ok, pairs = self.ul_do(key, lambda: library.move_on_disk(proj, self.ulib.mirror(key), ident, to_folder), "移動")
         self.ul_paths_changed(pairs, "移動 Library 檔案")
 
-    def ul_delete(self, key, ident):
+    def ul_delete(self, key, idents):
         proj = self.ulib.proj(key)
-        if ident.startswith("f"):
-            what = "資料夾和裡面所有的檔案"
-            gone = {it["path"] for it in library.lib(proj)["items"] if it.get("folder") in library.descendants(proj, ident)}
-        else:
-            what = "檔案"
-            gone = {library.item(proj, ident)["path"]}
+        folders = any(i.startswith("f") for i in idents)
+        what = "資料夾和裡面所有的檔案" if folders else "檔案"
+        gone = set()
+        for ident in idents:
+            if ident.startswith("f"):
+                gone |= {it["path"] for it in library.lib(proj)["items"] if it.get("folder") in library.descendants(proj, ident)}
+            else:
+                gone.add(library.item(proj, ident)["path"])
         used = 0
         if self.proj:
             for c in project.all_clips(self.proj):
                 used += bool(c.get("media") and c["media"]["path"] in gone)
                 used += sum(1 for e in c.get("effects") or [] if e["filter"] in gone)
         note = f"\n\n目前的專案有 {used} 個地方用到，刪除後它們會找不到檔案。" if used else ""
-        if not questions.question(self, "delete_library", "刪除", f"要刪除這個{what}嗎？它們會被移到資源回收筒。\n"
+        text = f"要刪除這個{what}嗎？" if len(idents) == 1 else f"要刪除這 {len(idents)} 個項目（{what}）嗎？"
+        if not questions.question(self, "delete_library", "刪除", f"{text}它們會被移到資源回收筒。\n"
                             f"（Library 是所有專案共用的）{note}"):
             return
-        ok, _ = self.ul_do(key, lambda: library.delete_on_disk(proj, self.ulib.mirror(key), ident, self.trash), "刪除")
+
+        def run():
+            for ident in idents:
+                library.delete_on_disk(proj, self.ulib.mirror(key), ident, self.trash)
+        ok, _ = self.ul_do(key, run, "刪除")
         if ok:
             if self.proj:
                 self.after_edit("刪除 Library 檔案")

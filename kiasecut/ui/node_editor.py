@@ -1859,6 +1859,12 @@ class GraphView(QGraphicsView):
                 self.centerOn(r.center())
 
 
+def drop_proxy(proxy):
+    """Take a field's proxy out of its scene a turn after it was let go (the scene may have been rebuilt, and the proxy with it)."""
+    if shiboken6.isValid(proxy) and proxy.scene() is not None:
+        proxy.scene().removeItem(proxy)
+
+
 CLIPBOARD = {"pack": None}                      # nodes copied (Ctrl+C), for any node effect to paste
 
 
@@ -2610,7 +2616,7 @@ class NodeEditor(QWidget):
                 return
             self.edit_proxy = None
             text = le.text()
-            QTimer.singleShot(0, lambda: (proxy.scene() and proxy.scene().removeItem(proxy)))
+            QTimer.singleShot(0, lambda: drop_proxy(proxy))
             if keep:
                 try:
                     self.set_number(item.nid, row, cell, float(text))
@@ -2705,7 +2711,7 @@ class NodeEditor(QWidget):
             if self.edit_proxy is not proxy:
                 return
             self.edit_proxy = None
-            QTimer.singleShot(0, lambda: (proxy.scene() and proxy.scene().removeItem(proxy)))
+            QTimer.singleShot(0, lambda: drop_proxy(proxy))
             if keep and then is not None:
                 then()
         self.edit_finish = finish

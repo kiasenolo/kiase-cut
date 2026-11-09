@@ -880,13 +880,16 @@ def make_context():
         import moderngl
     except ImportError as exc:
         raise FilterError("濾鏡需要 moderngl：pip install moderngl") from exc
-    try:
-        return moderngl, moderngl.create_standalone_context()
-    except Exception:
+    # On Linux EGL goes first: a GLX context made while Qt has a QOpenGLWidget (the preview, the node editor) ends the program with
+    # an X error (GLXMakeCurrent: BadAccess) - which no exception tells. KIASECUT_GL_BACKEND=glx puts GLX first.
+    order = ["egl", None] if sys.platform.startswith("linux") and os.environ.get("KIASECUT_GL_BACKEND") != "glx" else [None, "egl"]
+    last = None
+    for backend in order:
         try:
-            return moderngl, moderngl.create_standalone_context(backend="egl")
+            return moderngl, (moderngl.create_standalone_context(backend=backend) if backend else moderngl.create_standalone_context())
         except Exception as exc:
-            raise FilterError(f"無法建立 OpenGL（{exc}）") from exc
+            last = exc
+    raise FilterError(f"無法建立 OpenGL（{last}）") from last
 
 
 _UNSET = object()

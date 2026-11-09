@@ -15,6 +15,8 @@ window's mask mode follows it). Every panel's tab stays where it is whatever is 
 (set_usable): one the selection has no use for says so (its NOTES) instead of going away.
 A panel closed on purpose (its X, or the 視窗 menu) stays closed.
 """
+import sys
+
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPointF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QMouseEvent
@@ -255,7 +257,8 @@ class Panels(QObject):
             d.dragging.connect(self.gather)
             self.docks[key] = d
             win.addDockWidget(Qt.TopDockWidgetArea, d)
-        appevents.watch(self, (QEvent.MouseButtonPress, QEvent.Enter), self.eventFilter)
+        # (the pointer coming into a panel: not on Android, where a finger is no pointer - a touch drag is mouse events sent by touch.py)
+        appevents.watch(self, (QEvent.MouseButtonPress,) if sys.platform == "android" else (QEvent.MouseButtonPress, QEvent.Enter), self.eventFilter)
         appevents.watch(self, (QEvent.MouseButtonPress, QEvent.MouseMove), stale_grab)
 
     def __getitem__(self, key):

@@ -18,7 +18,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QFrame, QMenu, QStyle, QStyleOptionButton,
                                QStyleOptionMenuItem, QStyleOptionProgressBar, QStyleOptionTab, QStyleOptionToolButton, QMenuBar, QTabBar)
 
-from . import motion, smoothscroll, wheel
+from . import bigcombo, motion, smoothscroll, wheel
 
 FILES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "look").replace("\\", "/")
 FRAME = "#404042"         # Breeze's frame around scroll areas, spin boxes and tool buttons
@@ -284,6 +284,7 @@ class Style(wheel.Style):
         motion.attach_bar(widget)                     # (a scroll bar's thumb is drawn over it)
         motion.attach_tabs(widget)                    # (a tab bar moves its tabs' colours)
         motion.attach_toggle(widget)                  # (a check box or radio button moves its indicator)
+        bigcombo.watch(widget)                        # (a combo box with many items opens a searchable list with a scroll bar)
 
     def drawPrimitive(self, element, option, painter, widget=None):
         side = SIDES.get(element)

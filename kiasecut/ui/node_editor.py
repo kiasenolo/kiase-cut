@@ -20,13 +20,14 @@ import os
 
 import shiboken6
 
-from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSettings, QSizeF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSettings, QSizeF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen, QPolygonF
-from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QAbstractItemView, QApplication, QComboBox, QFrame, QListWidget, QListWidgetItem, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QColorDialog, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
 from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from . import appevents, motion, touch, viewglide
+from .searchbox import SearchBox
 from .toolbarscroll import ToolbarScroll
 from .wheel import pinch as wheel_pinch
 from .zoomglide import ZoomGlide
@@ -3145,17 +3146,12 @@ class NodeEditor(QWidget):
             else:
                 self.addRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y())
         menu = QMenu(self)
-        entries = []                                      # [(menu path, name, node)] - what the search looks through
-        search = QLineEdit()
-        search.setPlaceholderText("搜尋節點…")
-        box = QWidgetAction(menu)
-        box.setDefaultWidget(search)
-        menu.addAction(box)
+        box = SearchBox(menu, lambda node: ask(dict(node)), "搜尋節點…")
+        entries, groups = box, box.groups                 # (entries.add(path, name, node): what the search looks through)
         constant = ng.CONSTANTS.get(ng.socket_kind(self.graph, feed[0], feed[1])) if feed else None
         if constant:                                      # (a feeding link: the one constant that fits the input, with the value it holds)
             menu.addAction("常數（保留目前的值）", lambda: ask({"type": ng.FILTER, "ref": constant}))
             menu.addSeparator()
-        groups = []                                       # the top menus and separators (hidden while searching)
         known = set(fx.builtin_refs()) | set(node_refs())
 
         def fill(target, items, path, top=False):
@@ -3171,7 +3167,7 @@ class NodeEditor(QWidget):
                         if a.cat == "shape":
                             n = {"type": ng.SOURCE, "kind": "shape", "asset": {"key": a.key}}
                             sub.addAction(a.name, lambda _=False, n=n: ask(n))
-                            entries.append((path + " ▸ 形狀", a.name, n))
+                            entries.add(path + " ▸ 形狀", a.name, n)
                 elif isinstance(it, str):
                     ref = nodemenu.ref_of(it)
                     if ref not in known:
@@ -3179,12 +3175,12 @@ class NodeEditor(QWidget):
                     n = {"type": ng.FILTER, "ref": ref}
                     name = ng.short_name(fx.get(ref).name)
                     target.addAction(name, lambda _=False, n=n: ask(n))
-                    entries.append((path, name, n))
+                    entries.add(path, name, n)
                 elif it[0] == "node":
                     if feed and it[2].get("type") in (ng.VIEWER, ng.PARAMS, ng.STRING, ng.FONT):
                         continue                              # (these feed nothing a picture input takes)
                     target.addAction(it[1], lambda _=False, n=it[2]: ask(dict(n)))
-                    entries.append((path, it[1], it[2]))
+                    entries.add(path, it[1], it[2])
                 else:
                     sub = target.addMenu(it[1])
                     if top:
@@ -3204,85 +3200,17 @@ class NodeEditor(QWidget):
             for name, ref in cats[cat]:
                 node = {"type": ng.FILTER, "ref": ref}
                 sub.addAction(name, lambda _=False, n=node: ask(n))
-                entries.append(("KiaseCut 效果 ▸ " + cat, name, node))
+                entries.add("KiaseCut 效果 ▸ " + cat, name, node)
         if self.user_filters:
             mine = menu.addMenu("我的濾鏡（Library）")
             groups.append(mine.menuAction())
             for name, path in self.user_filters:
                 node = {"type": ng.FILTER, "ref": path}
                 mine.addAction(name, lambda _=False, n=node: ask(n))
-                entries.append(("我的濾鏡", name, node))
+                entries.add("我的濾鏡", name, node)
         menu.addSeparator()
         fill(menu, nodemenu.AFTER, "", True)
-        # the matches are a list with a scroll bar of its own (hundreds of menu actions made the menu taller than the screen and slow
-        # to lay out and draw at every key), shown in place of the categories
-        results = QListWidget()
-        results.setFrameShape(QFrame.NoFrame)
-        results.setFocusPolicy(Qt.NoFocus)                # (the keys stay in the search box)
-        results.setMouseTracking(True)
-        results.setUniformItemSizes(True)
-        results.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        results.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        results.setFixedWidth(max(320, search.sizeHint().width()))
-        results.setVisible(False)
-        shown_box = QWidgetAction(menu)
-        shown_box.setDefaultWidget(results)
-        shown_box.setVisible(False)
-        menu.addAction(shown_box)
-        found = []                                        # [(item, node)] of the list
-        results.itemEntered.connect(results.setCurrentItem)
-
-        def refresh(text):
-            found.clear()
-            results.clear()
-            text = text.strip().lower()
-            for act in groups:
-                act.setVisible(not text)
-            shown_box.setVisible(False)
-            if not text:
-                return
-            names = []
-            for cat, name, node in entries:
-                if text in name.lower() or text in cat.lower() or text in str(node.get("ref", node.get("shape", ""))).lower():
-                    names.append((f"{name}　（{cat}）", node))
-            results.setUpdatesEnabled(False)
-            if names:
-                results.addItems([t for t, _ in names])
-                found.extend((results.item(i), n) for i, (_, n) in enumerate(names))
-                results.setCurrentRow(0)
-            else:
-                none = QListWidgetItem("沒有符合的節點")
-                none.setFlags(Qt.NoItemFlags)
-                results.addItem(none)
-                found.append((none, None))
-            results.setUpdatesEnabled(True)
-            rows = min(len(found), 12)
-            results.setFixedHeight(rows * results.sizeHintForRow(0) + 2 * results.frameWidth() + 2)
-            shown_box.setVisible(True)                    # (the menu lays itself out again when an action appears, not when a widget is resized)
-            menu.adjustSize()
-        search.textChanged.connect(refresh)
-
-        def choose(item):
-            node = next((n for it, n in found if it is item), None)
-            if node is not None:
-                menu.close()
-                ask(dict(node))
-
-        def first():
-            choose(results.currentItem() or (found[0][0] if found else None))
-        results.itemClicked.connect(choose)
-        search.returnPressed.connect(first)
-
-        class Steer(QObject):                             # (Up and Down in the search box move along the matches)
-            def eventFilter(self, _o, ev):
-                if ev.type() == QEvent.KeyPress and ev.key() in (Qt.Key_Up, Qt.Key_Down) and shown_box.isVisible():
-                    row = results.currentRow() + (1 if ev.key() == Qt.Key_Down else -1)
-                    results.setCurrentRow(max(0, min(results.count() - 1, row)))
-                    return True
-                return False
-        steer = Steer(search)
-        search.installEventFilter(steer)
-        menu.search, menu.results = search, results       # (for the tests)
-        menu.setActiveAction(box)
-        QTimer.singleShot(0, search.setFocus)
+        menu.search, menu.results = box.search, box.results       # (for the tests)
+        menu.setActiveAction(box.box)
+        QTimer.singleShot(0, box.search.setFocus)
         self.popup(menu, global_pos)

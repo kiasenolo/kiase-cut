@@ -42,7 +42,7 @@ from .docks import Panels
 from .curve_editor import CurveEditor, param_rows as curve_param_rows
 from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
-from . import node_editor
+from . import node_editor, searchbox
 from .. import proxies, sharedgl
 from . import inputstate
 from .node_editor import NodeEditor
@@ -5563,6 +5563,7 @@ class MainWindow(QMainWindow):
     # -- filters ----------------------------------------------------------------------------------
     def _fill_filter_menu(self, menu, fn):
         menu.clear()
+        box = searchbox.install(menu, lambda ref: fn(ref), "搜尋濾鏡…")
         menu.addAction("節點效果（用節點編輯器組合）", lambda: fn(fx.GRAPH))
         menu.addSeparator()
         cats = {}
@@ -5573,14 +5574,18 @@ class MainWindow(QMainWindow):
             sub = menu.addMenu(cat)
             for name, ref in items:
                 sub.addAction(name, lambda _=False, ref=ref: fn(ref))
+                box.add(cat, name, ref)
         menu.addSeparator()
         mine = menu.addMenu("我的濾鏡（Library）")
         n = 0
         for it in sorted(self.ulib.lib("filters")["items"], key=lambda i: i["name"].lower()) if self.ulib else []:
-            mine.addAction(fx.get(it["path"]).name, lambda _=False, p=it["path"]: fn(p))
+            name = fx.get(it["path"]).name
+            mine.addAction(name, lambda _=False, p=it["path"]: fn(p))
+            box.add("我的濾鏡", name, it["path"])
             n += 1
         if not n:
             mine.addAction("（Library 的「濾鏡」頁還沒有檔案）").setEnabled(False)
+        searchbox.finish(box)
 
     def add_filter_clip(self, ref, track_id="", start_us=None, effect=None):
         """A filter as a clip of its own: it works on everything below it while it lasts (with

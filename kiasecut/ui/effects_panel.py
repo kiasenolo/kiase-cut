@@ -40,7 +40,7 @@ from .mediapick import pick_button
 from .curvefield import CurveField
 from .gradientbar import GradientEditor
 from .vfx_panel import FX_MIME, effect_mime
-from . import softdrag
+from . import searchbox, softdrag
 
 DEBOUNCE_MS = 350
 SOURCE_NAMES = (("顏色", None), ("圖片", "image"), ("影片", "video"), ("複合片段", "compound"), ("軌道", "track"))
@@ -207,6 +207,7 @@ class EffectsPanel(QWidget):
     def _fill_menu(self):
         menu = self.add_btn.menu()
         menu.clear()
+        box = searchbox.install(menu, self._add, "搜尋濾鏡…")
         if self.vfx_nodes:                                      # (the project's VFX Nodes: a use of one, or a new one)
             mine = menu.addMenu("節點效果（VFX Node）")
             for vid, name in self.vfx_nodes:
@@ -224,13 +225,16 @@ class EffectsPanel(QWidget):
             sub = menu.addMenu(cat)
             for name, ref in items:
                 sub.addAction(name, lambda _=False, ref=ref: self._add(ref))
+                box.add(cat, name, ref)
         menu.addSeparator()
         mine = menu.addMenu("我的濾鏡（Library）")
         for name, path in self.user_filters:
             mine.addAction(name, lambda _=False, path=path: self._add(path))
+            box.add("我的濾鏡", name, path)
         if not self.user_filters:
             mine.addAction("（Library 的「濾鏡」分頁還沒有檔案）").setEnabled(False)
         menu.addAction("選擇濾鏡檔案…", lambda: self.targets() and self.browseRequested.emit(self.targets()))
+        searchbox.finish(box)
 
     def targets(self):
         """The clips 新增效果 adds to: each picture clip of the selection."""

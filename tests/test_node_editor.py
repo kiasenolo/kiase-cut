@@ -401,7 +401,7 @@ class NodeEditorTests(unittest.TestCase):
         shown = []
         ed.popup = lambda menu, pos: shown.append([x.text() for x in menu.actions()])
         ed.add_menu(QPointF(0, 0), QPoint(0, 0), feed=("math1", "b"))
-        self.assertEqual(shown[-1][1], "常數（保留目前的值）")                    # (after the search box)
+        self.assertEqual(shown[-1][2], "常數（保留目前的值）")                    # (after the search box and its list of matches)
 
     def test_picking_up_a_link_and_dropping_it_nowhere_unlinks(self):
         ed = self.make()

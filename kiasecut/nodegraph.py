@@ -900,6 +900,48 @@ def socket_kind(graph, nid, socket):
     return "vector" if p.type in ("vec2", "vec3") else p.type if p.type in ("float", "int", "bool", "menu") else "color"
 
 
+# -- the shape of a socket (Blender's): a circle holds one value (0-D), a diamond a value for every pixel (a field) -------------
+SINGLE_NODES = ("value", "integer", "boolean", "rgb", "vector", "integer_vector", "menu")      # builtin:nodes/<these> give one value
+
+
+def output_shape(graph, nid, out=""):
+    """What output `out` of node nid gives: "single" (one number, colour or switch: a constant, a parameter of the effect)
+    or "field" (a picture - or a number that changes over the picture)."""
+    node = (graph or {}).get("nodes", {}).get(nid)
+    if node is None:
+        return "field"
+    t = node["type"]
+    if t in WORDS or t == PARAMS:
+        return "single"
+    if t == FILTER and node.get("ref", "").rpartition("/")[2] in SINGLE_NODES and node.get("ref", "").startswith("builtin:nodes/"):
+        return "single"
+    return "field"
+
+
+def input_shape(graph, nid, socket):
+    """What input `socket` of node nid takes: "field" (a picture), "either" (a number or colour that may be one value or a
+    picture read at every pixel) or "single" (a whole number, switch, choice or vector: a picture linked in is read once, at its
+    middle)."""
+    node = (graph or {}).get("nodes", {}).get(nid)
+    if node is None or socket in WORDS.values():
+        return "single" if node is not None else "field"
+    if not socket.startswith(PARAM):
+        if node["type"] == FILTER:
+            d = fx.for_node(node)
+            name = d.input_param.get(socket)
+            if name is None:
+                kind = d.socket_types.get(("in", socket), "image")
+                return "field" if kind == "image" else "either" if kind in ("float", "color") else "single"
+            p = param_of(graph, nid, PARAM + name)
+            if p is not None:
+                return "either" if p.type in fx.SOURCE_TYPES else "single"
+        return "field"
+    p = param_of(graph, nid, socket)
+    if p is None:
+        return "field"
+    return "either" if p.type in fx.SOURCE_TYPES else "single"
+
+
 def socket_value(graph, params, nid, socket):
     """The value of the number / colour / switch `socket` of filter node nid stands for - its field's (None: it has none)."""
     node = graph["nodes"].get(nid)

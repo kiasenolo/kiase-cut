@@ -25,6 +25,19 @@ class DataTest(unittest.TestCase):
         m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
         self.assertEqual(ng.default_params(g)[m + ".value"], 0.5)
 
+    def test_socket_shapes_circle_for_one_value_diamond_for_every_pixel(self):
+        g = ng.new_graph()
+        v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/value"})
+        sw = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/switch"})
+        m = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/math"})
+        a = ng.add_node(g, {"type": ng.SOURCE, "kind": "image"}, base="a")
+        self.assertEqual(ng.output_shape(g, v), "single")          # a Value node: one number
+        self.assertEqual(ng.output_shape(g, a), "field")           # a picture
+        self.assertEqual(ng.output_shape(g, m), "field")           # a Math node's result is made per pixel
+        self.assertEqual(ng.input_shape(g, sw, "param:use_true"), "single")   # a tick: read once
+        self.assertEqual(ng.input_shape(g, m, "param:value"), "either")       # a number: one value or a picture
+        self.assertEqual(ng.input_shape(g, sw, "yes"), "field")               # a picture input
+
     def test_parameters_made_by_hand_have_a_type_the_user_defines(self):
         g, params = ng.new_graph(), {}
         a = ng.add_exposed(g, params, "color", "主色")

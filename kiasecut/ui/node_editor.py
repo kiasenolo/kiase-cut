@@ -21,7 +21,7 @@ import os
 import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSettings, QSizeF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen
+from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen, QPolygonF
 from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QColorDialog, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
@@ -467,7 +467,7 @@ class NodeItem(QGraphicsItem):
             p.setPen(text)
             if kind == "out":
                 p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
-                self._socket(p, QPointF(self.w, y + ROW / 2), self.out_colour(r["p"] or ""))
+                self._socket(p, QPointF(self.w, y + ROW / 2), self.out_colour(r["p"] or ""), self.out_shape(r["p"] or ""))
                 continue
             if kind in ("expose", "ghost"):
                 ghost = kind == "ghost"
@@ -479,7 +479,7 @@ class NodeItem(QGraphicsItem):
                     p.setBrush(Qt.NoBrush)
                     p.drawEllipse(at, SOCKET_R, SOCKET_R)
                 else:
-                    self._socket(p, at, type_color(r["p"]["type"]))
+                    self._socket(p, at, type_color(r["p"]["type"]), "single")
                 continue
             if kind == "panel":
                 p.setPen(QColor(LABEL))
@@ -499,7 +499,7 @@ class NodeItem(QGraphicsItem):
                 p.setBrush(Qt.NoBrush)
                 p.drawEllipse(QPointF(0, y + ROW / 2), SOCKET_R, SOCKET_R)
             elif r["socket"]:
-                self._socket(p, QPointF(0, y + ROW / 2), self.in_colour(r["socket"]))
+                self._socket(p, QPointF(0, y + ROW / 2), self.in_colour(r["socket"]), self.in_shape(r["socket"]))
             if not self.has_field(r):
                 continue
             self._field(p, r, vals, field_bg, text, dim)
@@ -621,11 +621,28 @@ class NodeItem(QGraphicsItem):
         p.setBrush(colour)
         p.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5))
 
+    def out_shape(self, out=""):
+        """"single" (a circle: one value) or "field" (a diamond: a value for every pixel) - ng.output_shape."""
+        return ng.output_shape(self.editor.graph, self.nid, out)
+
+    def in_shape(self, sock):
+        """"single", "field" or "either" (a diamond with a dot: one value or a picture) - ng.input_shape."""
+        return ng.input_shape(self.editor.graph, self.nid, sock)
+
     @staticmethod
-    def _socket(p, at, colour):
+    def _socket(p, at, colour, shape="single"):
+        """Blender's socket shapes: a circle holds one value, a diamond a value for every pixel (a field), a diamond with a
+        dot either."""
         p.setPen(QPen(QColor(0, 0, 0, 160), 1))
         p.setBrush(QColor(colour))
-        p.drawEllipse(at, SOCKET_R, SOCKET_R)
+        if shape == "single":
+            p.drawEllipse(at, SOCKET_R, SOCKET_R)
+            return
+        r = SOCKET_R * 1.3
+        p.drawPolygon(QPolygonF([at + QPointF(0, -r), at + QPointF(r, 0), at + QPointF(0, r), at + QPointF(-r, 0)]))
+        if shape == "either":
+            p.setBrush(QColor(0, 0, 0, 200))
+            p.drawEllipse(at, SOCKET_R * 0.32, SOCKET_R * 0.32)
 
     # -- mouse: a field takes the press (the rest of the node moves it) ------------------------------------
     def edge_at(self, pos):
@@ -796,6 +813,7 @@ class RerouteItem(QGraphicsItem):
         self.has_out, self.rows, self.linked, self.drag = True, [], set(), None
         self.title = ""
         self.colour = SOCKET_COLORS["image"]               # (of what feeds it: set by the view as it draws the links)
+        self.shape = "field"                               # (and its shape)
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable | QGraphicsItem.ItemSendsGeometryChanges)
         self.setPos(node.get("x", 0.0), node.get("y", 0.0))
         self.setZValue(1)
@@ -818,6 +836,12 @@ class RerouteItem(QGraphicsItem):
     def in_colour(self, sock="src"):
         return self.colour
 
+    def out_shape(self, out=""):
+        return self.shape
+
+    def in_shape(self, sock="src"):
+        return self.shape
+
     def input_pos(self, socket="src"):
         return self.mapToScene(QPointF(0, self.H / 2))
 
@@ -837,8 +861,8 @@ class RerouteItem(QGraphicsItem):
         p.fillPath(body, QColor(NODE_HEAD))
         p.setPen(QPen(QColor(SELECT) if self.isSelected() else QColor("#000000"), 2 if self.isSelected() else 1))
         p.drawPath(body)
-        NodeItem._socket(p, QPointF(0, self.H / 2), self.colour)
-        NodeItem._socket(p, QPointF(self.W, self.H / 2), self.colour)
+        NodeItem._socket(p, QPointF(0, self.H / 2), self.colour, self.shape)
+        NodeItem._socket(p, QPointF(self.W, self.H / 2), self.colour, self.shape)
 
 
 class FrameItem(QGraphicsItem):
@@ -963,7 +987,7 @@ class Link(QGraphicsPathItem):
     def __init__(self, width=LINK_W):
         super().__init__()
         self.setZValue(0)
-        self.width, self.cols, self.lit = width, None, False
+        self.width, self.cols, self.lit, self.dash = width, None, False, False
         self.ends = (QPointF(), QPointF())
         self.normal()
 
@@ -972,17 +996,27 @@ class Link(QGraphicsPathItem):
         self.cols = (a, b)
         self.normal()
 
+    def dashed(self, on):
+        """Whether it is drawn dashed (a picture going into a socket that holds one value)."""
+        if on != self.dash:
+            self.dash = on
+            if not self.lit:
+                self.normal()
+
     def normal(self):
         """Its own look (not lit as the link a node is over)."""
         self.lit = False
+        style = Qt.DashLine if self.dash else Qt.SolidLine
         if self.cols is None:
-            self.setPen(QPen(QColor(LINK_COLOR), self.width))
-            return
-        a, b = self.ends
-        g = QLinearGradient(a, b)
-        g.setColorAt(0, QColor(self.cols[0]))
-        g.setColorAt(1, QColor(self.cols[1]))
-        self.setPen(QPen(QBrush(g), self.width))
+            pen = QPen(QColor(LINK_COLOR), self.width)
+        else:
+            a, b = self.ends
+            g = QLinearGradient(a, b)
+            g.setColorAt(0, QColor(self.cols[0]))
+            g.setColorAt(1, QColor(self.cols[1]))
+            pen = QPen(QBrush(g), self.width)
+        pen.setStyle(style)
+        self.setPen(pen)
 
     def light(self, width):
         self.lit = True
@@ -1294,14 +1328,25 @@ class GraphView(QGraphicsView):
         up = next(((a, o) for _l, a, b, _s, o in self.link_items if b == nid), None)
         return self.colour_up(up[0], up[1], depth + 1) if up and depth < 64 else SOCKET_COLORS["image"]
 
+    def shape_up(self, nid, out="", depth=0):
+        """The shape of what comes out of node nid at `out` ("single" or "field"): a reroute's is that of what feeds it."""
+        it = self.items_by_id[nid]
+        if not isinstance(it, RerouteItem):
+            return it.out_shape(out)
+        up = next(((a, o) for _l, a, b, _s, o in self.link_items if b == nid), None)
+        return self.shape_up(up[0], up[1], depth + 1) if up and depth < 64 else "field"
+
     def colour_links(self):
-        """Colour the reroutes and the links by their sockets' types."""
+        """Colour the reroutes and the links by their sockets' types, and dash the links where a value for every pixel goes
+        into a socket that holds one (it is read once, at the middle of the picture: Blender's implicit conversion)."""
         for nid, it in self.items_by_id.items():
             if isinstance(it, RerouteItem):
                 it.colour = self.colour_up(nid)
+                it.shape = self.shape_up(nid)
                 it.update()
         for ln, a, b, sock, out in self.link_items:
             ln.style(self.colour_up(a, out), self.items_by_id[b].in_colour(sock))
+            ln.dashed(self.shape_up(a, out) == "field" and self.items_by_id[b].in_shape(sock) == "single")
 
     def index_links(self):
         """Which links touch each node (reroute draws only those of the node that moved: a graph of hundreds of nodes

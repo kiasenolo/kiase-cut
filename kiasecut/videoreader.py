@@ -30,7 +30,7 @@ import threading
 
 from PySide6.QtGui import QImage
 
-from . import gpu
+from . import gpu, proxies
 from .build import find_ffmpeg
 
 US = 1_000_000
@@ -156,14 +156,32 @@ class Stream:
 
 
 class Readers:
-    def __init__(self):
+    def __init__(self, proxy_dir=None):
+        self.proxy_dir = proxy_dir           # where preview proxies live (proxies.py); None: the files themselves (exports)
+        self.proxied = {}                    # path -> (proxy path, its size) once it is made
         self.streams = []
         self.clock = 0
         self.no_gpu = set()                  # files the GPU could not decode: CPU from then on
         self.recent = {}                     # path -> the last few source times asked for
 
+    def through_proxy(self, path, w, h):
+        """(the file to read, whether it is a proxy): a finished preview proxy of `path` if the picture asked for fits in it."""
+        if not self.proxy_dir:
+            return path, False
+        got = self.proxied.get(path)
+        if got is None:
+            inf = info(path)
+            if inf is not None:
+                got = proxies.request(self.proxy_dir, path, inf)
+                if got is not None:
+                    self.proxied[path] = got
+        if got is not None and w <= got[1][0] and h <= got[1][1]:
+            return got[0], True
+        return path, False
+
     def get(self, path, us, w, h):
         """QImage of video `path` at source time us, at least w x h (or the source size)."""
+        path, proxy = self.through_proxy(path, w, h)
         inf = info(path)
         if inf is None or not find_ffmpeg():
             return None
@@ -186,13 +204,14 @@ class Readers:
             if img is not None:
                 s.used = self.clock
                 return img
-        if not follows and ENGINE:               # a jump: the engine is quicker for one picture
+        if not follows and ENGINE and not proxy:     # a jump: the engine is quicker for one picture (a proxy starts in 50 ms)
             return None
         return self._start(path, us, sw, sh, inf)
 
     def prefetch(self, path, us, w, h, seconds=0.5, stop=lambda: False):
         """Have a stream of path at source time us (started now unless one is there) with the
         next `seconds` decoded, so playing from us reads them at once (stop(): give up)."""
+        path, _proxy = self.through_proxy(path, w, h)
         inf = info(path)
         if inf is None or not find_ffmpeg() or stop():
             return

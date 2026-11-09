@@ -233,6 +233,7 @@ class Worker(QObject):
                     first = self.view is None
                     self.view = view
                     self.cache_dir = self.renderer.cache_dir = cache
+                    self.readers.proxy_dir = os.path.join(cache, "proxy") if cache else None     # 預覽代理檔 (proxies.py)
                     if self.mixer is None or self.mixer.dir != os.path.join(cache, "audio"):   # (設定 > 緩存位置)
                         self.mixer = Mixer(cache)
                     self.mixer.set_view(view)

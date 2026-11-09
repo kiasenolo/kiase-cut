@@ -42,7 +42,7 @@ from .curve_editor import CurveEditor, param_rows as curve_param_rows
 from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
 from . import node_editor
-from .. import sharedgl
+from .. import proxies, sharedgl
 from .node_editor import NodeEditor
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
 from .inspector import Inspector
@@ -5071,7 +5071,7 @@ class MainWindow(QMainWindow):
                              ui_scale=ui_scale(), node_gl=str(self.settings().value("node_gl", True)).lower() not in ("false", "0"),
                              preview_gl=str(self.settings().value("preview_gl", True)).lower() not in ("false", "0"),
                              preview_direct=str(self.settings().value("preview_direct", True)).lower() not in ("false", "0"),
-                             menu_anim=menuanim.enabled)
+                             menu_anim=menuanim.enabled, preview_proxy=proxies.enabled)
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
@@ -5090,6 +5090,8 @@ class MainWindow(QMainWindow):
         s.setValue("preview_direct", v["preview_direct"])
         s.setValue("menu_anim", v["menu_anim"])
         menuanim.enabled = v["menu_anim"]
+        s.setValue("preview_proxy", v["preview_proxy"])
+        proxies.enabled = v["preview_proxy"]
         scale_changed = v["ui_scale"] != ui_scale()
         s.setValue("ui_scale", v["ui_scale"])
         inertia.state.update(v["inertia"])
@@ -6491,6 +6493,7 @@ def run(argv):
     if sys.platform == "android":
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)       # the menus in the window, not behind the system's "..."
     direct = False
+    proxies.enabled = str(QSettings(*MainWindow.SETTINGS).value("preview_proxy", True)).lower() not in ("false", "0")     # 預覽代理檔 (設定)
     menuanim.enabled = str(QSettings(*MainWindow.SETTINGS).value("menu_anim", True)).lower() not in ("false", "0")     # 選單動畫 (設定)
     if sys.platform != "android":                               # 預覽直接用 GPU 貼圖 (sharedgl.py): Qt's GL contexts share one group
         st = QSettings(*MainWindow.SETTINGS)

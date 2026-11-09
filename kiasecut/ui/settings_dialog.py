@@ -20,7 +20,7 @@ CACHE_CHOICES = ((workspace.CACHE_DEFAULT, "預設（使用者的緩存資料夾
 class SettingsDialog(QDialog):
     def __init__(self, parent, library_dir, default_library, project_dir, autosave_min, use_gpu=True,
                  autosave_limit=30, autosave_dir="", cache_mode=workspace.CACHE_DEFAULT, cache_custom="",
-                 default_cache="", root_dir="", autosave_custom="", ui_scale=100, node_gl=True, preview_gl=True, preview_direct=True, menu_anim=True):
+                 default_cache="", root_dir="", autosave_custom="", ui_scale=100, node_gl=True, preview_gl=True, preview_direct=True, menu_anim=True, preview_proxy=True):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(600)
@@ -133,6 +133,10 @@ class SettingsDialog(QDialog):
         self.preview_direct = QCheckBox("預覽直接顯示 GPU 的畫面（省去讀回 CPU，需要上一項；重新開啟後生效）")
         self.preview_direct.setChecked(preview_direct)
         form.addRow("", self.preview_direct)
+        self.preview_proxy = QCheckBox("長影片的預覽代理檔（影片每隔幾秒才有關鍵幀時，背景做一份小的暫存檔給預覽跳轉用，拖時間軸不再卡；"
+                                       "放在緩存資料夾，匯出不受影響）")
+        self.preview_proxy.setChecked(preview_proxy)
+        form.addRow("", self.preview_proxy)
         self.menu_anim = QCheckBox("選單展開 / 收起的動畫（關掉後選單直接出現，最穩定）")
         self.menu_anim.setChecked(menu_anim)
         form.addRow("", self.menu_anim)
@@ -302,7 +306,7 @@ class SettingsDialog(QDialog):
                 "ui_scale": self.ui_scale.value(),
                 "inertia": {"separate": bool(self.inertia_mode.currentData()), "all": self.inertia_all.value(),
                             **{key: box.value() for key, box in self.inertia_each.items()}},
-                "gpu": self.gpu.isChecked(), "node_gl": self.node_gl.isChecked(), "preview_gl": self.preview_gl.isChecked(), "preview_direct": self.preview_direct.isChecked(), "menu_anim": self.menu_anim.isChecked(), "cache_mode": self.cache_mode.currentData(),
+                "gpu": self.gpu.isChecked(), "node_gl": self.node_gl.isChecked(), "preview_gl": self.preview_gl.isChecked(), "preview_direct": self.preview_direct.isChecked(), "menu_anim": self.menu_anim.isChecked(), "preview_proxy": self.preview_proxy.isChecked(), "cache_mode": self.cache_mode.currentData(),
                 "cache_custom": library.norm(self.cache_custom.text().strip()) if self.cache_custom.text().strip() else ""}
 
 

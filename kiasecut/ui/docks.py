@@ -10,7 +10,7 @@ system's (as every floating panel under Wayland): their title bar is shown there
 to drag the window by (onto the main window: back into it, all of them).
 
 Panels arranges them (the built-in layouts, see layouts.py), keeps which side panel was
-used last (`active`: the one whose tab was switched to or that was clicked in; the main
+used last (`active`: the one whose tab was switched to, that was clicked in or the pointer came into; the main
 window's mask mode follows it). Every panel's tab stays where it is whatever is selected
 (set_usable): one the selection has no use for says so (its NOTES) instead of going away.
 A panel closed on purpose (its X, or the 視窗 menu) stays closed.
@@ -255,7 +255,7 @@ class Panels(QObject):
             d.dragging.connect(self.gather)
             self.docks[key] = d
             win.addDockWidget(Qt.TopDockWidgetArea, d)
-        appevents.watch(self, (QEvent.MouseButtonPress,), self.eventFilter)
+        appevents.watch(self, (QEvent.MouseButtonPress, QEvent.Enter), self.eventFilter)
         appevents.watch(self, (QEvent.MouseButtonPress, QEvent.MouseMove), stale_grab)
 
     def __getitem__(self, key):
@@ -285,7 +285,11 @@ class Panels(QObject):
         return self.active == key and self.docks[key].isVisible()
 
     def eventFilter(self, obj, e):
-        if e.type() == QEvent.MouseButtonPress and isinstance(obj, QWidget):
+        # a click in a panel, or the pointer coming into it (as Blender: the area under the pointer is the one in use)
+        if e.type() in (QEvent.MouseButtonPress, QEvent.Enter) and isinstance(obj, QWidget):
+            if e.type() == QEvent.Enter and (QApplication.mouseButtons() != Qt.NoButton or QApplication.activePopupWidget() is not None
+                                             or QApplication.activeModalWidget() is not None):
+                return False                       # (a drag, a menu or a dialog going on)
             w = obj
             while w is not None and not isinstance(w, Dock):
                 w = w.parentWidget()

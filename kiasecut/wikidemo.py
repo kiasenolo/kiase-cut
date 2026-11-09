@@ -96,7 +96,23 @@ def badge():
     return img
 
 
-SAMPLES = {"scene": scene, "scene2": scene2, "mask": mask, "ramp": ramp, "uvmap": uvmap, "badge": badge}
+DRAWN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "images")      # (the pictures drawn by hand: images/example-wiki-<name>.png)
+
+
+def sample_of(name, draw):
+    """The sample picture `name`: the one drawn by hand (images/example-wiki-<name>.png, any size of 16:9) when there is one, else the one
+    the program draws."""
+    def make():
+        path = os.path.join(DRAWN, f"example-wiki-{name}.png")
+        if os.path.exists(path):
+            with Image.open(path) as img:
+                return img.convert("RGBA").resize((W, H), Image.LANCZOS)
+        return draw()
+    return make
+
+
+SAMPLES = {name: sample_of(name, draw) for name, draw in (("scene", scene), ("scene2", scene2), ("mask", mask), ("ramp", ramp), ("uvmap", uvmap),
+                                                           ("badge", badge))}
 CAPTIONS = {"scene": "輸入", "scene2": "B", "mask": "遮罩", "ramp": "輸入", "uvmap": "UV 圖", "badge": "前景"}
 
 
@@ -144,7 +160,7 @@ DEMOS = {
     "nodes/index_switch": {"inputs": {"i2": "scene2"}, "tiles": [_t("索引 0", index=0), _t("索引 1", index=1)]},
     "nodes/menu_switch": {"inputs": {"i2": "scene2"}, "tiles": [_t("選項 1", choice="選項 1"), _t("選項 2", choice="選項 2")]},
     "nodes/map_uv": {"inputs": {"uv": "uvmap"}, "tiles": [_t("用 UV 圖取色")]},
-    "nodes/dilate_erode": {"in": "mask", "tiles": [_t("擴張 6", size=6), _t("擴張 16", size=16), _t("侵蝕 16", size=-16)]},
+    "nodes/dilate_erode": {"in": "mask", "tiles": [_t("擴張 10", size=10), _t("擴張 30", size=30), _t("侵蝕 30", size=-30)]},
     "nodes/clamp": {"in": "ramp", "tiles": [_t("0.3 ~ 0.7", lo=0.3, hi=0.7), _t("0.2 ~ 0.5", lo=0.2, hi=0.5), _t("0.5 ~ 0.8", lo=0.5, hi=0.8)]},
     "nodes/map_range": {"in": "ramp", "tiles": [_t("對應到 0.25 ~ 0.75", to_min=0.25, to_max=0.75), _t("對應到 0.5 ~ 1", to_min=0.5, to_max=1.0), _t("對應到 1 ~ 0（反過來）", to_min=1.0, to_max=0.0)]},
     "nodes/float_curve": {"in": "ramp"},

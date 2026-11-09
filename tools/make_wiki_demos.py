@@ -25,7 +25,7 @@ def main(argv):
     eng = fx.Engine()
     os.makedirs(os.path.join(wikidemo.DIR, "_in"), exist_ok=True)
     for name, make in wikidemo.SAMPLES.items():
-        wikidemo.tile(make().convert("RGB")).save(os.path.join(wikidemo.DIR, "_in", name + ".jpg"), quality=86)
+        wikidemo.tile(wikidemo.shown(wikidemo.premultiplied(make()))).save(os.path.join(wikidemo.DIR, "_in", name + ".jpg"), quality=86)
     rows = []
     index_path = os.path.join(wikidemo.DIR, "index.json")
     try:

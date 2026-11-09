@@ -249,9 +249,8 @@ def types_page():
     rows = "".join(f"<tr><td>{dot(k)}</td><td>{esc(name)}</td><td>{esc(text)}</td></tr>" for k, name, text in TYPES)
     return ("<h1>資料類型</h1><p>節點插槽上的點，顏色是資料類型。每條連線帶的其實都是一張圖片，數字、顏色、遮罩都是圖片的不同解讀；"
             "字串、字體和矢量輪廓不是圖片，只接特定的節點。</p>"
-            + legend_row() +
-            '<table border="1" cellspacing="0" cellpadding="4"><tr><th></th><th>類型</th><th>是什麼</th></tr>' + rows + "</table>"
-            "<h3>點的形狀</h3>" + shapes_row())
+            + legend_row() + "<h3>點的形狀</h3>" + shapes_row() + "<h3>類型</h3>" +
+            '<table border="1" cellspacing="0" cellpadding="4"><tr><th></th><th>類型</th><th>是什麼</th></tr>' + rows + "</table>")
 
 
 def category_page(label):

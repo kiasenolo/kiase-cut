@@ -7,6 +7,8 @@ import sys
 import tempfile
 import unittest
 
+import shiboken6
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -597,6 +599,7 @@ class PaintTests(unittest.TestCase):
     def test_the_editor_is_not_pulled_back_while_it_is_used(self):
         from kiasecut.ui.gradientbar import GradientEditor
         ed = GradientEditor()
+        self.addCleanup(shiboken6.delete, ed)                         # (a widget left to the end of the process is deleted after the application: a crash then)
         ed.set_stops([[0, [1, 0, 0, 1]], [1, [0, 0, 1, 1]]])
         ed.bar.sel = 1
         ed.set_stops([[0, [1, 0, 0, 1]], [1, [0, 0, 1, 1]]])          # (the same: nothing is reset)

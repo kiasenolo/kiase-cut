@@ -9,6 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from kiasecut import fx, nodegraph as ng, nodemenu  # noqa: E402
 
+fx.BIG = 1 << 60                       # (a big shader is compiled ahead on a second context: in a test with no window that leaves the next compile failing; tools/make_wiki_demos.py does the same)
+
 W, H = 64, 40
 NAMES = ["brick", "checker", "gabor", "gradient", "magic", "noise", "voronoi", "wave", "white_noise"]
 PTS = [(3, 5), (12, 40), (27, 17), (35, 58)]              # (row, column) of the 64 x 40 picture, top down

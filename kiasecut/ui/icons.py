@@ -1,13 +1,38 @@
-"""Monochrome icons drawn with QPainter (no image files): icon(name) -> QIcon.
+"""Monochrome icons: icon(name) -> QIcon. Those in look/glyphs/<name>.svg (drawn in Lunacy: white shapes on a 128 x 128 board with a
+translucent black background square) are drawn from the file, the white replaced by the ink; the rest with QPainter on a 24-unit grid.
 
-Drawn on a 24-unit grid in the UI's light grey, with a dimmer copy for disabled buttons and
-a dark copy for checked (light) buttons.
+In the UI's light grey, with a dimmer copy for disabled buttons and a dark copy for checked (light) buttons.
 """
-from PySide6.QtCore import QPointF, QRectF, Qt
+import os
+import re
+
+from PySide6.QtCore import QByteArray, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
+from PySide6.QtSvg import QSvgRenderer
 
 INK, DIM, DARK = "#d6d6d8", "#5c5c62", "#151517"
 _cache = {}
+GLYPHS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "look", "glyphs")
+_svg = {}
+
+
+def _glyph(name):
+    """The text of look/glyphs/<name>.svg without its background square, or None."""
+    if name not in _svg:
+        try:
+            with open(os.path.join(GLYPHS, name + ".svg"), encoding="utf-8") as fh:
+                _svg[name] = re.sub(r'<rect[^>]*fill="#000000"[^>]*/>', "", fh.read())
+        except OSError:
+            _svg[name] = None
+    return _svg[name]
+
+
+def _draw_glyph(p, text, ink, size):
+    """The glyph over (0, 0, size, size); its white is the ink (what lies out of the board is cut, as the board does)."""
+    p.save()
+    p.setClipRect(QRectF(0, 0, size, size))
+    QSvgRenderer(QByteArray(text.replace("#FFFFFF", ink).encode())).render(p, QRectF(0, 0, size, size))
+    p.restore()
 
 
 def _poly(p, pts):
@@ -178,11 +203,15 @@ def icon(name, size=24, on=INK):
             pm.fill(Qt.transparent)
             p = QPainter(pm)
             p.setRenderHint(QPainter.Antialiasing)
-            p.scale(size * 2 / 24, size * 2 / 24)
             ink = QColor(on if state == QIcon.On and mode == QIcon.Normal else color)
-            p.setPen(QPen(ink, 1))
-            p.setBrush(ink)
-            _draw(p, name)
+            glyph = _glyph(name)
+            if glyph:
+                _draw_glyph(p, glyph, ink.name(), size * 2)
+            else:
+                p.scale(size * 2 / 24, size * 2 / 24)
+                p.setPen(QPen(ink, 1))
+                p.setBrush(ink)
+                _draw(p, name)
             p.end()
             pm.setDevicePixelRatio(2)
             ic.addPixmap(pm, mode, state)

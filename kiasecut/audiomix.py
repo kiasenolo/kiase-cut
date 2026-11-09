@@ -12,13 +12,15 @@ import hashlib
 import os
 import subprocess
 import threading
+import time
 
 import numpy as np
 
 from . import curves, normalize, project, stretch
-from .build import audio_stream, find_ffmpeg, media_start
+from .build import audio_stream, audio_streams, find_ffmpeg, media_start
 
 RATE, CHANNELS = 48000, 2
+RETRY_S = 30.0                   # a file found to have no sound is tried again this long after (Mixer.failed)
 US = 1_000_000
 
 
@@ -105,12 +107,22 @@ def sources(tracks, offset_us=0, win=(0, float("inf")), gain=1.0, only=None, rat
     return out
 
 
+def _stamp(path):
+    """(size, modified) of a file - what tells one file at a path from the next - or None when there is none."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_size, st.st_mtime
+
+
 class Mixer:
     def __init__(self, cache_dir):
         self.cache_dir = cache_dir
         self.dir = os.path.join(cache_dir, "audio")
         os.makedirs(self.dir, exist_ok=True)
         self.decoded = {}                     # key -> (pcm, offset)
+        self.failed = {}                      # key -> (its file's stamp, when) of the sources whose file has no sound (a silent video)
         self.sources = []
         self.lock = threading.Lock()
         self.queue = []
@@ -123,8 +135,17 @@ class Mixer:
         srcs = sources(view["tracks"], only=only, level=project.level_tracks(view))
         with self.lock:
             for s in srcs:
-                if s.dkey() in self.decoded:
-                    s.pcm, s.offset = self.decoded[s.dkey()]
+                k = s.dkey()
+                if k in self.decoded:
+                    s.pcm, s.offset = self.decoded[k]
+                elif k in self.failed:
+                    # a file with no sound in it stays silent until it is another file (or RETRY_S have gone by): every edit
+                    # and every tick of a drag comes through here, and each used to start ffmpeg again for every such video
+                    stamp, when = self.failed[k]
+                    if stamp == _stamp(k[0]) and time.monotonic() - when < RETRY_S:
+                        s.pcm, s.offset = np.zeros((0, CHANNELS), np.int16), 0
+                    else:
+                        del self.failed[k]
             self.sources = srcs
             self.queue = [s for s in srcs if s.pcm is None]
         if self.queue and (self.thread is None or not self.thread.is_alive()):
@@ -142,9 +163,15 @@ class Mixer:
                     continue
             try:
                 pcm, offset = self._decode(s)
-            except Exception:                           # silent for now; the next set_view tries again
+            except Exception:                           # silent for now; the next set_view tries again...
+                path = s.key()[0]
+                mute = os.path.exists(path) and not audio_streams(path)     # ...but not a file that has no sound in it
                 with self.lock:
-                    s.pcm, s.offset = np.zeros((0, CHANNELS), np.int16), 0
+                    if mute:
+                        self.failed[s.dkey()] = (_stamp(path), time.monotonic())
+                    for o in self.sources + [s]:
+                        if o.pcm is None and o.dkey() == s.dkey():
+                            o.pcm, o.offset = np.zeros((0, CHANNELS), np.int16), 0
                 continue
             normalize.remember(s.key(), pcm)
             if s.pitched:                               # 保持音高: stretched to the clip's pace once

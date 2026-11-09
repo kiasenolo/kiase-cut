@@ -42,6 +42,51 @@ class StreamEditTests(unittest.TestCase):
         self.assertEqual(v["volume"], 0.0)
 
 
+class FailedDecodeTests(unittest.TestCase):
+    """A file with no sound in it (a silent video) is silent and is not tried again at every edit: each try starts ffmpeg, and
+    every edit and every tick of a drag hands the mixer the project again. (Another failure - a slow drive - is tried again:
+    StreamMediaTests.)"""
+
+    def test_it_is_tried_once_until_the_file_changes(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "silent.mp4")
+            with open(path, "wb") as fh:
+                fh.write(b"x")
+            tried = []
+
+            class M(audiomix.Mixer):
+                def _decode(self, s):
+                    tried.append(s.key())
+                    raise RuntimeError("no sound in it")
+
+            def view():
+                return {"tracks": [{"id": "t0", "kind": "video", "clips": [
+                    {"id": "c1", "type": "video", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0, "volume": 1.0,
+                     "media": {"path": path, "width": 320, "height": 180, "duration_us": 2 * S}}]}]}
+
+            m = M(d)
+            for _ in range(5):
+                m.set_view(view())
+                if m.thread is not None:
+                    m.thread.join()
+            self.assertEqual(len(tried), 1)
+            self.assertEqual(len(m.sources[0].pcm), 0)                        # silent, and said so (not "not decoded yet")
+            self.assertEqual(len(m.mix(0, 30)), 48000 // 30 * 2 * 2)          # the mix goes on
+            with open(path, "wb") as fh:                                      # another file at the path: tried again
+                fh.write(b"another one")
+            os.utime(path, (1, 1))
+            m.set_view(view())
+            m.thread.join()
+            self.assertEqual(len(tried), 2)
+            old, audiomix.RETRY_S = audiomix.RETRY_S, 0.0                     # and after a while
+            try:
+                m.set_view(view())
+                m.thread.join()
+            finally:
+                audiomix.RETRY_S = old
+            self.assertEqual(len(tried), 3)
+
+
 @unittest.skipUnless(FFMPEG, "needs ffmpeg")
 class StreamMediaTests(unittest.TestCase):
     @classmethod

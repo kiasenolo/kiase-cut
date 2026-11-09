@@ -139,7 +139,7 @@ class WikiTests(unittest.TestCase):
                         self.assertIn(wiki.wikidemo.slug(e[1]), index)
         for slug, tiles in index.items():
             for i, _ in enumerate(tiles):
-                self.assertTrue(os.path.exists(os.path.join(wiki.wikidemo.DIR, slug, f"{i}.jpg")), slug)
+                self.assertTrue(os.path.exists(os.path.join(wiki.wikidemo.DIR, slug, f"{i}.png")), slug)
 
     def test_a_node_page_shows_its_demo(self):
         if not wiki.wikidemo.index():

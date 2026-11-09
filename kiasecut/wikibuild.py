@@ -26,7 +26,7 @@ def build(refs=None, log=print):
     stamp = wikidemo.stamp()
     eng = fx.Engine()
     for name, make in wikidemo.SAMPLES.items():
-        wikidemo.tile(wikidemo.shown(wikidemo.premultiplied(make()))).save(os.path.join(work, "_in", name + ".jpg"), quality=86)
+        wikidemo.tile(wikidemo.shown(wikidemo.premultiplied(make()))).save(os.path.join(work, "_in", name + ".png"))
     index_path = os.path.join(work, "index.json")
     try:
         with open(index_path, encoding="utf-8") as fh:
@@ -49,7 +49,7 @@ def build(refs=None, log=print):
             continue
         os.makedirs(folder)
         for i, (_caption, img, _kind) in enumerate(tiles):
-            wikidemo.tile(img).save(os.path.join(folder, f"{i}.jpg"), quality=86)
+            wikidemo.tile(img).save(os.path.join(folder, f"{i}.png"))
         index[wikidemo.slug(ref)] = [[c, k] for c, _img, k in tiles]
         rows.append((ref, [(c, img) for c, img, _k in tiles]))
         log(ref, len(tiles))

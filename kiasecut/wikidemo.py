@@ -1,5 +1,5 @@
 """示範圖 for the 說明 Wiki: what a node does, shown by running the real filter on a sample picture. wikibuild draws them (the program
-starts it by itself when they are missing or out of date) into DIR, a folder in the user's cache (one folder per node, a JPEG per tile, the
+starts it by itself when they are missing or out of date) into DIR, a folder in the user's cache (one folder per node, a PNG per tile, the
 sample inputs in _in/); the wiki shows the ones that exist (wiki.demo).
 
 DEMOS says what to show for a node: {"in": sample picture the node's main input gets ("none": a generator, there is no input to show),

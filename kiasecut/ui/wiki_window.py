@@ -122,7 +122,7 @@ class Browser(QTextBrowser):
         if url.scheme() == "demo":                         # (a picture wikidemo drew, or the arrow between what a node was given and what it made)
             if url.path() == "_arrow":
                 return arrow_image()
-            img = QImage(os.path.join(wikidemo.DIR, url.path() + ".jpg"))
+            img = QImage(os.path.join(wikidemo.DIR, url.path() + ".png"))
             return img if not img.isNull() else None
         if url.scheme() == "diagram" and url.path() in wikidata.DIAGRAMS:
             return diagram_image(url.path())

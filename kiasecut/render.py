@@ -240,6 +240,10 @@ class Renderer:
             links = {l["socket"]: l["from"] for l in graph["links"] if l["to"] == nid}
             groups = [self.vector_layers(e, graph, links[sock], t, disp, fps, seen) for sock in nodegraph.vecop_sockets(node) if sock in links]
             op = nodegraph.vecop_of(node, nid, e["params"], t, bound)
+            if op == "rotate":
+                angle = curves.value(nodegraph.bound_value(e["params"], bound, nid, "angle", 0.0), t)
+                about = curves.value(nodegraph.bound_value(e["params"], bound, nid, "about", nodegraph.ROTATE_ABOUT[0]), t)
+                return vector.rotated(vector.add(groups), angle, about == nodegraph.ROTATE_ABOUT[1])
             return vector.add(groups) if op == "add" else vector.combine(op, groups)
         src = nodegraph.placed_by(src, e["params"], bound, nid, t)
         v = lambda k, d=0.0: curves.value(src.get(k, d), t)

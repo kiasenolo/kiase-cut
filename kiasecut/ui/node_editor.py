@@ -241,7 +241,8 @@ class NodeItem(QGraphicsItem):
                 for sock, label in ng.sockets(node):
                     if not sock.startswith(ng.PARAM):
                         add("image", label, sock)
-                add("image", "（拉一條線進來新增輸入）", GHOST_ITEM)
+                if ng.is_dynamic(node):
+                    add("image", "（拉一條線進來新增輸入）", GHOST_ITEM)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
                 if ng.is_text(node):                                   # (a text: its words - or a string node's - and font first)
                     add("text", "文字", ng.TEXT_SOCKET, h=ROW * self.lines() if ng.TEXT_SOCKET not in self.linked else ROW)

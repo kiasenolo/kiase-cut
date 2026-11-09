@@ -36,7 +36,8 @@ INPUT = [
 VECTOR = [SHAPES, node("文字", type=ng.SOURCE, kind="text"), node("SVG 圖片", type=ng.SOURCE, kind="image", svg=True),
           SEP,
           node("相加（把多個矢量疊在一起）", type=ng.SOURCE, kind="vector", op="add"),
-          node("布林運算（聯集、差集、交集、排除）", type=ng.SOURCE, kind="vector", op="boolean")]
+          node("布林運算（聯集、差集、交集、排除）", type=ng.SOURCE, kind="vector", op="boolean"),
+          node("旋轉（矢量）", type=ng.SOURCE, kind="vector", op="rotate")]
 
 OUTPUT = [node("預覽（編輯器的預覽看這裡）", type=ng.VIEWER)]
 

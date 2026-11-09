@@ -85,7 +85,7 @@ def param_key(nid, name):
 
 # -- nodes with items of their own (Menu Switch): node["items"] = [{"sock", "name"}], see dynamic.py ------------------------
 def is_dynamic(node):
-    return is_vecop(node) or (node["type"] == FILTER and bool(fx.get(node["ref"]).dynamic))
+    return (is_vecop(node) and node.get("op") != "rotate") or (node["type"] == FILTER and bool(fx.get(node["ref"]).dynamic))
 
 
 def _items(node):
@@ -141,6 +141,8 @@ def add_item(graph, params, nid, name=None):
     """A new option at the end of node nid's items; returns its socket."""
     node = graph["nodes"][nid]
     if is_vecop(node):
+        if node.get("op") == "rotate":
+            raise GraphError("旋轉只有一個輸入")
         items = vecop_items(node)
         node["items"] = items
         node["next_item"] = max(node.get("next_item", 0), len(items), *(int(it["sock"][1:]) for it in items)) + 1
@@ -297,7 +299,8 @@ def asset_def(node):
 # of kind "vector" (node["op"]: "add" | "boolean"); its inputs are the sockets of node["items"] ("v1", "v2"...), each taking the outline of
 # a shape, a text, an SVG file or another vector node (vector.py; the picture of the node is its outlines drawn) ---------------------------
 VECTOR = "vector"
-VECOPS = (("add", "相加"), ("boolean", "布林運算"))
+VECOPS = (("add", "相加"), ("boolean", "布林運算"), ("rotate", "旋轉"))
+ROTATE_ABOUT = ("自己的中心", "畫面中心")
 BOOLEAN_OPS = (("聯集", "union"), ("差集", "subtract"), ("交集", "intersect"), ("排除", "xor"))
 _vecop_defs = {}
 
@@ -308,7 +311,7 @@ def is_vecop(node):
 
 def vecop_items(node):
     """[{"sock"}] the inputs of a vector node (two to start with)."""
-    return node.get("items") or [{"sock": "v1"}, {"sock": "v2"}]
+    return node.get("items") or ([{"sock": "v1"}] if node.get("op") == "rotate" else [{"sock": "v1"}, {"sock": "v2"}])
 
 
 def vecop_sockets(node):
@@ -320,13 +323,17 @@ def vecop_def(node):
     op = node.get("op", "add")
     hit = _vecop_defs.get(op)
     if hit is None:
-        params = [fx.Param("operation", "menu", BOOLEAN_OPS[0][0], label="運算", items=[n for n, _ in BOOLEAN_OPS])] if op == "boolean" else []
+        params = {"boolean": [fx.Param("operation", "menu", BOOLEAN_OPS[0][0], label="運算", items=[n for n, _ in BOOLEAN_OPS])],
+                  "rotate": [fx.Param("angle", "float", 0.0, -3600.0, 3600.0, "角度 °"),
+                             fx.Param("about", "menu", ROTATE_ABOUT[0], label="繞著", items=list(ROTATE_ABOUT))]}.get(op, [])
         hit = _vecop_defs[op] = fx.FilterDef("vector:" + op, dict(VECOPS).get(op, "相加"), "", params, "矢量", "")
     return hit
 
 
 def vecop_of(node, nid, params, t, bound=None):
     """The operation of vector node nid at clip time t: "add", "union", "subtract", "intersect" or "xor"."""
+    if node.get("op", "add") == "rotate":
+        return "rotate"
     if node.get("op", "add") != "boolean":
         return "add"
     v = curves.value(bound_value(params, bound, nid, "operation", BOOLEAN_OPS[0][0]), t)

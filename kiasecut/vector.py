@@ -491,6 +491,18 @@ def combine(op, groups):
     return [first.styled(path)]
 
 
+def rotated(layers, degrees, about_frame=False):
+    """The layers turned clockwise by `degrees` about the middle of the frame, or of their own outlines."""
+    if not layers or not degrees:
+        return list(layers)
+    if about_frame:
+        c = QPointF(0, 0)
+    else:
+        c = region(layers).boundingRect().center()
+    tf = QTransform().translate(c.x(), c.y()).rotate(degrees).translate(-c.x(), -c.y())
+    return [l.mapped(tf) for l in layers]
+
+
 def add(groups):
     """The layers of the inputs one over the other (the later on top)."""
     return [l for g in groups for l in g]

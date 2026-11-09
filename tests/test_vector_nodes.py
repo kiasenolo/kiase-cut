@@ -183,6 +183,25 @@ class VectorRenderTests(unittest.TestCase):
             out.append([rgb(img, x, H // 2) for x in (8, 24, 40, 56)])      # (a quarter of the clip each)
         return out
 
+    def test_rotate_turns_a_vector_and_feeds_a_boolean(self):
+        p = proj()
+        eff = edit.add_effect(p, "c1", fx.GRAPH)
+        rot = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "vector", "op": "rotate"})
+        n = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect", "colors": ("#ffffff", "#000000")}})
+        eff["sources"][n].update(cx=0.0, w=1.0, h=0.25)                       # (a wide bar over the middle of the clip)
+        edit.connect_graph(p, "c1", eff["id"], n, rot, "v1")
+        edit.connect_graph(p, "c1", eff["id"], rot, "output", "src")
+        with self.assertRaises(edit.EditError):
+            edit.node_item(p, "c1", eff["id"], rot, "add")
+        eff["params"][ng.param_key(rot, "angle")] = 90.0
+        view = self.s.view()
+        view["tracks"][0]["clips"][0]["effects"] = [eff]
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            self.assertEqual(rgb(img, W // 2, 2), WHITE, type(r).__name__)           # (now a tall bar: the top middle is covered)
+            self.assertEqual(rgb(img, 3, H // 2), BLACK, type(r).__name__)
+
     def test_union_subtract_intersect_xor(self):
         a, b = (-0.25, 0.75), (0.25, 0.75)         # (cx in half-frame units, w as a fraction: A covers the left 3/4 of the clip, B the right 3/4)
         want = {"聯集": [WHITE] * 4, "差集": [WHITE, BLACK, BLACK, BLACK], "交集": [BLACK, WHITE, WHITE, BLACK],

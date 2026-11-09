@@ -4190,6 +4190,11 @@ class MainWindow(QMainWindow):
     # -- inspector / preview overlay --------------------------------------------------------------
     def refresh_inspector(self):
         sel = self.timeline.selected
+        shown = frozenset(c["id"] for c in self.timeline.selected_clips() if (c.get("asset") or {}).get("family") == "empty") \
+            if self.proj else frozenset()
+        if shown != getattr(self, "_empties_shown", frozenset()):     # 空物體 show while they are selected: draw again
+            self._empties_shown = shown
+            self.rebuild()
         self.show_selection_props()
         self.curves.set_clip(sel, self.clip_time(sel["id"]) if sel else 0, self.fps)
         self.curves.set_links(*self.curve_links(sel))
@@ -4211,6 +4216,7 @@ class MainWindow(QMainWindow):
         Its 參考 tracks show and sound (editing): an export's copy leaves them out."""
         v = pickle.loads(pickle.dumps(self.view(), pickle.HIGHEST_PROTOCOL))
         v["play_fps"], v["fps"], v["editing"] = self.proj["fps"], self.fps, True
+        v["selected"] = sorted(self.timeline.selected_ids)              # (空物體 show only while selected)
         shown = self._matte_shown = self.matte_target()
         if shown:
             v["matte_preview"] = shown

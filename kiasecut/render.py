@@ -131,6 +131,7 @@ class Renderer:
         self.compounds = {}         # the view's compounds (what compound masks cut with)
         self.matte_preview = None   # {clip, opacity}: show that clip's mask compound over it
         self.editing = False
+        self.selected = set()
         self.thumbs = {}            # {effect id: nodegraph.thumb_tap store} of the node effects the editor shows thumbnails of
         self.want_thumbs = set()
         self.thumb_memo = {}        # {effect id: {(node id, output): (signature, thumbnail)}}: pictures of nodes that did not change are not read back again
@@ -311,6 +312,7 @@ class Renderer:
         self.want_thumbs = set(view.get("thumbs") or ()) if view.get("editing") else set()
         self.thumbs = {}
         self.editing = bool(view.get("editing"))            # (the editor's preview: a node effect shows the node picked with 預覽)
+        self.selected = set(view.get("selected") or ())     # (the clips picked on the timeline: an 空物體 shows while it is)
         self.level = project.level_tracks(view)
         self.canvas_h = view.get("height") or 1080          # (a text node's size is in px of a 1080-high canvas, as a text clip's)
 
@@ -659,6 +661,8 @@ class Renderer:
             rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             if c.get("asset"):                       # drawn from its parameters at t
                 q = assets.at(c["asset"], t)
+                if q.get("family") == "empty" and not backdrop and not (self.editing and c["id"] in self.selected):
+                    return                           # 空物體: nothing to see (its effects too); the preview's box shows it while it is selected
                 pic = self.asset(q, tw, th)
                 rect = asset_rect(q, bw, bh)
                 if backdrop:

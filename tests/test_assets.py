@@ -298,7 +298,7 @@ class AssetTests(unittest.TestCase):
         self.assertEqual((b.red(), b.blue()), (0, 255))
         self.assertFalse(r.errors)
 
-    def test_empties_show_only_while_editing(self):
+    def test_empties_show_only_while_selected(self):
         from kiasecut import render
         keys = [a.key for a in assets.ASSETS if a.cat == "empty"]
         self.assertGreaterEqual(len(keys), 3)
@@ -313,6 +313,9 @@ class AssetTests(unittest.TestCase):
         dark = r.render(p, 0, 64, 36).pixelColor(32, 18)
         self.assertEqual((dark.red(), dark.green(), dark.blue()), (0, 0, 0))     # nothing in the output
         p["editing"] = True
+        unpicked = r.render(p, 0, 64, 36)
+        self.assertEqual(max(unpicked.pixelColor(x, y).red() for x in range(64) for y in range(36)), 0)   # not picked: still nothing
+        p["selected"] = ["c1"]
         seen = r.render(p, 0, 64, 36)
         self.assertGreater(max(seen.pixelColor(x, y).red() for x in range(64) for y in range(36)), 40)   # its frame in the preview
         self.assertFalse(r.errors)

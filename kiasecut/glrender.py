@@ -686,6 +686,8 @@ class GLRenderer(render.Renderer):
             rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             if c.get("asset"):                       # drawn from its parameters at t
                 q = assets.at(c["asset"], t)
+                if q.get("family") == "empty" and not backdrop and not (self.editing and c["id"] in self.selected):
+                    return                           # 空物體: nothing to see (see render.py)
                 pic = self.asset(q, tw, th)
                 tex, straight = gl.picture(pic, mipmap=True)
                 made_of = pic.cacheKey()

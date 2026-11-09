@@ -879,7 +879,8 @@ class NodeEditorTests(unittest.TestCase):
         self.assertTrue(any("模糊" in k for sub in top["KiaseCut 效果"].values() for k in sub))
         self.assertNotIn("圖片來源", {k for sub in top.values() if sub for k in sub})
         menus[0].search.setText("向量數學")
-        self.assertTrue(any("向量" in a.text() for a in menus[0].found))
+        res = menus[0].results
+        self.assertTrue(any("向量" in res.item(i).text() for i in range(res.count())))
 
     def test_every_tool_node_has_a_place_in_the_menu(self):
         from kiasecut import nodemenu
@@ -898,12 +899,34 @@ class NodeEditorTests(unittest.TestCase):
         ed.add_menu(QPointF(5, 6), QPoint(0, 0))
         menu = menus[0]
         menu.search.setText("blur")
-        self.assertTrue(menu.found and all(a.isEnabled() for a in menu.found))
+        self.assertTrue(menu.results.count() and all(menu.results.item(i).flags() & Qt.ItemIsEnabled for i in range(menu.results.count())))
         menu.search.setText("zzzzqq")
-        self.assertFalse(menu.found[0].isEnabled())
+        self.assertFalse(menu.results.item(0).flags() & Qt.ItemIsEnabled)
         menu.search.setText("圓")
         menu.search.returnPressed.emit()
         self.assertEqual(asked[-1]["kind"], "shape")
+
+    def test_search_results_are_a_scrolling_list_and_the_arrow_keys_move_along_it(self):
+        ed = self.make()
+        asked = []
+        ed.addRequested.connect(lambda *a: asked.append(a[1]))
+        menus = []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        ed.add_menu(QPointF(0, 0), QPoint(0, 0))
+        menu = menus[0]
+        menu.show()
+        menu.search.setText("b")
+        res = menu.results
+        self.assertGreater(res.count(), 20)
+        self.assertLess(res.height(), 500)                                  # (the list scrolls: the menu is not as tall as the matches)
+        self.assertEqual(res.currentRow(), 0)
+        QTest.keyClick(menu.search, Qt.Key_Down)
+        self.assertEqual(res.currentRow(), 1)
+        QTest.keyClick(menu.search, Qt.Key_Up)
+        QTest.keyClick(menu.search, Qt.Key_Up)
+        self.assertEqual(res.currentRow(), 0)
+        menu.search.returnPressed.emit()
+        self.assertEqual(len(asked), 1)
 
     def test_frame_carries_nodes_and_is_sized(self):
         def add(e):

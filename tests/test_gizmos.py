@@ -94,6 +94,34 @@ class GizmoMathTests(unittest.TestCase):
         self.assertAlmostEqual(rot["local"][1], -0.35 * BH)                      # (straight up while the angle is 0)
 
 
+class NodeGizmoTests(unittest.TestCase):
+    def test_a_node_of_a_node_effect_has_handles_unless_a_link_sets_the_value(self):
+        from kiasecut import nodegraph as ng
+        p = proj()
+        eff = edit.add_effect(p, "c1", fx.GRAPH)
+        n = edit.add_graph_node(p, "c1", eff["id"], {"type": "filter", "ref": "builtin:swirl"})
+        pseudo = gizmos.node_effect(eff, n)
+        self.assertEqual({h["kind"] for h in gizmos.handles(pseudo, 0, BW, BH)}, {"point", "radius", "angle"})
+        eff["graph"]["nodes"][n]["x"] = 0
+        v = edit.add_graph_node(p, "c1", eff["id"], {"type": "filter", "ref": "builtin:nodes/value"})
+        edit.connect_graph(p, "c1", eff["id"], v, n, "param:radius")
+        self.assertEqual({h["kind"] for h in gizmos.handles(gizmos.node_effect(eff, n), 0, BW, BH)}, {"point", "angle"})
+        self.assertIsNone(gizmos.node_effect(eff, v))
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.set_scene(p, S // 2, "c1")
+        pv.set_gizmo(eff["id"], n)
+        got = []
+        pv.paramsCommitted.connect(lambda *a: got.append(a))
+        QTest.mousePress(pv, Qt.LeftButton, NONE, QPoint(480, 270))
+        QTest.mouseMove(pv, QPoint(540, 270))
+        QTest.mouseMove(pv, QPoint(600, 270))
+        QTest.mouseRelease(pv, Qt.LeftButton, NONE, QPoint(600, 270))
+        (cid, group, vals), = got
+        self.assertEqual(group, "fx:" + eff["id"])
+        self.assertAlmostEqual(vals[n + ".center"][0], 0.625, places=2)
+
+
 class GizmoPreviewTests(unittest.TestCase):
     def setUp(self):
         self.p = proj()

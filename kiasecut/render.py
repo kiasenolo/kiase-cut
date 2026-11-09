@@ -261,7 +261,7 @@ class Renderer:
             return [layer.mapped(local)]
         if nodegraph.is_text(node):
             spec = textvars.spec_at(nodegraph.text_of(node, nid, e["params"], t, bound, src, e["graph"]), t, TEXT_FIELDS, fps)
-            layers = vector.text_layers(spec, textlayout.PX_PER_FONT_UNIT * self.canvas_h / 1080)
+            layers = vector.text_layers(spec, self.canvas_h)
             return [l.mapped(local) for l in layers]
         if node.get("type") == nodegraph.SOURCE and node.get("kind") == "image" and svgimage.is_svg(src.get("image")):
             layers, box = vector.load_svg(src["image"])

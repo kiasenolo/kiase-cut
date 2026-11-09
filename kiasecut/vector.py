@@ -420,51 +420,43 @@ def _family(path):
     return _fonts[path]
 
 
-def text_layers(spec, em_px):
-    """The glyph outlines of a text spec (the text tool's fields: content, font_path, size...) as one layer centred on 0. em_px: the
-    size of one font unit in canvas px (the text tool's 字號 × this = the em in px)."""
-    size = max(1.0, float(spec.get("size") or 1.0) * em_px)
-    font = QFont()
-    fam = _family(spec.get("font_path"))
-    if fam:
-        font.setFamily(fam)
-    font.setPixelSize(max(1, round(size)))
-    font.setItalic(False)
-    font.setLetterSpacing(QFont.AbsoluteSpacing, float(spec.get("letter_spacing") or 0.0) * size)
-    lines = str(spec.get("content") or "").split("\n")
-    path = QPainterPath()
-    path.setFillRule(Qt.WindingFill)
-    step = size * (1.2 + float(spec.get("line_spacing") or 0.0))
-    align = spec.get("align", "center")
-    widths = []
-    for k, line in enumerate(lines):
-        row = QPainterPath()
-        row.addText(0, 0, font, line)
-        widths.append(row.boundingRect().right() if line.strip() else 0.0)
-        path.addPath(row.translated(0, k * step))
-    # (each line placed by its alignment, the block centred on 0)
-    full = max(widths + [0.0])
+def text_layers(spec, canvas_h=1080):
+    """The glyph outlines of a text spec (the text tool's fields) as one layer centred on the text box's middle: every glyph where
+    textlayout.py puts it (the same lines, wrapping, alignment and spacing), its outline from the font."""
+    from . import textlayout
+    lay = textlayout._layout(spec, 1.0, canvas_h)
+    shear = math.tan(math.radians(spec.get("italic_deg", 0.0) or 0.0))
+    fw, align = lay["fw"], spec.get("align") or "center"
     out = QPainterPath()
     out.setFillRule(Qt.WindingFill)
-    for k, line in enumerate(lines):
-        row = QPainterPath()
-        row.addText(0, 0, font, line)
-        w = widths[k]
-        dx = 0.0 if align in ("left", "justify") else (full - w) if align == "right" else (full - w) / 2
-        out.addPath(row.translated(dx - full / 2, k * step))
-    h = step * (len(lines) - 1)
-    out.translate(0, -h / 2 + size * 0.35)
-    italic = float(spec.get("italic_deg") or 0.0)
-    if italic:
-        out = QTransform(1, 0, -math.tan(math.radians(italic)), 1, 0, 0).map(out)
+    fonts = {}
+    for li, (glyphs, lw) in enumerate(lay["lines"]):
+        ox = {"left": -fw / 2, "justify": -fw / 2, "right": fw / 2 - lw}.get(align, -lw / 2)
+        spread = (fw - lw) / (len(glyphs) - 1) if align == "justify" and li < len(lay["lines"]) - 1 and len(glyphs) > 1 else 0.0
+        base = lay["ct"] + lay["ext_top"] + li * lay["step"] + lay["asc"]
+        for gi, (gx, ch, f, _rgba, _adv) in enumerate(glyphs):
+            if not ch.strip():
+                continue
+            key = (f.path, f.size)
+            font = fonts.get(key)
+            if font is None:
+                font = fonts[key] = QFont()
+                fam = _family(f.path)
+                if fam:
+                    font.setFamily(fam)
+                font.setPixelSize(max(1, round(f.size)))
+            out.addText(ox + gx + gi * spread, base, font, ch)
+    if shear:
+        out = QTransform(1, 0, -shear, 1, 0, 0).map(out)
     col = spec.get("color") or (1.0, 1.0, 1.0, 1.0)
     fill = tuple(float(x) for x in (list(col) + [1.0])[:4]) if spec.get("fill", True) else None
     stroke = None
-    if spec.get("stroke_on") and float(spec.get("stroke") or 0) > 0:
+    width = float(spec.get("stroke", 2.0) or 0.0) * canvas_h / 1080
+    if spec.get("stroke_on") and width > 0:
         sc = spec.get("stroke_color") or (0.0, 0.0, 0.0, 1.0)
         stroke = tuple(float(x) for x in (list(sc) + [1.0])[:4])
-    return [Layer(out, fill, stroke, float(spec.get("stroke") or 0.0) if stroke else 0.0, "round",
-                  {"inside": "inside", "outside": "outside"}.get(spec.get("stroke_align"), "center"))]
+    return [Layer(out, fill, stroke, width if stroke else 0.0, "round",
+                  {"inside": "inside", "outside": "outside", "center": "center"}.get(spec.get("stroke_align"), "inside"))]
 
 
 # -- combining ---------------------------------------------------------------------------------------------------------------

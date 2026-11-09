@@ -566,6 +566,7 @@ class Preview(_Surface):
         self.interactive = interactive
         self.show_guides = True                          # 輔助線: the frame, handles and notes drawn over the picture (off: just the picture)
         self.mask_mode = False
+        self.gizmo_node = None                  # the node of that node effect whose handles they are
         self.gizmo = None                       # id of the effect whose handles (gizmos.py) are on the canvas (編輯控制點)
         self.mask_group = "mask"                # which mask mask mode edits: the clip's, "fxmask:<effect id>"
         self.text_box = None                    # TextBox while a text clip's words are typed on the canvas
@@ -699,17 +700,20 @@ class Preview(_Surface):
         self.mask_mode, self.mask_group = on, group
         self.update()
 
-    def set_gizmo(self, eid):
-        """Show the handles of effect eid on the canvas (None: none)."""
-        if eid != self.gizmo:
-            self.gizmo = eid
+    def set_gizmo(self, eid, nid=None):
+        """Show the handles of effect eid on the canvas (None: none); nid: those of one node of a node effect."""
+        if (eid, nid) != (self.gizmo, self.gizmo_node):
+            self.gizmo, self.gizmo_node = eid, nid
             self.update()
 
     def gizmo_effect(self, box):
         """The effect (of box's clip) whose handles are shown, or None."""
         if not self.gizmo or box is None or self.mask_mode or self.multi() or getattr(box, "group", False):
             return None
-        return next((e for e in box.clip.get("effects") or [] if e["id"] == self.gizmo and gizmos.has_gizmo(e["filter"])), None)
+        e = next((e for e in box.clip.get("effects") or [] if e["id"] == self.gizmo), None)
+        if e is not None and self.gizmo_node:             # (a node of a node effect: its parameters, as an effect of its own)
+            return gizmos.node_effect(e, self.gizmo_node)
+        return e if e is not None and gizmos.has_gizmo(e["filter"]) else None
 
     def gizmo_hit(self, box, m, k):
         """The handle (gizmos.handles, with its canvas point) under canvas point m, the last drawn first, or None."""
@@ -1928,6 +1932,8 @@ class Preview(_Surface):
             h = d["handle"]
             vals = gizmos.dragged(h, (pt.x(), pt.y()), box.bw, box.bh, d["turn"], snap=not e.modifiers() & Qt.AltModifier,
                                   turn_snap=lambda v: snap_angle(v, free))
+            if self.gizmo_node:
+                vals = {f"{self.gizmo_node}.{k}": v for k, v in vals.items()}
             return "fx:" + h["effect"], vals
         c = QPointF(box.cx, box.cy)
         if kind == "scale":

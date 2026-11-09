@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, components, curves, edit, fonts, fx, gpu, keybatch, layouts, library, project, recovery,
+from .. import (androidfs, assets, build, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, library, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -903,9 +903,13 @@ class MainWindow(QMainWindow):
                 self.preview.set_mask_mode(True, "place:" + ins.place_edit)
             else:
                 self.preview.set_mask_mode(False)
-            self.preview.set_gizmo(ef.gizmo_edit if pn.is_active("effects") else None)
+            if pn.is_active("nodes") and self.node_gizmo:
+                self.preview.set_gizmo(*self.node_gizmo)
+            else:
+                self.preview.set_gizmo(ef.gizmo_edit if pn.is_active("effects") else None)
             self._matte_preview_changed()
             self._update_matte_region()
+        self.node_gizmo = None          # (effect id, node id) of the filter node selected in the node editor that has handles (gizmos.py)
         self.node_source = None         # (effect id, node id) of the picture node selected in the node editor
         self.node_mask_mode = mask_mode
         self.panels.activeChanged.connect(lambda _k: mask_mode())
@@ -4328,7 +4332,13 @@ class MainWindow(QMainWindow):
                 lvl, cid, e, name, track=(value, size)))
             return
         if not value:
-            what = "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.svg)" if kind == "image" else \
+            svg = False
+            try:
+                svg = bool(self.container() and edit.find(self.container(), ids[0])[1] and
+                           next(e for e in edit.find(self.container(), ids[0])[1]["effects"] if e["id"] == eid)["graph"]["nodes"][name].get("svg"))
+            except (KeyError, StopIteration, TypeError, edit.EditError):
+                pass
+            what = "SVG 向量圖 (*.svg)" if svg else "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.svg)" if kind == "image" else \
                 "影片 (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.gif)"
             value, _ = QFileDialog.getOpenFileName(self, "效果來源", self.root or "", what)
             if not value:
@@ -6009,6 +6019,12 @@ class MainWindow(QMainWindow):
             e = next((x for x in c.get("effects") or [] if x["id"] == eid), None)
             if e is not None and nid in (e.get("sources") or {}):
                 want = (eid, nid)
+            if e is not None and gizmos.node_effect(e, nid) is not None:
+                self.node_gizmo = (eid, nid)
+            else:
+                self.node_gizmo = None
+        else:
+            self.node_gizmo = None
         self.node_source = want
         self.node_mask_mode()
 

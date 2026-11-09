@@ -2161,7 +2161,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
                 raise EditError("這不是內建形狀")
             asset = {"key": preset.key, "family": preset.family}
         node = {"type": nodegraph.SOURCE, "kind": node["kind"], **({"asset": asset} if asset else {}),
-                **({"op": node["op"] if node.get("op") in dict(nodegraph.VECOPS) else "add"} if node["kind"] == nodegraph.VECTOR else {})}
+                **({"op": node["op"] if node.get("op") in dict(nodegraph.VECOPS) else "add"} if node["kind"] == nodegraph.VECTOR else {}),
+                **({"svg": True} if node["kind"] == "image" and node.get("svg") else {})}
     elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS, nodegraph.REROUTE, nodegraph.VIEWER):
         node = {"type": node["type"]}
     elif node["type"] == nodegraph.STRING:                 # (Blender's String constant: words for a text node)

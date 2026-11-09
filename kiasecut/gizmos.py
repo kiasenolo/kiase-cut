@@ -45,8 +45,23 @@ SPECS = {
     "builtin:blender_glare": [dict(point("sun_position", up=True), when=("type", "Sun Beams"))],
     "builtin:push_in": [point("from", label="起"), point("to", label="終")],
     "builtin:translate": [offset("offset")],
+    "builtin:nodes/split": [point("position", up=True)],
     "builtin:transform": [offset("position", "anchor"), angle("rotation", "anchor", start=-90.0, reach=0.35)],
 }
+
+
+def node_effect(e, nid):
+    """Node nid of node effect e as an effect of its own (its parameters without the node's name), or None when it has no
+    handles: not a filter node, or its place is set by a link or by a parameter of the effect."""
+    from . import nodegraph
+    g = e.get("graph") or {}
+    node = (g.get("nodes") or {}).get(nid)
+    if node is None or node.get("type") != nodegraph.FILTER or not has_gizmo(node["ref"]):
+        return None
+    taken = {l["socket"][len(nodegraph.PARAM):] for l in g.get("links") or [] if l["to"] == nid and l["socket"].startswith(nodegraph.PARAM)}
+    own = {k[len(nid) + 1:]: v for k, v in e["params"].items() if k.startswith(nid + ".")}
+    out = {"id": e["id"], "filter": node["ref"], "params": own, "taken": taken}
+    return out
 
 
 def spec_of(ref):
@@ -118,7 +133,7 @@ def handles(e, t, bw, bh):
     d = fx.def_of(e)
     out = []
     for item in spec_of(e["filter"]):
-        if not shown(e, item):
+        if not shown(e, item) or item["param"] in e.get("taken", ()):
             continue
         v, p = _value(e, d, item["param"], t)
         if p is None or v is None:

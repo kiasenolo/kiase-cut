@@ -194,3 +194,30 @@ class VectorRenderTests(unittest.TestCase):
     def test_add_puts_them_together_and_three_inputs_work(self):
         for got in self.pixels(self.build("add", [(-0.75, 0.25), (-0.25, 0.25), (0.75, 0.25)])):
             self.assertEqual(got, [WHITE, WHITE, BLACK, WHITE])
+
+
+class VectorTextAndSvgTests(VectorRenderTests):
+    def test_a_text_gives_its_glyph_outlines_where_the_text_node_draws_them(self):
+        p = proj()
+        eff = edit.add_effect(p, "c1", fx.GRAPH)
+        v = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "vector", "op": "add"})
+        t = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "text"})
+        eff["sources"][t]["content"] = "█"
+        eff["params"][ng.param_key(t, "size")] = 12.0
+        edit.connect_graph(p, "c1", eff["id"], t, v, "v1")
+        edit.connect_graph(p, "c1", eff["id"], v, "output", "src")
+        view = self.s.view()
+        view["tracks"][0]["clips"][0]["effects"] = [eff]
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            self.assertEqual(rgb(img, W // 2, H // 2), WHITE, type(r).__name__)
+            self.assertEqual(rgb(img, 2, 2), BLACK, type(r).__name__)
+
+    def test_an_svg_node_is_offered_svg_files_only(self):
+        pr = proj()
+        eff = edit.add_effect(pr, "c1", fx.GRAPH)
+        n = edit.add_graph_node(pr, "c1", eff["id"], {"type": "source", "kind": "image", "svg": True})
+        self.assertTrue(eff["graph"]["nodes"][n]["svg"])
+        plain = edit.add_graph_node(pr, "c1", eff["id"], {"type": "source", "kind": "image"})
+        self.assertNotIn("svg", eff["graph"]["nodes"][plain])

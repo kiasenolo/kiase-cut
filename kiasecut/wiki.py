@@ -82,8 +82,11 @@ def colors():
         return FALLBACK_COLORS
 
 
-def dot(kind):
-    return f'<span style="color:{colors().get(kind, "#888888")}">●</span>'
+def dot(kind, shape="single", size=14):
+    """A socket dot as an image: "socket:<colour>:<shape>" (ui/wiki_window.py draws it as the node editor draws its sockets: "single" is
+    a circle, "field" a diamond, "either" a diamond with a dot)."""
+    return (f'<img src="socket:{colors().get(kind, "#888888").lstrip("#")}:{shape}" width="{size}" height="{size}" '
+            'style="vertical-align: middle">')
 
 
 # -- the pages as a tree ----------------------------------------------------------------------------
@@ -229,9 +232,17 @@ def node_page(key):
 
 def legend_row():
     """The dots in a row, each with its name below."""
-    cells = "".join(f'<td align="center" width="70"><span style="font-size:22px">{dot(k)}</span><br><small>{esc(n.split("（")[0])}</small></td>'
+    cells = "".join(f'<td align="center" width="70">{dot(k, size=24)}<br><small>{esc(n.split("（")[0])}</small></td>'
                     for k, n, _ in TYPES)
     return f'<table cellspacing="0" cellpadding="4"><tr>{cells}</tr></table><br>'
+
+
+def shapes_row():
+    """The three shapes of a socket, drawn, each with what it means."""
+    cells = "".join(f'<td align="center" width="170">{dot("float", shape, 28)}<br><b>{esc(n)}</b><br><small>{esc(t)}</small></td>'
+                    for shape, n, t in (("single", "圓點", "整張圖一個值"), ("field", "菱形", "每個像素各一個值（場）"),
+                                        ("either", "菱形帶點", "兩種都可以")))
+    return f'<table cellspacing="0" cellpadding="4"><tr>{cells}</tr></table>'
 
 
 def types_page():
@@ -240,7 +251,7 @@ def types_page():
             "字串、字體和矢量輪廓不是圖片，只接特定的節點。</p>"
             + legend_row() +
             '<table border="1" cellspacing="0" cellpadding="4"><tr><th></th><th>類型</th><th>是什麼</th></tr>' + rows + "</table>"
-            "<h3>點的形狀</h3><ul><li>● 圓點：整張圖一個值</li><li>◆ 菱形：每個像素各一個值（場）</li><li>◈ 菱形帶點：兩種都可以</li></ul>")
+            "<h3>點的形狀</h3>" + shapes_row())
 
 
 def category_page(label):

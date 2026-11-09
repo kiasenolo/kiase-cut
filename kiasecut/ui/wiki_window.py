@@ -1,12 +1,44 @@
 """說明 Wiki (說明 menu, F1): a window with the pages of wiki.py - a tree of them and a search field at the left, the page at the right
 (links between pages, 上一頁 / 下一頁). The window is made when first wanted and keeps its place."""
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSplitter, QTextBrowser, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from .. import wiki
 
 STYLE = "table {border-color: #555555;} th {background-color: #2a2a2a;} code {color: #c8c85a;} a {color: #6a9fd0;}"
+
+
+def socket_image(colour, shape, size=64):
+    """A socket as the node editor draws it (NodeItem._socket): a circle holds one value, a diamond a value for every pixel (a field), a
+    diamond with a dot either."""
+    img = QImage(size, size, QImage.Format_ARGB32)
+    img.fill(Qt.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor(0, 0, 0, 160), size / 16))
+    p.setBrush(QColor(colour))
+    c, r = QPointF(size / 2, size / 2), size * 0.36
+    if shape == "single":
+        p.drawEllipse(c, r, r)
+    else:
+        r *= 1.3
+        p.drawPolygon(QPolygonF([c + QPointF(0, -r), c + QPointF(r, 0), c + QPointF(0, r), c + QPointF(-r, 0)]))
+        if shape == "either":
+            p.setBrush(QColor(0, 0, 0, 200))
+            p.drawEllipse(c, r * 0.25, r * 0.25)
+    p.end()
+    return img
+
+
+class Browser(QTextBrowser):
+    """The page: it draws the "socket:<colour>:<shape>" images the pages hold (wiki.dot)."""
+    def loadResource(self, kind, url):
+        if url.scheme() == "socket":
+            colour, _, shape = url.path().partition(":")
+            return socket_image("#" + colour.lstrip("#"), shape or "single")
+        return super().loadResource(kind, url)
 
 
 class WikiWindow(QWidget):
@@ -31,7 +63,7 @@ class WikiWindow(QWidget):
         col.addWidget(self.search)
         col.addWidget(self.tree, 1)
         col.addWidget(self.found, 1)
-        self.view = QTextBrowser()
+        self.view = Browser()
         self.view.setOpenLinks(False)
         self.view.document().setDefaultStyleSheet(STYLE)
         self.view.anchorClicked.connect(lambda url: self.show_page(wiki.page_of(url.toString())))

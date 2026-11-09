@@ -41,7 +41,7 @@ class WikiTests(unittest.TestCase):
             self.skipTest("no Qt")
         for key, _, _ in wiki.TYPES:
             self.assertIn(key, SOCKET_COLORS)
-            self.assertIn(SOCKET_COLORS[key], wiki.dot(key))
+            self.assertIn(SOCKET_COLORS[key].lstrip("#"), wiki.dot(key))
 
     def test_links_round_trip(self):
         ref = "node:builtin:nodes/mix"

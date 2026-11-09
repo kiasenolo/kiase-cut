@@ -524,6 +524,7 @@ class MainWindow(QMainWindow):
         ef.effectDropped.connect(self.effect_dropped)
         ef.effectsDropped.connect(self.effects_dropped)
         ef.effectSwapped.connect(self.effect_swapped)
+        ef.overscanChosen.connect(lambda ids, eid, v: self.fx_each("延伸範圍", ids, eid, lambda lvl, cid, e: edit.set_effect_overscan(lvl, cid, e, v)))
         ef.maskKindChosen.connect(lambda ids, eid, kind: self.fx_each(
             "效果範圍" if kind else "移除效果範圍", ids, eid,
             lambda lvl, cid, e: edit.set_effect_mask(lvl, cid, e, kind, self.clip_time(cid))))

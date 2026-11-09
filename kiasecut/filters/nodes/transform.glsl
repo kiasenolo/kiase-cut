@@ -29,7 +29,7 @@ vec4 effect(vec2 uv) {
     float a = radians(angle), cs = cos(a), sn = sin(a);
     p = vec2(cs * p.x - sn * p.y, sn * p.x + cs * p.y) / zoom;
     vec2 q = p / resolution + 0.5;
-    if (q.x < 0.0 || q.y < 0.0 || q.x > 1.0 || q.y > 1.0) return vec4(0.0);
+    if (!in_picture(q)) return vec4(0.0);
     if (interp == 0) return src((floor(q * src_px) + 0.5) / src_px);
     if (interp == 2) return cubic_tap(q);
     return src(q);

@@ -7,7 +7,7 @@
 // @param anchor vec2 0,0 -1 1 "錨點"
 
 vec4 sample_image(vec2 p) {
-    if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, vec2(1.0)))) return vec4(0.0);
+    if (!in_picture(p)) return vec4(0.0);
     return src(p);
 }
 

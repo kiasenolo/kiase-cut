@@ -147,18 +147,22 @@ class VectorGraphTests(unittest.TestCase):
         self.assertEqual(ng.vecop_of(self.e["graph"]["nodes"][add], add, self.e["params"], 0), "add")
 
 
-class VectorRenderTests(unittest.TestCase):
+_SHARED = {}
+
+
+class RenderBase(unittest.TestCase):
+    """The scene and the renderers, made once (a second GL context in the same process can make the first one fail)."""
     @classmethod
     def setUpClass(cls):
-        cls.dir = tempfile.mkdtemp()
-        cls.s = Scene(cls.dir)
-        from kiasecut import glrender
-        cls.renderers = [render.Renderer()] + ([glrender.GLRenderer()] if HAVE_GL else [])
+        if not _SHARED:
+            _SHARED["dir"] = tempfile.mkdtemp()
+            _SHARED["scene"] = Scene(_SHARED["dir"])
+            from kiasecut import glrender
+            _SHARED["renderers"] = [render.Renderer()] + ([glrender.GLRenderer()] if HAVE_GL else [])
+        cls.dir, cls.s, cls.renderers = _SHARED["dir"], _SHARED["scene"], _SHARED["renderers"]
 
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.dir, ignore_errors=True)
 
+class VectorRenderTests(RenderBase):
     def build(self, op, sizes):
         """A graph effect: a boolean of rectangles (x, w in clip fractions; all as tall as the clip), white, into the output."""
         p = proj()
@@ -215,7 +219,7 @@ class VectorRenderTests(unittest.TestCase):
             self.assertEqual(got, [WHITE, WHITE, BLACK, WHITE])
 
 
-class VectorTextAndSvgTests(VectorRenderTests):
+class VectorTextAndSvgTests(RenderBase):
     def test_a_text_gives_its_glyph_outlines_where_the_text_node_draws_them(self):
         p = proj()
         eff = edit.add_effect(p, "c1", fx.GRAPH)
@@ -240,3 +244,58 @@ class VectorTextAndSvgTests(VectorRenderTests):
         self.assertTrue(eff["graph"]["nodes"][n]["svg"])
         plain = edit.add_graph_node(pr, "c1", eff["id"], {"type": "source", "kind": "image"})
         self.assertNotIn("svg", eff["graph"]["nodes"][plain])
+
+
+class OverscanTests(RenderBase):
+    def graph(self, ref, params, overscan=None):
+        p = proj()
+        eff = edit.add_effect(p, "c1", fx.GRAPH)
+        n = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect", "colors": ("#ffffff", "#000000")}})
+        eff["sources"][n].update(cx=0.0, w=4.0, h=4.0)                       # (four times the frame: most of it is outside)
+        t = edit.add_graph_node(p, "c1", eff["id"], {"type": "filter", "ref": ref})
+        for k, v in params.items():
+            eff["params"][ng.param_key(t, k)] = v
+        edit.connect_graph(p, "c1", eff["id"], n, t, "src")
+        edit.connect_graph(p, "c1", eff["id"], t, "output", "src")
+        if overscan is not None:
+            eff["overscan"] = overscan
+        view = self.s.view()
+        view["tracks"][0]["clips"][0]["effects"] = [eff]
+        return view
+
+    def pixels_of(self, view):
+        out = []
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            out.append((rgb(img, 12, 18), rgb(img, 52, 18)))
+        return out
+
+    def test_what_a_transform_shrinks_back_into_the_frame_comes_from_outside_it(self):
+        for ref, params in (("builtin:nodes/transform", {"zoom": 0.5}), ("builtin:transform", {"factor": [0.5, 0.5]}),
+                            ("builtin:scale", {"factor": [0.5, 0.5]})):
+            view = self.graph(ref, params)
+            for got in self.pixels_of(view):
+                self.assertEqual(got, (WHITE, WHITE), ref)                    # (auto: a margin)
+            for got in self.pixels_of(self.graph(ref, params, 0)):
+                self.assertEqual(got, (BLACK, BLACK), ref)                    # (no margin: the shape was cut at the frame first)
+
+    def test_a_rotate_node_keeps_the_corners(self):
+        view = self.graph("builtin:nodes/rotate", {"angle": 45.0})
+        for got in self.pixels_of(view):
+            self.assertEqual(got, (WHITE, WHITE))
+        self.assertEqual(ng.overscan_fraction(self.graph("builtin:blur", {})["tracks"][0]["clips"][0]["effects"][0]["graph"]), 0.0)
+
+    def test_the_setting_is_kept_and_checked(self):
+        p = proj()
+        eff = edit.add_effect(p, "c1", fx.GRAPH)
+        edit.set_effect_overscan(p, "c1", eff["id"], 100)
+        self.assertEqual(eff["overscan"], 100)
+        edit.set_effect_overscan(p, "c1", eff["id"], "auto")
+        self.assertNotIn("overscan", eff)
+        with self.assertRaises(edit.EditError):
+            edit.set_effect_overscan(p, "c1", eff["id"], 7)
+        g = self.graph("builtin:nodes/transform", {"zoom": 0.5})["tracks"][0]["clips"][0]["effects"][0]["graph"]
+        self.assertEqual((ng.overscan_fraction(g), ng.overscan_fraction(g, 0), ng.overscan_fraction(g, 25)), (0.5, 0.0, 0.25))
+        g["nodes"]["glare"] = {"type": "filter", "ref": "builtin:blender_glare"}            # (a node that reads pixels by their place on the card: no margin on its own)
+        self.assertEqual(ng.overscan_fraction(g), 0.0)

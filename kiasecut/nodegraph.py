@@ -1575,9 +1575,77 @@ class Cache:
             self._drop(k)
 
 
-def evaluate(eng, graph, params, src_tex, w, h, alloc, free, *args, **kw):
+OVERSCAN_STEPS = (0, 25, 50, 100)                           # 延伸範圍: % of the frame on each side; "auto": GEOMETRY_NODES have 50
+GEOMETRY_NODES = ("rotate", "transform", "map_uv")          # (builtin:nodes/...) and the filters below: what moves a picture, so the part that leaves the frame is wanted again
+GEOMETRY_FILTERS = ("transform", "scale", "translate")
+OVERSCAN_IN, OVERSCAN_OUT = "builtin:_overscan_in", "builtin:_overscan_out"
+OVERSCAN_MAX_PX = 8192
+
+
+def overscan_safe(d):
+    """Whether filter d works the same with a bigger picture under it: it does not read pixels by their place on the card."""
+    code = d.code or ""
+    return "gl_FragCoord" not in code and "texelFetch" not in code
+
+
+def overscan_fraction(graph, setting="auto"):
+    """The margin (a fraction of the frame, on each side) a node effect's graph is worked out with: its 延伸範圍 setting (a number of
+    %, or "auto": 50 % when the graph has a node that moves the picture and none that cannot work with a margin)."""
+    nodes = [n for n in (graph.get("nodes") or {}).values() if n["type"] == FILTER]
+    if setting in (None, "auto"):
+        refs = {n["ref"] for n in nodes}
+        moves = any(r.rpartition("/")[2] in GEOMETRY_NODES and r.startswith("builtin:nodes/") for r in refs) or \
+            any(r in ["builtin:" + f for f in GEOMETRY_FILTERS] for r in refs)
+        percent = 50 if moves and all(overscan_safe(fx.get(r)) for r in refs) else 0
+    else:
+        try:
+            percent = float(setting)
+        except (TypeError, ValueError):
+            percent = 0
+    return max(0.0, min(percent, 100.0)) / 100.0
+
+
+def evaluate(eng, graph, params, src_tex, w, h, alloc, free, *args, overscan=None, **kw):
     """Work out graph's output - see _evaluate. The values a shape or text node reads from the nodes linked into its parameters are
-    put into `params` while it runs (the shape and the text are drawn from the effect's params) and taken out again after."""
+    put into `params` while it runs (the shape and the text are drawn from the effect's params) and taken out again after.
+    overscan: the effect's 延伸範圍 (overscan_fraction): the graph is worked out on pictures that many times bigger round the frame,
+    so what a Rotate or Transform takes out of the frame can come back; the result is the frame's part. None: no margin."""
+    m = 0.0 if overscan is None else overscan_fraction(graph, overscan)
+    mx, my = round(w * m), round(h * m)
+    while m > 0 and max(w + 2 * mx, h + 2 * my) > OVERSCAN_MAX_PX:
+        mx, my = mx * 3 // 4, my * 3 // 4
+    if mx <= 0 and my <= 0:
+        return _evaluate_given(eng, graph, params, src_tex, w, h, alloc, free, *args, **kw)
+    W, H = w + 2 * mx, h + 2 * my
+    ov = (w / W, h / H, mx / W, my / H)
+    ident = (1.0, 1.0, 0.0, 0.0)
+    unit, errors = kw.get("unit", 1.0), kw.setdefault("errors", [])
+    big = alloc(W, H)
+    result = (None, None)
+    try:
+        eng.overscan = (ident, ov)                                  # (drawn in the middle of the bigger picture)
+        if not _run(eng, fx.get(OVERSCAN_IN), {}, src_tex, W, H, [(0, big)], 0.0, 0.0, 0, unit, None, None, errors):
+            return _evaluate_given(eng, graph, params, src_tex, w, h, alloc, free, *args, **kw)
+        eng.overscan = (ov, ov)
+        tex, owner = _evaluate_given(eng, graph, params, big.tex, W, H, alloc, free, *args, **kw)
+        if tex is None:
+            return None, None
+        out = alloc(w, h)
+        eng.overscan = (ov, ident)                                  # (and the frame's part taken back)
+        ok = _run(eng, fx.get(OVERSCAN_OUT), {}, tex, w, h, [(0, out)], 0.0, 0.0, 0, unit, None, None, errors)
+        if owner is not None:
+            free(owner)
+        if not ok:
+            free(out)
+            return None, None
+        result = (out.tex, out)
+        return result
+    finally:
+        eng.overscan = None
+        free(big)
+
+
+def _evaluate_given(eng, graph, params, src_tex, w, h, alloc, free, *args, **kw):
     given = {}
     try:
         return _evaluate(eng, graph, params, src_tex, w, h, alloc, free, *args, _given=given, **kw)

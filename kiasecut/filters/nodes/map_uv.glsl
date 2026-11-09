@@ -15,17 +15,18 @@
 
 // The picture is read as Blender's GPU samplers do: the texel grid of the picture itself, outside of it transparent (裁切), the edge pixel (延伸) or
 // the picture again (重複), per axis. Bicubic is Blender's cubic B-spline (gpu_shader_bicubic_sampler_lib.glsl).
-int wrap_(int i, int n, int mode, out bool gone) {
+int wrap_(int i, int n, int m, int mode, out bool gone) {          // (m: the margin round the frame that has a picture too)
     gone = false;
-    if (i >= 0 && i < n) return i;
+    if (i >= -m && i < n + m) return i;
     if (mode == 0) { gone = true; return 0; }
-    if (mode == 1) return clamp(i, 0, n - 1);
+    if (mode == 1) return clamp(i, -m, n + m - 1);
     return i - n * int(floor(float(i) / float(n)));
 }
 vec4 texel_at(ivec2 p) {
     ivec2 n = ivec2(src_px);
     bool gx, gy;
-    int x = wrap_(p.x, n.x, ext_x, gx), y = wrap_(p.y, n.y, ext_y, gy);
+    ivec2 m = ov_margin_px();
+    int x = wrap_(p.x, n.x, m.x, ext_x, gx), y = wrap_(p.y, n.y, m.y, ext_y, gy);
     if (gx || gy) return vec4(0.0);
     return src((vec2(x, y) + 0.5) / src_px);
 }

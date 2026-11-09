@@ -2307,6 +2307,19 @@ def connect_graph(proj, clip_id, effect_id, src, dst, socket, out=None):
         raise EditError(str(exc)) from exc
 
 
+def set_effect_overscan(proj, clip_id, effect_id, value):
+    """A node effect's 延伸範圍: "auto" (a margin when the graph moves the picture), or 0 / 25 / 50 / 100 (% of the frame on each side)."""
+    _, c = find(proj, clip_id)
+    e, _g = _graph(c, effect_id)
+    if value in (None, "auto"):
+        e.pop("overscan", None)
+    elif value in nodegraph.OVERSCAN_STEPS:
+        e["overscan"] = value
+    else:
+        raise EditError("延伸範圍要是自動、0、25、50 或 100")
+    return e
+
+
 def node_item(proj, clip_id, effect_id, nid, action, sock="", name="", src="", out=""):
     """A node with options of its own (Menu Switch): action "add" (a new option at the end, named `name`; src: a node whose picture
     goes into it - the link let go on the empty socket), "rename" (option `sock`), "remove", "up" or "down". Returns the socket."""

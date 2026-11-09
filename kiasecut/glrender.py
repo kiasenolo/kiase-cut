@@ -978,7 +978,7 @@ class GLRenderer(render.Renderer):
             tex, owner = nodegraph.evaluate(gl.fx, e["graph"], e["params"], cur.tex, cur.w, cur.h, lambda w, h: gl.layer(w, h, dtype="f2"), gl.release,
                                             t=t, duration=duration, fps=fps, unit=ppu, picture=picture, errors=errors,
                                             viewer=self.editing, tap=self.thumb_tap(e), stamp=stamp, cache=self.graph_cache, scope=e["id"],
-                                            input_stamp=look)
+                                            input_stamp=look, overscan=e.get("overscan", "auto"))
         except nodegraph.GraphError as exc:
             self.errors.append(f"節點效果：{exc}")
             return None

@@ -121,6 +121,7 @@ class EffectsPanel(QWidget):
     enabledChosen = Signal(list, str, bool)
     moveRequested = Signal(list, str, int)          # clip ids, effect id, -1 / +1
     maskKindChosen = Signal(list, str, object)      # clip ids, effect id, kind or None
+    overscanChosen = Signal(list, str, object)      # clip ids, effect id, 延伸範圍 of a node effect ("auto" or % of the frame)
     maskInvertChosen = Signal(list, str, bool)
     maskEditChanged = Signal()                      # 編輯遮罩 / 編輯位置 switched: self.mask_edit, self.source_edit
     sourceKindChosen = Signal(list, str, str, object)   # clip ids, effect id, colour param, "image" / "video" /
@@ -387,6 +388,18 @@ class EffectsPanel(QWidget):
             open_nodes.setToolTip("在節點編輯器裡接這個效果的節點")
             open_nodes.clicked.connect(lambda _=False, eid=e["id"]: self.nodesRequested.emit(eid))
             lay.addWidget(open_nodes)
+            orow = QHBoxLayout()
+            orow.addWidget(QLabel("延伸範圍"))
+            over = ComboBox()
+            over.setToolTip("旋轉、變換、縮放、平移會把畫面轉到框外：節點圖在比畫面大的工作區裡算，最後裁回畫面，轉出去的部分還能轉回來。"
+                            "自動：圖裡有這些節點才延伸 50%；越大越慢")
+            for label, v in (("自動", "auto"), ("關", 0), ("25%", 25), ("50%", 50), ("100%", 100)):
+                over.addItem(label, v)
+            have = {x.get("overscan", "auto") for x in (k["effects"][index] for k in self.clips)}
+            over.setCurrentIndex(max(0, over.findData(have.pop())) if len(have) == 1 else -1)
+            over.activated.connect(lambda i, eid=e["id"], cb=over: self._now(self.overscanChosen, eid, cb.itemData(i)))
+            orow.addWidget(over, 1)
+            lay.addLayout(orow)
         elif not e["filter"].startswith(fx.BUILTIN):
             where = QPushButton("在檔案總管中顯示濾鏡檔")
             where.clicked.connect(lambda _=False, ref=e["filter"]: self.revealFilter.emit(ref))

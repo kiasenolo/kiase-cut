@@ -706,14 +706,24 @@ uniform sampler2D extra_;
 uniform vec2 pass_px;
 uniform vec2 src_px;
 uniform vec2 extra_px;
+uniform vec2 ov_scale;                              // (a node effect's 延伸範圍: the pictures are bigger than the frame; uv still runs 0 - 1 over the frame)
+uniform vec2 ov_off;
+vec2 ov_(vec2 uv) { return clamp(uv * ov_scale + ov_off, 0.0, 1.0); }
+// whether a uv has a picture under it: the frame, and with 延伸範圍 the margin round it (what a transform may bring into the frame)
+bool in_picture(vec2 uv) {
+    vec2 lo = -ov_off / ov_scale, hi = (1.0 - ov_off) / ov_scale;
+    return all(greaterThanEqual(uv, lo)) && all(lessThanEqual(uv, hi));
+}
+// the margin in texels (src_px: the frame's)
+ivec2 ov_margin_px() { return ivec2(floor(ov_off / ov_scale * src_px + 0.5)); }
 %(params)s
 in vec2 uv_;
 out vec4 fragColor;
 uniform bool src_on_;
 bool has_src() { return src_on_; }
-vec4 src(vec2 uv) { return texture(source, clamp(uv, 0.0, 1.0)); }
-vec4 original(vec2 uv) { return texture(original_, clamp(uv, 0.0, 1.0)); }
-vec4 extra(vec2 uv) { return texture(extra_, clamp(uv, 0.0, 1.0)); }
+vec4 src(vec2 uv) { return texture(source, ov_(uv)); }
+vec4 original(vec2 uv) { return texture(original_, ov_(uv)); }
+vec4 extra(vec2 uv) { return texture(extra_, ov_(uv)); }
 vec4 unpremultiply(vec4 c) { return c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(0.0); }
 vec4 premultiply(vec4 c) { return vec4(c.rgb * c.a, c.a); }
 // a curve parameter: its y at x (0 - 1), between its samples
@@ -841,7 +851,9 @@ EPILOGUE = "\nvoid main() { fragColor = effect(uv_); }\n"
 VERTEX = """#version 330
 in vec2 pos;
 out vec2 uv_;
-void main() { uv_ = pos * 0.5 + 0.5; gl_Position = vec4(pos, 0.0, 1.0); }
+uniform vec2 ov_dst_scale;
+uniform vec2 ov_dst_off;
+void main() { uv_ = (pos * 0.5 + 0.5 - ov_dst_off) / ov_dst_scale; gl_Position = vec4(pos, 0.0, 1.0); }
 """
 GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "vec2": "vec2", "vec3": "vec3",
               "menu": "int", "curve": "float", "gradient": "vec4"}
@@ -858,7 +870,7 @@ def shader_source(d, sampled=()):
     for name, _label in d.inputs:
         decl += (f"\nuniform sampler2D inp_{name}_;\nuniform bool inp_{name}_on_;\n"
                  f"bool has_input_{name}() {{ return inp_{name}_on_; }}\n"
-                 f"vec4 input_{name}(vec2 uv) {{ return texture(inp_{name}_, clamp(uv, 0.0, 1.0)); }}")
+                 f"vec4 input_{name}(vec2 uv) {{ return texture(inp_{name}_, ov_(uv)); }}")
     return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + EPILOGUE
 
 
@@ -932,6 +944,7 @@ class Engine:
     compositor's own is shared: glrender.py)."""
 
     def __init__(self, mgl=None, ctx=None):
+        self.overscan = None                  # (scale, offset) of the pictures read and of the one drawn, while a node effect with 延伸範圍 runs (nodegraph._evaluate)
         if ctx is None:
             mgl, ctx = make_context()
         self.mgl, self.ctx = mgl, ctx
@@ -1066,7 +1079,9 @@ class Engine:
         prog, vao = self._program(d, tuple(sorted(sources)))
         targets = self._targets(w, h)
         unit = unit if unit > 1e-9 else 1.0
-        for name, v in (("resolution", (w / unit, h / unit)), ("time", float(time)), ("progress", float(progress)),
+        ov = self.overscan or ((1.0, 1.0, 0.0, 0.0), (1.0, 1.0, 0.0, 0.0))        # (the pictures read, the one drawn: scale x y, offset x y)
+        for name, v in (("resolution", (w / unit * ov[1][0], h / unit * ov[1][1])), ("ov_scale", ov[0][:2]), ("ov_off", ov[0][2:]),
+                        ("ov_dst_scale", ov[1][:2]), ("ov_dst_off", ov[1][2:]), ("time", float(time)), ("progress", float(progress)),
                         ("frame", int(frame)), ("scale", 1.0)):
             prog.put(name, v)
         for p in d.params:
@@ -1149,8 +1164,9 @@ class Engine:
                 dst_tex, dst_fbo = next(t for t in pool if t[0] is not read and t[0] is not src)
             sw, sh = read.size
             ex = d.extras[i] if i < len(d.extras) else None
-            for name, v in (("pass_px", (float(tw), float(th))), ("src_px", (float(sw), float(sh))),
-                            ("extra_px", (float(made[ex][1]), float(made[ex][2])) if ex is not None else (1.0, 1.0))):
+            ov = self.overscan or ((1.0, 1.0, 0.0, 0.0), (1.0, 1.0, 0.0, 0.0))     # (the sizes a filter is told are those of the frame's part)
+            for name, v in (("pass_px", (float(tw) * ov[1][0], float(th) * ov[1][1])), ("src_px", (float(sw) * ov[0][0], float(sh) * ov[0][1])),
+                            ("extra_px", (float(made[ex][1]) * ov[0][0], float(made[ex][2]) * ov[0][1]) if ex is not None else (1.0, 1.0))):
                 prog.put(name, v)
             dst_fbo.use()
             self.ctx.viewport = (0, 0, tw, th)

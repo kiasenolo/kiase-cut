@@ -47,6 +47,7 @@ FAR = 0.3                                                  # (a node drawn small
 SNAP_R = 28.0                                              # (a dragged link this near (screen px) to a socket it can go into jumps onto it)
 LINK_W = 5.0                                               # (the width of a placed link)
 DRAG_W = 7.0                                               # (and of one being dragged)
+LINK_BORDER = 1.5                                          # (the dark edge round a link, each side: it shows on any colour behind it)
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 190.0, "gradient": 96.0}          # the height of a curve / gradient parameter in a node (a curve is edited right there: its plot and buttons)
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
@@ -994,6 +995,14 @@ def fm_elide(p, text, width):
     return p.fontMetrics().elidedText(text, Qt.ElideRight, int(width))
 
 
+def draw_border(p, path, width):
+    """The edge of a link: the path drawn wider and dark under the link (always unbroken: a dashed link shows dashes on it)."""
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor(0, 0, 0, 210), width + 2 * LINK_BORDER, Qt.SolidLine, Qt.RoundCap))
+    p.setBrush(Qt.NoBrush)
+    p.drawPath(path)
+
+
 class Link(QGraphicsPathItem):
     """A link, in the colours of the sockets it joins (Blender's coloured links): from the output's colour to the input's,
     a gradient when they differ."""
@@ -1035,6 +1044,13 @@ class Link(QGraphicsPathItem):
     def light(self, width):
         self.lit = True
         self.setPen(QPen(QColor("#ffffff"), width))
+
+    def boundingRect(self):
+        return super().boundingRect().adjusted(-LINK_BORDER, -LINK_BORDER, LINK_BORDER, LINK_BORDER)
+
+    def paint(self, p, option, widget=None):
+        draw_border(p, self.path(), self.pen().widthF())
+        super().paint(p, option, widget)
 
     def route(self, a, b):
         path = QPainterPath(a)

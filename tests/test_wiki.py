@@ -56,7 +56,7 @@ class WikiTests(unittest.TestCase):
             self.assertIn(word, text)
 
     def test_guides_link_to_pages_that_exist(self):
-        known = set(pages(wiki.tree())) | {"types", "rules", "nodes", "fx", "guides", "format", "home"}
+        known = set(pages(wiki.tree())) | {"types", "rules", "nodes", "fx", "format", "home"} | set(wiki.wikidata.SECTIONS)
         known |= {"node:" + e[1] for _, entries in wiki.categories() for e in entries if e[0] == "node"}
         known |= {"node:" + ref for _, items in wiki.effect_categories() for ref, _ in items}
         for pid, (title, body) in wiki.wikidata.GUIDES.items():
@@ -76,6 +76,16 @@ class WikiTests(unittest.TestCase):
                 for a, o, b, i in links:
                     self.assertEqual(nodes[a][5][o][0], "out")
                     self.assertEqual(nodes[b][5][i][0], "in")
+
+    def test_every_guide_is_in_a_section(self):
+        listed = set(pages(wiki.tree()))
+        for pid in wiki.wikidata.GUIDES:
+            self.assertIn(pid, listed, pid)
+        for sec, (_, _, ids) in wiki.wikidata.SECTIONS.items():
+            kind, text = wiki.render(sec)
+            for pid in ids:
+                self.assertIn(pid, listed)
+                self.assertIn(wiki.quote(pid, safe=":"), text)
 
     def test_search_finds_guides(self):
         self.assertTrue(any(p.startswith("guide:") for p, _, _ in wiki.search("節點效果")))

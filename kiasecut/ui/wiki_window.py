@@ -164,7 +164,10 @@ class WikiWindow(QWidget):
             self.items.setdefault(pid, item)
             self._fill(item, children)
         if parent is self.tree.invisibleRootItem():
-            self.items["guides"].setExpanded(True)
+            for sec in wikidata.SECTIONS:
+                self.items[sec].setExpanded(True)
+            for pid in ("nodes", "fx"):
+                self.items[pid].setExpanded(False)
 
     def show_page(self, pid, remember=True):
         if not pid:

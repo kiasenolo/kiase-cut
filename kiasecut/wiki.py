@@ -58,12 +58,10 @@ SPECIAL = {
 HOME = """<h1>KiaseCut 說明</h1>
 <p>這裡的頁面大多是從程式自己的資料產生的：節點的說明、插槽、參數都和你現在用的版本一致。</p>
 <ul>
-<li><a href="wiki:guides">入門</a>：第一次用？從認識整個軟體、剪輯、效果，到做出第一個節點效果</li>
-<li><a href="wiki:types">資料類型</a>：插槽上的點是什麼顏色、什麼形狀</li>
-<li><a href="wiki:rules">連線規則</a>：怎麼把節點接起來、什麼能接什麼</li>
-<li><a href="wiki:nodes">節點</a>：節點編輯器的 Add 選單，照選單的順序，每個節點的輸入、輸出和參數</li>
-<li><a href="wiki:fx">KiaseCut 效果</a>：Blender 沒有的、「效果」清單裡的其他效果（它們也是節點）</li>
-<li><a href="wiki:format">濾鏡寫法</a>：自己用 .glsl 寫濾鏡</li>
+<li><a href="wiki:guide%3Aoverview">認識 KiaseCut</a>：第一次用，先看這篇</li>
+<li><a href="wiki:sec%3Aedit">剪輯</a>：專案與素材、時間線、預覽與屬性、複合片段</li>
+<li><a href="wiki:sec%3Afx">效果</a>：加效果、關鍵幀、效果清單、自己寫濾鏡</li>
+<li><a href="wiki:sec%3Anodes">節點</a>：節點是什麼、做第一個節點效果、編輯器操作，以及資料類型、連線規則和每個節點的說明</li>
 </ul>
 <p>左邊的搜尋欄可以找節點、參數和說明。</p>"""
 
@@ -169,8 +167,15 @@ def tree():
     nodes = [("cat:" + label, label, [("node:" + e[1], e[2], []) for e in entries if e[0] == "node"])
              for label, entries in categories()]
     effects = [("fxcat:" + cat, cat, [("node:" + ref, name, []) for ref, name in items]) for cat, items in effect_categories()]
-    guides = [(pid, title, []) for pid, (title, _) in wikidata.GUIDES.items()]
-    return [("home", "首頁", []), ("guides", "入門", guides), ("types", "資料類型", []), ("rules", "連線規則", []), ("nodes", "節點", nodes), ("fx", "KiaseCut 效果", effects), ("format", "濾鏡寫法", [])]
+    special = {"nodes": ("節點目錄", nodes), "fx": ("效果清單", effects), "format": ("濾鏡寫法", []), "types": ("資料類型", []), "rules": ("連線規則", [])}
+    out = [("home", "首頁", []), ("guide:overview", wikidata.GUIDES["guide:overview"][0], [])]
+    for sec, (title, _, pages) in wikidata.SECTIONS.items():
+        kids = []
+        for pid in pages:
+            name, children = special[pid] if pid in special else (wikidata.GUIDES[pid][0], [])
+            kids.append((pid, name, children))
+        out.append((sec, title, kids))
+    return out
 
 
 # -- the pages ---------------------------------------------------------------------------------------
@@ -304,8 +309,13 @@ def legend_row():
     return f'<table cellspacing="0" cellpadding="4"><tr>{cells}</tr></table><br>'
 
 
-def guides_page():
-    return "<h1>入門</h1><p>照順序看最容易：</p><ol>" + "".join(f"<li>{link(pid, title)}</li>" for pid, (title, _) in wikidata.GUIDES.items()) + "</ol>"
+def page_title(pid):
+    return {"nodes": "節點目錄", "fx": "效果清單", "format": "濾鏡寫法", "types": "資料類型", "rules": "連線規則"}.get(pid) or wikidata.GUIDES[pid][0]
+
+
+def section_page(sec):
+    title, intro, pages = wikidata.SECTIONS[sec]
+    return f"<h1>{esc(title)}</h1><p>{esc(intro)}</p><ol>" + "".join(f"<li>{link(pid, page_title(pid))}</li>" for pid in pages) + "</ol>"
 
 
 def shapes_row():
@@ -350,7 +360,7 @@ def _summary(key):
 
 def effects_page(cat=None):
     if cat is None:
-        return "<h1>KiaseCut 效果</h1><p>Blender 沒有的效果。它們都能在節點編輯器的「KiaseCut 效果」選單加成節點。</p>" + "".join(
+        return "<h1>效果清單</h1><p>KiaseCut 自己的效果（Blender 的合成器沒有的），依類別列出。它們也都能在節點編輯器的「KiaseCut 效果」選單加成節點。</p>" + "".join(
             f"<p>{link('fxcat:' + c, c)}（{len(items)}）</p>" for c, items in effect_categories())
     items = dict(effect_categories()).get(cat, [])
     return f"<h1>{esc(cat)}</h1>" + "".join(f"<p>{link('node:' + ref, name)}<br><small>{esc(_summary(ref))}</small></p>" for ref, name in items)
@@ -370,8 +380,8 @@ def render(page):
         return "markdown", format_page()
     if page == "home" or not page:
         return "html", HOME
-    if page == "guides":
-        return "html", guides_page()
+    if page in wikidata.SECTIONS:
+        return "html", section_page(page)
     if page in wikidata.GUIDES:
         return "html", expand(wikidata.GUIDES[page][1])
     if page == "types":
@@ -379,7 +389,7 @@ def render(page):
     if page == "rules":
         return "html", expand(wikidata.RULES)
     if page == "nodes":
-        return "html", "<h1>節點</h1><p>照 Blender 5.2 合成器 Add 選單的順序。</p>" + "".join(
+        return "html", "<h1>節點目錄</h1><p>每個節點的用法、接法、插槽和參數，照 Blender 5.2 合成器 Add 選單的順序。</p>" + "".join(
             f"<p>{link('cat:' + lab, lab)}（{sum(1 for k, *_ in entries if k == 'node')}）</p>" for lab, entries in categories())
     if page == "fx":
         return "html", effects_page()

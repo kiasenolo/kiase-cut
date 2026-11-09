@@ -106,7 +106,7 @@ from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPainterPath, QPen,
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
-from .. import components, curves, edit, fonts, nodegraph, project, render, sharedgl, textlayout, textvars
+from .. import components, curves, edit, fonts, gizmos, nodegraph, project, render, sharedgl, textlayout, textvars
 from . import appevents, touch, viewglide, wheel
 from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
@@ -566,6 +566,7 @@ class Preview(_Surface):
         self.interactive = interactive
         self.show_guides = True                          # 輔助線: the frame, handles and notes drawn over the picture (off: just the picture)
         self.mask_mode = False
+        self.gizmo = None                       # id of the effect whose handles (gizmos.py) are on the canvas (編輯控制點)
         self.mask_group = "mask"                # which mask mask mode edits: the clip's, "fxmask:<effect id>"
         self.text_box = None                    # TextBox while a text clip's words are typed on the canvas
         self.drag = None
@@ -697,6 +698,30 @@ class Preview(_Surface):
     def set_mask_mode(self, on, group="mask"):
         self.mask_mode, self.mask_group = on, group
         self.update()
+
+    def set_gizmo(self, eid):
+        """Show the handles of effect eid on the canvas (None: none)."""
+        if eid != self.gizmo:
+            self.gizmo = eid
+            self.update()
+
+    def gizmo_effect(self, box):
+        """The effect (of box's clip) whose handles are shown, or None."""
+        if not self.gizmo or box is None or self.mask_mode or self.multi() or getattr(box, "group", False):
+            return None
+        return next((e for e in box.clip.get("effects") or [] if e["id"] == self.gizmo and gizmos.has_gizmo(e["filter"])), None)
+
+    def gizmo_hit(self, box, m, k):
+        """The handle (gizmos.handles, with its canvas point) under canvas point m, the last drawn first, or None."""
+        e = self.gizmo_effect(box)
+        if e is None:
+            return None
+        xf = box.xf()
+        for h in reversed(gizmos.handles(e, box.t, box.bw, box.bh)):
+            pt = xf.map(QPointF(*h["local"]))
+            if self._near(pt, m, k):
+                return dict(h, canvas=pt, effect=e["id"])
+        return None
 
     def mask_of(self, clip):
         """The mask that mask mode edits on clip (編輯位置: a component picture's placement), or None."""
@@ -1250,10 +1275,11 @@ class Preview(_Surface):
         elif box is not None:
             if mbox is not None and self.masking(mbox):
                 self._paint_mask(p, mbox, k)
-            elif self.mask_mode:                         # no mask: just where the clip is
+            elif self.mask_mode or self.gizmo_effect(box) is not None:     # no mask: just where the clip is
                 p.setBrush(Qt.NoBrush)
                 p.setPen(QPen(QColor(255, 255, 255, 120), 1 * k, Qt.DashLine))
                 p.drawPolygon(QPolygonF(box.corners()))
+                self._paint_gizmo(p, box, k)
             else:
                 self._paint_transform(p, box, k)
         if self.drag and self.drag["kind"] == "zoombox" and self.drag["moved"]:
@@ -1569,6 +1595,55 @@ class Preview(_Surface):
         ex = [b.extents() for b in boxes]
         return min(e[0] for e in ex), max(e[1] for e in ex), min(e[2] for e in ex), max(e[3] for e in ex)
 
+    GIZMO_COLOR = "#4fc3f7"
+
+    def _paint_gizmo(self, p, box, k):
+        """The handles of the effect picked for 編輯控制點: a ring with a cross for a place, a square on a circle for a size, a
+        round handle on a line for a turn."""
+        e = self.gizmo_effect(box)
+        if e is None:
+            return
+        xf = box.xf()
+        col = QColor(self.GIZMO_COLOR)
+        casing, line = QPen(QColor("#070707"), 3.5 * k), QPen(col, 1.5 * k)
+        for h in gizmos.handles(e, box.t, box.bw, box.bh):
+            pt = xf.map(QPointF(*h["local"]))
+            kind = h["kind"]
+            p.setBrush(Qt.NoBrush)
+            if kind in ("radius", "angle"):
+                c = h["centre"]
+                ring = QPainterPath()
+                rr = h["reach"] if kind == "angle" else math.hypot(h["local"][0] - c[0], h["local"][1] - c[1])
+                ring.addEllipse(QPointF(*c), rr, rr)
+                ring = xf.map(ring)
+                for pen in (casing, QPen(col, 1.25 * k, Qt.DashLine)):
+                    p.setPen(pen)
+                    p.drawPath(ring)
+                if kind == "angle":
+                    for pen in (casing, line):
+                        p.setPen(pen)
+                        p.drawLine(xf.map(QPointF(*c)), pt)
+                    self._handle(p, pt, k, round_=True, color=self.GIZMO_COLOR)
+                else:
+                    self._handle(p, pt, k, color=self.GIZMO_COLOR)
+            else:
+                if kind == "offset":
+                    o = xf.map(QPointF(*h["origin"]))
+                    p.setPen(QPen(col, 1 * k, Qt.DashLine))
+                    p.drawLine(o, pt)
+                r = 5 * k
+                for w, c in ((3 * k, "#111114"), (1.25 * k, self.GIZMO_COLOR)):
+                    p.setPen(QPen(QColor(c), w))
+                    p.drawEllipse(pt, r, r)
+                    p.drawLine(pt - QPointF(2 * r, 0), pt + QPointF(2 * r, 0))
+                    p.drawLine(pt - QPointF(0, 2 * r), pt + QPointF(0, 2 * r))
+                if h.get("label"):
+                    f = p.font()
+                    f.setPixelSize(round(13 * k))
+                    p.setFont(f)
+                    p.setPen(col)
+                    p.drawText(pt + QPointF(9 * k, -7 * k), h["label"])
+
     def _paint_mask(self, p, box, k):
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(QColor(255, 255, 255, 90), 1 * k, Qt.DashLine))
@@ -1653,6 +1728,9 @@ class Preview(_Surface):
         k = self._k()
         box = self.selected_box()
         mbox = self.mask_box(box)
+        if (h := self.gizmo_hit(box, m, k)) is not None:                # a handle of the effect picked for 編輯控制點
+            self.drag = {"kind": "gizmo", "box": box, "m0": m, "moved": False, "handle": h, "grab": h["canvas"] - m, "turn": {}}
+            return
         if mbox is not None and self.masking(mbox):
             g = MaskGeo(mbox, self.mask_of(box.clip))
             hit = next((n for n, pt in g.handles(k) if self._near(pt, m, k)), None)
@@ -1661,7 +1739,7 @@ class Preview(_Surface):
             if hit is not None:
                 self.drag = {"kind": hit, "box": mbox, "geo": g, "m0": m, "moved": False}
                 return
-        elif box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False):
+        elif box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False) and self.gizmo_effect(box) is None:
             if self._near(box.rot_handle(k), m, k):
                 self.drag = {"kind": "rotate", "box": box, "m0": m, "moved": False}
                 return
@@ -1844,6 +1922,13 @@ class Preview(_Surface):
         if kind == "gap":
             along = m.x() - d["m0"].x() if d["axis"] == "x" else m.y() - d["m0"].y()
             return "moves", self._spread(d["boxes"], d["axis"], max(0.0, round(d["gap0"] + along)))
+        if kind == "gizmo":
+            inv, _ = box.xf().inverted()
+            pt = inv.map(m + d["grab"])
+            h = d["handle"]
+            vals = gizmos.dragged(h, (pt.x(), pt.y()), box.bw, box.bh, d["turn"], snap=not e.modifiers() & Qt.AltModifier,
+                                  turn_snap=lambda v: snap_angle(v, free))
+            return "fx:" + h["effect"], vals
         c = QPointF(box.cx, box.cy)
         if kind == "scale":
             return self._scale_values(box, d, m, e.modifiers())
@@ -2127,7 +2212,9 @@ class Preview(_Surface):
         cur = Qt.ArrowCursor
         hover = None
         mbox = self.mask_box(box)
-        if mbox is not None and self.masking(mbox):
+        if self.gizmo_hit(box, m, k) is not None:
+            cur = Qt.PointingHandCursor
+        elif mbox is not None and self.masking(mbox):
             g = MaskGeo(mbox, self.mask_of(box.clip))
             if any(self._near(pt, m, k) for _, pt in g.handles(k)):
                 cur = Qt.PointingHandCursor
@@ -2143,6 +2230,9 @@ class Preview(_Surface):
                 cur, hover = Qt.SizeAllCursor, "group"
             elif l - pad <= x <= r + pad and t - pad <= y <= b + pad:
                 hover = "group"
+        elif box is not None and not self.mask_mode and self.gizmo_effect(box) is not None:
+            if grabs(box, x, y):
+                cur = Qt.SizeAllCursor
         elif box is not None and not self.mask_mode:
             if self._near(box.rot_handle(k), m, k):
                 cur = Qt.PointingHandCursor

@@ -31,7 +31,7 @@ from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
                                QPushButton, QToolButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, fx, nodegraph
+from .. import curves, edit, fx, gizmos, nodegraph
 from .colorpick import pick_color, qcolor, rgba
 from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, key_button, kind_tag,
                         section)
@@ -152,6 +152,7 @@ class EffectsPanel(QWidget):
         self.menu_extender = None                   # f(menu, clip ids, number prop): the binding entries of a number's menu
         self.boxes = []                             # the effects' boxes, in order
         self.mask_edit = None                       # effect id whose mask the preview edits (編輯遮罩)
+        self.gizmo_edit = None                      # effect id whose handles the preview shows (編輯控制點, gizmos.py)
         self.source_edit = None                     # (effect id, colour param) whose source the preview places (編輯位置)
         self.source_region = None                   # (effect id, colour param) whose 編輯區域 shows on the timeline
         self.media = {"image": [], "video": [], "compound": [], "track": []}    # [(path / id, name)] sources can show
@@ -390,6 +391,14 @@ class EffectsPanel(QWidget):
             where = QPushButton("在檔案總管中顯示濾鏡檔")
             where.clicked.connect(lambda _=False, ref=e["filter"]: self.revealFilter.emit(ref))
             lay.addWidget(where)
+        if gizmos.has_gizmo(e["filter"]) and len(self.clips) == 1:       # (the preview drags one clip's)
+            hand = QPushButton("編輯控制點")
+            hand.setCheckable(True)
+            hand.setChecked(self.gizmo_edit == e["id"])
+            hand.setToolTip("在預覽畫面上拖曳這個效果的中心點、範圍、角度或位移")
+            hand.toggled.connect(lambda v, eid=e["id"]: self.set_gizmo_edit(eid if v else None))
+            self.widgets[("gizmo_edit", e["id"])] = hand
+            lay.addWidget(hand)
         lay.addLayout(self._number_row("fxmix:" + e["id"], "mix", "混合程度 %", 0.0, 100.0, 1.0, 0, 100))
         group = "fx:" + e["id"]
         sections = {name: self._panel(e["id"], name, closed) for name, closed in d.panels}   # Blender's panels
@@ -756,8 +765,8 @@ class EffectsPanel(QWidget):
     def _check_edits(self):
         """The 編輯遮罩 / 編輯位置 / 編輯區域 buttons as the panel's state has them."""
         for key, b in self.widgets.items():
-            if isinstance(key, tuple) and key[0] in ("mask_edit", "source_edit", "source_region"):
-                on = (key[1] == self.mask_edit if key[0] == "mask_edit" else
+            if isinstance(key, tuple) and key[0] in ("mask_edit", "source_edit", "source_region", "gizmo_edit"):
+                on = (key[1] == self.mask_edit if key[0] == "mask_edit" else key[1] == self.gizmo_edit if key[0] == "gizmo_edit" else
                       key[1:] == (self.source_edit if key[0] == "source_edit" else self.source_region))
                 b.blockSignals(True)
                 b.setChecked(on)
@@ -778,6 +787,15 @@ class EffectsPanel(QWidget):
         self.mask_edit = eid
         if eid:
             self.source_edit = None
+        self._check_edits()
+        self.maskEditChanged.emit()
+
+    def set_gizmo_edit(self, eid):
+        """Show the handles of effect eid on the preview (None: none)."""
+        eid = self._real(eid) if eid else None
+        if eid == self.gizmo_edit:
+            return
+        self.gizmo_edit = eid
         self._check_edits()
         self.maskEditChanged.emit()
 
@@ -902,6 +920,8 @@ class EffectsPanel(QWidget):
             if self.mask_edit and (len(pics) > 1 or not any(e["id"] == self.mask_edit and e.get("mask")
                                                             for e in (c.get("effects") or [] if c else []))):
                 self.mask_edit = None               # that effect or its mask is gone (or several clips)
+            if self.gizmo_edit and (len(pics) > 1 or not any(e["id"] == self.gizmo_edit for e in (c.get("effects") or [] if c else []))):
+                self.gizmo_edit = None              # that effect is gone (or several clips)
             for attr in ("source_edit", "source_region"):
                 se = getattr(self, attr)
                 if se and (len(pics) > 1 or not any(e["id"] == se[0] and se[1] in (e.get("sources") or {})

@@ -903,6 +903,7 @@ class MainWindow(QMainWindow):
                 self.preview.set_mask_mode(True, "place:" + ins.place_edit)
             else:
                 self.preview.set_mask_mode(False)
+            self.preview.set_gizmo(ef.gizmo_edit if pn.is_active("effects") else None)
             self._matte_preview_changed()
             self._update_matte_region()
         self.node_source = None         # (effect id, node id) of the picture node selected in the node editor
@@ -2836,6 +2837,8 @@ class MainWindow(QMainWindow):
             label = "效果來源位置"
         elif group == "multi":                          # a built-in asset or a 文字框 resized: size and place
             label = "調整大小"
+        elif group.startswith("fx:"):
+            label = "效果控制點"
         else:
             label = "旋轉" if "rotation" in values else "縮放" if "scale" in values else \
                 "中心點" if "pivot_x" in values else "錨點" if "anchor_x" in values else "移動位置"

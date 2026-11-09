@@ -29,13 +29,13 @@ ARROW = f"{FILES}/arrow"  # its chevrons: arrow-down.svg, arrow-up.svg ...
 # DaVinci Resolve-like: charcoal panels on a near-black frame, flat controls, light grey
 # text; colour is left to clips, keyframes, the playhead and the meter
 STYLE = """
-QWidget { background: #111111; color: #d0d0d2; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC', sans-serif; font-size: 12px; }
+QWidget { background: #111111; color: #ffffff; font-family: 'Segoe UI', 'Microsoft JhengHei UI', 'Noto Sans CJK TC', sans-serif; font-size: 12px; }
 QLabel { background: transparent; }
 QMainWindow { background: #050505; }
 QMenuBar { background: #0b0b0b; border-bottom: 1px solid #000000; }
 QMenu { background: #1a1a1a; border: none; border-radius: 0; padding: 0; }
-QMenu::item { padding: 5px 30px 5px 28px; background: transparent; color: #cccccc; }
-QMenu::item:disabled { color: rgba(255, 255, 255, 77); }
+QMenu::item { padding: 5px 30px 5px 28px; background: transparent; color: #ffffff; }
+QMenu::item:disabled { color: rgba(255, 255, 255, 128); }
 QMenu::item:selected { background: rgba(255, 255, 255, 26); color: #ffffff; }
 QMenu::separator { height: 2px; background: #4d4d4d; margin: 5px 8px; }
 QMenu::indicator { width: 14px; height: 14px; left: 4px; }
@@ -68,10 +68,10 @@ QTreeView::branch:has-children:closed { image: url(@ARROW-right.svg); }
 QTreeView::branch:has-children:open { image: url(@ARROW-down.svg); }
 QHeaderView { background: #161616; border: none; }
 QHeaderView::section { background: #161616; color: #8e8e94; border: none; border-bottom: 1px solid #000000; padding: 4px; }
-QLabel#time { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 15px; color: #e8e8ea; }
+QLabel#time { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 15px; color: #ffffff; }
 QLabel#viewer { color: #8e8e94; }
 QLabel#title { color: #8e8e94; font-weight: 600; font-size: 11px; }
-QLabel#crumb { color: #d0d0d2; font-weight: 600; }
+QLabel#crumb { color: #ffffff; font-weight: 600; }
 QWidget#bar { background: #161616; border-top: 1px solid #000000; border-bottom: 1px solid #000000; }
 QTabWidget::pane { border: none; border-top: 1px solid #000000; }
 QWidget#docktitle { background: #0b0b0b; border-bottom: 1px solid #000000; }
@@ -82,7 +82,7 @@ QTabBar { background: #0b0b0b; }
 QTabBar QToolButton { background: #0b0b0b; border: none; padding: 0; }
 QTabBar::tear { width: 0; border: none; }
 QMessageBox, QInputDialog, QColorDialog, QDialog { background: #111111; }
-QMessageBox QLabel { color: #d0d0d2; background: transparent; }
+QMessageBox QLabel { color: #ffffff; background: transparent; }
 QStatusBar { background: #0b0b0b; color: #8e8e94; border-top: 1px solid #000000; }
 QStatusBar::item { border: none; }
 QSlider:horizontal { min-height: 20px; }
@@ -121,8 +121,8 @@ COLOURS = {
     "Accent": ACCENT,
 }
 DISABLED = {
-    "WindowText": "#636467", "PlaceholderText": "#606163", "Text": "#646567", "ButtonText": "#67696c",
-    "Highlight": "#0d0d0d", "HighlightedText": "#636467", "Link": "#5e4e3d", "LinkVisited": "#383d40",
+    "WindowText": "#80ffffff", "PlaceholderText": "#80ffffff", "Text": "#80ffffff", "ButtonText": "#80ffffff",
+    "Highlight": "#0d0d0d", "HighlightedText": "#80ffffff", "Link": "#5e4e3d", "LinkVisited": "#383d40",
     "Accent": "#0d0d0d",
 }
 
@@ -335,7 +335,7 @@ class Style(wheel.Style):
             option = QStyleOptionMenuItem(option)
             option.state &= ~QStyle.State_Selected
             option.rect = option.rect.adjusted(motion.LIST_PAD, 0, 0, 0)               # (the text, not the wash, moves in)
-            ink = QColor("#ffffff" if hot else "#cccccc") if option.state & QStyle.State_Enabled else QColor(255, 255, 255, 77)
+            ink = QColor("#ffffff") if option.state & QStyle.State_Enabled else QColor(255, 255, 255, 128)
             for role in (QPalette.Text, QPalette.WindowText, QPalette.ButtonText):
                 option.palette.setColor(role, ink)
         if element in (QStyle.CE_ProgressBarGroove, QStyle.CE_ProgressBarContents) and self._line(option):

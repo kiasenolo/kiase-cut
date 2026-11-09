@@ -71,7 +71,7 @@ NODE_HEAD = "#262626"                            # (Color(.15): a reroute's body
 FIELD_BG = "#0a0a0a"
 FIELD_LINE = "#4d4d4d"                           # a field's outline, Color(.3) ...
 FIELD_HOT = "#808080"                            # ... and under the mouse, Color(.5)
-LABEL = "#cccccc"                                # Color(.8)
+LABEL = "#ffffff"
 INK = "#ffffff"                                  # what a field shows
 DASH = "#808080"                                 # an unlinked (ghost) socket
 SELECT = "#ffffff"                               # the outline of what is selected
@@ -520,7 +520,7 @@ class NodeItem(QGraphicsItem):
             self._field(p, r, vals, field_bg, text, dim)
 
     def _field(self, p, r, vals, bg, text, dim):
-        text = QColor(INK)                                   # (what a field shows is white, its label is not)
+        text = QColor(INK)                                   # (what a field shows)
         kind = r["kind"]
         if kind == "shape":
             box = self.field_rect(r)

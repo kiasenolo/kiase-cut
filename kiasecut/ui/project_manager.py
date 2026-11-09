@@ -107,7 +107,7 @@ def folder_card(up=False):
     p.setBrush(QColor("#2e2e33" if up else "#e0b93a"))
     p.drawRoundedRect(w * 0.28, h * 0.26, w * 0.44, h * 0.56, 8, 8)
     if up:
-        p.setPen(QColor("#c0c0c4"))
+        p.setPen(QColor("#ffffff"))
         f = p.font()
         f.setPixelSize(34)
         p.setFont(f)

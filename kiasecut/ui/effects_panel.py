@@ -494,7 +494,7 @@ class EffectsPanel(QWidget):
         head.setText(name)
         head.setAutoRaise(True)
         head.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-        head.setStyleSheet("QToolButton { font-weight: bold; color: #c8c8cc; }")
+        head.setStyleSheet("QToolButton { font-weight: bold; color: #ffffff; }")
         body = QWidget()
         bl = QVBoxLayout(body)
         bl.setContentsMargins(14, 0, 0, 0)

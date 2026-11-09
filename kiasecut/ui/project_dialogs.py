@@ -41,7 +41,7 @@ class RatioPreview(QWidget):
         p.drawRect(r)
         g = gcd(w, h)
         ratio = f"{w // g}:{h // g}" if max(w, h) // g <= 64 else f"{w / h:.3f}:1"
-        p.setPen(QColor("#d0d0d6"))
+        p.setPen(QColor("#ffffff"))
         p.drawText(r, Qt.AlignCenter, f"{w} × {h}\n{ratio}")
 
 

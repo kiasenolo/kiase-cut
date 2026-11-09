@@ -10,7 +10,7 @@ from PySide6.QtCore import QByteArray, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QPolygonF
 from PySide6.QtSvg import QSvgRenderer
 
-INK, DIM, DARK = "#d6d6d8", "#5c5c62", "#151517"
+INK, DIM, DARK = "#ffffff", "#80ffffff", "#151517"      # (disabled: white at half strength)
 _cache = {}
 GLYPHS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "look", "glyphs")
 _svg = {}
@@ -28,10 +28,11 @@ def _glyph(name):
 
 
 def _draw_glyph(p, text, ink, size):
-    """The glyph over (0, 0, size, size); its white is the ink (what lies out of the board is cut, as the board does)."""
+    """The glyph over (0, 0, size, size); its white is the ink, a QColor (what lies out of the board is cut, as the board does)."""
     p.save()
     p.setClipRect(QRectF(0, 0, size, size))
-    QSvgRenderer(QByteArray(text.replace("#FFFFFF", ink).encode())).render(p, QRectF(0, 0, size, size))
+    p.setOpacity(ink.alphaF())
+    QSvgRenderer(QByteArray(text.replace("#FFFFFF", ink.name()).encode())).render(p, QRectF(0, 0, size, size))
     p.restore()
 
 
@@ -206,7 +207,7 @@ def icon(name, size=24, on=INK):
             ink = QColor(on if state == QIcon.On and mode == QIcon.Normal else color)
             glyph = _glyph(name)
             if glyph:
-                _draw_glyph(p, glyph, ink.name(), size * 2)
+                _draw_glyph(p, glyph, ink, size * 2)
             else:
                 p.scale(size * 2 / 24, size * 2 / 24)
                 p.setPen(QPen(ink, 1))
@@ -253,7 +254,7 @@ def key_icon(state, color=INK, size=16):
         p.setRenderHint(QPainter.Antialiasing)
         glyph = _glyph("keyframe-" + state)
         if glyph:
-            _draw_glyph(p, glyph, QColor(ink).name(), size * 2)
+            _draw_glyph(p, glyph, QColor(ink), size * 2)
         else:
             p.scale(size * 2 / 24, size * 2 / 24)
             p.setPen(QPen(QColor(ink), 1))

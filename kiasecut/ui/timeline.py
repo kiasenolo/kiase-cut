@@ -988,7 +988,7 @@ class Timeline(QWidget):
                 if n % label == 0:
                     code = beat_code(tb["offset_us"] + n * part_s * US + 1, tb).split(".")
                     keep = 1 if label % bar == 0 else len(code) - 1 if label % div == 0 and div > 1 else len(code)
-                    p.setPen(QColor("#c8c8cc" if n % bar == 0 else "#8a8a90"))
+                    p.setPen(QColor("#ffffff" if n % bar == 0 else "#8a8a90"))
                     p.drawText(int(x) + 3, RULER_H - 9, ".".join(code[:keep]))
             n += tick
 
@@ -1082,7 +1082,7 @@ class Timeline(QWidget):
                     p.drawRoundedRect(r, 3, 3)
                     p.setPen(QColor("#111114"))
                     p.drawText(r, Qt.AlignCenter, "參考")
-                p.setPen(QColor("#c8c8cc"))
+                p.setPen(QColor("#ffffff"))
                 name = p.fontMetrics().elidedText(tr.get("name") or tr["kind"], Qt.ElideRight, int(name_w))
                 gain = tr.get("gain", 1.0)
                 if abs(gain - 1.0) > 1e-6:
@@ -1330,7 +1330,7 @@ class Timeline(QWidget):
         pts = ([QPointF(cx - a, cy - a * 0.6), QPointF(cx + a, cy - a * 0.6), QPointF(cx, cy + a * 0.8)] if opened
                else [QPointF(cx - a * 0.6, cy - a), QPointF(cx + a * 0.8, cy), QPointF(cx - a * 0.6, cy + a)])
         p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
+        p.setBrush(QColor("#9a9aa0") if dim else QColor("#ffffff"))
         p.drawPolygon(QPolygonF(pts))
         p.restore()
 
@@ -1418,7 +1418,7 @@ class Timeline(QWidget):
                     p.drawPixmap(QPointF(tx, wt), pix)
                 p.restore()
         if r.width() > 24:
-            p.setPen(QColor("#9a9aa0") if dim else QColor("#f2f2f2"))
+            p.setPen(QColor("#9a9aa0") if dim else QColor("#ffffff"))
             label = self.clip_label(c).replace("\n", " ")
             if c["type"] == "compound":
                 label = ("⧉ " if c.get("timeline_id") else components.ICON + " " if kind == "component"

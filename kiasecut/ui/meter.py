@@ -128,7 +128,7 @@ class MeterPanel(QWidget):
         lay.addLayout(row, 1)
         self.db_lbl = QLabel("0.0 dB")
         self.db_lbl.setAlignment(Qt.AlignCenter)
-        self.db_lbl.setStyleSheet("font-family: Consolas, monospace; color: #cfcfd4;")
+        self.db_lbl.setStyleSheet("font-family: Consolas, monospace; color: #ffffff;")
         lay.addWidget(self.db_lbl)
 
     def gain(self):

@@ -2504,7 +2504,7 @@ class SeekBar(QWidget):
         p.setBrush(QColor("#e6e6e6"))
         p.drawRoundedRect(QRectF(tr.x(), tr.y(), tr.width() * frac, tr.height()), 2, 2)
         p.drawEllipse(QPointF(tr.x() + tr.width() * frac, tr.center().y()), 6, 6)
-        p.setPen(QColor("#d0d0d2"))
+        p.setPen(QColor("#ffffff"))
         f = p.font()
         f.setPixelSize(13)
         p.setFont(f)

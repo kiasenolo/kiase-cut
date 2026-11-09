@@ -860,7 +860,7 @@ class CurveEditor(QWidget):
                 it.setForeground(QColor(CURVE_COLORS[slot % len(CURVE_COLORS)]))
                 slot += 1
             else:
-                it.setForeground(QColor("#c8c8cc"))
+                it.setForeground(QColor("#ffffff"))
         self.params.blockSignals(False)
 
     def _ticked(self, it):

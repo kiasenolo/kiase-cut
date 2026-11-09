@@ -835,11 +835,13 @@ KiaseCut is free software under the GNU General Public License, version 3 or (at
 option) any later version: see `LICENSE`. This covers every version published so far, from
 the first commit on. It comes with no warranty.
 
-The exception is the pictures drawn by hand for the wiki's demos: `images/` and `images.free`
-(the Lunacy document they are drawn in). The demo pictures the program makes from them
-(`kiasecut/wikibuild.py`, in the user's cache folder, not in the repository) are theirs too. They are © 2026 KIASENOLO under CC BY 4.0
-(`LICENSES/CC-BY-4.0.txt`): use, change and share them, also commercially, with credit to
-"KIASENOLO". `REUSE.toml` says it for each file.
+The exception is what KIASENOLO drew by hand: the logo and the pictures for the wiki's demos
+(`images/`), the interface's icons (`kiasecut/look/glyphs/`, the arrows `kiasecut/look/arrow-*.svg`
+and `partial.svg`; their sources in `icon/`) and the Lunacy documents they are drawn in
+(`images.free`, `icons.free`). The demo pictures the program makes from them
+(`kiasecut/wikibuild.py`, in the user's cache folder, not in the repository) are theirs too.
+They are © 2026 KIASENOLO under CC BY 4.0 (`LICENSES/CC-BY-4.0.txt`): use, change and share them,
+also commercially, with credit to "KIASENOLO". `REUSE.toml` says it for each file.
 
 Taken from elsewhere:
 

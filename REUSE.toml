@@ -1,7 +1,9 @@
 version = 1
 
-# The pictures drawn by hand for the wiki's demos are not KiaseCut's code: they have their own license.
+# The pictures and icons drawn by hand (the wiki's demos, the logo, the interface's icons) are not KiaseCut's code: they have their own license.
+# (look/check.svg and look/icons/ are not theirs: the first is KiaseCut's code's, the others are KDE's Breeze, LGPL-3.0-or-later.)
 [[annotations]]
-path = ["images/**", "images.free"]
+path = ["images/**", "images.free", "icon/**", "icons.free", "kiasecut/look/glyphs/**",
+        "kiasecut/look/arrow-*.svg", "kiasecut/look/partial.svg"]
 SPDX-FileCopyrightText = "2026 KIASENOLO"
 SPDX-License-Identifier = "CC-BY-4.0"

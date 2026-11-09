@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g>
+    <rect width="128" height="128" fill="#000000" fill-rule="evenodd" fill-opacity="0.188" />
+    <g transform="translate(8 23)">
+      <path d="M28 0L0 0L0 24L11 24L11 11L28 11L28 0ZM83 11L83 0L112 0L112 24L101 24L101 11L83 11ZM83 71L101 71L101 58L112 58L112 82L83 82L83 71ZM11 58L11 71L28 71L28 82L0 82L0 58L11 58Z" />
+      <path d="M28 11L28 0L0 0L0 24L11 24L11 11L28 11ZM101 24L112 24L112 0L83 0L83 11L101 11L101 24ZM0 67L0 58L11 58L11 71L28 71L28 82L0 82L0 67ZM83 71L83 82L112 82L112 58L101 58L101 71L83 71Z" fill="#FFFFFF" fill-rule="evenodd" />
+    </g>
+  </g>
+</svg>

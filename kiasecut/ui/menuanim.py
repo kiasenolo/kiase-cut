@@ -36,10 +36,13 @@ def log(menu, what):
         print(f"[menuanim {time.monotonic() % 1000:8.3f}] {what:<8} {title or type(menu).__name__} @{id(menu) & 0xffff:04x}", file=sys.stderr, flush=True)
 
 
+enabled = True                                                # the 設定 switch (選單動畫)
+
+
 def animated():
     """Whether menus animate: everywhere, the tablet too (KIASECUT_MENUANIM=0 turns it off). The invisible menus and the crashes the tablet
     had with it were found elsewhere - a slide over the titles switching menus faster than Android could show them (menubartap.py)."""
-    return os.environ.get("KIASECUT_MENUANIM") != "0"
+    return enabled and os.environ.get("KIASECUT_MENUANIM") != "0"
 
 
 def curve():

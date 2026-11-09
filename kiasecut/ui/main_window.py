@@ -5070,7 +5070,8 @@ class MainWindow(QMainWindow):
                              root_dir=self.app_root(), autosave_custom=str(self.settings().value("autosave_dir") or ""),
                              ui_scale=ui_scale(), node_gl=str(self.settings().value("node_gl", True)).lower() not in ("false", "0"),
                              preview_gl=str(self.settings().value("preview_gl", True)).lower() not in ("false", "0"),
-                             preview_direct=str(self.settings().value("preview_direct", True)).lower() not in ("false", "0"))
+                             preview_direct=str(self.settings().value("preview_direct", True)).lower() not in ("false", "0"),
+                             menu_anim=menuanim.enabled)
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
@@ -5087,6 +5088,8 @@ class MainWindow(QMainWindow):
         s.setValue("node_gl", v["node_gl"])
         s.setValue("preview_gl", v["preview_gl"])
         s.setValue("preview_direct", v["preview_direct"])
+        s.setValue("menu_anim", v["menu_anim"])
+        menuanim.enabled = v["menu_anim"]
         scale_changed = v["ui_scale"] != ui_scale()
         s.setValue("ui_scale", v["ui_scale"])
         inertia.state.update(v["inertia"])
@@ -6488,6 +6491,7 @@ def run(argv):
     if sys.platform == "android":
         QApplication.setAttribute(Qt.AA_DontUseNativeMenuBar)       # the menus in the window, not behind the system's "..."
     direct = False
+    menuanim.enabled = str(QSettings(*MainWindow.SETTINGS).value("menu_anim", True)).lower() not in ("false", "0")     # 選單動畫 (設定)
     if sys.platform != "android":                               # 預覽直接用 GPU 貼圖 (sharedgl.py): Qt's GL contexts share one group
         st = QSettings(*MainWindow.SETTINGS)
         on = lambda key: str(st.value(key, True)).lower() not in ("false", "0")

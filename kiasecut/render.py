@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, components, curves, fonts, fx, masks, nodegraph, project, propexpr, rack, svgimage, textlayout, textvars, viz
+from . import assets, components, curves, fonts, fx, masks, nodegraph, project, propexpr, rack, svgimage, textlayout, textvars, vector, viz
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -113,6 +113,9 @@ class Mips:
         for w, h in self.sizes[m + 1:n + 1]:
             im = im.scaled(w, h, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
         return im
+
+
+MAX_VECTOR_PX = 4096                  # longest side of the picture a vector node is drawn into
 
 
 class Renderer:
@@ -220,6 +223,71 @@ class Renderer:
         reach = 2 * assets.overflow(q)
         placed = dict(src, w=(sw + reach) / max(disp[0], 1e-6), h=(sh + reach) / max(disp[1], 1e-6))
         return self.asset(q, sw, sh), placed
+
+    # -- vector nodes (vector.py) -------------------------------------------------------------------
+    OUTLINE_FAMILIES = ("rect", "line", "ellipse", "star", "polygon", "arrow", "parallelogram", "heart")
+
+    def vector_layers(self, e, graph, nid, t, disp, fps, seen=()):
+        """The outlines (vector.Layer, canvas px centred on the clip's frame) node nid of effect e's graph gives at clip time t:
+        a built-in shape's, a text's, an SVG picture's, or what a vector node makes of the nodes linked into it."""
+        node = graph["nodes"].get(nid) or e["graph"]["nodes"].get(nid)
+        if node is None or nid in seen:
+            return []
+        seen += (nid,)
+        src = (e.get("sources") or {}).get(nid) or {}
+        bound = nodegraph.binds(e["graph"])
+        if nodegraph.is_vecop(node):
+            links = {l["socket"]: l["from"] for l in graph["links"] if l["to"] == nid}
+            groups = [self.vector_layers(e, graph, links[sock], t, disp, fps, seen) for sock in nodegraph.vecop_sockets(node) if sock in links]
+            op = nodegraph.vecop_of(node, nid, e["params"], t, bound)
+            return vector.add(groups) if op == "add" else vector.combine(op, groups)
+        src = nodegraph.placed_by(src, e["params"], bound, nid, t)
+        v = lambda k, d=0.0: curves.value(src.get(k, d), t)
+        local = QTransform().translate(v("cx") * disp[0] / 2, -v("cy") * disp[1] / 2).rotate(v("rotation"))
+        if nodegraph.is_asset(node):
+            q = nodegraph.asset_of(node, nid, e["params"], t, bound)
+            if q.get("family") not in self.OUTLINE_FAMILIES:
+                return []
+            sw, sh = max(v("w", 1.0) * disp[0], 1.0), max(v("h", 1.0) * disp[1], 1.0)
+            ratio = v("fit") if "fit" in src else 0.0
+            if ratio > 0:
+                sw, sh = (sh * ratio, sh) if sw / sh > ratio else (sw, sw / ratio)
+            path = vector.parse_d(assets.outline_d(q, sw, sh))
+            path.translate(-sw / 2, -sh / 2)
+            fill = tuple(assets.to_rgba(q.get("color"))) if q.get("fill", True) else None
+            stroke = tuple(assets.to_rgba(q.get("stroke_color"), (0.0, 0.0, 0.0, 1.0))) if assets.stroked(q) else None
+            layer = vector.Layer(path, fill, stroke, float(q.get("stroke", 0.0)) if stroke else 0.0, q.get("join", "miter"),
+                                 q.get("stroke_align", "inside"))
+            return [layer.mapped(local)]
+        if nodegraph.is_text(node):
+            spec = textvars.spec_at(nodegraph.text_of(node, nid, e["params"], t, bound, src, e["graph"]), t, TEXT_FIELDS, fps)
+            layers = vector.text_layers(spec, textlayout.PX_PER_FONT_UNIT * self.canvas_h / 1080)
+            return [l.mapped(local) for l in layers]
+        if node.get("type") == nodegraph.SOURCE and node.get("kind") == "image" and svgimage.is_svg(src.get("image")):
+            layers, box = vector.load_svg(src["image"])
+            if not layers or box.width() <= 0 or box.height() <= 0:
+                return []
+            sw, sh = max(v("w", 1.0) * disp[0], 1.0), max(v("h", 1.0) * disp[1], 1.0)
+            k = min(sw / box.width(), sh / box.height())
+            fit = QTransform().scale(k, k).translate(-box.center().x(), -box.center().y())      # (the picture keeps its proportions in its frame)
+            return [l.mapped(QTransform(fit.m11(), fit.m12(), fit.m21(), fit.m22(), fit.dx(), fit.dy()) * local) for l in layers]
+        return []
+
+    def vector_source(self, e, nid, src, t, disp, unit=1.0, fps=30.0):
+        """(picture, the source to place it by) of a vector node of a node effect: its outlines drawn over the whole clip at `unit`
+        render px per canvas px (a few thousand px at most)."""
+        graph = nodegraph.flatten(e["graph"])
+        layers = self.vector_layers(e, graph, nid, t, disp, fps)
+        k = min(max(unit, 1e-3), MAX_VECTOR_PX / max(disp[0], disp[1], 1.0))
+        pw, ph = max(1, round(disp[0] * k)), max(1, round(disp[1] * k))
+        key = ("vector", vector.signature(layers), pw, ph)
+        im = self.images.get(key)
+        if im is None:
+            im = vector.render(layers, pw, ph, k)
+            if len(self.images) >= 48:
+                self.images.pop(next(iter(self.images)))
+            self.images[key] = im
+        return im, {"cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
 
     def image(self, path, w, h):
         """The image at the smallest mip level at least w x h; the painter scales it the rest
@@ -874,6 +942,9 @@ class Renderer:
 
             def picture(nid, paint=None, linked=()):
                 src = sources.get(nid)
+                if src and src.get("kind") == nodegraph.VECTOR:
+                    pic, placed = self.vector_source(e, nid, src, t, disp, unit, fps)
+                    return upload(image_to_array(pic)), source_map(placed, t, disp, wt, w, h), None
                 if src and src.get("kind") in ("shape", "text"):
                     got = self.shape_source(e, nid, src, t, disp, paint, linked, unit, fps)
                     if got is None and paint:

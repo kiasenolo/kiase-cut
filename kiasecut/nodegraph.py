@@ -30,7 +30,7 @@ INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output"
 FONT = "font"                                               # 字體: Blender's Font constant - a font file that feeds a text node (never a picture)
 STRING = "string"                                           # 字串: Blender's String constant - words that feed a text node (never a picture)
 VIEWER = "viewer"                                           # 預覽: what the editor's preview shows (never exported)
-SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text")
+SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text", "vector")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
 PICTURE = "builtin:nodes/picture"
@@ -85,7 +85,7 @@ def param_key(nid, name):
 
 # -- nodes with items of their own (Menu Switch): node["items"] = [{"sock", "name"}], see dynamic.py ------------------------
 def is_dynamic(node):
-    return node["type"] == FILTER and bool(fx.get(node["ref"]).dynamic)
+    return is_vecop(node) or (node["type"] == FILTER and bool(fx.get(node["ref"]).dynamic))
 
 
 def _items(node):
@@ -140,6 +140,13 @@ def _settle_items(graph, params, nid, old_names):
 def add_item(graph, params, nid, name=None):
     """A new option at the end of node nid's items; returns its socket."""
     node = graph["nodes"][nid]
+    if is_vecop(node):
+        items = vecop_items(node)
+        node["items"] = items
+        node["next_item"] = max(node.get("next_item", 0), len(items), *(int(it["sock"][1:]) for it in items)) + 1
+        sock = f"v{node['next_item']}"
+        items.append({"sock": sock})
+        return sock
     if not is_dynamic(node):
         raise GraphError("這個節點沒有選項")
     items = _items(node)
@@ -153,6 +160,8 @@ def add_item(graph, params, nid, name=None):
 
 def rename_item(graph, params, nid, sock, name):
     node = graph["nodes"][nid]
+    if is_vecop(node):
+        raise GraphError("矢量節點的輸入不用命名")
     items = _items(node)
     old = {id(it): it["name"] for it in items}
     it = next((i for i in items if i["sock"] == sock), None)
@@ -164,6 +173,15 @@ def rename_item(graph, params, nid, sock, name):
 
 def remove_item(graph, params, nid, sock):
     node = graph["nodes"][nid]
+    if is_vecop(node):
+        items = vecop_items(node)
+        if len(items) <= 2:
+            raise GraphError("矢量節點至少要有兩個輸入")
+        if not any(it["sock"] == sock for it in items):
+            raise GraphError("找不到這個輸入")
+        node["items"] = [it for it in items if it["sock"] != sock]
+        graph["links"] = [l for l in graph["links"] if not (l["to"] == nid and l["socket"] == sock)]
+        return
     items = _items(node)
     if len(items) <= 2:
         raise GraphError("選單切換至少要有兩個選項")
@@ -178,6 +196,12 @@ def remove_item(graph, params, nid, sock):
 
 def move_item(graph, params, nid, sock, delta):
     node = graph["nodes"][nid]
+    if is_vecop(node):
+        items = node["items"] = vecop_items(node)
+        i = next((k for k, it in enumerate(items) if it["sock"] == sock), None)
+        if i is not None and 0 <= i + delta < len(items):
+            items[i], items[i + delta] = items[i + delta], items[i]
+        return
     items = _items(node)
     old = {id(it): it["name"] for it in items}
     i = next((k for k, it in enumerate(items) if it["sock"] == sock), None)
@@ -193,7 +217,7 @@ def default_params(graph):
     for nid, n in graph["nodes"].items():
         if n["type"] == FILTER:
             out.update({param_key(nid, k): v for k, v in fx.default_params(fx.for_node(n)).items()})
-        elif is_asset(n) or is_text(n):
+        elif is_asset(n) or is_text(n) or is_vecop(n):
             out.update({param_key(nid, k): v for k, v in fx.default_params(node_def(n)).items()})
     return out
 
@@ -267,6 +291,56 @@ def asset_def(node):
     out = fx.FilterDef("asset:" + a["key"], preset.name if preset else "形狀", "", params, "形狀", "", panels=panels)
     _asset_defs[key] = out
     return out
+
+
+# -- vector nodes (矢量): 相加 puts the outlines of its inputs one over the other, 布林 combines them by an operation. A source node
+# of kind "vector" (node["op"]: "add" | "boolean"); its inputs are the sockets of node["items"] ("v1", "v2"...), each taking the outline of
+# a shape, a text, an SVG file or another vector node (vector.py; the picture of the node is its outlines drawn) ---------------------------
+VECTOR = "vector"
+VECOPS = (("add", "相加"), ("boolean", "布林運算"))
+BOOLEAN_OPS = (("聯集", "union"), ("差集", "subtract"), ("交集", "intersect"), ("排除", "xor"))
+_vecop_defs = {}
+
+
+def is_vecop(node):
+    return node.get("type") == SOURCE and node.get("kind") == VECTOR
+
+
+def vecop_items(node):
+    """[{"sock"}] the inputs of a vector node (two to start with)."""
+    return node.get("items") or [{"sock": "v1"}, {"sock": "v2"}]
+
+
+def vecop_sockets(node):
+    return [it["sock"] for it in vecop_items(node)]
+
+
+def vecop_def(node):
+    """FilterDef standing for a vector node: 布林's operation as its only parameter."""
+    op = node.get("op", "add")
+    hit = _vecop_defs.get(op)
+    if hit is None:
+        params = [fx.Param("operation", "menu", BOOLEAN_OPS[0][0], label="運算", items=[n for n, _ in BOOLEAN_OPS])] if op == "boolean" else []
+        hit = _vecop_defs[op] = fx.FilterDef("vector:" + op, dict(VECOPS).get(op, "相加"), "", params, "矢量", "")
+    return hit
+
+
+def vecop_of(node, nid, params, t, bound=None):
+    """The operation of vector node nid at clip time t: "add", "union", "subtract", "intersect" or "xor"."""
+    if node.get("op", "add") != "boolean":
+        return "add"
+    v = curves.value(bound_value(params, bound, nid, "operation", BOOLEAN_OPS[0][0]), t)
+    return dict(BOOLEAN_OPS).get(v, "union")
+
+
+def gives_vector(node, source=None):
+    """Whether the node's outline can go into a vector node: a built-in shape, a text, a vector node, or an SVG picture
+    (source: its entry of the effect's sources, which says the file)."""
+    if is_asset(node) or is_text(node) or is_vecop(node):
+        return True
+    if node.get("type") == SOURCE and node.get("kind") == "image":
+        return source is None or str(source.get("image", "")).lower().endswith(".svg") or not source.get("image")
+    return False
 
 
 # -- text nodes: KiaseCut's text tool as a node (node["kind"] == "text"; its words and font are its source's "content" and
@@ -499,6 +573,9 @@ def sockets(node):
     if is_asset(node):                                   # (a built-in shape: pictures to paint its fill and outline with, then every value)
         return ([(sock, label) for _p, sock, label in ASSET_PAINTS] +
                 [(PARAM + q.name, q.label) for q in asset_def(node).params + place_params() if has_socket(q)])
+    if is_vecop(node):                                   # (its outlines, then the operation)
+        return ([(sock, f"矢量 {i + 1}") for i, sock in enumerate(vecop_sockets(node))] +
+                [(PARAM + q.name, q.label) for q in vecop_def(node).params if has_socket(q)])
     if is_text(node):                                    # (a text: its words from a string node, then every value)
         return [(TEXT_SOCKET, "文字"), (FONT_SOCKET, "字體")] + [(PARAM + q.name, q.label) for q in text_def(node).params + text_place_params() if has_socket(q)]
     if node["type"] != FILTER:
@@ -533,9 +610,9 @@ def title(node):
         return short_name(fx.for_node(node).name)
     if node["type"] == GROUP:
         return node.get("label") or "群組"
-    if is_asset(node):
-        return asset_def(node).name
-    return {"groupin": "群組輸入", "groupout": "群組輸出", STRING: "字串", FONT: "字體", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀", "text": "文字",
+    if is_asset(node) or is_vecop(node):
+        return node_def(node).name
+    return {"groupin": "群組輸入", "groupout": "群組輸出", STRING: "字串", FONT: "字體", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀", "text": "文字", "vector": "矢量",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
 
@@ -753,7 +830,7 @@ def node_def(node):
     """FilterDef whose parameters node has: a filter's, or a shape made from a built-in one; else None."""
     if node["type"] == FILTER:
         return fx.for_node(node)
-    return asset_def(node) if is_asset(node) else text_def(node) if is_text(node) else None
+    return asset_def(node) if is_asset(node) else text_def(node) if is_text(node) else vecop_def(node) if is_vecop(node) else None
 
 
 def virtual_def(e):
@@ -863,6 +940,8 @@ def param_of(graph, nid, socket):
         return next((p for p in asset_def(node).params + place_params() if p.name == socket[len(PARAM):]), None)
     if is_text(node):
         return next((p for p in text_def(node).params + text_place_params() if p.name == socket[len(PARAM):]), None)
+    if is_vecop(node):
+        return next((p for p in vecop_def(node).params if p.name == socket[len(PARAM):]), None)
     if node["type"] != FILTER:
         return None
     return next((p for p in fx.for_node(node).params if p.name == socket[len(PARAM):]), None)
@@ -879,7 +958,7 @@ def takes_picture(graph, nid, socket):
     p = param_of(graph, nid, socket)
     if p is None:
         return True
-    if is_asset(node) or is_text(node):                      # (a shape's or a text's values, and where it sits, are read once)
+    if is_asset(node) or is_text(node) or is_vecop(node):    # (a shape's or a text's values, and where it sits, are read once)
         return p.type in fx.SOURCE_TYPES + CONTROL_TYPES
     return p.type in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES
 
@@ -891,7 +970,7 @@ CONSTANTS = {"float": "builtin:nodes/value", "int": "builtin:nodes/integer", "bo
 def socket_kind(graph, nid, socket):
     """What input `socket` of node nid takes: "float", "int", "bool", "color", "vector" or "menu" (a picture: "color")."""
     node = graph["nodes"].get(nid)
-    if node is not None and (is_asset(node) or is_text(node)):          # (a shape's or a text's field: its own type)
+    if node is not None and (is_asset(node) or is_text(node) or is_vecop(node)):          # (a shape's or a text's field: its own type)
         p = param_of(graph, nid, socket)
         return "color" if p is None else "vector" if p.type in ("vec2", "vec3") else p.type if p.type in ("float", "int", "bool", "menu") else "color"
     if node is None or node["type"] != FILTER:
@@ -946,7 +1025,7 @@ def input_shape(graph, nid, socket):
     p = param_of(graph, nid, socket)
     if p is None:
         return "field"
-    if is_asset(node) or is_text(node):                      # (a shape's or a text's values are read once)
+    if is_asset(node) or is_text(node) or is_vecop(node):    # (a shape's or a text's values are read once)
         return "single"
     return "either" if p.type in fx.SOURCE_TYPES else "single"
 
@@ -954,7 +1033,7 @@ def input_shape(graph, nid, socket):
 def socket_value(graph, params, nid, socket):
     """The value of the number / colour / switch `socket` of filter node nid stands for - its field's (None: it has none)."""
     node = graph["nodes"].get(nid)
-    if node is not None and (is_asset(node) or is_text(node)) and socket.startswith(PARAM):
+    if node is not None and (is_asset(node) or is_text(node) or is_vecop(node)) and socket.startswith(PARAM):
         p = param_of(graph, nid, socket)
         if p is None:
             return None
@@ -1016,7 +1095,9 @@ def connect(graph, src, dst, socket, out=None):
     else:
         if out not in [o for o, _ in outputs(nodes[src])]:
             out = outputs(nodes[src])[0][0]
-        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst])) and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES:
+        if is_vecop(nodes[dst]) and socket in vecop_sockets(nodes[dst]) and not gives_vector(nodes[src]):
+            raise GraphError("矢量節點只能接形狀、文字、SVG 圖片或別的矢量節點")
+        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst]) or is_vecop(nodes[dst])) and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
         if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
@@ -1544,7 +1625,7 @@ def _evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, f
             todo += [f[0] for f in feeds_of.get(n, ())]
     for (to, sock), f in list(feed.items()):
         p = param_of(graph, to, sock) if sock.startswith(PARAM) else None
-        drawn = nodes[to]["type"] == SOURCE and (is_asset(nodes[to]) or is_text(nodes[to]))      # (a shape / text node: its fields are read once)
+        drawn = nodes[to]["type"] == SOURCE and (is_asset(nodes[to]) or is_text(nodes[to]) or is_vecop(nodes[to]))      # (a shape / text node: its fields are read once)
         if p is not None and (p.type in CONTROL_TYPES + VECTOR_TYPES or (drawn and p.type in fx.SOURCE_TYPES)):
             del feed[(to, sock)]                              # (read once, a number: the picture itself is not drawn for it)
             if to not in reach:

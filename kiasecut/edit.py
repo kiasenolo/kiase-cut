@@ -2160,7 +2160,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
             if node["kind"] != "shape" or preset is None or preset.cat != "shape":
                 raise EditError("這不是內建形狀")
             asset = {"key": preset.key, "family": preset.family}
-        node = {"type": nodegraph.SOURCE, "kind": node["kind"], **({"asset": asset} if asset else {})}
+        node = {"type": nodegraph.SOURCE, "kind": node["kind"], **({"asset": asset} if asset else {}),
+                **({"op": node["op"] if node.get("op") in dict(nodegraph.VECOPS) else "add"} if node["kind"] == nodegraph.VECTOR else {})}
     elif node["type"] in (nodegraph.INPUT, nodegraph.PARAMS, nodegraph.REROUTE, nodegraph.VIEWER):
         node = {"type": node["type"]}
     elif node["type"] == nodegraph.STRING:                 # (Blender's String constant: words for a text node)
@@ -2184,6 +2185,9 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
         if node["kind"] == "shape" and shape:
             set_effect_shape(proj, clip_id, effect_id, nid, shape)
+        if node["kind"] == nodegraph.VECTOR:             # (its operation: a parameter of the effect)
+            for q in nodegraph.vecop_def(node).params:
+                e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
         if node["kind"] == "text":                       # (its fields: parameters of the effect; a preset of the 內建素材 tab sets some)
             for q in nodegraph.text_def(node).params:
                 e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
@@ -2812,6 +2816,9 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
         old = sources.get(param) or {}
         sources[param] = {"kind": "shape", "shape": old.get("shape", "rectangle"), "color": old.get("color", [1.0, 1.0, 1.0, 1.0]),
                           **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 0.5), ("h", 0.5), ("rotation", 0.0))}}
+        return e
+    if kind == nodegraph.VECTOR and e["filter"] == fx.GRAPH:      # a vector node: its outlines drawn over the whole clip (nothing to place)
+        sources[param] = {"kind": nodegraph.VECTOR, "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
         return e
     if kind == "text" and e["filter"] == fx.GRAPH:       # a text node: the words drawn by textlayout.py
         old = sources.get(param) or {}

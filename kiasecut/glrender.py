@@ -944,6 +944,10 @@ class GLRenderer(render.Renderer):
 
         def picture(nid, paint=None, linked=()):
             src = sources.get(nid)
+            if src and src.get("kind") == nodegraph.VECTOR:
+                pic, placed = self.vector_source(e, nid, src, t, disp, ppu, fps)
+                tex, _straight = gl.picture(pic)
+                return tex, render.source_map(placed, t, disp, world, cur.w, cur.h), None
             if src and src.get("kind") in ("shape", "text"):
                 got = self.shape_source(e, nid, src, t, disp, paint, linked, ppu, fps)
                 if got is None and paint:
@@ -959,6 +963,9 @@ class GLRenderer(render.Renderer):
         def stamp(nid, paint=None, linked=()):
             """What picture(nid, ...) gives, as something that is the same while the picture is (None: not known)."""
             src = sources.get(nid)
+            if src and src.get("kind") == nodegraph.VECTOR:
+                pic, placed = self.vector_source(e, nid, src, t, disp, ppu, fps)
+                return pic.cacheKey(), render.source_map(placed, t, disp, world, cur.w, cur.h)
             if not (src and src.get("kind") in ("shape", "text")):
                 return None
             got = self.shape_source(e, nid, src, t, disp, paint, linked, ppu, fps)

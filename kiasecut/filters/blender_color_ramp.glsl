@@ -19,7 +19,8 @@
 // SPDX-FileCopyrightText: Blender Authors (original, GPL-2.0-or-later); KiaseCut
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-const int INTERP[5] = int[5](2, 0, 4, 1, 3);
+// (Blender's order of the menu: linear, ease, constant, cardinal, B-spline; not an array lookup, which Adreno gets wrong)
+int interp_of(int i) { return i == 0 ? 2 : i == 1 ? 0 : i == 2 ? 4 : i == 3 ? 1 : 3; }
 
 vec4 effect(vec2 uv) {
     vec4 c = src(uv);
@@ -27,7 +28,7 @@ vec4 effect(vec2 uv) {
     // picture with clear parts, like Glare's 光, is its light - and what comes out is the ramp's alone, opaque
     // where the ramp is)
     float fac = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
-    vec4 r = gradient_eval(ramp_p, ramp_c, ramp_n, fac, INTERP[interp], mode, hue);
+    vec4 r = gradient_eval(ramp_p, ramp_c, ramp_n, fac, interp_of(interp), mode, hue);
     if (output_index == 1) return vec4(vec3(r.a), 1.0);
     return vec4(r.rgb * r.a, r.a);
 }

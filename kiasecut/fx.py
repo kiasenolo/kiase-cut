@@ -778,7 +778,7 @@ vec4 gradient_eval(float p[32], vec4 c[32], int n, float x, int interp, int mode
     if (mode != 0) interp = 2;                                 // (hsv / hsl: always linear, as Blender's)
     bool spline = interp == 1 || interp == 3;
     int a = 0;                                                // the first stop after x
-    while (a < n && p[a] <= x) a++;
+    for (int i = 0; i < 32; i++) a += (i < n && p[i] <= x) ? 1 : 0;   // (stops are in order: the same count a loop to the first later one gives)
     if (a == n && !spline) return c[n - 1];
     if (a == 0 && !spline) return c[0];
     vec4 l, r, pl, nr;                                        // the segment's left and right, and the stops outside them

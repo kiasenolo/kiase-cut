@@ -1124,6 +1124,9 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         add(m, "全螢幕預覽", "F", self.toggle_fullscreen)
         add(m, "返回上一層", "Esc", self.leave_compound)
+        m = keyed(self.menuBar().addMenu("說明(&H)"))
+        add(m, "KiaseCut 說明（Wiki）", "F1", self.open_wiki)
+        add(m, "濾鏡寫法說明…", None, self.show_filter_doc)
         for key, fn in (("Space", self.toggle_play), ("Left", lambda: self.step(-1)),
                         ("Right", lambda: self.step(1)), ("Home", lambda: self.seek(0)),
                         ("End", lambda: self.seek(self.length - 1)), ("Ctrl+Shift+Z", self.do_redo)):
@@ -1637,6 +1640,23 @@ class MainWindow(QMainWindow):
             cover = covers.get(kind)
             if cover is None:
                 cover = covers[kind] = ToolCover(self, w)
+            cover.present()
+            return
+        w.show()
+        w.raise_()
+        w.activateWindow()
+
+    def open_wiki(self):
+        """說明: the wiki window (one), or over the whole window on Android as the tools are."""
+        w = self.__dict__.get("_wiki")
+        if w is None:
+            from .wiki_window import WikiWindow
+            w = self._wiki = WikiWindow()
+        if sys.platform == "android" or os.environ.get("KIASECUT_TOOL_COVER"):
+            from .tools import ToolCover
+            cover = self.__dict__.get("_wiki_cover")
+            if cover is None:
+                cover = self._wiki_cover = ToolCover(self, w)
             cover.present()
             return
         w.show()

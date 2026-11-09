@@ -84,6 +84,7 @@ class Worker(QObject):
         self.engine = None          # started on first use, for video pictures only
         self.loop = None            # (first, last) frame: playback stays inside (time selection)
         self.render_w = PREVIEW_W   # width in px the frames are drawn at (the preview's own size)
+        self.quality = None         # a fraction of the project's width the frames are drawn at (1, 1/2, 1/4), None: the preview's size
         self.overflow = 0.0         # the fraction of the canvas drawn round it too (what lies outside the canvas)
         self.t0 = 0.0               # playback clock: when the first picture was due
         self.shown_n = self.audio_n = 0     # pictures shown / sound frames queued since playing began
@@ -118,6 +119,17 @@ class Worker(QObject):
             if abs(w - self.render_w) < 8:
                 return
             self.render_w = w
+            if not self.playing and self.view is not None and self.want is None:
+                self.want = self.pos
+                self.cv.notify()
+
+    def set_quality(self, q):
+        """Draw frames at q times the project's size (1, 0.5, 0.25), or at the size the preview shows them (None).
+        A stopped picture is redrawn at once."""
+        with self.cv:
+            if q == self.quality:
+                return
+            self.quality = q
             if not self.playing and self.view is not None and self.want is None:
                 self.want = self.pos
                 self.cv.notify()
@@ -310,7 +322,7 @@ class Worker(QObject):
         v = self.view
         if gpu.enabled != isinstance(self.renderer, glrender.GLRenderer):     # the 設定 switch changed
             self.renderer = self._renderer()
-        w = max(2, min(self.render_w, v["width"]))
+        w = max(2, round(v["width"] * self.quality)) if self.quality else max(2, min(self.render_w, v["width"]))
         h = max(2, round(w * v["height"] / v["width"]))
         self.asked = []
         margin = self.overflow

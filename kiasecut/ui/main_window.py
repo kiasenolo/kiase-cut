@@ -86,6 +86,7 @@ class Task(QObject):
             self.failed.emit(f"{type(exc).__name__}: {exc}")
 
 
+QUALITIES = (("1×", 1.0), ("1/2×", 0.5), ("1/4×", 0.25), ("自動", None))       # 預覽畫質
 OVERFLOW = 0.5                 # 顯示畫布外: how much round the canvas is drawn too, as a fraction of the canvas on each side
 PLAYING_PROPS_MS = 100         # while playing, the selection's panels show its values this often
 OPEN_PREFIX = "cmp:"            # path_ids[0] = OPEN_PREFIX + compound id: that compound opened by itself
@@ -622,6 +623,20 @@ class MainWindow(QMainWindow):
         self.pitch_btn.toggled.connect(self.set_keep_pitch)
         bar.addWidget(self.pitch_btn)
         self.transport += [self.rate_box, self.pitch_btn]
+        self.quality_box = QComboBox()                  # 預覽畫質: the size frames are drawn at, as other editors' 1/1 1/2 1/4
+        for label, q in QUALITIES:
+            self.quality_box.addItem(label, q)
+        self.quality_box.setToolTip("預覽畫質：預覽畫面畫成專案解析度的幾分之幾。\n1× 是完整解析度，1/2×、1/4× 比較不吃力；自動依預覽視窗的大小。\n"
+                                    "只影響預覽，不影響匯出。")
+        self.quality_box.setFocusPolicy(Qt.NoFocus)
+        try:
+            q = float(self.settings().value("preview_quality", 1.0))
+        except (TypeError, ValueError):
+            q = 1.0
+        self.quality_box.setCurrentIndex(max(0, self.quality_box.findData(q or None)))
+        self.quality_box.currentIndexChanged.connect(lambda _i: self.set_preview_quality(self.quality_box.currentData()))
+        bar.addWidget(self.quality_box)
+        self.transport.append(self.quality_box)
         bar.addWidget(self.guides_btn)
         bar.addWidget(self.overflow_btn)
         bar.addWidget(full_btn)
@@ -900,6 +915,7 @@ class MainWindow(QMainWindow):
         self.player.worker.set_rate(self.rate_box.currentData())     # (the 播放速度 used last time)
         self.player.worker.set_keep_pitch(self.pitch_btn.isChecked())
         self.player.worker.set_overflow(OVERFLOW if self.overflow_btn.isChecked() else 0.0)       # (the 畫布外 button as it was left)
+        self.player.worker.set_quality(self.quality_box.currentData())
         w = self.player.worker
         w.frameReady.connect(self.on_frame)
         w.textureReady.connect(self.on_texture)
@@ -4690,6 +4706,10 @@ class MainWindow(QMainWindow):
             # (closed from its own closeEvent, or from the double click on its canvas: dropping the last reference here deleted the window
             # - and the canvas - under the code that was still running in them, which ends the program on Android; deleted a turn later)
             QTimer.singleShot(0, lambda fs=fs: fs.deleteLater())
+
+    def set_preview_quality(self, q):
+        self.player.worker.set_quality(q)
+        self.settings().setValue("preview_quality", q if q else 0)
 
     def set_render_width(self, who, w):
         """The preview (or the fullscreen one) shows frames w px wide: draw them that size."""

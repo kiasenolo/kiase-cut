@@ -11,14 +11,18 @@ import re
 import xml.etree.ElementTree as ET
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QImage, QPainter, QPainterPath, QPen, QTransform
+from PySide6.QtGui import (QBrush, QColor, QFont, QFontDatabase, QImage, QLinearGradient, QPainter, QPainterPath, QPen,
+                           QRadialGradient, QTransform)
+
+from . import assets, svgimage, textures  # noqa: E402
 
 OPS = (("聯集", "union"), ("差集", "subtract"), ("交集", "intersect"), ("排除", "xor"))
 MAX_PX = 4096                      # longest side of a picture made from a drawing
 
 
 class Layer:
-    """One outline with its paint. fill / stroke: (r, g, b, a) in 0..1 or None; width px; join "miter" | "round" | "bevel";
+    """One outline with its paint. fill / stroke: (r, g, b, a) in 0..1, a QBrush (a gradient or a picture, in the outline's own
+    coordinates: it is turned and moved with it) or None; width px; join "miter" | "round" | "bevel";
     align "center" | "inside" | "outside" (which side of the outline the stroke is on)."""
     __slots__ = ("path", "fill", "stroke", "width", "join", "align")
 
@@ -28,10 +32,28 @@ class Layer:
     def mapped(self, tf):
         """The layer moved / turned / scaled by QTransform tf (the stroke's width follows a scale)."""
         k = math.sqrt(abs(tf.determinant()))
-        return Layer(tf.map(self.path), self.fill, self.stroke, self.width * k, self.join, self.align)
+        moved = lambda c: _brush_moved(c, tf)
+        return Layer(tf.map(self.path), moved(self.fill), moved(self.stroke), self.width * k, self.join, self.align)
 
     def styled(self, path):
         return Layer(path, self.fill, self.stroke, self.width, self.join, self.align)
+
+
+def _brush_moved(c, tf):
+    if isinstance(c, QBrush):
+        c = QBrush(c)
+        c.setTransform(c.transform() * tf)
+    return c
+
+
+def _paint_key(c):
+    if isinstance(c, QBrush):
+        g = c.gradient()
+        t = c.transform()
+        return repr((int(c.style().value), g.type().value if g else None, [(round(x, 3), y.name(QColor.HexArgb)) for x, y in g.stops()] if g else
+                     c.textureImage().cacheKey() if not c.textureImage().isNull() else None,
+                     tuple(round(x, 2) for x in (t.m11(), t.m12(), t.m21(), t.m22(), t.dx(), t.dy()))))
+    return c
 
 
 # -- SVG path data -----------------------------------------------------------------------------------------------------------
@@ -487,14 +509,82 @@ def signature(layers):
     h = hashlib.sha1()
     for l in layers:
         p = l.path
-        h.update(repr((l.fill, l.stroke, round(l.width, 3), l.join, l.align, p.fillRule() == Qt.WindingFill, p.elementCount())).encode())
+        h.update(repr((_paint_key(l.fill), _paint_key(l.stroke), round(l.width, 3), l.join, l.align, p.fillRule() == Qt.WindingFill, p.elementCount())).encode())
         h.update(b"".join(("%d:%.2f:%.2f;" % (e.type.value, e.x, e.y)).encode() for e in (p.elementAt(i) for i in range(p.elementCount()))))
     return h.hexdigest()
 
 
 # -- drawing ---------------------------------------------------------------------------------------------------------------
 def _qcolour(c):
+    if isinstance(c, QBrush):
+        return c
     return QColor.fromRgbF(*[min(max(x, 0.0), 1.0) for x in c])
+
+
+def _qcolor_of(hexa):
+    r, g, b, a = assets.to_rgba(hexa)
+    return QColor.fromRgbF(r, g, b, a)
+
+
+PICTURE_PX = 2048
+
+
+def _cover_image(img, w, h):
+    """The picture scaled to cover a w x h box and cut to it from the middle (an SVG's preserveAspectRatio slice)."""
+    k = min(1.0, PICTURE_PX / max(w, h, 1.0))
+    bw, bh = max(1, round(w * k)), max(1, round(h * k))
+    big = img.scaled(bw, bh, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+    return big.copy((big.width() - bw) // 2, (big.height() - bh) // 2, bw, bh), k
+
+
+def paint_of(q, pre, w, h):
+    """How the fill (pre "fill") or outline ("stroke") of built-in shape parameters q (assets.at) is painted over its w x h box
+    (origin at its middle): a colour tuple, or a QBrush for a gradient, a texture or a picture."""
+    c = q.get("color") if pre == "fill" else q.get("stroke_color", "#000000")
+    c2 = q.get(pre + "_color2", "#000000")
+    kind = q.get(pre + "_type", "solid")
+    plain = tuple(assets.to_rgba(c, (0.0, 0.0, 0.0, 1.0) if pre == "stroke" else (1.0, 1.0, 1.0, 1.0)))
+    if kind == "gradient":
+        stops = q.get(pre + "_stops") or None
+        if q.get(pre + "_gtype", "linear") == "radial":
+            g = QRadialGradient(0.0, 0.0, math.hypot(w, h) / 2)
+            pts = stops or [(0.35, c), (1.0, c2)]
+            if not stops:
+                g.setColorAt(0.0, _qcolor_of(c))
+        else:
+            r = math.radians(q.get(pre + "_angle", 0))
+            dx, dy = math.cos(r), math.sin(r)
+            half = (abs(dx) * w + abs(dy) * h) / 2
+            g = QLinearGradient(-dx * half, -dy * half, dx * half, dy * half)
+            pts = stops or [(0.0, c), (1.0, c2)]
+        for x, col in pts:
+            g.setColorAt(min(max(float(x), 0.0), 1.0), _qcolor_of(col))
+        return QBrush(g)
+    img = None
+    if kind in textures.KINDS:
+        from PIL import Image
+        a = textures.render(kind, max(1, round(w)), max(1, round(h)), q.get(pre + "_scale", 5), q.get(pre + "_seed", 0), q.get(pre + "_z", 0),
+                            assets.to_rgba(c), assets.to_rgba(c2, (0.0, 0.0, 0.0, 1.0)))
+        from PIL.ImageQt import ImageQt
+        img = QImage(ImageQt(Image.fromarray(a, "RGBA"))).convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    elif kind == "image" and q.get(pre + "_image"):
+        path = q[pre + "_image"]
+        if svgimage.is_svg(path):
+            try:
+                sw, sh = svgimage.size(path)
+                k = PICTURE_PX / max(sw, sh)
+                img = svgimage.raster(path, sw * k, sh * k)
+            except ValueError:
+                img = None
+        else:
+            img = QImage(path)
+            img = None if img.isNull() else img.convertToFormat(QImage.Format_ARGB32_Premultiplied)
+    if img is None or img.isNull():
+        return plain
+    img, k = _cover_image(img, w, h)
+    brush = QBrush(img)
+    brush.setTransform(QTransform().translate(-w / 2, -h / 2).scale(1 / k, 1 / k))
+    return brush
 
 
 def render(layers, w, h, k=1.0):

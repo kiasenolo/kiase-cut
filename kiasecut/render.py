@@ -254,8 +254,8 @@ class Renderer:
                 sw, sh = (sh * ratio, sh) if sw / sh > ratio else (sw, sw / ratio)
             path = vector.parse_d(assets.outline_d(q, sw, sh))
             path.translate(-sw / 2, -sh / 2)
-            fill = tuple(assets.to_rgba(q.get("color"))) if q.get("fill", True) else None
-            stroke = tuple(assets.to_rgba(q.get("stroke_color"), (0.0, 0.0, 0.0, 1.0))) if assets.stroked(q) else None
+            fill = vector.paint_of(q, "fill", sw, sh) if q.get("fill", True) else None
+            stroke = vector.paint_of(q, "stroke", sw, sh) if assets.stroked(q) else None
             layer = vector.Layer(path, fill, stroke, float(q.get("stroke", 0.0)) if stroke else 0.0, q.get("join", "miter"),
                                  q.get("stroke_align", "inside"))
             return [layer.mapped(local)]

@@ -71,6 +71,33 @@ class VectorTests(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class VectorPaintTests(unittest.TestCase):
+    def test_gradient_and_picture_fills_are_kept_and_follow_the_outline(self):
+        q = {"color": "#ff0000", "fill_type": "gradient", "fill_color2": "#0000ff", "fill_gtype": "linear", "fill_angle": 0}
+        brush = vector.paint_of(q, "fill", 100, 100)
+        path = QPainterPath()
+        path.addRect(QRectF(-50, -50, 100, 100))
+        layer = vector.Layer(path, brush).mapped(vector.QTransform().translate(100, 0))
+        img = vector.render([layer], 300, 100, 1.0)
+        left, right = img.pixelColor(210, 50), img.pixelColor(290, 50)        # (the shape is 200..300 in the picture: its colours go red to blue)
+        self.assertGreater(left.red(), left.blue())
+        self.assertGreater(right.blue(), right.red())
+        self.assertNotEqual(vector.signature([layer]), vector.signature([vector.Layer(path, (1.0, 0.0, 0.0, 1.0))]))
+        d = tempfile.mkdtemp()
+        try:
+            f = os.path.join(d, "g.png")
+            im = vector.QImage(8, 8, vector.QImage.Format_ARGB32)
+            im.fill(vector.QColor(0, 255, 0))
+            im.save(f)
+            green = vector.paint_of({"color": "#fff", "fill_type": "image", "fill_image": f}, "fill", 100, 100)
+            out = vector.render([vector.Layer(path, green)], 100, 100, 1.0).pixelColor(50, 50)
+            self.assertEqual((out.red(), out.green(), out.blue()), (0, 255, 0))
+            plain = vector.paint_of({"color": "#00ff00", "fill_type": "image", "fill_image": "/nope.png"}, "fill", 100, 100)
+            self.assertEqual(plain, (0.0, 1.0, 0.0, 1.0))                                   # (a picture that cannot be read: the colour)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 class VectorGraphTests(unittest.TestCase):
     def setUp(self):
         self.p = proj()

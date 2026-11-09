@@ -251,10 +251,14 @@ def key_icon(state, color=INK, size=16):
         pm.fill(Qt.transparent)
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing)
-        p.scale(size * 2 / 24, size * 2 / 24)
-        p.setPen(QPen(QColor(ink), 1))
-        p.setBrush(QColor(ink))
-        _diamond(p, state)
+        glyph = _glyph("keyframe-" + state)
+        if glyph:
+            _draw_glyph(p, glyph, QColor(ink).name(), size * 2)
+        else:
+            p.scale(size * 2 / 24, size * 2 / 24)
+            p.setPen(QPen(QColor(ink), 1))
+            p.setBrush(QColor(ink))
+            _diamond(p, state)
         p.end()
         pm.setDevicePixelRatio(2)
         ic.addPixmap(pm, mode)

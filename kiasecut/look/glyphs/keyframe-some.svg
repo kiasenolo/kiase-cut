@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g>
+    <rect width="128" height="128" fill="#000000" fill-rule="evenodd" fill-opacity="0.188" />
+    <g transform="translate(64 4)">
+      <path d="M0 120.104L0.104065 120.208L53.8442 66.468L60.2081 60.1041L0.104065 0L0 0.104065L0 12.832L0.104065 12.7279L47.4802 60.1041L0.104065 107.48L0 107.376L0 120.104Z" />
+      <path d="M0 120.104L0.104065 120.208L53.8442 66.468L60.2081 60.1041L53.8442 53.7401L9 8.89594L6.46803 6.36396L0.20813 0.104066L0.104065 0L0 0.104065L0 12.832L0.104065 12.7279L47.4802 60.1041L41.1163 66.468L6.46803 101.116L0.104065 107.48L0 107.376L0 120.104Z" fill="#FFFFFF" fill-rule="evenodd" />
+    </g>
+    <path d="M47.2162 0L3.05176e-05 47.2162L47.2162 94.4323L47.2162 0Z" fill="#FFFFFF" fill-rule="evenodd" transform="translate(16.784 16.888)" />
+  </g>
+</svg>

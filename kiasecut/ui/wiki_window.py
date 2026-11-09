@@ -1,11 +1,11 @@
 """說明 Wiki (說明 menu, F1): a window with the pages of wiki.py - a tree of them and a search field at the left, the page at the right
 (links between pages, 上一頁 / 下一頁). The window is made when first wanted and keeps its place."""
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPolygonF
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSplitter, QTextBrowser, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from .. import wiki
+from .. import wiki, wikidata
 
 STYLE = "table {border-color: #555555;} th {background-color: #2a2a2a;} code {color: #c8c85a;} a {color: #6a9fd0;}"
 
@@ -32,12 +32,60 @@ def socket_image(colour, shape, size=64):
     return img
 
 
+def diagram_image(name, scale=2):
+    """A little node graph, drawn as the node editor draws one: dark boxes with a title, sockets down the sides, links between them."""
+    w, h, nodes, links = wikidata.DIAGRAMS[name]
+    img = QImage(w * scale, h * scale, QImage.Format_ARGB32)
+    img.fill(Qt.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.scale(scale, scale)
+    NW, HEAD, ROW = 120, 22, 22
+    font = QFont(p.font())
+    font.setPixelSize(12)
+    p.setFont(font)
+    pos = {}
+    for nid, (title, x, y, ins, outs) in nodes.items():
+        pos[nid] = ([QPointF(x, y + HEAD + ROW * (i + .5)) for i in range(len(ins))],
+                    [QPointF(x + NW, y + HEAD + ROW * (i + .5)) for i in range(len(outs))])
+    p.setBrush(Qt.NoBrush)
+    for a, o, b, i in links:
+        s, e = pos[a][1][o], pos[b][0][i]
+        path = QPainterPath(s)
+        d = max(30, abs(e.x() - s.x()) / 2)
+        path.cubicTo(s + QPointF(d, 0), e - QPointF(d, 0), e)
+        p.setPen(QPen(QColor("#b3b3b3"), 2))
+        p.drawPath(path)
+    for nid, (title, x, y, ins, outs) in nodes.items():
+        rows = max(len(ins), len(outs), 0)
+        body = QRectF(x, y, NW, HEAD + ROW * max(rows, 1))
+        p.setPen(QPen(QColor(0, 0, 0, 160), 1))
+        p.setBrush(QColor("#1a1a1a"))
+        p.drawRoundedRect(body, 5, 5)
+        p.setBrush(QColor("#6c696f"))
+        p.drawRoundedRect(QRectF(x, y, NW, HEAD), 5, 5)
+        p.setPen(QColor("#f0f0f0"))
+        p.drawText(QRectF(x + 8, y, NW - 16, HEAD), Qt.AlignVCenter, title)
+        for k, (names, pts) in enumerate(((ins, pos[nid][0]), (outs, pos[nid][1]))):
+            for n, pt in zip(names, pts):
+                p.setPen(QColor("#d0d0d0"))
+                box = QRectF(pt.x() + 8, pt.y() - 10, NW - 20, 20) if k == 0 else QRectF(pt.x() - NW + 12, pt.y() - 10, NW - 20, 20)
+                p.drawText(box, Qt.AlignVCenter | (Qt.AlignLeft if k == 0 else Qt.AlignRight), n)
+                p.setPen(QPen(QColor(0, 0, 0, 160), 1))
+                p.setBrush(QColor("#c8c85a"))
+                p.drawEllipse(pt, 5, 5)
+    p.end()
+    return img
+
+
 class Browser(QTextBrowser):
     """The page: it draws the "socket:<colour>:<shape>" images the pages hold (wiki.dot)."""
     def loadResource(self, kind, url):
         if url.scheme() == "socket":
             colour, _, shape = url.path().partition(":")
             return socket_image("#" + colour.lstrip("#"), shape or "single")
+        if url.scheme() == "diagram" and url.path() in wikidata.DIAGRAMS:
+            return diagram_image(url.path())
         return super().loadResource(kind, url)
 
 
@@ -96,8 +144,7 @@ class WikiWindow(QWidget):
             self.items.setdefault(pid, item)
             self._fill(item, children)
         if parent is self.tree.invisibleRootItem():
-            for pid in ("nodes", "fx"):
-                self.items[pid].setExpanded(False)
+            self.items["guides"].setExpanded(True)
 
     def show_page(self, pid, remember=True):
         if not pid:

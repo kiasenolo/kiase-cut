@@ -55,6 +55,31 @@ class WikiTests(unittest.TestCase):
         for word in ("怎麼用", "接法範例", "怎麼接", "係數（向量）"):
             self.assertIn(word, text)
 
+    def test_guides_link_to_pages_that_exist(self):
+        known = set(pages(wiki.tree())) | {"types", "rules", "nodes", "fx", "guides", "format", "home"}
+        known |= {"node:" + e[1] for _, entries in wiki.categories() for e in entries if e[0] == "node"}
+        known |= {"node:" + ref for _, items in wiki.effect_categories() for ref, _ in items}
+        for pid, (title, body) in wiki.wikidata.GUIDES.items():
+            for target, _ in wiki.LINK.findall(body):
+                if target.startswith("node:") and not target.startswith(("node:builtin:", "node:special:")):
+                    target = "node:builtin:" + target[5:]
+                with self.subTest(guide=pid, link=target):
+                    self.assertIn(target, known)
+        self.assertNotIn("[[", wiki.render("guide:first")[1])
+
+    def test_the_diagrams_of_the_guides_are_drawn(self):
+        import re
+        for pid, (_, body) in wiki.wikidata.GUIDES.items():
+            for name in re.findall(r'src="diagram:(\w+)"', body):
+                self.assertIn(name, wiki.wikidata.DIAGRAMS)
+                w, h, nodes, links = wiki.wikidata.DIAGRAMS[name]
+                for a, o, b, i in links:
+                    self.assertLess(o, len(nodes[a][4]))
+                    self.assertLess(i, len(nodes[b][3]))
+
+    def test_search_finds_guides(self):
+        self.assertTrue(any(p.startswith("guide:") for p, _, _ in wiki.search("節點效果")))
+
     def test_legend_colours_are_the_node_editors(self):
         try:
             from kiasecut.ui.node_editor import SOCKET_COLORS

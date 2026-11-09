@@ -7,6 +7,7 @@ Page ids: "home", "types" (the data types and their socket dots), "nodes" and "c
 import glob
 import html
 import os
+import re
 from urllib.parse import quote, unquote
 
 from . import assets, fx, nodegraph as ng, nodemenu, wikidata
@@ -57,6 +58,7 @@ SPECIAL = {
 HOME = """<h1>KiaseCut 說明</h1>
 <p>這裡的頁面大多是從程式自己的資料產生的：節點的說明、插槽、參數都和你現在用的版本一致。</p>
 <ul>
+<li><a href="wiki:guides">入門</a>：第一次用？從認識整個軟體、剪輯、效果，到做出第一個節點效果</li>
 <li><a href="wiki:types">資料類型</a>：插槽上的點是什麼顏色、什麼形狀</li>
 <li><a href="wiki:rules">連線規則</a>：怎麼把節點接起來、什麼能接什麼</li>
 <li><a href="wiki:nodes">節點</a>：節點編輯器的 Add 選單，照選單的順序，每個節點的輸入、輸出和參數</li>
@@ -68,6 +70,19 @@ HOME = """<h1>KiaseCut 說明</h1>
 
 def link(page, text):
     return f'<a href="{SCHEME}{quote(page, safe=":")}">{html.escape(text)}</a>'
+
+
+LINK = re.compile(r"\[\[([^|\]]+)\|([^\]]+)\]\]")
+
+
+def expand(text):
+    """[[page|text]] of the guides as links; [[node:blur|..]] is the page of builtin:blur."""
+    def one(m):
+        page = m.group(1)
+        if page.startswith("node:") and not page.startswith(("node:builtin:", "node:special:")):
+            page = "node:builtin:" + page[len("node:"):]
+        return link(page, m.group(2))
+    return LINK.sub(one, text)
 
 
 def page_of(url):
@@ -154,7 +169,8 @@ def tree():
     nodes = [("cat:" + label, label, [("node:" + e[1], e[2], []) for e in entries if e[0] == "node"])
              for label, entries in categories()]
     effects = [("fxcat:" + cat, cat, [("node:" + ref, name, []) for ref, name in items]) for cat, items in effect_categories()]
-    return [("home", "首頁", []), ("types", "資料類型", []), ("rules", "連線規則", []), ("nodes", "節點", nodes), ("fx", "KiaseCut 效果", effects), ("format", "濾鏡寫法", [])]
+    guides = [(pid, title, []) for pid, (title, _) in wikidata.GUIDES.items()]
+    return [("home", "首頁", []), ("guides", "入門", guides), ("types", "資料類型", []), ("rules", "連線規則", []), ("nodes", "節點", nodes), ("fx", "KiaseCut 效果", effects), ("format", "濾鏡寫法", [])]
 
 
 # -- the pages ---------------------------------------------------------------------------------------
@@ -288,6 +304,10 @@ def legend_row():
     return f'<table cellspacing="0" cellpadding="4"><tr>{cells}</tr></table><br>'
 
 
+def guides_page():
+    return "<h1>入門</h1><p>照順序看最容易：</p><ol>" + "".join(f"<li>{link(pid, title)}</li>" for pid, (title, _) in wikidata.GUIDES.items()) + "</ol>"
+
+
 def shapes_row():
     """The three shapes of a socket, drawn, each with what it means."""
     cells = "".join(f'<td align="center" width="170">{dot("float", shape, 28)}<br><b>{esc(n)}</b><br><small>{esc(t)}</small></td>'
@@ -350,10 +370,14 @@ def render(page):
         return "markdown", format_page()
     if page == "home" or not page:
         return "html", HOME
+    if page == "guides":
+        return "html", guides_page()
+    if page in wikidata.GUIDES:
+        return "html", expand(wikidata.GUIDES[page][1])
     if page == "types":
         return "html", types_page()
     if page == "rules":
-        return "html", wikidata.RULES
+        return "html", expand(wikidata.RULES)
     if page == "nodes":
         return "html", "<h1>節點</h1><p>照 Blender 5.2 合成器 Add 選單的順序。</p>" + "".join(
             f"<p>{link('cat:' + lab, lab)}（{sum(1 for k, *_ in entries if k == 'node')}）</p>" for lab, entries in categories())
@@ -382,6 +406,10 @@ def search(text, limit=60):
     for cat, items in effect_categories():
         found += [(ref, name, "KiaseCut 效果 ▸ " + cat) for ref, name in items]
     out = []
+    for pid, (title, body) in wikidata.GUIDES.items():
+        plain = re.sub(r"<[^>]+>", "", body)
+        if text in title.lower() or text in plain.lower():
+            out.append((pid, f"{title}　（入門）", ""))
     for key, name, where in found:
         hay = [name, key]
         if key.startswith("special:") or key == "shapes":

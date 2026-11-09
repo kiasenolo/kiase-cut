@@ -2696,10 +2696,23 @@ class MainWindow(QMainWindow):
             self.mask_panel.set_tracks(self.mask_tracks())
             self.inspector.set_images(self.mask_images())          # (a component's picture parameters)
         self.mask_panel.show_clips(clips, t, self.fps)
-        self.nodes.show_clip(clips[0] if len(clips) == 1 else None, t=times[clips[0]["id"]] if len(clips) == 1 else 0)
+        kept = self._nodes_kept(clips)
+        self.nodes.show_clip(clips[0] if len(clips) == 1 else kept, t=times[clips[0]["id"]] if len(clips) == 1 else 0)
         self.beats.show_clips(clips)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
         self._update_side_tabs(clips)
+
+    def _nodes_kept(self, clips):
+        """The clip the node editor keeps showing when nothing is selected (a click on empty preview must not
+        send it away): the clip it showed, if it is still there and still has the node effect."""
+        c = self.nodes.clip if self.proj and not clips else None
+        if c is None:
+            return None
+        try:
+            c = edit.find(self.container(), c["id"])[1]
+        except (KeyError, StopIteration, edit.EditError):
+            return None
+        return c if any(e.get("filter") == fx.GRAPH for e in c.get("effects") or []) else None
 
     def _update_side_tabs(self, clips):
         """The side panels a selection has use for (屬性 always): 效果 for pictures, texts and
@@ -2711,7 +2724,8 @@ class MainWindow(QMainWindow):
                 "beat": len(clips) == 1 and edit.has_sound(clips[0]),
                 "subtitle": any(c["type"] == "text" for c in clips),
                 "curves": bool(clips),
-                "nodes": len(clips) == 1 and any(e.get("filter") == fx.GRAPH for e in clips[0].get("effects") or [])}
+                "nodes": len(clips) == 1 and any(e.get("filter") == fx.GRAPH for e in clips[0].get("effects") or [])
+                         or self._nodes_kept(clips) is not None}
         for key, dock in (("nodes", "nodes"), ("fx", "effects"), ("mask", "mask"), ("beat", "beats"), ("subtitle", "subtitles"),
                           ("curves", "curves")):
             self.panels.set_usable(dock, show[key])
@@ -5686,6 +5700,9 @@ class MainWindow(QMainWindow):
     def node_clip(self):
         """The clip the node editor shows: the only one selected."""
         sel = self.timeline.selected_clips_primary_first()
+        if not sel:                                              # (nothing picked: the editor still shows its clip)
+            kept = self._nodes_kept(sel)
+            return kept["id"] if kept else None
         return sel[0]["id"] if len(sel) == 1 else None
 
     def open_node_editor(self, eid):

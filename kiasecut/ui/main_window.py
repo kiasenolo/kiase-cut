@@ -4085,7 +4085,7 @@ class MainWindow(QMainWindow):
                 gone.add(library.item(self.proj, ident)["path"])
         used = sum(1 for c in project.all_clips(self.proj) if c.get("media") and c["media"]["path"] in gone)
         note = f"\n\n時間軸上有 {used} 個片段用到，刪除後它們會找不到素材。" if used else ""
-        text = f"要刪除{this}{what}嗎？" if len(idents) == 1 else f"要刪除這 {len(idents)} 個項目（{what}）嗎？"
+        text = f"要刪除這個{what}嗎？" if len(idents) == 1 else f"要刪除這 {len(idents)} 個項目（{what}）嗎？"
         if questions.question(self, "delete_media", "刪除", f"{text}它們會被移到資源回收筒。{note}"):
             def run():
                 for ident in idents:
@@ -5802,7 +5802,7 @@ class MainWindow(QMainWindow):
         if not items:
             self.statusBar().showMessage("Library 的「效果預設」還沒有檔案：先在 VFX Node 上按右鍵 > 存到 Library", 5000)
             return
-        menu = QMenu(self)
+        menu = Menu(self)
         for it in items:
             menu.addAction(os.path.splitext(it["name"])[0], lambda _=False, it=it: self._import_vfx(it))
         menu.exec(QCursor.pos())

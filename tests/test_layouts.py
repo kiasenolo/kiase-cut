@@ -70,16 +70,17 @@ class PanelTests(unittest.TestCase):
     def tearDown(self):
         self.win.close()
 
-    def test_library_tabs_for_compounds_and_vfx_nodes_come_and_go_with_what_they_list(self):
+    def test_library_tabs_for_compounds_and_vfx_nodes_stay_and_say_when_empty(self):
         for key in ("compounds", "vfxnodes"):
             self.pn.set_usable(key, False)
             QApplication.processEvents()
-            self.assertFalse(self.pn[key].isVisible(), key)
+            self.assertTrue(self.pn[key].isVisible(), key)
+            self.assertEqual(self.pn[key].stack.currentIndex(), 1)
             self.pn.set_usable(key, True)
             QApplication.processEvents()
             self.assertTrue(self.pn[key].isVisible(), key)
-        self.pn.set_usable("compounds", False)                       # (one closed on purpose stays closed)
-        self.pn["vfxnodes"].close()
+            self.assertEqual(self.pn[key].stack.currentIndex(), 0)
+        self.pn["vfxnodes"].close()                                  # (one closed on purpose stays closed)
         self.pn.set_usable("vfxnodes", True)
         self.assertFalse(self.pn["vfxnodes"].isVisible())
 
@@ -97,13 +98,14 @@ class PanelTests(unittest.TestCase):
         self.assertFalse(self.pn["curves"].isVisible())
         self.assertTrue(self.pn["compounds"].isVisible())
 
-    def test_unusable_side_panel_leaves_its_tabs_and_comes_back(self):
+    def test_unusable_side_panel_keeps_its_tab_and_says_so(self):
         mask = self.pn["mask"]
         self.pn.set_usable("mask", False)
-        self.assertTrue(mask.isHidden() and mask.auto_hidden and not mask.user_closed)
+        self.assertFalse(mask.isHidden() or mask.auto_hidden)
+        self.assertEqual(mask.stack.currentIndex(), 1)
         self.pn.set_usable("mask", True)
-        self.assertFalse(mask.isHidden())
-        self.assertIn(self.pn["inspector"], self.win.tabifiedDockWidgets(mask))      # back in its tabs
+        self.assertEqual(mask.stack.currentIndex(), 0)
+        self.assertIn(self.pn["inspector"], self.win.tabifiedDockWidgets(mask))
 
     def test_unusable_panel_on_its_own_says_so(self):
         mask = self.pn["mask"]
@@ -123,7 +125,7 @@ class PanelTests(unittest.TestCase):
     def test_state_round_trip(self):
         self.pn["curves"].setFloating(True)
         self.pn["subtitles"].close()
-        self.pn.set_usable("mask", False)                # hidden for the selection: not saved as closed
+        self.pn.set_usable("mask", False)                # (says it has nothing to show: not saved as closed)
         state, closed = self.pn.state(), self.pn.closed()
         self.assertEqual(closed, ["subtitles"])
         self.pn.arrange("design")
@@ -201,25 +203,6 @@ class PanelTests(unittest.TestCase):
         self.assertLess(ins.x(), lib.x())
         self.assertFalse(ins.isFloating())
         self.assertEqual({d.key for d in self.win.tabifiedDockWidgets(ins)}, set(SIDE[1:]))
-
-    def test_lone_panel_dragged_with_the_tabs_that_left_for_the_selection(self):
-        ins, lib = self.pn["inspector"], self.pn["library"]
-        for k in SIDE[1:]:                               # nothing selected: only 屬性 is left
-            self.pn.set_usable(k, False)
-        QTest.qWait(20)
-        self.assertIs(ins.titleBarWidget(), ins.title)   # looks like one on its own
-        QTest.mousePress(ins.title, Qt.LeftButton, Qt.NoModifier, QPoint(40, 8))
-        QTest.mouseMove(ins.title, QPoint(70, 28))
-        self.assertTrue(all(self.pn[k].parentWidget() is ins.parentWidget() for k in SIDE[1:]))
-        to = ins.mapFromGlobal(lib.mapToGlobal(QPoint(5, lib.height() // 2)))
-        QTest.mouseMove(ins, to)
-        QTest.mouseRelease(ins, Qt.LeftButton, Qt.NoModifier, to)
-        QTest.qWait(400)
-        self.assertLess(ins.x(), lib.x())
-        self.assertTrue(all(self.pn[k].isHidden() and self.pn[k].auto_hidden for k in SIDE[1:]))   # away again
-        for k in SIDE[1:]:
-            self.pn.set_usable(k, True)
-        self.assertEqual({d.key for d in self.win.tabifiedDockWidgets(ins)}, set(SIDE[1:]))   # back with it
 
     def test_tabs_floated_together_have_a_title_bar_to_bring_them_back(self):
         ins, lib = self.pn["inspector"], self.pn["library"]

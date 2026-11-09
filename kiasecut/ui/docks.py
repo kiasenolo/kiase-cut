@@ -11,9 +11,9 @@ to drag the window by (onto the main window: back into it, all of them).
 
 Panels arranges them (the built-in layouts, see layouts.py), keeps which side panel was
 used last (`active`: the one whose tab was switched to or that was clicked in; the main
-window's mask mode follows it) and shows a side panel only while the selection has a use
-for it (set_usable): one in tabs leaves them, as a tab did before; one on its own stays and
-says it has nothing to show. A panel closed on purpose (its X, or the 視窗 menu) stays closed.
+window's mask mode follows it). Every panel's tab stays where it is whatever is selected
+(set_usable): one the selection has no use for says so (its NOTES) instead of going away.
+A panel closed on purpose (its X, or the 視窗 menu) stays closed.
 """
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, QPointF, QSize, Qt, QTimer, Signal
@@ -331,17 +331,15 @@ class Panels(QObject):
         self.maximizedChanged.emit(key, False)
 
     def set_usable(self, key, on):
-        """Whether the selection has use for the side panel."""
+        """Whether the selection has use for the panel: if not, it shows its note. Its tab stays (a panel
+        that an older layout saved as away for the selection comes back)."""
         d = self.docks[key]
         d.stack.setCurrentIndex(0 if on else 1)
         if d.user_closed:
             return
-        if on and d.auto_hidden:
+        if d.auto_hidden:
             d.auto_hidden = False
             d.show()
-        elif not on and not d.auto_hidden and d.isVisible() and self.tabbed(d):
-            d.auto_hidden = True
-            d.hide()
 
     def gather(self, dock):
         """dock is about to be dragged by its title bar: the panels of its tabs that left them

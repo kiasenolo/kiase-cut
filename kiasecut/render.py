@@ -39,14 +39,14 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, components, curves, fonts, fx, masks, nodegraph, project, propexpr, rack, svgimage, textlayout, textvars, vector, viz
+from . import assets, components, curves, fonts, fx, masks, nodegraph, project, propexpr, rack, svgimage, sysmem, textlayout, textvars, vector, viz
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
                "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
                "box_w", "box_h") + tuple(textlayout.DECOR)
 BIG = 1e5
-TEXT_CACHE_BYTES = 192 << 20
+TEXT_CACHE_BYTES = sysmem.scaled(192 << 20, 48 << 20)
 # clip blend modes (edit.BLEND_MODES) as the painter's composition modes
 BLEND_OPS = {"normal": QPainter.CompositionMode_SourceOver, "multiply": QPainter.CompositionMode_Multiply,
              "screen": QPainter.CompositionMode_Screen, "overlay": QPainter.CompositionMode_Overlay,

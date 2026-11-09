@@ -270,6 +270,7 @@ class Context:
             raise GLError(f"eglCreateContext failed (0x{egl.eglGetError():x})")
         self.surface = egl.eglCreatePbufferSurface(self.dpy, cfg[0], (i32 * 5)(0x3057, 16, 0x3056, 16, 0x3038))
         self.stack = []
+        self.garbage = []                    # (delete function, name) of objects dropped without release(): see Context.collect
         self._make_current()
         self.program_in_use = 0
         self._viewport, self._blend = (0, 0, 0, 0), (ONE, ZERO)
@@ -278,6 +279,22 @@ class Context:
         gl.glPixelStorei(UNPACK_ALIGNMENT, 1)
         gl.glPixelStorei(PACK_ALIGNMENT, 1)
         self.scratch_fbo = None
+
+    def collect(self):
+        """Delete what was let go of without release(). moderngl frees its objects when they are collected, this layer did
+        not: every texture and framebuffer a cache dropped stayed in the card's (shared, 8 GB) memory for good. Collected
+        objects only note their name here (the collector may run on any thread): the thread that makes the next object, which
+        has the context, deletes them."""
+        bin_ = self.garbage
+        while bin_:
+            fn, glo = bin_.pop()
+            try:
+                if fn == "glDeleteProgram":
+                    self.gl.glDeleteProgram(glo)
+                else:
+                    getattr(self.gl, fn)(1, C.byref(C.c_uint(glo)))
+            except Exception:
+                pass
 
     def _make_current(self):
         if not self.egl.eglMakeCurrent(self.dpy, self.surface, self.surface, self.ctx):
@@ -378,6 +395,7 @@ class Texture:
     def __init__(self, ctx, size, components=4, data=None, dtype="f1"):
         if components != 4 or dtype not in DTYPES:
             raise GLError(f"a texture of {components} components, {dtype}")
+        ctx.collect()
         self.ctx, self.size, self.dtype = ctx, _check_size(size), dtype
         self.internal, self.kind, self.np_dtype, self.pixel = DTYPES[dtype]
         self.glo = _gen(ctx.gl.glGenTextures)
@@ -462,6 +480,15 @@ class Texture:
         finally:
             fbo.release()
 
+    def __del__(self):
+        glo = getattr(self, "glo", 0)
+        if glo:
+            self.glo = 0
+            try:
+                self.ctx.garbage.append(("glDeleteTextures", glo))
+            except Exception:
+                pass
+
     def release(self):
         if self._fbo is not None:
             self._fbo.release()
@@ -473,6 +500,7 @@ class Texture:
 class Framebuffer:
     def __init__(self, ctx, color_attachments, level=0):
         gl = ctx.gl
+        ctx.collect()
         self.ctx, self.attachments = ctx, list(color_attachments)
         tex = self.attachments[0]
         self.size, self.dtype = (max(1, tex.size[0] >> level), max(1, tex.size[1] >> level)), tex.dtype
@@ -519,6 +547,15 @@ class Framebuffer:
             return np.clip(np.rint(out * 255.0), 0, 255).astype(np.uint8).tobytes()
         return out.astype(DTYPES[dtype][2]).tobytes()
 
+    def __del__(self):
+        glo = getattr(self, "glo", 0)
+        if glo:
+            self.glo = 0
+            try:
+                self.ctx.garbage.append(("glDeleteFramebuffers", glo))
+            except Exception:
+                pass
+
     def release(self):
         if self.glo:
             self.ctx.gl.glDeleteFramebuffers(1, C.byref(C.c_uint(self.glo)))
@@ -527,6 +564,7 @@ class Framebuffer:
 
 class Buffer:
     def __init__(self, ctx, data=None, reserve=0, dynamic=False):
+        ctx.collect()
         self.ctx = ctx
         self.glo = _gen(ctx.gl.glGenBuffers)
         data = None if data is None else bytes(data)
@@ -541,6 +579,15 @@ class Buffer:
             raise GLError(f"{len(data)} bytes past the end of a {self.size} byte buffer")
         self.ctx.gl.glBindBuffer(GL_ARRAY_BUFFER, self.glo)
         self.ctx.gl.glBufferSubData(GL_ARRAY_BUFFER, offset, len(data), C.c_char_p(data))
+
+    def __del__(self):
+        glo = getattr(self, "glo", 0)
+        if glo:
+            self.glo = 0
+            try:
+                self.ctx.garbage.append(("glDeleteBuffers", glo))
+            except Exception:
+                pass
 
     def release(self):
         if self.glo:
@@ -643,6 +690,15 @@ class Program:
         except KeyError:
             raise KeyError(f"no uniform {name!r} (the compiler drops one that nothing reads)") from None
 
+    def __del__(self):
+        glo = getattr(self, "glo", 0)
+        if glo:
+            self.glo = 0
+            try:
+                self.ctx.garbage.append(("glDeleteProgram", glo))
+            except Exception:
+                pass
+
     def release(self):
         if self.glo:
             self.gl.glDeleteProgram(self.glo)
@@ -674,6 +730,15 @@ class VertexArray:
         self.ctx.use_program(self.program.glo)
         self.gl.glBindVertexArray(self.glo)
         self.gl.glDrawArrays(mode, first, self.vertices if vertices < 0 else vertices)
+
+    def __del__(self):
+        glo = getattr(self, "glo", 0)
+        if glo:
+            self.glo = 0
+            try:
+                self.ctx.garbage.append(("glDeleteVertexArrays", glo))
+            except Exception:
+                pass
 
     def release(self):
         if self.glo:

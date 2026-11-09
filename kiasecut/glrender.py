@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, components, curves, fx, nodegraph, project, propexpr, rack, render, sharedgl, textlayout, textvars
+from . import assets, components, curves, fx, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -30,9 +30,9 @@ BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 
 MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5, "image": 5, "video": 5, "track": 5}
 MAX_LAYER = 8192
 TEX_CACHE = 160
-FREE_LAYER_BYTES = 384 << 20         # (the layers waiting to be drawn on again)
-GRAPH_CACHE_BYTES = 384 << 20        # (the pictures of node effects' costly nodes kept between frames: nodegraph.Cache)
-TEX_CACHE_BYTES = 768 << 20          # (of the card's memory: animated texts are a new picture every frame)
+FREE_LAYER_BYTES = sysmem.scaled(384 << 20, 64 << 20)         # (the layers waiting to be drawn on again)
+GRAPH_CACHE_BYTES = sysmem.scaled(384 << 20, 128 << 20)        # (the pictures of node effects' costly nodes kept between frames: nodegraph.Cache)
+TEX_CACHE_BYTES = sysmem.scaled(768 << 20, 96 << 20)          # (of the card's memory: animated texts are a new picture every frame)
 
 VERTEX = """#version 330
 uniform vec2 size;

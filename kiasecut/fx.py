@@ -22,7 +22,7 @@ import time
 
 import numpy as np
 
-from . import curves
+from . import curves, sysmem
 
 PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filters")
 DOC_PATH = os.path.join(PKG, "FORMAT.md")
@@ -966,6 +966,11 @@ class Prog:
         self.last.pop(name, None)
 
 
+TARGET_SIZES = sysmem.scaled(7, 4)       # sizes the working targets are kept for (the preview's size changes with the layout: the old ones are dead weight)
+LEVEL_TARGETS = sysmem.scaled(96, 40)   # passes of @levels filters kept
+LEVEL_DTYPE = sysmem.scaled("f4", "f2")    # (32-bit floats are 33 MB each at 1080p: half of that on a tablet)
+
+
 class Engine:
     """Runs filters on the GPU (any OpenGL 3.3 context; a hidden one is made, or the GPU
     compositor's own is shared: glrender.py)."""
@@ -1017,10 +1022,12 @@ class Engine:
         return t
 
     def _targets(self, w, h):
-        t = self.targets.get((w, h))
-        if t is None:
-            if len(self.targets) > 6:
-                self.targets.clear()
+        t = self.targets.pop((w, h), None)
+        if t is not None:
+            self.targets[(w, h)] = t                 # (least recently used first)
+        else:
+            while len(self.targets) >= TARGET_SIZES:
+                self.targets.pop(next(iter(self.targets)))           # (what is still drawing into them keeps them; the rest goes when nothing holds them)
             t = []
             for _ in range(3):              # the input can stay one of them while two take turns
                 tex = self.ctx.texture((w, h), 4)
@@ -1032,10 +1039,12 @@ class Engine:
 
     def _mid_targets(self, w, h):
         """Two 16-bit float targets for the passes between the first and the last of a @precision float filter."""
-        t = self.mid_targets.get((w, h))
-        if t is None:
-            if len(self.mid_targets) > 6:
-                self.mid_targets.clear()
+        t = self.mid_targets.pop((w, h), None)
+        if t is not None:
+            self.mid_targets[(w, h)] = t
+        else:
+            while len(self.mid_targets) >= TARGET_SIZES:
+                self.mid_targets.pop(next(iter(self.mid_targets)))
             t = []
             for _ in range(2):
                 tex = self.ctx.texture((w, h), 4, dtype="f2")
@@ -1047,11 +1056,13 @@ class Engine:
 
     def _level_target(self, d, i, w, h):
         key = (d.key(), i, w, h)
-        t = self.level_targets.get(key)
-        if t is None:
-            if len(self.level_targets) > 96:
-                self.level_targets.clear()
-            tex = self.ctx.texture((w, h), 4, dtype="f4")
+        t = self.level_targets.pop(key, None)
+        if t is not None:
+            self.level_targets[key] = t
+        else:
+            while len(self.level_targets) >= LEVEL_TARGETS:
+                self.level_targets.pop(next(iter(self.level_targets)))
+            tex = self.ctx.texture((w, h), 4, dtype=LEVEL_DTYPE)
             tex.filter = (self.mgl.LINEAR, self.mgl.LINEAR)
             tex.repeat_x = tex.repeat_y = False
             t = self.level_targets[key] = (tex, self.ctx.framebuffer(color_attachments=[tex]))

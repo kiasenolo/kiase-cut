@@ -636,7 +636,7 @@ class MainWindow(QMainWindow):
                                     "只影響預覽，不影響匯出。")
         self.quality_box.setFocusPolicy(Qt.NoFocus)
         try:
-            q = float(self.settings().value("preview_quality", 1.0))
+            q = float(self.settings().value("preview_quality", 0.0 if sys.platform == "android" else 1.0))     # (a tablet draws the frame the size of the preview, not the project: a 1080p graph keeps hundreds of MB of the system's memory)
         except (TypeError, ValueError):
             q = 1.0
         self.quality_box.setCurrentIndex(max(0, self.quality_box.findData(q or None)))

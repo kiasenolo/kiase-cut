@@ -103,10 +103,21 @@ if sys.platform == "win32":
             _k32.CloseHandle(h)
 
 
+def _proc():
+    """Whether /proc says what the memory is (Linux, and Android: sys.platform "android" since Python 3.13)."""
+    return sys.platform.startswith("linux") or sys.platform == "android"
+
+
+def scaled(desktop_bytes, phone_bytes):
+    """The size of a cache: desktop_bytes, or phone_bytes on a phone / tablet, where the card has no memory of its own
+    (the app shares the 8 GB of the system, and Android ends it at the first low-memory warning)."""
+    return phone_bytes if sys.platform == "android" else desktop_bytes
+
+
 def used():
     """Bytes of memory this process and the processes it started hold; None if unknown."""
     try:
-        if sys.platform.startswith("linux"):
+        if _proc():
             return sum(_linux_rss(p) for p in _tree(os.getpid(), _linux_children()))
         if sys.platform == "win32":
             return sum(_win_rss(p) for p in _tree(os.getpid(), _win_children()))
@@ -118,7 +129,7 @@ def used():
 def available():
     """(bytes the system can still give, bytes in all); None if unknown."""
     try:
-        if sys.platform.startswith("linux"):
+        if _proc():
             info = {}
             with open("/proc/meminfo") as f:
                 for line in f:

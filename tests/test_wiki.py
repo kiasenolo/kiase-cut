@@ -104,6 +104,22 @@ class WikiTests(unittest.TestCase):
             with self.subTest(header=key):
                 self.assertIn("// @" + key, doc)
 
+    def test_demos_are_drawn_for_the_nodes_of_the_menu(self):
+        index = wiki.wikidemo.index()
+        for _, entries in wiki.categories():
+            for e in entries:
+                if e[0] == "node" and e[1].startswith("builtin:nodes/") and e[1].split("/")[1] not in wiki.wikidemo.NO_DEMO:
+                    with self.subTest(node=e[1]):
+                        self.assertIn(wiki.wikidemo.slug(e[1]), index)
+        for slug, tiles in index.items():
+            for i, _ in enumerate(tiles):
+                self.assertTrue(os.path.exists(os.path.join(wiki.wikidemo.DIR, slug, f"{i}.jpg")), slug)
+
+    def test_a_node_page_shows_its_demo(self):
+        text = wiki.node_page("builtin:blur")
+        self.assertIn("示範", text)
+        self.assertIn('src="demo:blur/0"', text)
+
     def test_legend_colours_are_the_node_editors(self):
         try:
             from kiasecut.ui.node_editor import SOCKET_COLORS

@@ -10,7 +10,7 @@ import os
 import re
 from urllib.parse import quote, unquote
 
-from . import assets, fx, nodegraph as ng, nodemenu, wikidata
+from . import assets, fx, nodegraph as ng, nodemenu, wikidata, wikidemo
 
 SCHEME = "wiki:"
 
@@ -266,6 +266,43 @@ def recipes(key, name):
     return out + f'<p><small>連線的通則見{link("rules", "連線規則")}。</small></p>'
 
 
+SHOW_W, ARROW_W, ROW_W = 200, 28, 660
+
+
+def demo(ref):
+    """示範: the node run on a sample picture - the pictures it was given, an arrow, then what it made (the pictures wikidemo drew)."""
+    tiles = wikidemo.index().get(wikidemo.slug(ref))
+    if not tiles:
+        return ""
+    cells, width = [], 0
+    rows = []
+    arrow_at = next((i for i, (_c, kind) in enumerate(tiles) if kind == "out"), 0) if any(k == "in" for _c, k in tiles) else -1
+    for i, (caption, _kind) in enumerate(tiles):
+        parts = []
+        if i == arrow_at and i > 0:
+            parts.append(("arrow", ARROW_W))
+        parts.append((i, SHOW_W))
+        need = sum(w for _, w in parts)
+        if cells and width + need > ROW_W:
+            rows.append(cells)
+            cells, width = [], 0
+        for item, w in parts:
+            cells.append((item, w, tiles[item][0] if item != "arrow" else ""))
+            width += w
+    rows.append(cells)
+    slug = wikidemo.slug(ref)
+    out = ""
+    for row in rows:
+        out += '<table cellspacing="0" cellpadding="3"><tr>'
+        for item, w, caption in row:
+            if item == "arrow":
+                out += f'<td width="{w}" align="center" valign="middle"><img src="demo:_arrow" width="22" height="22"></td>'
+            else:
+                out += f'<td width="{w}" align="center"><img src="demo:{slug}/{item}" width="{w - 6}"><br><small>{esc(caption)}</small></td>'
+        out += "</tr></table>"
+    return "<h3>示範</h3>" + out
+
+
 def filter_page(ref):
     d = fx.get(ref)
     name = ng.short_name(d.name)
@@ -273,7 +310,7 @@ def filter_page(ref):
     desc = esc(d.description).replace("\n", "<br>")
     return (f"<h1>{esc(name)}</h1><p><small>{where}"
             + (f" ・ 類別：{esc(d.category)}" if d.category else "") + f" ・ <code>{esc(ref)}</code></small></p>"
-            f"<p>{desc or '（沒有說明）'}</p>{recipes(ref, name)}<h3>怎麼接</h3>{wiring(d)}<h3>參數</h3>{params_table(d)}")
+            f"<p>{desc or '（沒有說明）'}</p>{demo(ref)}{recipes(ref, name)}<h3>怎麼接</h3>{wiring(d)}<h3>參數</h3>{params_table(d)}")
 
 
 def special_page(key):

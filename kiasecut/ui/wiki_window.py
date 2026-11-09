@@ -1,11 +1,13 @@
 """說明 Wiki (說明 menu, F1): a window with the pages of wiki.py - a tree of them and a search field at the left, the page at the right
 (links between pages, 上一頁 / 下一頁). The window is made when first wanted and keeps its place."""
+import os
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QSplitter, QTextBrowser, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from .. import wiki, wikidata
+from .. import wiki, wikidata, wikidemo
 
 STYLE = "table {border-color: #555555;} th {background-color: #2a2a2a;} code {color: #c8c85a;} a {color: #6a9fd0;}"
 
@@ -98,12 +100,30 @@ def diagram_image(name, scale=2):
     return img
 
 
+def arrow_image(size=44):
+    img = QImage(size, size, QImage.Format_ARGB32)
+    img.fill(Qt.transparent)
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor("#9a9a9a"), size / 9, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    m = size / 2
+    p.drawLine(QPointF(size * .15, m), QPointF(size * .85, m))
+    p.drawPolyline(QPolygonF([QPointF(size * .58, m - size * .26), QPointF(size * .85, m), QPointF(size * .58, m + size * .26)]))
+    p.end()
+    return img
+
+
 class Browser(QTextBrowser):
     """The page: it draws the "socket:<colour>:<shape>" images the pages hold (wiki.dot)."""
     def loadResource(self, kind, url):
         if url.scheme() == "socket":
             colour, _, shape = url.path().partition(":")
             return socket_image("#" + colour.lstrip("#"), shape or "single")
+        if url.scheme() == "demo":                         # (a picture wikidemo drew, or the arrow between what a node was given and what it made)
+            if url.path() == "_arrow":
+                return arrow_image()
+            img = QImage(os.path.join(wikidemo.DIR, url.path() + ".jpg"))
+            return img if not img.isNull() else None
         if url.scheme() == "diagram" and url.path() in wikidata.DIAGRAMS:
             return diagram_image(url.path())
         return super().loadResource(kind, url)

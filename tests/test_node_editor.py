@@ -66,6 +66,18 @@ class NodeEditorTests(unittest.TestCase):
         v.items_by_id["c1"].setPos(600, 100)                    # (the link into it follows)
         self.assertAlmostEqual(far.path().currentPosition().y(), v.items_by_id["c1"].input_pos("src").y(), places=3)
 
+    def test_a_view_zoomed_out_past_the_limit_zooms_back(self):
+        ed = self.make()
+        v = ed.view
+        v.resetTransform()
+        v.scale(0.04, 0.04)                                     # (a saved view, or 全部顯示 of a very wide graph)
+        v.zoom_by(1.15, QPoint(100, 100))
+        self.assertGreater(v.transform().m11(), 0.04)           # in: allowed
+        v.zoom_by(1 / 1.15, QPoint(100, 100))
+        at = v.transform().m11()
+        v.zoom_by(1 / 1.15, QPoint(100, 100))
+        self.assertAlmostEqual(v.transform().m11(), at)         # out: below the limit already, stays
+
     def test_a_far_away_node_is_drawn_as_a_box(self):
         ed = self.make(lambda e: ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/exposure"}, 0, 0, base="a"))
         v = ed.view

@@ -29,6 +29,8 @@ from .. import assets, curves, dynamic, fx, nodegraph as ng, nodemenu
 from . import appevents, motion, touch, viewglide
 from .wheel import pinch as wheel_pinch
 from .zoomglide import ZoomGlide
+
+ZOOM_MIN, ZOOM_MAX = 0.05, 3.0                       # the node graph's zoom (set_view_state and 全部顯示 reach down to the same)
 from .wrapdrag import WrapDrag
 
 WIDTH, HEAD, ROW, PAD = 210.0, 24.0, 22.0, 6.0
@@ -1665,8 +1667,11 @@ class GraphView(QGraphicsView):
 
     def zoom_by(self, k, at=None):
         """Zoom by k (limited), keeping the scene point under `at` (a viewport point) where it is."""
-        s = self.transform().m11() * k
-        if 0.2 <= s <= 3.0:
+        now = self.transform().m11()
+        s = now * k
+        # (the view can be outside the limits - a saved one, or 全部顯示 of a wide graph - and must still zoom back in:
+        #  a step is allowed when it ends inside them or moves towards them)
+        if ZOOM_MIN <= s <= ZOOM_MAX or (s < ZOOM_MIN and k > 1.0) or (s > ZOOM_MAX and k < 1.0):
             if at is None:
                 at = self.viewport().mapFromGlobal(QCursor.pos())
             before = self.mapToScene(at)
@@ -2352,7 +2357,7 @@ class NodeEditor(QWidget):
             return
         v = self.view
         v.resetTransform()
-        v.scale(min(8.0, max(0.05, zoom)), min(8.0, max(0.05, zoom)))
+        v.scale(min(8.0, max(ZOOM_MIN, zoom)), min(8.0, max(ZOOM_MIN, zoom)))
         v.centerOn(cx, cy)
 
     def show_clip(self, clip, want=None, t=0):

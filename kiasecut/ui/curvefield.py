@@ -16,9 +16,8 @@ FPS = 1000.0                       # (x snaps to 0.001)
 
 
 class UnitCanvas(CurveCanvas):
-    """The keyframe canvas with a plain 0 - 1 ruler and no playhead. A key dragged along x goes on past the others as
-    in Blender's curve widget: the keys it passes over are gone (the order of the keys is what it is), where the keyframe
-    editor keeps every key between its neighbours."""
+    """The keyframe canvas with a plain 0 - 1 ruler and no playhead. A key dragged along x goes on past the others (the
+    keys are in the order of their x again, none is lost), where the keyframe editor keeps every key between its neighbours."""
 
     def x_label(self, t):
         return f"{t:.3g}"
@@ -39,13 +38,15 @@ class UnitCanvas(CurveCanvas):
         for i in chosen:
             keys[i][0] = int(round(orig[i][0] + dt))
             keys[i][1] = self.vv(0, self.pv(0, orig[i][1]) + dp)
-        passed = sorted({j for i in chosen for j in range(len(orig)) if j not in chosen
-                         and (orig[i][0] < orig[j][0] <= keys[i][0] or keys[i][0] <= orig[j][0] < orig[i][0])},
-                        key=lambda j: min(abs(orig[j][0] - orig[i][0]) for i in chosen))
-        gone = set(passed[:max(0, len(orig) - 2)])                # (two keys are the least a curve has)
         ref_i = d.setdefault("ref0", d["ref"][1])                  # (the key under the pointer, as the press numbered it)
-        rows = sorted(((keys[j], j in chosen, j == ref_i) for j in range(len(orig)) if j not in gone), key=lambda r: r[0][0])
+        rows = sorted(((keys[j], j in chosen, j == ref_i) for j in range(len(orig))), key=lambda r: (r[0][0], r[1]))
         out = [r[0] for r in rows]
+        for n in range(1, len(out)):                             # (no two keys at one x: the one being dragged steps aside)
+            if out[n][0] <= out[n - 1][0]:
+                if rows[n][1] or not rows[n - 1][1]:
+                    out[n][0] = out[n - 1][0] + 1
+                else:
+                    out[n - 1][0] = out[n][0] - 1
         for n, k in enumerate(out):                              # (a handle does not reach past the next key)
             if n + 1 < len(out):
                 k[4] = min(k[4], out[n + 1][0] - k[0])

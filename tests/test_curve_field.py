@@ -1,4 +1,4 @@
-"""The curve widget (curvefield.py): a key dragged past others replaces them (Blender's curve widget), and a curve is
+"""The curve widget (curvefield.py): a key dragged past others goes on past them and they stay, and a curve is
 edited right inside its node."""
 import os
 import sys
@@ -43,34 +43,37 @@ class DragPastTests(unittest.TestCase):
         f.set_value(keys)
         return f
 
-    def test_a_key_dragged_right_past_another_replaces_it(self):
+    def test_a_key_dragged_right_past_another_leaves_it(self):
         f = self.field()
         done = []
         f.finished.connect(done.append)
         cv = f.canvas
         drag(cv, 1, cv.key_point(0, 2).x() + 30)
         self.assertEqual([round(k[0], 2) for k in f.keys][0], 0.0)
-        self.assertEqual(len(f.keys), 3)                                       # (the key it passed is gone)
-        self.assertEqual(sorted(round(k[1], 2) for k in f.keys), [0.0, 0.8, 1.0])
-        self.assertGreater(f.keys[1][0], 0.6)                                  # (and it sits where it was let go)
+        self.assertEqual(len(f.keys), 4)                                       # (the key it passed is still there)
+        self.assertEqual(sorted(round(k[1], 2) for k in f.keys), [0.0, 0.2, 0.8, 1.0])
+        self.assertEqual([round(k[1], 2) for k in f.keys][1], 0.2)             # (it is the first of them now)
+        self.assertGreater(f.keys[2][0], 0.6)                                  # (and the dragged one sits where it was let go)
+        self.assertEqual([k[1] for k in f.keys][2], 0.8)
         self.assertEqual(len(done), 1)
 
     def test_and_left(self):
         f = self.field()
         cv = f.canvas
         drag(cv, 2, cv.key_point(0, 1).x() - 30)
-        self.assertEqual(len(f.keys), 3)
-        self.assertEqual(sorted(round(k[1], 2) for k in f.keys), [0.0, 0.2, 1.0])
+        self.assertEqual(len(f.keys), 4)
+        self.assertEqual(sorted(round(k[1], 2) for k in f.keys), [0.0, 0.2, 0.8, 1.0])
         self.assertLess(f.keys[1][0], 0.3)
 
-    def test_the_passed_key_comes_back_when_the_drag_goes_back(self):
+    def test_the_order_comes_back_when_the_drag_goes_back(self):
         f = self.field()
         cv = f.canvas
         live = []
         f.live.connect(live.append)
         x0 = cv.key_point(0, 1).x()
         drag(cv, 1, cv.key_point(0, 2).x() + 30, release=False)
-        self.assertEqual(len(live[-1]), 3)
+        self.assertEqual(len(live[-1]), 4)
+        self.assertEqual([k[1] for k in live[-1]][2], 0.8)
         QTest.mouseMove(cv, QPointF(x0 + 4, cv.key_point(0, 1).y()).toPoint())
         QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, QPointF(x0 + 4, 0).toPoint())
         self.assertEqual(len(f.keys), 4)

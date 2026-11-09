@@ -9,9 +9,9 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTabBar  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QMainWindow, QTabBar, QWidget  # noqa: E402
 
 from kiasecut import layouts  # noqa: E402
 from kiasecut.ui.docks import ORDER, SIDE, Panels  # noqa: E402
@@ -58,6 +58,17 @@ class FileTests(unittest.TestCase):
         self.assertEqual(layouts.title(layouts.user_key("我的")), "我的")
 
 
+class _Press(QObject):
+    def __init__(self, parent, got):
+        super().__init__(parent)
+        self.got = got
+
+    def eventFilter(self, obj, e):
+        if e.type() == QEvent.MouseButtonPress:
+            self.got.append(obj)
+        return False
+
+
 class PanelTests(unittest.TestCase):
     def setUp(self):
         self.win = QMainWindow()
@@ -83,6 +94,25 @@ class PanelTests(unittest.TestCase):
         self.pn["vfxnodes"].close()                                  # (one closed on purpose stays closed)
         self.pn.set_usable("vfxnodes", True)
         self.assertFalse(self.pn["vfxnodes"].isVisible())
+
+    def test_a_stale_mouse_grab_on_a_panel_is_let_go(self):
+        from PySide6.QtCore import QEvent, QPointF
+        from PySide6.QtGui import QMouseEvent
+        dock = self.pn["inspector"]
+        dock.grabMouse()
+        self.assertIs(QWidget.mouseGrabber(), dock)
+        out = QPointF(-50, -50)
+        QApplication.sendEvent(dock, QMouseEvent(QEvent.MouseMove, out, dock.mapToGlobal(out), Qt.NoButton, Qt.NoButton, Qt.NoModifier))
+        self.assertIsNone(QWidget.mouseGrabber())                       # (no button down: nothing is being dragged)
+        dock.grabMouse()
+        back = self.pn["preview"]
+        at = back.mapToGlobal(QPointF(20, 20).toPoint())
+        got = []
+        back.installEventFilter(_Press(back, got))
+        QApplication.sendEvent(dock, QMouseEvent(QEvent.MouseButtonPress, QPointF(dock.mapFromGlobal(at)), QPointF(at),
+                                                 Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+        self.assertIsNone(QWidget.mouseGrabber())
+        self.assertTrue(got)                                           # (the press went where the pointer was)
 
     def test_edit_layout_tabs(self):
         tabs = {d.key for d in self.win.tabifiedDockWidgets(self.pn["library"])}

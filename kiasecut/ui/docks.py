@@ -195,6 +195,34 @@ class Dock(QDockWidget):
             want.show()
 
 
+def dock_like(w):
+    return isinstance(w, QDockWidget) or w.metaObject().className() == "QDockWidgetGroupWindow"
+
+
+def stale_grab(obj, e):
+    """Under Wayland a panel dragged out (or floated, or put back) by the system's own move can be left holding the mouse grab Qt took
+    for the drag: every press then goes to the panel, whatever is under the pointer, while the wheel, the keys and the pointer's
+    shape still work - clicks, buttons and the middle button of the whole program were dead. A grab held by a panel with no
+    button down, or a press outside it, is stale: it is let go (and the press goes where it was meant)."""
+    g = QWidget.mouseGrabber()
+    if g is None or obj is not g or not dock_like(g):
+        return False
+    if e.type() == QEvent.MouseMove:
+        if not e.buttons():
+            g.releaseMouse()
+        return False
+    at = e.globalPosition().toPoint()
+    if g.rect().contains(g.mapFromGlobal(at)):
+        return False
+    g.releaseMouse()
+    target = QApplication.widgetAt(at)
+    if target is not None and target is not g:
+        QApplication.sendEvent(target, QMouseEvent(QEvent.MouseButtonPress, QPointF(target.mapFromGlobal(at)), e.globalPosition(),
+                                                   e.button(), e.buttons(), e.modifiers()))
+        return True
+    return False
+
+
 class Panels(QObject):
     """The dock widgets of a QMainWindow (see the module notes)."""
     activeChanged = Signal(str)               # the side panel used last
@@ -228,6 +256,7 @@ class Panels(QObject):
             self.docks[key] = d
             win.addDockWidget(Qt.TopDockWidgetArea, d)
         appevents.watch(self, (QEvent.MouseButtonPress,), self.eventFilter)
+        appevents.watch(self, (QEvent.MouseButtonPress, QEvent.MouseMove), stale_grab)
 
     def __getitem__(self, key):
         return self.docks[key]

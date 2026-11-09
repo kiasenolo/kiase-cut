@@ -206,6 +206,34 @@ class VectorRenderTests(RenderBase):
             self.assertEqual(rgb(img, W // 2, 2), WHITE, type(r).__name__)           # (now a tall bar: the top middle is covered)
             self.assertEqual(rgb(img, 3, H // 2), BLACK, type(r).__name__)
 
+    def single(self, op, **params):
+        p = proj()
+        eff = edit.add_effect(p, "c1", fx.GRAPH)
+        node = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "vector", "op": op})
+        n = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect", "colors": ("#ffffff", "#000000")}})
+        eff["sources"][n].update(cx=0.0, w=0.25, h=1.0)                       # (a bar a quarter of the clip wide, in the middle)
+        edit.connect_graph(p, "c1", eff["id"], n, node, "v1")
+        edit.connect_graph(p, "c1", eff["id"], node, "output", "src")
+        for k, v in params.items():
+            eff["params"][ng.param_key(node, k)] = v
+        view = self.s.view()
+        view["tracks"][0]["clips"][0]["effects"] = [eff]
+        return view, eff, node
+
+    def test_move_and_scale_a_vector(self):
+        view, eff, node = self.single("move", offset=[720.0, 0.0])           # (canvas px: the 1920 px canvas is 64 px here)
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            self.assertEqual((rgb(img, 12, 18), rgb(img, 52, 18)), (BLACK, WHITE), type(r).__name__)      # (the bar is on the right now)
+        view, _, _ = self.single("scale", factor=[4.0, 1.0])
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual((rgb(img, 12, 18), rgb(img, 52, 18)), (WHITE, WHITE), type(r).__name__)
+        view, _, _ = self.single("scale", factor=[0.5, 1.0], about="畫面中心")
+        for r in self.renderers:
+            self.assertEqual(rgb(r.render(view, 0, W, H), 12, 18), BLACK, type(r).__name__)
+
     def test_union_subtract_intersect_xor(self):
         a, b = (-0.25, 0.75), (0.25, 0.75)         # (cx in half-frame units, w as a fraction: A covers the left 3/4 of the clip, B the right 3/4)
         want = {"聯集": [WHITE] * 4, "差集": [WHITE, BLACK, BLACK, BLACK], "交集": [BLACK, WHITE, WHITE, BLACK],

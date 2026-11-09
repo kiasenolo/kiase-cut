@@ -503,6 +503,19 @@ def rotated(layers, degrees, about_frame=False):
     return [l.mapped(tf) for l in layers]
 
 
+def moved(layers, dx, dy):
+    """The layers moved by dx, dy canvas px."""
+    return [l.mapped(QTransform().translate(dx, dy)) for l in layers] if (dx or dy) else list(layers)
+
+
+def scaled(layers, kx, ky, about_frame=False):
+    """The layers scaled by kx, ky about the middle of the frame, or of their own outlines."""
+    if not layers or (kx == 1 and ky == 1):
+        return list(layers)
+    c = QPointF(0, 0) if about_frame else region(layers).boundingRect().center()
+    return [l.mapped(QTransform().translate(c.x(), c.y()).scale(kx, ky).translate(-c.x(), -c.y())) for l in layers]
+
+
 def add(groups):
     """The layers of the inputs one over the other (the later on top)."""
     return [l for g in groups for l in g]

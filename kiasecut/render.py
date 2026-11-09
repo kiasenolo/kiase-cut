@@ -240,6 +240,13 @@ class Renderer:
             links = {l["socket"]: l["from"] for l in graph["links"] if l["to"] == nid}
             groups = [self.vector_layers(e, graph, links[sock], t, disp, fps, seen) for sock in nodegraph.vecop_sockets(node) if sock in links]
             op = nodegraph.vecop_of(node, nid, e["params"], t, bound)
+            if op == "move":
+                off = curves.value(nodegraph.bound_value(e["params"], bound, nid, "offset", [0.0, 0.0]), t)
+                return vector.moved(vector.add(groups), float(off[0]), float(off[1]))
+            if op == "scale":
+                k = curves.value(nodegraph.bound_value(e["params"], bound, nid, "factor", [1.0, 1.0]), t)
+                about = curves.value(nodegraph.bound_value(e["params"], bound, nid, "about", nodegraph.ROTATE_ABOUT[0]), t)
+                return vector.scaled(vector.add(groups), float(k[0]), float(k[1]), about == nodegraph.ROTATE_ABOUT[1])
             if op == "rotate":
                 angle = curves.value(nodegraph.bound_value(e["params"], bound, nid, "angle", 0.0), t)
                 about = curves.value(nodegraph.bound_value(e["params"], bound, nid, "about", nodegraph.ROTATE_ABOUT[0]), t)

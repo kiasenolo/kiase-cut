@@ -6,7 +6,8 @@ viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w,
   w, h     the object's size, in canvas pixels, as a shape's: the picture is exactly that rectangle (bars
            grow from its bottom edge up to its top, a wave or a scope fills its height, a vectorscope its
            shorter side, a circle's outer edge is half the shorter side)
-  kind     bars (Spectrum Bars) | wave (Smooth Filled Waveform) | scope (Oscilloscope) |
+  kind     bars (Spectrum Bars) | wave (Smooth Filled Waveform) | scope (Wave: the sound's line) |
+           oscilloscope (Oscilloscope: a CRT screen with graticule, glowing trace, optional XY) |
            vector (Vectorscope: side against mid, as iZotope Ozone Imager draws it)
   source   {type: file, path} - an audio / video file, played from the clip's source_start_us as a
            clip of its own would | {type: compound, id} - what a compound clip plays (from its
@@ -20,7 +21,8 @@ viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w,
   floor_db / top_db  the levels (dB, a sine of 1 is 0 dB) that give a bar no height / its full height
   level_map  a mapping (mapping.py) of that 0 - 1 to the height shown (direct: as it is)
   smooth   0 - 1, how much neighbouring bars / points are blended
-  auto_freq (oscilloscope) the picture shows `cycles` periods of the pitch it finds in the sound (the
+  xy       (oscilloscope) left against right instead of the sound against time (a Lissajous figure)
+  auto_freq (wave, oscilloscope) the picture shows `cycles` periods of the pitch it finds in the sound (the
            wave stands still while the note holds); without a clear pitch, or with it off, a window of
            time_ms milliseconds
   auto_scale (vectorscope) the picture is scaled so the widest swing of the last AUTO_BACK seconds just
@@ -43,7 +45,8 @@ from . import audiomix, normalize, project, stretch
 
 US = 1_000_000
 RATE = audiomix.RATE
-KINDS = {"bars": "Spectrum Bars", "wave": "Smooth Filled Waveform", "scope": "Oscilloscope", "vector": "Vectorscope"}
+KINDS = {"bars": "Spectrum Bars", "wave": "Smooth Filled Waveform", "scope": "Wave", "vector": "Vectorscope",
+         "oscilloscope": "Oscilloscope"}
 CHANNELS = (("M", "中 (M)"), ("L", "左 (L)"), ("R", "右 (R)"), ("S", "側 (S)"))
 SOURCE_TYPES = ("file", "compound", "track")
 STEP_US = US // 60                      # the moments a picture is worked out for (and cached by)
@@ -64,7 +67,7 @@ DEFAULTS = {
     "bar_w": 12.0, "gap": 6.0, "radius": 0.0, "mirror": False, "radial": False, "inner": 120.0,
     "f_lo": 30.0, "f_hi": 16000.0, "log": 1.0, "smooth": 0.4, "line_w": 4.0, "grid": True,
     "floor_db": FLOOR_DB, "top_db": TOP_DB, "level_map": mapping.make("direct"),
-    "auto_scale": True, "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
+    "auto_scale": True, "xy": False, "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
 }
 LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
           "w": (1.0, 16384.0), "h": (1.0, 16384.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
@@ -82,6 +85,10 @@ def make(kind, source, canvas_w=1920, canvas_h=1080):
     v["w"], v["h"] = float(canvas_w), round(420.0 * k, 1)
     if kind == "wave":
         v["h"] = round(v["h"] * 0.6, 1)
+    if kind == "oscilloscope":
+        v["w"], v["h"] = round(840.0 * k, 1), round(630.0 * k, 1)
+        v["decay"] = 0.08
+        v["line_w"] = round(v["line_w"] * 0.7, 1)
     if kind == "vector":
         v["w"] = v["h"] = round(630.0 * k, 1)
         v["decay"] = 0.15
@@ -300,7 +307,8 @@ def paint(spec, probe, c, t_us, w, h, design_h, compounds=None, tracks=None):
             return make()
         return probe.cached((name, sig, tt, extra), make)
 
-    {"bars": _bars, "wave": _wave, "scope": _scope, "vector": _vector}[spec["kind"]](
+    {"bars": _bars, "wave": _wave, "scope": _scope, "vector": _vector,
+     "oscilloscope": _oscilloscope}[spec["kind"]](
         p, spec, w, h, u, t_us, window, memo)
     p.end()
     return img
@@ -528,3 +536,75 @@ def _vector(p, spec, w, h, u, t_us, window, memo):
             continue
         p.setPen(QPen(_qc(spec["color"], alpha), width, Qt.SolidLine, Qt.RoundCap))
         p.drawPoints(QPolygonF([QPointF(cx + float(a) * gain * radius, cy - float(b) * gain * radius) for a, b in xy]))
+
+
+def _oscilloscope(p, spec, w, h, u, t_us, window, memo):
+    """A CRT oscilloscope: the dark screen, a 10 x 8 graticule, and the trace as a glowing line (the sound
+    against time from a rising zero crossing, or with xy the left channel against the right)."""
+    rad = min(w, h) * 0.04
+    screen = QRectF(0, 0, w, h)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(4, 16, 9, 235))
+    p.drawRoundedRect(screen, rad, rad)
+    pad = min(w, h) * 0.06
+    area = QRectF(pad, pad, w - 2 * pad, h - 2 * pad)
+    cx, cy = area.center().x(), area.center().y()
+    if spec["grid"]:
+        dx, dy = area.width() / 10, area.height() / 8
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(_qc(spec["color"], 0.16), max(1.0, u)))
+        for i in range(11):
+            p.drawLine(QPointF(area.left() + i * dx, area.top()), QPointF(area.left() + i * dx, area.bottom()))
+        for j in range(9):
+            p.drawLine(QPointF(area.left(), area.top() + j * dy), QPointF(area.right(), area.top() + j * dy))
+        p.setPen(QPen(_qc(spec["color"], 0.38), max(1.0, u)))
+        p.drawLine(QPointF(cx, area.top()), QPointF(cx, area.bottom()))
+        p.drawLine(QPointF(area.left(), cy), QPointF(area.right(), cy))
+        tick = 0.12 * min(dx, dy)                                # (the minor divisions along the two centre axes)
+        for i in range(51):
+            x = area.left() + i * dx / 5
+            p.drawLine(QPointF(x, cy - tick), QPointF(x, cy + tick))
+        for j in range(41):
+            y = area.top() + j * dy / 5
+            p.drawLine(QPointF(cx - tick, y), QPointF(cx + tick, y))
+    p.setClipRect(area)
+    if spec["xy"]:
+        n = int(RATE * STEP_US / US)
+
+        def points(back):
+            tt = (int(math.floor(t_us / STEP_US)) - back) * STEP_US
+
+            def make():
+                pcm = window(tt, n)
+                step = max(1, len(pcm) // 400)
+                return pcm[::step, :2]
+            return memo("oscxy", tt, (n,), make)
+        trail = max(0, min(6, int(spec["decay"] * LAUNCH * US / STEP_US)))
+        polys = []
+        for back in range(trail, -1, -1):
+            xy = points(back)
+            a = math.exp(-back * STEP_US / US / max(spec["decay"], 1e-3)) if spec["decay"] > 0 else (1.0 if back == 0 else 0.0)
+            if a >= 0.02 and len(xy) > 1:
+                polys.append((a, QPolygonF([QPointF(cx + float(l) * area.width() / 2, cy - float(r) * area.height() / 2) for l, r in xy])))
+    else:
+        seg = scope_segment(mono(window(t_us, SCOPE_N), spec["channel"]), spec)
+        if len(seg) < 8:
+            seg = np.zeros(16)
+        pts = max(16, min(len(seg), int(area.width() / max(1.0, 2.0 * u)), 800))
+        seg = np.interp(np.linspace(0, len(seg) - 1, pts), np.arange(len(seg)), seg)
+        seg = smooth_across(seg, spec["smooth"] * 0.5)
+        xs = np.linspace(area.left(), area.right(), pts)
+        polys = [(1.0, QPolygonF([QPointF(x, cy - float(a) * area.height() / 2) for x, a in zip(xs, seg)]))]
+    width = max(1.0, spec["line_w"] * u)
+    p.setBrush(Qt.NoBrush)
+    for alpha, poly in polys:
+        for k, (mul, al) in enumerate(((5.0, 0.07), (3.0, 0.14), (1.8, 0.3))):          # (the glow: wide faint strokes)
+            p.setPen(QPen(_qc(spec["color"], al * alpha), width * mul, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPolyline(poly)
+        p.setPen(QPen(_qc(spec["color"], alpha), width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPolyline(poly)
+        core = QColor(255, 255, 255)
+        core.setAlphaF(0.55 * alpha)
+        p.setPen(QPen(core, max(1.0, width * 0.35), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPolyline(poly)
+    p.setClipping(False)

@@ -262,6 +262,27 @@ class ScopeTests(unittest.TestCase):
         self.assertLess(float(np.abs(a[:m] - b[:m]).max()), 0.1)
 
 
+class OscilloscopeTests(unittest.TestCase):
+    def paint(self, **kw):
+        spec = viz.make("oscilloscope", {"type": "track", "id": ""}, 1920, 1080)
+        spec.update(kw)
+        c = {"start_us": 0, "duration_us": S}
+        return viz.paint(spec, None, c, 0, 420, 315, 315)
+
+    def test_it_draws_a_screen_with_a_graticule(self):
+        img = self.paint()
+        self.assertEqual(img.pixelColor(210, 157).alpha() > 200, True)               # (the dark screen is opaque)
+        self.assertEqual((img.pixelColor(0, 0).alpha(), img.pixelColor(210, 157).alpha() > 0), (0, True))   # (rounded corner)
+        self.assertNotEqual(img.pixelColor(210, 100).rgba(), self.paint(grid=False).pixelColor(210, 100).rgba())
+
+    def test_xy_mode_paints(self):
+        self.assertNotEqual(self.paint(xy=True).pixelColor(210, 157).rgba(), self.paint().pixelColor(210, 157).rgba())
+
+    def test_it_is_a_kind_and_the_old_scope_is_called_wave(self):
+        self.assertEqual((viz.KINDS["oscilloscope"], viz.KINDS["scope"]), ("Oscilloscope", "Wave"))
+        self.assertTrue(viz.clean({"kind": "oscilloscope", "xy": 1})["xy"])
+
+
 class VizInspectorTests(unittest.TestCase):
     def test_rows_follow_the_kind_and_report_edits(self):
         from kiasecut.ui.inspector import Inspector

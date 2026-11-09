@@ -1320,10 +1320,11 @@ class Inspector(QWidget):
                  "log", "floor_db", "top_db", "level_map", "smooth", "color"),
         "wave": ("channel", "attack", "decay", "size", "mirror", "radial", "inner", "smooth", "color"),
         "scope": ("channel", "auto_freq", "cycles", "time_ms", "size", "line_w", "radial", "inner", "smooth", "color"),
-        "vector": ("decay", "size", "line_w", "grid", "auto_scale", "color")}
+        "vector": ("decay", "size", "line_w", "grid", "auto_scale", "color"),
+        "oscilloscope": ("channel", "xy", "auto_freq", "cycles", "time_ms", "decay", "size", "line_w", "grid", "smooth", "color")}
     VIZ_GRADIENT = ("bars", "wave")                     # (the kinds that can fill from one colour to another)
     VIZ_TOGGLES = {"auto_freq": "自動頻率", "mirror": "鏡像", "radial": "放射狀",
-                   "grid": "顯示格線", "auto_scale": "自動縮放"}
+                   "grid": "顯示格線", "auto_scale": "自動縮放", "xy": "XY 模式"}
 
     def _viz_edit(self, **fields):
         if self.clip_ids:

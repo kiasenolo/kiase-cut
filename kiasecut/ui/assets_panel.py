@@ -102,6 +102,22 @@ def viz_thumbnail(kind):
             x = 6 + i * (w - 12) / 60
             path.lineTo(x, h / 2 - 13 * math.sin(i * 0.33) * math.sin(i * 0.07 + 0.3))
         p.drawPath(path)
+    elif kind == "oscilloscope":
+        p.setBrush(QColor(4, 16, 9))
+        p.drawRoundedRect(QRectF(2, 2, w - 4, h - 4), 4, 4)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(QColor(col.red(), col.green(), col.blue(), 55), 1))
+        for i in range(1, 6):
+            p.drawLine(QPointF(2 + i * (w - 4) / 6, 6), QPointF(2 + i * (w - 4) / 6, h - 6))
+        for j in range(1, 4):
+            p.drawLine(QPointF(6, 2 + j * (h - 4) / 4), QPointF(w - 6, 2 + j * (h - 4) / 4))
+        path = QPainterPath(QPointF(6, h / 2))
+        for i in range(1, 61):
+            path.lineTo(6 + i * (w - 12) / 60, h / 2 - 11 * math.sin(i * 0.42))
+        p.setPen(QPen(QColor(col.red(), col.green(), col.blue(), 80), 5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPath(path)
+        p.setPen(QPen(col, 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.drawPath(path)
     else:
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(QColor(col.red(), col.green(), col.blue(), 70), 1))

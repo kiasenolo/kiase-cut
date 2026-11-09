@@ -80,6 +80,20 @@ class WikiTests(unittest.TestCase):
     def test_search_finds_guides(self):
         self.assertTrue(any(p.startswith("guide:") for p, _, _ in wiki.search("節點效果")))
 
+    def test_filter_format_names_every_header(self):
+        import re
+        with open(fx.__file__, encoding="utf-8") as fh:
+            src = fh.read()
+        body = src[src.index("def parse("):src.index("_cache = {}")]
+        keys = set(re.findall(r'key == "(\w+)"', body))
+        for group in re.findall(r"key in \(([^)]*)\)", body):
+            keys |= set(re.findall(r'"(\w+)"', group))
+        self.assertTrue({"passes", "socket", "bake", "enable", "param"} <= keys)
+        doc = wiki.format_page()
+        for key in keys:
+            with self.subTest(header=key):
+                self.assertIn("// @" + key, doc)
+
     def test_legend_colours_are_the_node_editors(self):
         try:
             from kiasecut.ui.node_editor import SOCKET_COLORS

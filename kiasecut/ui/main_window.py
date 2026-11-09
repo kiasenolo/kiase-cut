@@ -43,6 +43,7 @@ from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
 from . import node_editor
 from .. import proxies, sharedgl
+from . import inputstate
 from .node_editor import NodeEditor
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
 from .inspector import Inspector
@@ -6527,6 +6528,7 @@ def run(argv):
     if os.path.exists(logo):
         app.setWindowIcon(QIcon(logo))
     win = MainWindow()
+    inputstate.install(win)                          # Ctrl+Alt+Shift+R: lets go of what holds the mouse (inputstate.py)
     win.show()
     if sys.platform == "android" and not androidfs.can_read():
         QMessageBox.information(win, "需要權限", androidfs.HOW_TO_ALLOW)

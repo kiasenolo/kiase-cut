@@ -289,6 +289,24 @@ class NodeEditorTests(unittest.TestCase):
         self.drag(ed, ed.view.items_by_id["input"].output_pos(), mix.input_pos("b"))
         self.assertEqual(got, [("e1", "input", "mix1", "b", "")])
 
+    def test_a_value_node_is_dragged_onto_where_a_text_sits_and_its_size(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/value"}, 0, 150)
+            t = ng.add_node(e["graph"], {"type": ng.SOURCE, "kind": "text"}, 300, 150, base="t")
+            e.setdefault("sources", {})[t] = {"kind": "text", "content": "x", "cx": 0.0, "cy": 0.0, "rotation": 0.0}
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got = []
+        ed.connectRequested.connect(lambda *a: got.append(a))
+        value = ed.view.items_by_id["value1"]
+        text = ed.view.items_by_id["t1"]
+        for sock in ("param:cy", "param:cx", "param:rotation", "param:size"):
+            self.assertIn(sock, [s for s, _ in text.sockets()], sock)
+            self.drag(ed, value.output_pos(), text.input_pos(sock))
+        self.assertEqual([g[3] for g in got], ["param:cy", "param:cx", "param:rotation", "param:size"])
+        for g in got:                                                         # (and the graph takes each)
+            ng.connect(ed.graph, g[1], g[2], g[3], g[4])
+
     def test_a_dragged_link_jumps_onto_a_near_socket_and_is_thicker_than_the_placed_ones(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/mix"}, 0, 150)

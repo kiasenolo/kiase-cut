@@ -73,9 +73,8 @@ class GraphEditTests(unittest.TestCase):
         with self.assertRaises(edit.EditError):
             edit.set_effect_text(self.p, "c1", self.e["id"], "output", content="x")
         other = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
-        ng.connect(self.e["graph"], other, nid, "param:size")                  # (a number node feeds a value; where it sits only the effect's own parameters)
-        with self.assertRaises(ng.GraphError):
-            ng.connect(self.e["graph"], other, nid, "param:cx")
+        for sock in ("param:size", "param:cy", "param:cx", "param:rotation"):    # a number node feeds a value, and where it sits
+            ng.connect(self.e["graph"], other, nid, sock)
         edit.remove_graph_node(self.p, "c1", self.e["id"], nid)
         self.assertFalse([k for k in self.e["params"] if k.startswith(nid + ".")])
 
@@ -184,7 +183,7 @@ class GraphEditTests(unittest.TestCase):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect"}})
         g = self.e["graph"]
         self.assertTrue(ng.takes_picture(g, nid, "param:radius"))
-        self.assertFalse(ng.takes_picture(g, nid, "param:cx"))                   # (where it sits: only the effect's parameters)
+        self.assertTrue(ng.takes_picture(g, nid, "param:cx"))                    # (and where it sits)
         self.e["params"][nid + ".radius"] = 33.0
         pn = edit.add_graph_node_feeding(self.p, "c1", self.e["id"], {"type": "params"}, 0, 0, nid, "param:radius")
         self.assertEqual(g["nodes"][pn]["type"], "params")
@@ -715,8 +714,8 @@ class GraphRenderTests(unittest.TestCase):
         pn = ng.add_node(g, {"type": "params"}, base="params")
         self.assertIn(("param:color", "顏色"), ng.sockets(g["nodes"][nid]))
         self.assertIn(("param:cx", "位置 X"), ng.sockets(g["nodes"][nid]))
-        with self.assertRaises(ng.GraphError):                                    # (where it sits: only the effect's parameters)
-            ng.connect(g, "input", nid, "param:cx")
+        ng.connect(g, "input", nid, "param:cx")                                   # (a picture is read once, at its middle)
+        g["links"] = [l for l in g["links"] if l["to"] != nid]
         colour = ng.expose(g, eff["params"], pn, nid, "param:color")
         shift = ng.expose(g, eff["params"], pn, nid, "param:cx", eff["sources"])
         eff["params"]["expose." + colour] = [0.0, 0.0, 1.0, 1.0]

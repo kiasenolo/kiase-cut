@@ -203,15 +203,16 @@ class RunTest(unittest.TestCase):
         s = ng.add_node(g, {"type": ng.SOURCE, "kind": "shape", "asset": {"key": "ring", "family": "ellipse"}}, base="s")
         ng.connect(g, v, s, "param:ratio")                         # a Value node into a shape's number
         ng.connect(g, c, s, "param:stroke_color")                  # a colour into its colour
-        with self.assertRaises(ng.GraphError):
-            ng.connect(g, v, s, "param:cx")                        # where it sits: the effect's parameters only
+        ng.connect(g, v, s, "param:cy")                            # where it sits too
         self.assertEqual(ng.input_shape(g, s, "param:ratio"), "single")
         ng.connect(g, s, "output", "src")
         params = {v + ".value": 0.25, c + ".color": [0.0, 1.0, 0.0, 1.0]}
         seen = {}
         self.run_graph(g, self.solid([0, 0, 0, 255]), params=dict(params),
-                       watch=lambda nid, ps: seen.update(ratio=ps.get(s + ".ratio"), colour=ps.get(s + ".stroke_color")))
+                       watch=lambda nid, ps: seen.update(ratio=ps.get(s + ".ratio"), colour=ps.get(s + ".stroke_color"),
+                                                                   placed=ng.placed_by({"cy": 0.0}, ps, None, s, 0)["cy"]))
         self.assertAlmostEqual(seen["ratio"], 0.25, 3)
+        self.assertAlmostEqual(seen["placed"], 0.25, 3)            # (the same number moves it)
         self.assertAlmostEqual(seen["colour"][1], 1.0, 2)
         mine = dict(params)
         self.run_graph(g, self.solid([0, 0, 0, 255]), params=mine)

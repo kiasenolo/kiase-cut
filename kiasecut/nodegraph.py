@@ -395,6 +395,8 @@ def placed_by(src, params, bound, nid, t):
     for name, *_ in PLACE:
         if bound and (nid, PARAM + name) in bound:
             out[name] = curves.value(params.get(expose_key(bound[(nid, PARAM + name)]), src.get(name)), t)
+        elif param_key(nid, name) in params:                 # (read from a node linked into it: evaluate puts the value there while it runs)
+            out[name] = curves.value(params[param_key(nid, name)], t)
     return out
 
 
@@ -877,8 +879,8 @@ def takes_picture(graph, nid, socket):
     p = param_of(graph, nid, socket)
     if p is None:
         return True
-    if is_asset(node) or is_text(node):                      # (a shape's or a text's values are read once; where it sits, only the effect's parameters feed)
-        return not getattr(p, "place", False) and p.type in fx.SOURCE_TYPES + CONTROL_TYPES
+    if is_asset(node) or is_text(node):                      # (a shape's or a text's values, and where it sits, are read once)
+        return p.type in fx.SOURCE_TYPES + CONTROL_TYPES
     return p.type in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES
 
 
@@ -1005,9 +1007,8 @@ def connect(graph, src, dst, socket, out=None):
     else:
         if out not in [o for o, _ in outputs(nodes[src])]:
             out = outputs(nodes[src])[0][0]
-        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst])) and (
-                getattr(p, "place", False) or p.type not in fx.SOURCE_TYPES + CONTROL_TYPES):
-            raise GraphError("形狀和文字的位置、大小只能接效果自己的參數（參數輸入節點）")
+        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst])) and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES:
+            raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
         if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):

@@ -131,12 +131,12 @@ def _t(caption, **over):
 
 NO_DEMO = ("boolean", "integer", "integer_vector", "menu", "value", "vector", "image_info", "time")      # (a number or a vector is no picture to look at)
 DEMOS = {
-    "blur": {"tiles": [_t("大小 6", radius=6, radius_y=6), _t("大小 24", radius=24, radius_y=24)]},
-    "motion_blur": {"tiles": [_t("距離 40，角度 0", amount=40, angle=0), _t("距離 40，角度 45", amount=40, angle=45)]},
-    "lens_blur": {"tiles": [_t("半徑 14", radius=14)]},
-    "posterize": {"tiles": [_t("色階 4", levels=4), _t("色階 2", levels=2)]},
-    "pixelate": {"tiles": [_t("方塊 10", size=10), _t("方塊 24", size=24)]},
-    "nodes/mix": {"inputs": {"b": "scene2"}, "tiles": [_t("係數 0.5", fac=0.5), _t("相乘", blend="相乘"), _t("差異", blend="差異")]},
+    "blur": {"tiles": [_t("大小 4", radius=4, radius_y=4), _t("大小 12", radius=12, radius_y=12), _t("大小 32", radius=32, radius_y=32)]},
+    "motion_blur": {"tiles": [_t("距離 15", amount=15, angle=0), _t("距離 40", amount=40, angle=0), _t("距離 80，角度 30", amount=80, angle=30)]},
+    "lens_blur": {"tiles": [_t("半徑 6", radius=6), _t("半徑 14", radius=14), _t("半徑 28", radius=28)]},
+    "posterize": {"tiles": [_t("色階 8", levels=8), _t("色階 4", levels=4), _t("色階 2", levels=2)]},
+    "pixelate": {"tiles": [_t("方塊 6", size=6), _t("方塊 12", size=12), _t("方塊 28", size=28)]},
+    "nodes/mix": {"inputs": {"b": "scene2"}, "tiles": [_t("係數 0.3", fac=0.3), _t("係數 0.7", fac=0.7), _t("相乘", blend="相乘")]},
     "nodes/alpha_over": {"inputs": {"b": "badge"}, "tiles": [_t("疊上去")]},
     "nodes/set_alpha": {"inputs": {"alpha_img": "mask"}, "tiles": [_t("透明度接遮罩")]},
     "nodes/split": {"inputs": {"b": "scene2"}, "tiles": [_t("位置在中間")]},
@@ -144,18 +144,25 @@ DEMOS = {
     "nodes/index_switch": {"inputs": {"i2": "scene2"}, "tiles": [_t("索引 0", index=0), _t("索引 1", index=1)]},
     "nodes/menu_switch": {"inputs": {"i2": "scene2"}, "tiles": [_t("選項 1", choice="選項 1"), _t("選項 2", choice="選項 2")]},
     "nodes/map_uv": {"inputs": {"uv": "uvmap"}, "tiles": [_t("用 UV 圖取色")]},
-    "nodes/dilate_erode": {"in": "mask", "tiles": [_t("擴張", size=14), _t("侵蝕", size=-14)]},
-    "nodes/clamp": {"in": "ramp", "tiles": [_t("限制在 0.3 ~ 0.7", lo=0.3, hi=0.7)]},
-    "nodes/map_range": {"in": "ramp", "tiles": [_t("對應到 0.25 ~ 0.75", to_min=0.25, to_max=0.75)]},
+    "nodes/dilate_erode": {"in": "mask", "tiles": [_t("擴張 6", size=6), _t("擴張 16", size=16), _t("侵蝕 16", size=-16)]},
+    "nodes/clamp": {"in": "ramp", "tiles": [_t("0.3 ~ 0.7", lo=0.3, hi=0.7), _t("0.2 ~ 0.5", lo=0.2, hi=0.5), _t("0.5 ~ 0.8", lo=0.5, hi=0.8)]},
+    "nodes/map_range": {"in": "ramp", "tiles": [_t("對應到 0.25 ~ 0.75", to_min=0.25, to_max=0.75), _t("對應到 0.5 ~ 1", to_min=0.5, to_max=1.0), _t("對應到 1 ~ 0（反過來）", to_min=1.0, to_max=0.0)]},
     "nodes/float_curve": {"in": "ramp"},
+    "nodes/math": {"in": "ramp", "tiles": [_t("相乘，B = 0.5", op="相乘", value=0.5), _t("相加，B = 0.4", op="相加", value=0.4),
+                                          _t("次方，B = 2", op="次方", value=2.0)]},
+    "nodes/filter": {"tiles": [_t("柔化", kind="柔化"), _t("方塊銳利化", kind="方塊銳利化"), _t("索伯（邊緣）", kind="索伯")]},
+    "nodes/flip": {"tiles": [_t("水平翻轉", flip_x=True, flip_y=False), _t("垂直翻轉", flip_x=False, flip_y=True), _t("兩個都開", flip_x=True, flip_y=True)]},
+    "nodes/rotate": {"tiles": [_t("15°", angle=15), _t("45°", angle=45), _t("90°", angle=90)]},
+    "nodes/blackbody": {"in": "none", "tiles": [_t("1800 K", temperature=1800), _t("5000 K", temperature=5000), _t("12000 K", temperature=12000)]},
+    "nodes/rgb": {"in": "none", "tiles": [_t("紅", color=[0.9, 0.2, 0.25, 1.0]), _t("綠", color=[0.2, 0.7, 0.35, 1.0]), _t("藍", color=[0.2, 0.4, 0.9, 1.0])]},
+    "nodes/rounded_square_mask": {"tiles": [_t("圓角 0", size=[0.6, 0.5], roundness=0.0), _t("圓角 0.4", size=[0.6, 0.5], roundness=0.4), _t("圓角 0.8，羽化", size=[0.6, 0.5], roundness=0.8, feather=0.3)]},
     "nodes/normalize": {"in": "ramp"},
-    "nodes/math": {"in": "ramp"},
     "nodes/rgb_to_bw": {"in": "scene"},
     "blender_glare": {"tiles": [("Bloom", {"type": "Bloom", "threshold": 0.6}, "image"), ("Streaks", {"type": "Streaks", "threshold": 0.6}, "image"),
                                 ("Fog Glow", {"type": "Fog Glow", "threshold": 0.6}, "image")]},
-    "nodes/exposure": {"tiles": [_t("-1 檔", exposure=-1), _t("+1 檔", exposure=1)]},
-    "nodes/gamma": {"tiles": [_t("0.6", gamma=0.6), _t("1.8", gamma=1.8)]},
-    "nodes/hue_sat_value": {"tiles": [_t("色相 0.75", hue=0.75), _t("飽和度 2", sat=2.0)]},
+    "nodes/exposure": {"tiles": [_t("-1 檔", exposure=-1), _t("+1 檔", exposure=1), _t("+2 檔", exposure=2)]},
+    "nodes/gamma": {"tiles": [_t("0.5", gamma=0.5), _t("1.5", gamma=1.5), _t("2.5", gamma=2.5)]},
+    "nodes/hue_sat_value": {"tiles": [_t("色相 0.25", hue=0.25), _t("色相 0.75", hue=0.75), _t("飽和度 2", sat=2.0)]},
 }
 
 
@@ -221,27 +228,25 @@ def difference(a, b):
     return float(np.abs(a[..., :3].astype(np.int16) - b[..., :3].astype(np.int16)).mean())
 
 
-def visible_variant(eng, d, src, inputs, tiles):
-    """When a filter at its defaults hardly changes the picture, one more tile: the number parameter whose raising changes it most."""
-    base = run(eng, d, values_for(d, {}), src, inputs, 0)
-    if difference(base, src) >= 4:
-        return None
+def visible_variant(eng, d, src, inputs):
+    """Three tiles, low / middle / high, of the number parameter whose raising changes the picture most (two steps are hard to tell apart;
+    three show which way it goes); none when no parameter does."""
     best = None
     for p in d.params:
         if p.type != "float" or not p.lo < p.hi <= 1000 or p.panel:
             continue
-        for at in (0.5, 0.8):
-            v = p.lo + (p.hi - p.lo) * at
-            try:
-                out = run(eng, d, values_for(d, {p.name: v}), src, inputs, 0)
-            except Exception:
-                continue
-            gain = difference(out, src)
-            if gain > 4 and (best is None or gain > best[0]) and difference(out, np.zeros_like(out)) > 8:
-                best = (gain, p, v)
+        v = p.lo + (p.hi - p.lo) * 0.6
+        try:
+            out = run(eng, d, values_for(d, {p.name: v}), src, inputs, 0)
+        except Exception:
+            continue
+        gain = difference(out, src)
+        if gain > 4 and (best is None or gain > best[0]) and difference(out, np.zeros_like(out)) > 8:
+            best = (gain, p)
     if best is None:
-        return None
-    return (f"{best[1].label} = {best[2]:g}", {best[1].name: best[2]}, None)
+        return []
+    p = best[1]
+    return [(f"{p.label} = {v:g}", {p.name: v}, None) for v in (p.lo + (p.hi - p.lo) * k for k in (0.2, 0.45, 0.7))]
 
 
 def make(eng, ref):
@@ -269,9 +274,7 @@ def make(eng, ref):
     names = [n for n, _ in d.outputs]
     tiles_spec = list(s["tiles"])
     if not got_tiles(ref) and s["in"] != "none" and not names:
-        extra = visible_variant(eng, d, src, inputs, tiles_spec)
-        if extra:
-            tiles_spec.append(extra)
+        tiles_spec = visible_variant(eng, d, src, inputs) or tiles_spec
     for caption, over, out in tiles_spec:
         vals = values_for(d, over)
         index = names.index(out) if out in names else 0

@@ -266,7 +266,7 @@ def recipes(key, name):
     return out + f'<p><small>連線的通則見{link("rules", "連線規則")}。</small></p>'
 
 
-SHOW_W, ARROW_W, ROW_W = 200, 28, 660
+SHOW_W, ARROW_W, ROW_W = 156, 28, 660          # (what was given, an arrow, three results: one row)
 
 
 def demo(ref):

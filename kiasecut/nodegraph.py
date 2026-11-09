@@ -868,7 +868,7 @@ def param_of(graph, nid, socket):
 
 def takes_picture(graph, nid, socket):
     """Whether a picture (a constant node's, say) can be linked into `socket` of node nid: false for a parameter that only
-    the effect's own parameters feed (a shape's or a text's values, a vector...)."""
+    the effect's own parameters feed (where a shape or a text sits...)."""
     node = graph["nodes"].get(nid)
     if node is None:
         return False
@@ -877,7 +877,9 @@ def takes_picture(graph, nid, socket):
     p = param_of(graph, nid, socket)
     if p is None:
         return True
-    return not (is_asset(node) or is_text(node)) and p.type in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES
+    if is_asset(node) or is_text(node):                      # (a shape's or a text's values are read once; where it sits, only the effect's parameters feed)
+        return not getattr(p, "place", False) and p.type in fx.SOURCE_TYPES + CONTROL_TYPES
+    return p.type in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES
 
 
 CONSTANTS = {"float": "builtin:nodes/value", "int": "builtin:nodes/integer", "bool": "builtin:nodes/boolean",
@@ -939,6 +941,8 @@ def input_shape(graph, nid, socket):
     p = param_of(graph, nid, socket)
     if p is None:
         return "field"
+    if is_asset(node) or is_text(node):                      # (a shape's or a text's values are read once)
+        return "single"
     return "either" if p.type in fx.SOURCE_TYPES else "single"
 
 
@@ -1001,8 +1005,9 @@ def connect(graph, src, dst, socket, out=None):
     else:
         if out not in [o for o, _ in outputs(nodes[src])]:
             out = outputs(nodes[src])[0][0]
-        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst])):
-            raise GraphError("形狀和文字的數值只能接效果自己的參數（參數輸入節點）")
+        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst])) and (
+                getattr(p, "place", False) or p.type not in fx.SOURCE_TYPES + CONTROL_TYPES):
+            raise GraphError("形狀和文字的位置、大小只能接效果自己的參數（參數輸入節點）")
         if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):
@@ -1472,8 +1477,25 @@ class Cache:
             self._drop(k)
 
 
-def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False, tap=None,
-             stamp=None, cache=None, scope=None, input_stamp=None):
+def evaluate(eng, graph, params, src_tex, w, h, alloc, free, *args, **kw):
+    """Work out graph's output - see _evaluate. The values a shape or text node reads from the nodes linked into its parameters are
+    put into `params` while it runs (the shape and the text are drawn from the effect's params) and taken out again after."""
+    given = {}
+    try:
+        return _evaluate(eng, graph, params, src_tex, w, h, alloc, free, *args, _given=given, **kw)
+    finally:
+        for key, old in given.items():
+            if old is _MISSING:
+                params.pop(key, None)
+            else:
+                params[key] = old
+
+
+_MISSING = object()
+
+
+def _evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False, tap=None,
+              stamp=None, cache=None, scope=None, input_stamp=None, _given=None):
     """Work out graph's output (params: the effect's e["params"]) for the w x h texture src_tex (the effect's input)
     at clip time t.
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
@@ -1512,9 +1534,25 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fp
             todo += [f[0] for f in feeds_of.get(n, ())]
     for (to, sock), f in list(feed.items()):
         p = param_of(graph, to, sock) if sock.startswith(PARAM) else None
-        if p is not None and p.type in CONTROL_TYPES + VECTOR_TYPES:
+        drawn = nodes[to]["type"] == SOURCE and (is_asset(nodes[to]) or is_text(nodes[to]))      # (a shape / text node: its fields are read once)
+        if p is not None and (p.type in CONTROL_TYPES + VECTOR_TYPES or (drawn and p.type in fx.SOURCE_TYPES)):
             del feed[(to, sock)]                              # (read once, a number: the picture itself is not drawn for it)
             if to not in reach:
+                continue
+            if drawn:
+                if p.type == "color":
+                    c = _centre(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
+                    v = [float(c[0]), float(c[1]), float(c[2]), 1.0]
+                else:
+                    v = _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
+                    if p.type == "bool":
+                        v = v > 0.5
+                    elif p.type == "menu":
+                        v = p.items[min(max(int(round(v)), 0), len(p.items) - 1)] if p.items else v
+                key = param_key(to, p.name)
+                if _given is not None:
+                    _given.setdefault(key, params.get(key, _MISSING))
+                params[key] = v
                 continue
             if p.type in VECTOR_TYPES:
                 c = _centre(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)

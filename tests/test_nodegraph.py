@@ -111,7 +111,7 @@ class DataTest(unittest.TestCase):
 class RunTest(unittest.TestCase):
     W = H = 8
 
-    def run_graph(self, g, rgba, pictures=None, t=0, params=None):
+    def run_graph(self, g, rgba, pictures=None, t=0, params=None, watch=None):
         eng = engine()
         pool = ng.Pool(eng)
         with eng.ctx:
@@ -119,7 +119,9 @@ class RunTest(unittest.TestCase):
             src.filter = (eng.mgl.LINEAR, eng.mgl.LINEAR)
             texs = {}
 
-            def picture(nid):
+            def picture(nid, *_more):
+                if watch:
+                    watch(nid, params)
                 arr = (pictures or {}).get(nid)
                 if arr is None:
                     return None
@@ -193,6 +195,27 @@ class RunTest(unittest.TestCase):
             out, errors, _ = self.run_graph(g, self.solid([0, 255, 0, 255]), pics, params={m + ".choice": choice})
             self.assertEqual(errors, [], choice)
             self.close(out, want)
+
+    def test_a_number_node_can_feed_a_shape_and_leaves_the_params_as_they_were(self):
+        g = ng.new_graph()
+        v = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/value"})
+        c = ng.add_node(g, {"type": ng.FILTER, "ref": "builtin:nodes/rgb"})
+        s = ng.add_node(g, {"type": ng.SOURCE, "kind": "shape", "asset": {"key": "ring", "family": "ellipse"}}, base="s")
+        ng.connect(g, v, s, "param:ratio")                         # a Value node into a shape's number
+        ng.connect(g, c, s, "param:stroke_color")                  # a colour into its colour
+        with self.assertRaises(ng.GraphError):
+            ng.connect(g, v, s, "param:cx")                        # where it sits: the effect's parameters only
+        self.assertEqual(ng.input_shape(g, s, "param:ratio"), "single")
+        ng.connect(g, s, "output", "src")
+        params = {v + ".value": 0.25, c + ".color": [0.0, 1.0, 0.0, 1.0]}
+        seen = {}
+        self.run_graph(g, self.solid([0, 0, 0, 255]), params=dict(params),
+                       watch=lambda nid, ps: seen.update(ratio=ps.get(s + ".ratio"), colour=ps.get(s + ".stroke_color")))
+        self.assertAlmostEqual(seen["ratio"], 0.25, 3)
+        self.assertAlmostEqual(seen["colour"][1], 1.0, 2)
+        mine = dict(params)
+        self.run_graph(g, self.solid([0, 0, 0, 255]), params=mine)
+        self.assertEqual(mine, params)                             # (put back: nothing left of the linked values)
 
     def test_a_number_can_set_a_tick_and_choose_a_menu_option(self):
         g = ng.new_graph()

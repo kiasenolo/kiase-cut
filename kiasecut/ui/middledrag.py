@@ -19,7 +19,7 @@ from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QAbstractScrollArea, QApplication, QPlainTextEdit, QWidget
 
-from . import appevents, inertia
+from . import appevents, inertia, wheel
 from .wrapdrag import WrapDrag
 
 
@@ -114,7 +114,7 @@ class _Drag(QObject):
         self.area, self.at = area, vp.mapFromGlobal(e.globalPosition())
         self.last = self.at
         self.samples = [(time.monotonic(), self.last)]
-        self.start = (h.value(), v.value())
+        self.rest = [0.0, 0.0]                       # the part of a move not yet a whole step
         # a plain text box scrolls by lines up and down, everything else by pixels
         self.unit = area.fontMetrics().lineSpacing() if isinstance(area, QPlainTextEdit) else 1
         area.destroyed.connect(self._end)
@@ -131,15 +131,35 @@ class _Drag(QObject):
             self.last = self.wrap.pos(e)             # (viewport coordinates, past its edges)
             now = time.monotonic()
             self.samples = [x for x in self.samples if now - x[0] < SPAN_MS[1] / 1000.0] + [(now, self.last)]
-            d = self.last - self.at
+            d, self.at = self.last - self.at, self.last
+            # the motion is only added to where the content is, not what sets it: the wheel (or anything else)
+            # moving it meanwhile is kept, and the two do not fight
+            self._scroll(-d.x(), -d.y() / self.unit)
+            return True
+        if t == QEvent.Wheel:                        # wherever the pointer is, the wheel scrolls the content being dragged
+            nx, ny = wheel.notches(e)
             h, v = self.area.horizontalScrollBar(), self.area.verticalScrollBar()
-            h.setValue(self.start[0] - round(d.x()))
-            v.setValue(self.start[1] - round(d.y() / self.unit))
+            if wheel.touchpad(e):
+                px, py = wheel.pixels(e, 0, 0)
+                self._scroll(-px, -py / self.unit)
+            else:
+                self._scroll(-nx * h.singleStep() * 3, -ny * v.singleStep() * 3)
             return True
         if t == QEvent.MouseButtonRelease and e.button() == Qt.MiddleButton:
             self._end(glide=True)
             return True
         return t in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick)   # other buttons wait
+
+    def _scroll(self, dx, dy):
+        """Move the content by (dx, dy) scroll units; the fractions wait for the next move."""
+        for i, (bar, d) in enumerate(((self.area.horizontalScrollBar(), dx), (self.area.verticalScrollBar(), dy))):
+            if bar.maximum() <= bar.minimum():
+                continue
+            self.rest[i] += d
+            whole = int(self.rest[i])
+            self.rest[i] -= whole
+            if whole:
+                bar.setValue(bar.value() + whole)
 
     def _velocity(self):
         """(vx, vy) in scroll units a second the content was moving at when the button was let go."""

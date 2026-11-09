@@ -57,6 +57,19 @@ class MiddleDragTests(unittest.TestCase):
         self.assertEqual(self.bar.value(), 570)
         self.assertIsNone(QApplication.overrideCursor())
 
+    def test_wheel_while_dragging_adds_to_the_drag(self):
+        from PySide6.QtGui import QWheelEvent
+        vp = self.scroll.viewport()                               # (the content moves under the pointer: use the view's own points)
+        QTest.mousePress(vp, Qt.MiddleButton, NONE, QPoint(150, 250))
+        QTest.mouseMove(vp, QPoint(150, 230))                     # +20
+        elsewhere = QPointF(5, 5)                                 # (the pointer is not over the content)
+        ev = QWheelEvent(elsewhere, vp.mapToGlobal(elsewhere), QPoint(0, 0), QPoint(0, -120),
+                         Qt.NoButton, NONE, Qt.NoScrollPhase, False)
+        APP.sendEvent(vp, ev)                                     # one notch down: 3 steps
+        QTest.mouseMove(vp, QPoint(150, 220))                     # +10 more, on top of the wheel
+        QTest.mouseRelease(vp, Qt.MiddleButton, NONE, QPoint(150, 220))
+        self.assertEqual(self.bar.value(), 500 + 20 + 3 * self.bar.singleStep() + 10)
+
     def test_box_without_scroll_hands_it_on(self):
         self.bar.setValue(0)
         drag(self.box.viewport(), QPoint(50, 40), QPoint(50, 10))

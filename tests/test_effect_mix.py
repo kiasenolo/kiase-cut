@@ -131,6 +131,19 @@ class MixPanelTests(unittest.TestCase):
         self.assertEqual(s.value(), 100)
 
 
+    def test_deleted_widget(self):
+        """A widget of the form deleted under it (a dock rebuilt on a tablet): the next frame builds the form again, no 'already deleted'."""
+        import shiboken6
+        p = proj()
+        e = edit.put_effect(p, "c1", "builtin:vignette")
+        panel = EffectsPanel()
+        panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        key = ("fxmix:" + e["id"], "mix")
+        shiboken6.delete(panel.widgets[key])
+        panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        self.assertTrue(shiboken6.isValid(panel.widgets[key]))
+
+
 class CurveParamTests(unittest.TestCase):
     def test_duotone_curve_row(self):
         p = proj()

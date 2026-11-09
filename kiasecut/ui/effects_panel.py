@@ -26,6 +26,7 @@ for) is put through _real on its way in.
 import json
 import os
 
+from shiboken6 import isValid
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
@@ -905,7 +906,14 @@ class EffectsPanel(QWidget):
         else:
             self.effectDropped.emit(list(self.ids), payload, i)
 
+    def _gone(self):
+        """Whether a widget of the form was deleted under it (its parent went, as a dock or a tab is rebuilt): reading one
+        raises 'Internal C++ object already deleted' on every frame that follows."""
+        return any(not all(isValid(x) for x in (w if isinstance(w, (tuple, list)) else (w,))) for w in self.widgets.values())
+
     def show_clips(self, clips, t_us, fps):
+        if self.widgets and self._gone():
+            self.shape = None                       # (the form is built again below)
         pics = [k for k in clips if k["type"] in edit.VISUAL]
         chains = {tuple(e["filter"] for e in k.get("effects") or []) for k in pics}
         c = pics[0] if len(chains) == 1 else None               # alike (or one clip): a form

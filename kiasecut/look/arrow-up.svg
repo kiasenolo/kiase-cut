@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><polyline points="3.5,10 8,5.5 12.5,10" fill="none" stroke="#aaaaab" stroke-width="1.2"/></svg>
+<?xml version="1.0" encoding="utf-8"?>
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g>
+    <path d="M8.01355 46.5544L41.1132 76.0267L44.2707 78.8382L44.2707 64.1096L24.5549 46.5544L8.01355 46.5544ZM0.152012 39.5544L0 39.4191L44.2707 0L44.2707 14.7286L16.5414 39.4191L16.6934 39.5544L0.152012 39.5544Z" fill="#aaaaab" fill-rule="evenodd" transform="matrix(0 1 -1 -0 103.838 42)" />
+  </g>
+</svg>

@@ -23,6 +23,7 @@
 // @param offset float 0 -1000000 1000000 "偏移"
 // @param gain float 1 -1000000 1000000 "增益"
 // @param distortion float 0 -1000000 1000000 "扭曲"
+// @bake dims ntype normalized
 // @show src dims != 1D
 // @show w dims == 1D|4D
 // @show in_w dims == 1D|4D

@@ -237,6 +237,7 @@ def static_label(comp):
 
 class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread
+    shaderCompile = Signal(str, bool)          # (filter name, finished): a node's shader is being compiled (by the player's thread)
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
                     ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
@@ -294,6 +295,9 @@ class MainWindow(QMainWindow):
         self.pending_seek = None
         self.fullscreen = None
         self.taskCall.connect(self._task_call)
+        self.compile_dialog = None
+        self.shaderCompile.connect(self.on_shader_compile)
+        fx.compile_listeners.append(self._tell_compile)
         self.setAcceptDrops(True)       # files dragged in from the file manager go to the library
 
         # library | preview | inspector
@@ -1779,11 +1783,63 @@ class MainWindow(QMainWindow):
             return False
         old_format = "info" not in proj
         workspace.opened(proj, fn)
+        self.show_compile_progress(proj)
         if not self.open_loaded(proj, fn):
+            self.close_compile_progress()
             return False
         if old_format and library.external_media(proj, self.root):
             self.collect_external(ask=True)
         return True
+
+    # the shaders of the project's node effects are compiled by the first picture; a bar tells what is going on ------------
+    def show_compile_progress(self, proj):
+        """A progress window while the node effects' shaders (which no engine has compiled yet) are compiled; it closes once
+        the picture that needed them is shown."""
+        self.close_compile_progress()
+        try:
+            todo = {k: n for k, n in nodegraph.programs_needed(proj).items() if k not in fx.compiled}
+        except Exception:
+            return
+        if not todo:
+            return
+        dlg = QProgressDialog("正在編譯節點的 shader…", None, 0, len(todo), self)
+        dlg.setWindowTitle("開啟專案")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setValue(0)
+        self.compile_dialog = dlg
+        self.compile_todo = set(todo)
+        self.compile_done = 0
+        self.compile_seen = 0                                 # (compiles since it opened: a picture of the project before shows nothing of them)
+        dlg.show()
+        QApplication.processEvents()                          # (painted before the project's own opening keeps the thread busy)
+        QTimer.singleShot(180_000, self.close_compile_progress)       # (a driver that never answers does not keep the window)
+
+    def _tell_compile(self, name, finished):
+        try:
+            self.shaderCompile.emit(name, finished)
+        except RuntimeError:                                  # (this window is gone)
+            if self._tell_compile in fx.compile_listeners:
+                fx.compile_listeners.remove(self._tell_compile)
+
+    def on_shader_compile(self, name, finished):
+        dlg = self.compile_dialog
+        if dlg is None:
+            return
+        self.compile_seen += finished
+        if finished:
+            self.compile_done = min(dlg.maximum(), self.compile_done + 1)
+            dlg.setValue(self.compile_done)
+        else:
+            dlg.setLabelText(f"正在編譯節點的 shader…（{self.compile_done}／{dlg.maximum()}）\n{name}")
+
+    def close_compile_progress(self):
+        dlg, self.compile_dialog = self.compile_dialog, None
+        if dlg is not None:
+            dlg.close()
+            dlg.deleteLater()
 
     def save_project(self, save_as=False):
         if not self.proj:
@@ -4534,6 +4590,8 @@ class MainWindow(QMainWindow):
 
     def after_frame(self, img, pos):
         self.pos = pos
+        if self.compile_dialog is not None and self.compile_seen:
+            self.close_compile_progress()
         self.show_rack()
         if img is not None:
             self.nodes.view.set_backdrop(img)

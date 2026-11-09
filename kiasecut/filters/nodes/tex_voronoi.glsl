@@ -15,6 +15,7 @@
 // @output position "位置"
 // @output wout "W"
 // @output radius "半徑"
+// @bake dims metric feature normalized
 // @param dims menu 2D "1D|2D|3D|4D" "維度"
 // @param metric menu 歐幾里得 "歐幾里得|曼哈頓|切比雪夫|閔可夫斯基" "距離"
 // @param feature menu F1 "F1|F2|平滑 F1|到邊緣距離|N 球半徑" "特徵"

@@ -134,7 +134,7 @@ def analyse(d):
 
 
 def can_fuse(d):
-    return analyse(d) is not None
+    return not d.bakes and analyse(d) is not None          # (a baked setting is a constant of its own shader: nothing to fuse)
 
 
 def _renames(d, i, names):

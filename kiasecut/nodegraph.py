@@ -844,6 +844,26 @@ def node_def(node):
     return asset_def(node) if is_asset(node) else text_def(node) if is_text(node) else vecop_def(node) if is_vecop(node) else None
 
 
+def programs_needed(proj):
+    """{(filter key, baked values): the filter's name} of the shaders the node effects of project proj run (every clip's, compounds
+    included), as the graphs' settings choose them: what opening the project compiles (the progress bar counts it against fx.compiled)."""
+    from . import project                     # (project imports this module)
+    out = {}
+    for c in project.all_clips(proj):
+        for e in c.get("effects") or ():
+            g = e.get("graph") if e.get("filter") == fx.GRAPH else None
+            if not g:
+                continue
+            params = e.get("params") or {}
+            for nid, node in flatten(g)["nodes"].items():
+                d = node_def(node) if node["type"] == FILTER else None
+                if d is None or d.error:
+                    continue
+                values = {p.name: fx.uniform_value(p, params.get(f"{nid}.{p.name}"), 0.0) for p in d.params if p.name in d.bakes}
+                out[(d.key(), fx.baked_values(d, values))] = d.name
+    return out
+
+
 def virtual_def(e):
     """A FilterDef whose parameters are those of every filter node of effect e's graph, named
     "<node>.<parameter>" and in a panel (@panel) of the node each (so the effects panel, keyframes and the

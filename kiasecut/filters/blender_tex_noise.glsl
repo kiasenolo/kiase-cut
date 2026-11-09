@@ -3,6 +3,7 @@
 // @description Blender 的噪點紋理：分形柏林噪訊（細節、粗糙度、間隙度、扭曲），調 Z（3D）或 W（4D）可以讓它連貫地流動
 // @output fac "數值"
 // @output color "顏色"
+// @bake dims normalize
 // @param dims menu 3D "3D|4D" "維度"
 // @param z float 0 -1000 1000 "Z"
 // @param w float 0 -1000 1000 "W（4D）"

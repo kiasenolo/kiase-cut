@@ -368,8 +368,8 @@ class EffectsPanel(QWidget):
         b_down.setEnabled(index < count - 1)
         lay.addLayout(head)
         inner = QWidget()                                       # all but the head row: what folds away
-        inner.setVisible(e["id"] not in self.collapsed)
         lay.addWidget(inner)
+        inner.setVisible(e["id"] not in self.collapsed)         # (after it has a parent: a parentless widget shown is a window that flashes up)
         lay = QVBoxLayout(inner)
         lay.setContentsMargins(0, 0, 0, 0)
 

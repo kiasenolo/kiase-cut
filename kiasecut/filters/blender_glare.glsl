@@ -13,6 +13,7 @@
 // @skip 5 type != Bloom|Sun Beams
 // @skip 6-23 type != Bloom
 // @precision float
+// @bake type
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
 // @param quality menu 中 "高|中|低" "品質"
 // @panel 亮部

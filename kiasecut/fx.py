@@ -72,6 +72,7 @@ class FilterDef:
         self.shared = False                      # @shared: only the last pass looks at output_index, the ones before it are drawn once for every output asked
         self.alone = []                          # @alone: outputs the last pass draws from nothing the earlier passes drew (they are not drawn for it)
         self.skips = []                          # @skip: (first pass, last pass, conditions): not drawn while the conditions hold
+        self.bakes = []                          # @bake: menu / bool / int parameters written into the shader as constants (one compile per setting; the driver drops the branches left unused)
         self.input_param = {}                    # @input name "Label" param: the number box of that parameter sits on the input's row, hidden while a link feeds it
         self.input_show = {}                     # @show on an @input: {name: conditions}
         self.dynamic = None                      # @dynamic: the name of the generator that makes this filter's text from a node's items (dynamic.py)
@@ -279,7 +280,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     head = {}
     params, error = [], None
     panels, panel, enables, inputs, outputs = [], None, [], [], []
-    input_param, alone, skips, steps = {}, [], [], []
+    input_param, alone, skips, steps, bakes = {}, [], [], [], []
     sockets = []
     for line in text.splitlines():
         m = HEADER.match(line)
@@ -323,6 +324,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                                 words[2], words[3] if len(words) > 3 else None))
             elif key == "shared":
                 head["shared"] = True
+            elif key == "bake":                           # (read once every @param is known)
+                bakes += shlex.split(rest)
             elif key == "alone":
                 alone += shlex.split(rest)
             elif key == "skip":                           # (read once every @param is known)
@@ -370,6 +373,9 @@ def parse(text, ref, fallback_name="濾鏡"):
             skipped.append(_skip(rest, params))
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
+    for name in bakes:
+        if all(q.name != name or q.type not in BAKEABLE for q in params):
+            error = error or f"@bake：「{name}」不是選單、整數或勾選參數"
     for name in alone:
         if all(name != n for n, _ in outputs):
             error = error or f"@alone：沒有叫「{name}」的 @output"
@@ -402,6 +408,7 @@ def parse(text, ref, fallback_name="濾鏡"):
             d.error = d.error or f"@input {iname}：「{pname}」不是數字參數"
     d.outputs = outputs
     d.shared, d.alone, d.skips = head.get("shared", False), alone, skipped
+    d.bakes = bakes
     d.src_label = head.get("source") or d.src_label
     for way, name, kind, label in sockets:
         d.socket_types[(way, name)] = kind
@@ -859,13 +866,30 @@ GLSL_TYPES = {"float": "float", "int": "int", "bool": "bool", "color": "vec4", "
               "menu": "int", "curve": "float", "gradient": "vec4"}
 
 
-def shader_source(d, sampled=()):
+BAKEABLE = ("menu", "int", "bool")
+
+
+def baked_values(d, values):
+    """((name, value), ...) of the parameters filter d says @bake, as the shader is made with them."""
+    if not d.bakes:
+        return ()
+    by = {p.name: p for p in d.params}
+    return tuple((n, int(values.get(n, by[n].default if by[n].type != "menu" else menu_index(by[n], by[n].default))))
+                 for n in d.bakes if n in by)
+
+
+def shader_source(d, sampled=(), baked=()):
     """The fragment shader of filter d; sampled: its colour and number parameters that read a
-    picture."""
+    picture; baked: ((name, value), ...) of its @bake parameters, written in as constants."""
+    consts = dict(baked)
     decl = "\n".join((f"uniform float {p.name}_p[{GRADIENT_N}];\nuniform vec4 {p.name}_c[{GRADIENT_N}];\nuniform int {p.name}_n;"
                       if p.type == "gradient" else
                       f"uniform {GLSL_TYPES[p.type]} {p.name}" + (f"[{CURVE_N}]" if p.type == "curve" else "") + ";")
-                     for p in d.params if p.name not in sampled)
+                     for p in d.params if p.name not in sampled and p.name not in consts)
+    for p in d.params:
+        if p.name in consts:
+            decl += f"\nconst {GLSL_TYPES[p.type]} {p.name} = " + ("true" if consts[p.name] else "false") * (p.type == "bool") + \
+                    str(consts[p.name]) * (p.type != "bool") + ";"
     kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
     for name, _label in d.inputs:
         decl += (f"\nuniform sampler2D inp_{name}_;\nuniform bool inp_{name}_on_;\n"
@@ -905,6 +929,9 @@ def make_context():
 
 
 _UNSET = object()
+
+compiled = set()                 # (filter key, baked values) of every program any engine has compiled in this run (the project's progress bar counts what is left)
+compile_listeners = []           # fn(filter name, finished): told before and after each compile, on the thread that compiles
 
 
 class Prog:
@@ -955,19 +982,26 @@ class Engine:
         self.mid_targets = {}        # (w, h) -> [(texture, fbo)] x 2, 16-bit floats (@precision float)
         self.level_targets = {}      # (filter key, pass, w, h) -> (texture, fbo): a pass of @levels (16-bit floats, kept)
 
-    def _program(self, d, sampled=()):
-        key = (d.key(), sampled)
+    def _program(self, d, sampled=(), baked=()):
+        key = (d.key(), sampled, baked)
         prog = self.programs.get(key)
         if prog is None:
             if d.error:
                 raise FilterError(d.error)
-            if len(d.code) > BIG and not use_gles():          # (gles.py's calls already let go of Python's lock)
-                with self.ctx:
-                    precompile(shader_source(d, sampled))
+            for fn in compile_listeners:
+                fn(d.name, False)
             try:
-                prog = self.ctx.program(vertex_shader=VERTEX, fragment_shader=shader_source(d, sampled))
-            except Exception as exc:
-                raise FilterError(f"{d.name}：{exc}") from exc
+                if len(d.code) > BIG and not use_gles():          # (gles.py's calls already let go of Python's lock)
+                    with self.ctx:
+                        precompile(shader_source(d, sampled, baked))
+                try:
+                    prog = self.ctx.program(vertex_shader=VERTEX, fragment_shader=shader_source(d, sampled, baked))
+                except Exception as exc:
+                    raise FilterError(f"{d.name}：{exc}") from exc
+            finally:
+                compiled.add((d.key(), baked))
+                for fn in compile_listeners:
+                    fn(d.name, True)
             vao = self.ctx.vertex_array(prog, [(self.quad, "2f", "pos")])
             if len(self.programs) > 64:
                 self.programs.clear()
@@ -1076,7 +1110,7 @@ class Engine:
         pass alone; any other is drawn all over again for every output."""
         types = {p.name: p.type for p in d.params}
         sources = {n: v for n, v in (sources or {}).items() if types.get(n) in SOURCE_TYPES}
-        prog, vao = self._program(d, tuple(sorted(sources)))
+        prog, vao = self._program(d, tuple(sorted(sources)), baked_values(d, values))
         targets = self._targets(w, h)
         unit = unit if unit > 1e-9 else 1.0
         ov = self.overscan or ((1.0, 1.0, 0.0, 0.0), (1.0, 1.0, 0.0, 0.0))        # (the pictures read, the one drawn: scale x y, offset x y)

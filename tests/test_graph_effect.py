@@ -54,6 +54,18 @@ class GraphEditTests(unittest.TestCase):
             edit.set_effect_shape(self.p, "c1", self.e["id"], nid, "blob")
         self.assertTrue(edit.has_param(self.p_clip(), f"fxsrc:{self.e['id']}:{nid}", "cx"))
 
+    def test_a_text_field_dragged_out_offers_a_constant_of_its_own_kind_with_its_value(self):
+        nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "text"})
+        g = self.e["graph"]
+        self.e["params"][nid + ".letter_spacing"] = 0.3
+        self.assertEqual(ng.socket_kind(g, nid, "param:letter_spacing"), "float")      # (not a colour)
+        self.assertEqual(ng.socket_kind(g, nid, "param:color"), "color")
+        self.assertEqual(ng.socket_kind(g, nid, "param:fill"), "bool")
+        self.assertEqual(ng.CONSTANTS[ng.socket_kind(g, nid, "param:letter_spacing")], "builtin:nodes/value")
+        v = edit.add_graph_node_feeding(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/value"}, 0, 0, nid, "param:letter_spacing")
+        self.assertAlmostEqual(self.e["params"][v + ".value"], 0.3)                    # (it keeps the value)
+        self.assertTrue(any(l["from"] == v and l["to"] == nid and l["socket"] == "param:letter_spacing" for l in g["links"]))
+
     def test_text_node_edits(self):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "text"})
         node = self.e["graph"]["nodes"][nid]

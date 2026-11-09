@@ -891,6 +891,9 @@ CONSTANTS = {"float": "builtin:nodes/value", "int": "builtin:nodes/integer", "bo
 def socket_kind(graph, nid, socket):
     """What input `socket` of node nid takes: "float", "int", "bool", "color", "vector" or "menu" (a picture: "color")."""
     node = graph["nodes"].get(nid)
+    if node is not None and (is_asset(node) or is_text(node)):          # (a shape's or a text's field: its own type)
+        p = param_of(graph, nid, socket)
+        return "color" if p is None else "vector" if p.type in ("vec2", "vec3") else p.type if p.type in ("float", "int", "bool", "menu") else "color"
     if node is None or node["type"] != FILTER:
         return "color"
     d = fx.for_node(node)
@@ -951,6 +954,12 @@ def input_shape(graph, nid, socket):
 def socket_value(graph, params, nid, socket):
     """The value of the number / colour / switch `socket` of filter node nid stands for - its field's (None: it has none)."""
     node = graph["nodes"].get(nid)
+    if node is not None and (is_asset(node) or is_text(node)) and socket.startswith(PARAM):
+        p = param_of(graph, nid, socket)
+        if p is None:
+            return None
+        v = params.get(param_key(nid, p.name), p.default)
+        return curves.value(v, 0) if curves.is_animated(v) else v
     if node is None or node["type"] != FILTER:
         return None
     name = socket[len(PARAM):] if socket.startswith(PARAM) else fx.for_node(node).input_param.get(socket)

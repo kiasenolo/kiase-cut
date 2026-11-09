@@ -5,9 +5,3 @@ version = 1
 path = ["images/**", "images.free"]
 SPDX-FileCopyrightText = "2026 KIASENOLO"
 SPDX-License-Identifier = "CC-BY-4.0"
-
-# The demo pictures of the wiki are those pictures run through KiaseCut's filters (tools/make_wiki_demos.py).
-[[annotations]]
-path = "kiasecut/wikiimg/**"
-SPDX-FileCopyrightText = "2026 KIASENOLO"
-SPDX-License-Identifier = "CC-BY-4.0"

@@ -104,8 +104,34 @@ class WikiTests(unittest.TestCase):
             with self.subTest(header=key):
                 self.assertIn("// @" + key, doc)
 
+    def test_the_demo_stamp_says_when_they_are_out_of_date(self):
+        import tempfile
+        old = wiki.wikidemo.DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                wiki.wikidemo.DIR = tmp
+                self.assertFalse(wiki.wikidemo.current())
+                with open(os.path.join(tmp, "stamp.txt"), "w", encoding="utf-8") as fh:
+                    fh.write(wiki.wikidemo.stamp())
+                self.assertTrue(wiki.wikidemo.current())
+                with open(os.path.join(tmp, "stamp.txt"), "w", encoding="utf-8") as fh:
+                    fh.write("old")
+                self.assertFalse(wiki.wikidemo.current())
+        finally:
+            wiki.wikidemo.DIR = old
+
+    def test_no_demos_yet_is_a_page_without_them(self):
+        old = wiki.wikidemo.DIR
+        try:
+            wiki.wikidemo.DIR = os.path.join(os.path.dirname(__file__), "no-such-folder")
+            self.assertNotIn("demo:", wiki.node_page("builtin:blur"))
+        finally:
+            wiki.wikidemo.DIR = old
+
     def test_demos_are_drawn_for_the_nodes_of_the_menu(self):
         index = wiki.wikidemo.index()
+        if not index:
+            self.skipTest("the demo pictures are drawn by the program (wikibuild), not kept in the repository")
         for _, entries in wiki.categories():
             for e in entries:
                 if e[0] == "node" and e[1].startswith("builtin:nodes/") and e[1].split("/")[1] not in wiki.wikidemo.NO_DEMO:
@@ -116,6 +142,8 @@ class WikiTests(unittest.TestCase):
                 self.assertTrue(os.path.exists(os.path.join(wiki.wikidemo.DIR, slug, f"{i}.jpg")), slug)
 
     def test_a_node_page_shows_its_demo(self):
+        if not wiki.wikidemo.index():
+            self.skipTest("no demo pictures drawn here")
         text = wiki.node_page("builtin:blur")
         self.assertIn("示範", text)
         self.assertIn('src="demo:blur/0"', text)

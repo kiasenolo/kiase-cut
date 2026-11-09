@@ -836,8 +836,8 @@ option) any later version: see `LICENSE`. This covers every version published so
 the first commit on. It comes with no warranty.
 
 The exception is the pictures drawn by hand for the wiki's demos: `images/` and `images.free`
-(the Lunacy document they are drawn in), and `kiasecut/wikiimg/` (those pictures run through the
-filters, made by `tools/make_wiki_demos.py`). They are © 2026 KIASENOLO under CC BY 4.0
+(the Lunacy document they are drawn in). The demo pictures the program makes from them
+(`kiasecut/wikibuild.py`, in the user's cache folder, not in the repository) are theirs too. They are © 2026 KIASENOLO under CC BY 4.0
 (`LICENSES/CC-BY-4.0.txt`): use, change and share them, also commercially, with credit to
 "KIASENOLO". `REUSE.toml` says it for each file.
 

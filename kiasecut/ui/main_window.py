@@ -18,7 +18,7 @@ import threading
 import time
 
 from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObject, QPointF, QRect, QSettings, QSize,
-                            QStandardPaths, Qt, QProcess,
+                            QStandardPaths, Qt, QProcess, QProcessEnvironment,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
@@ -256,6 +256,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.resize(1600, 940)
+        QTimer.singleShot(6000, self.make_wiki_demos)
         self.proj = None
         self.history = None
         self.path = None
@@ -1645,6 +1646,28 @@ class MainWindow(QMainWindow):
         w.show()
         w.raise_()
         w.activateWindow()
+
+    def make_wiki_demos(self):
+        """The wiki's 示範圖 are drawn by the program itself (not kept in the repo): at the first start, and again when a filter or a sample
+        picture changed, in a process of its own (wikibuild) so the window does not wait; the open wiki page is shown again when they are done."""
+        from .. import wikidemo
+        if sys.platform == "android" or os.environ.get("KIASECUT_NO_WIKI_DEMOS") or wikidemo.current() or self.__dict__.get("_demo_proc"):
+            return
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONPATH", os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) + os.pathsep + env.value("PYTHONPATH"))
+        proc = self._demo_proc = QProcess(self)
+        proc.setProcessEnvironment(env)
+        proc.setProcessChannelMode(QProcess.MergedChannels)
+
+        def done(*_):
+            self._demo_proc = None
+            proc.deleteLater()
+            w = self.__dict__.get("_wiki")
+            if w is not None:
+                w.show_page(w.page, remember=False)
+        proc.finished.connect(done)
+        proc.errorOccurred.connect(done)
+        proc.start(sys.executable, ["-m", "kiasecut.wikibuild"])
 
     def open_wiki(self):
         """說明: the wiki window (one), or over the whole window on Android as the tools are."""

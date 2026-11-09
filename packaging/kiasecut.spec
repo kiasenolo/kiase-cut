@@ -18,10 +18,10 @@ def no_mlt(binaries):
 
 
 app = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[ROOT],
-               hiddenimports=["kiasecut.fxthumbs"],
+               hiddenimports=["kiasecut.fxthumbs", "kiasecut.wikibuild"],
                datas=[(os.path.join(ROOT, "kiasecut", "filters"), "kiasecut/filters"),
                       (os.path.join(ROOT, "kiasecut", "look"), "kiasecut/look"),
-                      (os.path.join(ROOT, "kiasecut", "wikiimg"), "kiasecut/wikiimg"),
+                      (os.path.join(ROOT, "images"), "images"),
                       (os.path.join(ROOT, "Icon.svg"), ".")],
                excludes=["tkinter", "kiasecut.engine"])
 app.binaries = no_mlt(app.binaries)

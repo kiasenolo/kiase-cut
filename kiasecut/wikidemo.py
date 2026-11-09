@@ -1,11 +1,13 @@
-"""示範圖 for the 說明 Wiki: what a node does, shown by running the real filter on a sample picture. tools/make_wiki_demos.py draws them
-into kiasecut/wikiimg/ (one folder per node, a JPEG per tile, the sample inputs in _in/); the wiki shows the ones that exist (wiki.demo).
+"""示範圖 for the 說明 Wiki: what a node does, shown by running the real filter on a sample picture. wikibuild draws them (the program
+starts it by itself when they are missing or out of date) into DIR, a folder in the user's cache (one folder per node, a JPEG per tile, the
+sample inputs in _in/); the wiki shows the ones that exist (wiki.demo).
 
 DEMOS says what to show for a node: {"in": sample picture the node's main input gets ("none": a generator, there is no input to show),
 "inputs": {@input name: sample}, "tiles": [(caption, {parameter: value}, output name or None)]}. A node not in it is shown at its defaults on
 the "scene" picture, one tile for each output. A menu parameter's value is the choice's name."""
 import math
 import os
+import sys
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
@@ -14,7 +16,23 @@ from . import fx
 
 W, H = 400, 224                    # a tile is drawn this big and kept at half of it
 TILE = (W // 2, H // 2)
-DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wikiimg")
+
+
+def cache_dir():
+    """Where the demo pictures are kept: the user's cache folder (KIASECUT_WIKI_CACHE sets another one)."""
+    own = os.environ.get("KIASECUT_WIKI_CACHE")
+    if own:
+        return own
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Caches")
+    else:
+        base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    return os.path.join(base, "KiaseCut", "wikiimg")
+
+
+DIR = cache_dir()
 
 
 def slug(ref):
@@ -298,8 +316,39 @@ def make(eng, ref):
     return tiles
 
 
+def sources():
+    """The files the pictures are made from: the pictures drawn by hand, the filters, and the code that runs them."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    out = [os.path.join(DRAWN, f"example-wiki-{n}.png") for n in sorted(SAMPLES)]
+    for root in (os.path.join(here, "filters"), os.path.join(here, "filters", "nodes")):
+        if os.path.isdir(root):
+            out += [os.path.join(root, f) for f in sorted(os.listdir(root))]
+    return out + [os.path.join(here, f) for f in ("wikidemo.py", "wikibuild.py", "fx.py")]
+
+
+def stamp():
+    """What the pictures would be made from now (names, sizes, times): when it differs from the stamp they were drawn with they are out of date."""
+    parts = []
+    for path in sources():
+        try:
+            st = os.stat(path)
+            parts.append(f"{os.path.basename(path)}:{st.st_size}:{int(st.st_mtime)}")
+        except OSError:
+            pass
+    return "\n".join(parts)
+
+
+def current():
+    """True when the pictures in DIR were drawn from what is here now."""
+    try:
+        with open(os.path.join(DIR, "stamp.txt"), encoding="utf-8") as fh:
+            return fh.read() == stamp()
+    except OSError:
+        return False
+
+
 def index():
-    """{slug: [[caption, "in" | "out"], ...]} of the demos that are drawn (kiasecut/wikiimg/index.json)."""
+    """{slug: [[caption, "in" | "out"], ...]} of the demos that are drawn (DIR/index.json)."""
     import json
     try:
         with open(os.path.join(DIR, "index.json"), encoding="utf-8") as fh:

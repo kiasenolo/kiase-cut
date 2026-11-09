@@ -4,6 +4,7 @@ number can follow through an expression (propexpr.py) by writing their name.
 proj["rack"] = [{id, name, value, expr}]
     name   a name an expression can read (letters, digits, _; not one of expr.py's own)
     value  a number, or keyframes (curves.py) along the project's timeline
+    lfo    optional: an LFO (lfo.py) - the parameter is its output along the timeline instead of value
     expr   optional: an expression (expr.py) that turns value into what the parameter is -
            input (value now), time (the timeline's seconds) and other parameters by name;
            absent: `input`
@@ -16,7 +17,7 @@ import copy
 import json
 import re
 
-from . import curves, expr, mapping
+from . import curves, expr, lfo, mapping
 
 RESERVED = ({"input", "value", "time", "progress", "duration", "Math", "undefined", "null"}
             | set(expr.CONSTANTS) | set(expr.FUNCTIONS) | set(expr.NEEDS_ENV))
@@ -91,6 +92,8 @@ def cycle(root):
 
 def _names(text):
     """The names an expression (text) or a mapping (mapping.py) reads."""
+    if lfo.is_lfo(text):
+        return set()
     if mapping.is_mapping(text):
         return mapping.names(text)
     try:
@@ -101,6 +104,8 @@ def _names(text):
 
 def rename_expr(x, old, new):
     """An expression text or a mapping with the name `old` read as `new`."""
+    if lfo.is_lfo(x):
+        return x
     return mapping.renamed(x, old, new) if mapping.is_mapping(x) else rename_in(x, old, new)
 
 
@@ -118,6 +123,8 @@ def values(root, t_us):
             return out[n]
         base = curves.value(p.get("value", 0.0), t_us)
         base = float(base) if isinstance(base, (int, float)) else 0.0
+        if lfo.is_lfo(p.get("lfo")):
+            base = lfo.safe(p["lfo"], t_us / curves.US, base)
         if p.get("expr") and n not in busy:
             busy.add(n)
             env = {"input": base, "value": base, "time": t_us / curves.US}
@@ -165,7 +172,8 @@ def rename_in(text, old, new):
 
 def export_text(root):
     return json.dumps({"format": FORMAT, "params": [
-        {"name": p["name"], "value": copy.deepcopy(p.get("value", 0.0)), **({"expr": p["expr"]} if p.get("expr") else {})}
+        {"name": p["name"], "value": copy.deepcopy(p.get("value", 0.0)), **({"expr": p["expr"]} if p.get("expr") else {}),
+         **({"lfo": copy.deepcopy(p["lfo"])} if lfo.is_lfo(p.get("lfo")) else {})}
         for p in params(root)]}, ensure_ascii=False, indent=1)
 
 
@@ -186,7 +194,9 @@ def parse_import(text):
         if not (isinstance(v, (int, float)) or curves.is_animated(v)):
             v = 0.0
         e = d.get("expr")
-        out.append({"name": d["name"], "value": v, **({"expr": e} if isinstance(e, str) and expr.check(e) is None else {})})
+        l = d.get("lfo")
+        out.append({"name": d["name"], "value": v, **({"expr": e} if isinstance(e, str) and expr.check(e) is None else {}),
+                    **({"lfo": l} if lfo.is_lfo(l) and lfo.check(l) is None else {})})
     if not out:
         raise ValueError("檔案裡沒有參數")
     return out

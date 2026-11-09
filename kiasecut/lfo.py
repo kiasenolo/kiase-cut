@@ -1,0 +1,128 @@
+"""LFO (低頻振盪器): a number that swings along a wave over time. Three places hold one:
+
+    a global parameter of the rack (rack.py):  p["lfo"] = spec     the parameter is the LFO's output (time: the timeline)
+    a clip's own number (propexpr.py):         clip["expr"][prop] = spec   (time: seconds into the clip)
+
+spec {wave, unit, rate, amp, offset, phase, fade, loop, width, bezier, curve, bipolar, rel, seed}
+  wave     sine / triangle / saw / square / bezier (a CSS cubic-bezier over one cycle) / curve (a curve of any
+           number of keys over one cycle, curves.unit_value) / random (a new value each cycle) / noise (smooth)
+  unit     "hz": `rate` is cycles per second;  "sec": `rate` is the seconds one cycle lasts
+  amp      how far the wave swings either way (bipolar) - its height (not bipolar)
+  offset   the centre it swings about (the value of the wave's 0)
+  phase    degrees into the cycle at time 0
+  fade     seconds the swing takes to grow from nothing to `amp` (0: at once)
+  loop     repeat: each cycle runs the wave from its start; mirror: forward, then back (saw, square, bezier, curve)
+  width    the share of a square wave's cycle that is high
+  bipolar  the wave runs -1 - 1 (else 0 - 1); the curves are drawn 0 - 1 either way
+  rel      for a clip's number: offset is added to the number as it is (keyframes included) instead of replacing it
+
+value(spec, t) = (number as it is, when rel) + offset + amp * wave * fade-in.
+"""
+import copy
+import math
+
+from . import curves, expr
+
+WAVES = (("sine", "正弦"), ("triangle", "三角"), ("saw", "鋸齒"), ("square", "方波"), ("bezier", "cubic-bezier 曲線"),
+         ("curve", "自訂曲線（多個點）"), ("random", "隨機（每週期換一個）"), ("noise", "平滑雜訊"))
+LOOPS = (("repeat", "重複"), ("mirror", "鏡像"))
+UNITS = (("hz", "頻率（每秒幾次）"), ("sec", "週期（一次幾秒）"))
+MIRRORABLE = ("saw", "square", "bezier", "curve")
+DEFAULT_BEZIER = (0.42, 0.0, 0.58, 1.0)
+DEFAULT_CURVE = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]]
+
+
+def make(wave="sine", unit="hz", rate=1.0, amp=1.0, offset=0.0, phase=0.0, fade=0.0, loop="repeat", width=0.5,
+         bezier=DEFAULT_BEZIER, curve=None, bipolar=True, rel=False, seed=0):
+    return {"wave": wave, "unit": unit, "rate": float(rate), "amp": float(amp), "offset": float(offset),
+            "phase": float(phase), "fade": float(fade), "loop": loop, "width": float(width),
+            "bezier": [float(x) for x in bezier], "curve": copy.deepcopy(curve or DEFAULT_CURVE),
+            "bipolar": bool(bipolar), "rel": bool(rel), "seed": int(seed)}
+
+
+def is_lfo(x):
+    return isinstance(x, dict) and "wave" in x
+
+
+def check(s):
+    """None when the spec is usable, else why not."""
+    if s.get("wave") not in dict(WAVES):
+        return "不認得的波形"
+    if s.get("unit") not in dict(UNITS) or s.get("loop") not in dict(LOOPS):
+        return "不認得的單位或循環方式"
+    nums = [s.get(k) for k in ("rate", "amp", "offset", "phase", "fade", "width")] + list(s.get("bezier") or [])
+    if len(s.get("bezier") or []) != 4 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in nums):
+        return "數字要是有限的"
+    if s["unit"] == "sec" and s["rate"] <= 0:
+        return "週期要大於 0 秒"
+    if s["rate"] < 0 or s["fade"] < 0:
+        return "頻率和漸入不能是負的"
+    if s["wave"] == "bezier" and not (0.0 <= s["bezier"][0] <= 1.0 and 0.0 <= s["bezier"][2] <= 1.0):
+        return "cubic-bezier 的 x1、x2 要在 0 到 1 之間"
+    keys = s.get("curve")
+    if keys is not None and not (isinstance(keys, list) and keys and all(
+            isinstance(k, (list, tuple)) and len(k) == 6 and all(isinstance(v, (int, float)) and math.isfinite(v) for v in k)
+            for k in keys)):
+        return "曲線的點要是有限的數字"
+    return None
+
+
+def hz(s):
+    """Cycles per second."""
+    return s["rate"] if s["unit"] == "hz" else (1.0 / s["rate"] if s["rate"] else 0.0)
+
+
+def unit_wave(s, x):
+    """The wave 0 - 1 at x cycles in (x: any number - its whole part is the cycle, for the ones that change by cycle)."""
+    cycle = math.floor(x)
+    p = x - cycle
+    w = s["wave"]
+    if s["loop"] == "mirror" and w in MIRRORABLE:
+        p = 2 * p if p < 0.5 else 2 * (1 - p)
+    if w == "sine":
+        return 0.5 + 0.5 * math.sin(2 * math.pi * p)
+    if w == "triangle":
+        return abs(((p + 0.75) % 1.0) * 2 - 1)
+    if w == "saw":
+        return p
+    if w == "square":
+        return 1.0 if p < s["width"] else 0.0
+    if w == "bezier":
+        return expr._bezier_y(*s["bezier"], p)
+    if w == "curve":
+        return curves.unit_value(s.get("curve") or DEFAULT_CURVE, p)
+    if w == "random":
+        return expr._hash(cycle * 7919 + s.get("seed", 0) * 104729)
+    return 0.5 + 0.5 * expr.noise(x, s.get("seed", 0))                # noise: one step of x a cycle
+
+
+def wave(s, x):
+    """The wave as the spec has it (bipolar: -1 - 1) at x cycles in."""
+    u = unit_wave(s, x)
+    return 2 * u - 1 if s["bipolar"] else u
+
+
+def value(s, t, cur=0.0):
+    """The LFO's number t seconds in (cur: the number as it is, which a `rel` one adds itself to)."""
+    x = hz(s) * t + s["phase"] / 360.0
+    grow = 1.0 if s["fade"] <= 0 else min(1.0, max(0.0, t / s["fade"]))
+    return (cur if s.get("rel") else 0.0) + s["offset"] + s["amp"] * wave(s, x) * grow
+
+
+def safe(s, t, cur=0.0):
+    """value(), or cur when the spec cannot be worked out."""
+    try:
+        return value(s, t, cur) if check(s) is None else cur
+    except (ArithmeticError, ValueError, TypeError, KeyError):
+        return cur
+
+
+def points(s, seconds, n=160):
+    """[(t, number)] over the first `seconds` (what the dialog's preview draws)."""
+    return [(seconds * i / n, safe(s, seconds * i / n)) for i in range(n + 1)]
+
+
+def label(s):
+    """A short description (for menus and tooltips)."""
+    rate = f"{s['rate']:g} Hz" if s["unit"] == "hz" else f"{s['rate']:g} 秒一次"
+    return f"LFO　{dict(WAVES).get(s['wave'], s['wave'])}　{rate}　{s['offset']:g} ± {s['amp']:g}"

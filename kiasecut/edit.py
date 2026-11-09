@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fonts, fx, mapping, nodegraph, project, rack, textlayout, textvars, viz
+from . import assets, components, curves, expr, fonts, fx, lfo, mapping, nodegraph, project, rack, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -3838,7 +3838,12 @@ def set_prop_expr(proj, clip_id, prop, text):
     _, c = find(proj, clip_id)
     if prop not in components.number_props_of(c) + components.instance_props(c):
         raise EditError("這個片段沒有那個數字")
-    if mapping.is_mapping(text):
+    if lfo.is_lfo(text):
+        why = lfo.check(text)
+        if why:
+            raise EditError(f"LFO 有問題：{why}")
+        text = copy.deepcopy(text)
+    elif mapping.is_mapping(text):
         why = mapping.check(text)
         if why:
             raise EditError(f"映射有問題：{why}")
@@ -3935,6 +3940,19 @@ def set_rack_expr(root, rid, text):
     return p
 
 
+def set_rack_lfo(root, rid, spec):
+    """The LFO (lfo.py) a parameter is the output of; None takes it away (the parameter is its value again)."""
+    p = _rack_param(root, rid)
+    if spec is None:
+        p.pop("lfo", None)
+        return p
+    why = lfo.check(spec)
+    if why:
+        raise EditError(f"LFO 有問題：{why}")
+    p["lfo"] = copy.deepcopy(spec)
+    return p
+
+
 def set_rack_value(root, rid, value, t_us=None):
     """A parameter's value; with keyframes, the key at t_us (new when none is there)."""
     p = _rack_param(root, rid)
@@ -4001,6 +4019,8 @@ def import_rack(root, items):
         p["value"] = copy.deepcopy(d["value"])
         if d.get("expr"):
             p["expr"] = d["expr"]
+        if d.get("lfo"):
+            p["lfo"] = d["lfo"]
     loop = rack.cycle(root)
     if loop:                                                  # (names that were taken may have joined a circle)
         for p in rack.params(root)[-len(items):]:

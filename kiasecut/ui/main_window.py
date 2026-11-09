@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, library, project, recovery,
+from .. import (androidfs, assets, build, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -59,7 +59,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, icons, inertia, inplace, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
+from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
@@ -2982,6 +2982,7 @@ class MainWindow(QMainWindow):
         if mapping.is_mapping(have) and have.get("src"):
             menu.addAction(f"映射…（{mapping.label(have)}）", lambda: self.bind_rack(ids, prop, have["src"]))
         menu.addAction("自訂表達式…", lambda: self.ask_prop_expr(ids, prop))
+        menu.addAction(f"LFO…（{lfo.label(have)}）" if lfo.is_lfo(have) else "LFO…", lambda: self.ask_prop_lfo(ids, prop))
         if have:
             menu.addAction("解除綁定／清除表達式", lambda: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))
         comp = self.open_component()
@@ -3072,6 +3073,18 @@ class MainWindow(QMainWindow):
         if text is not None:
             self.apply_each("表達式", edit.set_prop_expr, ids, prop, "" if text == "value" else text)
 
+    def ask_prop_lfo(self, ids, prop):
+        """LFO…: the number swings along a wave of its own (lfo.py), asked for now (on every clip selected)."""
+        c = edit.find(self.container(), ids[0])[1]
+        have = (c.get("expr") or {}).get(prop)
+        cur = components.number_at(c, prop, 0)
+        lo, hi = self.field_range(c, prop)
+        s = have if lfo.is_lfo(have) else lfo.make(offset=cur, amp=(hi - lo) / 10)
+        out = lfodialog.ask_lfo(self, f"LFO：{components.prop_label(c, prop)}", s,
+                                "這個數字會跟著低頻振盪器擺動（時間是片段內的秒數）：數字 = 偏移 ± 振幅 × 波形。", clip=True)
+        if out is not None:
+            self.apply_each("LFO", edit.set_prop_expr, ids, prop, out)
+
     # -- the parameter rack (全局參數架) ---------------------------------------------------------
     def open_rack(self):
         """工具 > 全局參數架: the panel, brought to the front."""
@@ -3114,6 +3127,14 @@ class MainWindow(QMainWindow):
                 note="input 是這個參數自己的值；time 是時間線的秒數；其他全局參數直接寫名字（不能繞一圈讀回自己）。")
             if text is not None:
                 self.apply_root("全局參數表達式", edit.set_rack_expr, rid, "" if text == "input" else text)
+        elif action == "lfo":
+            out = lfodialog.ask_lfo(self, f"LFO：{p['name']}", p.get("lfo") or lfo.make(offset=float(curves.value(p.get("value", 0.0), t))),
+                                    "這個全局參數會是低頻振盪器的輸出（時間是時間線的秒數）：值 = 偏移 ± 振幅 × 波形；"
+                                    "原本的值不再用，表達式的 input 會是 LFO 的輸出。")
+            if out is not None:
+                self.apply_root("全局參數 LFO", edit.set_rack_lfo, rid, out)
+        elif action == "lfo_off":
+            self.apply_root("取消全局參數 LFO", edit.set_rack_lfo, rid, None)
         elif action == "delete":
             n = rack.users(self.proj, p["name"])
             if n and not questions.question(self, "delete_rack", "刪除全局參數", f"有 {n} 個片段的表達式用到「{p['name']}」，"

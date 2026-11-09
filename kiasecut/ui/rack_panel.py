@@ -4,7 +4,7 @@ write in any clip's expression. Right-click a clip's number > 表達式 > 綁定
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
-from .. import curves, edit, rack
+from .. import curves, edit, lfo, rack
 from . import icons
 from .inspector import KEY_ANIMATED, KEY_ON, SpinBox, key_button
 from .menukeys import Menu
@@ -34,12 +34,15 @@ class RackRow(QWidget):
         self.expr = QPushButton("✎")
         self.expr.setFixedWidth(28)
         self.expr.clicked.connect(lambda: window.action.emit(self.rid, "expr", None))
+        self.lfo = QPushButton("∿")
+        self.lfo.setFixedWidth(28)
+        self.lfo.clicked.connect(lambda: window.action.emit(self.rid, "lfo", None))
         self.result = QLabel()
         self.result.setStyleSheet("color: #e0a030;")
         more = QPushButton("⋯")
         more.setFixedWidth(28)
         more.clicked.connect(lambda: window.row_menu(self.rid, more))
-        for w, stretch in ((self.name, 0), (self.spin, 1), (self.key, 0), (self.expr, 0), (self.result, 1), (more, 0)):
+        for w, stretch in ((self.name, 0), (self.spin, 1), (self.key, 0), (self.lfo, 0), (self.expr, 0), (self.result, 1), (more, 0)):
             lay.addWidget(w, stretch)
 
     def show_param(self, root, p, t_us, now):
@@ -49,6 +52,10 @@ class RackRow(QWidget):
         animated = curves.is_animated(p.get("value"))
         on = animated and edit.key_at(p["value"], t_us) is not None
         self.key.setIcon(icons.key_icon("on" if on else "off", KEY_ON if on else KEY_ANIMATED if animated else icons.INK))
+        driven = lfo.is_lfo(p.get("lfo"))
+        self.lfo.setStyleSheet("color: #6fb3ff;" if driven else "")
+        self.lfo.setToolTip(lfo.label(p["lfo"]) if driven else "加上 LFO（低頻振盪器）")
+        self.spin.setEnabled(not driven)
         has = bool(p.get("expr"))
         self.expr.setStyleSheet("color: #e0a030;" if has else "")
         self.expr.setToolTip(("表達式：" + p["expr"]) if has else "加上表達式")
@@ -57,7 +64,7 @@ class RackRow(QWidget):
 
 
 class RackPanel(QWidget):
-    action = Signal(str, str, object)        # parameter id, "value" (a number) / "key" / "rename" / "expr" / "up" / "down" /
+    action = Signal(str, str, object)        # parameter id, "value" (a number) / "key" / "rename" / "expr" / "lfo" / "lfo_off" / "up" / "down" /
                                              # "delete" / "easing" (a name)
     addRequested = Signal()
     importRequested = Signal()
@@ -116,5 +123,6 @@ class RackPanel(QWidget):
         for name, key in EASINGS:
             ease.addAction(name, lambda k=key: self.action.emit(rid, "easing", k))
         menu.addSeparator()
+        menu.addAction("取消 LFO", lambda: self.action.emit(rid, "lfo_off", None))
         menu.addAction("刪除參數", lambda: self.action.emit(rid, "delete", None))
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))

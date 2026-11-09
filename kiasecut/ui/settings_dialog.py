@@ -4,7 +4,7 @@ often, how many are kept, where), where project caches go, GPU acceleration, a c
 filter engine works on this computer, and the questions answered for good (不再詢問, ask.py)."""
 import os
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMessageBox, QPushButton, QScrollArea, QSpinBox, QVBoxLayout, QWidget)
@@ -189,8 +189,19 @@ class SettingsDialog(QDialog):
         self.buttons.button(QDialogButtonBox.Ok).setText("確定")
         self.buttons.button(QDialogButtonBox.Cancel).setText("取消")
         lay = QVBoxLayout(self)
-        lay.addLayout(form)
+        body = QWidget()
+        body.setLayout(form)
+        area = QScrollArea()                             # a screen too short for every setting scrolls them
+        area.setWidgetResizable(True)
+        area.setFrameShape(QScrollArea.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        area.setWidget(body)
+        lay.addWidget(area, 1)
         lay.addWidget(self.buttons)
+        screen = self.screen().availableGeometry() if self.screen() else None
+        want = body.sizeHint().height() + self.buttons.sizeHint().height() + 40
+        self.resize(max(self.minimumWidth(), body.sizeHint().width() + 40),
+                    min(want, int(screen.height() * 0.85)) if screen else want)
         self.library.textChanged.connect(self._library_changed)
         self._library_changed()
         self._cache_changed()

@@ -80,11 +80,22 @@ class FuseTests(unittest.TestCase):
         self.assertGreater(len(fusable), 20)
         for d in fusable:
             for second in (d, other):
+                if fuse.uniforms(d) + fuse.uniforms(second) > fuse.MAX_UNIFORMS:      # (never put in one group)
+                    continue
                 fused, _ = fuse.build([(d, {"src": ("ext", 0)}, 0), (second, {"src": ("node", 0)}, 0)])
                 try:
                     eng._program(fused)
                 except fx.FilterError as exc:
                     self.fail(f"{d.name} + {second.name}: {exc}")
+
+    def test_curves_past_the_cards_uniforms_are_not_put_in_one_group(self):
+        """Two RGB 曲線 are 8 curves of 128 numbers: more than an NVIDIA card links in one shader."""
+        g, _ = self.chain(["rgb_curves", "rgb_curves", "rgb_curves"])
+        params = ng.default_params(g)
+        fuse.bad.clear()
+        a, b = self.draw(g, params, False), self.draw(g, params, True)
+        self.assertLessEqual(int(np.abs(a.astype(int) - b.astype(int)).max()), 2)
+        self.assertEqual(fuse.bad, set())
 
     def test_groups_are_found(self):
         g, last = self.chain(["exposure", "gamma", "exposure"])

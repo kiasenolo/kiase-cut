@@ -2039,7 +2039,7 @@ def _plan_fusion(nodes, feed, order, needed, miss, users, final, cached, fx_, ct
     for root in reversed(order):
         if root in absorbed or ok.get(root) is None:
             continue
-        members, todo = [root], [root]
+        members, todo, uniforms = [root], [root], fuse.uniforms(ok[root])
         while todo and len(members) < fuse.MAX_NODES:
             c = todo.pop()
             for sock in ["src"] + [name for name, _ in ok[c].inputs]:
@@ -2049,6 +2049,9 @@ def _plan_fusion(nodes, feed, order, needed, miss, users, final, cached, fx_, ct
                 p = f[0]
                 if p in members or p in absorbed or ok.get(p) is None or users.get(f) != 1 or f == final or (p, f[1]) not in miss:
                     continue
+                if uniforms + fuse.uniforms(ok[p]) > fuse.MAX_UNIFORMS:        # (it starts a group of its own)
+                    continue
+                uniforms += fuse.uniforms(ok[p])
                 members.append(p)
                 todo.append(p)
         if len(members) < 2:

@@ -20,6 +20,8 @@ enabled = os.environ.get("KIASECUT_NOFUSE") != "1"                # (KIASECUT_NO
 bad = set()                                         # keys of fused filters that did not compile: those groups are drawn node by node
 MAX_NODES = 16                                      # nodes in a group (a longer chain is cut into groups)
 MAX_EXTERNAL = 6                                    # pictures from outside a group (a texture unit each)
+MAX_UNIFORMS = 900                                  # uniform slots of a group: NVIDIA links no more than 1024 in a fragment shader ("constant register limit
+                                                    # exceeded"), and every float of a curve's 128 takes a whole one - two RGB 曲線 (4 curves each) were past it
 
 _COMMENTS = re.compile(r"//[^\n]*|/\*.*?\*/", re.S)
 _EFFECT = re.compile(r"\bvec4\s+effect\s*\(\s*vec2\s+(\w+)\s*\)\s*\{")
@@ -131,6 +133,11 @@ def analyse(d):
     names.discard("main")
     d._fuse = (uv, names)
     return d._fuse
+
+
+def uniforms(d):
+    """Uniform slots the parameters of filter d take in a group (an array's every element is one)."""
+    return sum(fx.CURVE_N if p.type == "curve" else 2 * fx.GRADIENT_N + 1 if p.type == "gradient" else 1 for p in d.params)
 
 
 def can_fuse(d):

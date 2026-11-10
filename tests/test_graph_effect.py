@@ -643,7 +643,7 @@ class GraphRenderTests(unittest.TestCase):
         nid = edit.add_graph_node(proj_, "c1", eff["id"], {"type": "source", "kind": "text"}, 0, 0)
         edit.connect_graph(proj_, "c1", eff["id"], nid, "output", "src")
         eff["sources"][nid]["content"] = "█"
-        eff["params"][nid + ".size"] = 12.0
+        eff["params"][nid + ".size"] = 40.0                 # (big: 微軟正黑體's █ is half as wide as Noto's, and a few pixels of it are not all white)
         for k, v in params.items():
             eff["params"][nid + "." + k] = v
         view = self.s.view()
@@ -1025,5 +1025,5 @@ class GraphMediaDropTests(unittest.TestCase):
         self.assertEqual(len(srcs), 1)
         nid, node = srcs[0]
         self.assertEqual((node["x"], node["y"]), (10.0, 20.0))
-        self.assertEqual(e["sources"][nid]["image"], png)
+        self.assertEqual(e["sources"][nid]["image"], png.replace("\\", "/"))        # (paths are kept with /, on Windows too)
         self.assertEqual(e["sources"][nid]["img_w"], 40)

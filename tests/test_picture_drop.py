@@ -52,7 +52,7 @@ def drop(widget, md, pos=None):
 class PictureDropTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp()
-        self.png = os.path.join(self.dir, "g.png")
+        self.png = os.path.join(self.dir, "g.png").replace("\\", "/")           # (as the program keeps paths, on Windows too)
         im = QImage(40, 20, QImage.Format_ARGB32)
         im.fill(QColor("#00ff00"))
         im.save(self.png)

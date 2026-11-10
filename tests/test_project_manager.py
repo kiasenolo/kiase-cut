@@ -98,8 +98,8 @@ class ProjectsFolderTests(Base):
 
     def test_a_folder_the_old_way_drifted_into_goes_back_to_its_top_folder(self):
         deep = os.path.join(self.home, "Projects", "_製圖")
-        self.assertEqual(self.host().projects_root(deep), os.path.join(self.home, "Projects"))
-        self.assertEqual(self.host().projects_root(os.path.join(self.home, "Projects")), os.path.join(self.home, "Projects"))
+        self.assertEqual(self.host().projects_root(deep), os.path.join(self.home, "Projects").replace("\\", "/"))
+        self.assertEqual(self.host().projects_root(os.path.join(self.home, "Projects")), os.path.join(self.home, "Projects").replace("\\", "/"))
         self.assertEqual(self.host(project_dir_chosen=True).projects_root(deep), deep)       # (chosen on purpose: as it is)
         elsewhere = os.path.join(self.dir, "mine", "sub")
         self.assertEqual(self.host().projects_root(elsewhere), elsewhere)

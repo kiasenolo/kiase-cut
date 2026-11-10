@@ -33,6 +33,7 @@ LEVEL = """// @filter 灰階
 vec4 effect(vec2 uv) { return vec4(vec3(amount), 1.0); }
 """
 GREY = (128, 128, 128)
+HALF = (127, 127, 127)                 # (a half is 127.5: NVIDIA's driver writes 127, Mesa 128)
 BLACK = (0, 0, 0)
 
 
@@ -96,7 +97,8 @@ class SourceRenderTests(unittest.TestCase):
         for r in self.renderers:
             img = r.render(view, frame, W, H)
             self.assertEqual(r.errors, [], type(r).__name__)
-            self.assertEqual((rgb(img, 12, 18), rgb(img, 52, 18)), (left, right), type(r).__name__)
+            for got, want in ((rgb(img, 12, 18), left), (rgb(img, 52, 18), right)):
+                self.assertIn(got, (want, HALF) if want == GREY else (want,), type(r).__name__)
 
     def test_picture_over_the_colour(self):
         self.halves(self.view(), WHITE, BLUE)

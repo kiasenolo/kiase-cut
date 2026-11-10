@@ -59,7 +59,7 @@ class Vec3Test(unittest.TestCase):
         rgba = np.full((8, 8, 4), 255, np.uint8)
         rgba[..., :3] = 0
         out = eng.run(d, {"tint": (0.5, 0.0, 1.0)}, rgba)
-        self.assertEqual(tuple(out[4, 4]), (128, 0, 255, 255))
+        self.assertIn(tuple(int(x) for x in out[4, 4]), ((128, 0, 255, 255), (127, 0, 255, 255)))    # (0.5 is 127.5: NVIDIA writes 127, Mesa 128)
 
 
 MENU = """// @param mode menu Red "Keep|Red|Blue" "Mode"

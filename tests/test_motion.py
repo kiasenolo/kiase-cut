@@ -281,6 +281,8 @@ class ToggleTest(unittest.TestCase):
         host.close()
 
     def test_the_outline_brightens_under_the_mouse_over_the_label_too(self):
+        if sys.platform == "win32" and QApplication.platformName() == "offscreen":
+            self.skipTest("Qt's offscreen platform on Windows tells no widget that the mouse came in")
         host, cb, rb = self.make()
         t = cb.property("kcToggle")
         QTest.mouseMove(cb, QPoint(cb.width() - 3, 8))              # (on the text, not the box)
@@ -346,9 +348,9 @@ class TabsTest(unittest.TestCase):
         bar.close()
 
     def test_tabs_are_as_big_as_they_were_in_the_style_sheet(self):
-        for name, h in (("", 31), ("layouts", 25), ("timelines", 27)):
+        for name, pad in (("", 14), ("layouts", 8), ("timelines", 10)):         # (31, 25 and 27 px with a font 17 px tall)
             bar = self.make(name)
-            self.assertEqual(bar.tabRect(0).height(), h)
+            self.assertEqual(bar.tabRect(0).height(), bar.fontMetrics().height() + pad)
             bar.close()
 
     def test_the_open_tab_is_drawn_with_a_white_line_along_its_foot(self):

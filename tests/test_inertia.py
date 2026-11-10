@@ -30,7 +30,8 @@ class InertiaTests(unittest.TestCase):
         self.assertEqual(inertia.percent("preview_zoom"), 200)
 
     def test_save_and_load(self):
-        path = os.path.join(os.environ.get("TMPDIR", "/tmp"), "kc_inertia_test.ini")
+        import tempfile
+        path = os.path.join(tempfile.gettempdir(), "kc_inertia_test.ini")
         s = QSettings(path, QSettings.IniFormat)
         inertia.state.update(separate=True, all=30, scroll=0, drag=250)
         inertia.save(s)
@@ -38,7 +39,9 @@ class InertiaTests(unittest.TestCase):
         inertia.load(s)
         self.assertEqual((inertia.state["separate"], inertia.state["all"], inertia.state["scroll"], inertia.state["drag"]),
                          (True, 30, 0, 250))
-        os.remove(path)
+        s.sync()                                    # (the file is only written now on Windows)
+        if os.path.exists(path):
+            os.remove(path)
 
     def test_zero_zooms_at_once(self):
         got = []

@@ -301,7 +301,8 @@ class BuiltinFilterTests(unittest.TestCase):
                      "t")
         self.assertIsNone(d.error)
         out = eng.run(d, {}, np.zeros((40, 80, 4), np.uint8))
-        self.assertEqual(tuple(out[20, 40]), (51, 25, 128, 255))         # (pass 1 was 80 / 4 = 20 x 40 / 4 = 10 px; pass 0 gave 1.0 / 2)
+        self.assertEqual(tuple(out[20, 40, :2]) + (out[20, 40, 3],), (51, 25, 255))   # (pass 1 was 80 / 4 = 20 x 40 / 4 = 10 px)
+        self.assertIn(out[20, 40, 2], (127, 128))                        # (pass 0 gave 1.0 / 2: 127.5, which NVIDIA writes as 127 and Mesa as 128)
 
     def test_outputs_share_the_passes_before_the_last(self):
         """@shared: every output asked at once is drawn by the last pass alone, the passes before it once for all;

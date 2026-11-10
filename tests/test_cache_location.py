@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import shiboken6  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialogButtonBox  # noqa: E402
 
-from kiasecut import workspace  # noqa: E402
+from kiasecut import library, workspace  # noqa: E402
 from kiasecut.ui import main_window  # noqa: E402
 from kiasecut.ui.settings_dialog import SettingsDialog  # noqa: E402
 
@@ -136,7 +136,7 @@ class Dialog(unittest.TestCase):
         self.assertFalse(ok.isEnabled())
         dlg.cache_custom.setText("/tmp/c")
         self.assertTrue(ok.isEnabled())
-        self.assertEqual((dlg.values()["cache_mode"], dlg.values()["cache_custom"]), ("custom", "/tmp/c"))
+        self.assertEqual((dlg.values()["cache_mode"], dlg.values()["cache_custom"]), ("custom", library.norm("/tmp/c")))        # (C:/tmp/c on Windows)
 
     def test_folder_field_only_for_custom(self):
         dlg = self.dialog(workspace.CACHE_PROJECT)

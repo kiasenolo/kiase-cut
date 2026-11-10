@@ -66,11 +66,12 @@ class DroppedFiles(unittest.TestCase):
 
     def test_add_files_reuse_does_not_duplicate(self):
         p = proj()
-        probes = {"/x/new.png": {"kind": "image", "width": 1, "height": 1}}
-        first = library.add_files(p, ["/x/new.png"], None, probes, reuse=True)
-        again = library.add_files(p, ["/x/new.png"], None, probes, reuse=True)
+        png = os.path.abspath("/x/new.png").replace("\\", "/")              # (C:/x/new.png on Windows: as add_files keeps it)
+        probes = {png: {"kind": "image", "width": 1, "height": 1}}
+        first = library.add_files(p, [png], None, probes, reuse=True)
+        again = library.add_files(p, [png], None, probes, reuse=True)
         self.assertEqual(first[0]["id"], again[0]["id"])
-        self.assertEqual(sum(1 for i in library.lib(p)["items"] if i["path"] == "/x/new.png"), 1)
+        self.assertEqual(sum(1 for i in library.lib(p)["items"] if i["path"] == png), 1)
 
 
 if __name__ == "__main__":

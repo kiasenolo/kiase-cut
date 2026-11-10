@@ -38,8 +38,9 @@ class CrashReportTest(unittest.TestCase):
         got = self.files("crash-")
         self.assertEqual(len(got), 1)
         text = read(os.path.join(self.reports, got[0]))
-        for want in ("KiaseCut", "KIASECUT_X=1", "project: /a/b.kiasecut", "Fatal Python error", "in boom"):
+        for want in ("KiaseCut", "KIASECUT_X=1", "project: /a/b.kiasecut", "in boom"):
             self.assertIn(want, text)
+        self.assertTrue("Fatal Python error" in text or "Windows fatal exception" in text, text)      # (faulthandler's words on Windows)
 
     def test_a_normal_exit_leaves_no_report(self):
         res = run(f"from kiasecut import recovery\nrecovery.begin({self.auto!r})\nrecovery.end({self.auto!r})\n", self.root)

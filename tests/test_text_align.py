@@ -36,14 +36,14 @@ class TextAlignTests(unittest.TestCase):
 
     def test_alignments(self):
         top, mid, bottom = self.lines("left")
-        self.assertLess(abs(mid[0] - top[0]), 4)                     # left edges together
+        self.assertLess(abs(mid[0] - top[0]), 6)                     # left edges together (an i starts a little in from a W: 4 px in 微軟正黑體)
         self.assertLess(abs(bottom[0] - top[0]), 4)
         top, mid, bottom = self.lines("right")
-        self.assertLess(abs(mid[1] - top[1]), 4)                     # right edges together
+        self.assertLess(abs(mid[1] - top[1]), 6)                     # right edges together
         top, mid, _ = self.lines("center")
         self.assertLess(abs((mid[0] + mid[1]) - (top[0] + top[1])), 6)
         top, mid, bottom = self.lines("justify")
-        self.assertLess(abs(mid[0] - top[0]), 4)                     # spread edge to edge
+        self.assertLess(abs(mid[0] - top[0]), 6)                     # spread edge to edge
         self.assertLess(abs(mid[1] - top[1]), 6)
         self.assertGreater(top[1] - bottom[1], 20)                   # the last line is not spread
 

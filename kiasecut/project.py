@@ -191,7 +191,7 @@ def to_abs(path, root):
         return path
     if path.startswith(LIB_TAG):
         return _slash(LIBRARY_ROOT).rstrip("/") + "/" + path[len(LIB_TAG):] if LIBRARY_ROOT else path
-    return path if is_abs(path) else _slash(root).rstrip("/") + "/" + _slash(path)
+    return _slash(path) if is_abs(path) else _slash(root).rstrip("/") + "/" + _slash(path)
 
 
 def _map_sources(sources, fn):

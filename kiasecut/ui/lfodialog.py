@@ -1,10 +1,12 @@
 """LFO (lfo.py): the wave, how fast it goes (Hz or seconds a cycle), how far it swings and about what, where in the
 cycle it starts, how long it takes to swing fully, repeating or mirrored - with a picture of the number over the first
 few cycles. The wave can be a cubic-bezier or a curve of any number of points, drawn over one cycle."""
+import copy
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-                               QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
+                               QLabel, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import lfo, mapping
 from . import mapdialog
@@ -71,11 +73,47 @@ class WavePreview(QWidget):
         p.drawText(QRectF(area.right() - 80, area.bottom() + 3, 80, 16), Qt.AlignRight, f"{span:.3g} 秒")
 
 
-class LfoDialog(QDialog):
-    """Edit one LFO. `clip`: it is for a clip's number (a 疊加在原本的值上 box is offered)."""
+KEYS = ("wave", "unit", "rate", "amp", "offset", "phase", "fade", "loop", "width", "seed", "bipolar", "rel", "bezier",
+        "curve")
 
-    def __init__(self, parent, title, s, note="", clip=False):
+
+class MixSpin(QDoubleSpinBox):
+    """A number showing "--" while the LFOs being edited do not agree on it (until it is typed or stepped)."""
+
+    def __init__(self, value, decimals=3, key=None, owner=None):
+        self.mixed, self.key, self.owner = False, key, owner
+        super().__init__()
+        self.setRange(-1e9, 1e9)
+        self.setDecimals(decimals)
+        self.setSingleStep(0.1)
+        self.setKeyboardTracking(False)
+        self.setValue(value)
+        self.lineEdit().textEdited.connect(self._touch)
+        self.valueChanged.connect(self._touch)
+
+    def show_mixed(self):
+        self.mixed = True
+        self.lineEdit().setText("--")
+
+    def textFromValue(self, v):
+        return "--" if self.mixed else super().textFromValue(v)
+
+    def _touch(self, *_a):
+        self.mixed = False
+        if self.owner is not None:
+            self.owner.touch(self.key)
+
+
+class LfoDialog(QDialog):
+    """Edit one LFO. `clip`: it is for a clip's number (a 疊加在原本的值上 box is offered). specs: the LFOs of
+    several clips - a field they do not agree on shows "--" and is only written to them once it is changed."""
+
+    def __init__(self, parent, title, s, note="", clip=False, specs=None):
         super().__init__(parent)
+        specs = specs or [s]
+        self.touched = set()
+        self.base = lfo.make(**specs[0])
+        self.mixed = {k for k in KEYS if any(sp.get(k) != specs[0].get(k) for sp in specs[1:])}
         self.setWindowTitle(title)
         self.setMinimumWidth(480)
         s = lfo.make(**{"wave": s["wave"], "unit": s["unit"], "rate": s["rate"], "amp": s["amp"], "offset": s["offset"],
@@ -103,39 +141,40 @@ class LfoDialog(QDialog):
         for k, name in lfo.UNITS:
             self.unit.addItem(name, k)
         self.unit.setCurrentIndex(self.unit.findData(s["unit"]))
-        self.rate = spin(s["rate"], 3)
+        self.rate = self.mix("rate", s["rate"], 3)
         row = QWidget()
         hl = QHBoxLayout(row)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.addWidget(self.unit, 1)
         hl.addWidget(self.rate, 1)
         self.form.addRow("速度", row)
-        self.amp, self.offset = spin(s["amp"]), spin(s["offset"])
+        self.amp, self.offset = self.mix("amp", s["amp"]), self.mix("offset", s["offset"])
         self.form.addRow("振幅（擺多遠）", self.amp)
         self.form.addRow("偏移（擺動的中心）", self.offset)
         self.bipolar = QCheckBox("雙極（在中心上下擺；取消則只往上擺 0 – 振幅）")
         self.bipolar.setChecked(s["bipolar"])
         self.form.addRow("", self.bipolar)
-        self.phase = spin(s["phase"], 1)
+        self.phase = self.mix("phase", s["phase"], 1)
         self.phase.setSuffix(" °")
         self.form.addRow("相位（一開始在週期的哪裡）", self.phase)
-        self.fade = spin(s["fade"], 2)
+        self.fade = self.mix("fade", s["fade"], 2)
         self.fade.setSuffix(" 秒")
         self.fade.setToolTip("從開始起，擺動的幅度花這麼久慢慢長到完整（0：一開始就是完整的）")
         self.form.addRow("漸入", self.fade)
-        self.pulse = spin(s["width"], 2)
+        self.pulse = self.mix("width", s["width"], 2)
         self.pulse.setRange(0.0, 1.0)
         self.pulse.setSingleStep(0.05)
         self.form.addRow("脈衝寬度（方波高的部分）", self.pulse)
         self.seed = QSpinBox()
         self.seed.setRange(0, 99999)
         self.seed.setValue(s.get("seed", 0))
+        self.seed.valueChanged.connect(lambda *_: self.touch("seed"))
         self.form.addRow("種子（隨機、雜訊）", self.seed)
         self.rel = QCheckBox("疊加在數字原本的值上（關鍵幀照常，LFO 加在它上面）")
         self.rel.setChecked(s["rel"])
         if clip:
             self.form.addRow("", self.rel)
-        self.bz = [spin(v, 3) for v in s["bezier"]]
+        self.bz = [self.mix("bezier", v, 3) for v in s["bezier"]]
         box = QWidget()
         hl = QHBoxLayout(box)
         hl.setContentsMargins(0, 0, 0, 0)
@@ -181,8 +220,37 @@ class LfoDialog(QDialog):
             w.toggled.connect(self._changed)
         self.presets.activated.connect(self._preset)
         self.field.changed.connect(self._dragged)
+        self.cfield.changed.connect(lambda *_: self.touch("curve"))
         self.cfield.changed.connect(self._changed)
+        for key, w in (("wave", self.wave), ("loop", self.loop), ("unit", self.unit)):
+            w.activated.connect(lambda *_, k=key: self.touch(k))
+            if key in self.mixed:
+                w.setCurrentIndex(-1)
+        for key, w in (("bipolar", self.bipolar), ("rel", self.rel)):
+            w.clicked.connect(lambda *_, k=key, w=w: (w.setTristate(False), self.touch(k)))
+            if key in self.mixed:
+                w.setTristate(True)
+                w.setCheckState(Qt.PartiallyChecked)
+        self.hint = QLabel("「--」：選取的片段這一項各不相同；沒有動的項目，每個片段維持自己原本的值。")
+        self.hint.setWordWrap(True)
+        self.hint.setVisible(bool(self.mixed))
+        lay.insertWidget(lay.count() - 1, self.hint)
         self._changed()
+
+    def mix(self, key, value, decimals=3):
+        sp = MixSpin(value, decimals, key, self)
+        if key in self.mixed:
+            sp.show_mixed()
+        return sp
+
+    def touch(self, key):
+        """The user changed this field: it is written to every clip now."""
+        if key == "bezier":
+            for b in self.bz:
+                b.mixed = False
+                b.lineEdit().setText(b.textFromValue(b.value()))
+        self.touched.add(key)
+        self.hint.setVisible(False)
 
     def _preset(self, i):
         v = self.presets.itemData(i)
@@ -190,6 +258,7 @@ class LfoDialog(QDialog):
             self._dragged(v)
 
     def _dragged(self, v):
+        self.touch("bezier")
         for b, x in zip(self.bz, v):
             b.blockSignals(True)
             b.setValue(x)
@@ -197,6 +266,12 @@ class LfoDialog(QDialog):
         self._changed()
 
     def spec(self):
+        s = self._read()
+        for k in self.mixed - self.touched:
+            s[k] = self.base[k]
+        return s
+
+    def _read(self):
         return {"wave": self.wave.currentData(), "unit": self.unit.currentData(), "rate": self.rate.value(),
                 "amp": self.amp.value(), "offset": self.offset.value(), "phase": self.phase.value(),
                 "fade": self.fade.value(), "loop": self.loop.currentData(), "width": self.pulse.value(),
@@ -204,7 +279,8 @@ class LfoDialog(QDialog):
                 "bipolar": self.bipolar.isChecked(), "rel": self.rel.isChecked(), "seed": self.seed.value()}
 
     def _changed(self, *_a):
-        w = self.wave.currentData()
+        s = self.spec()
+        w = s["wave"]
         show = {"loop": w in lfo.MIRRORABLE, "width": w == "square", "seed": w in ("random", "noise"),
                 "presets": w == "bezier", "bezier": w == "bezier"}
         for key, on in show.items():
@@ -214,14 +290,30 @@ class LfoDialog(QDialog):
                 label.setVisible(on)
         self.field.setVisible(w == "bezier")
         self.cfield.setVisible(w == "curve")
-        self.field.set_value([b.value() for b in self.bz])
-        s = self.spec()
+        self.field.set_value(s["bezier"])
         why = lfo.check(s)
         self.preview.set_spec(s)
         self.status.setText("✗ " + why if why else "")
         self.buttons.button(QDialogButtonBox.Ok).setEnabled(why is None)
         self.layout().activate()
         self.resize(self.size().expandedTo(self.sizeHint()))
+
+
+def ask_lfo_each(parent, title, specs, note="", clip=False):
+    """One LFO spec per given spec (the LFOs of several clips), or None when cancelled: each keeps its own values
+    except the fields the user changed in the dialog."""
+    d = LfoDialog(parent, title, specs[0], note, clip, specs)
+    d.setWindowFlag(Qt.WindowContextHelpButtonHint, False)
+    if d.exec() != QDialog.Accepted:
+        return None
+    new = d.spec()
+    out = []
+    for sp in specs:
+        sp = lfo.make(**sp)
+        for k in d.touched:
+            sp[k] = copy.deepcopy(new[k])
+        out.append(sp)
+    return out
 
 
 def ask_lfo(parent, title, s=None, note="", clip=False):

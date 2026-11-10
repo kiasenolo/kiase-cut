@@ -16,6 +16,18 @@ APP = QApplication.instance() or QApplication([])
 S = 1_000_000
 
 
+class MixedDialogTests(unittest.TestCase):
+    def test_only_changed_fields_are_written(self):
+        from kiasecut.ui import lfodialog
+        a, b = lfo.make(rate=1, amp=5, offset=10), lfo.make(rate=2, amp=5, offset=20, wave="saw")
+        d = lfodialog.LfoDialog(None, "x", a, "", True, [a, b])
+        self.assertEqual(d.mixed, {"wave", "rate", "offset"})
+        self.assertEqual(d.rate.lineEdit().text(), "--")
+        d.amp.setValue(9)
+        self.assertEqual(d.touched, {"amp"})
+        self.assertEqual(d.spec()["rate"], 1.0)                      # (untouched: the preview uses the first's)
+
+
 class WaveTests(unittest.TestCase):
     def test_sine_and_period(self):
         s = lfo.make("sine", rate=2, amp=3, offset=10)

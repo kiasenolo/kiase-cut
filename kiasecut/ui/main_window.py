@@ -3119,16 +3119,20 @@ class MainWindow(QMainWindow):
             self.apply_each("表達式", edit.set_prop_expr, ids, prop, "" if text == "value" else text)
 
     def ask_prop_lfo(self, ids, prop):
-        """LFO…: the number swings along a wave of its own (lfo.py), asked for now (on every clip selected)."""
+        """LFO…: the number swings along a wave of its own (lfo.py), asked for now. Several clips: a field they do
+        not agree on shows "--", and only the fields changed are written (each keeps its own for the rest)."""
+        specs = []
+        for cid in ids:
+            c = edit.find(self.container(), cid)[1]
+            have = (c.get("expr") or {}).get(prop)
+            lo, hi = self.field_range(c, prop)
+            specs.append(have if lfo.is_lfo(have) else lfo.make(offset=components.number_at(c, prop, 0), amp=(hi - lo) / 10))
         c = edit.find(self.container(), ids[0])[1]
-        have = (c.get("expr") or {}).get(prop)
-        cur = components.number_at(c, prop, 0)
-        lo, hi = self.field_range(c, prop)
-        s = have if lfo.is_lfo(have) else lfo.make(offset=cur, amp=(hi - lo) / 10)
-        out = lfodialog.ask_lfo(self, f"LFO：{components.prop_label(c, prop)}", s,
-                                "這個數字會跟著低頻振盪器擺動（時間是片段內的秒數）：數字 = 偏移 ± 振幅 × 波形。", clip=True)
+        out = lfodialog.ask_lfo_each(self, f"LFO：{components.prop_label(c, prop)}", specs,
+                                     "這個數字會跟著低頻振盪器擺動（時間是片段內的秒數）：數字 = 偏移 ± 振幅 × 波形。", clip=True)
         if out is not None:
-            self.apply_each("LFO", edit.set_prop_expr, ids, prop, out)
+            by = dict(zip(ids, out))
+            self.apply("LFO", lambda level: [edit.set_prop_expr(level, cid, prop, by[cid]) for cid in ids])
 
     # -- the parameter rack (全局參數架) ---------------------------------------------------------
     def open_rack(self):

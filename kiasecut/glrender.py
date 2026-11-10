@@ -241,6 +241,8 @@ class GL:
         self.fx = fx.Engine(mgl, ctx)
         self.textures = {}              # QImage cacheKey -> texture (pictures, texts)
         self.tex_bytes = 0
+        self.tex_frame = {}             # the same keys -> (self.frame_no when last drawn, its bytes)
+        self.frame_no = 0
         self.moving = {}                # (w, h) -> [texture], reused every frame (video frames)
         self.moving_used = {}
         self.free = {}                  # (w, h) -> [Layer], the sizes least recently given back first
@@ -274,11 +276,22 @@ class GL:
             else:
                 tex.filter = (self.mgl.LINEAR, self.mgl.LINEAR)
             hit = (tex, straight)
-            self.tex_bytes += img.width() * img.height() * 4
+            size = img.width() * img.height() * 4
+            if mipmap:
+                size = size * 4 // 3                  # (its smaller levels)
+            self.tex_bytes += size
+            # (the longest unused go first, but never one this frame has drawn: a frame whose pictures are
+            # more than the budget would drop each picture before the next frame, and upload them all again)
             while self.textures and (len(self.textures) >= TEX_CACHE or self.tex_bytes > TEX_CACHE_BYTES):
-                old = self.textures.pop(next(iter(self.textures)))
-                self.tex_bytes -= old[0].width * old[0].height * 4
+                oldest = next(iter(self.textures))
+                if self.tex_frame[oldest][0] == self.frame_no:
+                    break
+                old = self.textures.pop(oldest)
+                self.tex_bytes -= self.tex_frame.pop(oldest)[1]
                 old[0].release()
+            self.tex_frame[key] = (self.frame_no, size)
+        else:
+            self.tex_frame[key] = (self.frame_no, self.tex_frame[key][1])
         self.textures[key] = hit                      # (most recently used last)
         return hit
 
@@ -299,6 +312,7 @@ class GL:
 
     def new_frame(self):
         self.moving_used.clear()
+        self.frame_no += 1
 
     def layer(self, w, h, clear=(0.0, 0.0, 0.0, 0.0), dtype="f1"):
         pool = self.free.get((w, h, dtype))

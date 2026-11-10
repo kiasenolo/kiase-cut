@@ -220,5 +220,27 @@ class BuiltinFilters(unittest.TestCase):
             self.assertTrue((out[..., :3] <= out[..., 3:4]).all(), f"{ref}: not premultiplied")
 
 
+@unittest.skipUnless(HAVE_GL, "needs OpenGL 3.3")
+class TextureCache(unittest.TestCase):
+    def test_pictures_of_one_frame_over_the_budget_are_not_uploaded_again_next_frame(self):
+        gl = glrender.GL()
+        old = glrender.TEX_CACHE_BYTES
+        glrender.TEX_CACHE_BYTES = 3 * 64 * 64 * 4              # room for three of the six pictures
+        try:
+            pics = [QImage(64, 64, QImage.Format_ARGB32_Premultiplied) for _ in range(6)]
+            for frame in range(3):
+                gl.new_frame()
+                tex = [gl.picture(p)[0] for p in pics]
+                if frame:
+                    self.assertEqual([t.glo for t in tex], [t.glo for t in first], "uploaded again")
+                first = tex
+            gl.new_frame()                                      # a later frame of one picture lets the idle ones go
+            gl.picture(QImage(64, 64, QImage.Format_ARGB32_Premultiplied))
+            self.assertLessEqual(len(gl.textures), 3 + 1)
+        finally:
+            glrender.TEX_CACHE_BYTES = old
+            gl.ctx.release()
+
+
 if __name__ == "__main__":
     unittest.main()

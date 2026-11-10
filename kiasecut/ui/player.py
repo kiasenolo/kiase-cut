@@ -3,7 +3,8 @@
 The preview never builds MLT documents: it renders frames straight from a snapshot of
 the project, so an edit or a drag shows on the next frame. Exports still go through MLT.
 Scrubbing coalesces requests (only the newest position is drawn). While playing, audio
-from the mixer goes to a QAudioSink whose buffer paces the loop, so audio is the clock.
+from the mixer goes to a QAudioSink, queued a little ahead of the pictures, and the clock the
+pictures follow is put back to the sound whenever the sound falls behind it, so audio is the clock.
 Video pictures come from ffmpeg streams while playing (videoreader.py, on the GPU for
 heavy codecs) and from the engine for a single jump.
 
@@ -25,7 +26,9 @@ picture there needs are started and PREFETCH_S of them decoded into memory
 (videoreader.Readers.prefetch), so pressing play right after does not stall on ffmpeg starting;
 the sound is decoded per clip when the project is set (audiomix), so it is ready already.
 """
+import math
 import os
+import sys
 import threading
 import time
 
@@ -40,7 +43,12 @@ from ..audiomix import CHANNELS, RATE, Mixer
 
 PREVIEW_W = 960            # until the preview reports its size
 MIN_W = 160
-LEAD = 6                    # frames of sound kept queued ahead of the picture while playing
+LEAD = 6                    # pictures of sound kept queued ahead of the picture while playing, at least
+SINK_S = 0.5                # seconds of sound the output's buffer holds: room for the lead of a slow picture
+LATE_S = 0.06               # the sound heard this far behind the clock: the clock is put back to it
+PLAY_SCALES = (1.0, 0.5) if sys.platform == "android" else (1.0,)     # sizes pictures are drawn at while playing (預覽畫質 自動): a tablet that cannot keep up draws them smaller
+SCRUB_S = 0.3               # stopped pictures asked for closer together than this are a drag (of the playhead, of a clip, of a number)
+ROUGH_OVER_S = 0.05         # ... and are drawn smaller too when one at its size takes longer than this, till the drag rests
 RATES = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)     # 播放速度 choices
 PREFETCH_REST_S = 0.15      # the playhead rests this long after a jump: its video streams start ahead
 PREFETCH_S = 0.5            # and decode this much of it into memory
@@ -96,6 +104,13 @@ class Worker(QObject):
         self.rate_carry = 0.0       # (speed_pcm's leftover fraction of a sample)
         self.keep_pitch = True      # 保持音高: the sound keeps its pitch at other speeds
         self.stretcher = None       # (the stretch.Stretch doing it, from where the sound began)
+        self.pending = b""          # the rest of a piece of sound the output had no room for yet
+        self.sink_bytes = 0         # the size of the output's buffer
+        self.took = 0.0             # seconds a picture takes to draw while playing (smoothed)
+        self.play_scale = 1.0       # the fraction of their size pictures are drawn at while playing (PLAY_SCALES)
+        self.rough = False          # the stopped picture shown was drawn smaller (a drag): drawn at its size once it rests
+        self.last_still = 0.0       # when the last stopped picture was asked for
+        self.still_took = 0.0       # seconds the last stopped picture drawn at its size took
         self.asked = []             # video pictures the last stopped picture needed (path, us, w, h)
         self.prefetch = None        # those, to stream ahead once the playhead rests (seek prefetch)
 
@@ -212,9 +227,9 @@ class Worker(QObject):
             with self.cv:
                 while not (self.quit or self.new_view or self.want is not None or self.playing
                            or was_playing):
-                    if self.prefetch and not self.cv.wait(PREFETCH_REST_S):
-                        break                           # resting there: stream ahead (below)
-                    if not self.prefetch:
+                    if (self.prefetch or self.rough) and not self.cv.wait(PREFETCH_REST_S):
+                        break                           # resting there: stream ahead, the picture at its size (below)
+                    if not (self.prefetch or self.rough):
                         self.cv.wait()
                 if self.quit:
                     break
@@ -225,6 +240,12 @@ class Worker(QObject):
                 new_rate, self.new_rate = self.new_rate, False
                 playing = self.playing
             if rest:
+                if self.rough and self.view is not None:        # (a drag's smaller picture: now at its size)
+                    try:
+                        self._show_still(sharp=True)
+                    except Exception as exc:
+                        self.rough = False
+                        self.failed.emit(f"{type(exc).__name__}: {exc}")
                 self._prefetch()
                 continue
             try:
@@ -249,9 +270,11 @@ class Worker(QObject):
                         sink, out = self._start_sink(sink)
                         self.t0 = time.monotonic()
                         self.shown_n = self.audio_n = 0
-                        self.audio_f, self.peaks, self.rate_carry, self.stretcher = None, {}, 0.0, None
+                        self.audio_f, self.peaks, self.rate_carry, self.stretcher, self.pending = None, {}, 0.0, None, b""
                     else:
                         sink = out = self._stop_sink(sink)
+                        if self.play_scale != 1.0 and want is None:
+                            want = self.pos                     # (the pictures were drawn smaller: where it stops, at its size)
                     was_playing = playing
                     self.stateChanged.emit(playing)
                 elif playing and (want is not None or moved_output or new_rate):
@@ -259,7 +282,7 @@ class Worker(QObject):
                     sink, out = self._start_sink(sink)
                     self.t0 = time.monotonic()
                     self.shown_n = self.audio_n = 0
-                    self.audio_f, self.peaks, self.rate_carry, self.stretcher = None, {}, 0.0, None
+                    self.audio_f, self.peaks, self.rate_carry, self.stretcher, self.pending = None, {}, 0.0, None, b""
                 if want is not None:
                     self.pos = min(want, self.length - 1)
                 if self.view is None:
@@ -267,7 +290,7 @@ class Worker(QObject):
                 if playing:
                     self._play_one(out, sink)
                 elif want is not None:
-                    self._show(self.pos)
+                    self._show_still()
             except Exception as exc:
                 self.failed.emit(f"{type(exc).__name__}: {exc}")
                 with self.cv:
@@ -296,9 +319,10 @@ class Worker(QObject):
 
     def _start_sink(self, old):
         """(sink, its device to write to): a new sound output on the default device as it is
-        now (old is stopped first), with room for LEAD frames and a few more: a buffer shorter
-        than the lead (30 fps: 6 frames are 200 ms) kept every picture late, so most were
-        skipped (~8 fps). Without a sound device it plays silently: (None, None)."""
+        now (old is stopped first), with room for SINK_S of sound, and for LEAD frames and a
+        few more: a buffer shorter than the lead (30 fps: 6 frames are 200 ms) kept every
+        picture late, so most were skipped (~8 fps). Without a sound device it plays
+        silently: (None, None)."""
         self._stop_sink(old)
         device = QMediaDevices.defaultAudioOutput()
         if device.isNull():
@@ -309,8 +333,11 @@ class Worker(QObject):
         fmt.setSampleFormat(QAudioFormat.Int16)
         sink = QAudioSink(device, fmt)
         per_frame = RATE * CHANNELS * 2 / max(1.0, self._play_fps() * self.rate)     # (one picture's sound)
-        sink.setBufferSize(max(RATE * CHANNELS * 2 // 8, int(per_frame * (LEAD + 3))))
+        size = max(int(RATE * CHANNELS * 2 * SINK_S), int(per_frame * (LEAD + 3)))
+        sink.setBufferSize(size)
         out = sink.start()
+        got = sink.bufferSize() if hasattr(sink, "bufferSize") else 0      # (the size the device gave, which may be another)
+        self.sink_bytes = got if got > 0 else size
         return (sink, out) if out is not None else (None, None)
 
     @staticmethod
@@ -324,6 +351,8 @@ class Worker(QObject):
         if gpu.enabled != isinstance(self.renderer, glrender.GLRenderer):     # the 設定 switch changed
             self.renderer = self._renderer()
         w = max(2, round(v["width"] * self.quality)) if self.quality else max(2, min(self.render_w, v["width"]))
+        if not self.quality:
+            w = max(2, round(w * (self.play_scale if self.playing else PLAY_SCALES[-1] if self.rough else 1.0)))
         h = max(2, round(w * v["height"] / v["width"]))
         self.asked = []
         margin = self.overflow
@@ -348,6 +377,18 @@ class Worker(QObject):
             self.failed.emit("；".join(dict.fromkeys(self.renderer.errors)))
             self.renderer.errors.clear()
 
+    def _show_still(self, sharp=False):
+        """The picture where the playhead stopped. On a tablet (PLAY_SCALES) the pictures of a drag - asked for one
+        after the other while the playhead, a clip or a number is dragged - are drawn smaller when one at its size
+        is slow, and the last of them again at its size (sharp) once the drag rests."""
+        began = time.monotonic()
+        self.rough = (not sharp and len(PLAY_SCALES) > 1 and not self.quality and began - self.last_still < SCRUB_S
+                      and self.still_took > ROUGH_OVER_S)
+        self.last_still = began
+        self._show(self.pos)
+        if not self.rough:
+            self.still_took = time.monotonic() - began
+
     def _next(self, f, n=1):
         """The frame n after f, looping inside the time selection."""
         for _ in range(n):
@@ -368,13 +409,47 @@ class Worker(QObject):
         return bool(self.new_view or self.want is not None or not self.playing or self.quit or self.new_output
                     or self.new_rate)
 
+    def _lead(self):
+        """Frames of sound kept queued ahead of the clock: LEAD pictures, or what two pictures take to draw when that
+        is more (the output must not run empty while a slow picture is drawn), as far as the output's buffer goes."""
+        fps, step = self.view["fps"] * self.rate, self.step()
+        lead = max(LEAD * step, math.ceil(2 * self.took * fps / step) * step)
+        if self.sink_bytes:
+            room = int(self.sink_bytes * fps / (RATE * CHANNELS * 2))      # frames of sound the buffer holds
+            lead = min(lead, max(step, room - 2 * step))
+        return lead
+
+    def _follow_sound(self, sink):
+        """The clock follows the sound. What is heard now is what was queued less what the output still holds; when
+        that is behind the clock (the output ran empty while a picture was drawn, or took a moment to start) the
+        clock is put back to it. Left alone, the sound stayed that late for good: the output was then full whenever
+        more was due, each picture waited for room in it, and the pictures came slower and slower (2 a second)."""
+        if sink is None or not self.sink_bytes:
+            return
+        fps = self.view["fps"] * self.rate
+        held = max(0, self.sink_bytes - sink.bytesFree()) + len(self.pending)
+        heard = self.audio_n - held * fps / (RATE * CHANNELS * 2)          # frames since playing began
+        late = time.monotonic() - self.t0 - heard / fps
+        if late > LATE_S:
+            self.t0 += late
+
     def _feed(self, out, sink):
-        """Queue the sound up to LEAD frames ahead of the picture. Playing begins with the
-        queue empty, so this is also what keeps the picture from racing ahead at the start."""
+        """Queue the sound up to _lead() frames ahead of the clock, as far as the output has room: what it has no
+        room for waits for the next time (self.pending). Nothing waits for the output here - the pictures wait for
+        the clock, and the clock follows the sound (_follow_sound)."""
         fps, step = self.view["fps"], self.step()
         if self.audio_f is None:
             self.audio_f = self.pos
-        while self.audio_n <= self.shown_n + LEAD * step and self.audio_f < self.length:
+        ahead = max(self.shown_n, int((time.monotonic() - self.t0) * fps * self.rate)) + self._lead()
+        while not self._interrupted():                      # (react to edits / seeks at once)
+            if self.pending:
+                free = sink.bytesFree()
+                n = out.write(bytes(self.pending[:free])) if free > 0 else 0
+                self.pending = self.pending[max(0, n):]
+                if n <= 0 or self.pending:
+                    return
+            if self.audio_n > ahead or self.audio_f >= self.length:
+                return
             pcm = self.mixer.mix(self.audio_f / step, fps / step)      # one picture's sound
             a = np.frombuffer(pcm, np.int16).reshape(-1, CHANNELS)
             if len(a):
@@ -387,16 +462,7 @@ class Worker(QObject):
             else:
                 pcm, self.rate_carry = speed_pcm(pcm, self.rate, self.rate_carry)
             if out is not None:
-                view = memoryview(pcm)
-                while view:
-                    if self._interrupted():
-                        return                              # react to edits / seeks at once
-                    free = sink.bytesFree()
-                    if free <= 0:
-                        time.sleep(0.002)
-                        continue
-                    n = out.write(bytes(view[:free]))
-                    view = view[n:]
+                self.pending = memoryview(pcm)
             self.audio_f = self._next(self.audio_f, step)
             self.audio_n += step
 
@@ -404,6 +470,7 @@ class Worker(QObject):
         """One picture, on time: the sound is queued first and the pictures follow the clock
         that started with it (a picture that is late is skipped, not shown late)."""
         fps, step = self.view["fps"] * self.rate, self.step()      # (frames per second of the clock)
+        self._follow_sound(sink)
         self._feed(out, sink)
         due = self.t0 + self.shown_n / fps
         while not self._interrupted():
@@ -419,7 +486,16 @@ class Worker(QObject):
             self.shown_n += step
         last = self.pos >= self.length - 1
         self.pos = min(self.pos, self.length - 1)
+        began = time.monotonic()
         self._show(self.pos)
+        took = time.monotonic() - began
+        self.took = took if not self.took else 0.7 * self.took + 0.3 * took
+        if len(PLAY_SCALES) > 1:                            # (pictures that cannot keep up are drawn smaller, and at their size again once they could)
+            each = step / fps                               # seconds a picture is shown
+            if self.took > 1.2 * each:
+                self.play_scale = PLAY_SCALES[-1]
+            elif self.took < 0.4 * each:
+                self.play_scale = PLAY_SCALES[0]
         for k in [k for k in self.peaks if k < self.shown_n]:
             del self.peaks[k]
         lv = self.peaks.pop(self.shown_n, None)

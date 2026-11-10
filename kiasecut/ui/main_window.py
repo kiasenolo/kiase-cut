@@ -51,7 +51,7 @@ from .inspector import Inspector
 from .library import LibraryPanel, dropped_paths
 from .layers import LayerPanel
 from .params import ParamList, clip_name
-from .player import RATES, Player
+from .player import PLAY_SCALES, RATES, Player
 from .project_dialogs import CompoundSizeDialog, NewProjectDialog, ProjectInfoDialog
 from .project_manager import ProjectManager
 from .settings_dialog import SettingsDialog
@@ -635,7 +635,8 @@ class MainWindow(QMainWindow):
         for label, q in QUALITIES:
             self.quality_box.addItem(label, q)
         self.quality_box.setToolTip("預覽畫質：預覽畫面畫成專案解析度的幾分之幾。\n1× 是完整解析度，1/2×、1/4× 比較不吃力；自動依預覽視窗的大小。\n"
-                                    "只影響預覽，不影響匯出。")
+                                    + ("自動時，播放或拖曳中來不及畫的畫面先畫成一半大小，停下來再畫清楚。\n" if len(PLAY_SCALES) > 1 else "")
+                                    + "只影響預覽，不影響匯出。")
         self.quality_box.setFocusPolicy(Qt.NoFocus)
         try:
             q = float(self.settings().value("preview_quality", 0.0 if sys.platform == "android" else 1.0))     # (a tablet draws the frame the size of the preview, not the project: a 1080p graph keeps hundreds of MB of the system's memory)

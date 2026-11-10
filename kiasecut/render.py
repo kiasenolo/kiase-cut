@@ -46,6 +46,8 @@ TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "
                "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
                "box_w", "box_h") + tuple(textlayout.DECOR)
 BIG = 1e5
+IMAGE_FILES = 600
+IMAGE_CACHE_BYTES = sysmem.scaled(1 << 30, 160 << 20)      # (pictures and their mip levels, decoded)
 TEXT_CACHE_BYTES = sysmem.scaled(192 << 20, 48 << 20)
 # clip blend modes (edit.BLEND_MODES) as the painter's composition modes
 BLEND_OPS = {"normal": QPainter.CompositionMode_SourceOver, "multiply": QPainter.CompositionMode_Multiply,
@@ -167,9 +169,7 @@ class Renderer:
                     painter.end()
             else:
                 im = svgimage.raster_text(text, *size)
-            if len(self.images) >= 48:
-                self.images.pop(next(iter(self.images)))
-            self.images[key] = im
+            self.keep_image(key, im)
         return im
 
     canvas_h = 1080
@@ -295,10 +295,18 @@ class Renderer:
         im = self.images.get(key)
         if im is None:
             im = vector.render(layers, pw, ph, k)
-            if len(self.images) >= 48:
-                self.images.pop(next(iter(self.images)))
-            self.images[key] = im
+            self.keep_image(key, im)
         return im, {"cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
+
+    def keep_image(self, key, im):
+        """images[key] = im, the ones longest unused dropped past IMAGE_FILES of them or IMAGE_CACHE_BYTES of
+        pixels (a count alone dropped a compound's 60 pictures at every frame, each decoded again)."""
+        self.images.pop(key, None)
+        self.images[key] = im
+        size = lambda v: sum(x.sizeInBytes() for x in v.levels.values()) if isinstance(v, Mips) else v.sizeInBytes()
+        total = sum(size(v) for v in self.images.values())
+        while len(self.images) > 1 and (len(self.images) > IMAGE_FILES or total > IMAGE_CACHE_BYTES):
+            total -= size(self.images.pop(next(iter(self.images))))
 
     def image(self, path, w, h):
         """The image at the smallest mip level at least w x h; the painter scales it the rest
@@ -318,16 +326,14 @@ class Renderer:
                 except ValueError:
                     im = QImage(1, 1, QImage.Format_ARGB32_Premultiplied)
                     im.fill(QColor(255, 0, 255))
-                if len(self.images) >= 48:
-                    self.images.pop(next(iter(self.images)))
-                self.images[key] = im
+                self.keep_image(key, im)
             return im
-        levels = self.images.get(path)
-        if levels is None:
+        levels = self.images.pop(path, None)
+        if levels is not None:
+            self.images[path] = levels                # (used last: the one longest unused goes first)
+        else:
             levels = Mips(path)
-            if len(self.images) >= 48:
-                self.images.pop(next(iter(self.images)))
-            self.images[path] = levels
+            self.keep_image(path, levels)
         return levels.at(w, h)
 
     def text(self, spec, scale, canvas_h):

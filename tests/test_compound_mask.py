@@ -216,3 +216,21 @@ class PreviewTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageCacheTests(unittest.TestCase):
+    def test_many_pictures_stay_decoded(self):
+        d = tempfile.mkdtemp()
+        try:
+            r = render.Renderer()
+            paths = []
+            for i in range(60):
+                im = QImage(32, 32, QImage.Format_ARGB32)
+                im.fill(Qt.red)
+                paths.append(os.path.join(d, f"{i}.png"))
+                im.save(paths[-1])
+            for path in paths:
+                r.image(path, 32, 32)
+            self.assertTrue(all(path in r.images for path in paths))      # (a compound of 60 pictures is drawn at every frame)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)

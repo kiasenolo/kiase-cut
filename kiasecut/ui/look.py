@@ -22,6 +22,7 @@ from . import bigcombo, motion, smoothscroll, wheel
 
 FILES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "look").replace("\\", "/")
 FRAME = "#404042"         # Breeze's frame around scroll areas, spin boxes and tool buttons
+BAR = "#161616"           # a bar's (QWidget#bar: the rows above and below the preview) background
 ACCENT = "#5b4731"        # the system's accent colour (apply reads it; this is KDE's as it was):
                           # a hovered tool button's frame, a radio button, a progress bar, selections
 ARROW = f"{FILES}/arrow"  # its chevrons: arrow-down.svg, arrow-up.svg ...
@@ -72,7 +73,7 @@ QLabel#time { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 15px
 QLabel#viewer { color: #8e8e94; }
 QLabel#title { color: #8e8e94; font-weight: 600; font-size: 11px; }
 QLabel#crumb { color: #ffffff; font-weight: 600; }
-QWidget#bar { background: #161616; border-top: 1px solid #000000; border-bottom: 1px solid #000000; }
+QWidget#bar { background: @BAR; border-top: 1px solid #000000; border-bottom: 1px solid #000000; }
 QTabWidget::pane { border: none; border-top: 1px solid #000000; }
 QWidget#docktitle { background: #0b0b0b; border-bottom: 1px solid #000000; }
 QMainWindow::separator { background: #000000; width: @SASHpx; height: @SASHpx; }
@@ -108,7 +109,7 @@ QGroupBox { border: 2px solid #262626; border-radius: 0; margin-top: 22px; paddi
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top center; padding: 2px 4px; }
 QToolTip { background: #1a1a1a; color: #ffffff; border: none; padding: 4px 6px; }
 QProgressDialog QLabel { background: transparent; }
-""".replace("@ARROW", ARROW).replace("@FRAME", FRAME).replace("@/", FILES + "/")   # (@ACCENT, @DIM: style_sheet)
+""".replace("@ARROW", ARROW).replace("@FRAME", FRAME).replace("@BAR", BAR).replace("@/", FILES + "/")   # (@ACCENT, @DIM: style_sheet)
 
 # KDE's colours as the program was made with them; the parts the style sheet leaves to the style
 # (selected text, links, placeholders, frames and lines) take these

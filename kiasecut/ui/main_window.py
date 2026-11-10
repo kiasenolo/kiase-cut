@@ -62,6 +62,7 @@ from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
 from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, fontkeep, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
+from .steadylabel import SteadyLabel
 from .meter import MeterPanel
 from .preview import FullscreenPreview, Preview
 from .preview import base_size as preview_base_size
@@ -589,9 +590,9 @@ class MainWindow(QMainWindow):
         self.overflow_btn = tool("outside", "顯示 / 隱藏畫布外的畫面（開：超出畫布的內容也畫出來，畫布外的部分壓暗；只影響預覽，不影響匯出）",
                                  self.toggle_overflow, True)
         self.overflow_btn.setChecked(str(self.settings().value("show_outside", "false")).lower() in ("true", "1"))
-        self.time_lbl = QLabel("00:00.00")
+        self.time_lbl = SteadyLabel("00:00.00", look.BAR)       # (they change with every picture played: steadylabel.py)
         self.time_lbl.setObjectName("time")
-        self.dur_lbl = QLabel("")
+        self.dur_lbl = SteadyLabel("", look.BAR)
         self.dur_lbl.setObjectName("viewer")
         self.viewer_lbl = QLabel("")
         self.viewer_lbl.setObjectName("viewer")

@@ -113,6 +113,16 @@ class UseTests(unittest.TestCase):
         edit.set_prop_expr(self.p, "c1", prop, "")
         self.assertNotIn("expr", edit.find(self.p, "c1")[1])
 
+    def test_the_panel_shows_a_clip_whose_number_has_an_lfo_or_a_mapping(self):
+        from kiasecut import mapping
+        from kiasecut.ui.inspector import Inspector
+        c = edit.find(self.p, "c1")[1]
+        ins = Inspector()
+        for spec, said in ((lfo.make("sine", rate=2), "LFO"), (mapping.make(src="a"), "映射：a"), ("value * 2", "表達式：value * 2")):
+            c["expr"] = {"transform.rotation": spec}
+            ins.show_clips([c], 0, 60)                                         # (the tip joined "表達式：" and a dict: TypeError)
+            self.assertIn(said, ins.widgets[("transform", "rotation")].toolTip())
+
 
 if __name__ == "__main__":
     unittest.main()

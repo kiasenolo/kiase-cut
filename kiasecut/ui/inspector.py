@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, textures, build, components, curves, edit, mapping, menugroups, normalize, project, textlayout, textvars, viz
+from .. import assets, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons, look, motion
 from .colorpick import pick_color, qcolor, rgba
@@ -1124,7 +1124,10 @@ class Inspector(QWidget):
             w.bound_names = (names, text)
             look.set_sheet(w, "QDoubleSpinBox { border: 1px solid #e0a030; }" if text else
                            "QDoubleSpinBox { border: 1px solid #b07cff; }" if names else "")
-            w.setToolTip(("表達式：" + text if text else "") + ("\n" if text and names else "") +
+            said = "" if not text else lfo.label(text) if lfo.is_lfo(text) else \
+                f"映射：{text.get('src', '')}　{mapping.label(text)}" if mapping.is_mapping(text) else \
+                "表達式：" + text if isinstance(text, str) else ""           # (an LFO and a 映射 are dicts, not the words of an expression)
+            w.setToolTip(said + ("\n" if said and names else "") +
                          ("元件參數：" + "、".join(names) if names else ""))
 
     def _unit(self, key):

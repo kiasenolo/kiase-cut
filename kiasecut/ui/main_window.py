@@ -3108,8 +3108,9 @@ class MainWindow(QMainWindow):
         """表達式…: the expression a clip's number follows, asked for now (on every clip selected)."""
         c = edit.find(self.container(), ids[0])[1]
         label = components.prop_label(c, prop)
+        have = (c.get("expr") or {}).get(prop, "")
         text = exprdialog.ask_expression(
-            self, f"表達式：{label}", (c.get("expr") or {}).get(prop, ""),
+            self, f"表達式：{label}", have if isinstance(have, str) else "",       # (an LFO or a 映射 there: no words to start from)
             {"value": components.number_at(c, prop, 0), "time": 0.0, "progress": 0.0, "duration": 1.0,
              **rack.values(self.proj, self.playhead_us())},
             default="value",

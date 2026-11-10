@@ -216,11 +216,83 @@ GUIDES = {
 </ul>
 <h3>從哪裡開始</h3>
 <ul>
+<li>[[guide:controls|操作總覽]]：滑鼠中鍵、滾輪、Ctrl／Shift／Alt 和常用快速鍵——每個視圖通用的操作習慣，先看這頁最省事。</li>
 <li>[[sec:edit|剪輯]]：專案與素材、時間線、預覽、複合片段。</li>
 <li>[[sec:fx|效果]]：加效果、關鍵幀、效果清單、自己寫濾鏡。</li>
 <li>[[sec:nodes|節點]]：用節點接出自己的效果。</li>
 </ul>
 <p>三區各自從頭教，想學哪個先看哪個。</p>"""),
+
+    "guide:controls": ("操作總覽：滑鼠與快速鍵", """<h1>操作總覽：滑鼠與快速鍵</h1>
+<p>KiaseCut 的操作習慣大多跟 Blender 一樣：<b>左鍵做事、中鍵移動檢視、右鍵叫出選單、滾輪縮放或捲動</b>，再用 Ctrl、Shift、Alt 改變它的意思。先記住這幾條，每個視圖幾乎都適用。</p>
+<h3>三顆鍵的分工</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><th>鍵</th><th>平常做什麼</th></tr>
+<tr><td>左鍵</td><td>點選、拖動、拉線、拖角縮放；在數字欄上按住拖就是改值</td></tr>
+<tr><td>中鍵（按下滾輪）</td><td>按住拖曳＝<b>移動檢視</b>（手掌游標）；Ctrl＋中鍵拖曳＝縮放</td></tr>
+<tr><td>右鍵</td><td>在片段、軌道、節點、空白處叫出選單；在時間線上按住右鍵拖曳＝選一段時間（入點到出點）</td></tr>
+<tr><td>滾輪</td><td>依視圖而定：時間線上下捲動、預覽和節點編輯器縮放（下表）</td></tr>
+</table>
+<h3>各個視圖的滾輪與中鍵</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><th>視圖</th><th>滾輪</th><th>Shift＋滾輪</th><th>Ctrl＋滾輪</th><th>Alt＋滾輪</th><th>中鍵拖曳</th><th>Ctrl＋中鍵拖曳</th></tr>
+<tr><td>時間線</td><td>上下捲動軌道</td><td>左右捲動</td><td>縮放時間（以游標為中心）</td><td>調整所有軌道的高度</td><td>移動檢視</td><td>縮放</td></tr>
+<tr><td>預覽</td><td>縮放（以游標為中心）</td><td>—</td><td>—</td><td>—</td><td>移動畫面</td><td>上下拖曳縮放</td></tr>
+<tr><td>節點編輯器</td><td>縮放（以游標為中心）</td><td>上下捲動</td><td>左右捲動</td><td>在節點裡的曲線上：縮放那條曲線</td><td>移動檢視（Alt＋中鍵：移動背後的預覽圖）</td><td>—</td></tr>
+<tr><td>曲線編輯器</td><td>上下捲動</td><td>左右捲動</td><td>縮放時間</td><td>縮放數值</td><td>移動檢視</td><td>縮放</td></tr>
+</table>
+<p>觸控板：兩指滑動是移動檢視，兩指捏合是縮放（預覽、節點編輯器）。</p>
+<h3>任何能捲動的地方：中鍵拖曳</h3>
+<p>面板、清單、文字框、對話框，只要內容放不下，按住中鍵拖曳就能把內容拉過來，不必去找捲軸。拖到邊緣時游標會從另一邊接著走（無邊界），所以不會因為滑鼠沒地方移而停住；放開時游標回到原處。</p>
+<h3>數字欄</h3>
+<ul>
+<li><b>按住上下拖曳</b>：改值（每 2 像素一格）。游標拖到視窗邊緣會跳到另一邊，可以一直拖。</li>
+<li><b>點一下（不拖）</b>：進入輸入，打數字、Enter 確定、Esc 取消。</li>
+<li>拖曳時按住 <b>Shift</b>＝十分之一的步進（微調）；按住 <b>Ctrl</b>＝十倍（粗調）；按住 <b>Alt</b>＝可以越過滑桿的建議範圍（輸入數字也一樣）。</li>
+<li>滾輪不會改數字欄，所以滾動面板時不會誤改數值。</li>
+<li>欄位旁的 ◆ 是關鍵幀（見「[[guide:keyframes|關鍵幀]]」）。</li>
+</ul>
+<h3>Ctrl、Shift、Alt 的通則</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><th>按住</th><th>在拖動、縮放時</th><th>在點選時</th></tr>
+<tr><td>Ctrl</td><td>暫時不吸附（節點編輯器相反：Ctrl 暫時開關格線吸附）</td><td>加入／移出選取</td></tr>
+<tr><td>Shift</td><td>縮放時保持比例；旋轉時以 15° 為單位；數字欄微調</td><td>加入／移出選取</td></tr>
+<tr><td>Alt</td><td>拖片段＝複製；縮放時以中心為準</td><td>—</td></tr>
+</table>
+<h3>常用快速鍵</h3>
+<p>下面是最常用的。選單裡每個指令旁邊也標著它的鍵，找不到時看那裡。</p>
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><th>類別</th><th>鍵</th><th>做什麼</th></tr>
+<tr><td rowspan="5">檔案</td><td>Ctrl+N／Ctrl+O</td><td>新專案／開啟專案</td></tr>
+<tr><td>Ctrl+S／Ctrl+Shift+S</td><td>儲存／另存新檔</td></tr>
+<tr><td>Ctrl+Shift+O</td><td>專案管理器</td></tr>
+<tr><td>Ctrl+Shift+I</td><td>匯入素材</td></tr>
+<tr><td>Ctrl+E／Ctrl+Shift+E</td><td>匯出影片／匯出目前畫面</td></tr>
+<tr><td rowspan="8">編輯</td><td>Ctrl+Z／Ctrl+Y</td><td>復原／重做（觸控：兩指點一下復原，三指重做）</td></tr>
+<tr><td>Ctrl+C／Ctrl+X／Ctrl+V</td><td>複製／剪下／貼上</td></tr>
+<tr><td>Shift+D</td><td>建立副本</td></tr>
+<tr><td>Delete（或 X）</td><td>刪除；加 Shift＝波紋刪除（後面的片段補上空隙）</td></tr>
+<tr><td>Ctrl+B</td><td>在播放頭分割</td></tr>
+<tr><td>Q／W</td><td>刪掉播放頭之前／之後的部分</td></tr>
+<tr><td>Ctrl+↑／Ctrl+↓</td><td>把選取的片段移到上面／下面的軌道</td></tr>
+<tr><td>Ctrl+G／Ctrl+Shift+G／Alt+G</td><td>建立群組／解散群組／建立複合片段</td></tr>
+<tr><td rowspan="6">播放與移動</td><td>Space</td><td>播放／暫停</td></tr>
+<tr><td>←／→（Shift：一秒）</td><td>後退／前進一格</td></tr>
+<tr><td>↑／↓</td><td>上一個／下一個剪輯點</td></tr>
+<tr><td>Alt+←／Alt+→</td><td>上一個／下一個關鍵幀</td></tr>
+<tr><td>I／O／Alt+X</td><td>標記入點／出點／清除</td></tr>
+<tr><td>M</td><td>在播放頭放時間線標記</td></tr>
+<tr><td rowspan="5">檢視</td><td>N</td><td>開關自動吸附</td></tr>
+<tr><td>Ctrl+＋／Ctrl+－／Shift+Z</td><td>時間線放大／縮小／縮放到適合</td></tr>
+<tr><td>F</td><td>全螢幕預覽</td></tr>
+<tr><td>Esc</td><td>離開目前的複合片段，回上一層</td></tr>
+<tr><td>Ctrl+PgUp／Ctrl+PgDn</td><td>切換上一個／下一個佈局</td></tr>
+<tr><td rowspan="3">其他</td><td>F1</td><td>這份說明</td></tr>
+<tr><td>F2</td><td>重新命名</td></tr>
+<tr><td>Ctrl+,</td><td>設定</td></tr>
+<tr><td>節點編輯器</td><td colspan="2">另有一組（Shift+A 新增節點、G 抓取、Ctrl+G 群組…），見「[[guide:editor|節點編輯器的操作]]」</td></tr>
+</table>
+<p>下一頁：[[guide:project|專案與素材]]。</p>"""),
 
     "guide:editing": ("時間線的基本操作", """<h1>時間線的基本操作</h1>
 <h3>把素材放上去</h3>
@@ -231,6 +303,7 @@ GUIDES = {
 <li>Ctrl+B 在播放頭切開選取的片段（沒選就切開播放頭下所有的片段）；Delete 刪除。</li>
 </ul>
 <h3>常用的鍵</h3>
+<p>完整的快速鍵和滑鼠操作見「[[guide:controls|操作總覽]]」。</p>
 <table border="1" cellspacing="0" cellpadding="4">
 <tr><th>鍵</th><th>做什麼</th></tr>
 <tr><td>Space</td><td>播放／暫停</td></tr>
@@ -365,6 +438,7 @@ GUIDES = {
 <p>節點編輯器的所有操作見「[[guide:editor|節點編輯器的操作]]」。</p>"""),
 
     "guide:editor": ("節點編輯器的操作", """<h1>節點編輯器的操作</h1>
+<p>滑鼠中鍵、滾輪和 Ctrl／Shift／Alt 的通用習慣見「[[guide:controls|操作總覽]]」；這頁只講節點編輯器自己的。</p>
 <h3>滑鼠</h3>
 <table border="1" cellspacing="0" cellpadding="4">
 <tr><th>操作</th><th>結果</th></tr>
@@ -443,7 +517,7 @@ DIAGRAMS = {
 # -- the sections: 剪輯, 效果 and 節點 each teach their own thing from the start -------------------------------------------------------
 SECTIONS = {
     "sec:edit": ("剪輯", "把素材排到時間線上、在預覽裡擺好位置、剪成想要的樣子。這一區不需要先懂效果或節點。",
-                 ["guide:project", "guide:editing", "guide:preview", "guide:compound"]),
+                 ["guide:controls", "guide:project", "guide:editing", "guide:preview", "guide:compound"]),
     "sec:fx": ("效果", "在片段上加調色、模糊、扭曲這類處理，讓它隨時間變化，還可以自己寫新的。這一區不需要先懂節點。",
                ["guide:effects", "guide:keyframes", "fx", "format"]),
     "sec:nodes": ("節點", "用節點把效果一塊塊接出來。從「節點是什麼」開始，照順序看；後面是查詢用的資料類型、連線規則和每個節點的說明。",

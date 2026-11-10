@@ -99,6 +99,7 @@ it; Esc or the right button puts it back. X / Y keep a G to one way; a typed num
 import json
 import math
 import os
+import sys
 import types
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
@@ -510,13 +511,19 @@ uniform sampler2D t; in vec2 v_uv; out vec4 c;
 void main() { c = vec4(texture(t, v_uv).rgb, 1.0); }"""
 
 
+# 預覽用 GPU 繪圖 when the setting was never touched. Not on a tablet: Qt paints what lies under a QOpenGLWidget again each
+# time it shows a picture (the panel, the dock, the window: four backgrounds the size of the preview) and sends all of it
+# to the screen's texture with the picture; an ordinary widget that fills itself is painted alone, a third less work a picture
+GL_DEFAULT = sys.platform != "android"
+
+
 def _gl_wanted():
     """Whether the preview is drawn on the GPU (a QOpenGLWidget; 設定 > 預覽用 GPU 繪圖, read once at start - it fixes the base class)."""
     if os.environ.get("KIASECUT_PREVIEW_GL", "1") == "0":
         return False
     try:
         from PySide6.QtCore import QSettings
-        return str(QSettings("KiaseCut", "KiaseCut").value("preview_gl", True)).lower() not in ("false", "0")
+        return str(QSettings("KiaseCut", "KiaseCut").value("preview_gl", GL_DEFAULT)).lower() not in ("false", "0")
     except Exception:
         return False
 
@@ -553,6 +560,8 @@ class Preview(_Surface):
         if GL_PREVIEW:
             self.setFormat(sharedgl.widget_format())     # (4 samples: smooth edges for the handles and guides, as the software painter's antialiasing)
             self.setUpdateBehavior(QOpenGLWidget.NoPartialUpdate)
+        else:
+            self.setAttribute(Qt.WA_OpaquePaintEvent)    # (it fills itself: what lies under it is not painted for every picture shown)
         self.img = None
         self._frame_img = None
         self.frame = None                  # a glrender.GpuFrame instead of img while the player keeps frames in the GPU (show_texture)

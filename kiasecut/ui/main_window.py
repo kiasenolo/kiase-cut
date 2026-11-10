@@ -64,7 +64,7 @@ from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, fontk
 from .rack_panel import RackPanel
 from .steadylabel import SteadyLabel
 from .meter import MeterPanel
-from .preview import FullscreenPreview, Preview
+from .preview import GL_DEFAULT as PREVIEW_GL_DEFAULT, FullscreenPreview, Preview
 from .preview import base_size as preview_base_size
 from .timebase import button_text, edit_timebase
 from .timeline import MEDIA_MIME, US, Timeline, time_text, timebase_of, timecode
@@ -5213,7 +5213,7 @@ class MainWindow(QMainWindow):
                              self.cache_mode(), self.cache_custom(), self.default_cache_base(),
                              root_dir=self.app_root(), autosave_custom=str(self.settings().value("autosave_dir") or ""),
                              ui_scale=ui_scale(), node_gl=str(self.settings().value("node_gl", True)).lower() not in ("false", "0"),
-                             preview_gl=str(self.settings().value("preview_gl", True)).lower() not in ("false", "0"),
+                             preview_gl=str(self.settings().value("preview_gl", PREVIEW_GL_DEFAULT)).lower() not in ("false", "0"),
                              preview_direct=str(self.settings().value("preview_direct", True)).lower() not in ("false", "0"),
                              menu_anim=menuanim.enabled, preview_proxy=proxies.enabled)
         if dlg.exec() != QDialog.Accepted:

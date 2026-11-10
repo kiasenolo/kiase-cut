@@ -10,7 +10,9 @@ import sys
 
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
-from PySide6.QtWidgets import QApplication, QMenu, QMenuBar
+from PySide6.QtWidgets import QMenu, QMenuBar
+
+from . import appevents
 
 REDRAW_MS = (16, 60, 150, 400)     # a menu is drawn again this long after it comes up (see _redraw)
 FORCE = False              # on for a desktop too (tests)
@@ -24,6 +26,9 @@ class _Watch(QObject):
     def __init__(self):
         super().__init__()
         self.eat = False           # the release of a press taken here
+
+    TYPES = (QEvent.MouseMove, QEvent.HoverMove, QEvent.HoverEnter, QEvent.Show, QEvent.Leave, QEvent.HoverLeave, QEvent.MouseButtonRelease,
+             QEvent.MouseButtonPress)             # (the events eventFilter looks at: appevents hands it no others)
 
     def eventFilter(self, obj, e):
         t = e.type()
@@ -91,11 +96,11 @@ def install():
     global _watch
     if active() and _watch is None:
         _watch = _Watch()
-        QApplication.instance().installEventFilter(_watch)
+        appevents.watch(_watch, _Watch.TYPES, _watch.eventFilter, first=True)
 
 
 def uninstall():
     global _watch
     if _watch is not None and shiboken6.isValid(_watch):
-        QApplication.instance().removeEventFilter(_watch)
+        appevents.unwatch(_watch)
     _watch = None

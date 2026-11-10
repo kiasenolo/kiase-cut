@@ -17,7 +17,7 @@ from PySide6.QtGui import QMouseEvent, QPainter
 from PySide6.QtWidgets import QApplication, QMainWindow, QSplitterHandle, QWidget
 
 from .. import haptic
-from . import touch
+from . import appevents, touch
 
 HOLD_MS = 450
 THIN = 40                  # px: a gap between panels thicker than this is not a line
@@ -108,6 +108,8 @@ class _Watch(QObject):
                 if r is not None:
                     return obj, r
         return None
+
+    TYPES = (QEvent.MouseButtonPress, QEvent.MouseButtonRelease, QEvent.MouseMove)      # (the events eventFilter looks at: appevents hands it no others)
 
     def eventFilter(self, obj, e):
         if self.replaying:
@@ -220,12 +222,12 @@ def install():
     global _watch
     if active() and _watch is None:
         _watch = _Watch()
-        QApplication.instance().installEventFilter(_watch)
+        appevents.watch(_watch, _Watch.TYPES, _watch.eventFilter, first=True)
 
 
 def uninstall():
     global _watch
     if _watch is not None:
         _watch._end()
-        QApplication.instance().removeEventFilter(_watch)
+        appevents.unwatch(_watch)
         _watch = None

@@ -17,6 +17,8 @@ from PySide6.QtCore import QEvent, QEventLoop, QObject, QPoint, QPointF, QRect, 
 from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QPainter, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QLabel
 
+from . import appevents
+
 FORCE = bool(os.environ.get("KIASECUT_SOFTDRAG"))
 GHOST_OPACITY = 0.75
 GHOST_MAX = (220, 120)              # a picture of the dragged rows is cut to this
@@ -211,6 +213,8 @@ class _Starter(QObject):
         view = obj.parent() if isinstance(obj, QObject) else None
         return view if isinstance(view, QAbstractItemView) and view.viewport() is obj else None
 
+    TYPES = (QEvent.MouseButtonPress, QEvent.MouseMove, QEvent.MouseButtonRelease)      # (the events eventFilter looks at: appevents hands it no others)
+
     def eventFilter(self, obj, e):
         t = e.type()
         if t == QEvent.MouseButtonPress and e.button() == Qt.LeftButton:
@@ -238,11 +242,11 @@ def install():
     global _starter
     if active() and _starter is None:
         _starter = _Starter()
-        QApplication.instance().installEventFilter(_starter)
+        appevents.watch(_starter, _Starter.TYPES, _starter.eventFilter, first=True)
 
 
 def uninstall():
     global _starter
     if _starter is not None:
-        QApplication.instance().removeEventFilter(_starter)
+        appevents.unwatch(_starter)
         _starter = None

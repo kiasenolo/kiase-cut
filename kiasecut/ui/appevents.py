@@ -15,13 +15,13 @@ class _Hub(QObject):
     def __init__(self, app):
         super().__init__(app)
         self.app = app
-        self.watchers = {}          # event type -> [(key, fn)], newest first
+        self.watchers = {}          # event type -> [(key, fn, first)], those that go first, then the others, the newest first of each
         app.installEventFilter(self)
 
     def eventFilter(self, obj, e):
         fns = self.watchers.get(e.type())
         if fns:
-            for _key, fn in list(fns):
+            for _key, fn, _first in list(fns):
                 if fn(obj, e):
                     return True
         return False
@@ -33,14 +33,22 @@ class _Hub(QObject):
                 del self.watchers[t]
 
 
-def watch(owner, types, fn):
+def watch(owner, types, fn, first=False):
     """fn(obj, event) -> True to take it, for every event of these types in the program, while
-    QObject owner lives."""
+    QObject owner lives. first: before the watchers that are not (as a filter of its own on the
+    application, put there after this one, would be)."""
     global _hub
     app = QApplication.instance()
     if _hub is None or _hub.app is not app:
         _hub = _Hub(app)
     hub, key = _hub, id(owner)
     for t in types:
-        hub.watchers.setdefault(t, []).insert(0, (key, fn))
+        fns = hub.watchers.setdefault(t, [])
+        fns.insert(0 if first else sum(1 for x in fns if x[2]), (key, fn, first))
     owner.destroyed.connect(lambda _o=None: hub.drop(key))
+
+
+def unwatch(owner):
+    """owner's watchers stop (before it is gone)."""
+    if _hub is not None:
+        _hub.drop(id(owner))

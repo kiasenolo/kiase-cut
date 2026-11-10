@@ -39,6 +39,17 @@ class BuiltinFilterTests(unittest.TestCase):
                     if p:
                         vals[p.name] = fx.uniform_value(p, None, 0)
 
+    def test_every_colour_and_number_compiles_fed_by_a_picture(self):
+        """使用遮罩 on a parameter named as something else in the filter's code (z: a vector's .z; an argument of a function)."""
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        for ref in fx.builtin_refs():
+            d = fx.get(ref)
+            for p in d.params:
+                if p.type in fx.SOURCE_TYPES:
+                    with self.subTest(filter=ref, param=p.name), self.eng.ctx:
+                        self.eng._program(d, (p.name,))
+
     def test_panels_and_enable(self):
         d = fx.parse('// @param mode menu A "A|B|C"\n// @param on bool false\n// @panel 面板 closed\n'
                      '// @param x float 1\n// @param y float 1\n// @enable x mode == B|C\n// @enable y !on\n'

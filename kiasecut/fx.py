@@ -826,7 +826,7 @@ vec4 %(n)s_at_() {
     float a = s.a + c.a * (1.0 - s.a);
     return a > 0.0 ? vec4((s.rgb + c.rgb * c.a * (1.0 - s.a)) / a, a) : vec4(0.0);
 }
-#define %(n)s %(n)s_at_()"""
+vec4 %(n)s;"""
 # a number parameter fed by a picture (使用遮罩): from its minimum (black) to its maximum (white) by
 # the picture's brightness at this pixel (Rec. 709 weights, as a 明度 mask's) - 0 and the number
 # itself unless the source says otherwise - and its own number where the picture does not reach,
@@ -843,7 +843,7 @@ float %(n)s_at_() {
     float k = s.a > 0.0 ? dot(s.rgb, vec3(0.2126, 0.7152, 0.0722)) / s.a : 0.0;
     return mix(%(n)s_val_, mix(%(n)s_min_, %(n)s_max_, k), s.a);
 }
-#define %(n)s %(n)s_at_()"""
+float %(n)s;"""
 SOURCE_TYPES = ("color", "float")              # parameters that can read a picture
 RANGE_MIN, RANGE_MAX = "\0min", "\0max"        # (suffixes of a number source's value keys: what black and white give)
 
@@ -853,7 +853,9 @@ def source_range(src, own, t):
     parameter's own number unless the source has its own."""
     mn, mx = src.get("min"), src.get("max")
     return (0.0 if mn is None else float(curves.value(mn, t)), own if mx is None else float(curves.value(mx, t)))
-EPILOGUE = "\nvoid main() { fragColor = effect(uv_); }\n"
+# (a sampled parameter is a variable main() fills in before the filter runs, not a #define of its name: that also rewrote
+# the .z of a vector and a function's own argument of that name, and the filter did not compile)
+EPILOGUE = "\nvoid main() { %(sampled)sfragColor = effect(uv_); }\n"
 # v = 0 is the first row of the picture (its top), both for what is read and what is written
 VERTEX = """#version 330
 in vec2 pos;
@@ -895,7 +897,8 @@ def shader_source(d, sampled=(), baked=()):
         decl += (f"\nuniform sampler2D inp_{name}_;\nuniform bool inp_{name}_on_;\n"
                  f"bool has_input_{name}() {{ return inp_{name}_on_; }}\n"
                  f"vec4 input_{name}(vec2 uv) {{ return texture(inp_{name}_, ov_(uv)); }}")
-    return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + EPILOGUE
+    return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + \
+        EPILOGUE % {"sampled": "".join(f"{n} = {n}_at_(); " for n in sampled)}
 
 
 def use_gles():

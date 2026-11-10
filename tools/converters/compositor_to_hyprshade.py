@@ -2637,10 +2637,11 @@ def kc_param(p):
     """(`// @param` line, GLSL macro line or '') for one node-group input (see param_spec())."""
     n, kind, d, lo, hi = p["name"], p["kind"], p["default"], p["lo"], p["hi"]
     lab = _kc_label(p["label"])
+    u = n if n.endswith("_") else n + "_"        # (a name ending in _ would give __: GLSL reserves it)
     if kind == "menu":                          # an int uniform (index of the choice) plus a macro
         items = [re.sub(r'["\\\n|]', "", s).strip() or "%d" % k for k, s in enumerate(p["items"])]
-        return ('// @param %s_m menu %d "%s" "%s"' % (n, p["items"].index(d), "|".join(items), lab),
-                "#define %s float(%s_m)" % (n, n))
+        return ('// @param %sm menu %d "%s" "%s"' % (u, p["items"].index(d), "|".join(items), lab),
+                "#define %s float(%sm)" % (n, u))
     if kind in ("float", "int"):
         d = float(d if not isinstance(d, (tuple, list)) else d[0])
         m = max(10.0, 10.0 * abs(d))
@@ -2649,24 +2650,24 @@ def kc_param(p):
         if hi <= lo:
             hi = lo + 1.0
         if kind == "int":                       # the shader works on floats: int uniform plus a macro
-            return ('// @param %s_i int %d %d %d "%s"' % (n, round(d), round(lo), round(hi), lab),
-                    "#define %s float(%s_i)" % (n, n))
+            return ('// @param %si int %d %d %d "%s"' % (u, round(d), round(lo), round(hi), lab),
+                    "#define %s float(%si)" % (n, u))
         return '// @param %s float %s %s %s "%s"' % (n, ("%.6g" % d), ("%.6g" % lo), ("%.6g" % hi), lab), ""
     if kind == "bool":
-        return ('// @param %s_b bool %s "%s"' % (n, "1" if float(d) else "0", lab),
-                "#define %s (%s_b ? 1.0 : 0.0)" % (n, n))
+        return ('// @param %sb bool %s "%s"' % (u, "1" if float(d) else "0", lab),
+                "#define %s (%sb ? 1.0 : 0.0)" % (n, u))
     if kind == "color":
         v = list(d) + [1.0] * (4 - len(d))
         hexv = "#" + "".join("%02x" % round(_lin_to_srgb_py(x) * 255) for x in v[:3]) + "%02x" % round(min(max(v[3], 0.0), 1.0) * 255)
-        return ('// @param %s_c color %s "%s"' % (n, hexv, lab),
-                "#if LINEARIZE\n#define %s vec4(srgb_to_lin(%s_c.rgb), %s_c.a)\n#else\n#define %s %s_c\n#endif" % (n, n, n, n, n))
+        return ('// @param %sc color %s "%s"' % (u, hexv, lab),
+                "#if LINEARIZE\n#define %s vec4(srgb_to_lin(%sc.rgb), %sc.a)\n#else\n#define %s %sc\n#endif" % (n, u, u, n, u))
     v = ([float(x) for x in d] + [0.0, 0.0, 0.0])[:2 if kind == "vec2" else 3]     # vec2 / vec3
     m = max(10.0, 10.0 * max(abs(x) for x in v))
     lo = -m if lo is None else lo
     hi = m if hi is None else hi
     vals = "%s %s %s" % (",".join("%.6g" % x for x in v), "%.6g" % lo, "%.6g" % hi)
     if kind == "vec2":                                    # the shader works on vec3: vec2 uniform plus a macro
-        return ('// @param %s_v vec2 %s "%s"' % (n, vals, lab), "#define %s vec3(%s_v, 0.0)" % (n, n))
+        return ('// @param %sv vec2 %s "%s"' % (u, vals, lab), "#define %s vec3(%sv, 0.0)" % (n, u))
     return '// @param %s vec3 %s "%s"' % (n, vals, lab), ""
 
 

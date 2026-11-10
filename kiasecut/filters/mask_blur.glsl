@@ -5,7 +5,7 @@
 // @param IN_Type_m menu 5 "平坦|帳篷|二次|三次|高斯|快速高斯|Catrom|Mitch" "類型"
 // @param IN_Extend_Bounds_b bool 0 "延伸邊界"
 // @param IN_Separable_b bool 1 "分離"
-// @param IN_Custom_Mask__b bool 0 "用自訂遮罩"
+// @param IN_Custom_Mask_b bool 0 "用自訂遮罩"
 // @param IN_Custom_Mask_c color #e7e7e7ff "自訂遮罩"
 
 // Made by KIASENOLO in Blender's compositor (a node group) and exported with
@@ -18,7 +18,7 @@
 #define IN_Type float(IN_Type_m)
 #define IN_Extend_Bounds (IN_Extend_Bounds_b ? 1.0 : 0.0)
 #define IN_Separable (IN_Separable_b ? 1.0 : 0.0)
-#define IN_Custom_Mask_ (IN_Custom_Mask__b ? 1.0 : 0.0)
+#define IN_Custom_Mask_ (IN_Custom_Mask_b ? 1.0 : 0.0)
 #if LINEARIZE
 #define IN_Custom_Mask vec4(srgb_to_lin(IN_Custom_Mask_c.rgb), IN_Custom_Mask_c.a)
 #else

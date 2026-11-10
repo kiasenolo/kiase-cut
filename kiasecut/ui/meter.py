@@ -25,6 +25,7 @@ class Bars(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumWidth(30)
+        self.setAttribute(Qt.WA_OpaquePaintEvent)         # (it fills itself: what lies under it is not painted for every level shown)
         self.level = [DB_LO, DB_LO]        # shown dB (falls smoothly)
         self.hold = [DB_LO, DB_LO]
         self.hold_t = [0.0, 0.0]

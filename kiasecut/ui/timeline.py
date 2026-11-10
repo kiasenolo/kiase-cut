@@ -141,6 +141,9 @@ def clip_kind(c):
     """What a clip is for its colour: its type, or "static" / "component" (元件)."""
     return "component" if components.of_clip(c) else "static" if project.is_static(c) else c["type"]
 RULER_H, TRACK_H, AUDIO_H, HEADER_W = 26, 34, 52, 140   # HEADER_W: the track headers' default width
+SEEN_PAD = 24                                            # px round what is repainted that a clip is still drawn in (its outline's width, its soft edge)
+LABEL_CHAR_W = 24                                        # (no letter of a clip's label is wider)
+RULER_LABEL_W = 96                                       # (a label on the ruler is no wider: one that starts this far left of what is repainted is drawn again)
 # drags along time: the pointer wraps (both ways for the view's own), the view follows the others
 WRAP_MODES = {"seek", "region", "body", "start", "end", "group", "key", "matte", "vol", "volkey",
               "lane_body", "lane_start", "lane_end", "pan", "zoom", "marker"}
@@ -326,6 +329,7 @@ class Timeline(QWidget):
         self.drag = None
         self.mark_in = self.mark_out = None        # export range, frames
         self.setMinimumHeight(220)
+        self.setAttribute(Qt.WA_OpaquePaintEvent)         # (it fills itself: what lies under it is not painted each time the playhead moves)
         self.setMouseTracking(True)
         # fingers: what is dragged in the tracks - a clip, or empty space (a box that picks clips) - is let go by a hold (a clip goes
         # white from it), and a finger that moves first scrolls the view; the ruler selects time once held (and moves the playhead
@@ -977,11 +981,12 @@ class Timeline(QWidget):
         label = next(s for s in steps if s * part_s * self.px_per_s >= 56)
         zero = tb["offset_us"] / US
         n = math.floor((self.scroll_s - zero) / part_s / tick) * tick
+        lo, hi = self.paint_span
         while True:
             x = self._x(zero + n * part_s)
             if x >= w:
                 break
-            if x >= self.header_w:
+            if x >= self.header_w and lo - RULER_LABEL_W <= x <= hi + 2:     # (a moving playhead repaints only near it; 2: a line's soft edge)
                 length, pen = (9, "#a8a8ae") if n % bar == 0 else (6, "#6a6a70") if n % div == 0 else (3, "#4a4a50")
                 p.setPen(QColor(pen))
                 p.drawLine(int(x), RULER_H - length, int(x), RULER_H)
@@ -1021,7 +1026,7 @@ class Timeline(QWidget):
             while self._x(n * step) < w:
                 t = n * step
                 x = self._x(t)
-                if x >= self.header_w:
+                if x >= self.header_w and self.paint_span[0] - RULER_LABEL_W <= x <= self.paint_span[1] + 2:     # (a moving playhead repaints only near it; 2: a line's soft edge)
                     p.drawLine(int(x), RULER_H - 6, int(x), RULER_H)
                     label = timecode(t * US, self.fps)
                     p.drawText(int(x) + 3, RULER_H - 9, label if step < 1 else label[:5])
@@ -1341,6 +1346,12 @@ class Timeline(QWidget):
         if x1 < max(self.header_w, lo - 12) or x0 > min(w, hi + 12):     # (12: its keyframes' diamonds)
             return
         r = QRectF(max(x0, self.header_w) + 0.5, y + 3, max(1.0, x1 - max(x0, self.header_w) - 1), h - 8)
+        # the part of it that this painting can show (and a little more, so that the ends cut here are not seen): a clip far
+        # longer than the view - or than the strip a moving playhead repaints - was filled and outlined over all its
+        # length each time, 20 ms for one clip on a tablet
+        near = QRectF(r)
+        near.setLeft(max(r.left(), lo - SEEN_PAD))
+        near.setRight(max(near.left() + 1.0, min(r.right(), min(w, hi) + SEEN_PAD)))
         kind = clip_kind(c)
         col = clip_color(c, track)
         sel = c["id"] in self.selected_ids
@@ -1354,14 +1365,14 @@ class Timeline(QWidget):
         edge.setAlpha(190 if ghost else 255)
         p.setBrush(fill)
         p.setPen(Qt.NoPen)
-        p.drawRect(r)
+        p.drawRect(near)
         p.setBrush(Qt.NoBrush)
         def outline(fade=1.0):
             if sel:
                 faded = QColor(edge)
                 faded.setAlpha(round(edge.alpha() * fade))
                 p.setPen(QPen(faded, 4))
-                p.drawRect(r.adjusted(1, 1, -1, -1))
+                p.drawRect(near.adjusted(1, 1, -1, -1))
                 white = QColor("#ffffff")
                 white.setAlpha(round(255 * fade))
                 p.setPen(QPen(white, 1.5))
@@ -1369,7 +1380,7 @@ class Timeline(QWidget):
                 faded = QColor(edge)
                 faded.setAlpha(round(edge.alpha() * fade))
                 p.setPen(QPen(faded, 2))
-            p.drawRect(r.adjusted(1, 1, -1, -1))
+            p.drawRect(near.adjusted(1, 1, -1, -1))
 
         cut_l, cut_r = x0 < self.header_w, x1 > w          # (it goes on out of view: that side has no edge)
         if cut_l or cut_r:
@@ -1397,10 +1408,10 @@ class Timeline(QWidget):
         if c["id"] == self.lit_id and not ghost:                 # (held by a finger: white, and it is let go to be dragged)
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(255, 255, 255, 120))
-            p.drawRect(r)
+            p.drawRect(near)
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(QColor("#ffffff"), 2))
-            p.drawRect(r.adjusted(1, 1, -1, -1))
+            p.drawRect(near.adjusted(1, 1, -1, -1))
         audio = c["type"] == "audio"
         wx0, wx1 = max(r.left() + 1, self.header_w), min(r.right() - 1, w)
         if wx1 - wx0 >= 2:
@@ -1440,7 +1451,8 @@ class Timeline(QWidget):
                 lr.setHeight(16)
             elif c["type"] == "video" and r.height() >= 24:
                 lr.setBottom(wt - 1 if r.height() > 40 else r.bottom() - 9)
-            p.drawText(lr, Qt.AlignVCenter, label)
+            if lr.left() <= hi + SEEN_PAD and lr.left() + len(label) * LABEL_CHAR_W >= lo - SEEN_PAD:     # (its words reach what is repainted)
+                p.drawText(lr, Qt.AlignVCenter, label)
         row = next((i for i, t in enumerate(self.rows) if c in t["clips"]), None)
         if row is not None and not ghost and abs(self.tops[row] - y) < 0.5:
             self._draw_volume(p, c, row, r)
@@ -1448,8 +1460,7 @@ class Timeline(QWidget):
             # BPM alignment: a tick per grid line along the top, longer and yellow on the beat
             # (the grid moves with a dragged clip)
             shift = start - c["start_us"]
-            lo, hi = self._sec(self.header_w) * US - shift, self._sec(w) * US - shift
-            lines = self._beat_lines(c, lo, hi, bars=True)
+            lines = self._beat_lines(c, self._sec(max(self.header_w, lo - SEEN_PAD)) * US - shift, self._sec(min(w, hi + SEEN_PAD)) * US - shift, bars=True)
             if lines:
                 p.save()
                 p.setClipRect(r)

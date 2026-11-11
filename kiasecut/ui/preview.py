@@ -215,6 +215,15 @@ class Box:
     def y_at(self, cy, pdy=None):
         return round((self.H / 2 - (cy - self.oy - (self.pdy if pdy is None else pdy))) / (self.H / 2), 5)
 
+    def anchor_to(self, gx, gy):
+        """{anchor_x, anchor_y, x, y} that move the anchor (錨點) to the clip's own edge / corner / centre (gx, gy: -1 / 0 / 1 along
+        its own x / y, y down) and change x / y to match, so the clip itself stays where it is."""
+        g = self.xf().map(QPointF(gx * self.bw / 2, gy * self.bh / 2))
+        c0x = self.pos[0] - self.anchor[0] * self.W / 2              # (its centre before the pivot swings it)
+        c0y = self.pos[1] + self.anchor[1] * self.H / 2
+        return {"anchor_x": round((g.x() - c0x) / (self.W / 2), 5), "anchor_y": round(-(g.y() - c0y) / (self.H / 2), 5),
+                "x": round((g.x() - self.ox - self.W / 2) / (self.W / 2), 5), "y": round((self.H / 2 - (g.y() - self.oy)) / (self.H / 2), 5)}
+
     def pivot_local(self):
         """Its pivot (中心點) in its own frame (centre origin, unscaled, y down, canvas px)."""
         return QPointF(self.pivot[0] * self.W / 2, -self.pivot[1] * self.H / 2)
@@ -1258,6 +1267,12 @@ class Preview(_Surface):
             return boxes
         kids = self._kid_boxes()
         return [k for k, _ in kids.values()]
+
+    def anchor_grid(self, gx, gy):
+        """The 9-point grid of the inspector: the anchor of every selected clip goes to the clip's corner, edge middle or centre
+        (gx, gy: -1 / 0 / 1; y down) without the clip moving (paramsCommitted, one edit each)."""
+        for b in self._picked_boxes():
+            self.paramsCommitted.emit(b.clip["id"], "transform", b.anchor_to(gx, gy))
 
     def nudge_moves(self, dx, dy):
         """{clip id: {x, y}} of the selected clips moved by dx, dy canvas pixels (y down)."""

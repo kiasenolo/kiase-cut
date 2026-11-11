@@ -35,7 +35,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QValidator
 import os
 
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QSpinBox,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout, QGridLayout, QSpinBox,
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
@@ -349,6 +349,7 @@ class Inspector(QWidget):
     placeEditChanged = Signal()                     # 編輯位置 of a component's picture switched: self.place_edit
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
+    anchorGridRequested = Signal(int, int)          # the 錨點 9-grid: -1 / 0 / 1 along the clip's x, y (y down)
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
     speedChosen = Signal(list, float)               # clip ids, speed
     lengthChosen = Signal(list, float)              # clip ids, 目標長度 (us): the speed that makes them last that
@@ -590,6 +591,7 @@ class Inspector(QWidget):
                 self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS],
                            (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("anchor_x", "anchor_y", "錨點"),
                             ("pivot_x", "pivot_y", "中心點")))
+                self._build_anchor_grid(form)
                 if c["type"] in ("image", "video", "compound") and not c.get("asset"):
                     self._build_corners(form)
                 blend = ComboBox()
@@ -1271,6 +1273,25 @@ class Inspector(QWidget):
             value = text
         self._queue(group, "value", value)
         self._flush()
+
+    def _build_anchor_grid(self, form):
+        """錨點 9 宮格: one press puts the anchor at a corner, an edge middle or the centre of the clip; the clip stays put."""
+        box = QWidget()
+        grid = QGridLayout(box)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(2)
+        for gy in (-1, 0, 1):
+            for gx in (-1, 0, 1):
+                b = QPushButton("◆" if gx == gy == 0 else "·")
+                b.setObjectName("tool")
+                b.setFixedSize(22, 22)
+                b.setToolTip("把錨點移到" + ("中心" if gx == gy == 0 else
+                             ("左" if gx < 0 else "右" if gx > 0 else "") + ("上" if gy < 0 else "下" if gy > 0 else "")
+                             + ("邊中間" if (gx == 0 or gy == 0) else "角")) + "（片段不會動，位置 X / Y 會跟著換成這一點的位置）")
+                b.clicked.connect(lambda _=False, gx=gx, gy=gy: self.anchorGridRequested.emit(gx, gy))
+                grid.addWidget(b, gy + 1, gx + 1)
+        grid.setColumnStretch(3, 1)
+        form.addRow("錨點位置", box)
 
     def _build_corners(self, form):
         """圓角: all four at once, then each (top left | top right, bottom left | bottom right)."""

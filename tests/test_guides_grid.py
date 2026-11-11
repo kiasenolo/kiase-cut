@@ -60,5 +60,23 @@ class Guides(unittest.TestCase):
         self.assertAlmostEqual((203 + dx) % 50, 0, delta=0.01)
 
 
+class Measure(unittest.TestCase):
+    def test_gaps_apart_and_inside(self):
+        from kiasecut.ui.preview import Preview
+        segs = Preview.measure_segments((0, 100, 0, 50), (150, 250, 20, 80))
+        self.assertEqual(segs, [(100, 35.0, 150, 35.0)])
+        inner = Preview.measure_segments((20, 60, 10, 30), (0, 100, 0, 50))
+        self.assertEqual(sorted((round(abs(s[2] - s[0] + s[3] - s[1]))) for s in inner), [10, 20, 20, 40])
+
+    def test_alt_over_a_clip(self):
+        p, pv = scene((300, 200), (900, 500))
+        pv.set_scene(pv.view, 0, "k0", {"k0"})
+        pv._measure_update(True, 900, 500)
+        self.assertIsNotNone(pv.measure)
+        self.assertEqual(pv.measure[1], (804.0, 996.0, 446.0, 554.0))
+        pv._measure_update(False, 900, 500)
+        self.assertIsNone(pv.measure)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -66,6 +66,7 @@ Every drag on the canvas is endless (無邊界, wrapdrag.py): the pointer reachi
 preview jumps to the other one and the drag goes on; what is moved or sized (a clip, a mask, a
 selection box) keeps the view following it. The pointer hides while dragging and comes back
 where the drag ended up.
+Alt held over another clip (or the canvas) while clips are selected shows the distances between the selection and it, in canvas px (measure).
 Rulers (標尺, 檢視 menu, the canvas keeps clear of them): a drag out of the top ruler makes a flat reference line, out of the left one
 an upright one (the project's / compound's "guides": {"x": [px], "y": [px]}; guidesCommitted); drag one in the open to move it, back onto
 the ruler to take it away (Ctrl: freely). Clips, drops and scaled edges settle on the lines (吸附到參考線) and on the grid (格線,
@@ -644,6 +645,7 @@ class Preview(_Surface):
         self.grid_size = 50
         self.snap_grid = False                           # clips, masks and reference lines settle on the grid lines
         self.snap_guides = True                          # clips settle on the reference lines
+        self.measure = None                              # (selection rect, other rect) while Alt is held over another clip or the canvas
         self.guide_live = None                           # ([x], [y]) while a reference line is dragged
         self.show_guides = True                          # 輔助線: the frame, handles and notes drawn over the picture (off: just the picture)
         self.mask_mode = False
@@ -674,7 +676,7 @@ class Preview(_Surface):
         self.drop_group = None                  # the group box a drop there would go into
         self.setAcceptDrops(interactive)
         if interactive:                          # its keys work while the mouse is over it (see _view_key)
-            appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress), self.eventFilter)
+            appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress, QEvent.KeyRelease), self.eventFilter)
 
     # -- state ------------------------------------------------------------------------------------
     def show_image(self, img):
@@ -1175,6 +1177,76 @@ class Preview(_Surface):
             p.setPen(QColor("#10222a"))
             p.drawText(box, Qt.AlignCenter, text)
 
+    # -- Alt: the distances between the selection and the clip (or the canvas) under the mouse ---------------------
+    def _measure_update(self, on, x, y):
+        """Alt held with the mouse over another clip (or over nothing: the canvas): self.measure = (the selection's rect, that one's)."""
+        new = None
+        if on and self.drag is None and not self.mask_mode and self.view and self.selected_ids:
+            picked = self._picked_boxes()
+            if picked:
+                mine = self._union(picked)
+                other = next((b for b in self.visible_boxes() if not b.locked and b.clip["id"] not in self.selected_ids
+                              and b.contains(x, y)), None)
+                new = (mine, other.extents() if other is not None else (0, self.W, 0, self.H))
+        if new != self.measure:
+            self.measure = new
+            self.update()
+
+    @staticmethod
+    def measure_segments(a, b):
+        """[(x1, y1, x2, y2)] canvas px: the gaps between rect a and rect b (left, right, top, bottom) along each axis -
+        between them when they are apart, else from each edge of the inner one to the outer one's (those that differ)."""
+        out = []
+        apart = any(a[i + 1] <= b[i] or b[i + 1] <= a[i] for i in (0, 2))
+        for axis in (0, 2):
+            alo, ahi, blo, bhi = a[axis], a[axis + 1], b[axis], b[axis + 1]
+            if apart and not (ahi <= blo or bhi <= alo):       # apart along one axis only: just that gap
+                continue
+            o = 2 - axis                                       # the other axis' pair of indexes
+            lo, hi = max(a[o], b[o]), min(a[o + 1], b[o + 1])
+            cross = (lo + hi) / 2 if lo < hi else (a[o] + a[o + 1]) / 2          # where along the other axis the line is drawn
+            spans = []
+            if ahi <= blo:
+                spans.append((ahi, blo))
+            elif bhi <= alo:
+                spans.append((bhi, alo))
+            else:
+                for u, v in ((alo, blo), (ahi, bhi)):
+                    if abs(u - v) > 0.5:
+                        spans.append((min(u, v), max(u, v)))
+            for u, v in spans:
+                out.append((u, cross, v, cross) if axis == 0 else (cross, u, cross, v))
+        return out
+
+    def _paint_measure(self, p, k):
+        if self.measure is None or self.drag is not None:
+            return
+        a, b = self.measure
+        red = QColor("#ff4d4d")
+        f = p.font()
+        f.setPixelSize(round(11 * k))
+        p.setFont(f)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(red, 1 * k, Qt.DashLine))
+        p.drawRect(QRectF(b[0], b[2], b[1] - b[0], b[3] - b[2]))
+        p.setPen(QPen(red, 1 * k))
+        for x1, y1, x2, y2 in self.measure_segments(a, b):
+            p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+            n = QPointF(0, 4 * k) if y1 == y2 else QPointF(4 * k, 0)
+            p.drawLine(QPointF(x1, y1) - n, QPointF(x1, y1) + n)
+            p.drawLine(QPointF(x2, y2) - n, QPointF(x2, y2) + n)
+            text = f"{math.hypot(x2 - x1, y2 - y1):.0f}"
+            tw = p.fontMetrics().horizontalAdvance(text) + 8 * k
+            box = QRectF(0, 0, tw, 16 * k)
+            box.moveCenter(QPointF((x1 + x2) / 2, (y1 + y2) / 2) + (QPointF(0, -12 * k) if y1 == y2 else QPointF(tw / 2 + 4 * k, 0)))
+            p.setPen(Qt.NoPen)
+            p.setBrush(red)
+            p.drawRoundedRect(box, 2 * k, 2 * k)
+            p.setPen(QColor("#ffffff"))
+            p.drawText(box, Qt.AlignCenter, text)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(red, 1 * k))
+
     # -- arrow keys: nudge the selection by a pixel (Shift: ten) ------------------------------------------------
     def _can_nudge(self):
         return (self.interactive and self.show_guides and not self.mask_mode and self.drag is None
@@ -1295,6 +1367,13 @@ class Preview(_Surface):
 
     def eventFilter(self, obj, e):
         t = e.type()
+        if t in (QEvent.KeyPress, QEvent.KeyRelease) and e.key() == Qt.Key_Alt and isinstance(obj, QWidget) and obj.window() is self.window():
+            if self.interactive and self.view and self.show_guides and self.isVisible() and self.underMouse():
+                x, y = self._to_canvas(QPointF(self.mapFromGlobal(QCursor.pos())))
+                self._measure_update(t == QEvent.KeyPress and self.drag is None, x, y)
+            return False
+        if t == QEvent.KeyRelease:
+            return False
         if (self.drag and self.drag.get("modal") and t in (QEvent.ShortcutOverride, QEvent.KeyPress)
                 and isinstance(obj, QWidget) and obj.window() is self.window()):
             if self._grab_key(e, t == QEvent.KeyPress):
@@ -1558,6 +1637,7 @@ class Preview(_Surface):
         p.scale(r.width() / self.W, r.height() / self.H)
         k = self._k()
         self._paint_grid(p, k)
+        self._paint_measure(p, k)
         box = self._live_box()
         mbox = self.mask_box(box)
         if self.multi():
@@ -2478,6 +2558,7 @@ class Preview(_Surface):
             return
         x, y = self._to_canvas(e.position())
         m, k = QPointF(x, y), self._k()
+        self._measure_update(bool(e.modifiers() & Qt.AltModifier), x, y)
         if self.show_rulers and (e.position().x() < RULER_PX) != (e.position().y() < RULER_PX):
             self.setCursor(Qt.SizeVerCursor if e.position().y() < RULER_PX else Qt.SizeHorCursor)
             return

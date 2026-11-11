@@ -22,7 +22,7 @@ import time
 
 import numpy as np
 
-from . import curves, sysmem
+from . import curves, gpusync, sysmem
 
 PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filters")
 DOC_PATH = os.path.join(PKG, "FORMAT.md")
@@ -1095,7 +1095,7 @@ class Engine:
                     tex.repeat_x = tex.repeat_y = False
                     texs[name] = (tex, m)
                 out = self.run_tex(d, values, ta, w, h, time, progress, frame, unit, texs)
-                data = out.read()
+                data = gpusync.read(out)
             finally:
                 for tex, _m in texs.values():
                     tex.release()

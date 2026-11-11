@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, components, curves, fx, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
+from . import assets, components, curves, fx, gpusync, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -496,6 +496,7 @@ class GLRenderer(render.Renderer):
                 base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(mx, my)
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
                                frame / view["fps"] * US, width / view["width"])
+                gpusync.finish(gl.ctx)                # (the read below holds the GIL while it waits for the GPU: wait here without it)
                 data = tgt.fbo.read(components=4)
             finally:
                 gl.release(tgt)
@@ -518,7 +519,7 @@ class GLRenderer(render.Renderer):
                 base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(mx, my)
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
                                frame / view["fps"] * US, width / view["width"])
-                gl.ctx.finish()                       # (what the preview's context draws from must be complete)
+                gpusync.finish(gl.ctx)                # (what the preview's context draws from must be complete)
             except BaseException:
                 gl.release(tgt)
                 raise

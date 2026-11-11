@@ -23,7 +23,7 @@ import hashlib
 import math
 import re
 
-from . import fuse, assets, curves, dynamic, fx
+from . import fuse, assets, curves, dynamic, fx, gpusync
 
 US = 1_000_000
 INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output", "source", "filter", "params", "reroute", "frame", "group"
@@ -1393,7 +1393,7 @@ def _centre(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit,
                           errors=errors, viewer=True)
     if tex is None:
         return 0.0, 0.0, 0.0
-    a = np.frombuffer(tex.read(), np.float16 if tex.dtype == "f2" else np.float32 if tex.dtype == "f4" else np.uint8).reshape(
+    a = np.frombuffer(gpusync.read(tex), np.float16 if tex.dtype == "f2" else np.float32 if tex.dtype == "f4" else np.uint8).reshape(
         tex.size[1], tex.size[0], 4).astype(np.float64)
     if tex.dtype == "f1":
         a /= 255.0
@@ -1414,8 +1414,8 @@ def read_rgba8(tex):
     import numpy as np
     w, h = tex.size
     if tex.dtype == "f1":
-        return np.frombuffer(tex.read(), np.uint8).reshape(h, w, 4)
-    a = np.frombuffer(tex.read(), np.float16 if tex.dtype == "f2" else np.float32).reshape(h, w, 4)
+        return np.frombuffer(gpusync.read(tex), np.uint8).reshape(h, w, 4)
+    a = np.frombuffer(gpusync.read(tex), np.float16 if tex.dtype == "f2" else np.float32).reshape(h, w, 4)
     return (np.clip(a, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
 
 
@@ -1429,7 +1429,7 @@ def small_rgba8(tex, size=96):
     if level:
         tex.build_mipmaps(0, level)
     lw, lh = max(1, w >> level), max(1, h >> level)
-    raw = tex.read(level=level)
+    raw = gpusync.read(tex, level=level)
     if tex.dtype == "f1":
         arr = np.frombuffer(raw, np.uint8).reshape(lh, lw, 4)
     else:

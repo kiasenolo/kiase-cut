@@ -94,10 +94,12 @@ class Opener(QObject):
     """Watches the combo boxes: a press (or the keys that open the list) on a big one opens a Popup instead of Qt's list."""
 
     def eventFilter(self, o, ev):
+        t = ev.type()
+        if t not in (QEvent.MouseButtonPress, QEvent.KeyPress):     # (the combo is not touched for any other event: one being deleted is sent
+            return False                                           #  some, and asking it for its items then is a crash - seen in a file dialog's loop)
         groups = o.property("kcGroups") if isinstance(o, QComboBox) else None
         if not isinstance(o, QComboBox) or o.isEditable() or not (groups or o.count() > BIG) or not o.isEnabled():
             return False
-        t = ev.type()
         if t == QEvent.MouseButtonPress and ev.button() == Qt.LeftButton or (
                 t == QEvent.KeyPress and (ev.key() in (Qt.Key_Space, Qt.Key_F4) or ev.key() == Qt.Key_Down and ev.modifiers() & Qt.AltModifier)):
             if groups:                                  # (menugroups: the choices in groups side by side)

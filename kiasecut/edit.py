@@ -4300,6 +4300,12 @@ def set_param_default(root, kid, pid, value):
             if size is None:
                 raise EditError("讀不到這張圖片")
             replace_media(comp, cid, {"kind": "image", "path": value, "width": size[0], "height": size[1]})
+        elif components.is_check_prop(prop):
+            eid = prop.split(":", 1)[1].split(".")[0]
+            if prop.startswith(components.FX_ON):
+                set_effect_enabled(comp, cid, eid, bool(value))
+            else:
+                set_param(comp, cid, "fx:" + eid, prop.split(".", 1)[1], bool(value), at)
         elif "." in prop:
             group, key = prop.split(".", 1)
             _label, _d, factor, lo, hi = components.number_info(c, prop)

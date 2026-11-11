@@ -38,7 +38,8 @@ import os
 from . import assets, curves, expr, fx, mapping, project, svgimage, textvars
 
 ICON = "❖"
-KINDS = {"text": "文字", "number": "數字", "color": "顏色", "image": "圖片", "visible": "顯示"}
+KINDS = {"text": "文字", "number": "數字", "color": "顏色", "image": "圖片", "visible": "勾選"}
+FX_ON, FX_BOOL = "fxon:", "fxb:"          # the check props of a layer's filter: "fxon:<effect id>" (the effect on / off), "fxb:<effect id>.<name>" (one of its check boxes)
 PROPS = {                         # prop: (kind, label)
     "content": ("text", "文字內容"),
     "text_color": ("color", "文字顏色"),
@@ -122,12 +123,28 @@ def props_of(c):
         out.append("source")
     if c["type"] != "filter":
         out.append("visible")
-    return out + [q for q in number_props_of(c) if not q.startswith("params.")]
+    return out + check_props_of(c) + [q for q in number_props_of(c) if not q.startswith("params.")]
+
+
+def check_props_of(c):
+    """The check boxes of layer c's filters a 勾選 parameter can set: each filter's on / off and its own check boxes."""
+    out = []
+    for e in c.get("effects") or []:
+        out.append(FX_ON + e["id"])
+        try:
+            out += [f"{FX_BOOL}{e['id']}.{q.name}" for q in fx.def_of(e).params if q.type == "bool"]
+        except Exception:
+            pass
+    return out
+
+
+def is_check_prop(prop):
+    return prop.startswith((FX_ON, FX_BOOL))
 
 
 def prop_kind(prop):
     """The kind of parameter that can set prop (a "group.key" number prop is a number)."""
-    return "number" if "." in prop else PROPS[prop][0]
+    return "visible" if is_check_prop(prop) else "number" if "." in prop else PROPS[prop][0]
 
 
 def number_info(c, prop):
@@ -205,6 +222,12 @@ def number_prop_for(c, group, key):
 
 def prop_label(c, prop):
     """What prop of layer c is called (a shape's colour is its 填充顏色)."""
+    if is_check_prop(prop):
+        e = _effect_of(c, prop.split(":", 1)[1].split(".")[0])
+        d = fx.def_of(e)
+        if prop.startswith(FX_ON):
+            return f"{d.name}（開／關）"
+        return f"{d.name}·{next(q for q in d.params if q.name == prop.split('.', 1)[1]).label}"
     if "." in prop:
         return number_info(c, prop)[0]
     if prop == "color" and c is not None and "fill" in assets.fields_of((c.get("asset") or {}).get("family")):
@@ -228,9 +251,22 @@ def layer_value(track, c, prop):
         return assets.clean(prop, curves.value(c["asset"].get(prop), 0))
     if prop == "source":
         return (c.get("media") or {}).get("path", "")
+    if is_check_prop(prop):
+        return check_at(c, prop)
     if "." in prop:
         return number_at(c, prop, 0)
     return not track.get("hidden")
+
+
+def check_at(c, prop):
+    """Check prop of layer c (check_props_of): on or off."""
+    eid = prop.split(":", 1)[1].split(".")[0]
+    e = _effect_of(c, eid)
+    if prop.startswith(FX_ON):
+        return not e.get("disabled")
+    name = prop.split(".", 1)[1]
+    q = next(q for q in fx.def_of(e).params if q.name == name)
+    return bool(curves.value(e["params"].get(name, q.default), 0))
 
 
 def number_at(c, prop, t):
@@ -398,6 +434,15 @@ def _put(c, prop, v):
         return out
     if prop == "place":
         return dict(c, place=v) if c["type"] == "image" else c
+    if is_check_prop(prop):
+        eid = prop.split(":", 1)[1].split(".")[0]
+        if not any(e["id"] == eid for e in c.get("effects") or []):
+            return c
+        if prop.startswith(FX_ON):
+            return dict(c, effects=[{k: x for k, x in e.items() if k != "disabled"} if e["id"] == eid and v else
+                                    dict(e, disabled=True) if e["id"] == eid else e for e in c["effects"]])
+        name = prop.split(".", 1)[1]
+        return dict(c, effects=[dict(e, params=dict(e["params"], **{name: bool(v)})) if e["id"] == eid else e for e in c["effects"]])
     if "." in prop:
         group, key = prop.split(".", 1)
         _label, _d, factor, lo, hi = number_info(c, prop)

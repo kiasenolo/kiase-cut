@@ -126,6 +126,35 @@ class ComponentTests(unittest.TestCase):
         with self.assertRaises(edit.EditError):
             edit.add_param(self.p, self.kid, "text", "字", [("c1", "color")])     # not words
 
+    def test_a_check_parameter_sets_a_filters_on_off_and_its_check_boxes(self):
+        e = edit.add_effect(self.comp, "c1", "builtin:mirror")
+        c1 = components.layer_index(self.comp)["c1"][1]
+        props = components.props_of(c1)
+        on, flip = components.FX_ON + e["id"], f"{components.FX_BOOL}{e['id']}.flip_y"
+        self.assertIn(on, props)
+        self.assertIn(flip, props)
+        self.assertEqual(components.prop_kind(flip), "visible")
+        self.assertEqual(components.prop_label(c1, flip), "鏡像·上下翻轉")
+        p_on = edit.add_param(self.p, self.kid, "visible", "鏡像", [("c1", on)])
+        p_flip = edit.add_param(self.p, self.kid, "visible", "上下", [("c1", flip)])
+        self.assertEqual((p_on["binds"], p_flip["binds"]), ([["c1", on]], [["c1", flip]]))
+        self.assertEqual(components.default(self.comp, p_on), True)
+        self.assertEqual(components.default(self.comp, p_flip), False)
+        edit.set_param(self.p, self.cid, "params", p_on["id"], False)
+        edit.set_param(self.p, self.cid, "params", p_flip["id"], True)
+        inst = edit.find(self.p, self.cid)[1]
+        got = components.layer_index(components.content(inst, 0))["c1"][1]["effects"][0]
+        self.assertTrue(got.get("disabled"))
+        self.assertIs(got["params"]["flip_y"], True)
+        self.assertNotIn("disabled", self.comp["tracks"][0]["clips"][0]["effects"][0])        # (the component itself is as it was)
+        edit.set_param(self.p, self.cid, "params", p_on["id"], True)
+        got = components.layer_index(components.content(edit.find(self.p, self.cid)[1], 0))["c1"][1]["effects"][0]
+        self.assertNotIn("disabled", got)
+        edit.set_param_default(self.p, self.kid, p_on["id"], False)          # (the default goes into the component's own filter)
+        edit.set_param_default(self.p, self.kid, p_flip["id"], True)
+        own = self.comp["tracks"][0]["clips"][0]["effects"][0]
+        self.assertEqual((own.get("disabled"), own["params"]["flip_y"]), (True, True))
+
     def test_text_and_picture(self):
         txt = {"id": "tx", "type": "text", "name": "", "start_us": 0, "duration_us": S,
                "text": {"content": "原本", "size": 5.0, "color": [1, 1, 1]},

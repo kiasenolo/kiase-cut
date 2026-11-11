@@ -32,7 +32,7 @@ from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
                                QPushButton, QToolButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, fx, gizmos, menugroups, nodegraph
+from .. import components, curves, edit, fx, gizmos, menugroups, nodegraph
 from .colorpick import pick_color, qcolor, rgba
 from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, key_button, kind_tag,
                         section)
@@ -359,6 +359,7 @@ class EffectsPanel(QWidget):
         set_checks(on, [not x.get("disabled") for x in es])
         on.setToolTip(d.description or "開／關這個效果")
         on.clicked.connect(lambda _=False, eid=e["id"]: self._now(self.enabledChosen, eid, on.checkState() == Qt.Checked))
+        self._check_menu(on, components.FX_ON + e["id"])
         head.addWidget(on, 1)
         for text, tip, fn in (("↑", "往前（先套用）", lambda _=False, eid=e["id"]: self._now(self.moveRequested, eid, -1)),
                               ("↓", "往後", lambda _=False, eid=e["id"]: self._now(self.moveRequested, eid, 1)),
@@ -545,6 +546,20 @@ class EffectsPanel(QWidget):
         menu.exec(spin.lineEdit().mapToGlobal(pos))
         menu.deleteLater()
 
+    def _check_menu(self, box, prop):
+        """A check box's right-click menu: in a component, 設為元件參數 (a 勾選 parameter that switches it)."""
+        box.setContextMenuPolicy(Qt.CustomContextMenu)
+        box.customContextMenuRequested.connect(lambda pos, box=box, prop=prop: self._check_menu_at(box, prop, pos))
+
+    def _check_menu_at(self, box, prop, pos):
+        if len(self.ids) != 1 or self.menu_extender is None:
+            return
+        menu = QMenu(box)
+        self.menu_extender(menu, list(self.ids), prop)
+        if not menu.isEmpty():
+            menu.exec(box.mapToGlobal(pos))
+        menu.deleteLater()
+
     def _key_button(self, group, key):
         b = key_button(lambda: self._now(self.keyToggled, group, key))
         self.widgets[("key", group, key)] = b
@@ -572,6 +587,8 @@ class EffectsPanel(QWidget):
             cb.clicked.connect(lambda _=False, g=group, k=p.name, cb=cb: (self._queue(g, k, cb.checkState() == Qt.Checked),
                                                                          self._flush()))
             self.widgets[(group, p.name)] = cb
+            if group.startswith("fx:"):
+                self._check_menu(cb, f"{components.FX_BOOL}{group[3:]}.{p.name}")
             row.addWidget(cb, 1)
             row.addWidget(self._key_button(group, p.name))
         elif p.type == "menu":

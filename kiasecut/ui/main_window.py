@@ -3067,6 +3067,21 @@ class MainWindow(QMainWindow):
             c = edit.find(self.container(), ids[0])[1]
         except edit.EditError:
             return
+        if components.is_check_prop(prop):                  # (a filter's on / off or a check box of it: only a component's parameter)
+            comp = self.open_component()
+            if comp is not None and prop in components.props_of(c):
+                sub = menu.addMenu("設為元件參數")
+                sub.addAction("新參數", lambda: self.layer_param_bind("", prop, ids))
+                checks = [p for p in components.params(comp) if p["kind"] == "visible"]
+                if checks:
+                    sub.addSeparator()
+                for p in checks:
+                    sub.addAction(f"交給「{p['name']}」", lambda pid=p["id"]: self.layer_param_bind(pid, prop, ids))
+                mine = [p for p, pr in components.bound(comp).get(ids[0], ()) if pr == prop]
+                if mine:
+                    menu.addAction("解除元件參數「" + "、".join(dict.fromkeys(p["name"] for p in mine)) + "」",
+                                   lambda: self.unbind_params([(cid, prop) for cid in ids]))
+            return
         if prop not in components.number_props_of(c) + components.instance_props(c):
             return
         menu.addSeparator()
@@ -3320,7 +3335,7 @@ class MainWindow(QMainWindow):
                                             text=label if len(ids) > 1 else f"{clip_name(c)} {label}")
             if not ok:
                 return
-            made = self.apply_root("新增參數", edit.add_param, kid, components.PROPS[prop][0], name, binds)
+            made = self.apply_root("新增參數", edit.add_param, kid, components.prop_kind(prop), name, binds)
             pid = made["id"] if made else None
         if pid and components.prop_kind(prop) == "number":
             self.ask_bind_mapping(pid, ids, prop)

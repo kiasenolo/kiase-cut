@@ -2604,9 +2604,31 @@ class MainWindow(QMainWindow):
             return
         self.apply_root(label, edit.unmake_component, kid)
 
+    def ask_lfo_kept(self, clips):
+        """Turning clips into a static one: when they have LFOs, whether they stay ("keep": a static clip has no keyframes, but its LFOs
+        swing as the clip made from it plays) or become the numbers they give now ("bake"). None: the user said no to all of it."""
+        if not edit.has_lfo(clips):
+            return "keep"
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("保留 LFO？")
+        box.setText("這些片段上有 LFO。")
+        box.setInformativeText("靜態片段沒有關鍵幀，但 LFO 可以留著：把靜態片段放到時間軸上就會依片段的時間擺動"
+                               "（在靜態片段裡面編輯時，看到的是 LFO 起點的樣子）。\n\n"
+                               "「烘焙」是把 LFO 換成現在這一刻的數值，之後不會動。")
+        keep = box.addButton("保留 LFO", QMessageBox.AcceptRole)
+        bake = box.addButton("烘焙成現在的值", QMessageBox.DestructiveRole)
+        box.addButton("取消", QMessageBox.RejectRole)
+        box.setDefaultButton(keep)
+        box.exec()
+        return "keep" if box.clickedButton() is keep else "bake" if box.clickedButton() is bake else None
+
     def compound_to_static(self, kid):
         """轉為靜態複合片段 (or 靜態元件): a compound whose content all lasts its whole length."""
-        self.apply_root(static_label(self.proj["compounds"][kid]), edit.to_static, kid)
+        mode = self.ask_lfo_kept([c for t in self.proj["compounds"][kid]["tracks"] for c in t["clips"]])
+        if mode is None:
+            return
+        self.apply_root(static_label(self.proj["compounds"][kid]), edit.to_static, kid, mode)
 
     def delete_use(self, tl_id, path, cid):
         self.timeline.selected_id = None
@@ -3983,8 +4005,11 @@ class MainWindow(QMainWindow):
             ids = sorted(sel) if cid in sel else [cid]
             comp, at = action.endswith("component"), self.playhead_us()
             static = action.startswith("make_static")
+            mode = self.ask_lfo_kept([edit.find(self.container(), i)[1] for i in ids]) if static else "keep"
+            if mode is None:
+                return
             self.apply_root(f"建立{edit.kind_name(static, comp)}",
-                            lambda root: edit.make_compound(root, self.container(root), ids, at, static, comp),
+                            lambda root: edit.make_compound(root, self.container(root), ids, at, static, comp, mode),
                             select=lambda c: c["id"])
             return
         if action in ("to_component", "from_component"):

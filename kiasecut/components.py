@@ -35,7 +35,7 @@ frame). It reaches the layer as layer["place"] (the renderers draw the picture t
 """
 import os
 
-from . import assets, curves, expr, fx, mapping, project, svgimage, textvars
+from . import assets, curves, expr, fx, lfo, mapping, project, svgimage, textvars
 
 ICON = "❖"
 KINDS = {"text": "文字", "number": "數字", "color": "顏色", "image": "圖片", "visible": "勾選"}
@@ -406,7 +406,45 @@ def bound(comp):
 def content(c, t):
     """What compound clip c draws at clip time t: its compound, or for a component instance
     with values of its own a copy of the component with them put into its layers (only what
-    they change is copied; the renderers key their stills on the content)."""
+    they change is copied; the renderers key their stills on the content). A static compound's
+    layers that have an LFO get its value at clip time t: the picture is drawn afresh as the clip plays."""
+    comp = _content(c, t)
+    if comp is not None and comp.get("static"):
+        over = {}
+        _lfo_over(comp["tracks"], t, over)
+        if over:
+            comp = dict(comp, tracks=_subst(comp["tracks"], over))
+    return comp
+
+
+def lfo_layers(tracks):
+    """[(layer, prop)] of the layers of tracks (groups' too) whose number an LFO swings."""
+    out = []
+    for tr in tracks:
+        for c in tr["clips"]:
+            out += [(c, prop) for prop, text in (c.get("expr") or {}).items() if lfo.is_lfo(text)]
+            if project.is_group(c):
+                out += lfo_layers(c["tracks"])
+    return out
+
+
+def _lfo_over(tracks, t, over):
+    """over: {layer id: [(prop, value)]} of the LFOs of tracks' layers at clip time t (a static compound's layers are at 0)."""
+    for c, prop in lfo_layers(tracks):
+        try:
+            cur = number_at(c, prop, 0)
+        except (KeyError, ValueError, TypeError):
+            continue                                             # (a prop the layer has not got any more)
+        over.setdefault(c["id"], []).append((prop, lfo.safe(c["expr"][prop], t / curves.US, cur)))
+    for c, _prop in lfo_layers(tracks):
+        if c["id"] in over and (LFO_DONE, None) not in over[c["id"]]:
+            over[c["id"]].append((LFO_DONE, None))               # (its LFOs have been put in: the renderer must not swing it again)
+
+
+LFO_DONE = "lfo!"
+
+
+def _content(c, t):
     comp = c.get("compound")
     own = c.get("params") or {}
     places = c.get("places") or {}
@@ -494,6 +532,9 @@ def _put(c, prop, v):
         return out
     if prop == "place":
         return dict(c, place=v) if c["type"] == "image" else c
+    if prop == LFO_DONE:
+        left = {k: x for k, x in (c.get("expr") or {}).items() if not lfo.is_lfo(x)}
+        return dict(c, expr=left)
     if not prop_alive(c, prop):
         return c
     if is_inst_prop(prop):

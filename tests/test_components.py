@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import assets, components, curves, edit, fx, glrender, project, render, renderexport  # noqa: E402
+from test_compound_mask import HAVE_GL  # noqa: E402
 from test_edit import S, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -215,6 +216,44 @@ class ComponentTests(unittest.TestCase):
         self.assertEqual(self.colour().name(), "#0000ff")                            # (drawn through both levels)
         edit.set_param_default(self.p, okid, oc["id"], RED)                          # (the default goes into the inner instance)
         self.assertEqual(curves.value(components.layer_index(comp)[self.cid][1]["params"][inner_color["id"]], 0)[:3], [1.0, 0.0, 0.0])
+
+    def lfo_clip(self):
+        """A static clip (made from c1) whose layer's opacity an LFO swings: 50 % +- 50 %, one cycle a second."""
+        from kiasecut import lfo
+        c1 = components.layer_index(self.comp)["c1"][1]
+        c1["expr"] = {"transform.opacity": lfo.make("sine", unit="hz", rate=1.0, amp=50.0, offset=50.0, bipolar=True)}
+        return c1
+
+    def test_a_static_clips_lfo_swings_as_the_clip_made_from_it_plays(self):
+        c1 = self.lfo_clip()
+        inst = edit.find(self.p, self.cid)[1]
+        self.assertTrue(edit.has_lfo([c1]))
+        at = lambda t: components.layer_index(components.content(inst, t))["c1"][1]
+        self.assertAlmostEqual(components.number_at(at(0), "transform.opacity", 0), 50.0, places=3)        # (the sine's 0)
+        self.assertAlmostEqual(components.number_at(at(250_000), "transform.opacity", 0), 100.0, places=3)  # (a quarter cycle: its peak)
+        self.assertAlmostEqual(components.number_at(at(750_000), "transform.opacity", 0), 0.0, places=3)
+        self.assertFalse(at(250_000).get("expr"))                                   # (the renderer must not swing it again)
+        self.assertIn("expr", c1)                                               # (the component itself is as it was)
+        fps = self.p["fps"]                                                     # (and the picture itself, in both renderers)
+        for renderer in [render.Renderer()] + ([glrender.GLRenderer()] if HAVE_GL else []):
+            peak, trough = (self.colour(round(fps * x), renderer=renderer).red() for x in (0.25, 0.75))
+            self.assertGreater(peak, 240, type(renderer).__name__)
+            self.assertLess(trough, 15, type(renderer).__name__)
+
+    def test_turning_clips_into_a_static_clip_keeps_or_bakes_their_lfo(self):
+        from kiasecut import lfo
+        for mode in ("keep", "bake"):
+            p = proj()
+            p["tracks"][0]["clips"] = p["tracks"][0]["clips"][:1]
+            c = p["tracks"][0]["clips"][0]
+            c["expr"] = {"transform.opacity": lfo.make("sine", unit="hz", rate=1.0, amp=50.0, offset=50.0, bipolar=True)}
+            clip = edit.make_compound(p, p, ["c1"], c["start_us"] + 250_000, static=True, lfo_mode=mode)
+            layer = p["compounds"][clip["compound_id"]]["tracks"][0]["clips"][0]
+            if mode == "keep":
+                self.assertTrue(lfo.is_lfo(layer["expr"]["transform.opacity"]))
+            else:
+                self.assertNotIn("expr", layer)
+                self.assertAlmostEqual(components.number_at(layer, "transform.opacity", 0), 100.0, places=3)     # (the peak, where it was frozen)
 
     def test_text_and_picture(self):
         txt = {"id": "tx", "type": "text", "name": "", "start_us": 0, "duration_us": S,

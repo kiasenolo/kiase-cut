@@ -3733,14 +3733,43 @@ def new_name(comps, static, component=False):
     return f"{kind_name(static, component)} {n}"
 
 
-def make_compound(root, container, clip_ids, at_us=None, static=False, component=False):
+def bake_lfo(tracks, t_us):
+    """Every LFO on the layers of tracks (groups' too) becomes the number it gives at t_us (the layer's time: t_us minus where it
+    starts; a group's layers count from the group's start) and goes."""
+    for tr in tracks:
+        for c in tr["clips"]:
+            local = max(0, t_us - c["start_us"])
+            for prop, text in list((c.get("expr") or {}).items()):
+                if not lfo.is_lfo(text):
+                    continue
+                try:
+                    cur = components.number_at(c, prop, local)
+                except (KeyError, ValueError, TypeError):
+                    continue
+                c.update(components._put(c, prop, lfo.safe(text, local / US, cur)))
+            left = {k: x for k, x in (c.get("expr") or {}).items() if not lfo.is_lfo(x)}
+            if left:
+                c["expr"] = left
+            else:
+                c.pop("expr", None)
+            if project.is_group(c):
+                bake_lfo(c["tracks"], local)
+
+
+def has_lfo(clips):
+    """Whether any of clips (and the layers inside the groups among them) has a number an LFO swings."""
+    return any(components.lfo_layers([{"clips": [c]}]) for c in clips)
+
+
+def make_compound(root, container, clip_ids, at_us=None, static=False, component=False, lfo_mode="keep"):
     """Move clips of the open level into a new shared compound and leave one clip showing it
     in their place: over their whole span, on the topmost picture track they used (or a new
     one above it when that has no room). The tracks they were on come along, in order.
     static makes a static compound (靜態片段), which shows only its first frame, like a
     picture: the content is re-timed (freeze_at) so the moment at at_us (the playhead, kept
     inside the span) is that frame. component makes it a component (元件; with static a
-    靜態元件)."""
+    靜態元件). A static one keeps the LFOs of its layers (lfo_mode "keep": they swing as the clip made from it plays,
+    components.content) or has them worked out at that moment ("bake")."""
     picked = [find(container, cid) for cid in dict.fromkeys(clip_ids)]
     if not picked:
         raise EditError("先在時間軸上選取片段")
@@ -3763,7 +3792,10 @@ def make_compound(root, container, clip_ids, at_us=None, static=False, component
             "height": size.get("height", 1080), "duration_us": int(span), "tracks": inner}
     if static:
         t = span // 2 if at_us is None else at_us - s0
-        freeze_at(inner, min(max(t, 0), max(0, span - 1)))
+        t = min(max(t, 0), max(0, span - 1))
+        if lfo_mode == "bake":
+            bake_lfo(inner, t)
+        freeze_at(inner, t)
         comp["static"] = True
     if component:
         comp.update(component=True, params=[])
@@ -3802,7 +3834,7 @@ def steady(comp):
     return ok(comp["tracks"], None)
 
 
-def to_static(root, kid):
+def to_static(root, kid, lfo_mode="keep"):
     """轉為靜態片段: compound kid (a steady one) becomes a static one, shown like a picture
     (its first frame) by every clip showing it; a component becomes a 靜態元件."""
     comp = (root.get("compounds") or {}).get(kid)
@@ -3812,6 +3844,8 @@ def to_static(root, kid):
         raise EditError("已經是靜態片段")
     if not steady(comp):
         raise EditError("裡面的片段要全部從頭開始、長度一樣，而且沒有聲音")
+    if lfo_mode == "bake":
+        bake_lfo(comp["tracks"], 0)
     comp["static"] = True
 
 

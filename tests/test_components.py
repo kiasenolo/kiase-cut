@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from kiasecut import assets, components, curves, edit, glrender, project, render, renderexport  # noqa: E402
+from kiasecut import assets, components, curves, edit, fx, glrender, project, render, renderexport  # noqa: E402
 from test_edit import S, proj  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -154,6 +154,23 @@ class ComponentTests(unittest.TestCase):
         edit.set_param_default(self.p, self.kid, p_flip["id"], True)
         own = self.comp["tracks"][0]["clips"][0]["effects"][0]
         self.assertEqual((own.get("disabled"), own["params"]["flip_y"]), (True, True))
+
+    def test_a_parameter_bound_to_a_filter_that_is_gone_still_shows_and_works(self):
+        """The filter was deleted: its bindings stay behind unused (the parameter list and the layer list threw on them)."""
+        e = edit.add_effect(self.comp, "c1", "builtin:mirror")
+        e2 = edit.add_effect(self.comp, "c1", "builtin:blur")
+        c1 = components.layer_index(self.comp)["c1"][1]
+        pc = edit.add_param(self.p, self.kid, "visible", "反轉", [("c1", components.FX_ON + e["id"])])
+        pn = edit.add_param(self.p, self.kid, "number", "模糊", [("c1", f"fx:{e2['id']}.radius")]) \
+            if any(q.name == "radius" for q in fx.def_of(e2).params) else None
+        c1["effects"] = []                                   # (both filters deleted)
+        self.assertEqual(components.prop_label(c1, components.FX_ON + e["id"]), "（已刪除的效果）")
+        self.assertEqual(components.default(self.comp, pc), True)         # (its own default: no layer has it any more)
+        if pn:
+            self.assertEqual(components.prop_label(c1, pn["binds"][0][1]), "（已刪除的效果）")
+        edit.set_param(self.p, self.cid, "params", pc["id"], False)
+        components.content(edit.find(self.p, self.cid)[1], 0)             # (nothing to set, and no error)
+        edit.set_param_default(self.p, self.kid, pc["id"], False)
 
     def test_text_and_picture(self):
         txt = {"id": "tx", "type": "text", "name": "", "start_us": 0, "duration_us": S,

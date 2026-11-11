@@ -4288,6 +4288,8 @@ def set_param_default(root, kid, pid, value):
         if cid not in index:
             continue
         t, c = index[cid]
+        if not components.prop_alive(c, prop):
+            continue
         at = 0
         if prop == "content":
             c["text"]["content"] = value

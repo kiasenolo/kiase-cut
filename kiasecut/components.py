@@ -142,6 +142,17 @@ def is_check_prop(prop):
     return prop.startswith((FX_ON, FX_BOOL))
 
 
+def prop_alive(c, prop):
+    """Whether layer c still has what prop sets (a filter that was deleted leaves its bindings behind, unused)."""
+    if is_check_prop(prop):
+        eid = prop.split(":", 1)[1].split(".")[0]
+    elif prop.startswith("fx:"):
+        eid = prop.split(".", 1)[0][3:]
+    else:
+        return True
+    return any(e["id"] == eid for e in c.get("effects") or [])
+
+
 def prop_kind(prop):
     """The kind of parameter that can set prop (a "group.key" number prop is a number)."""
     return "visible" if is_check_prop(prop) else "number" if "." in prop else PROPS[prop][0]
@@ -222,6 +233,8 @@ def number_prop_for(c, group, key):
 
 def prop_label(c, prop):
     """What prop of layer c is called (a shape's colour is its 填充顏色)."""
+    if not prop_alive(c, prop):
+        return "（已刪除的效果）"
     if is_check_prop(prop):
         e = _effect_of(c, prop.split(":", 1)[1].split(".")[0])
         d = fx.def_of(e)
@@ -285,7 +298,7 @@ def default(comp, p, index=None):
     layers gone) has the one it was given (p["default"])."""
     index = layer_index(comp) if index is None else index
     for cid, prop in p.get("binds") or []:
-        if cid in index:
+        if cid in index and prop_alive(index[cid][1], prop):
             t, c = index[cid]
             return layer_value(t, c, prop)
     return clean(p, p["default"]) if "default" in p else FALLBACK[p["kind"]]
@@ -434,10 +447,10 @@ def _put(c, prop, v):
         return out
     if prop == "place":
         return dict(c, place=v) if c["type"] == "image" else c
+    if not prop_alive(c, prop):
+        return c
     if is_check_prop(prop):
         eid = prop.split(":", 1)[1].split(".")[0]
-        if not any(e["id"] == eid for e in c.get("effects") or []):
-            return c
         if prop.startswith(FX_ON):
             return dict(c, effects=[{k: x for k, x in e.items() if k != "disabled"} if e["id"] == eid and v else
                                     dict(e, disabled=True) if e["id"] == eid else e for e in c["effects"]])

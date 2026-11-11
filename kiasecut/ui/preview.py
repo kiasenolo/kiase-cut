@@ -66,6 +66,10 @@ Every drag on the canvas is endless (無邊界, wrapdrag.py): the pointer reachi
 preview jumps to the other one and the drag goes on; what is moved or sized (a clip, a mask, a
 selection box) keeps the view following it. The pointer hides while dragging and comes back
 where the drag ended up.
+Rulers (標尺, 檢視 menu, the canvas keeps clear of them): a drag out of the top ruler makes a flat reference line, out of the left one
+an upright one (the project's / compound's "guides": {"x": [px], "y": [px]}; guidesCommitted); drag one in the open to move it, back onto
+the ruler to take it away (Ctrl: freely). Clips, drops and scaled edges settle on the lines (吸附到參考線) and on the grid (格線,
+吸附到格線, grid_size canvas px; also what a reference line settles on).
 With the mouse over the preview (and no text being typed): the arrow keys nudge the selected clips by a canvas pixel
 (Shift: ten; movesCommitted), Home fits the canvas in the view,
 numpad . frames the selection, numpad 1 shows it 1:1, numpad 2 / 4 / 8 at 1:2 / 1:4 / 1:8 and
@@ -123,6 +127,8 @@ ROT_PX = 34                   # rotation handle distance from the outline
 PICK_PX = 9
 ANGLE_SNAP = 3.0              # degrees within which rotation settles on a right angle
 PIVOT_PICK = 0.7              # the pivot's ring is picked closer than a handle (it sits on the clip)
+RULER_PX = 18                 # width of the rulers along the top and left edge
+GUIDE_COLOR = "#2dd4ff"       # the user's reference lines
 ZOOM_STEP = 1.25              # one wheel notch (as Blender's)
 ZOOM_MIN, ZOOM_MAX = 0.05, 64.0   # view zoom, 1 = the canvas fits the widget
 _text_sizes = {}
@@ -612,6 +618,7 @@ class Preview(_Surface):
     mediaDropped = Signal(list, list, float, float, str)  # idents, file paths, transform x / y there, group id or ""
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
     textureFailed = Signal(str)                 # the GpuFrame could not be drawn: the player sends pictures from now on
+    guidesCommitted = Signal(dict)              # {"x": [canvas px], "y": [canvas px]}: the reference lines after one was made, moved or taken away
     grabCancelled = Signal()                    # a G / R / S grab was put back (Esc / right button): draw the clips as they were
 
     def __init__(self, parent=None, interactive=True):
@@ -632,6 +639,12 @@ class Preview(_Surface):
         self.selected_id = None
         self.selected_ids = set()               # the whole selection (with selected_id, the primary)
         self.interactive = interactive
+        self.show_rulers = False                         # 標尺: along the top and left edge, reference lines are dragged out of them
+        self.show_grid = False                           # 格線 (grid_size canvas px apart)
+        self.grid_size = 50
+        self.snap_grid = False                           # clips, masks and reference lines settle on the grid lines
+        self.snap_guides = True                          # clips settle on the reference lines
+        self.guide_live = None                           # ([x], [y]) while a reference line is dragged
         self.show_guides = True                          # 輔助線: the frame, handles and notes drawn over the picture (off: just the picture)
         self.mask_mode = False
         self.gizmo_node = None                  # the node of that node effect whose handles they are
@@ -762,7 +775,7 @@ class Preview(_Surface):
     def set_show_guides(self, on):
         self.show_guides = bool(on)
         self.unsetCursor()
-        self.update()
+        self._view_changed()
 
     def set_mask_mode(self, on, group="mask"):
         self.mask_mode, self.mask_group = on, group
@@ -833,16 +846,21 @@ class Preview(_Surface):
         super().hideEvent(e)
         self._report_size()
 
+    def _ruler_inset(self):
+        return RULER_PX if self.show_rulers and self.interactive and self.show_guides else 0
+
     def _rect(self):
-        w, h = self.width(), self.height()
+        i = self._ruler_inset()
+        w, h = self.width() - i, max(1, self.height() - i)
         a = self.W / self.H
         dw, dh = (h * a, h) if w / h > a else (w, w / a)
         dw, dh = dw * self.zoom, dh * self.zoom
-        return QRectF((w - dw) / 2 + self.pan.x(), (h - dh) / 2 + self.pan.y(), dw, dh)
+        return QRectF(i + (w - dw) / 2 + self.pan.x(), i + (h - dh) / 2 + self.pan.y(), dw, dh)
 
     def _fit_size(self):
         """(w, h) the canvas has on the widget at zoom 1."""
-        w, h = self.width(), self.height()
+        i = self._ruler_inset()
+        w, h = self.width() - i, max(1, self.height() - i)
         a = self.W / self.H
         return (h * a, h) if w / max(1, h) > a else (w, w / a)
 
@@ -990,6 +1008,172 @@ class Preview(_Surface):
         if k == Qt.Key_Escape and self.box_zoom:
             return lambda: self._arm_box_zoom(False)
         return None
+
+    # -- rulers, reference lines and the grid ---------------------------------------------------
+    def set_rulers(self, on):
+        self.show_rulers = bool(on)
+        self._view_changed()
+
+    def set_grid(self, show=None, size=None, snap=None, snap_guides=None):
+        if show is not None:
+            self.show_grid = bool(show)
+        if size is not None:
+            self.grid_size = max(1, int(size))
+        if snap is not None:
+            self.snap_grid = bool(snap)
+        if snap_guides is not None:
+            self.snap_guides = bool(snap_guides)
+        self.update()
+
+    def guide_lists(self):
+        """([x], [y]) canvas px of the reference lines (the ones being dragged, while one is)."""
+        if self.guide_live is not None:
+            return self.guide_live
+        g = (self.view or {}).get("guides") or {}
+        return list(g.get("x") or ()), list(g.get("y") or ())
+
+    def _extra_targets(self):
+        """([x], [y]) canvas px a moved edge or centre settles on besides the clips: reference lines and grid lines."""
+        xs, ys = self.guide_lists() if self.snap_guides else ([], [])
+        xs, ys = list(xs), list(ys)
+        s = self.grid_size
+        if self.snap_grid and s >= 1 and self.W / s <= 800 and self.H / s <= 800:
+            xs += [i * s for i in range(int(self.W // s) + 1)]
+            ys += [i * s for i in range(int(self.H // s) + 1)]
+        return xs, ys
+
+    def _guide_at(self, m, k):
+        """("x" or "y", index) of the reference line within a few screen px of canvas point m, else None."""
+        tol = 5 * k
+        xs, ys = self.guide_lists()
+        for i, v in enumerate(xs):
+            if abs(m.x() - v) <= tol:
+                return "x", i
+        for i, v in enumerate(ys):
+            if abs(m.y() - v) <= tol:
+                return "y", i
+        return None
+
+    def _guide_move(self, d, e, m):
+        """A reference line being made or moved: it settles on the canvas centre / edges and the grid (Ctrl: freely) and is
+        taken away when the pointer is back on the ruler it came from (or the one for its kind)."""
+        axis = d["axis"]
+        v = m.x() if axis == "x" else m.y()
+        full = self.W if axis == "x" else self.H
+        if not e.modifiers() & Qt.ControlModifier:
+            cands = [0, full / 2, full]
+            if self.snap_grid and self.grid_size >= 1:
+                cands.append(round(v / self.grid_size) * self.grid_size)
+            near = min(cands, key=lambda c: abs(c - v))
+            v = near if abs(near - v) < SNAP_PX * self._k() else round(v)
+        if "base" not in d:
+            g = (self.view or {}).get("guides") or {}
+            d["base"] = (list(g.get("x") or ()), list(g.get("y") or ()))
+        xs, ys = (list(a) for a in d["base"])
+        lst = xs if axis == "x" else ys
+        if d["idx"] is not None:
+            del lst[d["idx"]]
+        pos = e.position()
+        away = (pos.x() if axis == "x" else pos.y()) < RULER_PX and self.show_rulers
+        d["value"], d["pos_w"] = (None if away else v), pos
+        if not away:
+            lst.append(v)
+            lst.sort()
+        self.guide_live = (xs, ys)
+        self.update()
+
+    def _paint_grid(self, p, k):
+        """The grid and the reference lines, in canvas coordinates under the handles."""
+        s = self.grid_size
+        if self.show_grid and s >= 1 and s / k >= 6:
+            p.setPen(QPen(QColor(255, 255, 255, 38), 1 * k))
+            for i in range(int(self.W // s) + 1):
+                p.drawLine(QPointF(i * s, 0), QPointF(i * s, self.H))
+            for i in range(int(self.H // s) + 1):
+                p.drawLine(QPointF(0, i * s), QPointF(self.W, i * s))
+        xs, ys = self.guide_lists()
+        if xs or ys:
+            far = (self.W + self.H) * 50
+            p.setPen(QPen(QColor(GUIDE_COLOR), 1 * k))
+            for v in xs:
+                p.drawLine(QPointF(v, -far), QPointF(v, far))
+            for v in ys:
+                p.drawLine(QPointF(-far, v), QPointF(far, v))
+
+    @staticmethod
+    def _ruler_step(per_px):
+        """Canvas px between the numbers of a ruler when one screen px is per_px canvas px (about 70 screen px apart)."""
+        raw = 70 * per_px
+        mag = 10 ** math.floor(math.log10(max(raw, 1e-9)))
+        for m in (1, 2, 5, 10):
+            if m * mag >= raw:
+                return m * mag, m
+        return 10 * mag, 10
+
+    def _paint_rulers(self, p):
+        r = self._rect()
+        w, h = self.width(), self.height()
+        bg, ink, tick = QColor(34, 34, 40), QColor("#9a9aa0"), QColor("#6a6a72")
+        p.fillRect(QRectF(0, 0, w, RULER_PX), bg)
+        p.fillRect(QRectF(0, 0, RULER_PX, h), bg)
+        p.setPen(QPen(QColor("#4a4a52"), 1))
+        p.drawLine(QPointF(0, RULER_PX), QPointF(w, RULER_PX))
+        p.drawLine(QPointF(RULER_PX, 0), QPointF(RULER_PX, h))
+        f = p.font()
+        f.setPixelSize(9)
+        p.setFont(f)
+        for axis in ("x", "y"):
+            full = self.W if axis == "x" else self.H
+            size = r.width() if axis == "x" else r.height()
+            origin = r.x() if axis == "x" else r.y()
+            unit = size / full                                   # screen px per canvas px
+            step, mant = self._ruler_step(1 / unit)
+            minor = step / (4 if mant == 2 else 5 if mant in (1, 5) else 10)
+            lo = math.floor((RULER_PX - origin) / unit / minor) * minor
+            hi = ((w if axis == "x" else h) - origin) / unit
+            n = int((hi - lo) / minor) + 2
+            for i in range(min(n, 4000)):
+                v = lo + i * minor
+                sp = origin + v * unit
+                if sp < RULER_PX:
+                    continue
+                major = abs(v / step - round(v / step)) < 1e-6
+                p.setPen(tick)
+                if axis == "x":
+                    p.drawLine(QPointF(sp, RULER_PX - (9 if major else 4)), QPointF(sp, RULER_PX))
+                else:
+                    p.drawLine(QPointF(RULER_PX - (9 if major else 4), sp), QPointF(RULER_PX, sp))
+                if major:
+                    p.setPen(ink)
+                    text = f"{v:g}"
+                    if axis == "x":
+                        p.drawText(QPointF(sp + 3, 9), text)
+                    else:
+                        p.save()
+                        p.translate(9, sp - 3)
+                        p.rotate(-90)
+                        p.drawText(QPointF(0, 0), text)
+                        p.restore()
+        xs, ys = self.guide_lists()                              # the reference lines marked on the rulers
+        p.setPen(QPen(QColor(GUIDE_COLOR), 2))
+        for v in xs:
+            sx = r.x() + v / self.W * r.width()
+            if sx >= RULER_PX:
+                p.drawLine(QPointF(sx, 0), QPointF(sx, RULER_PX))
+        for v in ys:
+            sy = r.y() + v / self.H * r.height()
+            if sy >= RULER_PX:
+                p.drawLine(QPointF(0, sy), QPointF(RULER_PX, sy))
+        d = self.drag
+        if d and d["kind"] == "guide" and d.get("value") is not None and d.get("pos_w") is not None:
+            text = ("X " if d["axis"] == "x" else "Y ") + f"{d['value']:g}"
+            pos = d["pos_w"]
+            box = QRectF(pos.x() + 14, pos.y() + 14, p.fontMetrics().horizontalAdvance(text) + 10, 16)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(GUIDE_COLOR))
+            p.drawRoundedRect(box, 3, 3)
+            p.setPen(QColor("#10222a"))
+            p.drawText(box, Qt.AlignCenter, text)
 
     # -- arrow keys: nudge the selection by a pixel (Shift: ten) ------------------------------------------------
     def _can_nudge(self):
@@ -1160,8 +1344,9 @@ class Preview(_Surface):
             return QPointF(x, y), []
         tol = SNAP_PX * self._k()
         rects = [b.extents() for b in self.visible_boxes()]
-        tx = [self.W / 2, 0, self.W] + [v for o in rects for v in ((o[0] + o[1]) / 2, o[0], o[1])]
-        ty = [self.H / 2, 0, self.H] + [v for o in rects for v in ((o[2] + o[3]) / 2, o[2], o[3])]
+        ex, ey = self._extra_targets()
+        tx = [self.W / 2, 0, self.W] + [v for o in rects for v in ((o[0] + o[1]) / 2, o[0], o[1])] + ex
+        ty = [self.H / 2, 0, self.H] + [v for o in rects for v in ((o[2] + o[3]) / 2, o[2], o[3])] + ey
         guides = []
         hit = self._best([x], tx, tol)
         if hit:
@@ -1332,7 +1517,14 @@ class Preview(_Surface):
             sharedgl.ENABLED = False
             self.textureFailed.emit(str(exc))
 
-    def paintEvent(self, _):
+    def paintEvent(self, e):
+        self._paint_view(e)
+        if self.interactive and self.show_guides and self.show_rulers and self.view:
+            p = QPainter(self)
+            self._paint_rulers(p)
+            p.end()
+
+    def _paint_view(self, _):
         p = QPainter(self)
         p.fillRect(self.rect(), QColor(SURROUND))
         r = self._rect()
@@ -1365,6 +1557,7 @@ class Preview(_Surface):
         p.translate(r.x(), r.y())
         p.scale(r.width() / self.W, r.height() / self.H)
         k = self._k()
+        self._paint_grid(p, k)
         box = self._live_box()
         mbox = self.mask_box(box)
         if self.multi():
@@ -1783,6 +1976,12 @@ class Preview(_Surface):
             return
         x, y = self._to_canvas(e.position())
         m = QPointF(x, y)
+        if self.show_rulers and (e.position().x() < RULER_PX) != (e.position().y() < RULER_PX):
+            axis = "y" if e.position().y() < RULER_PX else "x"          # the top ruler makes a flat line, the left one an upright one
+            self.drag = {"kind": "guide", "axis": axis, "idx": None, "m0": m, "moved": False}
+            return
+        if self.show_rulers and e.position().x() < RULER_PX and e.position().y() < RULER_PX:
+            return
         if self.box_zoom:
             self.drag = {"kind": "zoombox", "m0": m, "moved": False, "rect": QRectF(m, m)}
             return
@@ -1826,6 +2025,9 @@ class Preview(_Surface):
         pickable = [b for b in boxes if not b.locked]          # clips on locked tracks are not picked
         sel = next((b for b in pickable if b.clip["id"] in self.selected_ids and grabs(b, x, y)), None)
         hit = sel or next((b for b in pickable if b.contains(x, y)), None)
+        if hit is None and (g := self._guide_at(m, k)) is not None:      # a reference line in the open: move it
+            self.drag = {"kind": "guide", "axis": g[0], "idx": g[1], "m0": m, "moved": False}
+            return
         if hit is None:
             if not self.mask_mode:                       # a box around the clips to select
                 self.drag = {"kind": "marquee", "m0": m, "moved": False, "adding": adding, "hits": []}
@@ -1863,8 +2065,9 @@ class Preview(_Surface):
         canvas centre lines and edges, to other clips' centres and edges and to equal gaps
         between clips (others: their rects). Returns dx, dy and the guides to draw."""
         l, r, t, b = rect
-        tx = [self.W / 2, 0, self.W] + [v for o in others for v in ((o[0] + o[1]) / 2, o[0], o[1])]
-        ty = [self.H / 2, 0, self.H] + [v for o in others for v in ((o[2] + o[3]) / 2, o[2], o[3])]
+        ex, ey = self._extra_targets()
+        tx = [self.W / 2, 0, self.W] + [v for o in others for v in ((o[0] + o[1]) / 2, o[0], o[1])] + ex
+        ty = [self.H / 2, 0, self.H] + [v for o in others for v in ((o[2] + o[3]) / 2, o[2], o[3])] + ey
 
         def axis(name, lo, hi, d, gaps, point):
             hit = self._best([(lo + hi) / 2 + d, lo + d, hi + d], tx if name == "x" else ty, tol)
@@ -2168,7 +2371,8 @@ class Preview(_Surface):
         if min(r, 90 - r) > 0.01:
             return ks[0], ks[1], []
         tol = SNAP_PX * self._k()
-        targets = {"x": [self.W / 2, 0, self.W], "y": [self.H / 2, 0, self.H]}
+        ex, ey = self._extra_targets()
+        targets = {"x": [self.W / 2, 0, self.W] + ex, "y": [self.H / 2, 0, self.H] + ey}
         for o in others:
             ol, orr, ot, ob = o.extents()
             targets["x"] += [o.cx, ol, orr]
@@ -2248,6 +2452,9 @@ class Preview(_Surface):
         if d["kind"] in self.FOLLOW:
             self._follow(d["live"])
             d["live"] = pos + self.pan - d["wrap_pan"]
+        if d["kind"] == "guide":
+            self._guide_move(d, e, m)
+            return
         if d["kind"] == "zoombox":
             d["rect"] = QRectF(d["m0"], m).normalized()
             self.update()
@@ -2271,6 +2478,12 @@ class Preview(_Surface):
             return
         x, y = self._to_canvas(e.position())
         m, k = QPointF(x, y), self._k()
+        if self.show_rulers and (e.position().x() < RULER_PX) != (e.position().y() < RULER_PX):
+            self.setCursor(Qt.SizeVerCursor if e.position().y() < RULER_PX else Qt.SizeHorCursor)
+            return
+        if (g := self._guide_at(m, k)) is not None and not any(b.contains(x, y) for b in self.visible_boxes() if not b.locked):
+            self.setCursor(Qt.SizeVerCursor if g[0] == "y" else Qt.SizeHorCursor)
+            return
         box = self.selected_box()
         cur = Qt.ArrowCursor
         hover = None
@@ -2336,6 +2549,12 @@ class Preview(_Surface):
             if d["moved"]:
                 rc = d["rect"]
                 self.view_rect(rc.left(), rc.right(), rc.top(), rc.bottom(), margin=0)
+            self.update()
+            return
+        if d and d["kind"] == "guide":
+            live, self.guide_live = self.guide_live, None
+            if d["moved"] and live is not None:
+                self.guidesCommitted.emit({"x": live[0], "y": live[1]})
             self.update()
             return
         self.guides = []

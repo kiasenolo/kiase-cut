@@ -371,6 +371,7 @@ class MainWindow(QMainWindow):
         self.preview.paramsLive.connect(self.live_params)
         self.preview.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
         self.preview.movesCommitted.connect(self.on_preview_moves)
+        self.preview.guidesCommitted.connect(self.on_guides)
         self.preview.movesLive.connect(self.live_moves)
         self.preview.dupLive.connect(self.live_dup)
         self.preview.grabCancelled.connect(lambda: (self.rebuild(), self.refresh_inspector()))
@@ -1117,6 +1118,28 @@ class MainWindow(QMainWindow):
         row.addWidget(plus)
         self.layout_corner = corner                      # (PySide would delete it with this function's locals)
         self.menuBar().setCornerWidget(corner, Qt.TopRightCorner)     # (the window's own bar is not native: _global_menu keeps a second one for the desktop's)
+        m = keyed(self.menuBar().addMenu("檢視(&V)"))
+        self.view_actions = {}
+
+        def toggle(key, text, shortcut, fn, default):
+            a = QAction(text, self)
+            a.setCheckable(True)
+            a.setChecked(str(self.settings().value(key, "true" if default else "false")).lower() in ("true", "1"))
+            if shortcut:
+                a.setShortcut(QKeySequence(shortcut))
+            a.toggled.connect(lambda on: (self.settings().setValue(key, "true" if on else "false"), fn(on)))
+            m.addAction(a)
+            self.view_actions[key] = a
+        toggle("show_rulers", "標尺", "Ctrl+R", self.preview.set_rulers, False)
+        toggle("show_grid", "格線", "Ctrl+'", lambda on: self.preview.set_grid(show=on), False)
+        toggle("snap_grid", "吸附到格線", "Ctrl+Shift+'", lambda on: self.preview.set_grid(snap=on), False)
+        toggle("snap_guides", "吸附到參考線", None, lambda on: self.preview.set_grid(snap_guides=on), True)
+        add(m, "格線間距…", None, self.ask_grid_size)
+        add(m, "清除所有參考線", None, lambda: self.on_guides({"x": [], "y": []}))
+        grid = int(self.settings().value("grid_size", 50) or 50)
+        self.preview.set_grid(show=self.view_actions["show_grid"].isChecked(), size=grid,
+                              snap=self.view_actions["snap_grid"].isChecked(), snap_guides=self.view_actions["snap_guides"].isChecked())
+        self.preview.set_rulers(self.view_actions["show_rulers"].isChecked())
         m = keyed(self.menuBar().addMenu("播放(&P)"))
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
         add(m, "標記出點", "O", lambda: self.set_mark("out"))
@@ -1444,7 +1467,7 @@ class MainWindow(QMainWindow):
                 "master_gain": self.proj.get("master_gain", 1.0),
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"], "compounds": self.proj.get("compounds", {}),
-                "markers": node.get("markers") or [], "rack": self.proj.get("rack") or [],
+                "markers": node.get("markers") or [], "guides": node.get("guides"), "rack": self.proj.get("rack") or [],
                 "open_component": node if components.is_component(node) else None}
 
     def show_compound(self, tl_id, parent_path, cid):
@@ -3054,6 +3077,24 @@ class MainWindow(QMainWindow):
                     edit.set_param(level, cid, g, key, v, t)
 
         self.apply(label, set_all)
+
+    def ask_grid_size(self):
+        n, ok = QInputDialog.getInt(self, "格線間距", "格線間距（畫布像素）：", self.preview.grid_size, 1, 2000)
+        if ok:
+            self.settings().setValue("grid_size", n)
+            self.preview.set_grid(size=n)
+
+    def on_guides(self, g):
+        """The reference lines of the open canvas after one was made, moved or taken away ({"x": [px], "y": [px]})."""
+        if not self.proj:
+            return
+
+        def set_guides(level, g):
+            if g.get("x") or g.get("y"):
+                level["guides"] = {"x": list(g.get("x") or ()), "y": list(g.get("y") or ())}
+            else:
+                level.pop("guides", None)
+        self.apply("參考線", set_guides, g)
 
     def on_preview_moves(self, moves):
         """Several clips dragged together on the canvas ({clip id: {x, y}}): one edit."""

@@ -592,6 +592,7 @@ class Inspector(QWidget):
                            (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("anchor_x", "anchor_y", "錨點"),
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
+                self._build_flip(form)
                 if c["type"] in ("image", "video", "compound") and not c.get("asset"):
                     self._build_corners(form)
                 blend = ComboBox()
@@ -1273,6 +1274,21 @@ class Inspector(QWidget):
             value = text
         self._queue(group, "value", value)
         self._flush()
+
+    def _build_flip(self, form):
+        """翻轉: the picture turned over across (水平) and / or down (垂直)."""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        for key, text, tip in (("flip_h", "⇋ 水平", "左右翻轉（Shift+H，滑鼠在預覽上）"), ("flip_v", "⇅ 垂直", "上下翻轉（Shift+V，滑鼠在預覽上）")):
+            b = QPushButton(text)
+            b.setCheckable(True)
+            b.setToolTip(tip)
+            b.clicked.connect(lambda on, key=key: self._emit_now(self.paramEdited, "transform", key, bool(on)))
+            self.widgets[key] = b
+            lay.addWidget(b)
+        lay.addStretch(1)
+        form.addRow("翻轉", row)
 
     def _build_anchor_grid(self, form):
         """錨點 9 宮格: one press puts the anchor at a corner, an edge middle or the centre of the clip; the clip stays put."""
@@ -1993,6 +2009,11 @@ class Inspector(QWidget):
             vals = {round(curves.value(k["transform"].get(r, 0.0), t), 1)
                     for k, t in zip(clips, ts) for r in project.CORNERS}
             self._set("radius_all", vals.pop() if len(vals) == 1 else None)
+        for key in ("flip_h", "flip_v"):
+            if key in w:
+                w[key].blockSignals(True)
+                w[key].setChecked(all(bool(k["transform"].get(key)) for k in clips))
+                w[key].blockSignals(False)
         if "scale_link" in w:
             w["scale_link"].blockSignals(True)
             w["scale_link"].setChecked(all(edit.linked(k["transform"]) for k in clips))

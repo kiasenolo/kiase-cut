@@ -72,7 +72,7 @@ an upright one (the project's / compound's "guides": {"x": [px], "y": [px]}; gui
 the ruler to take it away (Ctrl: freely). Clips, drops and scaled edges settle on the lines (吸附到參考線) and on the grid (格線,
 吸附到格線, grid_size canvas px; also what a reference line settles on).
 With the mouse over the preview (and no text being typed): the arrow keys nudge the selected clips by a canvas pixel
-(Shift: ten; movesCommitted), Home fits the canvas in the view,
+(Shift: ten; movesCommitted), Shift+H / Shift+V flip them across / down, Home fits the canvas in the view,
 numpad . frames the selection, numpad 1 shows it 1:1, numpad 2 / 4 / 8 at 1:2 / 1:4 / 1:8 and
 Ctrl+numpad 2 / 4 / 8 at 2:1 / 4:1 / 8:1, numpad + / - zoom in / out, and Shift+B then a drag
 zooms into the box dragged (Esc or the right button: not).
@@ -1012,6 +1012,8 @@ class Preview(_Surface):
             return lambda: self._grab_begin(grab)
         if k == Qt.Key_B and shift and not ctrl:
             return self._arm_box_zoom
+        if k in (Qt.Key_H, Qt.Key_V) and shift and not ctrl and not pad and not mods & Qt.AltModifier and self._can_nudge():
+            return lambda: self.flip("flip_h" if k == Qt.Key_H else "flip_v")
         step = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0), Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}.get(k)
         if step and not pad and not ctrl and not mods & Qt.AltModifier and self._can_nudge():
             n = 10 if shift else 1
@@ -1273,6 +1275,16 @@ class Preview(_Surface):
         (gx, gy: -1 / 0 / 1; y down) without the clip moving (paramsCommitted, one edit each)."""
         for b in self._picked_boxes():
             self.paramsCommitted.emit(b.clip["id"], "transform", b.anchor_to(gx, gy))
+
+    def flip(self, key):
+        """Shift+H / Shift+V (and the inspector's buttons): the selected clips are turned over - all of them like the
+        primary one if it is not flipped yet, else all back."""
+        boxes = self._nudge_boxes()
+        if not boxes:
+            return
+        on = not (boxes[0].flip[0] < 0 if key == "flip_h" else boxes[0].flip[1] < 0)
+        for b in boxes:
+            self.paramsCommitted.emit(b.clip["id"], "transform", {key: on})
 
     def nudge_moves(self, dx, dy):
         """{clip id: {x, y}} of the selected clips moved by dx, dy canvas pixels (y down)."""

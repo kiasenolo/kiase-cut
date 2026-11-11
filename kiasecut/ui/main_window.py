@@ -241,7 +241,7 @@ class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread
     shaderCompile = Signal(str, bool)          # (filter name, finished): a node's shader is being compiled (by the player's thread)
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
-                    ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動",
+                    ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
                     ("transform", "anchor_x"): "錨點", ("transform", "anchor_y"): "錨點",
@@ -3069,7 +3069,8 @@ class MainWindow(QMainWindow):
         elif group.startswith("fx:"):
             label = "效果控制點"
         else:
-            label = "旋轉" if "rotation" in values else "縮放" if "scale" in values else \
+            label = "翻轉" if "flip_h" in values or "flip_v" in values else \
+                "旋轉" if "rotation" in values else "縮放" if "scale" in values else \
                 "中心點" if "pivot_x" in values else "錨點" if "anchor_x" in values else "移動位置"
 
         def set_all(level):
@@ -4777,7 +4778,7 @@ class MainWindow(QMainWindow):
     def on_live_edit(self, ids, group, key, value):
         """A value being typed or scrubbed in the inspector: the preview shows it at once
         (the edit itself follows after a short pause)."""
-        if key == "scale_link":
+        if key in ("scale_link", "flip_h", "flip_v"):
             return                                  # (drawn when the edit is made)
         view = self.snapshot()
         for c in project.walk_clips(view["tracks"]):

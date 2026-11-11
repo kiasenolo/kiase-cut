@@ -31,6 +31,17 @@ class Nudge(unittest.TestCase):
         pv.nudge(1, 0)
         self.assertEqual(list(got[0]), ["k0"])
 
+    def test_flip_toggles_and_applies(self):
+        p, pv = scene((300, 200))
+        got = []
+        pv.paramsCommitted.connect(lambda cid, g, v: got.append((cid, g, v)))
+        pv.flip("flip_h")
+        self.assertEqual(got, [("k0", "transform", {"flip_h": True})])
+        edit.set_param(p, "k0", "transform", "flip_h", True)
+        pv.set_scene(p, 0, "k0", {"k0"})
+        pv.flip("flip_h")
+        self.assertEqual(got[-1][2], {"flip_h": False})
+
 
 if __name__ == "__main__":
     unittest.main()

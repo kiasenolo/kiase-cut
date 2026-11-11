@@ -89,7 +89,7 @@ class AssetTests(unittest.TestCase):
             if a.cat not in ("shape", "empty"):             # fills the canvas
                 self.assertEqual((p["w"], p["h"]), (1920, 1080), a.key)
             img = svgimage.raster(path, 64)
-            if a.cat == "empty":                            # nothing to see in the file
+            if a.cat in ("empty", "path"):                  # nothing to see in the file (a pen path has no nodes yet)
                 self.assertEqual(sum(img.pixelColor(x, y).alpha() for x in range(0, 64, 4) for y in range(0, img.height(), 2)), 0)
                 continue
             self.assertGreater(sum(img.pixelColor(x, y).alpha() for x in range(0, 64, 4)

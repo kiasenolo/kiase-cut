@@ -1274,7 +1274,7 @@ class Preview(PenMixin, _Surface):
 
     def _has_radius_handles(self, box):
         return (not getattr(box, "group", False) and box.clip["type"] in ("image", "video", "compound") and not box.clip.get("asset")
-                and not box.locked and min(box.w, box.h) / self._k() >= 70)
+                and not getattr(box, "locked", False) and min(box.w, box.h) / self._k() >= 70)
 
     def radius_handles(self, box, k):
         """[(radius key, canvas point)]: each handle sits as far in from its corner as that corner is rounded (at least a

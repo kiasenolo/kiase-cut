@@ -2507,7 +2507,9 @@ class MainWindow(QMainWindow):
         if win is None:
             win = self.beat_editor = beat_dialog.BeatDialog(cid, self)
             win.destroyed.connect(lambda *_: setattr(self, "beat_editor", None))
-        if not win.show_clip(self.container(self.proj)):
+            win.beatEdited.connect(self.on_beat_edited)
+            self.timeline.peaksReady.connect(win.peaks_ready)
+        if not win.show_clip(self.container(self.proj), self.timeline.peaks):
             win.close()
             return
         win.show()
@@ -2865,6 +2867,8 @@ class MainWindow(QMainWindow):
         kept = self._nodes_kept(clips)
         self.nodes.show_clip(clips[0] if len(clips) == 1 else kept, t=times[clips[0]["id"]] if len(clips) == 1 else 0)
         self.beats.show_clips(clips)
+        if getattr(self, "beat_editor", None) is not None and not self.beat_editor.show_clip(self.container(self.proj)):
+            self.beat_editor.close()                               # (its clip is gone)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
         self._update_side_tabs(clips)
 

@@ -1522,6 +1522,24 @@ def beat_grid(c, lo=None, hi=None, bars=False, beyond=False):
     return out
 
 
+def source_grid(beat, lo, hi, bars=False):
+    """[(time us, d)] of a BPM grid's lines in the sound's own time (the 進階對齊編輯器's), between lo and
+    hi: the same lines and d as beat_grid, without a clip, its speed or whether the grid is on."""
+    beat = dict(BEAT_DEFAULT, **(beat or {}))
+    div = beat["div"] if beat["div"] in BEAT_DIVS else 1
+    period = 60 * US / beat["bpm"] / div
+    k0, k1 = math.ceil((lo - beat["offset_us"]) / period - 1e-9), math.floor((hi - beat["offset_us"]) / period + 1e-9)
+    meter = int(beat["meter"] or 0) if bars else 0
+    if div < 1:
+        step = round(1 / div)
+        return [(beat["offset_us"] + k * period, 0 if meter and (k * step) % meter == 0 else 1) for k in range(k0, k1 + 1)]
+    out = []
+    for k in range(k0, k1 + 1):
+        d = div // math.gcd(k % div, div)
+        out.append((beat["offset_us"] + k * period, 0 if meter and d == 1 and (k // div) % meter == 0 else d))
+    return out
+
+
 def level_beats(proj):
     """Every beat grid line (us, the level's time) of the level's sound clips with BPM
     alignment on, a group's included, sorted - with the line just past each clip's ends, so

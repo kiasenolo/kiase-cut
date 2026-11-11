@@ -216,5 +216,44 @@ class AdvancedEntry(unittest.TestCase):
         self.assertFalse(any(edit.find(p, i)[1]["beat"]["on"] for i in ("a1", "a2")))
 
 
+class SourceGridAndWave(unittest.TestCase):
+    def test_source_grid_is_beat_grid_in_the_sounds_time(self):
+        p = proj()
+        _, a = edit.find(p, "a1")
+        for div, meter in ((1, 4), (2, 3), (3, 0), (0.5, 4), (4, 7)):
+            edit.set_beat(p, "a1", on=True, bpm=133, offset_us=0.37 * S, div=div, meter=meter)
+            lo, hi = a["source_start_us"], a["source_start_us"] + a["duration_us"]
+            mine = [(round(t - lo), d) for t, d in edit.source_grid(a["beat"], lo, hi, bars=True)]
+            theirs = [(round(t - a["start_us"]), d) for t, d in edit.beat_grid(a, bars=True)]
+            self.assertEqual([d for _, d in mine], [d for _, d in theirs])
+            self.assertTrue(all(abs(x - y) <= 1 for (x, _), (y, _) in zip(mine, theirs)))
+
+    def test_wave_view_draws_and_moves(self):
+        import numpy as np
+        from kiasecut.ui.beat_wave import WaveView
+        p = proj()
+        edit.set_beat(p, "a1", on=True, bpm=120, offset_us=0)
+        _, a = edit.find(p, "a1")
+
+        class Peaks:
+            def get(self, path, stream=0):
+                n = 60_000
+                sig = np.sin(np.arange(n) / 40.0).astype(np.float32) * 0.6
+                return np.stack([sig, -sig], 1), 0.0
+        v = WaveView()
+        v.resize(800, 300)
+        v.set_clip(a, Peaks())
+        self.assertAlmostEqual(v.t0, 2 * S - 0.04 * 8 * S, delta=2)          # focused on the clip's stretch
+        self.assertFalse(v.grab().isNull())
+        w = v.t1 - v.t0
+        v.zoom(0.5, 400)
+        self.assertAlmostEqual(v.t1 - v.t0, w / 2, delta=2)
+        t0 = v.t0
+        v.pan(1000)
+        self.assertEqual(v.t0, t0 + 1000)
+        v.fit()
+        self.assertAlmostEqual(v.t0, 2 * S - 0.04 * 8 * S, delta=2)
+
+
 if __name__ == "__main__":
     unittest.main()

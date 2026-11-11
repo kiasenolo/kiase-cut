@@ -240,6 +240,23 @@ class ComponentTests(unittest.TestCase):
             self.assertGreater(peak, 240, type(renderer).__name__)
             self.assertLess(trough, 15, type(renderer).__name__)
 
+    def test_static_clips_with_lfos_put_together_into_another_static_clip_keep_swinging(self):
+        """The inner static clip is drawn at the outer one's time: its LFO is not frozen at the outer picture's 0."""
+        self.lfo_clip()
+        outer = edit.make_compound(self.p, self.p, [self.cid], 0, static=True)       # (the static clip made from c1 goes into another)
+        inst = edit.find(self.p, outer["id"])[1]
+        self.assertTrue(components.swings(inst["compound"]))
+        at = lambda t: components.layer_index(components.content(inst, t))[self.cid][1]
+        opacity = lambda t: components.number_at(components.layer_index(components.content(at(t), 0))["c1"][1], "transform.opacity", 0)
+        self.assertAlmostEqual(opacity(0), 50.0, places=3)
+        self.assertAlmostEqual(opacity(250_000), 100.0, places=3)
+        self.assertAlmostEqual(opacity(750_000), 0.0, places=3)
+        fps = self.p["fps"]
+        for renderer in [render.Renderer()] + ([glrender.GLRenderer()] if HAVE_GL else []):
+            peak, trough = (self.colour(round(fps * x), renderer=renderer).red() for x in (0.25, 0.75))
+            self.assertGreater(peak, 240, type(renderer).__name__)
+            self.assertLess(trough, 15, type(renderer).__name__)
+
     def test_turning_clips_into_a_static_clip_keeps_or_bakes_their_lfo(self):
         from kiasecut import lfo
         for mode in ("keep", "bake"):

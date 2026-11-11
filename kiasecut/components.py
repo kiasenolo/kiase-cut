@@ -428,8 +428,23 @@ def lfo_layers(tracks):
     return out
 
 
+def swings(comp, _seen=()):
+    """Whether a static compound has an LFO to swing as it plays: on a layer of its own, or inside a static clip it shows."""
+    if not comp or not comp.get("static") or id(comp) in _seen:
+        return False
+    if lfo_layers(comp["tracks"]):
+        return True
+    return any(swings(c.get("compound"), _seen + (id(comp),)) for tr in project.all_tracks(comp["tracks"]) for c in tr["clips"]
+               if c.get("type") == "compound")
+
+
 def _lfo_over(tracks, t, over):
-    """over: {layer id: [(prop, value)]} of the LFOs of tracks' layers at clip time t (a static compound's layers are at 0)."""
+    """over: {layer id: [(prop, value)]} of the LFOs of tracks' layers at clip time t (a static compound's layers are at 0); a
+    static clip among the layers that has LFOs inside is handed the time too (passed down: its picture is worked out at t)."""
+    for tr in project.all_tracks(tracks):
+        for c in tr["clips"]:
+            if c.get("type") == "compound" and swings(c.get("compound")):
+                over.setdefault(c["id"], []).append((LFO_INSIDE, t))
     for c, prop in lfo_layers(tracks):
         try:
             cur = number_at(c, prop, 0)
@@ -439,9 +454,12 @@ def _lfo_over(tracks, t, over):
     for c, _prop in lfo_layers(tracks):
         if c["id"] in over and (LFO_DONE, None) not in over[c["id"]]:
             over[c["id"]].append((LFO_DONE, None))               # (its LFOs have been put in: the renderer must not swing it again)
+    for ops in over.values():                                    # (its own numbers first: the static clip inside is drawn with them)
+        ops.sort(key=lambda op: op[0] == LFO_INSIDE)
 
 
 LFO_DONE = "lfo!"
+LFO_INSIDE = "lfo_inside!"
 
 
 def _content(c, t):
@@ -532,6 +550,8 @@ def _put(c, prop, v):
         return out
     if prop == "place":
         return dict(c, place=v) if c["type"] == "image" else c
+    if prop == LFO_INSIDE:
+        return dict(c, compound=content(c, v))
     if prop == LFO_DONE:
         left = {k: x for k, x in (c.get("expr") or {}).items() if not lfo.is_lfo(x)}
         return dict(c, expr=left)

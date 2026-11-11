@@ -31,6 +31,7 @@ class WaveView(QWidget):
     seekRequested = Signal(float)          # a click: the playhead there (source us)
     pointAdd = Signal(float)               # a change point wanted at this time (source us)
     pointMove = Signal(int, float)         # point index dragged to this time
+    userMoved = Signal()                   # the view was moved by hand (a drag, the wheel): playback stops following it
     pointSelected = Signal(object)         # index of the change point picked, None: none
     pointRemove = Signal(int)
 
@@ -179,13 +180,17 @@ class WaveView(QWidget):
         else:
             super().keyPressEvent(e)
 
+    FOLLOW_AT = 0.3                        # where in the view the playhead stays while it is followed
+
     def set_playhead(self, t, follow=False):
-        """The playhead at t; follow: the view turns a page when it has gone past the view's right (or left) end."""
+        """The playhead at t. follow (the 跟隨 switch, while playing): the view scrolls with it continuously - the playhead
+        goes on to FOLLOW_AT of the view's width and stays there while the sound moves under it - and jumps to there when the
+        playhead is outside the view (the loop's start, a seek)."""
         self.playhead = t
         if follow and self.drag is None and t is not None and not self.glide.running():
             span = self.t1 - self.t0
-            if not self.t0 <= t <= self.t1 - span * 0.05:
-                self.t0, self.t1 = t - span * 0.1, t + span * 0.9
+            if not 0 <= (t - self.t0) / span <= self.FOLLOW_AT:
+                self.t0, self.t1 = t - span * self.FOLLOW_AT, t + span * (1 - self.FOLLOW_AT)
                 self._moved()
                 return
         self.update()
@@ -206,6 +211,7 @@ class WaveView(QWidget):
         else:
             dx, dy = wheel.pixels(e, self.width() / 10, self.width() / 10)
             part = {"dx": -(dx if abs(dx) > abs(dy) else dy)}
+            self.userMoved.emit()
         glide = {k: v for k, v in part.items() if not wheel.touchpad(e) and inertia.percent(self.WHEEL_CHANNEL[k])}
         self._wheel_apply({k: v for k, v in part.items() if k not in glide})
         if glide:
@@ -281,6 +287,7 @@ class WaveView(QWidget):
         if not d.get("wrap"):                                # (this drag's first move)
             d["wrap"] = True
             self.wrap.start()
+            self.userMoved.emit()
         pos = self.wrap.pos(e)
         if d["kind"] == "pan":
             dt = (pos.x() - d["pos"].x()) / max(1, self.width()) * (d["t1"] - d["t0"])
@@ -497,6 +504,7 @@ class Overview(QWidget):
             return
         w = self.wave
         w.glide.stop()
+        w.userMoved.emit()
         t = self.t_of(e.position().x())
         mid = (w.t0 + w.t1) / 2
         inside = w.t0 <= t <= w.t1

@@ -568,5 +568,40 @@ class ChangePoints(unittest.TestCase):
         self.assertFalse(v._wheel_timer.isActive())
 
 
+    def test_follow_scrolls_continuously_and_a_drag_turns_it_off(self):
+        import numpy as np
+        from kiasecut.ui.beat_dialog import BeatDialog
+        from kiasecut.ui.beat_wave import WaveView
+        p = proj()
+        _, a = edit.find(p, "a1")
+
+        class Peaks:
+            def get(self, path, stream=0):
+                return np.full((60_000, 2), [0.5, -0.5], np.float32), 0.0
+        v = WaveView()
+        v.resize(800, 300)
+        v.set_clip(a, Peaks())
+        span = v.t1 - v.t0
+        v.set_playhead(v.t0 + 0.2 * span, True)                      # before the pin: the view stays
+        self.assertAlmostEqual(v.t1 - v.t0, span, delta=1)
+        t0 = v.t0
+        v.set_playhead(t0 + 0.2 * span, True)
+        self.assertEqual(v.t0, t0)
+        for f in (0.35, 0.5, 0.9, 1.3):                              # past it (and outside the view): pinned at 30 %
+            v.set_playhead(v.t0 + f * span, True)
+            self.assertAlmostEqual((v.playhead - v.t0) / span, 0.3, places=6)
+        before = v.t0
+        v.set_playhead(v.playhead + 0.1 * span, False)               # not following: the view stays
+        self.assertEqual(v.t0, before)
+        dlg = BeatDialog("a1")
+        dlg.show_clip(p, Peaks())
+        self.assertTrue(dlg.follow.isCheckable() and dlg.follow.isChecked())
+        dlg.wave.userMoved.emit()                                    # not playing: stays on
+        self.assertTrue(dlg.follow.isChecked())
+        dlg.preview.playing = True
+        dlg.wave.userMoved.emit()                                    # playing: a drag turns it off
+        self.assertFalse(dlg.follow.isChecked())
+
+
 if __name__ == "__main__":
     unittest.main()

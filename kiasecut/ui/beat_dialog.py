@@ -38,9 +38,10 @@ class BeatDialog(QDialog):
         self.loop = QCheckBox("循環")
         self.loop.setChecked(True)
         bar.addWidget(self.loop)
-        self.follow = QCheckBox("跟隨")
+        self.follow = QPushButton("跟隨")
+        self.follow.setCheckable(True)
         self.follow.setChecked(True)
-        self.follow.setToolTip("播放時，播放頭跑出畫面就翻頁")
+        self.follow.setToolTip("開著時，播放中畫面會連續捲動，播放頭停在畫面左邊約三成處；播放中拖動畫面或捲動就會自動關掉")
         bar.addWidget(self.follow)
         bar.addWidget(self.title, 1)
         self.on = QCheckBox("啟用 BPM 對齊")
@@ -71,13 +72,16 @@ class BeatDialog(QDialog):
         hint.setStyleSheet("color: #8a8a90")
         lay.addWidget(hint)
         self.peaks = None
+        self._seeking = False
         self._pick = None                       # time of a point just added: picked once the project has it
         self.preview = Preview(self)
         self.loop.toggled.connect(lambda v: setattr(self.preview, "loop", v))
-        self.preview.positionChanged.connect(lambda t: self.wave.set_playhead(t, self.follow.isChecked()))
+        self.preview.positionChanged.connect(self._position)
+        self.wave.userMoved.connect(self._user_moved)
+        self.follow.toggled.connect(lambda on: on and self.wave.playhead is not None and self._position(self.wave.playhead))
         self.preview.playingChanged.connect(lambda on: self.play.setText("⏸ 暫停" if on else "▶ 播放"))
         self.preview.failed.connect(lambda m: self.title.setText(m))
-        self.wave.seekRequested.connect(self.preview.seek)
+        self.wave.seekRequested.connect(self._seek)
         self.wave.pointAdd.connect(self.add_at)
         self.wave.pointSelected.connect(lambda _i: self._sync_point())
         self.wave.pointMove.connect(lambda i, t: self.pointEdited.emit(self.clip_id, "move", {"index": i, "time_us": t}))
@@ -180,6 +184,22 @@ class BeatDialog(QDialog):
         bpm, _ = edit.beat_at(self._beat(), t)
         self._pick = round(t)
         self.pointEdited.emit(self.clip_id, "add", {"time_us": t, "bpm": bpm})
+
+    def _position(self, t):
+        """The playhead moved: the view goes with it when 跟隨 is on and the sound is playing (not for a click's seek)."""
+        self.wave.set_playhead(t, self.follow.isChecked() and self.preview.playing and not self._seeking)
+
+    def _seek(self, t):
+        self._seeking = True
+        try:
+            self.preview.seek(t)
+        finally:
+            self._seeking = False
+
+    def _user_moved(self):
+        """The view was dragged or scrolled by hand while playing: it is not followed any more."""
+        if self.preview.playing:
+            self.follow.setChecked(False)
 
     def toggle_play(self):
         if self.preview.playing:

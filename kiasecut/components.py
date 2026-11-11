@@ -39,6 +39,7 @@ from . import assets, curves, expr, fx, mapping, project, svgimage, textvars
 
 ICON = "❖"
 KINDS = {"text": "文字", "number": "數字", "color": "顏色", "image": "圖片", "visible": "勾選"}
+INST = "inst:"                             # a nested component instance's parameter that is no number: "inst:<kind>:<parameter id>" (a number's is "params.<id>")
 FX_ON, FX_BOOL = "fxon:", "fxb:"          # the check props of a layer's filter: "fxon:<effect id>" (the effect on / off), "fxb:<effect id>.<name>" (one of its check boxes)
 PROPS = {                         # prop: (kind, label)
     "content": ("text", "文字內容"),
@@ -123,7 +124,16 @@ def props_of(c):
         out.append("source")
     if c["type"] != "filter":
         out.append("visible")
-    return out + check_props_of(c) + [q for q in number_props_of(c) if not q.startswith("params.")]
+    return out + check_props_of(c) + [q for q in number_props_of(c) if not q.startswith("params.")] + instance_bind_props(c)
+
+
+def instance_bind_props(c):
+    """The parameters of the component that layer c shows, as props a parameter of the component it is in can set (passed down)."""
+    return [f"params.{q['id']}" if q["kind"] == "number" else f"{INST}{q['kind']}:{q['id']}" for q in params(of_clip(c))]
+
+
+def is_inst_prop(prop):
+    return prop.startswith(INST)
 
 
 def check_props_of(c):
@@ -175,6 +185,8 @@ def prop_in(c0, prop, c):
 
 def prop_alive(c, prop):
     """Whether layer c still has what prop sets (a filter that was deleted leaves its bindings behind, unused)."""
+    if is_inst_prop(prop) or prop.startswith("params."):
+        return param(of_clip(c), prop.split(":", 2)[2] if is_inst_prop(prop) else prop.split(".", 1)[1]) is not None
     if is_check_prop(prop):
         eid = prop.split(":", 1)[1].split(".")[0]
     elif prop.startswith("fx:"):
@@ -186,7 +198,7 @@ def prop_alive(c, prop):
 
 def prop_kind(prop):
     """The kind of parameter that can set prop (a "group.key" number prop is a number)."""
-    return "visible" if is_check_prop(prop) else "number" if "." in prop else PROPS[prop][0]
+    return "visible" if is_check_prop(prop) else prop.split(":")[1] if is_inst_prop(prop) else "number" if "." in prop else PROPS[prop][0]
 
 
 def number_info(c, prop):
@@ -265,7 +277,9 @@ def number_prop_for(c, group, key):
 def prop_label(c, prop):
     """What prop of layer c is called (a shape's colour is its 填充顏色)."""
     if not prop_alive(c, prop):
-        return "（已刪除的效果）"
+        return "（已刪除的參數）" if is_inst_prop(prop) or prop.startswith("params.") else "（已刪除的效果）"
+    if is_inst_prop(prop):
+        return param(c["compound"], prop.split(":", 2)[2])["name"]
     if is_check_prop(prop):
         e = _effect_of(c, prop.split(":", 1)[1].split(".")[0])
         d = fx.def_of(e)
@@ -297,6 +311,8 @@ def layer_value(track, c, prop):
         return (c.get("media") or {}).get("path", "")
     if is_check_prop(prop):
         return check_at(c, prop)
+    if is_inst_prop(prop):
+        return value(c, param(c["compound"], prop.split(":", 2)[2]), 0)
     if "." in prop:
         return number_at(c, prop, 0)
     return not track.get("hidden")
@@ -480,6 +496,9 @@ def _put(c, prop, v):
         return dict(c, place=v) if c["type"] == "image" else c
     if not prop_alive(c, prop):
         return c
+    if is_inst_prop(prop):
+        pid = prop.split(":", 2)[2]
+        return dict(c, params=dict(c.get("params") or {}, **{pid: clean(param(c["compound"], pid), v)}))
     if is_check_prop(prop):
         eid = prop.split(":", 1)[1].split(".")[0]
         if prop.startswith(FX_ON):

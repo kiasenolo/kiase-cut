@@ -183,6 +183,39 @@ class ComponentTests(unittest.TestCase):
         self.assertIsNone(components.prop_in(a, components.FX_ON + "a2", mk(("b1", "builtin:mirror"), ("b2", "builtin:blur"))))
         self.assertEqual(components.prop_in(a, components.FX_ON + "a2", a), components.FX_ON + "a2")
 
+    def test_a_component_parameter_can_set_a_parameter_of_a_component_inside_it(self):
+        """Passed down: the outer component's colour sets the inner instance's colour (and its number, and its check box)."""
+        inner_color = edit.add_param(self.p, self.kid, "color", "主色", [("c1", "color")])
+        inner_num = edit.add_param(self.p, self.kid, "number", "大小", [])
+        inner_show = edit.add_param(self.p, self.kid, "visible", "顯示方塊", [("c1", "visible")])
+        outer = edit.make_compound(self.p, self.p, [self.cid], 0, static=True, component=True)
+        okid = outer["compound_id"]
+        comp = self.p["compounds"][okid]
+        inst = components.layer_index(comp)[self.cid][1]
+        props = components.props_of(inst)
+        for prop in (f"inst:color:{inner_color['id']}", f"params.{inner_num['id']}", f"inst:visible:{inner_show['id']}"):
+            self.assertIn(prop, props)
+        self.assertEqual(components.prop_kind(f"inst:color:{inner_color['id']}"), "color")
+        self.assertEqual(components.prop_label(inst, f"inst:color:{inner_color['id']}"), "主色")
+        oc = edit.add_param(self.p, okid, "color", "外色", [(self.cid, f"inst:color:{inner_color['id']}")])
+        on = edit.add_param(self.p, okid, "number", "外大小", [(self.cid, f"params.{inner_num['id']}")])
+        os_ = edit.add_param(self.p, okid, "visible", "外顯示", [(self.cid, f"inst:visible:{inner_show['id']}")])
+        self.assertEqual([x["binds"] for x in (oc, on, os_)], [[[self.cid, f"inst:color:{inner_color['id']}"]],
+                                                              [[self.cid, f"params.{inner_num['id']}"]],
+                                                              [[self.cid, f"inst:visible:{inner_show['id']}"]]])
+        self.assertEqual(components.default(comp, oc), RED[:3] + [1.0])             # (the inner instance's: the inner default)
+        with self.assertRaises(edit.EditError):                                      # (a colour parameter cannot set a number)
+            edit.add_param(self.p, okid, "color", "x", [(self.cid, f"params.{inner_num['id']}")])
+        outer_clip = next(c for c in project.all_clips(self.p) if c.get("compound_id") == okid)
+        edit.set_param(self.p, outer_clip["id"], "params", oc["id"], BLUE)
+        edit.set_param(self.p, outer_clip["id"], "params", on["id"], 7.0)
+        shown = components.layer_index(components.content(edit.find(self.p, outer_clip["id"])[1], 0))[self.cid][1]
+        self.assertEqual(curves.value(shown["params"][inner_color["id"]], 0)[:3], [0.0, 0.0, 1.0])
+        self.assertEqual(shown["params"][inner_num["id"]], 7.0)
+        self.assertEqual(self.colour().name(), "#0000ff")                            # (drawn through both levels)
+        edit.set_param_default(self.p, okid, oc["id"], RED)                          # (the default goes into the inner instance)
+        self.assertEqual(curves.value(components.layer_index(comp)[self.cid][1]["params"][inner_color["id"]], 0)[:3], [1.0, 0.0, 0.0])
+
     def test_text_and_picture(self):
         txt = {"id": "tx", "type": "text", "name": "", "start_us": 0, "duration_us": S,
                "text": {"content": "原本", "size": 5.0, "color": [1, 1, 1]},

@@ -3079,12 +3079,12 @@ class MainWindow(QMainWindow):
             c = edit.find(self.container(), ids[0])[1]
         except edit.EditError:
             return
-        if components.is_check_prop(prop):                  # (a filter's on / off or a check box of it: only a component's parameter)
+        if components.is_check_prop(prop) or components.is_inst_prop(prop):       # (a filter's on / off or a check box of it, a nested component's text / colour...: only a component's parameter)
             comp = self.open_component()
             if comp is not None and prop in components.props_of(c):
                 sub = menu.addMenu("設為元件參數")
                 sub.addAction("新參數", lambda: self.layer_param_bind("", prop, ids))
-                checks = [p for p in components.params(comp) if p["kind"] == "visible"]
+                checks = [p for p in components.params(comp) if p["kind"] == components.prop_kind(prop)]
                 if checks:
                     sub.addSeparator()
                 for p in checks:
@@ -3113,7 +3113,7 @@ class MainWindow(QMainWindow):
         if have:
             menu.addAction("解除綁定／清除表達式", lambda: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))
         comp = self.open_component()
-        if comp is not None and not prop.startswith("params."):
+        if comp is not None:
             sub = menu.addMenu("設為元件參數")
             sub.addAction("新參數", lambda: self.layer_param_bind("", prop, ids))
             nums = [p for p in components.params(comp) if p["kind"] == "number"]

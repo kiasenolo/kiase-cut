@@ -1105,6 +1105,20 @@ class Inspector(QWidget):
         menu.exec(spin.lineEdit().mapToGlobal(pos))
         menu.deleteLater()
 
+    def _inst_menu(self, w, prop):
+        """The right-click menu of a component parameter's field (text, colour, picture, check box): its usual one, then the
+        binding entries - a parameter of the component this clip is in can set it (passed down)."""
+        w.setContextMenuPolicy(Qt.CustomContextMenu)
+
+        def show(pos):
+            menu = w.createStandardContextMenu() if isinstance(w, QPlainTextEdit) else QMenu(w)
+            if self.clip_ids and self.menu_extender is not None:
+                self.menu_extender(menu, list(self.clip_ids), prop)
+            if not menu.isEmpty():
+                menu.exec(w.mapToGlobal(pos))
+            menu.deleteLater()
+        w.customContextMenuRequested.connect(show)
+
     def _mark_bound(self, clips):
         """Number fields a component's parameter sets are outlined, and say which one."""
         comp = self.component_of()
@@ -1681,6 +1695,8 @@ class Inspector(QWidget):
                 w = QCheckBox("顯示")
                 w.clicked.connect(lambda on, pid=pid: self._emit_now(self.paramEdited, "params", pid, bool(on)))
             self.widgets[("params", pid)] = w
+            if kind != "number":                         # (a number's menu is its field's: _spin_menu)
+                self._inst_menu(w, f"{components.INST}{kind}:{pid}")
             row = self._with_key(w, "params", pid)
             if kind == "image":
                 row.layout().insertWidget(1, pick_button(("image",), lambda path, pid=pid: self._param_image(pid, path)))

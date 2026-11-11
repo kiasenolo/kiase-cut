@@ -183,3 +183,27 @@ class VfxStartValuesTests(unittest.TestCase):
         project.sync_vfx(self.p, [self.e])
         self.assertEqual(two["params"][key], "相除")
         self.assertEqual((self.e["params"][alpha], two["params"].get(alpha)), (50.0, 10.0))
+
+
+class NodeEffectPanelTests(unittest.TestCase):
+    def test_a_node_effect_shows_only_its_exposed_parameters(self):
+        from PySide6.QtWidgets import QApplication
+        from test_edit import proj
+        from kiasecut import components
+        from kiasecut.ui.effects_panel import EffectsPanel
+        app = QApplication.instance() or QApplication([])
+        p = proj()
+        e = edit.add_effect(p, "c1", fx.GRAPH)
+        math = edit.add_graph_node(p, "c1", e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
+        e["params"].update(ng.default_params(e["graph"]))
+        name = ng.add_exposed(e["graph"], e["params"], "float", "透明度")
+        panel = EffectsPanel()
+        panel.resize(360, 900)
+        panel.show()
+        panel.show_clips([edit.find(p, "c1")[1]], 0, 30)
+        app.processEvents()
+        self.assertIn((f"fx:{e['id']}", ng.expose_key(name)), panel.widgets)
+        self.assertNotIn((f"fx:{e['id']}", ng.param_key(math, "op")), panel.widgets)
+        props = components.number_props_of(edit.find(p, "c1")[1])
+        self.assertIn(f"fx:{e['id']}.{ng.expose_key(name)}", props)
+        self.assertFalse([q for q in props if q.startswith(f"fx:{e['id']}.{math}.")])

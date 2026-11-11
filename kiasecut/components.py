@@ -132,10 +132,15 @@ def check_props_of(c):
     for e in c.get("effects") or []:
         out.append(FX_ON + e["id"])
         try:
-            out += [f"{FX_BOOL}{e['id']}.{q.name}" for q in fx.def_of(e).params if q.type == "bool"]
+            out += [f"{FX_BOOL}{e['id']}.{q.name}" for q in fx.def_of(e).params if q.type == "bool" and _public(e, q)]
         except Exception:
             pass
     return out
+
+
+def _public(e, q):
+    """Whether parameter q of filter e is one the filter shows: a node effect's own (exposed) ones, not what its nodes are set to."""
+    return e.get("filter") != fx.GRAPH or q.panel is None
 
 
 def is_check_prop(prop):
@@ -211,7 +216,7 @@ def number_props_of(c):
                 if assets.FIELD_INFO[f][1] == "number" and f not in ("w", "h")]
     for e in c.get("effects") or []:                     # the numbers of its filters
         try:
-            out += [f"fx:{e['id']}.{q.name}" for q in fx.def_of(e).params if q.type in ("float", "int")]
+            out += [f"fx:{e['id']}.{q.name}" for q in fx.def_of(e).params if q.type in ("float", "int") and _public(e, q)]
         except Exception:
             pass
     if c.get("text"):                                    # and of its text variables

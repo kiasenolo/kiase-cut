@@ -420,8 +420,11 @@ class EffectsPanel(QWidget):
             lay.addWidget(hand)
         lay.addLayout(self._number_row("fxmix:" + e["id"], "mix", "混合程度 %", 0.0, 100.0, 1.0, 0, 100))
         group = "fx:" + e["id"]
-        sections = {name: self._panel(e["id"], name, closed) for name, closed in d.panels}   # Blender's panels
+        graph = e["filter"] == fx.GRAPH                         # (a node effect shows only its own parameters: what the nodes inside are set to stays inside)
+        sections = {} if graph else {name: self._panel(e["id"], name, closed) for name, closed in d.panels}   # Blender's panels
         for p in sorted(d.params, key=lambda q: q.panel is not None):    # (the effect's own rows first)
+            if graph and p.panel is not None:
+                continue
             pl = sections[p.panel][1] if p.panel in sections else lay
             row = QWidget()
             rl = QVBoxLayout(row)

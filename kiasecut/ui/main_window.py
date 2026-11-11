@@ -4935,7 +4935,7 @@ class MainWindow(QMainWindow):
         fn, label = {"add": (edit.add_beat_point, "新增變速點"), "move": (edit.move_beat_point, "移動變速點"),
                      "set": (edit.set_beat_point, "改變速點"), "remove": (edit.remove_beat_point, "刪除變速點")}[op]
         self.apply(label, lambda level: fn(level, cid, **args),
-                   merge=("beatpt", cid, args["index"]) if op == "move" else None)
+                   merge=("beatpt", cid, op, args["index"]) if op in ("move", "set") else None)
 
     def set_snapping(self, on):
         self.timeline.snapping = on

@@ -9,14 +9,15 @@ touchpad's pinch, or Ctrl + the middle button; the middle button alone drags it,
 a little glide after (as the curve editor's, wrapdrag.py / viewglide.py).
 """
 import math
+import time
 
 import numpy as np
-from PySide6.QtCore import QEvent, QLineF, QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QLineF, QPointF, QRectF, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QMenu, QWidget
 
 from .. import build, edit, project, waveform
-from . import touch, viewglide, wheel
+from . import inertia, touch, viewglide, wheel
 from .timeline import BEAT_COLORS, BEAT_PX, US
 from .wrapdrag import WrapDrag
 
@@ -30,7 +31,7 @@ class WaveView(QWidget):
     seekRequested = Signal(float)          # a click: the playhead there (source us)
     pointAdd = Signal(float)               # a change point wanted at this time (source us)
     pointMove = Signal(int, float)         # point index dragged to this time
-    pointEdit = Signal(int)                # point index: change what it sets
+    pointSelected = Signal(object)         # index of the change point picked, None: none
     pointRemove = Signal(int)
 
     def __init__(self, parent=None):
@@ -45,6 +46,11 @@ class WaveView(QWidget):
         self.drag = None
         self.playhead = None                # source us, None: none
         self.sel_point = None               # index of the change point picked
+        self._wheel_queue = {}              # what the wheel has asked for and the view has not done yet
+        self._wheel_x = 0.0
+        self._wheel_last = 0.0
+        self._wheel_timer = QTimer(self, interval=8)
+        self._wheel_timer.timeout.connect(self._wheel_step)
         self.glide = viewglide.ViewGlide(self, self._glide_pan)
         self.wrap = WrapDrag(self, lambda: QRectF(0, 0, self.width(), self.height()), axes="x")
 
@@ -54,6 +60,13 @@ class WaveView(QWidget):
         self.clip, self.peaks = c, peaks
         if first or not keep_view:
             self.fit()
+        if first or self.sel_point is not None and self.sel_point >= len(self._pts()):
+            self.select_point(None)
+        self.update()
+
+    def select_point(self, i):
+        self.sel_point = i
+        self.pointSelected.emit(i)
         self.update()
 
     def trim(self):
@@ -150,25 +163,19 @@ class WaveView(QWidget):
         if i is None:
             menu.addAction("在此處新增變速點／變拍點", lambda: self.pointAdd.emit(t))
         else:
-            self.sel_point = i
-            menu.addAction("改數值…", lambda: self.pointEdit.emit(i))
+            self.select_point(i)
             menu.addAction("刪除", lambda: self.pointRemove.emit(i))
-            self.update()
         menu.exec(e.globalPos())
 
     def mouseDoubleClickEvent(self, e):
         if e.button() != Qt.LeftButton or not self.clip:
             return
-        i = self.point_at(e.position().x())
-        if i is not None:
-            self.pointEdit.emit(i)
-        else:
+        if self.point_at(e.position().x()) is None:
             self.pointAdd.emit(max(0.0, self.snapped(self.t_of(e.position().x()), free=bool(e.modifiers() & Qt.AltModifier))))
 
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.sel_point is not None:
-            i, self.sel_point = self.sel_point, None
-            self.pointRemove.emit(i)
+            self.pointRemove.emit(self.sel_point)
         else:
             super().keyPressEvent(e)
 
@@ -188,13 +195,50 @@ class WaveView(QWidget):
         self.pan(-dx / max(1, self.width()) * (self.t1 - self.t0))
 
     # -- events ---------------------------------------------------------------------------------
+    WHEEL_CHANNEL = {"dx": "timeline_scroll", "zoom": "timeline_zoom"}      # (inertia.py: the timeline's settings)
+
     def wheelEvent(self, e):
+        """As the timeline's wheel: a notch scrolls a tenth of the view, Ctrl + a notch zooms 1.25 times around the mouse; the
+        motion is queued and let out as the glide setting says (a touchpad's own motion is applied as it comes)."""
         if e.modifiers() & Qt.ControlModifier:
-            self.zoom(0.8 ** wheel.notch(e), e.position().x())
-        else:                                                # a notch: a tenth of the view (either wheel way moves along time)
+            part = {"zoom": wheel.notch(e)}
+            self._wheel_x = e.position().x()
+        else:
             dx, dy = wheel.pixels(e, self.width() / 10, self.width() / 10)
-            self.pan(-(dx if abs(dx) > abs(dy) else dy) / max(1, self.width()) * (self.t1 - self.t0))
+            part = {"dx": -(dx if abs(dx) > abs(dy) else dy)}
+        glide = {k: v for k, v in part.items() if not wheel.touchpad(e) and inertia.percent(self.WHEEL_CHANNEL[k])}
+        self._wheel_apply({k: v for k, v in part.items() if k not in glide})
+        if glide:
+            for k, v in glide.items():
+                self._wheel_queue[k] = self._wheel_queue.get(k, 0.0) + v
+            if not self._wheel_timer.isActive():
+                self._wheel_last = time.monotonic()
+                self._wheel_timer.start()
         e.accept()
+
+    def _wheel_step(self):
+        now = time.monotonic()
+        dt = (now - self._wheel_last) * 1000.0
+        self._wheel_last = now
+        part = {}
+        for key, left in list(self._wheel_queue.items()):
+            k = 1.0 - 0.5 ** (dt / max(inertia.half_life_ms(self.WHEEL_CHANNEL[key]), 1.0))
+            small = 0.5 if key == "dx" else 0.01
+            take = left if abs(left) * (1 - k) < small else left * k
+            part[key] = take
+            if take == left:
+                del self._wheel_queue[key]
+            else:
+                self._wheel_queue[key] = left - take
+        if not self._wheel_queue:
+            self._wheel_timer.stop()
+        self._wheel_apply(part)
+
+    def _wheel_apply(self, part):
+        if "zoom" in part:
+            self.zoom(1.25 ** -part["zoom"], self._wheel_x)
+        if "dx" in part:
+            self.pan(part["dx"] / max(1, self.width()) * (self.t1 - self.t0))
 
     def event(self, e):
         f = wheel.pinch(e)
@@ -211,7 +255,8 @@ class WaveView(QWidget):
                          "at": self.t_of(e.position().x()), "x": e.position().x()}
         elif e.button() == Qt.LeftButton:
             i = self.point_at(e.position().x())
-            self.sel_point = i
+            if i != self.sel_point:
+                self.select_point(i)
             if i is not None:                                # a change point: dragged along time
                 self.drag = {"kind": "point", "i": i, "at": self._pts()[i]["time_us"]}
                 self.update()

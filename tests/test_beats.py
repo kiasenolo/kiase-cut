@@ -479,7 +479,7 @@ class ChangePoints(unittest.TestCase):
         got = []
         v.pointAdd.connect(lambda t: got.append(("add", t)))
         v.pointMove.connect(lambda i, t: got.append(("move", i, t)))
-        v.pointEdit.connect(lambda i: got.append(("edit", i)))
+        v.pointSelected.connect(lambda i: got.append(("select", i)))
         v.pointRemove.connect(lambda i: got.append(("remove", i)))
 
         def mouse(kind, x, mods=Qt.NoModifier):
@@ -488,20 +488,84 @@ class ChangePoints(unittest.TestCase):
         self.assertEqual(v.point_at(x5 + 3), 0)
         self.assertEqual(v.point_at(v.x_of(7 * S)), 1)
         self.assertIsNone(v.point_at(v.x_of(6 * S)))
-        v.mouseDoubleClickEvent(mouse(QEvent.MouseButtonDblClick, x5 + 2))
-        self.assertEqual(got.pop(), ("edit", 0))
+        v.mouseDoubleClickEvent(mouse(QEvent.MouseButtonDblClick, x5 + 2))      # on a point: nothing new
+        self.assertEqual(got, [])
         v.mouseDoubleClickEvent(mouse(QEvent.MouseButtonDblClick, v.x_of(6.3 * S)))
         kind, t = got.pop()
         self.assertEqual(kind, "add")
         self.assertAlmostEqual(t, 5 * S + 4 * S / 3, delta=2)                # snapped to the 90 BPM grid after 5 s (0.667 s apart)
         v.mousePressEvent(mouse(QEvent.MouseButtonPress, x5))                  # drag the first point, no snapping (Alt)
         self.assertEqual(v.sel_point, 0)
+        self.assertEqual(got.pop(), ("select", 0))
         v.mouseMoveEvent(mouse(QEvent.MouseMove, v.x_of(5.3 * S), Qt.AltModifier))
         self.assertEqual(got[-1][:2], ("move", 0))
         self.assertAlmostEqual(got[-1][2], 5.3 * S, delta=S / 200)
         v.mouseReleaseEvent(mouse(QEvent.MouseButtonRelease, v.x_of(5.3 * S)))
         v.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
         self.assertEqual(got[-1], ("remove", 0))
+
+
+    def test_point_bar_edits_the_picked_point_in_place(self):
+        import numpy as np
+        from kiasecut.ui.beat_dialog import BeatDialog
+        p = proj()
+        edit.set_beat(p, "a1", on=True, bpm=120, offset_us=0)
+
+        class Peaks:
+            def get(self, path, stream=0):
+                return np.full((60_000, 2), [0.5, -0.5], np.float32), 0.0
+        dlg = BeatDialog("a1")
+        dlg.show_clip(p, Peaks())
+
+        def on_point(cid, op, args):                              # (what the main window does)
+            {"add": edit.add_beat_point, "move": edit.move_beat_point, "set": edit.set_beat_point,
+             "remove": edit.remove_beat_point}[op](p, cid, **args)
+            self.assertTrue(dlg.show_clip(p))
+        dlg.pointEdited.connect(on_point)
+        self.assertFalse(dlg.pt_bpm.isEnabled())                  # nothing picked
+        dlg.add_at(6 * S)
+        pts = edit.find(p, "a1")[1]["beat"]["points"]
+        self.assertEqual(pts, [{"time_us": 6 * S, "bpm": 120.0}])
+        self.assertEqual(dlg.wave.sel_point, 0)                   # picked, its numbers in the bar
+        self.assertTrue(dlg.pt_bpm.isEnabled() and dlg.pt_use_bpm.isChecked() and not dlg.pt_use_meter.isChecked())
+        dlg._point_set(bpm=100)
+        dlg.pt_use_meter.setChecked(True)                         # the bar's own check box
+        dlg._point_set(meter=3)
+        self.assertEqual(pts[0], {"time_us": 6 * S, "bpm": 100.0, "meter": 3})
+        dlg.pt_use_bpm.setChecked(False)
+        self.assertEqual(pts[0], {"time_us": 6 * S, "meter": 3})
+        self.assertFalse(dlg.pt_use_meter.isEnabled())            # the last thing it sets cannot be switched off
+        dlg.pt_delete.click()
+        self.assertNotIn("points", edit.find(p, "a1")[1]["beat"])
+        self.assertIsNone(dlg.wave.sel_point)
+        self.assertFalse(dlg.pt_bpm.isEnabled())
+
+    def test_wheel_zoom_glides_like_the_timelines(self):
+        import numpy as np
+        import time
+        from kiasecut.ui import inertia
+        from kiasecut.ui.beat_wave import WaveView
+        p = proj()
+        _, a = edit.find(p, "a1")
+
+        class Peaks:
+            def get(self, path, stream=0):
+                return np.full((60_000, 2), [0.5, -0.5], np.float32), 0.0
+        v = WaveView()
+        v.resize(800, 300)
+        v.set_clip(a, Peaks())
+        span = v.t1 - v.t0
+        v._wheel_queue, v._wheel_x, v._wheel_last = {"zoom": 2.0}, 400.0, time.monotonic()
+        v._wheel_timer.start()
+        v._wheel_step()
+        first = v.t1 - v.t0
+        self.assertTrue(span > first > span / 1.25 ** 2)          # a part of the way, not all at once
+        end = time.monotonic() + 3
+        while v._wheel_queue and time.monotonic() < end:
+            time.sleep(0.01)
+            v._wheel_step()
+        self.assertAlmostEqual(v.t1 - v.t0, span / 1.25 ** 2, delta=span * 1e-3)    # the whole of it in the end
+        self.assertFalse(v._wheel_timer.isActive())
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """The node editor widget (ui/node_editor.py): it shows a node effect's graph and turns mouse and keys into requests."""
 import os
 import sys
+import json
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -76,6 +77,27 @@ class NodeEditorTests(unittest.TestCase):
         nid = next(n for n, d in ed.graph["nodes"].items() if d.get("op") == "scale")
         self.assertEqual(list(ed.node_values(nid).get("factor")), [1.0, 1.0])
         ed.view.viewport().grab()                               # (draws every node)
+
+    def test_the_parameter_panel_survives_a_number_finished_with_enter(self):
+        """The panel is rebuilt by the edit while the number is still in its own key event (a segfault)."""
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QDoubleSpinBox
+        from kiasecut.ui.node_editor import ParamPanel
+        panel = ParamPanel()
+        panel.resize(300, 400)
+        panel.show()
+        state = [{"name": "a", "label": "A", "type": "float", "lo": 0.0, "hi": 1.0, "default": 0.5},
+                 {"name": "b", "label": "B", "type": "vec2", "lo": 0.0, "hi": 1.0, "default": [1.0, 1.0]}]
+        panel.fill(state)
+        panel.edited.connect(lambda name, ch: ([x.update(ch) for x in state if x["name"] == name], panel.fill(json.loads(json.dumps(state)))))
+        for i in (2, 3):                                    # (the float's 預設, the vector's X)
+            sp = panel.findChildren(QDoubleSpinBox)[i]
+            sp.setFocus()
+            sp.selectAll()
+            QTest.keyClicks(sp, "0.25")
+            QTest.keyClick(sp, Qt.Key_Return)
+            APP.processEvents()
+        self.assertEqual((state[0]["default"], state[1]["default"][0]), (0.25, 0.25))
 
     def test_a_view_zoomed_out_past_the_limit_zooms_back(self):
         ed = self.make()

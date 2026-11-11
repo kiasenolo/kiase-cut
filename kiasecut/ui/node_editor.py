@@ -2120,6 +2120,10 @@ class ParamPanel(QWidget):
         for i, x in enumerate(xs):
             col.addWidget(self.row(x, i, len(xs)))
         col.addStretch()
+        old = self.scroll.takeWidget()                      # (not deleted at once: a number's Enter or a field losing the focus rebuilds the
+        if old is not None:                                 #  panel from inside that widget's own event, and Qt used it after that: a crash)
+            old.hide()
+            old.deleteLater()
         self.scroll.setWidget(body)
 
     def row(self, x, i, n):
@@ -2177,7 +2181,8 @@ class ParamPanel(QWidget):
                 sp.setButtonSymbols(QDoubleSpinBox.NoButtons)
                 sp.setMinimumWidth(30)
                 sp.setValue(float(x["default"][i]))
-                sp.editingFinished.connect(lambda i=i, sp=sp: self.edited.emit(name, {"default": [sp.value() if j == i else c for j, c in enumerate(x["default"])]}))
+                sp.editingFinished.connect(lambda i=i, sp=sp: sp.value() != float(x["default"][i]) and
+                                           self.edited.emit(name, {"default": [sp.value() if j == i else c for j, c in enumerate(x["default"])]}))
                 row.addWidget(sp, 1)
             v.addLayout(row)
         elif x["type"] == "bool":

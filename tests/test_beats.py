@@ -603,5 +603,29 @@ class ChangePoints(unittest.TestCase):
         self.assertFalse(dlg.follow.isChecked())
 
 
+    def test_timeline_follow_is_continuous_and_can_be_off(self):
+        tl = Timeline()
+        tl.resize(1200, 300)
+        tl.set_project(proj())
+        tl.px_per_s, tl.scroll_s = 100.0, 0.0
+        pin = tl.header_w + (tl.width() - tl.header_w) * tl.FOLLOW_AT
+        tl.set_position(round(2 * tl.fps), follow=True, playing=True)       # before the pin: the view stays
+        self.assertEqual(tl.scroll_s, 0.0)
+        for sec in (6.0, 7.0, 9.5):                                          # past it: held there, the view moves
+            tl.set_position(round(sec * tl.fps), follow=True, playing=True)
+            self.assertAlmostEqual(tl._x(sec), pin, delta=1)
+        was = tl.scroll_s
+        tl.follow_play = False                                               # off: the view stays while playing
+        tl.set_position(round(20 * tl.fps), follow=True, playing=True)
+        self.assertEqual(tl.scroll_s, was)
+        got = []
+        tl.viewMovedByHand.connect(lambda: got.append(1))
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QWheelEvent
+        tl.wheelEvent(QWheelEvent(QPointF(300, 100), QPointF(300, 100), tl.rect().topLeft(), __import__("PySide6.QtCore").QtCore.QPoint(120, 0),
+                                  Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False))
+        self.assertEqual(got, [1])                                           # a sideways scroll is by hand
+
+
 if __name__ == "__main__":
     unittest.main()

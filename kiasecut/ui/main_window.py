@@ -672,6 +672,7 @@ class MainWindow(QMainWindow):
         self.timeline = Timeline()
         tl = self.timeline
         tl.seekRequested.connect(lambda f: self.seek(f, follow=False))     # the user is looking there
+        tl.viewMovedByHand.connect(lambda: self.playing and self.follow_btn.setChecked(False))   # (no longer followed)
         tl.clipSelected.connect(lambda c: self.refresh_inspector())
         tl.moveRequested.connect(lambda cid, start, tid: self.apply("移動", edit.move, cid, start, tid))
         tl.trimRequested.connect(
@@ -795,6 +796,11 @@ class MainWindow(QMainWindow):
         self.snap_btn.setChecked(True)
         self.snap_btn.toggled.connect(self.set_snapping)
         tools.addWidget(self.snap_btn)
+        self.follow_btn = tool("follow", "跟隨播放頭：播放時時間線連續捲動，播放頭停在畫面左邊約三成處。\n播放中拖動或左右捲動時間線會自動關掉",
+                               lambda: None, checkable=True)
+        self.follow_btn.setChecked(True)
+        self.follow_btn.toggled.connect(self.set_follow_play)
+        tools.addWidget(self.follow_btn)
         tools.addSpacing(10)
         hl = QLabel()
         hl.setPixmap(icons.icon("height").pixmap(16, 16))
@@ -1118,6 +1124,7 @@ class MainWindow(QMainWindow):
         add(m, "取消選區", "Ctrl+Shift+D", lambda: self.set_mark(None))
         add(m, "新增時間線標記", "M", lambda: self.add_marker())
         add(m, "自動吸附", "N", lambda: self.snap_btn.toggle())
+        add(m, "跟隨播放頭", None, lambda: self.follow_btn.toggle())
         add(m, "設定 / 取消為參考軌道", "R", self.toggle_reference)
         m.addSeparator()
         add(m, "上一個剪輯點", "Up", lambda: self.jump_edit(-1))
@@ -4715,7 +4722,7 @@ class MainWindow(QMainWindow):
             if img is not None:
                 self.fullscreen.canvas.show_image(img)
             self.fullscreen.set_position(pos, self.length, self.fps)
-        self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True))
+        self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True), playing=self.playing)
         self.show_time()
         sel = self.timeline.selected
         if sel is not None:
@@ -4936,6 +4943,12 @@ class MainWindow(QMainWindow):
                      "set": (edit.set_beat_point, "改變速點"), "remove": (edit.remove_beat_point, "刪除變速點")}[op]
         self.apply(label, lambda level: fn(level, cid, **args),
                    merge=("beatpt", cid, op, args["index"]) if op in ("move", "set") else None)
+
+    def set_follow_play(self, on):
+        self.timeline.follow_play = on
+        self.statusBar().showMessage("跟隨播放頭：開" if on else "跟隨播放頭：關", 2000)
+        if on and self.playing:
+            self.timeline.set_position(self.timeline.pos, follow=True, playing=True)
 
     def set_snapping(self, on):
         self.timeline.snapping = on

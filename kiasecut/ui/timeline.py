@@ -306,6 +306,7 @@ class Timeline(QWidget):
     grabCancelled = Signal()                         # a G grab was put back (Esc / right button)
     peaksReady = Signal(str)                         # emitted from the waveform thread
     vzoomChanged = Signal(float)
+    viewMovedByHand = Signal()                       # dragged (middle button) or scrolled sideways: playback stops following
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -348,6 +349,7 @@ class Timeline(QWidget):
         self.drop_many = None                      # (count, across) while several media items hover
         self.tops = []                             # y of each row (on screen)
         self.vzoom = 1.0                           # track height factor
+        self.follow_play = True                    # 跟隨: the view goes with the playhead while playing
         self.heights = {}                          # track id -> height set by dragging its edge
         self.scroll_y = 0
         self.vbar = QScrollBar(Qt.Vertical, self)
@@ -519,11 +521,21 @@ class Timeline(QWidget):
         grabbed by its edge."""
         return self.header_w - 6 <= pos.x() <= self.header_w + 2 and pos.y() < RULER_H
 
-    def set_position(self, frame, follow=True):
-        """Move the playhead; with follow, scroll so it stays in view (playback, keys)."""
+    FOLLOW_AT = 0.3                                      # where in the view the playhead is held while it is followed
+
+    def set_position(self, frame, follow=True, playing=False):
+        """Move the playhead. With follow, scroll so it stays in view (keys, a seek). While playing, the 跟隨 switch
+        (follow_play) decides: on, the view scrolls with the playhead continuously (it goes on to FOLLOW_AT of the width
+        and is held there); off, the view stays."""
         was, self.pos = self.pos, frame
         x = self._x(frame / self.fps)
-        if follow and (x > self.width() - 30 or x < self.header_w):
+        if follow and playing:
+            pin = self.header_w + (self.width() - self.header_w) * self.FOLLOW_AT
+            if self.follow_play and (x > pin or x < self.header_w):
+                self.scroll_s = max(0.0, frame / self.fps - (pin - self.header_w) / self.px_per_s)
+                self.update()
+                return
+        elif follow and (x > self.width() - 30 or x < self.header_w):
             self.scroll_s = max(0.0, frame / self.fps - (self.width() - self.header_w) * 0.2 / self.px_per_s)
             self.update()
             return
@@ -1877,6 +1889,8 @@ class Timeline(QWidget):
         if "wrap_s" not in d:                            # (this drag's first move)
             self.wrap.start("xy" if d["mode"] in ("pan", "zoom") else "x")
             d["wrap_s"] = self.scroll_s
+            if d["mode"] == "pan":
+                self.viewMovedByHand.emit()
         v = self.wrap.pos(e)
         if d["mode"] in ("pan", "zoom"):
             self._mouse_move(e, v)
@@ -2608,6 +2622,8 @@ class Timeline(QWidget):
             if shift:                                    # left / right
                 dx, dy = dy if abs(dy) >= abs(dx) else dx, 0.0
             part["dx"], part["dy"] = dx, dy              # (a touchpad moves both ways at once)
+            if dx:
+                self.viewMovedByHand.emit()
         glide = {k: v for k, v in part.items() if not wheel.touchpad(e) and inertia.percent(self.WHEEL_CHANNEL[k])}
         self._wheel_apply({k: v for k, v in part.items() if k not in glide})   # (a touchpad's fingers already move it smoothly)
         if glide:

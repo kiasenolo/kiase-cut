@@ -186,6 +186,10 @@ def _draw(p, name):
         p.setPen(QPen(pen.color(), 1.4))
         for x in (7.5, 15):
             p.drawLine(QPointF(x - 1.2, 12), QPointF(x + 1.2, 12))
+    elif name == "follow":                                 # the playhead and an arrow along: the view goes with it
+        p.drawRect(QRectF(4.5, 4, 2.4, 16))
+        p.drawRect(QRectF(9.5, 10.8, 6, 2.4))
+        _poly(p, [(14.5, 7), (21, 12), (14.5, 17)])
     elif name == "timeline":
         for y, x0, x1 in ((6, 4, 14), (11, 8, 20), (16, 4, 17)):
             p.drawRoundedRect(QRectF(x0, y - 1.6, x1 - x0, 3.2), 1, 1)

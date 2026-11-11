@@ -207,3 +207,22 @@ class NodeEffectPanelTests(unittest.TestCase):
         props = components.number_props_of(edit.find(p, "c1")[1])
         self.assertIn(f"fx:{e['id']}.{ng.expose_key(name)}", props)
         self.assertFalse([q for q in props if q.startswith(f"fx:{e['id']}.{math}.")])
+
+
+class ColourButtonMenuTests(unittest.TestCase):
+    def test_a_colour_buttons_background_does_not_reach_its_menu(self):
+        """The right-click menu of a component's colour field came up as a white board (the button's sheet went to the child menu)."""
+        from PySide6.QtWidgets import QApplication, QMenu, QPushButton, QWidget
+        from kiasecut.ui import look
+        app = QApplication.instance() or QApplication([])
+        look.apply(app)
+        host = QWidget()
+        host.show()
+        button = QPushButton(host)
+        look.set_sheet(button, "QPushButton { background: #ffffff; color: #000; }")      # (as the inspector sets it)
+        menu = QMenu(host)
+        menu.addAction("x")
+        menu.show()
+        img = menu.grab().toImage()
+        self.assertNotEqual(img.pixelColor(img.width() // 2, 4).name(), "#ffffff")
+        menu.close()

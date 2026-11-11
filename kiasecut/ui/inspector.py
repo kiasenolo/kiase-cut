@@ -1111,7 +1111,7 @@ class Inspector(QWidget):
         w.setContextMenuPolicy(Qt.CustomContextMenu)
 
         def show(pos):
-            menu = w.createStandardContextMenu() if isinstance(w, QPlainTextEdit) else QMenu(w)
+            menu = w.createStandardContextMenu() if isinstance(w, QPlainTextEdit) else QMenu(self)       # (not the field's child: its style sheet - a colour button's background - would reach the menu)
             if self.clip_ids and self.menu_extender is not None:
                 self.menu_extender(menu, list(self.clip_ids), prop)
             if not menu.isEmpty():
@@ -1501,7 +1501,7 @@ class Inspector(QWidget):
             elif f in ("color", "color2"):
                 hx = assets.hex_of(v[f])
                 wid.setText(hx)
-                look.set_sheet(wid, f"background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'};")
+                look.set_sheet(wid, f"QPushButton {{ background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'}; }}")
             elif isinstance(wid, QCheckBox):
                 wid.blockSignals(True)
                 wid.setChecked(bool(v[f]))
@@ -1606,7 +1606,7 @@ class Inspector(QWidget):
                 else:
                     rgb = QColor(v[:7])
                     wid.setText(v)
-                    look.set_sheet(wid, f"background: {v[:7]}; color: {'#000' if rgb.lightness() > 140 else '#fff'};")
+                    look.set_sheet(wid, f"QPushButton {{ background: {v[:7]}; color: {'#000' if rgb.lightness() > 140 else '#fff'}; }}")
             elif kind == "choice":
                 opts = [x for _n, x in assets.FIELD_INFO[f][2]]
                 self._set_combo(wid, opts.index(v) if v in opts else "--")
@@ -1746,7 +1746,7 @@ class Inspector(QWidget):
                 else:
                     hx = assets.hex_of(v)
                     wid.setText(hx)
-                    look.set_sheet(wid, f"background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'};")
+                    look.set_sheet(wid, f"QPushButton {{ background: {hx[:7]}; color: {'#000' if QColor(hx[:7]).lightness() > 140 else '#fff'}; }}")
             elif kind == "image":
                 i = wid.findData(v) if v else -1
                 if i < 0 and v:                          # a picture that is not in the media library

@@ -557,7 +557,7 @@ class EffectsPanel(QWidget):
     def _check_menu_at(self, box, prop, pos):
         if not self.ids or self.menu_extender is None:
             return
-        menu = QMenu(box)
+        menu = QMenu(self)
         self.menu_extender(menu, list(self.ids), prop)
         if not menu.isEmpty():
             menu.exec(box.mapToGlobal(pos))

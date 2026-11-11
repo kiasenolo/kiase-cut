@@ -133,6 +133,21 @@ class EditPath(unittest.TestCase):
         self.assertAlmostEqual(after[2][1], 850, delta=0.5)
 
 
+class PathMask(unittest.TestCase):
+    def test_path_cuts_the_other_clips_and_its_track_is_reference(self):
+        from test_edit import S, clip
+        from kiasecut import project
+        p = project.new()
+        a, b = clip("a", 0, S), clip("b", 0, S)
+        b["asset"] = assets.path_params([[0, 0, 0, 0, 0, 0], [100, 0, 0, 0, 0, 0], [50, 80, 0, 0, 0, 0]], True)[0]
+        p["tracks"] = [{"id": "t1", "kind": "video", "name": "v", "clips": [a]}, {"id": "t2", "kind": "video", "name": "v", "clips": [b]}]
+        p = project.link(p)
+        out = edit.mask_by_shape(p, "b", ["a", "b"], (1920, 1080))
+        self.assertEqual([c["id"] for c in out], ["a"])
+        self.assertEqual((a["mask"]["kind"], a["mask"]["track_id"]), ("track", "t2"))
+        self.assertTrue(p["tracks"][1]["reference"])
+
+
 def pv_nodes(pv, p):
     """The nodes of clip k0 in canvas px as the tool reads them."""
     box = Box(edit.find(p, "k0")[1], 1920, 1080, 0)

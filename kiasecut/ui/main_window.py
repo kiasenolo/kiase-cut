@@ -1049,6 +1049,7 @@ class MainWindow(QMainWindow):
         add(m, "剪下", "Ctrl+X", lambda: self.do_copy(cut=True))
         add(m, "貼上", "Ctrl+V", self.do_paste)
         add(m, "建立副本", ("Ctrl+Shift+C", "Shift+D"), self.do_duplicate)
+        add(m, "用路徑／形狀當遮罩", None, self.mask_by_shape)
         m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "向左裁剪（刪掉播放頭之前）", "Q", lambda: self.do_trim_to_playhead("start"))
@@ -3983,6 +3984,21 @@ class MainWindow(QMainWindow):
                 h["color"] = was
         self.timeline.update()
         return col
+
+    def mask_by_shape(self):
+        """選取一個內建形狀或鋼筆路徑，再加選要被切的片段：它們用那個形狀當遮罩（形狀所在的軌道變成參考軌道）。"""
+        tl = self.timeline
+        if not self.proj or not tl.selected_ids:
+            return
+        clips = {c["id"]: c for c in project.walk_clips(self.container()["tracks"]) if c["id"] in tl.selected_ids}
+        shapes = [c for c in clips.values() if c.get("asset") and c["asset"].get("family") not in ("solid", "gradient", "empty", "grid")]
+        shape = next((c for c in shapes if c["asset"].get("family") == "path"), shapes[0] if shapes else None)
+        others = [i for i in clips if shape is None or i != shape["id"]]
+        if shape is None or not others:
+            self.statusBar().showMessage("先選一個形狀或鋼筆路徑，再加選要被它切的片段（Ctrl+點）", 5000)
+            return
+        size = self.level_size()
+        self.apply("用路徑當遮罩", lambda lvl: edit.mask_by_shape(lvl, shape["id"], others, size))
 
     def toggle_reference(self):
         """R: the selected tracks (else the tracks of the selected clips) become 參考 tracks, or stop being."""

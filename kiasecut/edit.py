@@ -1420,6 +1420,25 @@ def set_mask_track(proj, clip_id, track_id, size):
     return c
 
 
+def mask_by_shape(proj, shape_id, clip_ids, size):
+    """用路徑當遮罩: the clips cut by what the shape clip (a pen path or a built-in shape) shows - a 軌道 mask of its track, and
+    that track becomes a 參考 track so the shape itself is not drawn. Returns the clips that got the mask."""
+    track, shape = find(proj, shape_id)
+    if not shape.get("asset"):
+        raise EditError("要用內建形狀或鋼筆路徑當遮罩")
+    out = []
+    for cid in clip_ids:
+        t, c = find(proj, cid)
+        if cid == shape_id or c["type"] not in MASKABLE or t is track:
+            continue
+        set_mask(proj, cid, "track")
+        set_mask_track(proj, cid, track["id"], size)
+        out.append(c)
+    if out:
+        track["reference"] = True
+    return out
+
+
 def set_mask_enabled(proj, clip_id, on):
     """Switch a clip's mask on or off, keeping its settings; switching on a clip without
     a mask gives it a rectangle."""

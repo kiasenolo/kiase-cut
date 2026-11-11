@@ -2,6 +2,6 @@
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <g>
     <rect width="128" height="128" fill="#000000" fill-rule="evenodd" fill-opacity="0.188" />
-    <path d="M8.01355 46.5544L41.1132 76.0267L44.2707 78.8382L44.2707 64.1096L24.5549 46.5544L8.01355 46.5544ZM0.152012 39.5544L0 39.4191L44.2707 0L44.2707 14.7286L16.5414 39.4191L16.6934 39.5544L0.152012 39.5544Z" fill="#FFFFFF" fill-rule="evenodd" transform="matrix(0 1 -1 -0 103.838 42)" />
+    <path d="M39.4191 0L33.8382 6.2678L33.8382 22.8092L39.4191 16.5414L64.1096 44.2707L78.8382 44.2707L39.4191 0L39.4191 0ZM2.81145 41.1132L24.8382 16.3755L24.8382 32.9169L14.7286 44.2707L0 44.2707L2.81145 41.1132L2.81145 41.1132Z" fill="#FFFFFF" fill-rule="evenodd" transform="translate(25 42)" />
   </g>
 </svg>

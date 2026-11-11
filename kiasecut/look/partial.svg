@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
   <g>
-    <path d="M6.00001 0L96 0L90 21L0 21L6.00001 0Z" fill="#ffffff" fill-rule="evenodd" transform="translate(16 43)" />
+    <path d="M6.00001 0L96 0L90 21L0 21L6.00001 0Z" fill="#FFFFFF" fill-rule="evenodd" transform="translate(16 43)" />
   </g>
 </svg>

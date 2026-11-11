@@ -74,5 +74,27 @@ class Follow(unittest.TestCase):
         self.assertAlmostEqual(x, (460 - 960) / 960 + 0.1, delta=0.001)
 
 
+class TextOnPath(unittest.TestCase):
+    def test_text_gets_the_polyline_and_the_middle(self):
+        p, f, path = scene()
+        t = clip("txt", 0, 5 * US)
+        t["type"] = "text"
+        t["text"] = {"content": "Hello", "size": 5.0}
+        p["tracks"][0]["clips"].append(t)
+        edit.set_text_path(p, "txt", "path")
+        self.assertEqual(t["text"]["on_path"], "path")
+        view = pathfollow.resolved(p)
+        c = view["tracks"][0]["clips"][1]
+        pts = c["text"]["path_pts"]
+        self.assertAlmostEqual(pts[0][0], -500, delta=0.5)           # (the line is 1000 px wide, its middle at the centre)
+        self.assertAlmostEqual(pts[-1][0], 500, delta=0.5)
+        self.assertAlmostEqual(c["transform"]["x"], 0.0, delta=0.001)
+        from kiasecut import textlayout
+        im = textlayout.render(dict(c["text"], font_path=None) if False else c["text"], 1.0, 1080)
+        self.assertGreater(im.width, 1000)
+        edit.set_text_path(p, "txt", None)
+        self.assertFalse(pathfollow.has_followers(p))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -23,7 +23,7 @@ MOVING = ("x", "y", "scale", "scale_y", "rotation", "pivot_x", "pivot_y", "ancho
 
 
 def is_follower(c):
-    return bool((c.get("transform") or {}).get("path_id"))
+    return bool((c.get("transform") or {}).get("path_id") or (c.get("text") or {}).get("on_path"))
 
 
 def is_path(c):
@@ -125,6 +125,38 @@ def _apply(c, p, W, H, fps):
     tf["x"], tf["y"] = {"keys": xs}, {"keys": ys}
 
 
+def _shifted(param, d):
+    """A number or curve with d added to every value."""
+    if curves.is_animated(param):
+        out = copy.deepcopy(param)
+        for k in out["keys"]:
+            k[1] = round(k[1] + d, 5)
+        return out
+    return round(curves.value(param, 0) + d, 5)
+
+
+TEXT_POINTS = 240
+
+
+def _apply_text(c, p, W, H):
+    """路徑文字: the text's path_pts (its polyline, px of a 1080-high canvas round the polyline's middle) from the path clip as it is
+    at the text's start, and the clip's x / y moved to that middle."""
+    tx, tf = c["text"], c.setdefault("transform", {})
+    if p is None or not is_path(p):
+        return
+    qp = _outline(p)
+    if qp.isEmpty():
+        return
+    frame = _frame(p, c["start_us"] - p["start_us"], W, H)
+    pts = [frame.map(qp.pointAtPercent(i / TEXT_POINTS)) for i in range(TEXT_POINTS + 1)]
+    xs, ys = [q.x() for q in pts], [q.y() for q in pts]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+    k = 1080.0 / H
+    tx["path_pts"] = [[round((q.x() - cx) * k, 2), round((q.y() - cy) * k, 2)] for q in pts]
+    tf["x"] = _shifted(tf.get("x", 0.0), (cx - W / 2) / (W / 2))
+    tf["y"] = _shifted(tf.get("y", 0.0), (H / 2 - cy) / (H / 2))
+
+
 def resolve(root):
     """Write the followers of a private copy of a project (or of the open level's view) as plain x / y; True when there were any."""
     found = False
@@ -134,7 +166,12 @@ def resolve(root):
         by_id = {c["id"]: c for c in clips}
         for c in clips:
             tf = c.get("transform")
-            if tf and tf.get("path_id"):
+            if c.get("text") and c["text"].get("on_path"):
+                found = True
+                _apply_text(c, by_id.get(c["text"]["on_path"]), W, H)
+                c["text"].pop("on_path", None)
+                c.setdefault("transform", {})["_followed"] = True
+            elif tf and tf.get("path_id"):
                 found = True
                 _apply(c, by_id.get(tf["path_id"]), W, H, fps)
                 tf["_followed"] = True

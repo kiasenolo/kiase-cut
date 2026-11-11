@@ -457,8 +457,7 @@ class MainWindow(QMainWindow):
         ins.throughChosen.connect(lambda ids, on: self.apply_each(
             "效果穿透", lambda lvl, cid: edit.set_fx_through(lvl, cid, on), ids))
         ins.anchorGridRequested.connect(self.preview.anchor_grid)
-        ins.pathFollowChosen.connect(lambda pid: self.apply_each("路徑跟隨" if pid else "取消路徑跟隨", edit.set_path_follow,
-                                                              sorted(self.timeline.selected_ids), pid))
+        ins.pathFollowChosen.connect(self.on_path_follow)
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
         ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)
@@ -4696,6 +4695,16 @@ class MainWindow(QMainWindow):
                         if c["id"] != cid and c["type"] in ok]
 
     # -- inspector / preview overlay --------------------------------------------------------------
+    def on_path_follow(self, pid):
+        """The inspector's 路徑跟隨 / 文字沿路徑: each selected clip follows (a text is set along) the path clip pid, or stops."""
+        clips = {c["id"]: c for c in project.walk_clips(self.container()["tracks"])}
+        ids = [i for i in sorted(self.timeline.selected_ids) if i in clips and i != pid]
+
+        def each(level):
+            for i in ids:
+                (edit.set_text_path if clips[i]["type"] == "text" else edit.set_path_follow)(level, i, pid)
+        self.apply("路徑跟隨" if pid else "取消路徑跟隨", each)
+
     def preview_view(self):
         """The open level for the preview: the clips that follow a path placed on it."""
         return pathfollow.resolved(self.view()) if self.proj else None

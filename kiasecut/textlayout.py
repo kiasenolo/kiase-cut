@@ -13,6 +13,10 @@ Calibrated frame by frame against a Jianying export:
     width (a Latin word goes down whole, CJK breaks anywhere) and the text sits at its top,
     middle or bottom (spec["valign"]); text that does not fit runs over it. Its centre is
     the clip position
+  * text on a path (路徑文字): spec["path_pts"] [[x, y], ...] (px of a 1080-high canvas at scale 1, the polyline's bounding box centred
+    on 0) sets every glyph on it, turned to the line, from spec["path_offset"] (0 - 1 of the line's length, where the text starts;
+    its alignment says which end of it: the left, middle or right) - lines below the first sit under it, off the line's left. The
+    image is as big as the polyline plus room for the text round it; 文字框, justify, slant and the background do not apply
   * a shadow (shadow_on: the drawn text and its outline in shadow_color, moved shadow_x /
     shadow_y and blurred by shadow_blur) and a background (bg_on: a rectangle in bg_color
     round the text's frame, bg_pad_l / _r / _t / _b (left, right, top, bottom) further out -
@@ -101,7 +105,7 @@ def _style_at(spec, i):
 def boxed(tx):
     """Whether text spec tx has a fixed frame (文字框): a width it wraps in or a height it
     sits in (box_w / box_h above 0, either can have keyframes)."""
-    return any(curves.max_abs(tx.get(k) or 0.0) > 0 for k in ("box_w", "box_h"))
+    return not tx.get("path_pts") and any(curves.max_abs(tx.get(k) or 0.0) > 0 for k in ("box_w", "box_h"))
 
 
 def _wordish(ch):
@@ -187,6 +191,79 @@ def frame_size(spec, canvas_h=1080, scale=1.0):
     return lay["fw"], lay["fh"]
 
 
+class PathGeo:
+    """A polyline (points px) with its cumulative lengths: where a distance along it is, and which way it runs there (the line
+    goes on straight past its ends)."""
+
+    def __init__(self, pts):
+        self.pts = [(float(x), float(y)) for x, y in pts]
+        self.cum = [0.0]
+        for a, b in zip(self.pts, self.pts[1:]):
+            self.cum.append(self.cum[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+        self.length = self.cum[-1]
+        xs, ys = [p[0] for p in self.pts], [p[1] for p in self.pts]
+        self.w, self.h = (max(xs) - min(xs), max(ys) - min(ys)) if self.pts else (0.0, 0.0)
+
+    def at(self, s):
+        """((x, y), degrees clockwise on a y-down canvas) at distance s."""
+        pts, cum = self.pts, self.cum
+        if len(pts) < 2 or self.length <= 0:
+            return (pts[0] if pts else (0.0, 0.0)), 0.0
+        i = 0
+        if s >= self.length:
+            i = len(pts) - 2
+        elif s > 0:
+            lo, hi = 0, len(pts) - 1
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                if cum[mid] <= s:
+                    lo = mid
+                else:
+                    hi = mid
+            i = lo
+        a, b = pts[i], pts[i + 1]
+        seg = cum[i + 1] - cum[i]
+        while seg <= 1e-9 and i > 0:                      # (a point on top of the one before it has no direction)
+            i -= 1
+            a, b, seg = pts[i], pts[i + 1], cum[i + 1] - cum[i]
+        u = (s - cum[i]) / seg if seg > 1e-9 else 0.0
+        return (a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u), math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+
+
+def _draw_on_path(spec, lay, geo, px, im, glyph_mask, fill_on, W, H):
+    """Every glyph of the laid-out text on the polyline geo (px): a tile each, turned to the line, put on im (and its outline mask)."""
+    align = spec.get("align") or "center"
+    start = float(spec.get("path_offset") or 0.0) * geo.length
+    em = lay["base_em"]
+    T = int(em * 2.4) + 8
+    T += T % 2
+    for li, (glyphs, lw) in enumerate(lay["lines"]):
+        s0 = {"right": start - lw, "center": start - lw / 2}.get(align, start)
+        down = li * lay["step"]
+        for gx, ch, f, rgba, adv in glyphs:
+            if not ch.strip():
+                continue
+            (x, y), deg = geo.at(s0 + gx + adv / 2)
+            a = math.radians(deg)
+            x, y = x - math.sin(a) * down, y + math.cos(a) * down       # (below the line, off its left)
+            for target, color in ((im, rgba if fill_on else (0, 0, 0, 0)), (glyph_mask, 255)):
+                if target is None:
+                    continue
+                tile = Image.new("RGBA" if target is im else "L", (T, T), 0)
+                ImageDraw.Draw(tile).text((T / 2 - adv / 2, T / 2), ch, font=f, fill=color, anchor="ls")
+                tile = tile.rotate(-deg, resample=Image.BICUBIC, center=(T / 2, T / 2))
+                dx, dy = int(round(W / 2 + x - T / 2)), int(round(H / 2 + y - T / 2))
+                x0, y0, x1, y1 = max(dx, 0), max(dy, 0), min(dx + T, W), min(dy + T, H)
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                tile = tile.crop((x0 - dx, y0 - dy, x1 - dx, y1 - dy))
+                if target is im:
+                    im.alpha_composite(tile, (x0, y0))
+                else:
+                    region = target.crop((x0, y0, x1, y1))
+                    target.paste(Image.fromarray(np.maximum(np.asarray(region), np.asarray(tile))), (x0, y0))
+
+
 def _dilate(a, r):
     """a (uint8, H x W) grown by a round brush of radius r px: every pixel takes the largest value within r."""
     if r <= 0:
@@ -224,8 +301,14 @@ def render(spec, scale, canvas_h=1080):
     pads = {k: (spec[f"bg_pad_{k}"] if f"bg_pad_{k}" in spec else d["bg_pad"]) * px for k in PADS}
     if d["bg_on"]:
         pad = max(pad, int(math.ceil(max(pads.values()))) + 2)
-    W = int(math.ceil(2 * lay["half_w"])) + 2 * pad
-    H = int(math.ceil(2 * lay["half_h"])) + 2 * pad
+    geo = PathGeo([(x * px, y * px) for x, y in spec["path_pts"]]) if spec.get("path_pts") else None
+    if geo:
+        d["bg_on"], shear = False, 0.0
+        pad += int(base_em * 1.4)
+        W, H = int(math.ceil(geo.w)) + 2 * pad, int(math.ceil(geo.h)) + 2 * pad
+    else:
+        W = int(math.ceil(2 * lay["half_w"])) + 2 * pad
+        H = int(math.ceil(2 * lay["half_h"])) + 2 * pad
     W += W % 2
     H += H % 2
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -234,7 +317,7 @@ def render(spec, scale, canvas_h=1080):
     mask_draw = ImageDraw.Draw(glyph_mask) if glyph_mask else None
     align = spec.get("align") or "center"
     fill_on = spec.get("fill", True)
-    for li, (glyphs, lw) in enumerate(lines):
+    for li, (glyphs, lw) in enumerate([] if geo else lines):
         left = (W - fw) / 2
         ox = {"left": left, "justify": left, "right": left + fw - lw}.get(align, (W - lw) / 2)
         spread = 0.0
@@ -246,6 +329,8 @@ def render(spec, scale, canvas_h=1080):
             dr.text(at, ch, font=f, fill=rgba if fill_on else (0, 0, 0, 0), anchor="ls")
             if mask_draw:
                 mask_draw.text(at, ch, font=f, fill=255, anchor="ls")
+    if geo:
+        _draw_on_path(spec, lay, geo, px, im, glyph_mask, fill_on, W, H)
     if glyph_mask:
         radius = stroke_width if stroke_align != "center" else (stroke_width + 1) // 2
         g = np.asarray(glyph_mask)

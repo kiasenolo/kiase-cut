@@ -938,8 +938,8 @@ def set_transform(proj, clip_id, key, value, t=None):
 
 # -- keyframes ------------------------------------------------------------------------------------
 TEXT_ANIM_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
-                    "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign", "box_w", "box_h") \
-    + tuple(textlayout.DECOR)
+                    "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign", "box_w", "box_h",
+                    "path_offset") + tuple(textlayout.DECOR)
 GROUP_FIELDS = {
     "transform": TRANSFORM_FIELDS,
     "text": TEXT_ANIM_FIELDS,
@@ -1442,6 +1442,28 @@ def set_path_follow(proj, clip_id, path_id):
         tf["x"], tf["y"] = 0.0, 0.0
         tf.setdefault("path_progress", 0.0)
     tf["path_id"] = path_id
+    return c
+
+
+def set_text_path(proj, clip_id, path_id):
+    """路徑文字: the text clip's words are set along shape / pen path clip path_id (pathfollow.py; textlayout's path_pts), or free
+    again with None. Its x / y become the offset from the path's middle."""
+    _, c = find(proj, clip_id)
+    tx = c.get("text")
+    if tx is None:
+        raise EditError("只有文字片段可以沿路徑排列")
+    if path_id is None:
+        tx.pop("on_path", None)
+        tx.pop("path_offset", None)
+        return c
+    _, target = find(proj, path_id)
+    if not (target.get("asset") and target["asset"].get("family") not in ("solid", "gradient", "empty", "grid")):
+        raise EditError("要沿著形狀或鋼筆路徑片段排列")
+    if not tx.get("on_path"):
+        tf = c.setdefault("transform", {})
+        tf["x"], tf["y"] = 0.0, 0.0
+        tx.setdefault("path_offset", 0.0)
+    tx["on_path"] = path_id
     return c
 
 

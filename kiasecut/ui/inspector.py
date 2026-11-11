@@ -63,6 +63,7 @@ PARAMS = {
              ("stroke", "邊框粗細 px", 0.0, 100.0, 0.1, 1, 1, 2.0),
              ("box_w", "寬", 0.0, 4000.0, 1.0, 1, 1, 0.0),             # 文字框 (0: 自動)
              ("box_h", "高", 0.0, 4000.0, 1.0, 1, 1, 0.0),
+             ("path_offset", "文字起點 %", -300.0, 400.0, 0.5, 1, 100, 0.0),          # 路徑文字 (textlayout path_pts): stored 0 - 1 of the line
              ("shadow_x", "陰影 X px", -500.0, 500.0, 0.5, 1, 1, 4.0),     # 陰影 / 背景 (textlayout.DECOR)
              ("shadow_y", "陰影 Y px", -500.0, 500.0, 0.5, 1, 1, 4.0),
              ("shadow_blur", "陰影模糊 px", 0.0, 200.0, 0.5, 1, 1, 6.0),
@@ -575,7 +576,7 @@ class Inspector(QWidget):
                     if r[0] in DECOR_ROWS[part] and not r[0].startswith("bg_pad_"):
                         form.addRow(r[1], self._param_row("text", *r))
             for r in PARAMS["text"]:
-                if r[0] not in BOX_KEYS and r[0] not in DECOR_KEYS and r[0] != "stroke":
+                if r[0] not in BOX_KEYS and r[0] not in DECOR_KEYS and r[0] not in ("stroke", "path_offset"):
                     form.addRow(r[1], self._param_row("text", *r))
         if c.get("transform") is not None:
             if c["type"] == "filter":                     # a filter has no place of its own: only how strongly it works
@@ -595,7 +596,7 @@ class Inspector(QWidget):
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
                 self._build_flip(form)
-                self._build_path_follow(form)
+                self._build_path_follow(form, c)
                 if c["type"] in ("image", "video", "compound") and not c.get("asset"):
                     self._build_corners(form)
                 blend = ComboBox()
@@ -1282,19 +1283,26 @@ class Inspector(QWidget):
         """[(id, name)] of the shapes / pen paths the clips of the open level can follow."""
         self.path_choices = list(choices)
 
-    def _build_path_follow(self, form):
-        """路徑跟隨: pick a shape or pen path clip to move along, and how far along it is (keyframes like any number)."""
+    def _build_path_follow(self, form, c):
+        """路徑跟隨: pick a shape or pen path clip to move along, and how far along it is (keyframes like any number). A text
+        clip is set along it instead (路徑文字), from the start point given."""
+        text = c["type"] == "text"
         box = ComboBox()
-        box.addItem("（不跟隨）", None)
+        box.addItem("（不排列）" if text else "（不跟隨）", None)
         for cid, name in getattr(self, "path_choices", []):
             if cid not in self.clip_ids:
                 box.addItem(name, cid)
-        box.setToolTip("讓片段沿著一個形狀或鋼筆路徑片段移動：路徑進度 0% 在路徑起點，100% 在終點，可以打關鍵幀。\n"
-                       "位置 X / Y 變成離路徑的偏移；路徑片段本身可以設成參考軌道（R）不顯示。")
+        box.setToolTip(("讓文字沿著一個形狀或鋼筆路徑片段排列：文字起點 0% 在路徑起點，可以打關鍵幀讓文字滑動。\n"
+                         "位置 X / Y 變成離路徑中心的偏移；路徑片段本身可以設成參考軌道（R）不顯示。") if text else
+                        ("讓片段沿著一個形狀或鋼筆路徑片段移動：路徑進度 0% 在路徑起點，100% 在終點，可以打關鍵幀。\n"
+                         "位置 X / Y 變成離路徑的偏移；路徑片段本身可以設成參考軌道（R）不顯示。"))
         box.activated.connect(lambda i: self.pathFollowChosen.emit(box.itemData(i)))
         self.widgets["path_id"] = box
-        form.addRow("路徑跟隨", box)
-        form.addRow("路徑進度", self._param_row("transform", *next(r for r in PARAMS["transform"] if r[0] == "path_progress")))
+        form.addRow("文字沿路徑" if text else "路徑跟隨", box)
+        if text:
+            form.addRow("文字起點", self._param_row("text", *next(r for r in PARAMS["text"] if r[0] == "path_offset")))
+        else:
+            form.addRow("路徑進度", self._param_row("transform", *next(r for r in PARAMS["transform"] if r[0] == "path_progress")))
 
     def _build_flip(self, form):
         """翻轉: the picture turned over across (水平) and / or down (垂直)."""
@@ -2038,7 +2046,7 @@ class Inspector(QWidget):
                 w[key].setChecked(all(bool(k["transform"].get(key)) for k in clips))
                 w[key].blockSignals(False)
         if "path_id" in w:
-            ids = {(k["transform"] or {}).get("path_id") for k in clips}
+            ids = {(k["text"].get("on_path") if k["type"] == "text" else (k["transform"] or {}).get("path_id")) for k in clips}
             box = w["path_id"]
             box.blockSignals(True)
             want = ids.pop() if len(ids) == 1 else None

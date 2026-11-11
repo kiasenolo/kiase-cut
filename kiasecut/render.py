@@ -44,7 +44,7 @@ from . import assets, components, curves, fonts, fx, masks, nodegraph, project, 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
                "letter_spacing", "line_spacing", "italic_deg", "font_path", "align", "valign",
-               "box_w", "box_h") + tuple(textlayout.DECOR)
+               "box_w", "box_h", "path_offset") + tuple(textlayout.DECOR)
 BIG = 1e5
 IMAGE_FILES = 600
 IMAGE_CACHE_BYTES = sysmem.scaled(1 << 30, 160 << 20)      # (pictures and their mip levels, decoded)

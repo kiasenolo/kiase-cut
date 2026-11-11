@@ -172,6 +172,17 @@ class ComponentTests(unittest.TestCase):
         components.content(edit.find(self.p, self.cid)[1], 0)             # (nothing to set, and no error)
         edit.set_param_default(self.p, self.kid, pc["id"], False)
 
+    def test_a_filters_prop_is_the_one_at_the_same_place_of_every_selected_layer(self):
+        mk = lambda *es: {"id": "x", "effects": [{"id": i, "filter": f} for i, f in es]}
+        a, b = mk(("a1", "builtin:blur"), ("a2", "builtin:mirror")), mk(("b1", "builtin:blur"), ("b2", "builtin:mirror"))
+        self.assertEqual(components.prop_in(a, components.FX_ON + "a2", b), components.FX_ON + "b2")
+        self.assertEqual(components.prop_in(a, "fxb:a2.flip_y", b), "fxb:b2.flip_y")
+        self.assertEqual(components.prop_in(a, "fx:a1.radius", b), "fx:b1.radius")
+        self.assertEqual(components.prop_in(a, "transform.x", b), "transform.x")            # (not a filter's: as it is)
+        self.assertIsNone(components.prop_in(a, components.FX_ON + "a2", mk(("b1", "builtin:blur"))))     # (no such filter there)
+        self.assertIsNone(components.prop_in(a, components.FX_ON + "a2", mk(("b1", "builtin:mirror"), ("b2", "builtin:blur"))))
+        self.assertEqual(components.prop_in(a, components.FX_ON + "a2", a), components.FX_ON + "a2")
+
     def test_text_and_picture(self):
         txt = {"id": "tx", "type": "text", "name": "", "start_us": 0, "duration_us": S,
                "text": {"content": "原本", "size": 5.0, "color": [1, 1, 1]},

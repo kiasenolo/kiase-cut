@@ -555,7 +555,7 @@ class EffectsPanel(QWidget):
         box.customContextMenuRequested.connect(lambda pos, box=box, prop=prop: self._check_menu_at(box, prop, pos))
 
     def _check_menu_at(self, box, prop, pos):
-        if len(self.ids) != 1 or self.menu_extender is None:
+        if not self.ids or self.menu_extender is None:
             return
         menu = QMenu(box)
         self.menu_extender(menu, list(self.ids), prop)

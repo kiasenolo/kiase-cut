@@ -3089,10 +3089,11 @@ class MainWindow(QMainWindow):
                     sub.addSeparator()
                 for p in checks:
                     sub.addAction(f"交給「{p['name']}」", lambda pid=p["id"]: self.layer_param_bind(pid, prop, ids))
-                mine = [p for p, pr in components.bound(comp).get(ids[0], ()) if pr == prop]
+                pairs = self.bind_pairs(ids, prop)
+                mine = [p for cid, pr0 in pairs for p, pr in components.bound(comp).get(cid, ()) if pr == pr0]
                 if mine:
                     menu.addAction("解除元件參數「" + "、".join(dict.fromkeys(p["name"] for p in mine)) + "」",
-                                   lambda: self.unbind_params([(cid, prop) for cid in ids]))
+                                   lambda: self.unbind_params(pairs))
             return
         if prop not in components.number_props_of(c) + components.instance_props(c):
             return
@@ -3120,10 +3121,11 @@ class MainWindow(QMainWindow):
                 sub.addSeparator()
             for p in nums:
                 sub.addAction(f"交給「{p['name']}」", lambda pid=p["id"]: self.layer_param_bind(pid, prop, ids))
-            mine = [(cid, p) for cid in ids for p, pr in components.bound(comp).get(cid, ()) if pr == prop]
+            pairs = self.bind_pairs(ids, prop)
+            mine = [(cid, p) for cid, pr0 in pairs for p, pr in components.bound(comp).get(cid, ()) if pr == pr0]
             if mine:
                 menu.addAction("解除元件參數「" + "、".join(dict.fromkeys(p["name"] for _c, p in mine)) + "」",
-                               lambda: self.unbind_params([(cid, prop) for cid in ids]))
+                               lambda: self.unbind_params(pairs))
 
     def field_range(self, c, prop):
         """(lo, hi) a number usually runs between: what its field drags across (a mapping's output at first)."""
@@ -3325,7 +3327,20 @@ class MainWindow(QMainWindow):
         out = mapdialog.ask_mapping(self, f"映射：{p['name']} → {components.prop_label(c, prop)}", m,
                                     f"元件參數「{p['name']}」", cur, {}, self.field_range(c, prop))
         if out is not None:
-            self.apply_root("參數映射", lambda root: [edit.set_bind_expr(root, kid, pid, cid, prop, out) for cid in ids])
+            self.apply_root("參數映射", lambda root: [edit.set_bind_expr(root, kid, pid, cid, pr, out) for cid, pr in self.bind_pairs(ids, prop)])
+
+    def bind_pairs(self, ids, prop):
+        """[(layer id, its prop)] of prop of layer ids[0] on each of layers ids (a filter's: the one at the same place in each chain)."""
+        comp = self.open_component()
+        if comp is None:
+            return []
+        c0 = edit.find(comp, ids[0])[1]
+        out = []
+        for cid in ids:
+            mine = components.prop_in(c0, prop, edit.find(comp, cid)[1])
+            if mine is not None:
+                out.append((cid, mine))
+        return out
 
     def unbind_params(self, binds):
         if self.open_kid():
@@ -3337,7 +3352,9 @@ class MainWindow(QMainWindow):
         comp = self.proj["compounds"].get(kid) if kid else None
         if not components.is_component(comp):
             return
-        binds = [(cid, prop) for cid in ids]
+        binds = self.bind_pairs(ids, prop)
+        if not binds:
+            return
         if pid:
             self.apply_root("設為參數", edit.bind_param, kid, pid, binds)
         else:

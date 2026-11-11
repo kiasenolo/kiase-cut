@@ -147,6 +147,32 @@ def is_check_prop(prop):
     return prop.startswith((FX_ON, FX_BOOL))
 
 
+def effect_id_of(prop):
+    """The filter a prop of a layer belongs to (None: it is not a filter's)."""
+    if is_check_prop(prop):
+        return prop.split(":", 1)[1].split(".")[0]
+    if prop.startswith("fx:"):
+        return prop[3:].split(".")[0]
+    return None
+
+
+def prop_in(c0, prop, c):
+    """What prop of layer c0 is on layer c (None: c has no such thing): a filter's is the one at the same place in c's chain
+    (the same filter), for the others it is prop itself."""
+    eid = effect_id_of(prop)
+    if eid is None or c is c0:
+        return prop
+    mine = [e["id"] for e in c0.get("effects") or []]
+    if eid not in mine:
+        return None
+    i = mine.index(eid)
+    theirs = c.get("effects") or []
+    if i >= len(theirs) or theirs[i].get("filter") != c0["effects"][i].get("filter") or \
+            theirs[i].get("vfx") != c0["effects"][i].get("vfx"):
+        return None
+    return prop.replace(eid, theirs[i]["id"], 1)
+
+
 def prop_alive(c, prop):
     """Whether layer c still has what prop sets (a filter that was deleted leaves its bindings behind, unused)."""
     if is_check_prop(prop):

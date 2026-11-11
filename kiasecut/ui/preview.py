@@ -66,7 +66,8 @@ Every drag on the canvas is endless (無邊界, wrapdrag.py): the pointer reachi
 preview jumps to the other one and the drag goes on; what is moved or sized (a clip, a mask, a
 selection box) keeps the view following it. The pointer hides while dragging and comes back
 where the drag ended up.
-With the mouse over the preview (and no text being typed): Home fits the canvas in the view,
+With the mouse over the preview (and no text being typed): the arrow keys nudge the selected clips by a canvas pixel
+(Shift: ten; movesCommitted), Home fits the canvas in the view,
 numpad . frames the selection, numpad 1 shows it 1:1, numpad 2 / 4 / 8 at 1:2 / 1:4 / 1:8 and
 Ctrl+numpad 2 / 4 / 8 at 2:1 / 4:1 / 8:1, numpad + / - zoom in / out, and Shift+B then a drag
 zooms into the box dragged (Esc or the right button: not).
@@ -982,9 +983,34 @@ class Preview(_Surface):
             return lambda: self._grab_begin(grab)
         if k == Qt.Key_B and shift and not ctrl:
             return self._arm_box_zoom
+        step = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0), Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}.get(k)
+        if step and not pad and not ctrl and not mods & Qt.AltModifier and self._can_nudge():
+            n = 10 if shift else 1
+            return lambda: self.nudge(step[0] * n, step[1] * n)
         if k == Qt.Key_Escape and self.box_zoom:
             return lambda: self._arm_box_zoom(False)
         return None
+
+    # -- arrow keys: nudge the selection by a pixel (Shift: ten) ------------------------------------------------
+    def _can_nudge(self):
+        return (self.interactive and self.show_guides and not self.mask_mode and self.drag is None
+                and self.text_box is None and bool(self._nudge_boxes()))
+
+    def _nudge_boxes(self):
+        boxes = self._picked_boxes()
+        if boxes:
+            return boxes
+        kids = self._kid_boxes()
+        return [k for k, _ in kids.values()]
+
+    def nudge_moves(self, dx, dy):
+        """{clip id: {x, y}} of the selected clips moved by dx, dy canvas pixels (y down)."""
+        return {b.clip["id"]: {"x": b.x_at(b.cx + dx), "y": b.y_at(b.cy + dy)} for b in self._nudge_boxes()}
+
+    def nudge(self, dx, dy):
+        moves = self.nudge_moves(dx, dy)
+        if moves:
+            self.movesCommitted.emit(moves)
 
     # -- G / R / S: Blender's grab, rotate and scale: the selected clip follows the pointer till a click --------------
     def _can_grab(self, kind):

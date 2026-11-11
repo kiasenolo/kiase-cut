@@ -23,7 +23,7 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QMenuBar, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
-                               QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTabBar, QToolBar,
+                               QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTabBar, QTextEdit, QToolBar,
                                QVBoxLayout,
                                QWidget)
 
@@ -1152,6 +1152,17 @@ class MainWindow(QMainWindow):
             a.triggered.connect(fn)
             self.addAction(a)
         appevents.watch(self, (QEvent.ShortcutOverride,), self.eventFilter)
+        appevents.watch(self, (QEvent.Enter,), self._hover_focus)
+
+    def _hover_focus(self, obj, e):
+        """The preview, the timeline and the node editor take the keyboard focus when the mouse comes over
+        them (as Blender's areas), unless words or a number are being typed somewhere."""
+        if obj in (self.preview, self.timeline, self.nodes) and obj.isVisible() and QApplication.activeWindow() is self:
+            w = QApplication.focusWidget()
+            if w is not obj and not isinstance(w, (QLineEdit, QAbstractSpinBox, QPlainTextEdit, QTextEdit)) \
+                    and not (isinstance(w, QComboBox) and w.isEditable()):
+                obj.setFocus(Qt.MouseFocusReason)
+        return False
 
     def eventFilter(self, obj, e):
         # ↑ / ↓ (剪輯點) stay with a focused widget that steps with them: a number field, a

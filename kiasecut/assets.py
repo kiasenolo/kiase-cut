@@ -100,8 +100,7 @@ FIELD_INFO = {
     "stroke_seed": ("外框材質位置", "number", -1000, 1000, 0.1, 2),
     "stroke_z": ("外框材質 Z", "number", -1000, 1000, 0.05, 2),
     "stroke": ("外框粗細", "number", 0, 2000, 1, 0),
-    "nodes": ("路徑", "path"),                  # (the pen tool's nodes: not a field to edit by number)
-    "closed": ("封閉路徑", "toggle"),
+    "paths": ("路徑", "path"),                  # (the pen tool's paths: not a field to edit by number)
     "stroke_align": ("外框位置", "choice", (("內側", "inside"), ("居中", "center"), ("外側", "outside"))),
     "join": ("轉角", "choice", (("直角", "miter"), ("圓角", "round"), ("倒角", "bevel"))),
 }
@@ -134,7 +133,7 @@ FIELDS = {                                 # what each family has besides w, h a
     "arrow": STROKE,
     "parallelogram": ("skew",) + STROKE,
     "line": (),
-    "path": ("nodes", "closed") + STROKE,
+    "path": ("paths",) + STROKE,
     "empty": (),
     "grid": ("gcols", "grows", "gratio", "gline", "gleft", "gright", "gtop", "gbottom", "fade"),
 }
@@ -261,7 +260,7 @@ def clean(f, v):
     a number in range (sides and points are rounded when drawn)."""
     info = FIELD_INFO[f]
     if info[1] == "path":
-        return _nodes(v)
+        return _paths(v)
     if info[1] == "color":
         return to_rgba(v, (0.0, 0.0, 0.0, 1.0) if f in ("color2", "stroke_color", "fill_color2", "stroke_color2")
                        else (1.0, 1.0, 1.0, 1.0))
@@ -282,18 +281,22 @@ def clean(f, v):
     return min(max(v, -math.inf if lo is None else lo), math.inf if hi is None else hi)
 
 
-def _nodes(v):
-    """A pen path's nodes [[x, y, in dx, in dy, out dx, out dy], ...] as stored: floats, in the units of its w x h box (0 - 1 across it,
-    the handles as offsets from their node), or [] if v is not such a list."""
+def _paths(v):
+    """A pen path's subpaths [{"nodes": [[x, y, in dx, in dy, out dx, out dy], ...], "closed": bool}, ...] as stored: floats, in the
+    units of its w x h box (0 - 1 across it, the handles as offsets from their node); [] if v is not such a list."""
     out = []
     try:
-        for n in v or ():
-            n = [float(x) for x in n]
-            if len(n) == 6 and all(math.isfinite(x) for x in n):
-                out.append(n)
-    except (TypeError, ValueError):
+        for sub in v or ():
+            nodes = []
+            for n in sub["nodes"]:
+                n = [float(x) for x in n]
+                if len(n) == 6 and all(math.isfinite(x) for x in n):
+                    nodes.append(n)
+            if nodes:
+                out.append({"nodes": nodes[:5000], "closed": bool(sub.get("closed")) and len(nodes) > 2})
+    except (TypeError, ValueError, KeyError, AttributeError):
         return []
-    return out[:5000]
+    return out[:200]
 
 
 def _stops(v):
@@ -350,6 +353,9 @@ def _migrate(p):
         p = dict(p)
         on = p.pop("gborder")
         p.update(gleft=on, gright=on, gtop=on, gbottom=on)
+    if p.get("family") == "path" and "nodes" in p and "paths" not in p:       # (a pen path before it could have several parts)
+        p = dict(p)
+        p["paths"] = [{"nodes": p.pop("nodes"), "closed": bool(p.pop("closed", False))}]
     if "outline" not in p or "fill" in p:
         return p
     p = dict(p)
@@ -378,7 +384,7 @@ _DEFAULTS = {"fill": True, "stroke_on": False, "stroke": 8, "stroke_align": "ins
              "stroke_color": "#000000", "radius": 0, "sides": 6, "points": 5, "inner": 40, "angle": 0,
              "arc_start": 0, "arc_sweep": 100, "ratio": 0, "skew": 20, "fade": 0,
              "gcols": 16, "grows": 9, "gratio": 0, "gline": 4, "gleft": True, "gright": True, "gtop": True, "gbottom": True,
-             "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX, "nodes": [], "closed": False,
+             "gtype": "linear", "w": SHAPE_PX, "h": SHAPE_PX, "paths": [],
              "fill_type": "solid", "fill_color2": "#000000", "fill_gtype": "linear", "fill_angle": 0, "fill_image": "",
              "stroke_type": "solid", "stroke_color2": "#ffffff", "stroke_gtype": "linear", "stroke_angle": 0,
              "stroke_image": "",
@@ -692,18 +698,21 @@ def outline_d(p, w, h):
 
 def _path_d(p, w, h):
     """The path (SVG d, in a w x h box) of a pen path: straight where a segment's handles are both 0, else a cubic curve."""
-    nodes = p.get("nodes") or []
-    if len(nodes) < 2:
-        return ""
-    d = [f"M{_num(nodes[0][0] * w)} {_num(nodes[0][1] * h)}"]
-    pairs = list(zip(nodes, nodes[1:])) + ([(nodes[-1], nodes[0])] if p.get("closed") and len(nodes) > 2 else [])
-    for a, b in pairs:
-        if a[4] == a[5] == b[2] == b[3] == 0:
-            d.append(f"L{_num(b[0] * w)} {_num(b[1] * h)}")
-        else:
-            d.append("C" + " ".join(_num(v) for v in ((a[0] + a[4]) * w, (a[1] + a[5]) * h, (b[0] + b[2]) * w, (b[1] + b[3]) * h,
-                                                      b[0] * w, b[1] * h)))
-    return " ".join(d) + (" Z" if p.get("closed") and len(nodes) > 2 else "")
+    out = []
+    for sub in p.get("paths") or []:
+        nodes, closed = sub["nodes"], bool(sub.get("closed")) and len(sub["nodes"]) > 2
+        if len(nodes) < 2:
+            continue
+        out.append(f"M{_num(nodes[0][0] * w)} {_num(nodes[0][1] * h)}")
+        for a, b in list(zip(nodes, nodes[1:])) + ([(nodes[-1], nodes[0])] if closed else []):
+            if a[4] == a[5] == b[2] == b[3] == 0:
+                out.append(f"L{_num(b[0] * w)} {_num(b[1] * h)}")
+            else:
+                out.append("C" + " ".join(_num(v) for v in ((a[0] + a[4]) * w, (a[1] + a[5]) * h, (b[0] + b[2]) * w,
+                                                            (b[1] + b[3]) * h, b[0] * w, b[1] * h)))
+        if closed:
+            out.append("Z")
+    return " ".join(out)
 
 
 def bezier_points(a, b, steps=24):
@@ -719,20 +728,23 @@ def bezier_points(a, b, steps=24):
     return out
 
 
-def path_params(nodes, closed, color="#ffffff"):
-    """(parameters, (cx, cy)) of a new pen path clip: nodes [[x, y, in dx, in dy, out dx, out dy], ...] in px (any origin; y down).
-    The clip is as big as the path (w x h), its nodes stored across that box, (cx, cy) is the middle of it in the nodes' own
-    coordinates. A closed path is filled, an open one is a line."""
-    pts = [(n[0], n[1]) for n in nodes]
-    pairs = list(zip(nodes, nodes[1:])) + ([(nodes[-1], nodes[0])] if closed and len(nodes) > 2 else [])
-    for a, b in pairs:
-        pts += bezier_points(a, b)
+def path_params(paths, color="#ffffff"):
+    """(parameters, (cx, cy)) of a new pen path clip: paths [{"nodes": [[x, y, in dx, in dy, out dx, out dy], ...], "closed": bool}]
+    in px (any origin; y down). The clip is as big as the paths (w x h), their nodes stored across that box, (cx, cy) is the middle
+    of it in the nodes' own coordinates. A closed first path makes a fill, an open one a line."""
+    pts = []
+    for sub in paths:
+        nodes = sub["nodes"]
+        pts += [(n[0], n[1]) for n in nodes]
+        for a, b in list(zip(nodes, nodes[1:])) + ([(nodes[-1], nodes[0])] if sub.get("closed") and len(nodes) > 2 else []):
+            pts += bezier_points(a, b)
     x0, x1 = min(x for x, _ in pts), max(x for x, _ in pts)
     y0, y1 = min(y for _, y in pts), max(y for _, y in pts)
     w, h = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
-    norm = [[(n[0] - x0) / w, (n[1] - y0) / h, n[2] / w, n[3] / h, n[4] / w, n[5] / h] for n in nodes]
-    closed = bool(closed) and len(nodes) > 2
-    p = {"key": "path.pen", "family": "path", "color": color, "nodes": norm, "closed": closed, "w": w, "h": h,
+    norm = [{"nodes": [[(n[0] - x0) / w, (n[1] - y0) / h, n[2] / w, n[3] / h, n[4] / w, n[5] / h] for n in sub["nodes"]],
+             "closed": bool(sub.get("closed")) and len(sub["nodes"]) > 2} for sub in paths]
+    closed = bool(norm and norm[0]["closed"])
+    p = {"key": "path.pen", "family": "path", "color": color, "paths": norm, "w": w, "h": h,
          "fill": closed, "stroke_on": not closed, "stroke": 8, "stroke_color": color, "stroke_align": "center", "join": "round"}
     return normalize(p), ((x0 + x1) / 2 if x1 > x0 else x0, (y0 + y1) / 2 if y1 > y0 else y0)
 

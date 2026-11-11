@@ -3092,13 +3092,17 @@ class MainWindow(QMainWindow):
                 if not self.preview.pen_edit():
                     self.pen_btn.setChecked(False)
         elif self.preview.pen is not None:
-            self.preview._pen_finish(False) if self.preview.pen["edit"] is None else self.preview.pen_end()
+            self.preview._pen_finish() if self.preview.pen["edit"] is None else self.preview.pen_end()
 
-    def on_pen_finished(self, nodes, closed):
+    def on_pen_finished(self, paths):
         """A path drawn with the pen tool: a new 路徑 clip at the playhead, as big as the path, where it was drawn."""
+        self.add_path_clip(paths, "鋼筆路徑")
+
+    def add_path_clip(self, paths, label, color="#ffffff"):
+        """A new 路徑 clip of paths (canvas px) at the playhead, where they are; returns nothing (one undo step)."""
         if not self.ensure_project():
             return
-        params, (cx, cy) = assets.path_params(nodes, closed)
+        params, (cx, cy) = assets.path_params(paths, color)
         path = self.store_asset(params)
         if not path:
             return
@@ -3112,7 +3116,7 @@ class MainWindow(QMainWindow):
             tf = c.setdefault("transform", {})
             tf["x"], tf["y"] = round((cx - W / 2) / (W / 2), 5), round((H / 2 - cy) / (H / 2), 5)
             return c
-        self.apply("鋼筆路徑", fn, select=lambda c: c["id"])
+        self.apply(label, fn, select=lambda c: c["id"])
 
     def ask_grid_size(self):
         n, ok = QInputDialog.getInt(self, "格線間距", "格線間距（畫布像素）：", self.preview.grid_size, 1, 2000)

@@ -6,23 +6,29 @@ from the last, a click on the first point closes the path (a fill), Enter / doub
 line), Backspace takes the last point back, Esc drops the path. It becomes a "path" built-in asset clip (assets.path_params) at the
 playhead, which has the usual fill / outline / colour parameters.
 
-A path clip is edited with a double click on it (or Enter with it selected): drag a point or a handle (a smooth point keeps its
-handles in line, Alt breaks that), click on a segment to add a point, Alt+click a point to toggle corner / smooth, Delete takes
-the selected point out, Enter / Esc / a click elsewhere ends. Every change is one edit (paramsCommitted, group "multi": the nodes,
-the frame they fill and where it sits).
+A path clip is edited with a double click on it (or Enter with it selected). A clip has one or more paths (parts, holes show
+where they overlap). Points: click selects one (Shift+click adds or takes out), a drag from empty space boxes some in (Shift: added),
+dragging a selected point moves all selected ones, arrow keys move them by a pixel (Shift: ten), Delete takes them out, Ctrl+A
+selects all. Handles: drag one (a smooth point keeps its handles in line, Alt breaks that). A click on a segment adds a point,
+Alt+click on a point toggles corner / smooth (all selected ones). Ctrl+click on the end of an open path goes on drawing from it
+(a click on the first point closes it, on the end of another open path joins the two), Shift+click on empty space starts a
+new part. Enter / Esc end the drawing, then the tool; a click on another clip ends it and picks that clip. Every change is one
+edit (paramsCommitted, group "multi": the paths, the frame they fill and where it sits).
 
-Nodes here are [x, y, in dx, in dy, out dx, out dy] in canvas px (the handles as offsets from their point).
+Nodes here are [x, y, in dx, in dy, out dx, out dy] in canvas px (the handles as offsets from their point); a path is
+{"nodes": [...], "closed": bool}. combine() / paths_of_qpath() / qpath_of_paths() are the boolean operations of 路徑運算.
 """
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import QColor, QPainterPath, QPen
 
 from .. import assets
 
 PEN_COLOR = "#2dd4ff"
 SEG_PICK_PX = 6
 CLOSE_PICK_PX = 9
+OPS = (("聯集", "union"), ("差集", "subtract"), ("交集", "intersect"), ("排除", "xor"))
 
 
 # -- geometry (nodes are lists, points tuples) -------------------------------------------------------------------------------
@@ -130,16 +136,96 @@ def set_handle(n, which, dx, dy, mirror):
             n[b], n[b + 1] = -dx / own * ln, -dy / own * ln
 
 
+def reversed_path(sub):
+    """The path run the other way (in and out handles swap)."""
+    return {"nodes": [[n[0], n[1], n[4], n[5], n[2], n[3]] for n in reversed(sub["nodes"])], "closed": sub["closed"]}
+
+
+def joined(a, b, a_end, b_end):
+    """Open path a's end (a_end: "last" or "first") joined to open path b's end b_end, as one path."""
+    a = a if a_end == "last" else reversed_path(a)
+    b = b if b_end == "first" else reversed_path(b)
+    nodes = [list(n) for n in a["nodes"]] + [list(n) for n in b["nodes"]]
+    return {"nodes": nodes, "closed": False}
+
+
+# -- boolean operations (路徑運算) -----------------------------------------------------------------------------------------------
+def qpath_of_paths(paths):
+    """One QPainterPath of subpaths (every one closed: an operation works on what a path encloses)."""
+    out = QPainterPath()
+    out.setFillRule(Qt.OddEvenFill)
+    for sub in paths:
+        if len(sub["nodes"]) > 1:
+            q = painter_path(sub["nodes"], True)
+            q.closeSubpath()
+            out.addPath(q)
+    return out
+
+
+def paths_of_qpath(qp):
+    """[{"nodes", "closed"}] of QPainterPath qp: its curves keep their handles, a subpath that comes back to its start is closed."""
+    subs, cur = [], None
+    n = qp.elementCount()
+    i = 0
+    while i < n:
+        el = qp.elementAt(i)
+        if el.type == QPainterPath.MoveToElement:
+            cur = [[el.x, el.y, 0.0, 0.0, 0.0, 0.0]]
+            subs.append(cur)
+        elif el.type == QPainterPath.LineToElement and cur is not None:
+            cur.append([el.x, el.y, 0.0, 0.0, 0.0, 0.0])
+        elif el.type == QPainterPath.CurveToElement and cur is not None and i + 2 < n:
+            c2, e = qp.elementAt(i + 1), qp.elementAt(i + 2)
+            prev = cur[-1]
+            prev[4], prev[5] = el.x - prev[0], el.y - prev[1]
+            cur.append([e.x, e.y, c2.x - e.x, c2.y - e.y, 0.0, 0.0])
+            i += 2
+        i += 1
+    out = []
+    for nodes in subs:
+        closed = len(nodes) > 2 and math.hypot(nodes[0][0] - nodes[-1][0], nodes[0][1] - nodes[-1][1]) < 1e-6
+        if closed:
+            last = nodes.pop()
+            nodes[0][2], nodes[0][3] = last[2], last[3]
+        # (points that sit on top of each other add nothing)
+        clean = []
+        for nd in nodes:
+            if clean and math.hypot(nd[0] - clean[-1][0], nd[1] - clean[-1][1]) < 1e-6:
+                clean[-1][4:] = nd[4:]
+                continue
+            clean.append(nd)
+        if len(clean) > 1:
+            out.append({"nodes": clean, "closed": closed and len(clean) > 2})
+    return out
+
+
+def combine(op, qpaths):
+    """The QPainterPath of boolean operation op ("union", "subtract", "intersect", "xor") over qpaths: the first minus / with / ..."""
+    path = qpaths[0]
+    for other in qpaths[1:]:
+        if op == "subtract":
+            path = path.subtracted(other)
+        elif op == "intersect":
+            path = path.intersected(other)
+        elif op == "xor":
+            path = path.united(other).subtracted(path.intersected(other))
+        else:
+            path = path.united(other)
+    return path
+
+
 # -- the tool, as part of the preview ----------------------------------------------------------------------------------------
 class PenMixin:
     """The pen tool's state and events; Preview calls these first while self.pen is not None (see its mouse / key handlers).
-    self.pen: {"nodes", "closed", "edit" (clip id or None), "box" (its Box), "sel", "drag", "hover"}."""
+    self.pen: {"paths", "cur" (the path being drawn into, or None), "edit" (clip id or None), "box" (its Box), "sel" ({(path, node)}),
+    "drag", "hover"}."""
 
     def pen_begin(self):
         """Start drawing a new path."""
         if not self.interactive or not self.view or self.pen is not None or self.drag is not None or self.mask_mode:
             return False
-        self.pen = {"nodes": [], "closed": False, "edit": None, "box": None, "sel": None, "drag": None, "hover": None}
+        self.pen = {"paths": [{"nodes": [], "closed": False}], "cur": 0, "edit": None, "box": None, "sel": set(), "drag": None,
+                    "hover": None}
         self.setCursor(Qt.CrossCursor)
         self.penToggled.emit(True)
         self.update()
@@ -147,15 +233,16 @@ class PenMixin:
 
     def pen_can_edit(self):
         box = self.selected_box()
-        return (box is not None and self.pen is None and not self.multi() and not getattr(box, "group", False) and not box.locked
-                and (box.clip.get("asset") or {}).get("family") == "path" and not self.mask_mode and self.drag is None)
+        return (box is not None and self.pen is None and not self.multi() and not getattr(box, "group", False)
+                and not getattr(box, "locked", False) and (box.clip.get("asset") or {}).get("family") == "path"
+                and not self.mask_mode and self.drag is None)
 
     def pen_edit(self, box=None):
-        """Edit the nodes of the selected path clip (box) on the canvas."""
+        """Edit the paths of the selected path clip (box) on the canvas."""
         box = box or self.selected_box()
         if box is None or not self.interactive or self.pen is not None or (box.clip.get("asset") or {}).get("family") != "path":
             return False
-        self.pen = {"nodes": [], "closed": False, "edit": box.clip["id"], "box": box, "sel": None, "drag": None, "hover": None}
+        self.pen = {"paths": [], "cur": None, "edit": box.clip["id"], "box": box, "sel": set(), "drag": None, "hover": None}
         self._pen_load(box)
         self.setCursor(Qt.ArrowCursor)
         self.penToggled.emit(True)
@@ -170,24 +257,28 @@ class PenMixin:
         self.update()
 
     def _pen_load(self, box):
-        """The clip's nodes in canvas px (through its transform) into the tool."""
-        q = box.clip["asset"]
-        q = assets.at(q, box.t)
+        """The clip's paths in canvas px (through its transform) into the tool."""
+        q = assets.at(box.clip["asset"], box.t)
         w, h = q["w"], q["h"]
         xf = box.xf()
-        nodes = []
-        for n in q["nodes"]:
-            lx, ly = (n[0] - 0.5) * w, (n[1] - 0.5) * h
-            c = xf.map(QPointF(lx, ly))
-            i = xf.map(QPointF(lx + n[2] * w, ly + n[3] * h)) - c
-            o = xf.map(QPointF(lx + n[4] * w, ly + n[5] * h)) - c
-            nodes.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()])
-        self.pen["nodes"], self.pen["closed"], self.pen["box"] = nodes, bool(q["closed"]), box
+        paths = []
+        for sub in q["paths"]:
+            nodes = []
+            for n in sub["nodes"]:
+                lx, ly = (n[0] - 0.5) * w, (n[1] - 0.5) * h
+                c = xf.map(QPointF(lx, ly))
+                i = xf.map(QPointF(lx + n[2] * w, ly + n[3] * h)) - c
+                o = xf.map(QPointF(lx + n[4] * w, ly + n[5] * h)) - c
+                nodes.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()])
+            paths.append({"nodes": nodes, "closed": bool(sub["closed"])})
+        pen = self.pen
+        pen["paths"], pen["box"] = paths, box
+        pen["sel"] = {(pi, ni) for pi, ni in pen["sel"] if pi < len(paths) and ni < len(paths[pi]["nodes"])}
 
     def pen_reload(self):
-        """The scene changed (an edit was made): an edited path takes the clip's nodes again, or the tool ends if it went."""
+        """The scene changed (an edit was made): an edited path takes the clip's paths again, or the tool ends if it went."""
         pen = self.pen
-        if pen is None or pen["edit"] is None or pen["drag"] is not None:
+        if pen is None or pen["edit"] is None or pen["drag"] is not None or pen["cur"] is not None:
             return
         box = next((b for b in self.visible_boxes() if b.clip["id"] == pen["edit"]), None)
         if box is None or box.clip["id"] != self.selected_id:
@@ -196,57 +287,76 @@ class PenMixin:
         self._pen_load(box)
 
     # -- finishing ------------------------------------------------------------------------------------------------------
-    def _pen_finish(self, closed=False):
+    def _pen_tidy(self):
+        """Paths with a point twice in a row (a double click) or too short thrown out."""
+        out = []
+        for sub in self.pen["paths"]:
+            nodes = [list(n) for n in sub["nodes"]]
+            if len(nodes) > 1 and math.hypot(nodes[-1][0] - nodes[-2][0], nodes[-1][1] - nodes[-2][1]) < 1e-6:
+                nodes.pop()
+            if len(nodes) >= 2:
+                out.append({"nodes": nodes, "closed": bool(sub["closed"]) and len(nodes) > 2})
+        return out
+
+    def _pen_finish(self):
+        """Enter / double click / close: a new path becomes a clip; in an edited one the drawing stops and is kept."""
         pen = self.pen
-        nodes = [list(n) for n in pen["nodes"]]
         if pen["edit"] is not None:
-            self.pen_end()
+            if pen["cur"] is not None:
+                pen["cur"] = None
+                pen["paths"] = self._pen_tidy() or pen["paths"]
+                self._pen_commit()
+            self.update()
             return
-        if len(nodes) > 1 and math.hypot(nodes[-1][0] - nodes[-2][0], nodes[-1][1] - nodes[-2][1]) < 1e-6:
-            nodes.pop()                                   # (a double click adds its point twice)
+        paths = self._pen_tidy()
         self.pen_end()
-        if len(nodes) >= 2:
-            self.penFinished.emit(nodes, bool(closed))
+        if paths:
+            self.penFinished.emit(paths)
 
     def _pen_commit(self):
-        """An edited path as one edit: its nodes in the clip's own frame, the frame they fill and where it sits."""
+        """An edited path as one edit: its paths in the clip's own frame, the frame they fill and where it sits."""
         pen = self.pen
         box = pen["box"]
         inv, ok = box.xf().inverted()
-        if not ok or len(pen["nodes"]) < 2:
+        paths = [s for s in pen["paths"] if len(s["nodes"]) >= 2]
+        if not ok or not paths:
             return
         local = []
-        for n in pen["nodes"]:
-            c = inv.map(QPointF(n[0], n[1]))
-            i = inv.map(QPointF(n[0] + n[2], n[1] + n[3])) - c
-            o = inv.map(QPointF(n[0] + n[4], n[1] + n[5])) - c
-            local.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()])
-        params, (cx, cy) = assets.path_params(local, pen["closed"])
+        for sub in paths:
+            nodes = []
+            for n in sub["nodes"]:
+                c = inv.map(QPointF(n[0], n[1]))
+                i = inv.map(QPointF(n[0] + n[2], n[1] + n[3])) - c
+                o = inv.map(QPointF(n[0] + n[4], n[1] + n[5])) - c
+                nodes.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()])
+            local.append({"nodes": nodes, "closed": sub["closed"]})
+        params, (cx, cy) = assets.path_params(local)
         centre = box.xf().map(QPointF(cx, cy))
         self.paramsCommitted.emit(box.clip["id"], "multi", {
-            "asset": {"nodes": params["nodes"], "closed": params["closed"], "w": params["w"], "h": params["h"]},
+            "asset": {"paths": params["paths"], "w": params["w"], "h": params["h"]},
             "transform": {"x": box.x_at(centre.x()), "y": box.y_at(centre.y())}})
 
     # -- snapping -------------------------------------------------------------------------------------------------------
-    def _pen_snap(self, pt, mods, skip=None):
+    def _pen_snap(self, pt, mods, skip=()):
         """pt (canvas px) settled on the canvas centre / edges, reference lines, the grid and the other points' lines (Ctrl:
         freely; Shift with a point before it: a 45° step from it)."""
         self.guides = []
-        nodes = self.pen["nodes"]
+        pen = self.pen
         x, y = pt.x(), pt.y()
-        last = next((n for i, n in reversed(list(enumerate(nodes))) if i != skip), None) if self.pen["edit"] is None else None
+        cur = pen["paths"][pen["cur"]]["nodes"] if pen["cur"] is not None else []
+        last = cur[-1] if cur else None
         if mods & Qt.ShiftModifier and last is not None:
             dx, dy = x - last[0], y - last[1]
             ang = round(math.atan2(dy, dx) / (math.pi / 4)) * math.pi / 4
             r = math.hypot(dx, dy)
-            x, y = last[0] + r * math.cos(ang), last[1] + r * math.sin(ang)
-            return QPointF(x, y)
+            return QPointF(last[0] + r * math.cos(ang), last[1] + r * math.sin(ang))
         if mods & Qt.ControlModifier:
             return QPointF(x, y)
         tol = 7 * self._k()
         ex, ey = self._extra_targets()
-        tx = [self.W / 2, 0, self.W] + ex + [n[0] for i, n in enumerate(nodes) if i != skip]
-        ty = [self.H / 2, 0, self.H] + ey + [n[1] for i, n in enumerate(nodes) if i != skip]
+        others = [n for pi, sub in enumerate(pen["paths"]) for ni, n in enumerate(sub["nodes"]) if (pi, ni) not in skip]
+        tx = [self.W / 2, 0, self.W] + ex + [n[0] for n in others]
+        ty = [self.H / 2, 0, self.H] + ey + [n[1] for n in others]
         hx, hy = self._best([x], tx, tol), self._best([y], ty, tol)
         if hx:
             x = hx[1]
@@ -258,61 +368,123 @@ class PenMixin:
 
     # -- events ---------------------------------------------------------------------------------------------------------
     def _pen_hit(self, m, k):
-        """What is under canvas point m: ("handle", node, "in" / "out"), ("node", i), ("seg", n, t) or None."""
-        nodes = self.pen["nodes"]
-        for i, n in enumerate(nodes):
-            for which, a in (("in", 2), ("out", 4)):
-                if (n[a] or n[a + 1]) and self._near(QPointF(n[0] + n[a], n[1] + n[a + 1]), m, k):
-                    return "handle", i, which
-        for i, n in enumerate(nodes):
-            if self._near(QPointF(n[0], n[1]), m, k):
-                return "node", i
-        seg = hit_segment(nodes, self.pen["closed"], (m.x(), m.y()), SEG_PICK_PX * k)
-        return ("seg",) + seg if seg else None
+        """What is under canvas point m: ("handle", path, node, "in" / "out"), ("node", path, node), ("seg", path, seg, t) or None."""
+        paths = self.pen["paths"]
+        for pi, sub in enumerate(paths):
+            for ni, n in enumerate(sub["nodes"]):
+                for which, a in (("in", 2), ("out", 4)):
+                    if (n[a] or n[a + 1]) and self._near(QPointF(n[0] + n[a], n[1] + n[a + 1]), m, k):
+                        return "handle", pi, ni, which
+        for pi, sub in enumerate(paths):
+            for ni, n in enumerate(sub["nodes"]):
+                if self._near(QPointF(n[0], n[1]), m, k):
+                    return "node", pi, ni
+        for pi, sub in enumerate(paths):
+            seg = hit_segment(sub["nodes"], sub["closed"], (m.x(), m.y()), SEG_PICK_PX * k)
+            if seg:
+                return ("seg", pi) + seg
+        return None
+
+    @staticmethod
+    def _is_end(sub, ni):
+        return not sub["closed"] and ni in (0, len(sub["nodes"]) - 1)
+
+    def _pen_continue(self, pi, ni):
+        """Go on drawing from the end of open path pi (its first point: the path is turned round first)."""
+        pen = self.pen
+        sub = pen["paths"][pi]
+        if ni == 0 and len(sub["nodes"]) > 1:
+            pen["paths"][pi] = reversed_path(sub)
+        pen["cur"] = pi
+        pen["sel"] = set()
 
     def pen_press(self, e):
         pen = self.pen
         k = self._k()
         m = QPointF(*self._to_canvas(e.position()))
+        mods = e.modifiers()
         if e.button() == Qt.RightButton:
-            if pen["edit"] is None and pen["nodes"]:
-                self._pen_finish(False)
+            if pen["cur"] is not None:
+                self._pen_finish()
             elif pen["edit"] is not None:
                 self.pen_end()
             return
         if e.button() != Qt.LeftButton:
             return
-        nodes = pen["nodes"]
-        if pen["edit"] is None:                                     # drawing
+        paths = pen["paths"]
+        if pen["cur"] is not None:                                  # drawing into a path
+            sub = paths[pen["cur"]]
+            nodes = sub["nodes"]
             if len(nodes) >= 3 and self._near(QPointF(nodes[0][0], nodes[0][1]), m, k * CLOSE_PICK_PX / 9):
-                self._pen_finish(True)
+                sub["closed"] = True
+                self._pen_finish()
                 return
-            p = self._pen_snap(m, e.modifiers())
+            if pen["edit"] is not None and nodes:                   # the end of another open path: the two are joined
+                for pi, other in enumerate(paths):
+                    if pi == pen["cur"] or other["closed"]:
+                        continue
+                    for ni in (0, len(other["nodes"]) - 1):
+                        n = other["nodes"][ni]
+                        if self._near(QPointF(n[0], n[1]), m, k):
+                            ends = ("first" if ni == 0 else "last")
+                            paths[pen["cur"]] = joined(sub, other, "last", ends)
+                            del paths[pi]
+                            pen["cur"] = None
+                            self._pen_commit()
+                            self.update()
+                            return
+            p = self._pen_snap(m, mods)
             nodes.append([p.x(), p.y(), 0.0, 0.0, 0.0, 0.0])
-            pen["drag"] = {"kind": "new", "i": len(nodes) - 1, "m0": m, "moved": False}
-            pen["sel"] = len(nodes) - 1
+            pen["drag"] = {"kind": "new", "p": pen["cur"], "i": len(nodes) - 1, "m0": m, "moved": False}
+            pen["sel"] = {(pen["cur"], len(nodes) - 1)}
             self.update()
             return
         hit = self._pen_hit(m, k)                                   # editing
         if hit is None:
-            self.pen_end()
-            self.mousePressEvent(e)                                 # (the click goes on to select / pick what is there)
+            if mods & Qt.ShiftModifier:                             # a new part
+                p = self._pen_snap(m, Qt.NoModifier)
+                paths.append({"nodes": [[p.x(), p.y(), 0.0, 0.0, 0.0, 0.0]], "closed": False})
+                pen["cur"] = len(paths) - 1
+                pen["sel"] = set()
+                self.update()
+                return
+            other = next((b for b in self.visible_boxes() if b.clip["id"] != pen["edit"] and not getattr(b, "locked", False)
+                          and b.contains(m.x(), m.y())), None)
+            if other is not None:                                   # another clip: the tool ends and the click picks it
+                self.pen_end()
+                self.mousePressEvent(e)
+                return
+            pen["drag"] = {"kind": "marquee", "m0": m, "rect": QRectF(m, m), "moved": False, "add": bool(mods & Qt.ShiftModifier),
+                           "had": bool(pen["sel"])}
             return
         if hit[0] == "handle":
-            n = nodes[hit[1]]
-            pen["sel"] = hit[1]
-            pen["drag"] = {"kind": "handle", "i": hit[1], "which": hit[2], "moved": False, "m0": m, "mirror": is_smooth(n)}
+            _, pi, ni, which = hit
+            pen["sel"] = {(pi, ni)}
+            pen["drag"] = {"kind": "handle", "p": pi, "i": ni, "which": which, "moved": False, "m0": m,
+                           "mirror": is_smooth(paths[pi]["nodes"][ni])}
         elif hit[0] == "node":
-            pen["sel"] = hit[1]
-            if e.modifiers() & Qt.AltModifier:
-                toggle_smooth(nodes, pen["closed"], hit[1])
+            _, pi, ni = hit
+            sub = paths[pi]
+            if mods & Qt.ControlModifier and self._is_end(sub, ni):
+                self._pen_continue(pi, ni)
+            elif mods & Qt.AltModifier:
+                targets = pen["sel"] if (pi, ni) in pen["sel"] else {(pi, ni)}
+                for tp, tn in targets:
+                    toggle_smooth(paths[tp]["nodes"], paths[tp]["closed"], tn)
+                pen["sel"] = set(targets)
                 self._pen_commit()
+            elif mods & Qt.ShiftModifier:
+                pen["sel"] ^= {(pi, ni)}
             else:
-                n = nodes[hit[1]]
-                pen["drag"] = {"kind": "node", "i": hit[1], "m0": m, "moved": False, "p0": (n[0], n[1])}
+                if (pi, ni) not in pen["sel"]:
+                    pen["sel"] = {(pi, ni)}
+                pen["drag"] = {"kind": "node", "p": pi, "i": ni, "m0": m, "moved": False,
+                               "p0": {s: (paths[s[0]]["nodes"][s[1]][0], paths[s[0]]["nodes"][s[1]][1]) for s in pen["sel"]}}
         else:
-            pen["nodes"], at = split(nodes, pen["closed"], hit[1], hit[2])
-            pen["sel"] = at
+            _, pi, seg, t = hit
+            sub = paths[pi]
+            sub["nodes"], at = split(sub["nodes"], sub["closed"], seg, t)
+            pen["sel"] = {(pi, at)}
             self._pen_commit()
         self.update()
 
@@ -322,17 +494,20 @@ class PenMixin:
         d = pen["drag"]
         k = self._k()
         if d is None:
-            pen["hover"] = self._pen_snap(m, e.modifiers()) if pen["edit"] is None else m
-            if pen["edit"] is not None:
-                hit = self._pen_hit(m, k)
-                self.setCursor(Qt.PointingHandCursor if hit else Qt.ArrowCursor)
+            pen["hover"] = self._pen_snap(m, e.modifiers()) if pen["cur"] is not None else m
+            if pen["cur"] is None:
+                self.setCursor(Qt.PointingHandCursor if self._pen_hit(m, k) else Qt.ArrowCursor)
             self.update()
             return
         if not d["moved"] and math.hypot(m.x() - d["m0"].x(), m.y() - d["m0"].y()) < 3 * k:
             return
         d["moved"] = True
-        nodes = pen["nodes"]
-        n = nodes[d["i"]]
+        if d["kind"] == "marquee":
+            d["rect"] = QRectF(d["m0"], m).normalized()
+            self.update()
+            return
+        paths = pen["paths"]
+        n = paths[d["p"]]["nodes"][d["i"]]
         alt = bool(e.modifiers() & Qt.AltModifier)
         if d["kind"] == "new":                                      # pulling a smooth point's handles out of the click
             dx, dy = m.x() - n[0], m.y() - n[1]
@@ -342,9 +517,13 @@ class PenMixin:
                 dx, dy = r * math.cos(ang), r * math.sin(ang)
             n[4], n[5] = dx, dy
             n[2], n[3] = (0.0, 0.0) if alt else (-dx, -dy)
-        elif d["kind"] == "node":
-            p = self._pen_snap(m, e.modifiers(), skip=d["i"])
-            n[0], n[1] = p.x() + (d["p0"][0] - d["m0"].x()), p.y() + (d["p0"][1] - d["m0"].y())
+        elif d["kind"] == "node":                                   # every selected point moves with the one dragged
+            x0, y0 = d["p0"][(d["p"], d["i"])]
+            p = self._pen_snap(QPointF(m.x() + x0 - d["m0"].x(), m.y() + y0 - d["m0"].y()), e.modifiers(), skip=set(d["p0"]))
+            dx, dy = p.x() - x0, p.y() - y0
+            for (sp, sn), (x0, y0) in d["p0"].items():
+                node = paths[sp]["nodes"][sn]
+                node[0], node[1] = x0 + dx, y0 + dy
         else:
             dx, dy = m.x() - n[0], m.y() - n[1]
             if e.modifiers() & Qt.ShiftModifier:
@@ -358,80 +537,152 @@ class PenMixin:
         pen = self.pen
         d, pen["drag"] = pen["drag"], None
         self.guides = []
-        if d is not None and pen["edit"] is not None and d["moved"]:
+        if d is not None and d["kind"] == "marquee":
+            if d["moved"]:
+                r = d["rect"]
+                hit = {(pi, ni) for pi, sub in enumerate(pen["paths"]) for ni, n in enumerate(sub["nodes"]) if r.contains(n[0], n[1])}
+                pen["sel"] = (pen["sel"] | hit) if d["add"] else hit
+            elif not d["add"]:
+                if d["had"]:
+                    pen["sel"] = set()
+                else:                                               # a click on nothing, with nothing selected: done
+                    self.pen_end()
+                    return
+        elif d is not None and pen["edit"] is not None and d["moved"]:
             self._pen_commit()
         self.update()
 
     def pen_double_click(self, e):
-        if self.pen["edit"] is None and self.pen["nodes"]:
-            self._pen_finish(False)
+        if self.pen["cur"] is not None:
+            self._pen_finish()
 
     def pen_key(self, e):
         """The action of key e while the pen tool is on (a function), or None."""
         pen = self.pen
-        k = e.key()
+        k, mods = e.key(), e.modifiers()
+        editing = pen["edit"] is not None
         if k in (Qt.Key_Return, Qt.Key_Enter):
-            return lambda: self._pen_finish(False)
+            return self._pen_finish if pen["cur"] is not None else (self.pen_end if editing else self._pen_finish)
         if k == Qt.Key_Escape:
-            return self.pen_end
+            if not editing:
+                return self.pen_end
+            if pen["cur"] is not None:
+                return self._pen_finish
+            return self._pen_clear_or_end
         if k in (Qt.Key_Backspace, Qt.Key_Delete):
-            if pen["edit"] is None:
+            if pen["cur"] is not None and k == Qt.Key_Backspace:
                 def back():
-                    if pen["nodes"]:
-                        pen["nodes"].pop()
+                    nodes = pen["paths"][pen["cur"]]["nodes"]
+                    if nodes:
+                        nodes.pop()
+                    if not nodes and editing:
+                        del pen["paths"][pen["cur"]]
+                        pen["cur"] = None
                     self.update()
                 return back
-
-            def remove():
-                if pen["sel"] is not None and len(pen["nodes"]) > 2:
-                    del pen["nodes"][pen["sel"]]
-                    pen["sel"] = None
-                    self._pen_commit()
-                    self.update()
-            return remove
-        if k == Qt.Key_P and not e.modifiers():
-            return self.pen_end if pen["edit"] is None and not pen["nodes"] else None
+            if editing and pen["sel"]:
+                return self._pen_delete_selected
+            return None
+        if k == Qt.Key_A and mods == Qt.ControlModifier and editing and pen["cur"] is None:
+            def everything():
+                pen["sel"] = {(pi, ni) for pi, sub in enumerate(pen["paths"]) for ni in range(len(sub["nodes"]))}
+                self.update()
+            return everything
+        step = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0), Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}.get(k)
+        if step and editing and pen["sel"] and pen["cur"] is None and not mods & (Qt.ControlModifier | Qt.AltModifier):
+            n = 10 if mods & Qt.ShiftModifier else 1
+            return lambda: self._pen_nudge(step[0] * n, step[1] * n)
+        if k == Qt.Key_P and not mods:
+            return self.pen_end if not editing and not pen["paths"][0]["nodes"] else None
         return None
+
+    def _pen_clear_or_end(self):
+        if self.pen["sel"]:
+            self.pen["sel"] = set()
+            self.update()
+        else:
+            self.pen_end()
+
+    def _pen_nudge(self, dx, dy):
+        pen = self.pen
+        for pi, ni in pen["sel"]:
+            n = pen["paths"][pi]["nodes"][ni]
+            n[0] += dx
+            n[1] += dy
+        self._pen_commit()
+        self.update()
+
+    def _pen_delete_selected(self):
+        pen = self.pen
+        keep = []
+        for pi, sub in enumerate(pen["paths"]):
+            nodes = [n for ni, n in enumerate(sub["nodes"]) if (pi, ni) not in pen["sel"]]
+            if len(nodes) >= 2:
+                keep.append({"nodes": nodes, "closed": sub["closed"] and len(nodes) > 2})
+        if keep:
+            pen["paths"] = keep
+            pen["sel"] = set()
+            self._pen_commit()
+        self.update()
 
     # -- painting -------------------------------------------------------------------------------------------------------
     def paint_pen(self, p, k):
         pen = self.pen
-        nodes = pen["nodes"]
         p.setBrush(Qt.NoBrush)
-        if nodes:
-            path = painter_path(nodes, pen["closed"])
-            p.setPen(QPen(QColor("#111114"), 3 * k))
-            p.drawPath(path)
-            p.setPen(QPen(QColor(PEN_COLOR), 1.5 * k))
-            p.drawPath(path)
+        for sub in pen["paths"]:
+            if sub["nodes"]:
+                path = painter_path(sub["nodes"], sub["closed"])
+                p.setPen(QPen(QColor("#111114"), 3 * k))
+                p.drawPath(path)
+                p.setPen(QPen(QColor(PEN_COLOR), 1.5 * k))
+                p.drawPath(path)
         hover = pen["hover"]
-        if pen["edit"] is None and nodes and hover is not None and pen["drag"] is None:      # the next segment, as it will be
-            a = nodes[-1]
+        cur = pen["paths"][pen["cur"]]["nodes"] if pen["cur"] is not None else []
+        if cur and hover is not None and pen["drag"] is None:       # the next segment, as it will be
+            a = cur[-1]
             q = QPainterPath(QPointF(a[0], a[1]))
-            q.cubicTo(a[0] + a[4], a[1] + a[5], hover.x(), hover.y(), hover.x(), hover.y()) if (a[4] or a[5]) else q.lineTo(hover)
+            if a[4] or a[5]:
+                q.cubicTo(a[0] + a[4], a[1] + a[5], hover.x(), hover.y(), hover.x(), hover.y())
+            else:
+                q.lineTo(hover)
             p.setPen(QPen(QColor(PEN_COLOR), 1.2 * k, Qt.DashLine))
             p.drawPath(q)
-            if len(nodes) >= 3 and self._near(QPointF(nodes[0][0], nodes[0][1]), hover, k):
+            if len(cur) >= 3 and self._near(QPointF(cur[0][0], cur[0][1]), hover, k):
                 p.setPen(QPen(QColor("#ffffff"), 1.5 * k))
-                p.drawEllipse(QPointF(nodes[0][0], nodes[0][1]), 8 * k, 8 * k)
+                p.drawEllipse(QPointF(cur[0][0], cur[0][1]), 8 * k, 8 * k)
         s = 4 * k
-        for i, n in enumerate(nodes):
-            sel = i == pen["sel"]
-            for a in (2, 4):
-                if n[a] or n[a + 1]:
-                    hp = QPointF(n[0] + n[a], n[1] + n[a + 1])
-                    p.setPen(QPen(QColor(PEN_COLOR), 1 * k))
-                    p.drawLine(QPointF(n[0], n[1]), hp)
-                    p.setBrush(QColor("#ffffff"))
-                    p.setPen(QPen(QColor("#111114"), 1 * k))
-                    p.drawEllipse(hp, 3 * k, 3 * k)
-            p.setPen(QPen(QColor("#111114"), 1 * k))
-            p.setBrush(QColor(PEN_COLOR) if sel else QColor("#ffffff"))
-            p.drawRect(QRectF(n[0] - s, n[1] - s, 2 * s, 2 * s))
+        for pi, sub in enumerate(pen["paths"]):
+            for ni, n in enumerate(sub["nodes"]):
+                sel = (pi, ni) in pen["sel"]
+                for a in (2, 4):
+                    if n[a] or n[a + 1]:
+                        hp = QPointF(n[0] + n[a], n[1] + n[a + 1])
+                        p.setPen(QPen(QColor(PEN_COLOR), 1 * k))
+                        p.drawLine(QPointF(n[0], n[1]), hp)
+                        p.setBrush(QColor("#ffffff"))
+                        p.setPen(QPen(QColor("#111114"), 1 * k))
+                        p.drawEllipse(hp, 3 * k, 3 * k)
+                p.setPen(QPen(QColor("#111114"), 1 * k))
+                p.setBrush(QColor(PEN_COLOR) if sel else QColor("#ffffff"))
+                if pen["edit"] is not None and self._is_end(sub, ni) and pen["cur"] is None:
+                    p.drawPolygon([QPointF(n[0], n[1] - 1.4 * s), QPointF(n[0] + 1.4 * s, n[1]), QPointF(n[0], n[1] + 1.4 * s),
+                                   QPointF(n[0] - 1.4 * s, n[1])])      # (an end of an open path: a diamond, Ctrl+click goes on from it)
+                else:
+                    p.drawRect(QRectF(n[0] - s, n[1] - s, 2 * s, 2 * s))
         p.setBrush(Qt.NoBrush)
+        d = pen["drag"]
+        if d is not None and d["kind"] == "marquee" and d["moved"]:
+            p.setPen(QPen(QColor("#e6e6e6"), 1 * k, Qt.DashLine))
+            p.setBrush(QColor(255, 255, 255, 28))
+            p.drawRect(d["rect"])
+            p.setBrush(Qt.NoBrush)
 
     def pen_tip(self):
         """The line of help shown on the preview while the tool is on."""
-        if self.pen["edit"] is None:
+        pen = self.pen
+        if pen["edit"] is None:
             return "鋼筆：點一下放角點，拖曳放平滑點；點第一個點封閉；Enter / 雙擊 / 右鍵結束；Backspace 退一點；Esc 取消"
-        return "編輯路徑：拖點或把手；點線段加點；Alt+點 切換角點 / 平滑；Delete 刪點；Enter / Esc 結束"
+        if pen["cur"] is not None:
+            return "接著畫：點一下加點；點起點封閉、點別條路徑的端點接起來；Enter / 雙擊 / 右鍵結束"
+        return ("編輯路徑：點選／框選節點（Shift 加選），拖動、方向鍵移動，Delete 刪除；點線段加點；Alt+點 切換角點 / 平滑；"
+                "Ctrl+點端點接著畫；Shift+點空白 新增一段；Enter / Esc 結束")

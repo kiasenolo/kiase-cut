@@ -630,7 +630,7 @@ class Preview(PenMixin, _Surface):
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
     textureFailed = Signal(str)                 # the GpuFrame could not be drawn: the player sends pictures from now on
     penToggled = Signal(bool)                   # the pen tool started or ended
-    penFinished = Signal(list, bool)            # a new path was drawn: its nodes [[x, y, in dx, in dy, out dx, out dy]] (canvas px), closed
+    penFinished = Signal(list)                  # a new path was drawn: its parts [{"nodes": [[x, y, in dx, in dy, out dx, out dy]], "closed"}] (canvas px)
     guidesCommitted = Signal(dict)              # {"x": [canvas px], "y": [canvas px]}: the reference lines after one was made, moved or taken away
     grabCancelled = Signal()                    # a G / R / S grab was put back (Esc / right button): draw the clips as they were
 

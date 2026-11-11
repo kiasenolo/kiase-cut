@@ -1086,8 +1086,12 @@ def key_at(p, t):
 def _coerce(value):
     """A parameter value as stored: numbers as floats, colours as float lists, choices
     (text, true / false, nothing) as they are (curves.discrete)."""
+    if isinstance(value, dict):                                  # (a pen path's parts: {"nodes": [...], "closed": bool})
+        return {k: _coerce(v) if isinstance(v, (list, tuple, dict)) or isinstance(v, bool) else v for k, v in value.items()}
+    if isinstance(value, bool):
+        return value
     if isinstance(value, (list, tuple)):
-        return [_coerce(v) if isinstance(v, (list, tuple)) else float(v) for v in value]     # (gradient stops, a curve's keys: lists of lists)
+        return [_coerce(v) if isinstance(v, (list, tuple, dict)) else float(v) for v in value]     # (gradient stops, a curve's keys: lists of lists)
     return value if curves.discrete(value) else float(value)
 
 

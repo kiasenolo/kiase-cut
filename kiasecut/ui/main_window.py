@@ -44,7 +44,8 @@ from .beat_panel import BeatPanel
 from .effects_panel import EffectsPanel
 from . import node_editor, searchbox
 from .. import proxies, sharedgl
-from . import inputstate
+from . import inputstate, pentool
+from .. import vector
 from .node_editor import NodeEditor
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
 from .inspector import Inspector
@@ -1050,6 +1051,9 @@ class MainWindow(QMainWindow):
         add(m, "貼上", "Ctrl+V", self.do_paste)
         add(m, "建立副本", ("Ctrl+Shift+C", "Shift+D"), self.do_duplicate)
         add(m, "用路徑／形狀當遮罩", None, self.mask_by_shape)
+        sub = m.addMenu("路徑運算")
+        for name, op in pentool.OPS:
+            add(sub, name, None, lambda op=op, name=name: self.path_boolean(op, name))
         m.addSeparator()
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "向左裁剪（刪掉播放頭之前）", "Q", lambda: self.do_trim_to_playhead("start"))
@@ -3098,8 +3102,8 @@ class MainWindow(QMainWindow):
         """A path drawn with the pen tool: a new 路徑 clip at the playhead, as big as the path, where it was drawn."""
         self.add_path_clip(paths, "鋼筆路徑")
 
-    def add_path_clip(self, paths, label, color="#ffffff"):
-        """A new 路徑 clip of paths (canvas px) at the playhead, where they are; returns nothing (one undo step)."""
+    def add_path_clip(self, paths, label, color="#ffffff", remove=()):
+        """A new 路徑 clip of paths (canvas px) at the playhead, where they are (remove: clips taken away in the same undo step)."""
         if not self.ensure_project():
             return
         params, (cx, cy) = assets.path_params(paths, color)
@@ -3111,6 +3115,8 @@ class MainWindow(QMainWindow):
         start = self.playhead_us()
 
         def fn(lvl):
+            if remove:
+                edit.delete_many(lvl, list(remove))
             c = library.place_item(lvl, assets.item(params, path), None, start)
             c["asset"] = params
             tf = c.setdefault("transform", {})
@@ -3988,6 +3994,30 @@ class MainWindow(QMainWindow):
                 h["color"] = was
         self.timeline.update()
         return col
+
+    SHAPE_FAMILIES_NOT = ("solid", "gradient", "empty", "grid")
+
+    def path_boolean(self, op, name):
+        """路徑運算: the selected shapes / pen paths (two or more) become one new path - the lowest one with the others added
+        (聯集), taken from it (差集), kept where they overlap (交集) or where they do not (排除); the old clips go."""
+        ids = set(self.timeline.selected_ids)
+        boxes = [b for b in reversed(self.preview.visible_boxes()) if not getattr(b, "group", False) and b.clip["id"] in ids
+                 and b.clip.get("asset") and b.clip["asset"].get("family") not in self.SHAPE_FAMILIES_NOT]
+        if len(boxes) < 2:
+            self.statusBar().showMessage("路徑運算：先選兩個以上的形狀或鋼筆路徑（Ctrl+點）", 5000)
+            return
+        qpaths = []
+        for b in boxes:
+            q = assets.at(b.clip["asset"], b.t)
+            qp = vector.parse_d(assets.outline_d(q, q["w"], q["h"]))
+            qp.translate(-q["w"] / 2, -q["h"] / 2)
+            qpaths.append(b.xf().map(qp))
+        paths = pentool.paths_of_qpath(pentool.combine(op, qpaths))
+        if not paths:
+            self.statusBar().showMessage(f"路徑運算（{name}）的結果是空的", 5000)
+            return
+        color = assets.at(boxes[0].clip["asset"], boxes[0].t).get("color") or "#ffffff"
+        self.add_path_clip(paths, "路徑運算：" + name, color, remove=[b.clip["id"] for b in boxes])
 
     def mask_by_shape(self):
         """選取一個內建形狀或鋼筆路徑，再加選要被切的片段：它們用那個形狀當遮罩（形狀所在的軌道變成參考軌道）。"""

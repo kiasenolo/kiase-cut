@@ -2588,6 +2588,9 @@ def add_vfx_effect(proj, clip_id, vid, index=None, level=None):
     e = fx.new_effect(fx.GRAPH, new_effect_id())
     e["vfx"] = vid
     e["params"].update(copy.deepcopy(m.get("params") or {}))
+    if not m.get("params"):                              # (a node made before it kept its settings: those of a use it already has)
+        for _c, used in project.vfx_uses(proj).get(vid, ())[:1]:
+            e["params"].update({k: copy.deepcopy(v) for k, v in used["params"].items() if not k.startswith(project.EXPOSE_PREFIX)})
     project._share_vfx(proj, e)
     es = c.setdefault("effects", [])
     es.insert(len(es) if index is None else max(0, min(index, len(es))), e)

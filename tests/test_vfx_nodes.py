@@ -141,3 +141,45 @@ class NodeEditorSelectionTests(unittest.TestCase):
         self.assertFalse(shared([mk(None), mk(None)]))                  # (their own graphs, not shared)
         self.assertFalse(shared([]))
 
+
+
+class VfxStartValuesTests(unittest.TestCase):
+    def setUp(self):
+        from test_edit import proj
+        self.p = proj()
+        self.e = edit.add_effect(self.p, "c1", fx.GRAPH)
+        math = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"})
+        self.math = math
+        self.e["params"].update(ng.default_params(self.e["graph"]))
+        self.vid = edit.vfx_from_effect(self.p, "c1", self.e["id"])
+
+    def test_a_new_use_starts_with_what_the_nodes_inside_were_set_to(self):
+        key = ng.param_key(self.math, "op")
+        self.e["params"][key] = "相除"                                      # (set after the VFX Node was made, on this use)
+        self.e["params"][ng.expose_key("alpha")] = 50.0                    # (the use's own value: not carried)
+        project.sync_vfx(self.p, [self.e])                                 # (what History.do does after the edit)
+        c2 = edit.find(self.p, "c2")[1] if any(c["id"] == "c2" for c in project.all_clips(self.p)) else None
+        if c2 is None:
+            self.skipTest("the test project has one clip")
+        used = edit.add_vfx_effect(self.p, "c2", self.vid)
+        self.assertEqual(used["params"][key], "相除")
+        self.assertNotIn(ng.expose_key("alpha"), used["params"])
+
+    def test_a_node_made_before_it_kept_its_settings_borrows_a_use(self):
+        key = ng.param_key(self.math, "op")
+        self.p["vfx_nodes"][self.vid]["params"] = {}
+        self.e["params"][key] = "相除"
+        c2 = next((c for c in project.all_clips(self.p) if c["id"] == "c2"), None)
+        if c2 is None:
+            self.skipTest("the test project has one clip")
+        self.assertEqual(edit.add_vfx_effect(self.p, "c2", self.vid)["params"][key], "相除")
+
+    def test_what_the_nodes_inside_were_set_to_goes_to_every_use_but_exposed_values_stay(self):
+        key, alpha = ng.param_key(self.math, "op"), ng.expose_key("alpha")
+        two = edit.add_vfx_effect(self.p, "c2", self.vid)
+        two["params"][alpha] = 10.0
+        self.e["params"][key] = "相除"
+        self.e["params"][alpha] = 50.0
+        project.sync_vfx(self.p, [self.e])
+        self.assertEqual(two["params"][key], "相除")
+        self.assertEqual((self.e["params"][alpha], two["params"].get(alpha)), (50.0, 10.0))

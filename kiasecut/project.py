@@ -631,19 +631,33 @@ def _share_vfx(p, e):
             e["params"][k] = copy.deepcopy(v)
 
 
+EXPOSE_PREFIX = "expose."                           # (nodegraph.expose_key)
+
+
 def sync_vfx(p, touched=()):
-    """After an edit: the effects of VFX Nodes it went through (touched) hand their graph and sources to the node, then every use
-    points at the node's again (an edit may have replaced the graph object)."""
+    """After an edit: the effects of VFX Nodes it went through (touched) hand their graph and sources to the node, and what the
+    nodes inside were set to (a Math's operation, its numbers: not the values of the effect's own parameters, which each use
+    keeps) to the node's start values and to every other use - the graph is one, so are its settings; then every use points at
+    the node's graph again (an edit may have replaced the graph object)."""
     nodes = p.get("vfx_nodes")
     if not nodes:
         return
+    changed = {}
     for e in touched:
         m = nodes.get(e.get("vfx"))
         if m is not None and e.get("graph") is not None:
             m["graph"], m["sources"] = e["graph"], e.get("sources") if e.get("sources") is not None else m.get("sources", {})
+            start = m.setdefault("params", {})
+            for k, v in (e.get("params") or {}).items():
+                if not k.startswith(EXPOSE_PREFIX) and start.get(k) != v:
+                    start[k] = copy.deepcopy(v)
+                    changed.setdefault(e["vfx"], {})[k] = v
     for c in all_clips(p):
         for e in c.get("effects") or ():
             if e.get("vfx"):
+                for k, v in changed.get(e["vfx"], {}).items():
+                    if e["params"].get(k) != v:
+                        e["params"][k] = copy.deepcopy(v)
                 _share_vfx(p, e)
 
 

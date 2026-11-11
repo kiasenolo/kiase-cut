@@ -2637,7 +2637,7 @@ class NodeEditor(QWidget):
     def node_values(self, nid):
         node = self.graph["nodes"].get(nid) or {}
         src = self.sources.get(nid) or {}
-        if node.get("type") != ng.FILTER and not ng.is_asset(node) and not ng.is_text(node):
+        if node.get("type") != ng.FILTER and not ng.is_asset(node) and not ng.is_text(node) and not ng.is_vecop(node):
             return self.Values({}, None, src.get("shape", "rectangle"), src.get("color") or [1.0, 1.0, 1.0, 1.0])
         d = ng.node_def(node)
         vals = {p.name: curves.value(self.params.get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params}

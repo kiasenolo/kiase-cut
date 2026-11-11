@@ -66,6 +66,17 @@ class NodeEditorTests(unittest.TestCase):
         v.items_by_id["c1"].setPos(600, 100)                    # (the link into it follows)
         self.assertAlmostEqual(far.path().currentPosition().y(), v.items_by_id["c1"].input_pos("src").y(), places=3)
 
+    def test_a_vector_node_shows_its_own_fields(self):
+        """縮放 / 移動（矢量） have vec2 fields: they showed no value, and drawing the node threw (a blank editor)."""
+        def build(e):
+            for op in ("scale", "move", "rotate"):
+                ng.add_node(e["graph"], {"type": ng.SOURCE, "kind": ng.VECTOR, "op": op}, 0, 0)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        nid = next(n for n, d in ed.graph["nodes"].items() if d.get("op") == "scale")
+        self.assertEqual(list(ed.node_values(nid).get("factor")), [1.0, 1.0])
+        ed.view.viewport().grab()                               # (draws every node)
+
     def test_a_view_zoomed_out_past_the_limit_zooms_back(self):
         ed = self.make()
         v = ed.view

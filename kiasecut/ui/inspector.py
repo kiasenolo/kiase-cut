@@ -1573,6 +1573,8 @@ class Inspector(QWidget):
         self._asset_form, self._asset_rows = form, {}
         for f in fields:
             info = assets.FIELD_INFO[f]
+            if info[1] == "path":                         # (a pen path's nodes: edited on the canvas)
+                continue
             if info[1] == "toggle":
                 box = QCheckBox(info[0])
                 box.clicked.connect(lambda on, f=f: self._emit_now(self.paramEdited, "asset", f, bool(on)))

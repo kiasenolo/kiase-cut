@@ -372,6 +372,8 @@ class MainWindow(QMainWindow):
         self.preview.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
         self.preview.movesCommitted.connect(self.on_preview_moves)
         self.preview.guidesCommitted.connect(self.on_guides)
+        self.preview.penFinished.connect(self.on_pen_finished)
+        self.preview.penToggled.connect(lambda on: self.pen_btn.setChecked(on))
         self.preview.movesLive.connect(self.live_moves)
         self.preview.dupLive.connect(self.live_dup)
         self.preview.grabCancelled.connect(lambda: (self.rebuild(), self.refresh_inspector()))
@@ -590,6 +592,7 @@ class MainWindow(QMainWindow):
         self.guides_btn = tool("guides", "顯示 / 隱藏預覽上的外框和控制點（只看畫面）", self.toggle_guides, True)
         self.guides_btn.setChecked(str(self.settings().value("show_guides", "true")).lower() not in ("false", "0"))
         self.preview.set_show_guides(self.guides_btn.isChecked())
+        self.pen_btn = tool("pen", "鋼筆工具（P，滑鼠在預覽上）：畫貝茲曲線路徑，變成一個可以改填色 / 外框的片段；雙擊路徑片段編輯節點", self.toggle_pen, True)
         self.overflow_btn = tool("outside", "顯示 / 隱藏畫布外的畫面（開：超出畫布的內容也畫出來，畫布外的部分壓暗；只影響預覽，不影響匯出）",
                                  self.toggle_overflow, True)
         self.overflow_btn.setChecked(str(self.settings().value("show_outside", "false")).lower() in ("true", "1"))
@@ -650,6 +653,7 @@ class MainWindow(QMainWindow):
         self.quality_box.currentIndexChanged.connect(lambda _i: self.set_preview_quality(self.quality_box.currentData()))
         bar.addWidget(self.quality_box)
         self.transport.append(self.quality_box)
+        bar.addWidget(self.pen_btn)
         bar.addWidget(self.guides_btn)
         bar.addWidget(self.overflow_btn)
         bar.addWidget(full_btn)
@@ -3065,7 +3069,7 @@ class MainWindow(QMainWindow):
         elif group.startswith("fxsrc:"):
             label = "效果來源位置"
         elif group == "multi":                          # a built-in asset or a 文字框 resized: size and place
-            label = "調整大小"
+            label = "編輯路徑" if "nodes" in (values.get("asset") or {}) else "調整大小"
         elif group.startswith("fx:"):
             label = "效果控制點"
         else:
@@ -3079,6 +3083,35 @@ class MainWindow(QMainWindow):
                     edit.set_param(level, cid, g, key, v, t)
 
         self.apply(label, set_all)
+
+    def toggle_pen(self):
+        """The 鋼筆 button: start drawing a path, or end the tool (an open path is kept as it is)."""
+        if self.pen_btn.isChecked():
+            if not self.preview.pen_begin():
+                if not self.preview.pen_edit():
+                    self.pen_btn.setChecked(False)
+        elif self.preview.pen is not None:
+            self.preview._pen_finish(False) if self.preview.pen["edit"] is None else self.preview.pen_end()
+
+    def on_pen_finished(self, nodes, closed):
+        """A path drawn with the pen tool: a new 路徑 clip at the playhead, as big as the path, where it was drawn."""
+        if not self.ensure_project():
+            return
+        params, (cx, cy) = assets.path_params(nodes, closed)
+        path = self.store_asset(params)
+        if not path:
+            return
+        level = self.container()
+        W, H = level.get("width") or self.proj["width"], level.get("height") or self.proj["height"]
+        start = self.playhead_us()
+
+        def fn(lvl):
+            c = library.place_item(lvl, assets.item(params, path), None, start)
+            c["asset"] = params
+            tf = c.setdefault("transform", {})
+            tf["x"], tf["y"] = round((cx - W / 2) / (W / 2), 5), round((H / 2 - cy) / (H / 2), 5)
+            return c
+        self.apply("鋼筆路徑", fn, select=lambda c: c["id"])
 
     def ask_grid_size(self):
         n, ok = QInputDialog.getInt(self, "格線間距", "格線間距（畫布像素）：", self.preview.grid_size, 1, 2000)

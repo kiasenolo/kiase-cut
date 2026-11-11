@@ -225,7 +225,7 @@ class Renderer:
         return self.asset(q, sw, sh), placed
 
     # -- vector nodes (vector.py) -------------------------------------------------------------------
-    OUTLINE_FAMILIES = ("rect", "line", "ellipse", "star", "polygon", "arrow", "parallelogram", "heart")
+    OUTLINE_FAMILIES = ("rect", "line", "ellipse", "star", "polygon", "arrow", "parallelogram", "heart", "path")
 
     def vector_layers(self, e, graph, nid, t, disp, fps, seen=()):
         """The outlines (vector.Layer, canvas px centred on the clip's frame) node nid of effect e's graph gives at clip time t:

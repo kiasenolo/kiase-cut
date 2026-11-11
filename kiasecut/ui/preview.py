@@ -115,6 +115,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineE
 
 from .. import components, curves, edit, fonts, gizmos, nodegraph, project, render, sharedgl, textlayout, textvars
 from . import appevents, touch, viewglide, wheel
+from .pentool import PenMixin
 from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
 
@@ -611,7 +612,7 @@ except ImportError:
 _Surface = QOpenGLWidget if GL_PREVIEW else QWidget
 
 
-class Preview(_Surface):
+class Preview(PenMixin, _Surface):
     clipPicked = Signal(object)                 # clip dict
     selectionPicked = Signal(object, object)    # {clip ids}, the primary one (or None): Shift / Ctrl+click, a box
     paramsLive = Signal(str, str, dict)         # clip id, group, {key: value} while dragging
@@ -628,6 +629,8 @@ class Preview(_Surface):
     mediaDropped = Signal(list, list, float, float, str)  # idents, file paths, transform x / y there, group id or ""
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
     textureFailed = Signal(str)                 # the GpuFrame could not be drawn: the player sends pictures from now on
+    penToggled = Signal(bool)                   # the pen tool started or ended
+    penFinished = Signal(list, bool)            # a new path was drawn: its nodes [[x, y, in dx, in dy, out dx, out dy]] (canvas px), closed
     guidesCommitted = Signal(dict)              # {"x": [canvas px], "y": [canvas px]}: the reference lines after one was made, moved or taken away
     grabCancelled = Signal()                    # a G / R / S grab was put back (Esc / right button): draw the clips as they were
 
@@ -649,6 +652,7 @@ class Preview(_Surface):
         self.selected_id = None
         self.selected_ids = set()               # the whole selection (with selected_id, the primary)
         self.interactive = interactive
+        self.pen = None                                  # 鋼筆工具 (pentool.py): its state while it draws or edits a path
         self.show_rulers = False                         # 標尺: along the top and left edge, reference lines are dragged out of them
         self.show_grid = False                           # 格線 (grid_size canvas px apart)
         self.grid_size = 50
@@ -780,6 +784,7 @@ class Preview(_Surface):
         self.t_us = t_us
         self.selected_id = selected_id
         self.selected_ids = (set(selected_ids or ()) | {selected_id}) if selected_id else set()
+        self.pen_reload()
         if self.drag is None:
             self.update()
 
@@ -997,6 +1002,12 @@ class Preview(_Surface):
         k, mods = e.key(), e.modifiers()
         pad = bool(mods & Qt.KeypadModifier)
         ctrl, shift = bool(mods & Qt.ControlModifier), bool(mods & Qt.ShiftModifier)
+        if self.pen is not None and (act := self.pen_key(e)) is not None:
+            return act
+        if k == Qt.Key_P and not mods and self.interactive and self.show_guides and self.pen is None and self.drag is None:
+            return self.pen_begin
+        if k in (Qt.Key_Return, Qt.Key_Enter) and not mods and self.pen_can_edit():
+            return self.pen_edit
         if k == Qt.Key_Home and not ctrl:
             return self.view_fit
         if pad and k in (Qt.Key_Period, Qt.Key_Comma):
@@ -1192,7 +1203,7 @@ class Preview(_Surface):
     def _measure_update(self, on, x, y):
         """Alt held with the mouse over another clip (or over nothing: the canvas): self.measure = (the selection's rect, that one's)."""
         new = None
-        if on and self.drag is None and not self.mask_mode and self.view and self.selected_ids:
+        if on and self.drag is None and self.pen is None and not self.mask_mode and self.view and self.selected_ids:
             picked = self._picked_boxes()
             if picked:
                 mine = self._union(picked)
@@ -1289,7 +1300,7 @@ class Preview(_Surface):
 
     # -- arrow keys: nudge the selection by a pixel (Shift: ten) ------------------------------------------------
     def _can_nudge(self):
-        return (self.interactive and self.show_guides and not self.mask_mode and self.drag is None
+        return (self.pen is None and self.interactive and self.show_guides and not self.mask_mode and self.drag is None
                 and self.text_box is None and bool(self._nudge_boxes()))
 
     def _nudge_boxes(self):
@@ -1327,7 +1338,7 @@ class Preview(_Surface):
     # -- G / R / S: Blender's grab, rotate and scale: the selected clip follows the pointer till a click --------------
     def _can_grab(self, kind):
         box = self.selected_box()
-        if (not self.interactive or not self.show_guides or self.mask_mode or self.drag is not None or self.text_box is not None
+        if (self.pen is not None or not self.interactive or not self.show_guides or self.mask_mode or self.drag is not None or self.text_box is not None
                 or box is None or box.locked):
             return False
         return kind == "move" or (not self.multi() and not getattr(box, "group", False))
@@ -1688,15 +1699,22 @@ class Preview(_Surface):
         if self.box_zoom:
             p.setPen(QColor("#9a9aa0"))
             p.drawText(QRectF(8, 24, 260, 18), Qt.AlignLeft, "拖出要放大的範圍（Esc：取消）")
+        if self.pen is not None:
+            p.setPen(QColor("#9a9aa0"))
+            p.drawText(QRectF(8 + (RULER_PX if self.show_rulers else 0), 6 + (RULER_PX if self.show_rulers else 0), 900, 18), Qt.AlignLeft, self.pen_tip())
         p.setRenderHint(QPainter.Antialiasing)
         p.translate(r.x(), r.y())
         p.scale(r.width() / self.W, r.height() / self.H)
         k = self._k()
         self._paint_grid(p, k)
         self._paint_measure(p, k)
+        if self.pen is not None:
+            self.paint_pen(p, k)
         box = self._live_box()
         mbox = self.mask_box(box)
-        if self.multi():
+        if self.pen is not None:                         # (the pen tool shows its own points: no frame round the clip)
+            pass
+        elif self.multi():
             self._paint_group(p, k)
         elif box is not None:
             if mbox is not None and self.masking(mbox):
@@ -2114,6 +2132,9 @@ class Preview(_Surface):
             self.drag = {"kind": "zoomdrag" if zoom else "pan", "pos": e.position(), "pan": QPointF(self.pan),
                          "zoom": self.zoom, "moved": False}
             self.setCursor(Qt.SizeVerCursor if zoom else Qt.ClosedHandCursor)
+            return
+        if self.pen is not None:
+            self.pen_press(e)
             return
         if self.box_zoom and e.button() == Qt.RightButton:
             self._arm_box_zoom(False)
@@ -2572,6 +2593,9 @@ class Preview(_Surface):
     def mouseMoveEvent(self, e):
         d = self.drag
         if d is None:
+            if self.pen is not None:
+                self.pen_move(e)
+                return
             self._hover(e)
             return
         if d.get("modal"):
@@ -2693,6 +2717,9 @@ class Preview(_Surface):
     def mouseReleaseEvent(self, e):
         if self.drag and self.drag.get("modal"):
             return
+        if self.pen is not None and self.drag is None:
+            self.pen_release(e)
+            return
         d, self.drag = self.drag, None
         self.wrap.stop(d and d.get("live"))            # (the pointer where the drag ended up)
         if d and d["kind"] in ("pan", "zoomdrag"):
@@ -2730,6 +2757,9 @@ class Preview(_Surface):
         if not self.interactive:
             self.doubleClicked.emit()
             return
+        if self.pen is not None:
+            self.pen_double_click(e)
+            return
         if e.button() != Qt.LeftButton or not self.view:
             return
         x, y = self._to_canvas(e.position())
@@ -2747,7 +2777,11 @@ class Preview(_Surface):
                 self.groupPicked.emit(kid)
                 self.update()
             return
-        if hit is not None and hit.clip["type"] == "text" and not curves.is_animated(hit.clip["text"].get("content")):
+        if hit is not None and (hit.clip.get("asset") or {}).get("family") == "path" and not hit.locked:      # a pen path: its nodes
+            self.drag = None
+            self._select([hit.clip["id"]], hit.clip["id"])
+            self.pen_edit(next((b for b in self.visible_boxes() if b.clip["id"] == hit.clip["id"]), hit))
+        elif hit is not None and hit.clip["type"] == "text" and not curves.is_animated(hit.clip["text"].get("content")):
             self.drag = None
             self.edit_text(hit)
         elif hit is None:                                # (double click / tap on nothing: the whole picture)

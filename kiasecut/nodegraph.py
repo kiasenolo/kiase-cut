@@ -225,7 +225,7 @@ def default_params(graph):
 
 
 # -- shape nodes made from the built-in shapes (assets.py): node["asset"] = {"key": preset, "family": ...} ----------
-ASSET_SKIP = ("w", "h", "fill_image", "stroke_image", "stops", "fill_stops", "stroke_stops")   # (size: the node's frame; pictures: its inputs; gradients: made with nodes)
+ASSET_SKIP = ("w", "h", "nodes", "fill_image", "stroke_image", "stops", "fill_stops", "stroke_stops")   # (size: the node's frame; pictures: its inputs; gradients: made with nodes)
 PLACE = (("cx", "位置 X", -2.0, 2.0, 0.0), ("cy", "位置 Y", -2.0, 2.0, 0.0), ("w", "寬", 0.01, 4.0, 1.0),
          ("h", "高", 0.01, 4.0, 1.0), ("rotation", "旋轉 °", -360.0, 360.0, 0.0),
          ("fit", "寬高比 寬/高（0＝拉伸）", 0.0, 10.0, 0.0))   # where a source sits on the clip (the source's own fields)

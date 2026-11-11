@@ -990,7 +990,7 @@ def takes_picture(graph, nid, socket):
     if p is None:
         return True
     if is_asset(node) or is_text(node) or is_vecop(node):    # (a shape's or a text's values, and where it sits, are read once)
-        return p.type in fx.SOURCE_TYPES + CONTROL_TYPES
+        return p.type in fx.SOURCE_TYPES + CONTROL_TYPES + (VECTOR_TYPES if is_vecop(node) else ())
     return p.type in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES
 
 
@@ -1128,7 +1128,8 @@ def connect(graph, src, dst, socket, out=None):
             out = outputs(nodes[src])[0][0]
         if is_vecop(nodes[dst]) and socket in vecop_sockets(nodes[dst]) and not gives_vector(nodes[src]):
             raise GraphError("矢量節點只能接形狀、文字、SVG 圖片或別的矢量節點")
-        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst]) or is_vecop(nodes[dst])) and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES:
+        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst]) or is_vecop(nodes[dst])) and \
+                p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + (VECTOR_TYPES if is_vecop(nodes[dst]) else ()):
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
         if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
@@ -1733,6 +1734,9 @@ def _evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, f
                 if p.type == "color":
                     c = _centre(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
                     v = [float(c[0]), float(c[1]), float(c[2]), 1.0]
+                elif p.type in VECTOR_TYPES:                  # (a number gives the same to X and Y: 縮放 / 移動（矢量）)
+                    c = _centre(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
+                    v = [float(x) for x in c[:2 if p.type == "vec2" else 3]]
                 else:
                     v = _control(eng, graph, f, params, src_tex, alloc, free, t, duration, fps, unit, picture, errors)
                     if p.type == "bool":

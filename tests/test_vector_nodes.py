@@ -234,6 +234,24 @@ class VectorRenderTests(RenderBase):
         for r in self.renderers:
             self.assertEqual(rgb(r.render(view, 0, W, H), 12, 18), BLACK, type(r).__name__)
 
+    def test_a_number_node_linked_into_scale_or_move_gives_x_and_y(self):
+        p = proj()
+        eff = edit.add_effect(p, "c1", fx.GRAPH)
+        node = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "vector", "op": "scale"})
+        n = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect", "colors": ("#ffffff", "#000000")}})
+        eff["sources"][n].update(cx=0.0, w=0.25, h=0.25)
+        val = edit.add_graph_node(p, "c1", eff["id"], {"type": "filter", "ref": "builtin:nodes/value"})
+        eff["params"][ng.param_key(val, "value")] = 4.0
+        edit.connect_graph(p, "c1", eff["id"], n, node, "v1")
+        edit.connect_graph(p, "c1", eff["id"], val, node, ng.PARAM + "factor")
+        edit.connect_graph(p, "c1", eff["id"], node, "output", "src")
+        view = self.s.view()
+        view["tracks"][0]["clips"][0]["effects"] = [eff]
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            self.assertEqual((rgb(img, 12, 18), rgb(img, 32, 4)), (WHITE, WHITE), type(r).__name__)      # (4 times as wide and as tall)
+
     def test_union_subtract_intersect_xor(self):
         a, b = (-0.25, 0.75), (0.25, 0.75)         # (cx in half-frame units, w as a fraction: A covers the left 3/4 of the clip, B the right 3/4)
         want = {"聯集": [WHITE] * 4, "差集": [WHITE, BLACK, BLACK, BLACK], "交集": [BLACK, WHITE, WHITE, BLACK],

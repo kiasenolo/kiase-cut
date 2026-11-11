@@ -254,6 +254,36 @@ class SourceGridAndWave(unittest.TestCase):
         v.fit()
         self.assertAlmostEqual(v.t0, 2 * S - 0.04 * 8 * S, delta=2)
 
+    def test_overview_moves_the_big_view(self):
+        import numpy as np
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtCore import QEvent
+        from kiasecut.ui.beat_wave import Overview, WaveView
+        p = proj()
+        _, a = edit.find(p, "a1")
+
+        class Peaks:
+            def get(self, path, stream=0):
+                return np.full((60_000, 2), [0.5, -0.5], np.float32), 0.0
+        v = WaveView()
+        v.resize(800, 300)
+        v.set_clip(a, Peaks())
+        o = Overview(v)
+        o.resize(600, 64)
+        self.assertFalse(o.grab().isNull())
+        span = v.t1 - v.t0
+
+        def mouse(kind, x):
+            return QMouseEvent(kind, QPointF(x, 10), Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+        o.mousePressEvent(mouse(QEvent.MouseButtonPress, o.x_of(40 * S)))     # outside the frame: centred there
+        self.assertAlmostEqual((v.t0 + v.t1) / 2, 40 * S, delta=S / 50)
+        self.assertAlmostEqual(v.t1 - v.t0, span, delta=2)
+        o.mouseMoveEvent(mouse(QEvent.MouseMove, o.x_of(20 * S)))
+        self.assertAlmostEqual((v.t0 + v.t1) / 2, 20 * S, delta=S / 50)
+        o.mouseReleaseEvent(mouse(QEvent.MouseButtonRelease, 0))
+        self.assertIsNone(o.drag)
+
 
 if __name__ == "__main__":
     unittest.main()

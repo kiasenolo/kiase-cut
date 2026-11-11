@@ -234,3 +234,107 @@ class WaveView(QWidget):
             m, s = divmod(t, 60)
             p.drawText(QPointF(x + 3, y + 17), f"{int(m)}:{s:06.3f}".rstrip("0").rstrip(".") if step < 1 else f"{int(m)}:{int(s):02d}")
             k += 1
+
+
+class Overview(QWidget):
+    """The whole sound in one strip (as FL Studio's Edison has): the stretch the clip plays lit, the big picture's
+    view as a frame. A click puts the frame there (its middle), a drag moves it; grabbed inside the frame it
+    keeps its place under the pointer."""
+    HEIGHT = 64
+
+    def __init__(self, wave, parent=None):
+        super().__init__(parent)
+        self.wave = wave
+        self.setFixedHeight(self.HEIGHT)
+        self.setMouseTracking(True)
+        self.drag = None                    # pointer's time minus the view's middle when grabbed
+        self._cols = None                   # (key, hi, lo): the strip's columns
+        wave.viewChanged.connect(self.update)
+
+    def _span(self):
+        """The time the strip covers (source us): the sound, and the view if it reaches past it."""
+        w = self.wave
+        return 0.0, max(w.total(), w.t1, 1.0)
+
+    def x_of(self, t):
+        a, b = self._span()
+        return (t - a) / (b - a) * self.width()
+
+    def t_of(self, x):
+        a, b = self._span()
+        return a + x / max(1, self.width()) * (b - a)
+
+    def _columns(self):
+        w = self.wave
+        res = w._res()
+        if res is None:
+            return None
+        a, b = self._span()
+        key = (id(res[0]), len(res[0]), self.width(), b)
+        if self._cols is None or self._cols[0] != key:
+            hi, lo = waveform.columns(res[0], res[1], a / US, b / US, max(1, self.width()))
+            self._cols = (key, hi, lo)
+        return self._cols[1:]
+
+    def paintEvent(self, _e):
+        w = self.wave
+        p = QPainter(self)
+        p.fillRect(self.rect(), QColor("#141416"))
+        if not w.clip:
+            return
+        h = self.height()
+        a, b = w.trim()
+        xa, xb = self.x_of(a), self.x_of(b)
+        p.fillRect(QRectF(xa, 0, max(xb - xa, 1), h), QColor("#26262b"))
+        cols = self._columns()
+        if cols is not None:
+            hi, lo = cols
+            shape = lambda v: np.sign(v) * np.clip(np.abs(v), 0, 1) ** 0.7
+            hi, lo = np.maximum(shape(hi), 0.01), np.minimum(shape(lo), -0.01)
+            half = h / 2
+            xs = np.arange(len(hi)) + 0.5
+            for lit, color in ((False, "#5b5e66"), (True, "#cfd3da")):
+                keep = (xs >= xa) & (xs <= xb)
+                keep = keep if lit else ~keep
+                p.setPen(QPen(QColor(color), 1))
+                p.drawLines([QLineF(x, half - t * half, x, half - b_ * half)
+                             for x, t, b_ in zip(xs[keep], hi[keep], lo[keep])])
+        else:
+            p.setPen(QColor("#8a8a90"))
+            p.drawText(self.rect(), Qt.AlignCenter, "波形讀取中…")
+        p.setPen(QPen(QColor("#e8e8ea"), 1.5))                  # the clip's in / out
+        for x in (xa, xb):
+            p.drawLine(QLineF(x, 0, x, h))
+        x0, x1 = self.x_of(w.t0), self.x_of(w.t1)                # the big picture's view
+        p.fillRect(QRectF(x0, 0, x1 - x0, h), QColor(77, 160, 255, 45))
+        p.setPen(QPen(QColor("#4da0ff"), 2))
+        p.drawRect(QRectF(x0 + 1, 1, max(x1 - x0 - 2, 1), h - 2))
+
+    def _move_to(self, t):
+        """The view's middle to t, its size kept."""
+        w = self.wave
+        span = w.t1 - w.t0
+        w.t0, w.t1 = t - span / 2, t + span / 2
+        w._moved()
+
+    def mousePressEvent(self, e):
+        if e.button() != Qt.LeftButton or not self.wave.clip:
+            return
+        w = self.wave
+        w.glide.stop()
+        t = self.t_of(e.position().x())
+        mid = (w.t0 + w.t1) / 2
+        inside = w.t0 <= t <= w.t1
+        self.drag = t - mid if inside else 0.0
+        if not inside:
+            self._move_to(t)
+
+    def mouseMoveEvent(self, e):
+        if self.drag is not None:
+            self._move_to(self.t_of(e.position().x()) - self.drag)
+        else:
+            self.setCursor(Qt.SizeHorCursor if self.wave.t0 <= self.t_of(e.position().x()) <= self.wave.t1
+                           else Qt.PointingHandCursor)
+
+    def mouseReleaseEvent(self, _e):
+        self.drag = None

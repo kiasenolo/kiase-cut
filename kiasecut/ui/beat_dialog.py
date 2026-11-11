@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButt
 
 from .. import edit
 from .beat_panel import DIV_NAMES
-from .beat_wave import WaveView
+from .beat_wave import Overview, WaveView
 from .inspector import ComboBox
 from .timeline import BEAT_COLORS
 
@@ -47,7 +47,9 @@ class BeatDialog(QDialog):
         self.wave = WaveView()
         self.fit.clicked.connect(self.wave.fit)
         lay.addWidget(self.wave, 1)
-        hint = QLabel("滾輪：左右捲動　Ctrl＋滾輪：縮放　中鍵拖動：移動畫面（Ctrl＋中鍵：縮放）")
+        self.overview = Overview(self.wave)
+        lay.addWidget(self.overview)
+        hint = QLabel("下方小圖：整份聲音，亮的是片段用到的，藍框是上面看到的範圍，點一下或拖動可以移動。\n滾輪：左右捲動　Ctrl＋滾輪：縮放　中鍵拖動：移動畫面（Ctrl＋中鍵：縮放）")
         hint.setStyleSheet("color: #8a8a90")
         lay.addWidget(hint)
         self.peaks = None
@@ -77,3 +79,4 @@ class BeatDialog(QDialog):
 
     def peaks_ready(self, _path=None):
         self.wave.update()
+        self.overview.update()

@@ -13,7 +13,7 @@ import math
 import numpy as np
 from PySide6.QtCore import QEvent, QLineF, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QMenu, QWidget
 
 from .. import build, edit, project, waveform
 from . import touch, viewglide, wheel
@@ -28,6 +28,10 @@ STEPS = (0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 
 class WaveView(QWidget):
     viewChanged = Signal()                 # t0 / t1 moved
     seekRequested = Signal(float)          # a click: the playhead there (source us)
+    pointAdd = Signal(float)               # a change point wanted at this time (source us)
+    pointMove = Signal(int, float)         # point index dragged to this time
+    pointEdit = Signal(int)                # point index: change what it sets
+    pointRemove = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -40,6 +44,7 @@ class WaveView(QWidget):
         self.t0, self.t1 = 0.0, float(US)   # the view, source us
         self.drag = None
         self.playhead = None                # source us, None: none
+        self.sel_point = None               # index of the change point picked
         self.glide = viewglide.ViewGlide(self, self._glide_pan)
         self.wrap = WrapDrag(self, lambda: QRectF(0, 0, self.width(), self.height()), axes="x")
 
@@ -109,6 +114,64 @@ class WaveView(QWidget):
         self.t0, self.t1 = a - span * k, a - span * k + span
         self._moved()
 
+    # -- change points (變速點 / 變拍點) ----------------------------------------------------------
+    HIT_PX = 6
+    SNAP_PX = 8
+
+    def _pts(self):
+        return (self.clip.get("beat") or {}).get("points") or [] if self.clip else []
+
+    def point_at(self, x):
+        """Index of the change point under pixel x, else None."""
+        best = None
+        for i, pt in enumerate(self._pts()):
+            d = abs(self.x_of(pt["time_us"]) - x)
+            if d <= self.HIT_PX and (best is None or d < best[0]):
+                best = (d, i)
+        return best[1] if best else None
+
+    def snapped(self, t, skip=None, free=False):
+        """t moved to the nearest grid line within a few pixels (the grid without point `skip`, as it is when that
+        one is moved); free (Alt): as it is."""
+        if free:
+            return t
+        beat = dict(self.clip.get("beat") or {})
+        beat["points"] = [pt for i, pt in enumerate(self._pts()) if i != skip]
+        reach = self.SNAP_PX / max(1, self.width()) * (self.t1 - self.t0)
+        lines = [x for x, _ in edit.source_grid(beat, t - reach, t + reach)]
+        return min(lines, key=lambda x: abs(x - t)) if lines else t
+
+    def contextMenuEvent(self, e):
+        if not self.clip:
+            return
+        i = self.point_at(e.pos().x())
+        t = max(0.0, self.snapped(self.t_of(e.pos().x())))
+        menu = QMenu(self)
+        if i is None:
+            menu.addAction("在此處新增變速點／變拍點", lambda: self.pointAdd.emit(t))
+        else:
+            self.sel_point = i
+            menu.addAction("改數值…", lambda: self.pointEdit.emit(i))
+            menu.addAction("刪除", lambda: self.pointRemove.emit(i))
+            self.update()
+        menu.exec(e.globalPos())
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() != Qt.LeftButton or not self.clip:
+            return
+        i = self.point_at(e.position().x())
+        if i is not None:
+            self.pointEdit.emit(i)
+        else:
+            self.pointAdd.emit(max(0.0, self.snapped(self.t_of(e.position().x()), free=bool(e.modifiers() & Qt.AltModifier))))
+
+    def keyPressEvent(self, e):
+        if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.sel_point is not None:
+            i, self.sel_point = self.sel_point, None
+            self.pointRemove.emit(i)
+        else:
+            super().keyPressEvent(e)
+
     def set_playhead(self, t, follow=False):
         """The playhead at t; follow: the view turns a page when it has gone past the view's right (or left) end."""
         self.playhead = t
@@ -146,9 +209,16 @@ class WaveView(QWidget):
             zoom = bool(e.modifiers() & Qt.ControlModifier)
             self.drag = {"kind": "zoom" if zoom else "pan", "pos": e.position(), "t0": self.t0, "t1": self.t1,
                          "at": self.t_of(e.position().x()), "x": e.position().x()}
-        elif e.button() == Qt.LeftButton:                    # the playhead goes there (and is dragged: seek)
-            self.drag = {"kind": "seek"}
+        elif e.button() == Qt.LeftButton:
+            i = self.point_at(e.position().x())
+            self.sel_point = i
+            if i is not None:                                # a change point: dragged along time
+                self.drag = {"kind": "point", "i": i, "at": self._pts()[i]["time_us"]}
+                self.update()
+                return
+            self.drag = {"kind": "seek"}                     # else the playhead goes there (and is dragged)
             self.seekRequested.emit(self.t_of(e.position().x()))
+            self.update()
 
     def mouseMoveEvent(self, e):
         d = self.drag
@@ -156,6 +226,12 @@ class WaveView(QWidget):
             return
         if d["kind"] == "seek":
             self.seekRequested.emit(self.t_of(e.position().x()))
+            return
+        if d["kind"] == "point":
+            t = max(0.0, self.snapped(self.t_of(e.position().x()), d["i"], bool(e.modifiers() & Qt.AltModifier)))
+            if abs(t - d["at"]) >= 1:
+                d["at"] = t
+                self.pointMove.emit(d["i"], t)
             return
         if not d.get("wrap"):                                # (this drag's first move)
             d["wrap"] = True
@@ -173,7 +249,7 @@ class WaveView(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
-        if d is not None and d["kind"] == "seek":
+        if d is not None and d["kind"] in ("seek", "point"):
             return
         self.wrap.stop()
         if d is not None and d["kind"] == "pan":
@@ -195,11 +271,33 @@ class WaveView(QWidget):
         for x in (xa, xb):                                   # the clip's in / out
             p.setPen(QPen(QColor("#e8e8ea"), 1.5))
             p.drawLine(QLineF(x, 0, x, wave.height()))
+        self._draw_points(p, wave)
         if self.playhead is not None:
             x = self.x_of(self.playhead)
             p.setPen(QPen(QColor("#ff4d4d"), 1.5))
             p.drawLine(QLineF(x, 0, x, h))
         self._draw_ruler(p, h)
+
+    def _draw_points(self, p, r):
+        """Change points: a solid pink line where the BPM changes, a dashed blue one where only the meter does, with
+        what they set on top (BPM and meter together in one label)."""
+        p.setFont(QFont(self.font().family(), 9))
+        for i, pt in enumerate(self._pts()):
+            x = self.x_of(pt["time_us"])
+            if not -40 <= x <= self.width() + 40:
+                continue
+            col = QColor("#ff5d9e" if pt.get("bpm") else "#5dc8ff")
+            pen = QPen(col, 3 if i == self.sel_point else 2)
+            if not pt.get("bpm"):
+                pen.setStyle(Qt.DashLine)
+            p.setPen(pen)
+            p.drawLine(QLineF(x, 0, x, r.height()))
+            text = " · ".join(([f"{pt['bpm']:g} BPM"] if pt.get("bpm") else [])
+                              + ([f"{pt['meter']} 拍" if pt["meter"] else "不分小節"] if pt.get("meter") is not None else []))
+            box = QRectF(x + 3, 3, p.fontMetrics().horizontalAdvance(text) + 10, 18)
+            p.fillRect(box, col)
+            p.setPen(QColor("#101012"))
+            p.drawText(box, Qt.AlignCenter, text)
 
     def _draw_wave(self, p, r, xa, xb):
         res = self._res()
@@ -331,6 +429,9 @@ class Overview(QWidget):
         p.setPen(QPen(QColor("#e8e8ea"), 1.5))                  # the clip's in / out
         for x in (xa, xb):
             p.drawLine(QLineF(x, 0, x, h))
+        for pt in w._pts():
+            p.setPen(QPen(QColor("#ff5d9e" if pt.get("bpm") else "#5dc8ff"), 1.5))
+            p.drawLine(QLineF(self.x_of(pt["time_us"]), 0, self.x_of(pt["time_us"]), h))
         if w.playhead is not None:
             p.setPen(QPen(QColor("#ff4d4d"), 1.5))
             p.drawLine(QLineF(self.x_of(w.playhead), 0, self.x_of(w.playhead), h))

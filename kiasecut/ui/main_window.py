@@ -2327,6 +2327,8 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.refresh_inspector()
         self.show_rack()
+        if getattr(self, "beat_editor", None) is not None and not self.beat_editor.show_clip(self.container()):
+            self.beat_editor.close()                               # (its clip is gone)
         self.statusBar().showMessage(label, 2000)
         self.rebuild()
 
@@ -2508,6 +2510,7 @@ class MainWindow(QMainWindow):
             win = self.beat_editor = beat_dialog.BeatDialog(cid, self)
             win.destroyed.connect(lambda *_: setattr(self, "beat_editor", None))
             win.beatEdited.connect(self.on_beat_edited)
+            win.pointEdited.connect(self.on_beat_point)
             self.timeline.peaksReady.connect(win.peaks_ready)
         if not win.show_clip(self.container(self.proj), self.timeline.peaks):
             win.close()
@@ -2867,8 +2870,6 @@ class MainWindow(QMainWindow):
         kept = self._nodes_kept(clips)
         self.nodes.show_clip(clips[0] if len(clips) == 1 else kept, t=times[clips[0]["id"]] if len(clips) == 1 else 0)
         self.beats.show_clips(clips)
-        if getattr(self, "beat_editor", None) is not None and not self.beat_editor.show_clip(self.container(self.proj)):
-            self.beat_editor.close()                               # (its clip is gone)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
         self._update_side_tabs(clips)
 
@@ -4928,6 +4929,13 @@ class MainWindow(QMainWindow):
         else:
             label = "調整 BPM" if "bpm" in fields else "BPM 細分" if "div" in fields else "調整起頭偏移"
         self.apply(label, lambda level: edit.set_beat(level, cid, **fields), merge=None if "on" in fields else ("beat", cid, tuple(fields)))
+
+    def on_beat_point(self, cid, op, args):
+        """The 進階對齊編輯器's change points (變速點 / 變拍點): op is add / move / set / remove."""
+        fn, label = {"add": (edit.add_beat_point, "新增變速點"), "move": (edit.move_beat_point, "移動變速點"),
+                     "set": (edit.set_beat_point, "改變速點"), "remove": (edit.remove_beat_point, "刪除變速點")}[op]
+        self.apply(label, lambda level: fn(level, cid, **args),
+                   merge=("beatpt", cid, args["index"]) if op == "move" else None)
 
     def set_snapping(self, on):
         self.timeline.snapping = on

@@ -325,5 +325,184 @@ class SourceGridAndWave(unittest.TestCase):
             self.assertEqual(pv.pos, 2 * S)
 
 
+def old_grid(c, lo=None, hi=None, bars=False, beyond=False):
+    """beat_grid as it was before change points existed (the reference for projects without them)."""
+    import math
+    beat = c.get("beat")
+    if not beat or not beat.get("on") or not beat.get("bpm"):
+        return []
+    div = beat.get("div", 1) if beat.get("div", 1) in edit.BEAT_DIVS else 1
+    k = project.speed(c)
+    period = 60 * S / beat["bpm"] / div / k
+    zero = c["start_us"] + (beat.get("offset_us", 0) - c.get("source_start_us", 0)) / k
+    a, b = c["start_us"], edit.end(c)
+    if beyond:
+        a, b = a - period, b + period
+    if lo is not None:
+        a = max(a, lo)
+    if hi is not None:
+        b = min(b, hi)
+    if b < a:
+        return []
+    k0, k1 = math.ceil((a - zero) / period - 1e-9), math.floor((b - zero) / period + 1e-9)
+    meter = int(beat.get("meter", edit.BEAT_DEFAULT["meter"]) or 0) if bars else 0
+    if div < 1:
+        step = round(1 / div)
+        return [(zero + i * period, 0 if meter and (i * step) % meter == 0 else 1) for i in range(k0, k1 + 1)]
+    out = []
+    for i in range(k0, k1 + 1):
+        d = div // math.gcd(i % div, div)
+        out.append((zero + i * period, 0 if meter and d == 1 and (i // div) % meter == 0 else d))
+    return out
+
+
+class ChangePoints(unittest.TestCase):
+    def clip(self, **beat):
+        p = proj()
+        edit.set_beat(p, "a1", on=True, **beat)
+        return p, edit.find(p, "a1")[1]
+
+    def test_without_points_nothing_changes(self):
+        for kw in (dict(bpm=120), dict(bpm=133.3, offset_us=0.37 * S, div=3, meter=7), dict(bpm=90, div=0.5, meter=4),
+                   dict(bpm=200, div=6, meter=0)):
+            for speed in (None, 1.5):
+                p, c = self.clip(**kw)
+                if speed:
+                    c["speed"] = speed
+                for args in (dict(), dict(bars=True), dict(beyond=True), dict(bars=True, beyond=True, lo=11 * S, hi=15 * S)):
+                    self.assertEqual(edit.beat_grid(c, **args), old_grid(c, **args))
+                c["beat"]["points"] = []                             # an empty list is none
+                self.assertEqual(edit.beat_grid(c, bars=True), old_grid(c, bars=True))
+
+    def test_old_file_round_trips_unchanged(self):
+        import json
+        p, c = self.clip(bpm=120)
+        self.assertNotIn("points", c["beat"])
+        text = project.dumps(p)
+        self.assertNotIn("points", text)
+        self.assertEqual(json.loads(project.dumps(project.link(json.loads(text)))), json.loads(text))
+
+    def test_tempo_change_cuts_the_grid(self):
+        # beats 0.5 s apart; at 4 s of the sound it goes to 60 BPM (1 s apart) and the beats begin again there
+        p, c = self.clip(bpm=120, offset_us=0)
+        edit.add_beat_point(p, "a1", 4 * S, bpm=60)
+        src = [t for t, _ in edit.source_grid(c["beat"], 2 * S, 8 * S)]
+        self.assertEqual(src, [2 * S, 2.5 * S, 3 * S, 3.5 * S, 4 * S, 5 * S, 6 * S, 7 * S, 8 * S])
+        # on the timeline the clip shows source 2 s.. at 10 s
+        self.assertEqual([round(t) for t in edit.beat_times(c)][:6], [10 * S, 10.5 * S, 11 * S, 11.5 * S, 12 * S, 13 * S])
+
+    def test_beats_begin_again_at_the_point_not_on_the_old_phase(self):
+        p, c = self.clip(bpm=120, offset_us=0)
+        edit.add_beat_point(p, "a1", 3.2 * S, bpm=120)               # same tempo, but beat 0 moves to 3.2 s
+        src = [t for t, _ in edit.source_grid(c["beat"], 3 * S, 4.2 * S)]
+        self.assertEqual(src, [3 * S, 3.2 * S, 3.7 * S, 4.2 * S])
+
+    def test_meter_change_restarts_the_bars(self):
+        p, c = self.clip(bpm=120, offset_us=0, meter=4)
+        edit.add_beat_point(p, "a1", 4 * S, meter=3)
+        grid = edit.source_grid(c["beat"], 0, 8 * S, bars=True)
+        firsts = [t / S for t, d in grid if d == 0]
+        self.assertEqual(firsts, [0.0, 2.0, 4.0, 5.5, 7.0])          # bars of 4 beats, then of 3 from the point
+        self.assertEqual(edit.beat_at(c["beat"], 5 * S), (120.0, 3))
+        self.assertEqual(edit.beat_at(c["beat"], 1 * S), (120.0, 4))
+
+    def test_both_at_once_and_several_points(self):
+        p, c = self.clip(bpm=120, offset_us=0, meter=7)
+        edit.add_beat_point(p, "a1", 6 * S, bpm=90, meter=4)
+        edit.add_beat_point(p, "a1", 3 * S, bpm=60)
+        self.assertEqual([x["time_us"] for x in c["beat"]["points"]], [3 * S, 6 * S])    # in time order
+        self.assertEqual(edit.beat_at(c["beat"], 7 * S), (90.0, 4))
+        self.assertEqual(edit.beat_at(c["beat"], 4 * S), (60.0, 7))                      # the meter goes on
+
+    def test_snapping_follows_the_points(self):
+        p, c = self.clip(bpm=120, offset_us=0)
+        edit.add_beat_point(p, "a1", 4 * S, bpm=60)
+        beats = edit.level_beats(p)
+        self.assertIn(round(12 * S), beats)                          # source 4 s: the point itself
+        self.assertIn(round(13 * S), beats)                          # a second later, not half a second
+        self.assertNotIn(round(12.5 * S), beats)
+        _, a = edit.find(p, "a1")
+        # a clip edge near 12.45 s goes to 12 s or 13 s, never to the old 12.5 s line
+        a["duration_us"] = round(2.45 * S)
+        edit.snap_to_beats(p, ["a1"])
+        self.assertIn(round(edit.end(a)), (12 * S, 13 * S))
+
+    def test_point_edits(self):
+        p, c = self.clip(bpm=120)
+        i = edit.add_beat_point(p, "a1", 5 * S, bpm=90)
+        self.assertEqual(i, 0)
+        with self.assertRaises(edit.EditError):
+            edit.add_beat_point(p, "a1", 5 * S + 10, bpm=80)         # too near the first
+        with self.assertRaises(edit.EditError):
+            edit.add_beat_point(p, "a1", 6 * S)                      # sets nothing
+        edit.add_beat_point(p, "a1", 8 * S, meter=3)
+        edit.move_beat_point(p, "a1", 0, 9 * S)                      # cannot go past its neighbour
+        self.assertEqual([x["time_us"] for x in c["beat"]["points"]], [8 * S - 1000, 8 * S])
+        edit.set_beat_point(p, "a1", 0, meter=5)                     # replaces what it sets
+        self.assertEqual(c["beat"]["points"][0], {"time_us": 8 * S - 1000, "meter": 5})
+        edit.remove_beat_point(p, "a1", 0)
+        edit.remove_beat_point(p, "a1", 0)
+        self.assertNotIn("points", c["beat"])
+        edit.add_beat_point(p, "a1", 5 * S, bpm=90)
+        edit.clear_beat(p, "a1")
+        self.assertNotIn("beat", c)
+        with self.assertRaises(edit.EditError):
+            edit.set_beat(p, "a1", points=[])                        # only through the point edits
+
+    def test_points_survive_save_and_load(self):
+        import json
+        p, c = self.clip(bpm=120)
+        edit.add_beat_point(p, "a1", 5 * S, bpm=90, meter=3)
+        q = project.link(json.loads(project.dumps(p)))
+        self.assertEqual(edit.find(q, "a1")[1]["beat"]["points"], [{"time_us": 5 * S, "bpm": 90.0, "meter": 3}])
+        self.assertEqual(edit.beat_times(edit.find(q, "a1")[1]), edit.beat_times(c))
+
+
+    def test_wave_view_change_points(self):
+        import numpy as np
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QKeyEvent, QMouseEvent
+        from kiasecut.ui.beat_wave import WaveView
+        p = proj()
+        edit.set_beat(p, "a1", on=True, bpm=120, offset_us=0)
+        edit.add_beat_point(p, "a1", 5 * S, bpm=90)
+        edit.add_beat_point(p, "a1", 7 * S, meter=3)
+        _, a = edit.find(p, "a1")
+
+        class Peaks:
+            def get(self, path, stream=0):
+                return np.full((60_000, 2), [0.5, -0.5], np.float32), 0.0
+        v = WaveView()
+        v.resize(800, 300)
+        v.set_clip(a, Peaks())
+        self.assertFalse(v.grab().isNull())
+        got = []
+        v.pointAdd.connect(lambda t: got.append(("add", t)))
+        v.pointMove.connect(lambda i, t: got.append(("move", i, t)))
+        v.pointEdit.connect(lambda i: got.append(("edit", i)))
+        v.pointRemove.connect(lambda i: got.append(("remove", i)))
+
+        def mouse(kind, x, mods=Qt.NoModifier):
+            return QMouseEvent(kind, QPointF(x, 100), QPointF(x, 100), Qt.LeftButton, Qt.LeftButton, mods)
+        x5 = v.x_of(5 * S)
+        self.assertEqual(v.point_at(x5 + 3), 0)
+        self.assertEqual(v.point_at(v.x_of(7 * S)), 1)
+        self.assertIsNone(v.point_at(v.x_of(6 * S)))
+        v.mouseDoubleClickEvent(mouse(QEvent.MouseButtonDblClick, x5 + 2))
+        self.assertEqual(got.pop(), ("edit", 0))
+        v.mouseDoubleClickEvent(mouse(QEvent.MouseButtonDblClick, v.x_of(6.3 * S)))
+        kind, t = got.pop()
+        self.assertEqual(kind, "add")
+        self.assertAlmostEqual(t, 5 * S + 4 * S / 3, delta=2)                # snapped to the 90 BPM grid after 5 s (0.667 s apart)
+        v.mousePressEvent(mouse(QEvent.MouseButtonPress, x5))                  # drag the first point, no snapping (Alt)
+        self.assertEqual(v.sel_point, 0)
+        v.mouseMoveEvent(mouse(QEvent.MouseMove, v.x_of(5.3 * S), Qt.AltModifier))
+        self.assertEqual(got[-1][:2], ("move", 0))
+        self.assertAlmostEqual(got[-1][2], 5.3 * S, delta=S / 200)
+        v.mouseReleaseEvent(mouse(QEvent.MouseButtonRelease, v.x_of(5.3 * S)))
+        v.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Delete, Qt.NoModifier))
+        self.assertEqual(got[-1], ("remove", 0))
+
+
 if __name__ == "__main__":
     unittest.main()

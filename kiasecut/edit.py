@@ -1497,6 +1497,8 @@ def beat_grid(c, lo=None, hi=None, bars=False, beyond=False):
     beat = c.get("beat")
     if not beat or not beat.get("on") or not beat.get("bpm"):
         return []
+    if beat.get("points"):
+        return _points_grid(c, beat, lo, hi, bars, beyond)
     div = beat.get("div", 1) if beat.get("div", 1) in BEAT_DIVS else 1
     k = project.speed(c)                                 # (the beats are the source's: faster with it)
     period = 60 * US / beat["bpm"] / div / k
@@ -1522,22 +1524,160 @@ def beat_grid(c, lo=None, hi=None, bars=False, beyond=False):
     return out
 
 
-def source_grid(beat, lo, hi, bars=False):
-    """[(time us, d)] of a BPM grid's lines in the sound's own time (the 進階對齊編輯器's), between lo and
-    hi: the same lines and d as beat_grid, without a clip, its speed or whether the grid is on."""
-    beat = dict(BEAT_DEFAULT, **(beat or {}))
-    div = beat["div"] if beat["div"] in BEAT_DIVS else 1
-    period = 60 * US / beat["bpm"] / div
-    k0, k1 = math.ceil((lo - beat["offset_us"]) / period - 1e-9), math.floor((hi - beat["offset_us"]) / period + 1e-9)
-    meter = int(beat["meter"] or 0) if bars else 0
+def _lines(zero, bpm, div, meter, lo, hi, bars):
+    """[(time us, d)] of the lines of a grid whose beat 0 is at zero, between lo and hi (d: see beat_grid)."""
+    period = 60 * US / bpm / div
+    k0, k1 = math.ceil((lo - zero) / period - 1e-9), math.floor((hi - zero) / period + 1e-9)
+    meter = int(meter or 0) if bars else 0
     if div < 1:
         step = round(1 / div)
-        return [(beat["offset_us"] + k * period, 0 if meter and (k * step) % meter == 0 else 1) for k in range(k0, k1 + 1)]
+        return [(zero + k * period, 0 if meter and (k * step) % meter == 0 else 1) for k in range(k0, k1 + 1)]
     out = []
     for k in range(k0, k1 + 1):
         d = div // math.gcd(k % div, div)
-        out.append((beat["offset_us"] + k * period, 0 if meter and d == 1 and (k // div) % meter == 0 else d))
+        out.append((zero + k * period, 0 if meter and d == 1 and (k // div) % meter == 0 else d))
     return out
+
+
+def beat_points(beat):
+    """A grid's change points [{time_us, bpm?, meter?}] in time order (a bad one dropped)."""
+    pts = [pt for pt in (beat.get("points") or ()) if isinstance(pt, dict) and "time_us" in pt
+           and (pt.get("bpm") or pt.get("meter") is not None)]
+    return sorted(pts, key=lambda pt: pt["time_us"])
+
+
+def beat_segments(beat):
+    """The stretches a grid is cut into by its change points (變速點 / 變拍點): [(start, end, bpm, meter, zero)] in the
+    sound's time. The first starts at -inf with the grid's own BPM, meter and offset; each point starts a stretch with
+    the point's BPM and / or meter (what it does not set goes on from the stretch before) and its own time as beat 0,
+    so the beats and the bars begin again there."""
+    beat = dict(BEAT_DEFAULT, **beat)
+    bpm, meter, zero = beat["bpm"], beat["meter"], beat["offset_us"]
+    segs, start = [], -math.inf
+    for pt in beat_points(beat):
+        segs.append([start, pt["time_us"], bpm, meter, zero])
+        start = zero = pt["time_us"]
+        bpm = pt.get("bpm") or bpm
+        meter = pt["meter"] if pt.get("meter") is not None else meter
+    segs.append([start, math.inf, bpm, meter, zero])
+    return [tuple(s) for s in segs]
+
+
+def beat_at(beat, t):
+    """(bpm, meter) of a grid at source time t (what a point put there would start from)."""
+    for start, end, bpm, meter, _ in beat_segments(beat):
+        if start <= t < end:
+            return bpm, meter
+    return beat.get("bpm", BEAT_DEFAULT["bpm"]), beat.get("meter", BEAT_DEFAULT["meter"])
+
+
+def source_grid(beat, lo, hi, bars=False):
+    """[(time us, d)] of a BPM grid's lines in the sound's own time (the 進階對齊編輯器's), between lo and
+    hi: the same lines and d as beat_grid, without a clip, its speed or whether the grid is on. With change
+    points each stretch has its own lines (those of one stretch end before the next one's first)."""
+    beat = dict(BEAT_DEFAULT, **(beat or {}))
+    div = beat["div"] if beat["div"] in BEAT_DIVS else 1
+    if not beat_points(beat):
+        return _lines(beat["offset_us"], beat["bpm"], div, beat["meter"], lo, hi, bars)
+    out = []
+    for start, end, bpm, meter, zero in beat_segments(beat):
+        a, b = max(lo, start), min(hi, end)
+        if b < a:
+            continue
+        out += [(t, d) for t, d in _lines(zero, bpm, div, meter, a, b, bars) if t < end - 1e-6]
+    return out
+
+
+def _points_grid(c, beat, lo, hi, bars, beyond):
+    """beat_grid for a grid with change points: the sound's lines (source_grid) on the timeline."""
+    k = project.speed(c)
+    ss, start = c.get("source_start_us", 0), c["start_us"]
+    to_time = lambda t: start + (t - ss) / k
+    to_src = lambda t: ss + (t - start) * k
+    a, b = start, end(c)
+    div = beat.get("div", 1) if beat.get("div", 1) in BEAT_DIVS else 1
+    slowest = max(60 * US / min(seg[2] for seg in beat_segments(beat)) / div, 1.0)    # (a line past either end is within this)
+    lines = [(to_time(t), d) for t, d in source_grid(beat, to_src(a) - slowest, to_src(b) + slowest, bars)]
+    eps = 1e-6
+    inside = [(t, d) for t, d in lines if a - eps <= t <= b + eps]
+    if beyond:
+        before = [x for x in lines if x[0] < a - eps]
+        after = [x for x in lines if x[0] > b + eps]
+        inside = before[-1:] + inside + after[:1]
+    return [(t, d) for t, d in inside if (lo is None or t >= lo) and (hi is None or t <= hi)]
+
+
+def _points(proj, clip_id):
+    _, c = find(proj, clip_id)
+    if not has_sound(c):
+        raise EditError("只有有聲音的片段可以 BPM 對齊")
+    return c, c.setdefault("beat", dict(BEAT_DEFAULT))
+
+
+def _point_fields(bpm, meter):
+    out = {}
+    if bpm is not None:
+        out["bpm"] = min(BPM_MAX, max(BPM_MIN, float(bpm)))
+    if meter is not None:
+        if int(meter) not in METERS:
+            raise EditError(f"拍號只能是 {METERS} 拍一小節")
+        out["meter"] = int(meter)
+    if not out:
+        raise EditError("變速點要改 BPM 或拍號")
+    return out
+
+
+POINT_GAP_US = 1000                                      # two change points are at least this far apart
+
+
+def add_beat_point(proj, clip_id, time_us, bpm=None, meter=None):
+    """A change point at the sound's time time_us: from there the grid has this BPM and / or meter and its beats
+    begin again (see beat_segments). Returns the point's index."""
+    c, beat = _points(proj, clip_id)
+    time_us = int(round(time_us))
+    pts = beat.setdefault("points", [])
+    if any(abs(p["time_us"] - time_us) < POINT_GAP_US for p in pts):
+        raise EditError("這裡已經有變速點了")
+    pts.append(dict(time_us=time_us, **_point_fields(bpm, meter)))
+    pts.sort(key=lambda p: p["time_us"])
+    return next(i for i, p in enumerate(pts) if p["time_us"] == time_us)
+
+
+def _point(beat, index):
+    pts = beat.get("points") or []
+    if not 0 <= index < len(pts):
+        raise EditError("沒有這個變速點")
+    return pts, pts[index]
+
+
+def move_beat_point(proj, clip_id, index, time_us):
+    """Move a change point in time; it stays between its neighbours (their order does not change)."""
+    c, beat = _points(proj, clip_id)
+    pts, pt = _point(beat, index)
+    lo = pts[index - 1]["time_us"] + POINT_GAP_US if index else -math.inf
+    hi = pts[index + 1]["time_us"] - POINT_GAP_US if index + 1 < len(pts) else math.inf
+    pt["time_us"] = int(round(min(max(time_us, lo), hi)))
+    return pt
+
+
+def set_beat_point(proj, clip_id, index, bpm=None, meter=None):
+    """What a change point sets: its BPM and / or meter (None: it does not change that)."""
+    c, beat = _points(proj, clip_id)
+    _, pt = _point(beat, index)
+    fields = _point_fields(bpm, meter)
+    for k in ("bpm", "meter"):
+        pt.pop(k, None)
+    pt.update(fields)
+    return pt
+
+
+def remove_beat_point(proj, clip_id, index):
+    c, beat = _points(proj, clip_id)
+    pts, _ = _point(beat, index)
+    del pts[index]
+    if not pts:
+        beat.pop("points")
+    return c
 
 
 def level_beats(proj):

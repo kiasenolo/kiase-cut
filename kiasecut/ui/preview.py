@@ -1599,7 +1599,7 @@ class Preview(PenMixin, _Surface):
                         if nested and plain and c["id"] in self.selected_ids:
                             b.locked = lock
                             picked.append(b)
-                    b.locked = lock
+                    b.locked = lock or bool((c.get("transform") or {}).get("_followed"))     # (a clip on a path: its place is the path's, not a drag's)
                     out.append(b)
             return out
         top = boxes(self.view["tracks"], self.t_us, False, True)

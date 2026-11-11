@@ -81,6 +81,7 @@ PARAMS = {
                   ("pivot_x", "中心點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 中心點: turns / scales about it (shown in
                   ("pivot_y", "中心點 Y", -1.0, 1.0, 0.01, 3, 1, 0.0),       # object widths / heights, see pivot_units)
                   ("opacity", "不透明度 %", 0.0, 100.0, 1.0, 0, 100, 1.0),
+                  ("path_progress", "路徑進度 %", 0.0, 100.0, 0.5, 1, 100, 0.0),       # 路徑跟隨 (pathfollow.py): stored 0 - 1
                   ("radius_tl", "圓角 左上", 0.0, 4000.0, 1.0, 1, 1, 0.0),       # 圓角 (project.CORNERS): px of a
                   ("radius_tr", "圓角 右上", 0.0, 4000.0, 1.0, 1, 1, 0.0),       # 1080-high canvas, the clip at scale 1
                   ("radius_bl", "圓角 左下", 0.0, 4000.0, 1.0, 1, 1, 0.0),
@@ -349,6 +350,7 @@ class Inspector(QWidget):
     placeEditChanged = Signal()                     # 編輯位置 of a component's picture switched: self.place_edit
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
+    pathFollowChosen = Signal(object)               # id of the shape / path clip the clips follow, or None
     anchorGridRequested = Signal(int, int)          # the 錨點 9-grid: -1 / 0 / 1 along the clip's x, y (y down)
     alignRequested = Signal(str)                    # left / hcenter / right / top / vcenter / bottom
     speedChosen = Signal(list, float)               # clip ids, speed
@@ -588,11 +590,12 @@ class Inspector(QWidget):
                 if components.of_clip(c) is not None:
                     self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
-                self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS],
+                self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS and r[0] != "path_progress"],
                            (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("anchor_x", "anchor_y", "錨點"),
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
                 self._build_flip(form)
+                self._build_path_follow(form)
                 if c["type"] in ("image", "video", "compound") and not c.get("asset"):
                     self._build_corners(form)
                 blend = ComboBox()
@@ -1274,6 +1277,24 @@ class Inspector(QWidget):
             value = text
         self._queue(group, "value", value)
         self._flush()
+
+    def set_path_choices(self, choices):
+        """[(id, name)] of the shapes / pen paths the clips of the open level can follow."""
+        self.path_choices = list(choices)
+
+    def _build_path_follow(self, form):
+        """路徑跟隨: pick a shape or pen path clip to move along, and how far along it is (keyframes like any number)."""
+        box = ComboBox()
+        box.addItem("（不跟隨）", None)
+        for cid, name in getattr(self, "path_choices", []):
+            if cid not in self.clip_ids:
+                box.addItem(name, cid)
+        box.setToolTip("讓片段沿著一個形狀或鋼筆路徑片段移動：路徑進度 0% 在路徑起點，100% 在終點，可以打關鍵幀。\n"
+                       "位置 X / Y 變成離路徑的偏移；路徑片段本身可以設成參考軌道（R）不顯示。")
+        box.activated.connect(lambda i: self.pathFollowChosen.emit(box.itemData(i)))
+        self.widgets["path_id"] = box
+        form.addRow("路徑跟隨", box)
+        form.addRow("路徑進度", self._param_row("transform", *next(r for r in PARAMS["transform"] if r[0] == "path_progress")))
 
     def _build_flip(self, form):
         """翻轉: the picture turned over across (水平) and / or down (垂直)."""
@@ -2016,6 +2037,17 @@ class Inspector(QWidget):
                 w[key].blockSignals(True)
                 w[key].setChecked(all(bool(k["transform"].get(key)) for k in clips))
                 w[key].blockSignals(False)
+        if "path_id" in w:
+            ids = {(k["transform"] or {}).get("path_id") for k in clips}
+            box = w["path_id"]
+            box.blockSignals(True)
+            want = ids.pop() if len(ids) == 1 else None
+            at = box.findData(want)
+            if want and at < 0:                                  # (a path that is no longer there)
+                box.addItem("（找不到）", want)
+                at = box.count() - 1
+            box.setCurrentIndex(max(0, at))
+            box.blockSignals(False)
         if "scale_link" in w:
             w["scale_link"].blockSignals(True)
             w["scale_link"].setChecked(all(edit.linked(k["transform"]) for k in clips))

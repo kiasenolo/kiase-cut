@@ -692,7 +692,7 @@ TEXT_VALIGNS = ("top", "middle", "bottom")               # 垂直對齊 in a 文
 TEXT_STROKE_ALIGNS = ("inside", "center", "outside")
 TEXT_BOX_MODES = ("auto", "auto_h", "fixed")             # 自動寬度 / 自動高度 / 固定大小 (Lunacy's)
 TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity", "pivot_x", "pivot_y",
-                    "anchor_x", "anchor_y") + project.CORNERS   # (pivot: 中心點, anchor: 錨點; 圓角)
+                    "anchor_x", "anchor_y", "path_progress") + project.CORNERS   # (pivot: 中心點, anchor: 錨點; 圓角)
 
 
 def set_text(proj, clip_id, **fields):
@@ -1421,6 +1421,27 @@ def set_mask_track(proj, clip_id, track_id, size):
     a, b = _aspect(c), size[0] / size[1]
     m.update(track_id=track_id, trk_w=int(size[0]), trk_h=int(size[1]))
     m["w"], m["h"] = (1.0, round(a / b, 4)) if b > a else (round(b / a, 4), 1.0)
+    return c
+
+
+def set_path_follow(proj, clip_id, path_id):
+    """路徑跟隨: the clip follows shape / pen path clip path_id (pathfollow.py), starting at its start; None: it stops, and stays
+    where the path had it (x / y take that offset). Following begins with x / y as the offset from the path (0, 0)."""
+    _, c = find(proj, clip_id)
+    if c.get("transform") is None:
+        raise EditError("這個片段沒有畫面可以跟隨路徑")
+    tf = c["transform"]
+    if path_id is None:
+        tf.pop("path_id", None)
+        tf.pop("path_progress", None)
+        return c
+    _, target = find(proj, path_id)
+    if not (target.get("asset") and target["asset"].get("family") not in ("solid", "gradient", "empty", "grid")) or path_id == clip_id:
+        raise EditError("要跟隨形狀或鋼筆路徑片段")
+    if not tf.get("path_id"):
+        tf["x"], tf["y"] = 0.0, 0.0
+        tf.setdefault("path_progress", 0.0)
+    tf["path_id"] = path_id
     return c
 
 

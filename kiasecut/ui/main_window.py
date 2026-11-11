@@ -46,6 +46,7 @@ from .effects_panel import EffectsPanel
 from . import node_editor, searchbox
 from .. import proxies, sharedgl
 from . import inputstate, pentool
+from .. import pathfollow
 from .. import textvars, vector
 from .node_editor import NodeEditor
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
@@ -456,6 +457,8 @@ class MainWindow(QMainWindow):
         ins.throughChosen.connect(lambda ids, on: self.apply_each(
             "效果穿透", lambda lvl, cid: edit.set_fx_through(lvl, cid, on), ids))
         ins.anchorGridRequested.connect(self.preview.anchor_grid)
+        ins.pathFollowChosen.connect(lambda pid: self.apply_each("路徑跟隨" if pid else "取消路徑跟隨", edit.set_path_follow,
+                                                              sorted(self.timeline.selected_ids), pid))
         ins.alignRequested.connect(lambda how: self.align_or_space("對齊", self.preview.align_moves(how)))
         ins.spacingRequested.connect(lambda gap: self.align_or_space("間距", self.preview.space_moves(gap)))
         mp.liveEdited.connect(self.on_live_edit)
@@ -2920,6 +2923,8 @@ class MainWindow(QMainWindow):
         return len(others), len(linked), links
 
     def show_selection_props(self):
+        if self.proj:
+            self.inspector.set_path_choices(pathfollow.candidates(self.container()["tracks"]))
         starts = edit.abs_starts(self.container()) if self.proj else {}
         clips, t = [self.placed(c, starts) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
         times = self.key_times([c["id"] for c in clips])
@@ -4691,6 +4696,10 @@ class MainWindow(QMainWindow):
                         if c["id"] != cid and c["type"] in ok]
 
     # -- inspector / preview overlay --------------------------------------------------------------
+    def preview_view(self):
+        """The open level for the preview: the clips that follow a path placed on it."""
+        return pathfollow.resolved(self.view()) if self.proj else None
+
     def refresh_inspector(self):
         sel = self.timeline.selected
         shown = frozenset(c["id"] for c in self.timeline.selected_clips() if (c.get("asset") or {}).get("family") == "empty") \
@@ -4701,7 +4710,7 @@ class MainWindow(QMainWindow):
         self.show_selection_props()
         self.curves.set_clip(sel, self.clip_time(sel["id"]) if sel else 0, self.fps)
         self.curves.set_links(*self.curve_links(sel))
-        self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
+        self.preview.set_scene(self.preview_view(), self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
         sp = self.preview.spacing() if self.proj else None
         self.inspector.show_spacing(sp[1] if sp else None)
@@ -4719,6 +4728,7 @@ class MainWindow(QMainWindow):
         Its 參考 tracks show and sound (editing): an export's copy leaves them out."""
         v = pickle.loads(pickle.dumps(self.view(), pickle.HIGHEST_PROTOCOL))
         v["play_fps"], v["fps"], v["editing"] = self.proj["fps"], self.fps, True
+        pathfollow.resolve(v)
         v["selected"] = sorted(self.timeline.selected_ids)              # (空物體 show only while selected)
         shown = self._matte_shown = self.matte_target()
         if shown:
@@ -5014,7 +5024,7 @@ class MainWindow(QMainWindow):
             elif not self.props_timer.isActive():     # (every frame cost playing its frame rate)
                 self.props_timer.start()
             self.curves.set_time(sel, self.clip_time(sel["id"]))
-        self.preview.set_scene(self.view() if self.proj else None, self.playhead_us(),
+        self.preview.set_scene(self.preview_view(), self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
 
     def on_state(self, playing):
@@ -5317,9 +5327,11 @@ class MainWindow(QMainWindow):
             return
         self.player.worker.set_playing(False)
         snapshot = json.loads(json.dumps(self.proj))
+        follows = pathfollow.has_followers(snapshot)
+        pathfollow.resolve(snapshot)
         cache = self.cache_dir()
         f = dlg.format()
-        own = renderexport.needs_renderer(snapshot) or not renderexport.uses_mlt(spec)
+        own = follows or renderexport.needs_renderer(snapshot) or not renderexport.uses_mlt(spec)
         desc = [f.label]
         if f.has_video:
             desc += [f"{fmt['width']}×{fmt['height']}", f"{fps:g} fps"]
@@ -5441,6 +5453,7 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         view = json.loads(json.dumps(self.view()))
+        pathfollow.resolve(view)
         view["fps"] = self.proj["fps"]
         name = workspace.project_name(self.path) if self.path else "KiaseCut"
         stamp = timecode(self.playhead_us(), self.fps).replace(":", "-")

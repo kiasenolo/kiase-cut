@@ -40,5 +40,28 @@ class AnchorGrid(unittest.TestCase):
         self.check(rotation=20.0, pivot_x=0.3, pivot_y=-0.2)
 
 
+class CornerHandles(unittest.TestCase):
+    def test_drag_sets_the_radius_and_shift_sets_all(self):
+        from PySide6.QtCore import QPointF, Qt
+        p, pv = scene((960, 540))
+        edit.find(p, "k0")[1]["transform"].update(scale=1.0)
+        pv.resize(1920, 1080)
+        pv.set_scene(p, 0, "k0", {"k0"})
+        box = pv.selected_box()
+        self.assertTrue(pv._has_radius_handles(box))
+        key, pt = pv.radius_handles(box, pv._k())[0]
+        self.assertEqual(key, "radius_tl")
+        d = {"corner": "radius_tl"}
+        tl = box.corners()[0]
+        got = pv._radius_values(box, d, QPointF(tl.x() + 30, tl.y() + 30), Qt.NoModifier)
+        self.assertEqual(got, {"radius_tl": 30.0})
+        every = pv._radius_values(box, d, QPointF(tl.x() + 30, tl.y() + 30), Qt.ShiftModifier)
+        self.assertEqual(set(every), {"radius_tl", "radius_tr", "radius_br", "radius_bl"})
+        edit.set_param(p, "k0", "transform", "radius_tl", 30.0)
+        pv.set_scene(p, 0, "k0", {"k0"})
+        _, pt = pv.radius_handles(pv.selected_box(), pv._k())[0]
+        self.assertAlmostEqual(pt.x(), tl.x() + 30, delta=0.01)
+
+
 if __name__ == "__main__":
     unittest.main()

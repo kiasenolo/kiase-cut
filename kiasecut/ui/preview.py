@@ -20,12 +20,12 @@ corner or edge square to
 scale it with the opposite corner / edge staying put (Alt: about its centre; the moving edges
 snap to the same lines while the clip is upright or turned by a right angle, Ctrl scales
 freely), drag the round
-handle above it to rotate (Shift: 15° steps; it also settles on 0 / 90 / 180 / 270). It turns
+handle above it to rotate (a picture, video or compound clip also has a round handle inside each corner for 圓角: drag it in / out, Shift: all four) (Shift: 15° steps; it also settles on 0 / 90 / 180 / 270). It turns
 and scales about its pivot (中心點, the ring with a cross, at its centre unless moved; with Alt a
 scale drag keeps the pivot in place): drag the ring to move the pivot (Ctrl+drag while it is at
 the centre, where a plain drag moves the clip) - x / y stay (a turned or scaled clip swings round the new pivot, as with CSS transform-origin) - and it snaps to the clip's centre, corners and edge middles (Shift: freely). With X / Y
 scale linked a corner or an edge keeps their ratio; unlinked, a corner sets both freely (Shift
-keeps the ratio) and an edge only its own axis. The anchor (錨點, the orange diamond: the point of the clip that 位置 places, unmoved while the pivot is) is dragged like the pivot (Alt+drag while it is at the centre): the diamond stays and the clip moves the other way. A built-in asset (assets.py) is resized instead:
+keeps the ratio) and an edge only its own axis. The anchor (錨點, the orange diamond: the point of the clip that 位置 places, unmoved while the pivot is) is dragged like the pivot (Alt+drag while it is at the centre): the diamond stays and the clip moves the other way. A picture, video or compound clip also has a round handle inside each corner for 圓角 (drag it in or out, Shift: all four; radius_*). A built-in asset (assets.py) is resized instead:
 its 寬 / 高 change and its scale stays (an edge changes one side, a corner both, Shift keeps
 their ratio); that drag reports group "multi": {"asset": {w, h}, "transform": {x, y}}. So is a
 text with a 文字框 (textlayout.py; not one as big as its words, which scales): an edge sets its
@@ -1258,6 +1258,35 @@ class Preview(_Surface):
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(red, 1 * k))
 
+    # -- 圓角: a round handle inside each corner of a picture clip -------------------------------------------------
+    CORNER_SIGNS = ((-1, -1), (1, -1), (1, 1), (-1, 1))             # project.CORNERS' order, in the clip's own frame (y down)
+
+    def _has_radius_handles(self, box):
+        return (not getattr(box, "group", False) and box.clip["type"] in ("image", "video", "compound") and not box.clip.get("asset")
+                and not box.locked and min(box.w, box.h) / self._k() >= 70)
+
+    def radius_handles(self, box, k):
+        """[(radius key, canvas point)]: each handle sits as far in from its corner as that corner is rounded (at least a
+        dozen screen px, so a square corner has one too)."""
+        radii = project.corner_radii(box.clip, box.t, (box.bw, box.bh), box.H) or (0.0,) * 4
+        floor = 14 * k / max(min(abs(box.s), abs(box.sy)), 1e-6)
+        xf = box.xf()
+        out = []
+        for key, (sx, sy), r in zip(project.CORNERS, self.CORNER_SIGNS, radii):
+            ins = min(max(r, floor), min(box.bw, box.bh) / 2)
+            out.append((key, xf.map(QPointF(sx * (box.bw / 2 - ins), sy * (box.bh / 2 - ins)))))
+        return out
+
+    def _radius_values(self, box, d, m, mods):
+        """{radius_*: px} of dragging a corner handle to canvas point m: how far in from the corner it is (all four with Shift)."""
+        inv, _ = box.xf().inverted()
+        q = inv.map(m)
+        sx, sy = self.CORNER_SIGNS[project.CORNERS.index(d["corner"])]
+        ins = ((box.bw / 2 - sx * q.x()) + (box.bh / 2 - sy * q.y())) / 2
+        ins = min(max(ins, 0.0), min(box.bw, box.bh) / 2)
+        v = round(ins * 1080 / box.H, 1)
+        return {k: v for k in (project.CORNERS if mods & Qt.ShiftModifier else (d["corner"],))}
+
     # -- arrow keys: nudge the selection by a pixel (Shift: ten) ------------------------------------------------
     def _can_nudge(self):
         return (self.interactive and self.show_guides and not self.mask_mode and self.drag is None
@@ -1775,6 +1804,16 @@ class Preview(_Surface):
         for _sx, _sy, pt in box.handles():
             self._handle(p, pt, k)
         self._handle(p, rh, k, round_=True, color="#e6e6e6")
+        if self._has_radius_handles(box):
+            for key, pt in self.radius_handles(box, k):
+                self._handle(p, pt, k, round_=True, color="#7fd1ff" if self.drag and self.drag["kind"] == "radius" else "#ffffff")
+            if self.drag and self.drag["kind"] == "radius":
+                v = (self.live[1] if self.live else {}).get(self.drag["corner"], curves.value((box.clip.get("transform") or {}).get(self.drag["corner"], 0.0), box.t))
+                p.setPen(QColor("#ffffff"))
+                f = p.font()
+                f.setPixelSize(round(14 * k))
+                p.setFont(f)
+                p.drawText(dict(self.radius_handles(box, k))[self.drag["corner"]] + QPointF(12 * k, -8 * k), f"圓角 {v:g}")
         an, d = box.anchor_pt(), 4 * k                         # 錨點: a diamond
         diamond = QPolygonF([an + QPointF(0, -d), an + QPointF(d, 0), an + QPointF(0, d), an + QPointF(-d, 0)])
         for w, col in ((3 * k, "#111114"), (1.25 * k, "#ffb020")):
@@ -2121,6 +2160,11 @@ class Preview(_Surface):
                 self.drag = {"kind": "scale", "box": box, "m0": m, "moved": False, "side": side,
                              "others": [b for b in self.visible_boxes() if b.clip["id"] != box.clip["id"]]}
                 return
+            if self._has_radius_handles(box):
+                corner = next((key for key, pt in self.radius_handles(box, k) if self._near(pt, m, k)), None)
+                if corner is not None:
+                    self.drag = {"kind": "radius", "box": box, "m0": m, "moved": False, "corner": corner}
+                    return
         gap = self._gap_at(m, k)
         if gap is not None:                              # a gap bar: all the gaps of its kind change together
             boxes = self._live_boxes()
@@ -2309,6 +2353,8 @@ class Preview(_Surface):
             return "transform", self._pivot_values(box, m, e.modifiers())
         if kind == "anchor":
             return "transform", self._anchor_values(box, d, m)
+        if kind == "radius":
+            return "transform", self._radius_values(box, d, m, e.modifiers())
         if kind == "rotate":
             c = box.pivot_pt()                                 # (中心點: it turns about its pivot)
             a0 = math.degrees(math.atan2(d["m0"].y() - c.y(), d["m0"].x() - c.x()))
@@ -2627,6 +2673,8 @@ class Preview(_Surface):
                 sx, sy = side
                 cur = (Qt.SizeHorCursor if not sy else Qt.SizeVerCursor if not sx else
                        Qt.SizeFDiagCursor if sx == sy else Qt.SizeBDiagCursor)
+            elif self._has_radius_handles(box) and any(self._near(pt, m, k) for _, pt in self.radius_handles(box, k)):
+                cur = Qt.PointingHandCursor
             elif grabs(box, x, y):
                 cur = Qt.SizeAllCursor
         if hover != self.gap_hover:                      # the gap bars show while over the selection

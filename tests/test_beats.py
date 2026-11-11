@@ -284,6 +284,46 @@ class SourceGridAndWave(unittest.TestCase):
         o.mouseReleaseEvent(mouse(QEvent.MouseButtonRelease, 0))
         self.assertIsNone(o.drag)
 
+    def test_preview_plays_only_the_stretch_and_loops(self):
+        import shutil
+        import subprocess
+        import tempfile
+        import time
+        from kiasecut.build import find_ffmpeg
+        from kiasecut.ui import beat_preview
+        self.assertEqual(beat_preview.tempo_filter(1.0), "atempo=1.000000")
+        self.assertEqual(beat_preview.tempo_filter(4.0).count("atempo"), 2)
+        self.assertEqual(beat_preview.tempo_filter(0.25).count("atempo"), 2)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "tone.wav")
+            subprocess.run([find_ffmpeg(), "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=3", path], check=True)
+            pv = beat_preview.Preview()
+            pos, states = [], []
+            pv.positionChanged.connect(pos.append)
+            pv.playingChanged.connect(states.append)
+            pv.set_source(path, 0, 1 * S, 2 * S, 1.0)                # the second second of the file
+            pv.play(1.5 * S)
+            end = time.monotonic() + 5
+            while pv.pcm is None and time.monotonic() < end:
+                APP.processEvents()
+                time.sleep(0.01)
+            self.assertAlmostEqual(len(pv.pcm) / 4 / 44100, 1.0, delta=0.05)       # 1 s of stereo 44.1 kHz
+            end = time.monotonic() + 0.4
+            while time.monotonic() < end:
+                APP.processEvents()
+            pv.pause()
+            self.assertTrue(pos and all(1 * S <= t <= 2 * S for t in pos))
+            self.assertGreater(max(pos), 1.5 * S)
+            self.assertEqual(states, [True, False])
+            pv.loop = False                                          # plays to the out point and stops there
+            pv.play(1.9 * S)
+            end = time.monotonic() + 1.5
+            while pv.playing and time.monotonic() < end:
+                APP.processEvents()
+                time.sleep(0.01)
+            self.assertFalse(pv.playing)
+            self.assertEqual(pv.pos, 2 * S)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,11 +5,12 @@ The big picture (beat_wave.WaveView) shows the sound's waveform with the grid on
 the switch and 細分. Edits go out as beatEdited(clip id, fields) - the main window's on_beat_edited, the
 same as the panel's, so they are undoable."""
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-from .. import edit
+from .. import build, edit, project
 from .beat_panel import DIV_NAMES
+from .beat_preview import Preview
 from .beat_wave import Overview, WaveView
 from .inspector import ComboBox
 from .timeline import BEAT_COLORS
@@ -29,6 +30,17 @@ class BeatDialog(QDialog):
         lay = QVBoxLayout(self)
         bar = QHBoxLayout()
         self.title = QLabel()
+        self.play = QPushButton("▶ 播放")
+        self.play.setToolTip("只播這個片段用到的那一段聲音（空白鍵）；點大圖可以指定從哪裡播")
+        self.play.clicked.connect(self.toggle_play)
+        bar.addWidget(self.play)
+        self.loop = QCheckBox("循環")
+        self.loop.setChecked(True)
+        bar.addWidget(self.loop)
+        self.follow = QCheckBox("跟隨")
+        self.follow.setChecked(True)
+        self.follow.setToolTip("播放時，播放頭跑出畫面就翻頁")
+        bar.addWidget(self.follow)
         bar.addWidget(self.title, 1)
         self.on = QCheckBox("啟用 BPM 對齊")
         self.on.toggled.connect(lambda v: self.beatEdited.emit(self.clip_id, {"on": v}))
@@ -53,6 +65,23 @@ class BeatDialog(QDialog):
         hint.setStyleSheet("color: #8a8a90")
         lay.addWidget(hint)
         self.peaks = None
+        self.preview = Preview(self)
+        self.loop.toggled.connect(lambda v: setattr(self.preview, "loop", v))
+        self.preview.positionChanged.connect(lambda t: self.wave.set_playhead(t, self.follow.isChecked()))
+        self.preview.playingChanged.connect(lambda on: self.play.setText("⏸ 暫停" if on else "▶ 播放"))
+        self.preview.failed.connect(lambda m: self.title.setText(m))
+        self.wave.seekRequested.connect(self.preview.seek)
+        QShortcut(QKeySequence(Qt.Key_Space), self, activated=self.toggle_play)
+
+    def toggle_play(self):
+        if self.preview.playing:
+            self.preview.pause()
+        else:
+            self.preview.play(self.wave.playhead)
+
+    def closeEvent(self, e):
+        self.preview.stop()
+        super().closeEvent(e)
 
     def show_clip(self, proj, peaks=None):
         """Refresh from the project; False when the clip no longer exists (or has no sound)."""
@@ -75,6 +104,9 @@ class BeatDialog(QDialog):
             self.div.setCurrentIndex(max(0, i))
             self.div.blockSignals(False)
         self.wave.set_clip(c, self.peaks)
+        if c.get("media") and project.frozen(c) is None:
+            a, b = self.wave.trim()
+            self.preview.set_source(c["media"]["path"], build.audio_stream(c), a, b, project.speed(c))
         return True
 
     def peaks_ready(self, _path=None):

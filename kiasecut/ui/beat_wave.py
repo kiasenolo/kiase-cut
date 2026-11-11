@@ -27,6 +27,7 @@ STEPS = (0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 
 
 class WaveView(QWidget):
     viewChanged = Signal()                 # t0 / t1 moved
+    seekRequested = Signal(float)          # a click: the playhead there (source us)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -38,6 +39,7 @@ class WaveView(QWidget):
         self.peaks = None                   # waveform.Peaks (the timeline's)
         self.t0, self.t1 = 0.0, float(US)   # the view, source us
         self.drag = None
+        self.playhead = None                # source us, None: none
         self.glide = viewglide.ViewGlide(self, self._glide_pan)
         self.wrap = WrapDrag(self, lambda: QRectF(0, 0, self.width(), self.height()), axes="x")
 
@@ -107,6 +109,18 @@ class WaveView(QWidget):
         self.t0, self.t1 = a - span * k, a - span * k + span
         self._moved()
 
+    def set_playhead(self, t, follow=False):
+        """The playhead at t; follow: the view turns a page when it has gone past the view's right (or left) end."""
+        self.playhead = t
+        if follow and self.drag is None and t is not None and not self.glide.running():
+            span = self.t1 - self.t0
+            if not self.t0 <= t <= self.t1 - span * 0.05:
+                self.t0, self.t1 = t - span * 0.1, t + span * 0.9
+                self._moved()
+                return
+        self.update()
+        self.viewChanged.emit()                              # (the overview's playhead)
+
     def _glide_pan(self, dx, _dy):
         self.pan(-dx / max(1, self.width()) * (self.t1 - self.t0))
 
@@ -132,10 +146,16 @@ class WaveView(QWidget):
             zoom = bool(e.modifiers() & Qt.ControlModifier)
             self.drag = {"kind": "zoom" if zoom else "pan", "pos": e.position(), "t0": self.t0, "t1": self.t1,
                          "at": self.t_of(e.position().x()), "x": e.position().x()}
+        elif e.button() == Qt.LeftButton:                    # the playhead goes there (and is dragged: seek)
+            self.drag = {"kind": "seek"}
+            self.seekRequested.emit(self.t_of(e.position().x()))
 
     def mouseMoveEvent(self, e):
         d = self.drag
         if d is None:
+            return
+        if d["kind"] == "seek":
+            self.seekRequested.emit(self.t_of(e.position().x()))
             return
         if not d.get("wrap"):                                # (this drag's first move)
             d["wrap"] = True
@@ -153,6 +173,8 @@ class WaveView(QWidget):
 
     def mouseReleaseEvent(self, e):
         d, self.drag = self.drag, None
+        if d is not None and d["kind"] == "seek":
+            return
         self.wrap.stop()
         if d is not None and d["kind"] == "pan":
             self.glide.release()
@@ -173,6 +195,10 @@ class WaveView(QWidget):
         for x in (xa, xb):                                   # the clip's in / out
             p.setPen(QPen(QColor("#e8e8ea"), 1.5))
             p.drawLine(QLineF(x, 0, x, wave.height()))
+        if self.playhead is not None:
+            x = self.x_of(self.playhead)
+            p.setPen(QPen(QColor("#ff4d4d"), 1.5))
+            p.drawLine(QLineF(x, 0, x, h))
         self._draw_ruler(p, h)
 
     def _draw_wave(self, p, r, xa, xb):
@@ -305,6 +331,9 @@ class Overview(QWidget):
         p.setPen(QPen(QColor("#e8e8ea"), 1.5))                  # the clip's in / out
         for x in (xa, xb):
             p.drawLine(QLineF(x, 0, x, h))
+        if w.playhead is not None:
+            p.setPen(QPen(QColor("#ff4d4d"), 1.5))
+            p.drawLine(QLineF(self.x_of(w.playhead), 0, self.x_of(w.playhead), h))
         x0, x1 = self.x_of(w.t0), self.x_of(w.t1)                # the big picture's view
         p.fillRect(QRectF(x0, 0, x1 - x0, h), QColor(77, 160, 255, 45))
         p.setPen(QPen(QColor("#4da0ff"), 2))

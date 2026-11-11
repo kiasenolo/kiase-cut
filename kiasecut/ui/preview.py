@@ -475,6 +475,64 @@ def snap_angle(deg, free):
     return r if abs(deg - r) <= ANGLE_SNAP else deg
 
 
+GIZMO_COLOR = "#4fc3f7"
+
+
+def draw_handle(p, pt, k, round_=False, color="#ffffff"):
+    s = HANDLE_PX * touch.scale() * k
+    p.setPen(QPen(QColor("#070707"), 1 * k))
+    p.setBrush(QColor(color))
+    if round_:
+        p.drawEllipse(pt, s / 1.6, s / 1.6)
+    else:
+        p.drawRect(QRectF(pt.x() - s / 2, pt.y() - s / 2, s, s))
+
+
+def paint_gizmo(p, e, box, k):
+    """The handles of effect e (gizmos.handles) of the clip in box, drawn in canvas px with k canvas px to a screen px: a ring with a
+    cross for a place, a square on a circle for a size, a round handle on a line for a turn."""
+    xf = box.xf()
+    col = QColor(GIZMO_COLOR)
+    casing, line = QPen(QColor("#070707"), 3.5 * k), QPen(col, 1.5 * k)
+    for h in gizmos.handles(e, box.t, box.bw, box.bh):
+        pt = xf.map(QPointF(*h["local"]))
+        kind = h["kind"]
+        p.setBrush(Qt.NoBrush)
+        if kind in ("radius", "angle"):
+            c = h["centre"]
+            ring = QPainterPath()
+            rr = h["reach"] if kind == "angle" else math.hypot(h["local"][0] - c[0], h["local"][1] - c[1])
+            ring.addEllipse(QPointF(*c), rr, rr)
+            ring = xf.map(ring)
+            for pen in (casing, QPen(col, 1.25 * k, Qt.DashLine)):
+                p.setPen(pen)
+                p.drawPath(ring)
+            if kind == "angle":
+                for pen in (casing, line):
+                    p.setPen(pen)
+                    p.drawLine(xf.map(QPointF(*c)), pt)
+                draw_handle(p, pt, k, round_=True, color=GIZMO_COLOR)
+            else:
+                draw_handle(p, pt, k, color=GIZMO_COLOR)
+        else:
+            if kind == "offset":
+                o = xf.map(QPointF(*h["origin"]))
+                p.setPen(QPen(col, 1 * k, Qt.DashLine))
+                p.drawLine(o, pt)
+            r = 5 * k
+            for w, c in ((3 * k, "#111114"), (1.25 * k, GIZMO_COLOR)):
+                p.setPen(QPen(QColor(c), w))
+                p.drawEllipse(pt, r, r)
+                p.drawLine(pt - QPointF(2 * r, 0), pt + QPointF(2 * r, 0))
+                p.drawLine(pt - QPointF(0, 2 * r), pt + QPointF(0, 2 * r))
+            if h.get("label"):
+                f = p.font()
+                f.setPixelSize(round(13 * k))
+                p.setFont(f)
+                p.setPen(col)
+                p.drawText(pt + QPointF(9 * k, -7 * k), h["label"])
+
+
 def gap_snaps(lo, hi, clo, chi, rects, tol):
     """Equal spacing along one axis. lo / hi: the moved outline's span along it, clo / chi:
     across it; rects: the other clips' (lo, hi, clo, chi). Returns [(lo, gaps)]: where lo
@@ -1608,54 +1666,18 @@ class Preview(_Surface):
         ex = [b.extents() for b in boxes]
         return min(e[0] for e in ex), max(e[1] for e in ex), min(e[2] for e in ex), max(e[3] for e in ex)
 
-    GIZMO_COLOR = "#4fc3f7"
-
     def _paint_gizmo(self, p, box, k):
-        """The handles of the effect picked for 編輯控制點: a ring with a cross for a place, a square on a circle for a size, a
-        round handle on a line for a turn."""
+        """The handles of the effect picked for 編輯控制點."""
         e = self.gizmo_effect(box)
-        if e is None:
-            return
-        xf = box.xf()
-        col = QColor(self.GIZMO_COLOR)
-        casing, line = QPen(QColor("#070707"), 3.5 * k), QPen(col, 1.5 * k)
-        for h in gizmos.handles(e, box.t, box.bw, box.bh):
-            pt = xf.map(QPointF(*h["local"]))
-            kind = h["kind"]
-            p.setBrush(Qt.NoBrush)
-            if kind in ("radius", "angle"):
-                c = h["centre"]
-                ring = QPainterPath()
-                rr = h["reach"] if kind == "angle" else math.hypot(h["local"][0] - c[0], h["local"][1] - c[1])
-                ring.addEllipse(QPointF(*c), rr, rr)
-                ring = xf.map(ring)
-                for pen in (casing, QPen(col, 1.25 * k, Qt.DashLine)):
-                    p.setPen(pen)
-                    p.drawPath(ring)
-                if kind == "angle":
-                    for pen in (casing, line):
-                        p.setPen(pen)
-                        p.drawLine(xf.map(QPointF(*c)), pt)
-                    self._handle(p, pt, k, round_=True, color=self.GIZMO_COLOR)
-                else:
-                    self._handle(p, pt, k, color=self.GIZMO_COLOR)
-            else:
-                if kind == "offset":
-                    o = xf.map(QPointF(*h["origin"]))
-                    p.setPen(QPen(col, 1 * k, Qt.DashLine))
-                    p.drawLine(o, pt)
-                r = 5 * k
-                for w, c in ((3 * k, "#111114"), (1.25 * k, self.GIZMO_COLOR)):
-                    p.setPen(QPen(QColor(c), w))
-                    p.drawEllipse(pt, r, r)
-                    p.drawLine(pt - QPointF(2 * r, 0), pt + QPointF(2 * r, 0))
-                    p.drawLine(pt - QPointF(0, 2 * r), pt + QPointF(0, 2 * r))
-                if h.get("label"):
-                    f = p.font()
-                    f.setPixelSize(round(13 * k))
-                    p.setFont(f)
-                    p.setPen(col)
-                    p.drawText(pt + QPointF(9 * k, -7 * k), h["label"])
+        if e is not None:
+            paint_gizmo(p, e, box, k)
+
+    def gizmo_frame(self):
+        """(clip id, effect, box, node id or None) whose handles the preview shows now, or None: the node editor draws them on
+        its backdrop too."""
+        box = self.selected_box()
+        e = self.gizmo_effect(box)
+        return None if e is None else (box.clip["id"], e, box, self.gizmo_node)
 
     def _paint_mask(self, p, box, k):
         p.setBrush(Qt.NoBrush)

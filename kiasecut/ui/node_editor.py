@@ -21,11 +21,11 @@ import os
 import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSettings, QSizeF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen, QPolygonF
+from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence, QLinearGradient, QMouseEvent, QPainter, QPainterPath, QPainterPathStroker, QPen, QPolygonF, QTransform
 from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QColorDialog, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
-from .. import assets, curves, dynamic, fx, menugroups, nodegraph as ng, nodemenu
+from .. import assets, curves, dynamic, fx, gizmos, menugroups, nodegraph as ng, nodemenu
 from . import appevents, motion, touch, viewglide
 from .groupmenu import GroupMenu
 from .searchbox import SearchBox
@@ -1097,6 +1097,8 @@ class DragButton(QPushButton):
 class GraphView(QGraphicsView):
     backdropToggled = Signal()                   # the preview picture behind the nodes was shown or hidden
     backdropWidth = Signal(int)                  # px the preview picture is wide on screen (0: not seen)
+    gizmoLive = Signal(str, str, dict)           # clip id, group, {key: value}: a handle of the preview picture is dragged
+    gizmoCommitted = Signal(str, str, dict)      # the same when it is let go
 
     def __init__(self, editor):
         super().__init__()
@@ -1135,6 +1137,8 @@ class GraphView(QGraphicsView):
         self.backdrop_zoom = 1.0
         self.backdrop_offset = QPointF()
         self.backdrop_panning = None
+        self.gizmo_source = None                  # callable -> (clip id, effect, box) whose handles (gizmos.py) the backdrop shows, or None
+        self.gizmo_drag = None
         self.glide = viewglide.ViewGlide(self, self._glide_pan, scale=GLIDE_SCALE)    # (it goes on a little after the button is let go)
         self.snap = True                         # 吸附: dragged nodes land on the grid (Ctrl while dragging: the other way)
         self.grabbed = None                      # the id of the node the left button went down on
@@ -1291,6 +1295,9 @@ class GraphView(QGraphicsView):
                 if it.sceneBoundingRect().contains(pos) and not isinstance(it, FrameItem):
                     self.editor.view_node(nid)
                     return
+        if e.button() == Qt.LeftButton and self._gizmo_press(e):
+            e.accept()
+            return
         if e.button() == Qt.LeftButton:
             hit = self.socket_at(pos)
             if hit:
@@ -1462,6 +1469,10 @@ class GraphView(QGraphicsView):
         return hit
 
     def mouseMoveEvent(self, e):
+        if self.gizmo_drag is not None:
+            self._gizmo_move(e)
+            e.accept()
+            return
         if self.carrying:
             at = self.wrap.pos(e) if self.wrap.on else e.position()
             self.carrying["pos"] = at
@@ -1550,6 +1561,88 @@ class GraphView(QGraphicsView):
             painter.drawImage(QRectF(center.x() - size.width() / 2 / z, center.y() - size.height() / 2 / z,
                                      size.width() / z, size.height() / z), self.backdrop)
 
+    def drawForeground(self, painter, rect):
+        """The handles of the selected node (編輯控制點) over the preview picture behind the nodes."""
+        super().drawForeground(painter, rect)
+        g = self._gizmo_frame()
+        if g is None:
+            return
+        from .preview import paint_gizmo
+        _cid, e, box, _nid = g
+        to_view = self._canvas_to_view(box)
+        painter.save()
+        painter.resetTransform()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setTransform(to_view)
+        paint_gizmo(painter, e, box, 1.0 / to_view.m11())
+        painter.restore()
+
+    def _canvas_to_view(self, box):
+        """Canvas px -> viewport px for the preview picture behind the nodes."""
+        size = self.backdrop_size()
+        c = self.viewport().rect().center() + self.backdrop_offset.toPoint()
+        s = size.width() / box.W
+        return QTransform().translate(c.x() - size.width() / 2, c.y() - size.height() / 2).scale(s, s)
+
+    def _gizmo_frame(self):
+        """(clip id, effect with the values being dragged, box, node id or None) of the handles, or None: they are there only
+        while the picture is."""
+        if self.gizmo_source is None or self.backdrop_size() is None:
+            return None
+        src = self.gizmo_source()
+        if src is None:
+            return None
+        cid, e, box, nid = src
+        if self.gizmo_drag is not None and self.gizmo_drag["cid"] == cid:
+            e = dict(e, params=dict(e["params"], **self.gizmo_drag["vals"]))
+        return cid, e, box, nid
+
+    def _gizmo_hit(self, pos):
+        """(clip id, effect, box, node id, handle with its viewport point as "view") under viewport point pos, the last drawn first."""
+        from .preview import PICK_PX
+        g = self._gizmo_frame()
+        if g is None:
+            return None
+        cid, e, box, nid = g
+        to_view, xf = self._canvas_to_view(box), box.xf()
+        for h in reversed(gizmos.handles(e, box.t, box.bw, box.bh)):
+            pt = to_view.map(xf.map(QPointF(*h["local"])))
+            if math.hypot(pt.x() - pos.x(), pt.y() - pos.y()) <= PICK_PX * touch.scale():
+                return cid, e, box, nid, dict(h, view=pt)
+        return None
+
+    def _gizmo_press(self, ev):
+        hit = self._gizmo_hit(ev.position())
+        if hit is None:
+            return False
+        cid, e, box, nid, h = hit
+        self.gizmo_drag = {"cid": cid, "eid": e["id"], "nid": nid, "box": box, "handle": h, "grab": h["view"] - ev.position(),
+                           "turn": {}, "vals": {}, "moved": False}
+        return True
+
+    def _gizmo_move(self, ev):
+        from .preview import snap_angle
+        d = self.gizmo_drag
+        box = d["box"]
+        canvas = self._canvas_to_view(box).inverted()[0].map(ev.position() + d["grab"])
+        pt = box.xf().inverted()[0].map(canvas)
+        free = bool(ev.modifiers() & Qt.ShiftModifier)
+        d["vals"] = gizmos.dragged(d["handle"], (pt.x(), pt.y()), box.bw, box.bh, d["turn"],
+                                   snap=not ev.modifiers() & Qt.AltModifier, turn_snap=lambda v: snap_angle(v, free))
+        d["moved"] = True
+        self.gizmoLive.emit(d["cid"], "fx:" + d["eid"], self._gizmo_keys(d))
+        self.viewport().update()
+
+    @staticmethod
+    def _gizmo_keys(d):
+        return {f"{d['nid']}.{k}": v for k, v in d["vals"].items()} if d["nid"] else dict(d["vals"])
+
+    def _gizmo_end(self):
+        d, self.gizmo_drag = self.gizmo_drag, None
+        if d["moved"]:
+            self.gizmoCommitted.emit(d["cid"], "fx:" + d["eid"], self._gizmo_keys(d))
+        self.viewport().update()
+
     def _draw_grid(self, painter, rect):
         z = self.transform().m11()
         if z * GRID < 6:
@@ -1600,6 +1693,10 @@ class GraphView(QGraphicsView):
             self.over = over
 
     def mouseReleaseEvent(self, e):
+        if self.gizmo_drag is not None and e.button() == Qt.LeftButton:
+            self._gizmo_end()
+            e.accept()
+            return
         if self.swallow:
             self.swallow = False
             e.accept()

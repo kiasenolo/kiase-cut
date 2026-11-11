@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QPoint, Qt  # noqa: E402
+from PySide6.QtCore import QPoint, QPointF, Qt  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
@@ -182,6 +182,50 @@ class GizmoPreviewTests(unittest.TestCase):
         button.setChecked(False)
         self.assertEqual(changed, [e["id"], None])
         self.assertNotIn(("gizmo_edit", edit.add_effect(self.p, "c1", "builtin:blur")["id"]), panel.widgets)
+
+
+class BackdropGizmoTests(unittest.TestCase):
+    """The handles are on the node editor's backdrop too: drawn over the picture, dragged there."""
+
+    def setUp(self):
+        from PySide6.QtGui import QImage
+        from kiasecut.ui.preview import Box
+        self.p = proj()
+        self.e = edit.add_effect(self.p, "c1", "builtin:bulge")
+        self.e["params"].update(center=[0.5, 0.5], radius=0.3)
+        clip = edit.find(self.p, "c1")[1]
+        self.box = Box(clip, 1920, 1080, 0)
+        self.view = self.make_view()
+        img = QImage(192, 108, QImage.Format_RGB32)
+        img.fill(0)
+        self.view.resize(400, 300)
+        self.view.set_backdrop(img)
+        self.view.set_backdrop_visible(True)
+        self.view.gizmo_source = lambda: ("c1", self.e, self.box, None)
+        self.live, self.done = [], []
+        self.view.gizmoLive.connect(lambda *a: self.live.append(a))
+        self.view.gizmoCommitted.connect(lambda *a: self.done.append(a))
+
+    @staticmethod
+    def make_view():
+        from kiasecut.ui.node_editor import NodeEditor
+        ed = NodeEditor()
+        return ed.view
+
+    def test_a_handle_dragged_on_the_backdrop_sets_its_parameter(self):
+        v = self.view
+        to_view = v._canvas_to_view(self.box)
+        h = next(x for x in gizmos.handles(self.e, 0, self.box.bw, self.box.bh) if x["kind"] == "radius")
+        a = to_view.map(self.box.xf().map(QPointF(*h["local"])))
+        self.assertIsNotNone(v._gizmo_hit(a))
+        far = to_view.map(QPointF(960 + 0.4 * 1080, 540))
+        QTest.mousePress(v.viewport(), Qt.LeftButton, NONE, a.toPoint())
+        QTest.mouseMove(v.viewport(), far.toPoint())
+        QTest.mouseRelease(v.viewport(), Qt.LeftButton, NONE, far.toPoint())
+        self.assertTrue(self.done)
+        cid, group, vals = self.done[-1]
+        self.assertEqual((cid, group), ("c1", "fx:" + self.e["id"]))
+        self.assertAlmostEqual(vals["radius"], 0.4, places=1)
 
 
 if __name__ == "__main__":

@@ -887,6 +887,9 @@ class MainWindow(QMainWindow):
             "nodes": self.nodes, "timeline": lower})
         nd.fullscreenRequested.connect(lambda: self.panels.toggle_fullscreen("nodes"))
         nd.view.backdropWidth.connect(lambda w: self.set_render_width("nodes", w))
+        nd.view.gizmo_source = lambda: self.preview.gizmo_frame()       # (編輯控制點 on the backdrop too)
+        nd.view.gizmoLive.connect(self.live_params)
+        nd.view.gizmoCommitted.connect(self.on_preview_params)
         self.panels.maximizedChanged.connect(
             lambda key, on: nd.set_fullscreen_mode(on) if key == "nodes" else None)
         self.panels["rack"].visibilityChanged.connect(lambda on: on and self.show_rack())

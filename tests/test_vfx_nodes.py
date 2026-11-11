@@ -128,3 +128,16 @@ class VfxPanels(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NodeEditorSelectionTests(unittest.TestCase):
+    def test_the_node_editor_follows_a_selection_that_shares_one_vfx_node(self):
+        from kiasecut.ui.main_window import MainWindow
+        mk = lambda *vfx: {"effects": [{"filter": fx.GRAPH, "vfx": v} for v in vfx]}
+        shared = MainWindow._nodes_shared
+        self.assertTrue(shared([mk("a")]))
+        self.assertTrue(shared([mk("a"), mk("a"), mk("b", "a")]))
+        self.assertFalse(shared([mk("a"), mk("b")]))                    # (different graphs: nothing to show for both)
+        self.assertFalse(shared([mk(None), mk(None)]))                  # (their own graphs, not shared)
+        self.assertFalse(shared([]))
+

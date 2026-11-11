@@ -208,6 +208,33 @@ class MultiSelect(unittest.TestCase):
         self.apply()
         self.assertEqual(len(edit.find(self.p, "k0")[1]["asset"]["paths"]), 2)
 
+    def test_types_and_open_close(self):
+        pv = self.pv
+        pv.pen["sel"] = {(0, 1)}
+        pv.pen_set_type("auto")
+        self.assertTrue(pentool.is_smooth(pv.pen["paths"][0]["nodes"][1]))
+        pv.pen_set_type("free")
+        n = pv.pen["paths"][0]["nodes"][1]
+        self.assertFalse(pentool.is_smooth(n))
+        self.assertEqual(n[6], 1.0)
+        self.apply()
+        self.assertEqual(len(edit.find(self.p, "k0")[1]["asset"]["paths"][0]["nodes"][1]), 7)        # (free survives the save)
+        pv.pen["sel"] = {(0, 1)}
+        pv.pen_set_type("aligned")
+        n = pv.pen["paths"][0]["nodes"][1]
+        self.assertTrue(pentool.is_smooth(n) and len(n) == 6)
+        pv.pen_set_type("vector")
+        n = pv.pen["paths"][0]["nodes"][1]
+        self.assertAlmostEqual(n[2], (400 - 800) / 3, delta=0.5)
+        pv.pen_set_type("corner")
+        self.assertEqual(pv.pen["paths"][0]["nodes"][1][2:], [0.0, 0.0, 0.0, 0.0])
+        pv.pen_toggle_closed()
+        self.apply()
+        self.assertTrue(edit.find(self.p, "k0")[1]["asset"]["paths"][0]["closed"])
+        pv.pen_toggle_closed()
+        self.apply()
+        self.assertFalse(edit.find(self.p, "k0")[1]["asset"]["paths"][0]["closed"])
+
 
 class Booleans(unittest.TestCase):
     def test_union_subtract_and_back_to_paths(self):

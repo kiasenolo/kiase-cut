@@ -15,13 +15,17 @@ Alt+click on a point toggles corner / smooth (all selected ones). Ctrl+click on 
 new part. Enter / Esc end the drawing, then the tool; a click on another clip ends it and picks that clip. Every change is one
 edit (paramsCommitted, group "multi": the paths, the frame they fill and where it sits).
 
+A bar over the preview's bottom edge sets the kind of the selected points (the last one while drawing): 角點, 自動, 對齊 (handles in
+line, any lengths), 自由 (independent; a 7th value 1 on the node), 向量 (handles toward the neighbours), and 封閉 / 開口 for their path.
+
 Nodes here are [x, y, in dx, in dy, out dx, out dy] in canvas px (the handles as offsets from their point); a path is
 {"nodes": [...], "closed": bool}. combine() / paths_of_qpath() / qpath_of_paths() are the boolean operations of 路徑運算.
 """
 import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainterPath, QPen
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from .. import assets
 
@@ -98,24 +102,26 @@ def split(nodes, closed, seg, t):
 
 
 def is_smooth(n):
-    """Whether the handles of node n are in line, opposite ways (and there is something to be in line)."""
-    ix, iy, ox, oy = n[2:]
+    """Whether the handles of node n are held in line (a 對齊 / 自動 point): in line, opposite ways, and not set 自由."""
+    if len(n) > 6 and n[6]:
+        return False
+    ix, iy, ox, oy = n[2:6]
     li, lo = math.hypot(ix, iy), math.hypot(ox, oy)
     return li > 1e-6 and lo > 1e-6 and abs(ix * oy - iy * ox) <= 1e-3 * li * lo and ix * ox + iy * oy < 0
 
 
-def toggle_smooth(nodes, closed, i):
-    """Alt+click on a point: a smooth one becomes a corner (no handles), a corner a smooth one whose handles run along the line
-    between its neighbours, a third of the way to each."""
-    n = nodes[i]
-    if n[2] or n[3] or n[4] or n[5]:
-        n[2:] = [0.0, 0.0, 0.0, 0.0]
-        return
+def _neighbours(nodes, closed, i):
     cnt = len(nodes)
     prev = nodes[(i - 1) % cnt] if (i > 0 or closed) and cnt > 1 else None
     nxt = nodes[(i + 1) % cnt] if (i < cnt - 1 or closed) and cnt > 1 else None
-    a = prev or n
-    b = nxt or n
+    return prev, nxt
+
+
+def auto_handles(nodes, closed, i):
+    """Node i's handles along the line between its neighbours, a third of the way to each (an end: its one neighbour)."""
+    n = nodes[i]
+    prev, nxt = _neighbours(nodes, closed, i)
+    a, b = prev or n, nxt or n
     tx, ty = b[0] - a[0], b[1] - a[1]
     ln = math.hypot(tx, ty)
     if ln < 1e-9:
@@ -123,7 +129,43 @@ def toggle_smooth(nodes, closed, i):
     tx, ty = tx / ln, ty / ln
     lin = math.hypot(n[0] - prev[0], n[1] - prev[1]) / 3 if prev else 0.0
     lout = math.hypot(nxt[0] - n[0], nxt[1] - n[1]) / 3 if nxt else 0.0
-    n[2:] = [-tx * lin, -ty * lin, tx * lout, ty * lout]
+    n[2:6] = [-tx * lin, -ty * lin, tx * lout, ty * lout]
+
+
+TYPES = (("corner", "角點：沒有把手"), ("auto", "自動：把手順著前後兩點的連線"), ("aligned", "對齊：兩邊把手成一直線，各自可長可短"),
+         ("free", "自由：兩邊把手各自獨立"), ("vector", "向量：把手指向前後的點"))
+
+
+def set_type(nodes, closed, i, kind):
+    """Node i made a corner / auto / aligned / free / vector point (the handles it has are kept where that can be)."""
+    n = nodes[i]
+    prev, nxt = _neighbours(nodes, closed, i)
+    del n[6:]
+    if kind == "corner":
+        n[2:6] = [0.0, 0.0, 0.0, 0.0]
+    elif kind == "auto":
+        auto_handles(nodes, closed, i)
+    elif kind == "vector":
+        n[2:6] = [(prev[0] - n[0]) / 3 if prev else 0.0, (prev[1] - n[1]) / 3 if prev else 0.0,
+                  (nxt[0] - n[0]) / 3 if nxt else 0.0, (nxt[1] - n[1]) / 3 if nxt else 0.0]
+        n.append(1.0)
+    else:
+        if not any(n[2:6]):
+            auto_handles(nodes, closed, i)
+        if kind == "free":
+            n.append(1.0)
+        else:                                                   # aligned: the longer handle sets the line
+            li, lo = math.hypot(n[2], n[3]), math.hypot(n[4], n[5])
+            if lo >= li and lo > 1e-9:
+                n[2], n[3] = -n[4] / lo * li, -n[5] / lo * li
+            elif li > 1e-9:
+                n[4], n[5] = -n[2] / li * lo, -n[3] / li * lo
+
+
+def toggle_smooth(nodes, closed, i):
+    """Alt+click on a point: one with handles becomes a corner (no handles), a corner a smooth one (自動)."""
+    n = nodes[i]
+    set_type(nodes, closed, i, "corner" if any(n[2:6]) else "auto")
 
 
 def set_handle(n, which, dx, dy, mirror):
@@ -138,7 +180,7 @@ def set_handle(n, which, dx, dy, mirror):
 
 def reversed_path(sub):
     """The path run the other way (in and out handles swap)."""
-    return {"nodes": [[n[0], n[1], n[4], n[5], n[2], n[3]] for n in reversed(sub["nodes"])], "closed": sub["closed"]}
+    return {"nodes": [[n[0], n[1], n[4], n[5], n[2], n[3]] + list(n[6:]) for n in reversed(sub["nodes"])], "closed": sub["closed"]}
 
 
 def joined(a, b, a_end, b_end):
@@ -227,9 +269,23 @@ class PenMixin:
         self.pen = {"paths": [{"nodes": [], "closed": False}], "cur": 0, "edit": None, "box": None, "sel": set(), "drag": None,
                     "hover": None}
         self.setCursor(Qt.CrossCursor)
+        self._show_penbar()
         self.penToggled.emit(True)
         self.update()
         return True
+
+    def _show_penbar(self):
+        if getattr(self, "penbar", None) is None:
+            self.penbar = PenBar(self)
+        self.penbar.show()
+        self.place_penbar()
+
+    def place_penbar(self):
+        bar = getattr(self, "penbar", None)
+        if bar is not None and bar.isVisible():
+            bar.adjustSize()
+            bar.move(max(4, (self.width() - bar.width()) // 2), self.height() - bar.height() - 10)
+            bar.raise_()
 
     def pen_can_edit(self):
         box = self.selected_box()
@@ -245,6 +301,7 @@ class PenMixin:
         self.pen = {"paths": [], "cur": None, "edit": box.clip["id"], "box": box, "sel": set(), "drag": None, "hover": None}
         self._pen_load(box)
         self.setCursor(Qt.ArrowCursor)
+        self._show_penbar()
         self.penToggled.emit(True)
         self.update()
         return True
@@ -253,6 +310,8 @@ class PenMixin:
         self.pen = None
         self.guides = []
         self.unsetCursor()
+        if getattr(self, "penbar", None) is not None:
+            self.penbar.hide()
         self.penToggled.emit(False)
         self.update()
 
@@ -269,7 +328,7 @@ class PenMixin:
                 c = xf.map(QPointF(lx, ly))
                 i = xf.map(QPointF(lx + n[2] * w, ly + n[3] * h)) - c
                 o = xf.map(QPointF(lx + n[4] * w, ly + n[5] * h)) - c
-                nodes.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()])
+                nodes.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()] + list(n[6:]))
             paths.append({"nodes": nodes, "closed": bool(sub["closed"])})
         pen = self.pen
         pen["paths"], pen["box"] = paths, box
@@ -328,7 +387,7 @@ class PenMixin:
                 c = inv.map(QPointF(n[0], n[1]))
                 i = inv.map(QPointF(n[0] + n[2], n[1] + n[3])) - c
                 o = inv.map(QPointF(n[0] + n[4], n[1] + n[5])) - c
-                nodes.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()])
+                nodes.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()] + list(n[6:]))
             local.append({"nodes": nodes, "closed": sub["closed"]})
         params, (cx, cy) = assets.path_params(local)
         centre = box.xf().map(QPointF(cx, cy))
@@ -596,6 +655,48 @@ class PenMixin:
             return self.pen_end if not editing and not pen["paths"][0]["nodes"] else None
         return None
 
+    def pen_set_type(self, kind):
+        """The toolbar's point types: the selected points (while drawing: the last one) become that kind."""
+        pen = self.pen
+        targets = set(pen["sel"])
+        if not targets and pen["cur"] is not None and pen["paths"][pen["cur"]]["nodes"]:
+            targets = {(pen["cur"], len(pen["paths"][pen["cur"]]["nodes"]) - 1)}
+        if not targets:
+            return
+        for pi, ni in targets:
+            sub = pen["paths"][pi]
+            set_type(sub["nodes"], sub["closed"], ni, kind)
+        if pen["edit"] is not None and pen["cur"] is None:
+            self._pen_commit()
+        self.update()
+
+    def pen_toggle_closed(self):
+        """The toolbar's 封閉 / 開口: the paths holding a selected point (the only one, or the one being drawn) are closed or opened."""
+        pen = self.pen
+        idx = {pi for pi, _ in pen["sel"]} or ({pen["cur"]} if pen["cur"] is not None else set(range(len(pen["paths"])))
+                                               if len(pen["paths"]) == 1 else set())
+        subs = [pen["paths"][pi] for pi in idx if len(pen["paths"][pi]["nodes"]) > 2 or pen["paths"][pi]["closed"]]
+        if not subs:
+            return
+        on = not all(sub["closed"] for sub in subs)
+        for sub in subs:
+            sub["closed"] = on
+        if pen["edit"] is None:
+            if on:
+                self._pen_finish()
+        elif pen["cur"] is None:
+            self._pen_commit()
+        self.update()
+
+    def pen_state(self):
+        """(whether there is a point to give a kind to, whether the path in question is closed) for the toolbar."""
+        pen = self.pen
+        if pen is None:
+            return False, False
+        has = bool(pen["sel"]) or (pen["cur"] is not None and bool(pen["paths"][pen["cur"]]["nodes"]))
+        idx = {pi for pi, _ in pen["sel"]} or ({pen["cur"]} if pen["cur"] is not None else set(range(len(pen["paths"]))))
+        return has, bool(idx) and all(pen["paths"][pi]["closed"] for pi in idx if pi < len(pen["paths"]))
+
     def _pen_clear_or_end(self):
         if self.pen["sel"]:
             self.pen["sel"] = set()
@@ -686,3 +787,100 @@ class PenMixin:
             return "接著畫：點一下加點；點起點封閉、點別條路徑的端點接起來；Enter / 雙擊 / 右鍵結束"
         return ("編輯路徑：點選／框選節點（Shift 加選），拖動、方向鍵移動，Delete 刪除；點線段加點；Alt+點 切換角點 / 平滑；"
                 "Ctrl+點端點接著畫；Shift+點空白 新增一段；Enter / Esc 結束")
+
+
+# -- the toolbar over the preview while the tool is on ----------------------------------------------------------------------------
+def _icon(kind):
+    """A 28 px picture of a point type (or "open" / "closed"): the path in white, the point a square, its handles round."""
+    pm = QPixmap(28, 28)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    c = QColor("#e8e8ec")
+    pt = QPointF(14, 14)
+    line = QPainterPath()
+    if kind == "corner":
+        line.moveTo(3, 22); line.lineTo(14, 8); line.lineTo(25, 22)
+        hs = []
+    elif kind == "auto":
+        line.moveTo(3, 20); line.cubicTo(8, 6, 20, 6, 25, 20)
+        hs = [QPointF(8, 8), QPointF(20, 8)]
+    elif kind == "aligned":
+        line.moveTo(3, 21); line.cubicTo(7, 8, 12, 10, 14, 14); line.cubicTo(17, 18, 21, 8, 25, 18)
+        hs = [QPointF(8, 11), QPointF(20, 17)]
+    elif kind == "free":
+        line.moveTo(3, 21); line.cubicTo(5, 5, 10, 9, 14, 14); line.cubicTo(18, 19, 21, 9, 25, 21)
+        hs = [QPointF(6, 7), QPointF(21, 11)]
+    elif kind == "vector":
+        line.moveTo(3, 22); line.lineTo(14, 8); line.lineTo(25, 22)
+        hs = [QPointF(8.5, 15), QPointF(19.5, 15)]
+    elif kind == "open":
+        line.moveTo(5, 22); line.lineTo(5, 6); line.lineTo(23, 6); line.lineTo(23, 22)
+        hs = []
+        pt = None
+    else:                                           # closed
+        line.moveTo(5, 22); line.lineTo(5, 6); line.lineTo(23, 6); line.lineTo(23, 22); line.closeSubpath()
+        hs = []
+        pt = None
+    p.setPen(QPen(c, 1.6))
+    p.drawPath(line)
+    if pt is not None:
+        for h in hs:
+            p.setPen(QPen(QColor(PEN_COLOR), 1))
+            p.drawLine(pt, h)
+            p.setBrush(c)
+            p.drawEllipse(h, 2, 2)
+        p.setPen(QPen(QColor("#111114"), 1))
+        p.setBrush(QColor(PEN_COLOR))
+        p.drawRect(QRectF(pt.x() - 3, pt.y() - 3, 6, 6))
+    else:
+        p.setBrush(c)
+        for q in ((5, 22), (23, 22)) if kind == "open" else ((5, 6), (23, 6)):
+            p.drawRect(QRectF(q[0] - 2.5, q[1] - 2.5, 5, 5))
+    p.end()
+    return QIcon(pm)
+
+
+class PenBar(QWidget):
+    """Point types (as Blender's handle types) and 封閉 / 開口 for the selected points, floating over the preview's bottom edge."""
+
+    def __init__(self, preview):
+        super().__init__(preview)
+        self.pv = preview
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("PenBar { background: rgba(28, 28, 32, 235); border: 1px solid #4a4a52; border-radius: 4px; }"
+                           "QPushButton { background: transparent; border: 1px solid transparent; border-radius: 3px; }"
+                           "QPushButton:hover { background: #3a3a42; } QPushButton:disabled { opacity: 0.4; }")
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(5, 4, 5, 4)
+        lay.setSpacing(2)
+        self.buttons = {}
+        for kind, tip in TYPES:
+            self._add(lay, kind, tip, lambda _=False, k=kind: preview.pen_set_type(k))
+        lay.addSpacing(8)
+        self.toggle = self._add(lay, "open", "", lambda _=False: preview.pen_toggle_closed())
+        self.setFocusPolicy(Qt.NoFocus)
+        preview.update_penbar = self.refresh
+
+    def _add(self, lay, kind, tip, fn):
+        b = QPushButton()
+        b.setFixedSize(34, 32)
+        b.setIcon(_icon(kind))
+        b.setIconSize(b.size() * 0.85)
+        b.setToolTip(tip)
+        b.setFocusPolicy(Qt.NoFocus)
+        b.clicked.connect(fn)
+        lay.addWidget(b)
+        self.buttons[kind] = b
+        return b
+
+    def refresh(self):
+        has, closed = self.pv.pen_state()
+        for kind, _tip in TYPES:
+            self.buttons[kind].setEnabled(has)
+        self.toggle.setIcon(_icon("closed" if closed else "open"))
+        self.toggle.setToolTip("路徑目前是封閉的：按一下開口（拿掉最後一段）" if closed else "路徑目前是開口的：按一下封閉（接回起點）")
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.refresh()

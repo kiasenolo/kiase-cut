@@ -854,6 +854,7 @@ class Preview(PenMixin, _Surface):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._report_size()
+        self.place_penbar()
 
     def showEvent(self, e):                     # (a preview that is not seen - its panel hidden, a full screen panel over it - asks for no size)
         super().showEvent(e)
@@ -1711,6 +1712,8 @@ class Preview(PenMixin, _Surface):
         self._paint_measure(p, k)
         if self.pen is not None:
             self.paint_pen(p, k)
+            if getattr(self, "update_penbar", None):
+                self.update_penbar()
         box = self._live_box()
         mbox = self.mask_box(box)
         if self.pen is not None:                         # (the pen tool shows its own points: no frame round the clip)

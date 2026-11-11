@@ -290,7 +290,7 @@ def _paths(v):
             nodes = []
             for n in sub["nodes"]:
                 n = [float(x) for x in n]
-                if len(n) == 6 and all(math.isfinite(x) for x in n):
+                if len(n) in (6, 7) and all(math.isfinite(x) for x in n):
                     nodes.append(n)
             if nodes:
                 out.append({"nodes": nodes[:5000], "closed": bool(sub.get("closed")) and len(nodes) > 2})
@@ -741,7 +741,7 @@ def path_params(paths, color="#ffffff"):
     x0, x1 = min(x for x, _ in pts), max(x for x, _ in pts)
     y0, y1 = min(y for _, y in pts), max(y for _, y in pts)
     w, h = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
-    norm = [{"nodes": [[(n[0] - x0) / w, (n[1] - y0) / h, n[2] / w, n[3] / h, n[4] / w, n[5] / h] for n in sub["nodes"]],
+    norm = [{"nodes": [[(n[0] - x0) / w, (n[1] - y0) / h, n[2] / w, n[3] / h, n[4] / w, n[5] / h] + list(n[6:7]) for n in sub["nodes"]],
              "closed": bool(sub.get("closed")) and len(sub["nodes"]) > 2} for sub in paths]
     closed = bool(norm and norm[0]["closed"])
     p = {"key": "path.pen", "family": "path", "color": color, "paths": norm, "w": w, "h": h,

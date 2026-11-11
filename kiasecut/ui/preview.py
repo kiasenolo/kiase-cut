@@ -629,6 +629,7 @@ class Preview(PenMixin, _Surface):
     mediaDropped = Signal(list, list, float, float, str)  # idents, file paths, transform x / y there, group id or ""
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
     textureFailed = Signal(str)                 # the GpuFrame could not be drawn: the player sends pictures from now on
+    contextRequested = Signal(object, object)   # (global QPoint, id of the clip under the right click or None): the right-click menu is the window's
     penToggled = Signal(bool)                   # the pen tool started or ended
     penFinished = Signal(list)                  # a new path was drawn: its parts [{"nodes": [[x, y, in dx, in dy, out dx, out dy]], "closed"}] (canvas px)
     guidesCommitted = Signal(dict)              # {"x": [canvas px], "y": [canvas px]}: the reference lines after one was made, moved or taken away
@@ -2139,6 +2140,8 @@ class Preview(PenMixin, _Surface):
         if self.box_zoom and e.button() == Qt.RightButton:
             self._arm_box_zoom(False)
             return
+        self._ctx = (e.button() == Qt.RightButton and self.interactive and bool(self.view) and self.show_guides
+                     and not self.box_zoom and self.drag is None)
         if not self.interactive or e.button() != Qt.LeftButton or not self.view or not self.show_guides:
             return
         x, y = self._to_canvas(e.position())
@@ -2719,6 +2722,15 @@ class Preview(PenMixin, _Surface):
             return
         if self.pen is not None and self.drag is None:
             self.pen_release(e)
+            return
+        if e is not None and e.button() == Qt.RightButton and getattr(self, "_ctx", False) and self.drag is None:
+            self._ctx = False
+            x, y = self._to_canvas(e.position())
+            hit = next((b for b in self.visible_boxes() if not b.locked and b.contains(x, y)), None)
+            if hit is not None and hit.clip["id"] not in self.selected_ids:
+                self._select([hit.clip["id"]], hit.clip["id"])
+                self.clipPicked.emit(hit.clip)
+            self.contextRequested.emit(e.globalPosition().toPoint(), hit.clip["id"] if hit is not None else None)
             return
         d, self.drag = self.drag, None
         self.wrap.stop(d and d.get("live"))            # (the pointer where the drag ended up)

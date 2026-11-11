@@ -6,6 +6,7 @@ Editing can happen on the main timeline or inside a compound clip (double-click 
 clip shows (a _thumbnail, a mask's) can be edited too. Every edit runs through one undo
 history on the whole project, applied to whichever level is open.
 """
+import copy
 import hashlib
 import json
 import math
@@ -45,7 +46,7 @@ from .effects_panel import EffectsPanel
 from . import node_editor, searchbox
 from .. import proxies, sharedgl
 from . import inputstate, pentool
-from .. import vector
+from .. import textvars, vector
 from .node_editor import NodeEditor
 from .export_dialog import QUALITY, ExportDialog, ExportProgress
 from .inspector import Inspector
@@ -374,6 +375,7 @@ class MainWindow(QMainWindow):
         self.preview.movesCommitted.connect(self.on_preview_moves)
         self.preview.guidesCommitted.connect(self.on_guides)
         self.preview.penFinished.connect(self.on_pen_finished)
+        self.preview.contextRequested.connect(self.preview_menu)
         self.preview.penToggled.connect(lambda on: self.pen_btn.setChecked(on))
         self.preview.movesLive.connect(self.live_moves)
         self.preview.dupLive.connect(self.live_dup)
@@ -3101,7 +3103,7 @@ class MainWindow(QMainWindow):
         """A path drawn with the pen tool: a new 路徑 clip at the playhead, as big as the path, where it was drawn."""
         self.add_path_clip(paths, "鋼筆路徑")
 
-    def add_path_clip(self, paths, label, color="#ffffff", remove=()):
+    def add_path_clip(self, paths, label, color="#ffffff", remove=(), keep=None, blend=None):
         """A new 路徑 clip of paths (canvas px) at the playhead, where they are (remove: clips taken away in the same undo step)."""
         if not self.ensure_project():
             return
@@ -3118,8 +3120,14 @@ class MainWindow(QMainWindow):
                 edit.delete_many(lvl, list(remove))
             c = library.place_item(lvl, assets.item(params, path), None, start)
             c["asset"] = params
+            for k, v in (keep or {}).items():
+                c[k] = v
+            if blend and blend[0]:
+                c["blend"] = blend[0]
             tf = c.setdefault("transform", {})
             tf["x"], tf["y"] = round((cx - W / 2) / (W / 2), 5), round((H / 2 - cy) / (H / 2), 5)
+            if blend and blend[1] is not None:
+                tf["opacity"] = blend[1]
             return c
         self.apply(label, fn, select=lambda c: c["id"])
 
@@ -3995,6 +4003,76 @@ class MainWindow(QMainWindow):
         return col
 
     SHAPE_FAMILIES_NOT = ("solid", "gradient", "empty", "grid")
+
+    def _outline_of(self, box):
+        """(QPainterPath in canvas px, colour #rrggbb[aa]) of a shape clip's or text clip's outline as drawn at the playhead, or None."""
+        c = box.clip
+        if c.get("asset") and c["asset"].get("family") not in self.SHAPE_FAMILIES_NOT:
+            q = assets.at(c["asset"], box.t)
+            qp = vector.parse_d(assets.outline_d(q, q["w"], q["h"]))
+            qp.translate(-q["w"] / 2, -q["h"] / 2)
+            return box.xf().map(qp), q.get("color") or "#ffffff"
+        if c["type"] == "text":
+            spec = textvars.spec_at(c["text"], box.t, render.TEXT_FIELDS)
+            layers = vector.text_layers(spec, box.H)
+            if layers:
+                col = assets.hex_of(layers[0].fill) if layers[0].fill else "#ffffff"
+                return box.xf().map(layers[0].path), col
+        return None
+
+    def to_path(self, boxes):
+        """轉成路徑: shapes and texts become 路徑 clips (same place in time, mask, effects, blend, opacity), the old ones go."""
+        done = 0
+        for b in boxes:
+            got = self._outline_of(b)
+            if got is None:
+                continue
+            paths = pentool.paths_of_qpath(got[0])
+            if not paths:
+                continue
+            old = b.clip
+            keep = {k: copy.deepcopy(old[k]) for k in ("mask", "effects", "start_us", "duration_us") if old.get(k) is not None}
+            blend = (old.get("blend"), (old.get("transform") or {}).get("opacity"))
+            self.add_path_clip(paths, "轉成路徑", got[1], remove=[old["id"]], keep=keep, blend=blend)
+            done += 1
+        if not done:
+            self.statusBar().showMessage("轉成路徑：只能轉形狀和文字", 4000)
+
+    def preview_menu(self, pos, cid):
+        """The right-click menu of the preview."""
+        if not self.proj:
+            return
+        pv = self.preview
+        ids = set(self.timeline.selected_ids)
+        boxes = [b for b in reversed(pv.visible_boxes()) if not getattr(b, "group", False) and b.clip["id"] in ids]
+        shapes = [b for b in boxes if self._outline_of(b) is not None]
+        m = Menu(self)
+        if cid is not None:
+            if pv.pen_can_edit():
+                m.addAction("編輯路徑（Enter）").triggered.connect(lambda: pv.pen_edit())
+            if shapes:
+                m.addAction("轉成路徑" + (f"（{len(shapes)} 個）" if len(shapes) > 1 else "")).triggered.connect(
+                    lambda: self.to_path(shapes))
+            paths = [b for b in boxes if b.clip.get("asset") and b.clip["asset"].get("family") not in self.SHAPE_FAMILIES_NOT]
+            if len(paths) >= 2:
+                sub = m.addMenu("路徑運算")
+                for name, op in pentool.OPS:
+                    sub.addAction(name).triggered.connect(lambda _=False, op=op, name=name: self.path_boolean(op, name))
+            if paths and len(boxes) >= 2:
+                m.addAction("用路徑／形狀當遮罩").triggered.connect(self.mask_by_shape)
+            m.addSeparator()
+            for key, text in (("flip_h", "水平翻轉（Shift+H）"), ("flip_v", "垂直翻轉（Shift+V）")):
+                m.addAction(text).triggered.connect(lambda _=False, key=key: pv.flip(key))
+            m.addSeparator()
+        m.addAction("鋼筆工具（P）").triggered.connect(lambda: self.pen_btn.setChecked(True) or self.toggle_pen())
+        for key, text in (("show_rulers", "標尺"), ("show_grid", "格線"), ("snap_grid", "吸附到格線")):
+            a = m.addAction(text)
+            a.setCheckable(True)
+            a.setChecked(self.view_actions[key].isChecked())
+            a.triggered.connect(lambda on, key=key: self.view_actions[key].setChecked(bool(on)))
+        if (self.container().get("guides") or {}).get("x") or (self.container().get("guides") or {}).get("y"):
+            m.addAction("清除所有參考線").triggered.connect(lambda: self.on_guides({"x": [], "y": []}))
+        m.exec(pos)
 
     def path_boolean(self, op, name):
         """路徑運算: the selected shapes / pen paths (two or more) become one new path - the lowest one with the others added

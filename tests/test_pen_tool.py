@@ -226,6 +226,18 @@ class Booleans(unittest.TestCase):
         self.assertEqual(pentool.paths_of_qpath(pentool.combine("intersect", [a, pentool.qpath_of_paths([sq(500, 500, 600, 600)])])), [])
 
 
+class RightClick(unittest.TestCase):
+    def test_right_click_asks_for_a_menu_over_a_clip_and_over_nothing(self):
+        p, pv = scene((960, 540))
+        pv.resize(1000, 600)
+        got = []
+        pv.contextRequested.connect(lambda pos, cid: got.append(cid))
+        for pt in ((960, 540), (100, 100)):
+            mouse(pv, "press", pt, button=Qt.RightButton)
+            mouse(pv, "release", pt, button=Qt.RightButton)
+        self.assertEqual(got, ["k0", None])
+
+
 class PathMask(unittest.TestCase):
     def test_path_cuts_the_other_clips_and_its_track_is_reference(self):
         from test_edit import S, clip

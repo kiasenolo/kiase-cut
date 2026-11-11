@@ -8,7 +8,7 @@ Switching it off keeps the numbers; 重置 (after asking) deletes them and switc
 """
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QCheckBox, QFormLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from .. import edit
 from . import ask
@@ -21,6 +21,7 @@ DIV_NAMES = {0.25: "BPM ÷4（每 4 拍）", 0.5: "BPM ÷2（每 2 拍）", 1: "
 class BeatPanel(QWidget):
     beatEdited = Signal(str, dict)                  # clip id, {on / bpm / offset_us / div: value}
     resetRequested = Signal(str)                    # clip id: delete its BPM settings
+    advancedRequested = Signal(str)                 # clip id: open the 進階對齊編輯器
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -70,7 +71,13 @@ class BeatPanel(QWidget):
         self.reset = QPushButton("重置")
         self.reset.setToolTip("刪除這個片段的 BPM 設定並關閉 BPM 對齊")
         self.reset.clicked.connect(self._reset)
-        form.addRow(self.reset)
+        self.advanced = QPushButton("進階設定…")
+        self.advanced.setToolTip("進階對齊編輯器（Alt+Shift+B）：看波形、調節拍線")
+        self.advanced.clicked.connect(lambda: self.clip_id and self.advancedRequested.emit(self.clip_id))
+        row = QHBoxLayout()
+        row.addWidget(self.reset)
+        row.addWidget(self.advanced)
+        form.addRow(row)
         lay.addWidget(self.body)
         lay.addStretch(1)
         self.body.hide()

@@ -60,7 +60,7 @@ from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import VfxNodePanel
-from . import androidfiles, appevents, dialogframe, exprdialog, escapekey, fontkeep, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
+from . import androidfiles, appevents, beat_dialog, dialogframe, exprdialog, escapekey, fontkeep, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
 from .steadylabel import SteadyLabel
 from .meter import MeterPanel
@@ -564,6 +564,7 @@ class MainWindow(QMainWindow):
         self.beats = BeatPanel()
         self.beats.beatEdited.connect(self.on_beat_edited)
         self.beats.resetRequested.connect(lambda cid: self.apply("重置 BPM 對齊", edit.clear_beat, cid))
+        self.beats.advancedRequested.connect(self.open_beat_editor)
         beat_scroll = QScrollArea()
         beat_scroll.setWidget(self.beats)
         beat_scroll.setWidgetResizable(True)
@@ -1041,6 +1042,8 @@ class MainWindow(QMainWindow):
         add(m, "向左裁剪（刪掉播放頭之前）", "Q", lambda: self.do_trim_to_playhead("start"))
         add(m, "向右裁剪（刪掉播放頭之後）", "W", lambda: self.do_trim_to_playhead("end"))
         add(m, "頭尾對齊拍子", "Alt+Q", self.do_snap_beats)
+        add(m, "切換 BPM 對齊", "Alt+B", self.do_toggle_beat)
+        add(m, "進階對齊編輯器…", "Alt+Shift+B", self.do_open_beat_editor)
         add(m, "打亂順序", "Alt+R", self.do_shuffle)
         add(m, "反轉排序（上下顛倒）", None, self.do_reverse_rows)
         add(m, "刪除", ("Delete", "Backspace", "X"), self.do_delete)
@@ -2476,6 +2479,40 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("先在時間軸上選取片段", 3000)
             return
         self.apply("頭尾對齊拍子", edit.snap_to_beats, ids)
+
+    def do_toggle_beat(self):
+        """Alt+B: BPM alignment of the selected sound clips switched together - all to the opposite of the first one's."""
+        clips = [c for c in self.timeline.selected_clips_primary_first() if edit.has_sound(c)]
+        if not self.proj or not clips:
+            self.statusBar().showMessage("先在時間軸上選取有聲音的片段", 3000)
+            return
+        on = not (clips[0].get("beat") or {}).get("on")
+        ids = [c["id"] for c in clips]
+        self.apply("啟用 BPM 對齊" if on else "關閉 BPM 對齊",
+                   lambda level: [edit.set_beat(level, cid, on=on) for cid in ids])
+
+    def do_open_beat_editor(self):
+        """Alt+Shift+B: the 進階對齊編輯器 for the selected sound clip (the primary one when several)."""
+        clips = [c for c in self.timeline.selected_clips_primary_first() if edit.has_sound(c)]
+        if not self.proj or not clips:
+            self.statusBar().showMessage("先在時間軸上選取有聲音的片段", 3000)
+            return
+        self.open_beat_editor(clips[0]["id"])
+
+    def open_beat_editor(self, cid):
+        win = getattr(self, "beat_editor", None)
+        if win is not None and win.clip_id != cid:
+            win.close()
+            win = None
+        if win is None:
+            win = self.beat_editor = beat_dialog.BeatDialog(cid, self)
+            win.destroyed.connect(lambda *_: setattr(self, "beat_editor", None))
+        if not win.show_clip(self.container(self.proj)):
+            win.close()
+            return
+        win.show()
+        win.raise_()
+        win.activateWindow()
 
     def do_shuffle(self):
         """Alt+R: the selected clips in a random order (each track's run of them)."""

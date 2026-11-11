@@ -179,5 +179,42 @@ class TimelineSnaps(unittest.TestCase):
         self.assertEqual((other.px_per_s, other.scroll_s, other.heights), (123.0, 4.5, {"t1": 90}))
 
 
+class AdvancedEntry(unittest.TestCase):
+    def test_panel_button_asks_for_the_editor(self):
+        from kiasecut.ui.beat_panel import BeatPanel
+        pn, got = BeatPanel(), []
+        pn.advancedRequested.connect(got.append)
+        pn.show_clips([edit.find(proj(), "a1")[1]])
+        pn.advanced.click()
+        self.assertEqual(got, ["a1"])
+
+    def test_dialog_follows_its_clip(self):
+        from kiasecut.ui.beat_dialog import BeatDialog
+        p = proj()
+        dlg = BeatDialog("a1")
+        self.assertTrue(dlg.show_clip(p))
+        self.assertFalse(BeatDialog("v1").show_clip(p))              # no sound
+        self.assertFalse(BeatDialog("nope").show_clip(p))
+
+    def test_alt_b_switches_all_to_the_opposite_of_the_first(self):
+        from types import SimpleNamespace
+        from kiasecut.ui.main_window import MainWindow
+        p = proj()
+        _, a1 = edit.find(p, "a1")
+        p["tracks"][1]["clips"].append(dict(a1, id="a2", start_us=30 * S))
+        edit.set_beat(p, "a2", on=True)
+        applied = []
+        sel = [edit.find(p, "a1")[1], edit.find(p, "a2")[1], edit.find(p, "v1")[1]]
+        win = SimpleNamespace(proj=p, timeline=SimpleNamespace(selected_clips_primary_first=lambda: sel),
+                              statusBar=lambda: None,
+                              apply=lambda label, fn: (applied.append(label), fn(p)))
+        MainWindow.do_toggle_beat(win)                              # first (a1) is off -> all on
+        self.assertEqual(applied, ["啟用 BPM 對齊"])
+        self.assertTrue(all(edit.find(p, i)[1]["beat"]["on"] for i in ("a1", "a2")))
+        self.assertNotIn("beat", edit.find(p, "v1")[1])
+        MainWindow.do_toggle_beat(win)
+        self.assertFalse(any(edit.find(p, i)[1]["beat"]["on"] for i in ("a1", "a2")))
+
+
 if __name__ == "__main__":
     unittest.main()

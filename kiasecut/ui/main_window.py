@@ -247,7 +247,8 @@ class MainWindow(QMainWindow):
     shaderCompile = Signal(str, bool)          # (filter name, finished): a node's shader is being compiled (by the player's thread)
     GLOBAL_KEYS = ("儲存專案", "復原", "重做", "全螢幕預覽", "KiaseCut 說明（Wiki）")     # menu items whose keys work everywhere in the program
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
-                    ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動", ("transform", "radius_link"): "圓角關聯", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
+                    ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動", ("transform", "radius_link"): "圓角關聯", ("transform", "shadow_on"): "陰影", ("transform", "shadow_color"): "陰影顏色",
+                    ("transform", "shadow_opacity"): "陰影", ("transform", "shadow_x"): "陰影", ("transform", "shadow_y"): "陰影", ("transform", "shadow_blur"): "陰影", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
                     ("transform", "anchor_x"): "錨點", ("transform", "anchor_y"): "錨點",

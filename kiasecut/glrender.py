@@ -732,7 +732,7 @@ class GLRenderer(render.Renderer):
             k = fit * max(abs(sx), abs(sy), 0.01) * ppu       # layer px per compound unit
             straight = False
             if kind == "group" and curves.value(c.get("blend", "normal"), t) == "pass_through" \
-                    and not project.visual_effects(c):          # (effects need a layer of its own)
+                    and not project.visual_effects(c, True):    # (effects need a layer of its own)
                 to_clip = QTransform(fit, 0, 0, fit, -bw / 2, -bh / 2)
                 self.gl_through(tgt, c, comp, to_clip * world, t, fps, k, opacity, (bw, bh), world, inv)
                 return
@@ -786,7 +786,7 @@ class GLRenderer(render.Renderer):
         corners = (disp, radii) if radii else None      # 圓角: cut where the picture is drawn, before its effects
         mask = self.clip_mask(c, t)
         blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
-        effects = project.visual_effects(c)
+        effects = project.visual_effects(c, not backdrop)           # (with the 陰影, drawn last; 套用至背景 works on what is under it)
         matte = self.gl_matte(mask, t, disp, world, fps)
         try:
             if backdrop:                                 # 套用至背景: the effects work on what is under it

@@ -1185,7 +1185,7 @@ def set_param(proj, clip_id, group, key, value, t=None):
         for k, v in with_linked_scale(h, {key: value}, t).items():
             _set_one(c, h, group, k, v, t)
         return c
-    if group == "transform" and key in ("scale_link", "flip_h", "flip_v", "radius_link"):
+    if group == "transform" and key in ("scale_link", "flip_h", "flip_v", "radius_link", "shadow_on"):
         h[key] = bool(value)
         return c
     if group == "transform" and key in project.CORNERS and radius_linked(h):

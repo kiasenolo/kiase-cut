@@ -775,7 +775,7 @@ class Renderer:
             bw, bh = cw * fit, ch * fit
             k = fit * max(abs(sx), abs(sy), 0.01) * px_per_unit       # layer px per compound unit
             if kind == "group" and curves.value(c.get("blend", "normal"), t) == "pass_through" \
-                    and not project.visual_effects(c) and isinstance(p.device(), QImage):
+                    and not project.visual_effects(c, True) and isinstance(p.device(), QImage):
                 self.draw_through(p, c, comp, t, fps, opacity, (bw, bh), fit, k, W, H)
                 return
             # 效果穿透: what is under it now, for its clips that work on what is under them
@@ -846,7 +846,7 @@ class Renderer:
                                                          1.0 if cover else opacity, fps))
             if hide or opacity <= 0:
                 return
-        elif project.visual_effects(c):
+        elif project.visual_effects(c, True):
             plain = draw
 
             def draw(q=p):
@@ -1056,7 +1056,7 @@ class Renderer:
         lp.setTransform(wt)
         plain(lp)
         lp.end()
-        layer = self.run_effects(c["effects"], layer, t, c["duration_us"], fps, wt, disp, unit)
+        layer = self.run_effects(project.visual_effects(c, True), layer, t, c["duration_us"], fps, wt, disp, unit)
         q.save()
         q.resetTransform()
         q.drawImage(0, 0, layer)

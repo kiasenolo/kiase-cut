@@ -114,6 +114,15 @@ class GpuMatchesCpu(unittest.TestCase):
         self.check("see-through", self.view([self.bg()], [self.top(transform=tf(scale=0.7, x=-0.3, opacity=0.8))]))
         self.check("svg", self.view([self.bg()], [self.pic("s", self.svg, 100, 100, transform=tf(scale=0.5))]))
 
+    def test_a_shadow_is_drawn_under_the_clip_and_the_same_by_both(self):
+        shadow = dict(shadow_on=True, shadow_x=20.0, shadow_y=20.0, shadow_blur=6.0, shadow_opacity=1.0, shadow_color=[1.0, 0.0, 0.0])
+        view = self.view([self.bg()], [self.top(transform=dict(tf(scale=0.5), **shadow))])
+        plain = self.view([self.bg()], [self.top(transform=tf(scale=0.5))])
+        self.check("shadow", view)
+        for r in (self.cpu, self.gpu):
+            a, b = pixels(r.render(copy.deepcopy(view), 0, W, H)), pixels(r.render(copy.deepcopy(plain), 0, W, H))
+            self.assertGreater(int((np.abs(a - b).max(axis=2) > 20).sum()), 500)
+
     def test_a_margin_draws_what_is_outside_the_canvas_round_it(self):
         view = self.view([self.bg(transform=tf(x=0.3, scale=1.4))])                  # (runs over the canvas on the right and the top and bottom)
         for name, r in (("cpu", self.cpu), ("gpu", self.gpu)):

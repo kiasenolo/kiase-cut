@@ -528,9 +528,29 @@ def passes_through(c):
     return c.get("type") == "compound" and bool(c.get("fx_through")) and backdrop_inside(c.get("compound"))
 
 
-def visual_effects(c):
-    """The effects that change a clip's picture: on, and not a time effect (stepped()) or 動態模糊."""
-    return [e for e in c.get("effects") or () if not e.get("disabled") and e.get("filter") not in PLACE_FILTERS]
+SHADOW = "builtin:_shadow"
+
+
+def shadow_effect(c):
+    """The effect that draws a clip's 陰影 (the shadow_* of its transform: on, colour, opacity, x, y, blur), or None: it is not
+    switched on (and has no keyframes to), or the clip is a filter, which has no picture of its own."""
+    tf = c.get("transform")
+    if not tf or c.get("type") == "filter":
+        return None
+    on = tf.get("shadow_on")
+    if not on and not curves.is_animated(on):
+        return None
+    return {"id": "~shadow", "filter": SHADOW, "params": {
+        "on": on, "color": tf.get("shadow_color", [0.0, 0.0, 0.0, 1.0]), "opacity": tf.get("shadow_opacity", 0.5),
+        "x": tf.get("shadow_x", 6.0), "y": tf.get("shadow_y", 6.0), "blur": tf.get("shadow_blur", 8.0)}}
+
+
+def visual_effects(c, shadow=False):
+    """The effects that change a clip's picture: on, and not a time effect (stepped()) or 動態模糊. shadow: the clip's 陰影 too,
+    last (as it is drawn: the clip's own drawing, not what a filter clip or 套用至背景 works on)."""
+    out = [e for e in c.get("effects") or () if not e.get("disabled") and e.get("filter") not in PLACE_FILTERS]
+    sh = shadow_effect(c) if shadow else None
+    return out + [sh] if sh else out
 
 
 def active_mask(c):

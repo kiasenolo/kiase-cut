@@ -86,7 +86,11 @@ PARAMS = {
                   ("radius_tl", "圓角 左上", 0.0, 4000.0, 1.0, 1, 1, 0.0),       # 圓角 (project.CORNERS): px of a
                   ("radius_tr", "圓角 右上", 0.0, 4000.0, 1.0, 1, 1, 0.0),       # 1080-high canvas, the clip at scale 1
                   ("radius_bl", "圓角 左下", 0.0, 4000.0, 1.0, 1, 1, 0.0),
-                  ("radius_br", "圓角 右下", 0.0, 4000.0, 1.0, 1, 1, 0.0)),
+                  ("radius_br", "圓角 右下", 0.0, 4000.0, 1.0, 1, 1, 0.0),
+                  ("shadow_opacity", "陰影不透明度 %", 0.0, 100.0, 1.0, 0, 100, 0.5),       # 陰影 (project.shadow_effect): px of a 1080-high canvas
+                  ("shadow_x", "陰影 X px", -500.0, 500.0, 0.5, 1, 1, 6.0),
+                  ("shadow_y", "陰影 Y px", -500.0, 500.0, 0.5, 1, 1, 6.0),
+                  ("shadow_blur", "陰影模糊 px", 0.0, 200.0, 0.5, 1, 1, 8.0)),
     "mask": (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0),
              ("cy", "中心 Y", -5.0, 5.0, 0.01, 3, 1, 0.0),
              ("w", "寬", 0.0, 10.0, 0.01, 3, 1, 1.0),
@@ -104,7 +108,7 @@ HARD = {("text", "size"): (0.0, None), ("text", "italic_deg"): (-89.0, 89.0),
         ("text", "stroke"): (0.0, None),
         ("text", "box_w"): (0.0, None), ("text", "box_h"): (0.0, None),
         ("transform", "scale"): (0.0, None), ("transform", "scale_y"): (0.0, None),
-        ("transform", "opacity"): (0.0, 1.0),
+        ("transform", "opacity"): (0.0, 1.0), ("transform", "shadow_opacity"): (0.0, 1.0), ("transform", "shadow_blur"): (0.0, None),
         ("mask", "w"): (0.0, None), ("mask", "h"): (0.0, None), ("mask", "feather"): (0.0, None),
         ("clip", "volume"): (0.0, None), ("fxmix", "mix"): (0.0, 1.0)}
 
@@ -591,7 +595,7 @@ class Inspector(QWidget):
                 if components.of_clip(c) is not None:
                     self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
-                self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS and r[0] != "path_progress"],
+                self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS and r[0] != "path_progress" and not r[0].startswith("shadow_")],
                            (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("anchor_x", "anchor_y", "錨點"),
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
@@ -599,6 +603,7 @@ class Inspector(QWidget):
                 self._build_path_follow(form, c)
                 if c["type"] in ("image", "video", "compound") and not c.get("asset"):
                     self._build_corners(form)
+                self._build_shadow(form)
                 blend = ComboBox()
                 blend.setPlaceholderText("--")
                 for name, k in ((PASS_THROUGH,) if c["type"] == "group" else ()) + BLEND_NAMES:
@@ -1356,6 +1361,38 @@ class Inspector(QWidget):
         rows = [r for r in PARAMS["transform"] if r[0] in project.CORNERS]
         self._rows(form, "transform", rows, (("radius_tl", "radius_tr", ""), ("radius_bl", "radius_br", "")))
 
+    def _build_shadow(self, form):
+        """陰影: on, colour (see-through too), then 不透明度, X, Y and 模糊 (project.shadow_effect)."""
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        on = QCheckBox("啟用")
+        on.setToolTip("片段後面的陰影：片段自己的樣子（包含透明的地方）模糊、位移、上色")
+        on.clicked.connect(lambda v: self._emit_now(self.paramEdited, "transform", "shadow_on", bool(v)))
+        self.widgets["shadow_on"] = on
+        lay.addWidget(on)
+        lay.addWidget(self._key_button("transform", "shadow_on"))
+        col = QPushButton()
+        col.clicked.connect(lambda _=False: self._pick_shadow_color())
+        self.widgets["shadow_color"] = col
+        lay.addWidget(col, 1)
+        lay.addWidget(self._key_button("transform", "shadow_color"))
+        form.addRow("陰影", row)
+        for r in PARAMS["transform"]:
+            if r[0].startswith("shadow_"):
+                form.addRow(r[1], self._param_row("transform", *r))
+
+    def _pick_shadow_color(self):
+        text = self.widgets["shadow_color"].text()
+        cur = QColor("black") if text == "--" else QColor("#" + text[7:9] + text[1:7]) if len(text) == 9 else QColor(text)
+        ids = list(self.clip_ids)
+        col = pick_color(self, cur, "陰影顏色", alpha=False,
+                         live=lambda c: self.liveEdited.emit(ids, "transform", "shadow_color", rgba(c)[:3]),
+                         cancel=self.liveCancelled.emit, anchor=self.widgets["shadow_color"])
+        if col is not None:
+            self._queue("transform", "shadow_color", [col.redF(), col.greenF(), col.blueF()])
+            self._flush()
+
     def _param_row(self, group, key, _label, lo, hi, step, dec, factor, _default):
         row = QWidget()
         lay = QHBoxLayout(row)
@@ -2049,6 +2086,26 @@ class Inspector(QWidget):
             w["radius_link"].blockSignals(True)
             w["radius_link"].setChecked(all(edit.radius_linked(k["transform"]) for k in clips))
             w["radius_link"].blockSignals(False)
+        if "shadow_on" in w:
+            values = [curves.value(k["transform"].get("shadow_on", False), t) for k, t in zip(clips, ts)]
+            box = w["shadow_on"]
+            box.blockSignals(True)
+            mixed = any(v != values[0] for v in values[1:])
+            box.setTristate(mixed)
+            box.setCheckState(Qt.PartiallyChecked if mixed else Qt.Checked if values[0] else Qt.Unchecked)
+            box.blockSignals(False)
+            self._key_state(w[("key", "transform", "shadow_on")], [k["transform"].get("shadow_on", False) for k in clips], clips, ts)
+            cols = [tuple(int(round(min(1, max(0, v)) * 255)) for v in curves.value(k["transform"].get("shadow_color", [0, 0, 0]), t)[:3])
+                    for k, t in zip(clips, ts)]
+            button = w["shadow_color"]
+            if all(c == cols[0] for c in cols[1:]):
+                r, g, b = cols[0]
+                button.setText(f"#{r:02x}{g:02x}{b:02x}")
+                look.set_sheet(button, f"background: rgb({r},{g},{b}); color: {'#000' if r + g + b > 380 else '#fff'};")
+            else:
+                button.setText("--")
+                look.set_sheet(button, "")
+            self._key_state(w[("key", "transform", "shadow_color")], [k["transform"].get("shadow_color") for k in clips], clips, ts)
         for key in ("flip_h", "flip_v"):
             if key in w:
                 w[key].blockSignals(True)

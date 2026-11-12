@@ -51,7 +51,8 @@ class WavePreview(QWidget):
         ramp = s.get("ramp", 0.0)
         if ramp > 0 and h > 0:                      # (a ramp from slow: its 3 cycles at full speed come after it)
             span = ramp + span
-        return max(span, s.get("fade", 0.0) * 1.5, 0.05)
+        span += s.get("ramp_out", 0.0) + s.get("hold", 0.0)           # (the preview ends where the clip does)
+        return max(span, s.get("fade", 0.0) * 1.5, (s.get("fade_out", 0.0) + s.get("hold", 0.0)) * 1.5, 0.05)
 
     def window(self):
         """(first second, seconds shown)."""
@@ -183,7 +184,7 @@ class WavePreview(QWidget):
             p.drawText(area, Qt.AlignCenter, "（這個 LFO 算不出來）")
             return
         t0, span = self.window()
-        pts = lfo.points(s, span, max(240, min(4000, int(area.width() * 2))), t0)
+        pts = lfo.points(s, span, max(240, min(4000, int(area.width() * 2))), t0, t0 + span)
         ys = [y for _x, y in pts] + [s["offset"]]
         y0, y1 = min(ys), max(ys)
         if y1 - y0 < 1e-9:

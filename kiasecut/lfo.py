@@ -155,9 +155,9 @@ def safe(s, t, cur=0.0, dur=None):
         return cur
 
 
-def points(s, seconds, n=160, start=0.0):
-    """[(t, number)] over `seconds` from `start` (what the dialog's preview draws)."""
-    return [(start + seconds * i / n, safe(s, start + seconds * i / n)) for i in range(n + 1)]
+def points(s, seconds, n=160, start=0.0, dur=None):
+    """[(t, number)] over `seconds` from `start` (what the dialog's preview draws; dur: where the clip ends, for the fade-outs)."""
+    return [(start + seconds * i / n, safe(s, start + seconds * i / n, 0.0, dur)) for i in range(n + 1)]
 
 
 def label(s):

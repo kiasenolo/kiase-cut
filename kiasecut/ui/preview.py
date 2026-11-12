@@ -625,6 +625,7 @@ class Preview(PenMixin, _Surface):
     doubleClicked = Signal()
     textEdited = Signal(str, str)               # text clip id, its words: typed in on the canvas
     sourceTextEdited = Signal(str, str, str, str)   # clip id, effect id, text node id, its words: typed in on the canvas
+    regionChanged = Signal(object)              # (left, top, right, bottom) of what the widget shows, as fractions of the canvas
     renderWidth = Signal(int)                   # width of the canvas on screen, device px
     mediaDropped = Signal(list, list, float, float, str)  # idents, file paths, transform x / y there, group id or ""
     replaceDropped = Signal(str, str)           # media ident, clip it was Alt-dropped on (替換素材)
@@ -647,6 +648,8 @@ class Preview(PenMixin, _Surface):
         self.frame = None                  # a glrender.GpuFrame instead of img while the player keeps frames in the GPU (show_texture)
         self._mgl = None                   # (moderngl, its context of this widget's GL context, the program, the quad, its GL context)
         self.margin = 0.0                  # (the fraction of the canvas that self.img holds on every side of it)
+        self.frame_rect = None             # (left, top, right, bottom) of the part of the canvas the frame holds, as fractions of it, when it is a part (a canvas too big to be drawn whole)
+        self._region = None
         self.W, self.H = 1920, 1080
         self.view = None
         self.t_us = 0
@@ -699,6 +702,7 @@ class Preview(PenMixin, _Surface):
         self.img = img
         self.frame = None
         self.margin = 0.0
+        self.frame_rect = None
         try:
             self.margin = max(0.0, float(img.text("margin") or 0.0)) if img is not None else 0.0
         except ValueError:
@@ -707,12 +711,28 @@ class Preview(PenMixin, _Surface):
             mx, my = round(img.width() * self.margin / (1 + 2 * self.margin)), round(img.height() * self.margin / (1 + 2 * self.margin))
             self.img = img.copy(mx, my, img.width() - 2 * mx, img.height() - 2 * my)
             self.margin = 0.0
+        rect = img.text("rect") if img is not None else ""
+        if rect:                                         # a part of the canvas (the frame is not all of it)
+            try:
+                self.frame_rect = tuple(float(v) for v in rect.strip("()").split(","))
+            except ValueError:
+                self.frame_rect = None
+            else:
+                self.margin = 0.0
+                if not self.interactive:                 # (only the canvas: the part of the frame on it)
+                    x0, y0, x1, y1 = self.frame_rect
+                    c0, d0, c1, d1 = max(x0, 0.0), max(y0, 0.0), min(x1, 1.0), min(y1, 1.0)
+                    sx, sy = img.width() / (x1 - x0), img.height() / (y1 - y0)
+                    if c1 > c0 and d1 > d0:
+                        self.img = img.copy(round((c0 - x0) * sx), round((d0 - y0) * sy), round((c1 - c0) * sx), round((d1 - d0) * sy))
+                        self.frame_rect = (c0, d0, c1, d1)
         self.update()
 
     def show_texture(self, frame):
         """frame: a glrender.GpuFrame, drawn from its texture without a trip through the CPU (image() reads it when it is wanted)."""
         self.frame, self.img, self._frame_img = frame, None, None
         self.margin = frame.margin
+        self.frame_rect = frame.rect
         self.update()
 
     def image(self):
@@ -851,6 +871,14 @@ class Preview(PenMixin, _Surface):
         return box
 
     def _report_size(self):
+        r = self._rect()
+        i = self._ruler_inset()
+        if r.width() > 0 and r.height() > 0:
+            region = tuple(round(v, 4) for v in ((i - r.x()) / r.width(), (i - r.y()) / r.height(),
+                                                 (self.width() - r.x()) / r.width(), (self.height() - r.y()) / r.height()))
+            if region != self._region:
+                self._region = region
+                self.regionChanged.emit(region)
         self.renderWidth.emit(round(self._rect().width() * self.devicePixelRatioF()) if self.isVisible() else 0)
 
     def resizeEvent(self, e):
@@ -1709,7 +1737,16 @@ class Preview(PenMixin, _Surface):
         r = self._rect()
         p.fillRect(r, QColor("black"))
         shown = self.img is not None or self.frame is not None
-        if shown and self.margin:       # (what lies outside the canvas: drawn dimmed)
+        if shown and self.frame_rect:   # (a part of a canvas too big to be drawn whole: where it is, what lies outside the canvas dimmed)
+            x0, y0, x1, y1 = self.frame_rect
+            m = QRectF(r.x() + r.width() * x0, r.y() + r.height() * y0, r.width() * (x1 - x0), r.height() * (y1 - y0))
+            self._draw_picture(p, m)
+            outside = QPainterPath()
+            outside.addRect(m)
+            canvas = QPainterPath()
+            canvas.addRect(r)
+            p.fillPath(outside.subtracted(canvas), QColor(42, 42, 47, 150))
+        elif shown and self.margin:       # (what lies outside the canvas: drawn dimmed)
             m = QRectF(r.x() - r.width() * self.margin, r.y() - r.height() * self.margin,
                        r.width() * (1 + 2 * self.margin), r.height() * (1 + 2 * self.margin))
             self._draw_picture(p, m)

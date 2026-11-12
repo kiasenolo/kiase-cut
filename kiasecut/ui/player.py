@@ -93,6 +93,8 @@ class Worker(QObject):
         self.loop = None            # (first, last) frame: playback stays inside (time selection)
         self.render_w = PREVIEW_W   # width in px the frames are drawn at (the preview's own size)
         self.quality = None         # a fraction of the project's width the frames are drawn at (1, 1/2, 1/4), None: the preview's size
+        self.big = False            # the last frame was drawn by part (set_region)
+        self.region = None          # the part of the canvas the preview shows (left, top, right, bottom: fractions of it): drawn alone when the canvas is too big to be drawn whole
         self.overflow = 0.0         # the fraction of the canvas drawn round it too (what lies outside the canvas)
         self.t0 = 0.0               # playback clock: when the first picture was due
         self.shown_n = self.audio_n = 0     # pictures shown / sound frames queued since playing began
@@ -147,6 +149,17 @@ class Worker(QObject):
                 return
             self.quality = q
             if not self.playing and self.view is not None and self.want is None:
+                self.want = self.pos
+                self.cv.notify()
+
+    def set_region(self, region):
+        """The part of the canvas the preview shows now, (left, top, right, bottom) as fractions of the canvas (they may reach past it).
+        Only a canvas too big for the card's textures is drawn by part; a stopped picture is redrawn at once then."""
+        with self.cv:
+            if region == self.region:
+                return
+            self.region = region
+            if self.big and not self.playing and self.view is not None and self.want is None:
                 self.want = self.pos
                 self.cv.notify()
 
@@ -365,19 +378,30 @@ class Worker(QObject):
             limit = int(self.renderer.gl.ctx.info["GL_MAX_TEXTURE_SIZE"])       # (a picture wider than the card's textures cannot be drawn: a compound of another, huge, size)
         except Exception:
             limit = 0
+        region = None
+        self.big = False
         if limit > 0 and max(w, h) * (1 + 2 * margin) > limit:
-            k = limit / (max(w, h) * (1 + 2 * margin))
-            w, h = max(2, int(w * k)), max(2, int(h * k))
+            self.big = True
+            r = self.region
+            if r:                                        # only what the preview shows, a little more round it, at the size asked for
+                pad = 0.04 * max(r[2] - r[0], r[3] - r[1])
+                region = (max(r[0] - pad, -margin), max(r[1] - pad, -margin), min(r[2] + pad, 1 + margin), min(r[3] + pad, 1 + margin))
+                if region[2] <= region[0] or region[3] <= region[1]:
+                    region = None
+            span = max((region[2] - region[0]) * w, (region[3] - region[1]) * h) if region else max(w, h) * (1 + 2 * margin)
+            if span > limit:                             # (a view too big for one frame: the whole is drawn smaller)
+                k = limit / span
+                w, h = max(2, int(w * k)), max(2, int(h * k))
         shown = img = None
         with gpu.ui_lock:                                # (the layer list renders thumbnails on the UI thread: never both at once)
             if sharedgl.ENABLED and getattr(getattr(self.renderer, "gl", None), "shared", False):
                 try:
-                    shown = self.renderer.render_gpu(v, pos, w, h, margin)
+                    shown = self.renderer.render_gpu(v, pos, w, h, margin, region)
                 except Exception as exc:                 # (no way to show textures here: pictures from now on)
                     sharedgl.ENABLED = False
                     self.failed.emit(f"預覽直接用 GPU 貼圖失敗，改用一般方式：{exc}")
             if shown is None:
-                img = self.renderer.render(v, pos, w, h, margin=margin) if margin else self.renderer.render(v, pos, w, h)
+                img = self.renderer.render(v, pos, w, h, margin=margin, region=region) if margin or region else self.renderer.render(v, pos, w, h)
         if shown is not None:
             self.textureReady.emit(shown, pos)
         else:

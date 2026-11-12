@@ -120,6 +120,17 @@ class Mips:
 MAX_VECTOR_PX = 4096                  # longest side of the picture a vector node is drawn into
 
 
+def frame_geometry(width, height, margin=0.0, region=None):
+    """(w, h of the frame in px, where the canvas's top left is in it, rect): a canvas drawn width x height with margin (a
+    fraction of it more on every side) or only the part region (left, top, right, bottom: fractions of the canvas); rect is the
+    frame's own corners as fractions of the canvas."""
+    if region:
+        x0, y0, x1, y1 = region
+        return (max(1, round((x1 - x0) * width)), max(1, round((y1 - y0) * height)), -x0 * width, -y0 * height, tuple(region))
+    mx, my = round(width * margin), round(height * margin)
+    return width + 2 * mx, height + 2 * my, mx, my, (-margin, -margin, 1 + margin, 1 + margin)
+
+
 class Renderer:
     def __init__(self, video_frame=None, cache_limit=600):
         """video_frame(path, source_us, w, h) -> QImage or None, for video clips."""
@@ -522,17 +533,21 @@ class Renderer:
         p.restore()
 
     # -- frames -----------------------------------------------------------------------------------
-    def render(self, view, frame, width, height, alpha=False, margin=0.0):
+    def render(self, view, frame, width, height, alpha=False, margin=0.0, region=None):
         """RGB frame `frame` of a project-like view, drawn at width x height; on a transparent
         background instead of black with alpha (transparent exports). margin: the picture is
         given that fraction of width / height more on every side, the canvas in the middle
-        (what lies outside the canvas, for the preview)."""
-        mx, my = round(width * margin), round(height * margin)
-        img = QImage(width + 2 * mx, height + 2 * my, QImage.Format_ARGB32_Premultiplied)
+        (what lies outside the canvas, for the preview). region: (left, top, right, bottom) as fractions of the canvas
+        (0 - 1 is the canvas): only that part is drawn, at the canvas's width x height scale (a canvas too big to be drawn
+        whole; its text "rect" says where it is)."""
+        full_w, full_h, tx, ty, rect = frame_geometry(width, height, margin, region)
+        img = QImage(full_w, full_h, QImage.Format_ARGB32_Premultiplied)
+        if region:
+            img.setText("rect", repr(rect))
         img.fill(Qt.transparent if alpha else QColor("black"))
         p = QPainter(img)
         p.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-        p.translate(mx, my)
+        p.translate(tx, ty)
         p.scale(width / view["width"], height / view["height"])
         self.begin(view)
         self.names = rack.values(view, frame / view["fps"] * US)

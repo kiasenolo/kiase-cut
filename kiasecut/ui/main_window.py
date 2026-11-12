@@ -393,6 +393,7 @@ class MainWindow(QMainWindow):
             "文字", [cid], eid, lambda lvl, c, e: edit.set_effect_text(lvl, c, e, nid, words)))
         self.render_w = {"main": 0, "full": 0, "nodes": 0}       # width each view shows frames at; the player draws the largest
         self.preview.renderWidth.connect(lambda w: self.set_render_width("main", w))
+        self.preview.regionChanged.connect(lambda r: self.player.worker.set_region(r) if hasattr(self, "player") else None)
         self.preview.mediaDropped.connect(self.preview_drop)
         self.preview.replaceDropped.connect(self.replace_source)
 
@@ -1001,6 +1002,7 @@ class MainWindow(QMainWindow):
         self.player.worker.set_volume(self.vol_slider.value() / 100)     # (the 預覽音量 as it was left)
         self.player.worker.set_overflow(OVERFLOW if self.overflow_btn.isChecked() else 0.0)       # (the 畫布外 button as it was left)
         self.player.worker.set_quality(self.quality_box.currentData())
+        self.player.worker.set_region(self.preview._region)
         w = self.player.worker
         w.frameReady.connect(self.on_frame)
         w.textureReady.connect(self.on_texture)

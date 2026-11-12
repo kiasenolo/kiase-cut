@@ -128,6 +128,17 @@ class GpuMatchesCpu(unittest.TestCase):
             n = lambda v: int((np.abs(pixels(r.render(copy.deepcopy(v), 0, W, H)) - pixels(r.render(copy.deepcopy(plain), 0, W, H))).max(axis=2) > 20).sum())
             self.assertGreater(n(wide), n(view) + 300)
 
+    def test_a_region_is_the_same_part_of_the_whole_picture(self):
+        view = self.view([self.bg(transform=tf(x=0.2, scale=0.8, rotation=15))], [self.top(transform=tf(scale=0.5, x=-0.3))])
+        region = (0.25, 0.1, 0.75, 0.6)
+        for name, r in (("cpu", self.cpu), ("gpu", self.gpu)):
+            whole = r.render(copy.deepcopy(view), 0, W, H)
+            part = r.render(copy.deepcopy(view), 0, W, H, region=region)
+            self.assertEqual((part.width(), part.height()), (round(0.5 * W), round(0.5 * H)), name)
+            self.assertEqual(part.text("rect"), repr(region), name)
+            crop = whole.copy(round(0.25 * W), round(0.1 * H), part.width(), part.height())
+            self.assertLessEqual(float(np.abs(pixels(crop) - pixels(part)).mean()), 1.0, name)
+
     def test_a_margin_draws_what_is_outside_the_canvas_round_it(self):
         view = self.view([self.bg(transform=tf(x=0.3, scale=1.4))])                  # (runs over the canvas on the right and the top and bottom)
         for name, r in (("cpu", self.cpu), ("gpu", self.gpu)):

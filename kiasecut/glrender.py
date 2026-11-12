@@ -459,10 +459,11 @@ class GL:
 class GpuFrame:
     """A frame left in a texture of the GPU compositor's context (render_gpu): the preview draws it from there.
     glo: the texture's name (valid in any context of Qt's share group), w x h: its size, margin: as the text "margin" of a QImage frame."""
-    __slots__ = ("layer", "glo", "w", "h", "margin")
+    __slots__ = ("layer", "glo", "w", "h", "margin", "rect")
 
-    def __init__(self, layer, w, h, margin):
+    def __init__(self, layer, w, h, margin, rect=None):
         self.layer, self.glo, self.w, self.h, self.margin = layer, layer.tex.glo, w, h, margin
+        self.rect = rect                          # the part of the canvas drawn (render.frame_geometry), when it is not the canvas and its margin
 
 
 SHOWN = 4                             # frames kept out of the layer pool: the preview may still be drawing one of the last few
@@ -478,14 +479,14 @@ class GLRenderer(render.Renderer):
         self.gl_stills = {}            # still key -> Layer (static compounds)
         self.graph_cache = nodegraph.Cache(GRAPH_CACHE_BYTES)
 
-    def render(self, view, frame, width, height, alpha=False, margin=0.0):
+    def render(self, view, frame, width, height, alpha=False, margin=0.0, region=None):
         """RGBA frame `frame` of a project-like view, drawn at width x height (RGBA8888); on a
         transparent background instead of black with alpha (premultiplied RGBA8888 then).
         margin: the picture is given that fraction of width / height more on every side, the
-        canvas in the middle (what lies outside the canvas, for the preview)."""
+        canvas in the middle (what lies outside the canvas, for the preview). region: only that part of the canvas
+        (left, top, right, bottom as fractions of it), at the same scale (render.frame_geometry)."""
         gl = self.gl
-        mx, my = round(width * margin), round(height * margin)
-        full_w, full_h = width + 2 * mx, height + 2 * my
+        full_w, full_h, tx, ty, _rect = render.frame_geometry(width, height, margin, region)
         with gl.ctx:                    # (another renderer's filters may have made theirs current)
             gl.new_frame()
             self.graph_cache.frame()
@@ -493,7 +494,7 @@ class GLRenderer(render.Renderer):
             self.begin(view)
             self.names = rack.values(view, frame / view["fps"] * US)
             try:
-                base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(mx, my)
+                base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(tx, ty)
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
                                frame / view["fps"] * US, width / view["width"])
                 gpusync.finish(gl.ctx)                # (the read below holds the GIL while it waits for the GPU: wait here without it)
@@ -501,14 +502,16 @@ class GLRenderer(render.Renderer):
             finally:
                 gl.release(tgt)
         fmt = QImage.Format_RGBA8888_Premultiplied if alpha else QImage.Format_RGBA8888
-        return QImage(data, full_w, full_h, full_w * 4, fmt).copy()
+        img = QImage(data, full_w, full_h, full_w * 4, fmt).copy()
+        if region:
+            img.setText("rect", repr(_rect))
+        return img
 
-    def render_gpu(self, view, frame, width, height, margin=0.0):
+    def render_gpu(self, view, frame, width, height, margin=0.0, region=None):
         """render() (on black) without the read back: a GpuFrame of the texture the picture was drawn in (the renderer must be
         shared: GL(shared=True)). The texture stays out of the layer pool until SHOWN newer frames have been made."""
         gl = self.gl
-        mx, my = round(width * margin), round(height * margin)
-        full_w, full_h = width + 2 * mx, height + 2 * my
+        full_w, full_h, tx, ty, rect = render.frame_geometry(width, height, margin, region)
         with gl.ctx:
             gl.new_frame()
             self.graph_cache.frame()
@@ -516,14 +519,14 @@ class GLRenderer(render.Renderer):
             self.begin(view)
             self.names = rack.values(view, frame / view["fps"] * US)
             try:
-                base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(mx, my)
+                base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(tx, ty)
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
                                frame / view["fps"] * US, width / view["width"])
                 gpusync.finish(gl.ctx)                # (what the preview's context draws from must be complete)
             except BaseException:
                 gl.release(tgt)
                 raise
-        out = GpuFrame(tgt, full_w, full_h, margin)
+        out = GpuFrame(tgt, full_w, full_h, margin, rect if region else None)
         self.shown.append(out)
         while len(self.shown) > SHOWN:
             gl.release(self.shown.pop(0).layer)

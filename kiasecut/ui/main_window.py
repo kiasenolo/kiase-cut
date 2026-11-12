@@ -1151,6 +1151,7 @@ class MainWindow(QMainWindow):
         add(m, "cubic-bezier 編輯器", None, lambda: self.open_tool("bezier"))
         add(m, "調色盤", None, lambda: self.open_tool("palette"))
         add(m, "全局參數架", None, self.open_rack)
+        add(m, "批量裁切圖片", None, lambda: self.open_tool("batchcrop"))
         m = keyed(self.menuBar().addMenu("視窗(&W)"))
         self.layout_menu = m.addMenu("佈局")
         self.layout_menu.aboutToShow.connect(self._fill_layout_menu)
@@ -1762,12 +1763,13 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("已把目前的畫面設為專案縮圖", 4000)
 
     def open_tool(self, kind):
-        """工具: the cubic-bezier editor or the palette, in a window of its own (one of each)."""
+        """工具: the cubic-bezier editor, the palette or the batch cropper, in a window of its own (one of each)."""
         tools = self.__dict__.setdefault("_tools", {})
         w = tools.get(kind)
         if w is None:
+            from .batchcrop import BatchCropTool
             from .tools import BezierTool, PaletteTool
-            w = tools[kind] = (BezierTool if kind == "bezier" else PaletteTool)(self.app_root)
+            w = tools[kind] = {"bezier": BezierTool, "palette": PaletteTool, "batchcrop": BatchCropTool}[kind](self.app_root)
         else:
             w.fill()
         if sys.platform == "android" or os.environ.get("KIASECUT_TOOL_COVER"):      # (fullscreen: over the window, not a window of its own)

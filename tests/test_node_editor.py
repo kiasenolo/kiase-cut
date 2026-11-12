@@ -1452,6 +1452,25 @@ class NodeEditorTests(unittest.TestCase):
         menus[0].actions()[0].trigger()
         self.assertEqual(got, [(ed.eid, nid, "/m/a.png")])
 
+    def test_a_compound_node_has_a_read_time_tick(self):
+        ed = self.make()
+        kid = ng.add_node(ed.graph, {"type": ng.SOURCE, "kind": "compound"}, 0, 300)
+        pic = ng.add_node(ed.graph, {"type": ng.SOURCE, "kind": "image"}, 0, 100)
+        ed.sources[kid] = {"kind": "compound"}
+        ed.sources[pic] = {"kind": "image"}
+        ed.rebuild()
+        self.assertEqual([r["label"] for r in ed.view.items_by_id[kid].rows if r["kind"] == "live"], ["讀取時間"])
+        self.assertEqual([r for r in ed.view.items_by_id[pic].rows if r["kind"] == "live"], [])
+        got = []
+        ed.liveToggled.connect(lambda *a: got.append(a))
+        item = ed.view.items_by_id[kid]
+        ed.field_clicked(item, next(r for r in item.rows if r["kind"] == "live"), 0, QPoint(0, 0))
+        self.assertEqual(got, [(ed.eid, kid, True)])
+        ed.sources[kid]["static_live"] = True
+        ed.view.grab()                                                              # (it paints, ticked)
+        ed.field_clicked(item, next(r for r in item.rows if r["kind"] == "live"), 0, QPoint(0, 0))
+        self.assertEqual(got[-1], (ed.eid, kid, False))
+
     def test_shape_ratio_field_is_its_own(self):
         ed = self.make()
         nid = ng.add_node(ed.graph, {"type": ng.SOURCE, "kind": "shape", "asset": {"key": "ring", "family": "ellipse"}}, 0, 100)

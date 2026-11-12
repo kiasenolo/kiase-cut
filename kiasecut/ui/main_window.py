@@ -524,6 +524,8 @@ class MainWindow(QMainWindow):
         nd.placeEdited.connect(lambda eid, nid, key, v: self.node_clip() and self.on_fx_param_edited(
             [self.node_clip()], f"fxsrc:{eid}:{nid}", key, v))
         nd.mediaChosen.connect(lambda eid, nid, value: self.node_clip() and self.on_fx_source_media([self.node_clip()], eid, nid, value))
+        nd.liveToggled.connect(lambda eid, nid, on: self.node_clip() and self.fx_each(
+            "讀取時間", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_source_live(lvl, cid, e, nid, on)))
         nd.shapeEdited.connect(lambda eid, nid, shape, col: self.node_clip() and self.fx_each(
             "形狀", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_shape(lvl, cid, e, nid, shape, col)))
         nd.textEdited.connect(lambda eid, nid, content, font: self.node_clip() and self.fx_each(

@@ -277,6 +277,8 @@ class NodeItem(QGraphicsItem):
             add("shapecolor", "顏色")
         elif node["type"] == ng.SOURCE and node.get("kind") in MEDIA_LABELS:     # (which picture / video / compound / track: in the node)
             add("media", MEDIA_LABELS[node["kind"]])
+            if node["kind"] == "compound":                                     # (a static one drawn afresh at the time it is read: the effects inside that read the time move)
+                add("live", "讀取時間")
         if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.VIEWER, ng.PARAMS, ng.GROUP, "groupin", "groupout"):
             for name, _label in self.shown_outputs():
                 add("thumb", "", p=name, h=THUMB_H)
@@ -423,7 +425,7 @@ class NodeItem(QGraphicsItem):
             return not (r["socket"] and r["socket"] in self.linked) and r["p"].type not in ("curve", "gradient")
         if r["kind"] in ("text", "font"):
             return r["socket"] not in self.linked                 # (a string / font node's value replaces the box)
-        return r["kind"] in ("shape", "shapecolor", "plot", "string", "fontvalue", "media")
+        return r["kind"] in ("shape", "shapecolor", "plot", "string", "fontvalue", "media", "live")
 
     def field_at(self, pos):
         """(row, cell) of the field under pos (item coordinates), or the panel header row, else None."""
@@ -531,6 +533,15 @@ class NodeItem(QGraphicsItem):
             p.drawText(box.adjusted(6, 0, -14, 0), Qt.AlignVCenter | Qt.AlignLeft,
                        dict(ng.SHAPES).get(vals.shape, vals.shape))
             p.drawText(box.adjusted(0, 0, -4, 0), Qt.AlignVCenter | Qt.AlignRight, "▾")
+            return
+        if kind == "live":
+            box = QRectF(self.w - 10 - ROW + 4, r["y"] + 4, ROW - 8, ROW - 8)
+            hot = self._hover is not None and box.contains(self._hover)
+            opt = QStyleOptionButton()
+            opt.rect = box.toAlignedRect()
+            on = bool((self.editor.sources.get(self.nid) or {}).get("static_live"))
+            opt.state = QStyle.State_Enabled | (QStyle.State_On if on else QStyle.State_Off) | (QStyle.State_MouseOver if hot else QStyle.State_None)
+            motion.paint_indicator(p, opt, None, False)
             return
         if kind == "media":
             box = self.field_rect(r)
@@ -2248,6 +2259,7 @@ class NodeEditor(QWidget):
     paramLive = Signal(str, str, str, object)               # effect id, group ("fx:<id>" / "fxsrc:<id>:<node>"), key, value: still being changed
     placeEdited = Signal(str, str, str, object)             # effect id, node id, where it sits (cx / cy / w / h / rotation), value
     mediaChosen = Signal(str, str, str)                     # effect id, picture / video / compound / track node, file or id ("": browse)
+    liveToggled = Signal(str, str, bool)                    # effect id, compound node, 讀取時間 on or off
     shapeEdited = Signal(str, str, object, object)          # effect id, shape node, shape id or None, colour or None
     stringEdited = Signal(str, str, str)                    # effect id, string node, its new words
     fontEdited = Signal(str, str, str)                      # effect id, font node, its new font file
@@ -2720,6 +2732,9 @@ class NodeEditor(QWidget):
             for sid, name in ng.SHAPES:
                 menu.addAction(name, lambda sid=sid: self.shapeEdited.emit(self.eid, nid, sid, None))
             self.popup(menu, gp)
+            return
+        if kind == "live":
+            self.liveToggled.emit(self.eid, nid, not bool((self.sources.get(nid) or {}).get("static_live")))
             return
         if kind == "media":
             node_kind = self.graph["nodes"][nid]["kind"]

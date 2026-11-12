@@ -3307,6 +3307,20 @@ def set_effect_source_media(proj, clip_id, effect_id, param, image=None, video=N
     return src
 
 
+def set_effect_source_live(proj, clip_id, effect_id, param, on):
+    """讀取時間 of a compound node: a static compound it shows is drawn afresh at its own time (the effects inside that read the
+    time move), not as a still."""
+    _, c = find(proj, clip_id)
+    src = _source(c, f"fxsrc:{effect_id}:{param}")
+    if src["kind"] != "compound":
+        raise EditError("只有複合片段能讀取時間")
+    if on:
+        src["static_live"] = True
+    else:
+        src.pop("static_live", None)
+    return src
+
+
 def set_effect_source_offset(proj, clip_id, effect_id, param, t_off):
     """編輯區域 of a video's or a compound's colour source: its time at the clip's start (us)."""
     _, c = find(proj, clip_id)

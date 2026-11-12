@@ -445,7 +445,12 @@ class Renderer:
         if kind != "compound":
             return None
         kid = mask.get("compound_id")
-        return None if kid in self._matting else self.compounds.get(kid)
+        comp = None if kid in self._matting else self.compounds.get(kid)
+        if comp is not None and comp.get("static") and mask.get("static_live"):          # 讀取時間: drawn afresh at its own time, as a compound
+            at = int(max(0, t + mask.get("t_off", 0)))
+            comp = dict(comp, static=False, duration_us=max(comp.get("duration_us") or 0, at + US),
+                        tracks=components._stretch(comp["tracks"], at + curves.US))
+        return comp
 
     def clip_mask(self, c, t):
         """The mask that cuts clip c now (None: none, off, or a picture mask without its picture)."""

@@ -1231,8 +1231,8 @@ class MainWindow(QMainWindow):
                         ("End", lambda: self.seek(self.length - 1)), ("Ctrl+Shift+Z", self.do_redo)):
             a = QAction(self)
             a.setShortcut(QKeySequence(key))
-            a.setShortcutContext(Qt.ApplicationShortcut if key == "Ctrl+Shift+Z" else Qt.WindowShortcut)
-            a.triggered.connect(fn if key != "Ctrl+Shift+Z" else lambda *_a, fn=fn: QApplication.activeModalWidget() is None and fn())
+            a.setShortcutContext(Qt.ApplicationShortcut if key in ("Ctrl+Shift+Z", "Space") else Qt.WindowShortcut)
+            a.triggered.connect(fn if key not in ("Ctrl+Shift+Z", "Space") else lambda *_a, fn=fn: QApplication.activeModalWidget() is None and fn())
             self.addAction(a)
         appevents.watch(self, (QEvent.ShortcutOverride,), self.eventFilter)
         appevents.watch(self, (QEvent.ShortcutOverride,), self._global_undo_keys, first=True)

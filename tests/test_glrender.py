@@ -241,6 +241,16 @@ class GpuMatchesCpu(unittest.TestCase):
         self.assertLessEqual(float(np.abs(pixels(self.gpu.render(copy.deepcopy(turn), 30, W, H))
                                           - pixels(self.gpu.render(copy.deepcopy(turn), 0, W, H))).mean()), 1.0)
 
+    def test_a_static_strip_is_drawn_at_the_size_it_is_shown_up_to_the_cards_textures(self):
+        if int(self.gpu.gl.ctx.info["GL_MAX_TEXTURE_SIZE"]) < 16384:
+            self.skipTest("small textures here")
+        comp = {"name": "s", "width": 15360, "height": 1080, "static": True, "duration_us": 2 * S,
+                "tracks": [{"id": "i0", "kind": "video", "name": "v", "clips": [self.bg()]}]}
+        with self.gpu.gl.ctx:
+            lay = self.gpu.gl_still(comp, 1.0, 30)
+            size = (lay.w, lay.h)
+        self.assertEqual(size, (15360, 1080))                    # (it was cut down to 4096 wide and blown up again)
+
     def test_compounds(self):
         self.check("compound", self.view([self.top()], [self.compound()]))
         self.check("static", self.view([self.top()], [self.compound(static=True)]))

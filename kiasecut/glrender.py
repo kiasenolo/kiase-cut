@@ -912,14 +912,20 @@ class GLRenderer(render.Renderer):
     def gl_still(self, comp, k, fps):
         """A static compound's picture as a layer (drawn once, kept while unchanged)."""
         cw, ch = comp["width"], comp["height"]
-        k = min(quantize(k), self.STILL_MAX_PX / max(cw, ch))
+        try:
+            side = max(self.STILL_MAX_PX, int(self.gl.ctx.info["GL_MAX_TEXTURE_SIZE"]))
+        except Exception:
+            side = self.STILL_MAX_PX
+        # (the long side up to what the card's textures take - a strip 15360 px wide was drawn at 4096 and blown up again - but no more
+        # pixels than a 4096 x 4096 picture and a half: a long strip of a normal height, not a huge one)
+        k = min(quantize(k), side / max(cw, ch), math.sqrt(1.5 * self.STILL_MAX_PX ** 2 / (cw * ch)))
         key = (json.dumps(comp["tracks"], sort_keys=True, default=str), cw, ch, round(k, 4))
         lay = self.gl_stills.pop(key, None)
         if lay is None:
             lay = Layer(self.gl, max(1, math.ceil(cw * k)), max(1, math.ceil(ch * k)))
             lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
             self.gl_tracks(lay, QTransform.fromScale(k, k), comp["tracks"], cw, ch, fps, 0, k)
-            while len(self.gl_stills) >= 24:
+            while self.gl_stills and (len(self.gl_stills) >= 24 or sum(v.bytes for v in self.gl_stills.values()) + lay.bytes > TEX_CACHE_BYTES):
                 self.gl_stills.pop(next(iter(self.gl_stills))).release()
         self.gl_stills[key] = lay
         return lay

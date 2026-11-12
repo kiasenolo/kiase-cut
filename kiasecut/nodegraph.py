@@ -353,7 +353,9 @@ def gives_vector(node, source=None):
     if is_asset(node) or is_text(node):
         return True
     if node.get("type") == SOURCE and node.get("kind") == "image":
-        return source is None or str(source.get("image", "")).lower().endswith(".svg") or not source.get("image")
+        if source is None:
+            return bool(node.get("svg"))
+        return str(source.get("image", "")).lower().endswith(".svg") or (not source.get("image") and bool(node.get("svg")))
     return False
 
 
@@ -1131,8 +1133,7 @@ def connect(graph, src, dst, socket, out=None):
     else:
         if out not in [o for o, _ in outputs(nodes[src])]:
             out = outputs(nodes[src])[0][0]
-        if is_vecop(nodes[dst]) and socket in vecop_sockets(nodes[dst]) and not gives_vector(nodes[src]) \
-                and not (nodes[dst].get("op") == "rasterize" and nodes[src].get("type") == SOURCE and nodes[src].get("kind") == "image"):
+        if is_vecop(nodes[dst]) and socket in vecop_sockets(nodes[dst]) and not gives_vector(nodes[src]):
             raise GraphError("矢量節點只能接形狀、文字、SVG 圖片或別的矢量節點")
         if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst]) or is_vecop(nodes[dst])) and \
                 p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + (VECTOR_TYPES if is_vecop(nodes[dst]) else ()):

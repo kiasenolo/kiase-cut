@@ -549,6 +549,7 @@ class GraphPanelTests(unittest.TestCase):
         m = edit.add_graph_node(p, "c1", e["id"], {"type": "filter", "ref": "builtin:nodes/mix"}, 0, 0)
         s = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "image"}, -100, 0)
         sh = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "shape", "shape": "star"})
+        name = ng.add_exposed(e["graph"], e["params"], "float", "透明度")
         panel = EffectsPanel()
         opened = []
         panel.nodesRequested.connect(opened.append)
@@ -559,7 +560,8 @@ class GraphPanelTests(unittest.TestCase):
         self.assertEqual(box.currentData(), "star")
         box.activated.emit(box.findData("heart"))
         self.assertEqual(picked[-1][1:], (e["id"], sh, "heart", None))
-        self.assertIn(("fx:" + e["id"], m + ".fac"), panel.widgets)
+        self.assertIn(("fx:" + e["id"], ng.expose_key(name)), panel.widgets)
+        self.assertNotIn(("fx:" + e["id"], m + ".fac"), panel.widgets)
         self.assertIn(("source_media", "fx:" + e["id"], s), panel.widgets)
         edit.set_param(p, "c1", "fx:" + e["id"], m + ".fac", 0.25)
         panel.show_clips([edit.find(p, "c1")[1]], 0, 30)

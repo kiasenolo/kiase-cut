@@ -372,6 +372,8 @@ class NodeItem(QGraphicsItem):
                 return type_color(r["p"]["type"])
         if t == ng.FILTER:
             return type_color(fx.for_node(self.node).socket_type("out", out))
+        if ng.is_vecop(self.node) and self.node.get("op") == "rasterize":
+            return SOCKET_COLORS["image"]
         if ng.is_asset(self.node) or ng.is_text(self.node) or ng.is_vecop(self.node) or (t == ng.SOURCE and self.node.get("kind") == "image"):
             return SOCKET_COLORS["outline"]
         return SOCKET_COLORS["image"]

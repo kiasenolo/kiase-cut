@@ -294,6 +294,17 @@ class Renderer:
             k = min(sw / box.width(), sh / box.height())
             fit = QTransform().scale(k, k).translate(-box.center().x(), -box.center().y())      # (the picture keeps its proportions in its frame)
             return [l.mapped(QTransform(fit.m11(), fit.m12(), fit.m21(), fit.m22(), fit.dx(), fit.dy()) * local) for l in layers]
+        if node.get("type") == nodegraph.SOURCE and node.get("kind") == "image" and src.get("image"):      # (a plain picture, into a 柵格化: a rectangle painted with it)
+            size = QImage(src["image"]).size()
+            if size.isEmpty():
+                return []
+            sw, sh = max(v("w", 1.0) * disp[0], 1.0), max(v("h", 1.0) * disp[1], 1.0)
+            k = min(sw / size.width(), sh / size.height())
+            sw, sh = size.width() * k, size.height() * k
+            path = QPainterPath()
+            path.addRect(QRectF(-sw / 2, -sh / 2, sw, sh))
+            brush = vector.paint_of({"fill_type": "image", "fill_image": src["image"]}, "fill", sw, sh)
+            return [vector.Layer(path, brush).mapped(local)]
         return []
 
     def vector_source(self, e, nid, src, t, disp, unit=1.0, fps=30.0):

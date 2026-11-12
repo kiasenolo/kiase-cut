@@ -235,6 +235,29 @@ class VectorRenderTests(RenderBase):
             edit.connect_graph(p, "c1", e["id"], ras, add, "v1")
         edit.connect_graph(p, "c1", e["id"], ras, "output", "src")
 
+    def test_a_rasterize_node_takes_a_plain_picture_too(self):
+        d = tempfile.mkdtemp()
+        try:
+            f = os.path.join(d, "w.png")
+            im = vector.QImage(8, 8, vector.QImage.Format_ARGB32)
+            im.fill(vector.QColor(255, 255, 255))
+            im.save(f)
+            p = proj()
+            e = edit.add_effect(p, "c1", fx.GRAPH)
+            pic = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "image"})
+            e["sources"][pic]["image"] = f
+            ras = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "vector", "op": "rasterize"})
+            edit.connect_graph(p, "c1", e["id"], pic, ras, "v1")
+            edit.connect_graph(p, "c1", e["id"], ras, "output", "src")
+            view = self.s.view()
+            view["tracks"][0]["clips"][0]["effects"] = [e]
+            for r in self.renderers:
+                img = r.render(view, 0, W, H)
+                self.assertEqual(r.errors, [], type(r).__name__)
+                self.assertEqual(rgb(img, W // 2, H // 2), WHITE, type(r).__name__)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_move_and_scale_a_vector(self):
         view, eff, node = self.single("move", offset=[720.0, 0.0])           # (canvas px: the 1920 px canvas is 64 px here)
         for r in self.renderers:

@@ -268,6 +268,7 @@ GUIDES = {
 </table>
 <h3>常用快速鍵</h3>
 <p>下面是最常用的。選單裡每個指令旁邊也標著它的鍵，找不到時看那裡。</p>
+<p>Ctrl+S、Ctrl+Z／Ctrl+Y（Ctrl+Shift+Z）、F（全螢幕預覽）、F1 在程式的任何地方都有效，包括浮動的面板和全螢幕預覽；只有欄位裡正在打的字有自己的復原時，Ctrl+Z 才先給那個欄位。</p>
 <table border="1" cellspacing="0" cellpadding="4">
 <tr><th>類別</th><th>鍵</th><th>做什麼</th></tr>
 <tr><td rowspan="5">檔案</td><td>Ctrl+N／Ctrl+O</td><td>新專案／開啟專案</td></tr>

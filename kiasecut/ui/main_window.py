@@ -244,6 +244,7 @@ def static_label(comp):
 class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread
     shaderCompile = Signal(str, bool)          # (filter name, finished): a node's shader is being compiled (by the player's thread)
+    GLOBAL_KEYS = ("儲存專案", "復原", "重做", "全螢幕預覽", "KiaseCut 說明（Wiki）")     # menu items whose keys work everywhere in the program
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
                     ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動", ("transform", "radius_link"): "圓角關聯", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
@@ -1059,7 +1060,11 @@ class MainWindow(QMainWindow):
             a = QAction(text, self)
             if key:                                      # (a tuple: more than one key does it)
                 a.setShortcuts([QKeySequence(k) for k in ((key,) if isinstance(key, str) else key)])
-            a.triggered.connect(fn)
+            if text in self.GLOBAL_KEYS:                 # 全域: from any window of the program (a floating panel, the fullscreen preview) and any widget
+                a.setShortcutContext(Qt.ApplicationShortcut)
+                a.triggered.connect(lambda *_a, fn=fn: QApplication.activeModalWidget() is None and fn())
+            else:
+                a.triggered.connect(fn)
             menu.addAction(a)
 
         self.menuBar().setNativeMenuBar(False)           # (before the corner is set: a native bar shows none)
@@ -1226,10 +1231,11 @@ class MainWindow(QMainWindow):
                         ("End", lambda: self.seek(self.length - 1)), ("Ctrl+Shift+Z", self.do_redo)):
             a = QAction(self)
             a.setShortcut(QKeySequence(key))
-            a.setShortcutContext(Qt.WindowShortcut)
-            a.triggered.connect(fn)
+            a.setShortcutContext(Qt.ApplicationShortcut if key == "Ctrl+Shift+Z" else Qt.WindowShortcut)
+            a.triggered.connect(fn if key != "Ctrl+Shift+Z" else lambda *_a, fn=fn: QApplication.activeModalWidget() is None and fn())
             self.addAction(a)
         appevents.watch(self, (QEvent.ShortcutOverride,), self.eventFilter)
+        appevents.watch(self, (QEvent.ShortcutOverride,), self._global_undo_keys, first=True)
         appevents.watch(self, (QEvent.Enter,), self._hover_focus)
 
     def _hover_focus(self, obj, e):
@@ -1241,6 +1247,24 @@ class MainWindow(QMainWindow):
                     and not (isinstance(w, QComboBox) and w.isEditable()):
                 obj.setFocus(Qt.MouseFocusReason)
         return False
+
+    def _global_undo_keys(self, obj, e):
+        """復原 / 重做 are global: a field takes Ctrl+Z / Ctrl+Y only while it has something of its own to undo / redo (the words being
+        typed in it); otherwise - a number box that was just set, a list, a button, another window - they are the project's."""
+        key, mods = e.key(), e.modifiers()
+        if not mods & Qt.ControlModifier or key not in (Qt.Key_Z, Qt.Key_Y) or QApplication.activeModalWidget() is not None:
+            return False
+        w = QApplication.focusWidget()
+        if isinstance(w, QAbstractSpinBox):
+            w = w.lineEdit()
+        redo = key == Qt.Key_Y or bool(mods & Qt.ShiftModifier)
+        if isinstance(w, QLineEdit):
+            own = w.isRedoAvailable() if redo else w.isUndoAvailable()
+        elif isinstance(w, (QPlainTextEdit, QTextEdit)):
+            own = w.document().isRedoAvailable() if redo else w.document().isUndoAvailable()
+        else:
+            return False
+        return not own           # (taken, not accepted: the key goes on to the shortcut)
 
     def eventFilter(self, obj, e):
         # ↑ / ↓ (剪輯點) stay with a focused widget that steps with them: a number field, a

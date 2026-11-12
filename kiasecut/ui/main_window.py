@@ -3733,7 +3733,8 @@ class MainWindow(QMainWindow):
         if getattr(self, "_thumb_renderer", None) is None:     # (one for all: its pictures are decoded once)
             self._thumb_renderer = render.Renderer(self._thumb_video)
         try:
-            img = self._thumb_renderer.render(view, at / US * self.proj["fps"], w, h, alpha=True)
+            with gpu.ui_lock:
+                img = self._thumb_renderer.render(view, at / US * self.proj["fps"], w, h, alpha=True)
         except Exception:
             return None
         finally:

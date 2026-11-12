@@ -16,6 +16,7 @@ enabled = True                       # the user's switch (設定 > GPU 加速)
 HEAVY_CODECS = {"hevc", "h265", "av1", "vp9"}
 NVENC_MAX = 4096                     # NVENC's largest H.264 picture side
 _lock = threading.Lock()
+ui_lock = threading.RLock()          # the preview's render thread and the UI thread's own renders (layer thumbnails) take turns on the card
 _found = {}                          # job -> bool, tested once per run
 
 

@@ -361,17 +361,19 @@ class Worker(QObject):
         h = max(2, round(w * v["height"] / v["width"]))
         self.asked = []
         margin = self.overflow
-        shown = None
-        if sharedgl.ENABLED and getattr(getattr(self.renderer, "gl", None), "shared", False):
-            try:
-                shown = self.renderer.render_gpu(v, pos, w, h, margin)
-            except Exception as exc:                     # (no way to show textures here: pictures from now on)
-                sharedgl.ENABLED = False
-                self.failed.emit(f"預覽直接用 GPU 貼圖失敗，改用一般方式：{exc}")
+        shown = img = None
+        with gpu.ui_lock:                                # (the layer list renders thumbnails on the UI thread: never both at once)
+            if sharedgl.ENABLED and getattr(getattr(self.renderer, "gl", None), "shared", False):
+                try:
+                    shown = self.renderer.render_gpu(v, pos, w, h, margin)
+                except Exception as exc:                 # (no way to show textures here: pictures from now on)
+                    sharedgl.ENABLED = False
+                    self.failed.emit(f"預覽直接用 GPU 貼圖失敗，改用一般方式：{exc}")
+            if shown is None:
+                img = self.renderer.render(v, pos, w, h, margin=margin) if margin else self.renderer.render(v, pos, w, h)
         if shown is not None:
             self.textureReady.emit(shown, pos)
         else:
-            img = self.renderer.render(v, pos, w, h, margin=margin) if margin else self.renderer.render(v, pos, w, h)
             img.setText("margin", repr(margin))              # (the preview needs to know where the canvas is in it)
             self.frameReady.emit(img, pos)
         if self.renderer.thumbs:

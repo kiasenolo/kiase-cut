@@ -2,30 +2,43 @@
 cycle it starts, how long it takes to swing fully, how long the speed takes to grow from slow, repeating or mirrored - with a picture of the number over the first
 few cycles. The wave can be a cubic-bezier or a curve of any number of points, drawn over one cycle."""
 import copy
+import time
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
                                QLabel, QSpinBox, QVBoxLayout, QWidget)
 
 from .. import lfo, mapping
 from . import mapdialog
+from . import inertia, viewglide, wheel
 from .curvefield import CurveField
 from .mapdialog import spin
 from .tools import BezierField
+from .wrapdrag import WrapDrag
 
 
 class WavePreview(QWidget):
-    """The number over time: seconds across, the number up; the dashed line is the offset. The wheel zooms the time
-    (about the pointer), a drag moves along it, a double click goes back to the first few cycles."""
+    """The number over time: seconds across, the number up; the dashed line is the offset. The time moves and zooms as the
+    timeline's does (the same inertia settings): the wheel scrolls it, Ctrl + wheel, a pinch or Ctrl + the middle button zooms it
+    about the pointer, the middle (or left) button drags it with a little glide after; a double click goes back to the first few cycles."""
+    MIN_SPAN, MAX_SPAN = 0.01, 36000.0
+    WHEEL_CHANNEL = {"dx": "timeline_scroll", "zoom": "timeline_zoom"}      # (inertia.py: the timeline's settings)
 
     def __init__(self):
         super().__init__()
         self.s = lfo.make()
-        self.view = None                    # (first second, seconds shown) once zoomed or moved, else the first few cycles
+        self.view = None                    # (first second, last second) once zoomed or moved, else the first few cycles
         self.drag = None
+        self._wheel_queue = {}
+        self._wheel_x = 0.0
+        self._wheel_last = 0.0
+        self._wheel_timer = QTimer(self, interval=8)
+        self._wheel_timer.timeout.connect(self._wheel_step)
+        self.glide = viewglide.ViewGlide(self, self._glide_pan)
+        self.wrap = WrapDrag(self, lambda: QRectF(0, 0, self.width(), self.height()), axes="x")
         self.setMinimumSize(320, 190)
-        self.setToolTip("滾輪縮放時間（以滑鼠位置為中心），拖曳左右移動，按兩下回到預設")
+        self.setToolTip("滾輪左右移動時間，Ctrl + 滾輪（或 Ctrl + 中鍵拖曳）縮放，中鍵拖曳移動，按兩下回到預設")
 
     def set_spec(self, s):
         self.s = s
@@ -41,35 +54,120 @@ class WavePreview(QWidget):
         return max(span, s.get("fade", 0.0) * 1.5, 0.05)
 
     def window(self):
-        return self.view or (0.0, self.auto_seconds())
+        """(first second, seconds shown)."""
+        if self.view is None:
+            return 0.0, self.auto_seconds()
+        return self.view[0], self.view[1] - self.view[0]
 
     def area(self):
         return QRectF(46, 10, self.width() - 58, self.height() - 34)
 
-    def wheelEvent(self, e):
+    def _set_view(self, t0, span):
+        span = min(max(span, self.MIN_SPAN), self.MAX_SPAN)
+        t0 = max(0.0, t0)
+        self.view = (t0, t0 + span)
+        self.update()
+
+    def pan(self, dt):
+        t0, span = self.window()
+        self._set_view(t0 + dt, span)
+
+    def zoom(self, f, x):
+        """Zoom time by f (below 1: in) about the pixel x."""
         t0, span = self.window()
         area = self.area()
-        f = min(1.0, max(0.0, (e.position().x() - area.left()) / max(1.0, area.width())))
-        new = min(max(span * (0.8 if e.angleDelta().y() > 0 else 1.25), 0.01), 36000.0)
-        t0 = max(0.0, t0 + (span - new) * f)
-        self.view = (t0, new)
-        self.update()
+        k = min(1.0, max(0.0, (x - area.left()) / max(1.0, area.width())))
+        new = min(max(span * f, self.MIN_SPAN), self.MAX_SPAN)
+        self._set_view(t0 + (span - new) * k, new)
+
+    def _glide_pan(self, dx, _dy):
+        self.pan(-dx / max(1.0, self.area().width()) * self.window()[1])
+
+    def wheelEvent(self, e):
+        """As the timeline's wheel: a notch scrolls a tenth of the view, Ctrl + a notch zooms 1.25 times about the pointer; the
+        motion is queued and let out as the glide setting says (a touchpad's own motion is applied as it comes)."""
+        if e.modifiers() & Qt.ControlModifier:
+            part = {"zoom": wheel.notch(e)}
+            self._wheel_x = e.position().x()
+        else:
+            dx, dy = wheel.pixels(e, self.width() / 10, self.width() / 10)
+            part = {"dx": -(dx if abs(dx) > abs(dy) else dy)}
+        glide = {k: v for k, v in part.items() if not wheel.touchpad(e) and inertia.percent(self.WHEEL_CHANNEL[k])}
+        self._wheel_apply({k: v for k, v in part.items() if k not in glide})
+        if glide:
+            for k, v in glide.items():
+                self._wheel_queue[k] = self._wheel_queue.get(k, 0.0) + v
+            if not self._wheel_timer.isActive():
+                self._wheel_last = time.monotonic()
+                self._wheel_timer.start()
         e.accept()
 
+    def _wheel_step(self):
+        now = time.monotonic()
+        dt = (now - self._wheel_last) * 1000.0
+        self._wheel_last = now
+        part = {}
+        for key, left in list(self._wheel_queue.items()):
+            k = 1.0 - 0.5 ** (dt / max(inertia.half_life_ms(self.WHEEL_CHANNEL[key]), 1.0))
+            small = 0.5 if key == "dx" else 0.01
+            take = left if abs(left) * (1 - k) < small else left * k
+            part[key] = take
+            if take == left:
+                del self._wheel_queue[key]
+            else:
+                self._wheel_queue[key] = left - take
+        if not self._wheel_queue:
+            self._wheel_timer.stop()
+        self._wheel_apply(part)
+
+    def _wheel_apply(self, part):
+        if "zoom" in part:
+            self.zoom(1.25 ** -part["zoom"], self._wheel_x)
+        if "dx" in part:
+            self.pan(part["dx"] / max(1.0, self.area().width()) * self.window()[1])
+
+    def event(self, e):
+        f = wheel.pinch(e)
+        if f is not None:
+            self.zoom(1 / f, e.position().x())
+            return True
+        return super().event(e)
+
     def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton:
-            self.drag = (e.position().x(), *self.window())
+        self.glide.stop()
+        if e.button() in (Qt.MiddleButton, Qt.LeftButton):
+            t0, span = self.window()
+            zoom = e.button() == Qt.MiddleButton and bool(e.modifiers() & Qt.ControlModifier)
+            self.drag = {"kind": "zoom" if zoom else "pan", "x0": e.position().x(), "t0": t0, "span": span, "x": e.position().x()}
 
     def mouseMoveEvent(self, e):
-        if self.drag is not None:
-            x0, t0, span = self.drag
-            self.view = (max(0.0, t0 - (e.position().x() - x0) / max(1.0, self.area().width()) * span), span)
-            self.update()
+        d = self.drag
+        if d is None:
+            return
+        if not d.get("wrap"):
+            d["wrap"] = True
+            self.wrap.start()
+        x = self.wrap.pos(e).x()
+        area = self.area()
+        if d["kind"] == "pan":
+            self._set_view(d["t0"] - (x - d["x0"]) / max(1.0, area.width()) * d["span"], d["span"])
+            self.glide.sample(x, 0.0)
+        else:                                                # about the press; right: in
+            k = min(1.0, max(0.0, (d["x"] - area.left()) / max(1.0, area.width())))
+            at = d["t0"] + d["span"] * k
+            span = min(max(d["span"] * 2 ** (-(x - d["x0"]) / 200), self.MIN_SPAN), self.MAX_SPAN)
+            self._set_view(at - span * k, span)
 
     def mouseReleaseEvent(self, _e):
-        self.drag = None
+        d, self.drag = self.drag, None
+        if d is not None:
+            self.wrap.stop()
+            if d["kind"] == "pan":
+                self.glide.release()
 
     def mouseDoubleClickEvent(self, _e):
+        self.glide.stop()
+        self._wheel_queue.clear()
         self.view = None
         self.update()
 

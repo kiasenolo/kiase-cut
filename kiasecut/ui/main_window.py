@@ -3161,7 +3161,7 @@ class MainWindow(QMainWindow):
         elif group.startswith("fx:"):
             label = "效果控制點"
         else:
-            label = "翻轉" if "flip_h" in values or "flip_v" in values else \
+            label = "隨機變形" if {"x", "rotation", "scale_y"} <= values.keys() else "翻轉" if "flip_h" in values or "flip_v" in values else \
                 "旋轉" if "rotation" in values else "縮放" if "scale" in values else \
                 "中心點" if "pivot_x" in values else "錨點" if "anchor_x" in values else "移動位置"
 

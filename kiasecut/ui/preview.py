@@ -105,6 +105,7 @@ it; Esc or the right button puts it back. X / Y keep a G to one way; a typed num
 import json
 import math
 import os
+import random
 import sys
 import types
 
@@ -1025,6 +1026,8 @@ class Preview(PenMixin, _Surface):
             return lambda: self._grab_begin(grab)
         if k == Qt.Key_B and shift and not ctrl:
             return self._arm_box_zoom
+        if k == Qt.Key_R and shift and not ctrl and not pad and mods & Qt.AltModifier and self._can_nudge():
+            return self.randomize
         if k in (Qt.Key_H, Qt.Key_V) and shift and not ctrl and not pad and not mods & Qt.AltModifier and self._can_nudge():
             return lambda: self.flip("flip_h" if k == Qt.Key_H else "flip_v")
         step = {Qt.Key_Left: (-1, 0), Qt.Key_Right: (1, 0), Qt.Key_Up: (0, -1), Qt.Key_Down: (0, 1)}.get(k)
@@ -1344,6 +1347,15 @@ class Preview(PenMixin, _Surface):
         on = not (boxes[0].flip[0] < 0 if key == "flip_h" else boxes[0].flip[1] < 0)
         for b in boxes:
             self.paramsCommitted.emit(b.clip["id"], "transform", {key: on})
+
+    def randomize(self):
+        """Alt+Shift+R: every selected clip is moved, turned and stretched a random bit from where it is (one edit each)."""
+        for b in self._nudge_boxes():
+            r = random.uniform
+            self.paramsCommitted.emit(b.clip["id"], "transform", {
+                "x": round(b.x_at(b.cx + r(-0.15, 0.15) * b.W), 5), "y": round(b.y_at(b.cy + r(-0.15, 0.15) * b.H), 5),
+                "rotation": round(b.deg + r(-20, 20), 3),
+                "scale": round(b.s * r(0.75, 1.3), 4), "scale_y": round(b.sy * r(0.75, 1.3), 4)})
 
     def nudge_moves(self, dx, dy):
         """{clip id: {x, y}} of the selected clips moved by dx, dy canvas pixels (y down)."""

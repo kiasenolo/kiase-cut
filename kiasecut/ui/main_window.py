@@ -3161,7 +3161,7 @@ class MainWindow(QMainWindow):
         elif group.startswith("fx:"):
             label = "效果控制點"
         else:
-            label = "隨機變形" if {"x", "rotation", "scale_y"} <= values.keys() else "翻轉" if "flip_h" in values or "flip_v" in values else \
+            label = "翻轉" if "flip_h" in values or "flip_v" in values else \
                 "旋轉" if "rotation" in values else "縮放" if "scale" in values else \
                 "中心點" if "pivot_x" in values else "錨點" if "anchor_x" in values else "移動位置"
 
@@ -3240,7 +3240,7 @@ class MainWindow(QMainWindow):
                 for key, v in vals.items():
                     edit.set_param(level, cid, "transform", key, v, times[cid])
 
-        self.apply("移動位置", set_all)
+        self.apply("隨機變形" if any("rotation" in v for v in moves.values()) else "移動位置", set_all)
 
     def pick_in_group(self, c):
         """A clip inside a group picked on the canvas: its groups open on the timeline, it is selected."""

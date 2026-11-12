@@ -105,7 +105,6 @@ it; Esc or the right button puts it back. X / Y keep a G to one way; a typed num
 import json
 import math
 import os
-import random
 import sys
 import types
 
@@ -115,7 +114,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QInput
                                QWidget)
 
 from .. import components, curves, edit, fonts, gizmos, nodegraph, project, render, sharedgl, textlayout, textvars
-from . import appevents, touch, viewglide, wheel
+from . import appevents, randomdialog, touch, viewglide, wheel
 from .pentool import PenMixin
 from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
@@ -1349,13 +1348,14 @@ class Preview(PenMixin, _Surface):
             self.paramsCommitted.emit(b.clip["id"], "transform", {key: on})
 
     def randomize(self):
-        """Alt+Shift+R: every selected clip is moved, turned and stretched a random bit from where it is (one edit each)."""
-        for b in self._nudge_boxes():
-            r = random.uniform
-            self.paramsCommitted.emit(b.clip["id"], "transform", {
-                "x": round(b.x_at(b.cx + r(-0.15, 0.15) * b.W), 5), "y": round(b.y_at(b.cy + r(-0.15, 0.15) * b.H), 5),
-                "rotation": round(b.deg + r(-20, 20), 3),
-                "scale": round(b.s * r(0.75, 1.3), 4), "scale_y": round(b.sy * r(0.75, 1.3), 4)})
+        """Alt+Shift+R: the 隨機變形 window - the selected clips move, turn and stretch at random by its numbers and seed,
+        shown live; OK is one edit."""
+        boxes = self._nudge_boxes()
+        if not boxes:
+            return
+        dlg = randomdialog.RandomDialog(self.window(), boxes, self.movesLive.emit, self.movesCommitted.emit, self.grabCancelled.emit)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.open()
 
     def nudge_moves(self, dx, dy):
         """{clip id: {x, y}} of the selected clips moved by dx, dy canvas pixels (y down)."""

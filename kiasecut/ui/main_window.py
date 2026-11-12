@@ -335,6 +335,8 @@ class MainWindow(QMainWindow):
         self.compounds.renameRequested.connect(self.rename_compound)
         self.compounds.timelineRequested.connect(self.switch_timeline)
         self.compounds.deleteRequested.connect(self.delete_compound_item)
+        self.compounds.newFolderRequested.connect(self.new_compound_folder)
+        self.compounds.moveRequested.connect(self.move_compound_item)
         self.compounds.useDeleteRequested.connect(self.delete_use)
         self.compounds.createRequested.connect(self.create_from_panel)
         self.compounds.componentRequested.connect(self.component_kind)
@@ -2666,6 +2668,9 @@ class MainWindow(QMainWindow):
         if kid.startswith("tl"):
             self.timeline_do("delete", kid)
             return
+        if kid.startswith("cf"):
+            self.apply_root("刪除資料夾", edit.delete_compound_folder, kid)
+            return
         n = len(project.compound_uses(self.proj).get(kid, []))
         name = self.proj["compounds"][kid].get("name") or "複合片段"
         msg = f"刪除「{name}」？" + (f"\n時間軸上有 {n} 個片段在使用它，會一起刪除。" if n else "")
@@ -4585,9 +4590,24 @@ class MainWindow(QMainWindow):
                         lambda root: edit.place_compound(root, self.container(root), kid, track_id or None, start_us),
                         select=lambda c: c["id"])
 
+    def new_compound_folder(self, parent):
+        if not self.proj:
+            return
+        name, ok = QInputDialog.getText(self, "新資料夾", "名稱", text="新資料夾")
+        if ok:
+            self.apply_root("新資料夾", edit.add_compound_folder, name, parent)
+
+    def move_compound_item(self, ident, folder):
+        self.apply_root("移到資料夾", edit.move_to_compound_folder, ident, folder)
+
     def rename_compound(self, kid):
         if kid.startswith("tl"):                                    # a timeline row
             self.timeline_do("rename", kid)
+            return
+        if kid.startswith("cf"):
+            name, ok = inplace.ask_name(self, edit.compound_folder(self.proj, kid)["name"])
+            if ok:
+                self.apply_root("重新命名資料夾", edit.rename_compound_folder, kid, name)
             return
         comp = self.proj["compounds"][kid]
         name, ok = inplace.ask_name(self, comp.get("name") or "")

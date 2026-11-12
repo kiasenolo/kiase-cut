@@ -211,5 +211,45 @@ class ToStaticTests(unittest.TestCase):
         self.assertEqual(got, [kid])
 
 
+class FolderTests(unittest.TestCase):
+    def test_folders_hold_compounds_and_folders(self):
+        p = proj()
+        a, b = edit.add_compound(p), edit.add_compound(p)
+        outer = edit.add_compound_folder(p, "外")
+        inner = edit.add_compound_folder(p, "內", outer)
+        edit.move_to_compound_folder(p, a, inner)
+        panel = CompoundPanel()
+        panel.set_project(p)
+        tops = [panel.tree.topLevelItem(i).data(0, 0x0100) for i in range(panel.tree.topLevelItemCount())]
+        self.assertEqual([d for d in tops if d[0] == "folder"], [("folder", outer)])
+        self.assertIn(("def", b), tops)                                      # (b is outside every folder)
+        self.assertNotIn(("def", a), tops)
+        folder_row = panel.tree.topLevelItem(next(i for i, d in enumerate(tops) if d[0] == "folder"))
+        self.assertEqual(folder_row.child(0).data(0, 0x0100), ("folder", inner))
+        self.assertEqual(folder_row.child(0).child(0).data(0, 0x0100), ("def", a))
+        with self.assertRaises(edit.EditError):                               # not into itself
+            edit.move_to_compound_folder(p, outer, inner)
+        edit.rename_compound_folder(p, inner, "新名")
+        edit.delete_compound_folder(p, inner)                                 # a moves up into 外
+        self.assertEqual(p["compounds"][a]["folder"], outer)
+        edit.delete_compound_folder(p, outer)
+        self.assertNotIn("folder", p["compounds"][a])
+        self.assertNotIn("compound_folders", p)
+
+    def test_menu_and_drop(self):
+        p = proj()
+        a = edit.add_compound(p)
+        f = edit.add_compound_folder(p, "夾")
+        panel = CompoundPanel()
+        panel.set_project(p)
+        got = []
+        panel.moveRequested.connect(lambda i, to: got.append((i, to)))
+        menu = QMenu()
+        panel._item_actions(menu, ("def", a))
+        sub = next(x for x in menu.actions() if x.text() == "移到資料夾").menu()
+        next(x for x in sub.actions() if "夾" in x.text()).trigger()
+        self.assertEqual(got, [(a, f)])
+
+
 if __name__ == "__main__":
     unittest.main()

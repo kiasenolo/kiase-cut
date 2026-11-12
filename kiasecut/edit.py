@@ -4045,6 +4045,78 @@ def rename_compound(root, compound_id, name):
     comp["name"] = name
 
 
+# -- the compound list's folders (root["compound_folders"]: [{id, name, parent}]; a compound's "folder" is a folder id) ------------
+def compound_folder(root, folder_id):
+    for f in root.get("compound_folders") or []:
+        if f["id"] == folder_id:
+            return f
+    raise EditError("folder not found")
+
+
+def compound_folder_below(root, folder_id):
+    """Folder ids inside folder_id, itself included."""
+    out, todo = set(), [folder_id]
+    while todo:
+        f = todo.pop()
+        out.add(f)
+        todo += [g["id"] for g in root.get("compound_folders") or [] if g.get("parent") == f]
+    return out
+
+
+def add_compound_folder(root, name, parent=None):
+    """A new folder in the compound list (inside folder `parent`, else at the top). Returns its id."""
+    if parent:
+        compound_folder(root, parent)
+    ids = {f["id"] for f in root.get("compound_folders") or []}
+    n = 1
+    while f"cf{n}" in ids:
+        n += 1
+    root.setdefault("compound_folders", []).append(
+        {"id": f"cf{n}", "name": str(name).strip() or "新資料夾", "parent": parent or None})
+    return f"cf{n}"
+
+
+def rename_compound_folder(root, folder_id, name):
+    name = str(name).strip()
+    if not name:
+        raise EditError("name is empty")
+    compound_folder(root, folder_id)["name"] = name
+
+
+def move_to_compound_folder(root, ident, folder_id=None):
+    """Compound (or folder) `ident` into folder `folder_id` (None: the top of the list)."""
+    if folder_id:
+        compound_folder(root, folder_id)
+    if ident.startswith("cf"):
+        if folder_id and folder_id in compound_folder_below(root, ident):
+            raise EditError("a folder cannot go into itself")
+        compound_folder(root, ident)["parent"] = folder_id or None
+    else:
+        comp = root["compounds"][ident]
+        if folder_id:
+            comp["folder"] = folder_id
+        else:
+            comp.pop("folder", None)
+
+
+def delete_compound_folder(root, folder_id):
+    """The folder goes; what it holds moves up into its own folder."""
+    f = compound_folder(root, folder_id)
+    up = f.get("parent")
+    for g in root["compound_folders"]:
+        if g.get("parent") == folder_id:
+            g["parent"] = up
+    for comp in root.get("compounds", {}).values():
+        if comp.get("folder") == folder_id:
+            if up:
+                comp["folder"] = up
+            else:
+                comp.pop("folder", None)
+    root["compound_folders"] = [g for g in root["compound_folders"] if g["id"] != folder_id]
+    if not root["compound_folders"]:
+        root.pop("compound_folders")
+
+
 def delete_compound(root, compound_id, force=False):
     """Remove a shared compound; with force also every clip that shows it (anywhere)."""
     uses = project.compound_uses(root).get(compound_id) or []

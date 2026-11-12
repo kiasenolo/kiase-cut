@@ -17,8 +17,11 @@ double-click a use to open it there. Double-click a compound that no clip shows 
 show it) or a timeline, or to delete one use, and anywhere in
 the list to add a timeline, a compound or a static compound (createRequested: "timeline" /
 "compound" / "static" / "component" / "static_component"; a new compound starts empty and opens by itself).
+Compounds can be kept in folders (新資料夾, newFolderRequested; root["compound_folders"], edit.add_compound_folder): drag a compound
+or a folder onto a folder (or a gap, for the top) to move it there (moveRequested), or pick 移到資料夾. A folder is renamed and
+deleted like a compound (its contents move up). The timelines stay on top, outside the folders.
 """
-from PySide6.QtCore import QMimeData, Qt, Signal
+from PySide6.QtCore import QEvent, QMimeData, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem,
                                QVBoxLayout, QWidget)
 
@@ -31,6 +34,7 @@ from .viewmode import TreeView
 
 US = 1_000_000
 PREFIX = "cmp:"                # in the media drag format: "cmp:<compound id>"
+FOLDER_MIME = "application/x-kiasecut-compound-folder"      # (folder ids dragged inside the list)
 
 
 def stamp(us):
@@ -39,19 +43,62 @@ def stamp(us):
 
 
 class CompoundTree(QTreeWidget):
+    moved = Signal(str, object)      # compound or folder id, target folder id or None (the top)
+
     def __init__(self):
         super().__init__()
         self.setHeaderLabels(["複合片段", "位置", "長度"])
         self.setColumnWidth(0, 160)
         self.setColumnWidth(1, 64)
         self.setDragEnabled(True)
-        self.setDragDropMode(QAbstractItemView.DragOnly)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)
+        self.setDragDropMode(QAbstractItemView.DragDrop)
+
+    def mimeTypes(self):
+        return [MIME, FOLDER_MIME]
 
     def mimeData(self, items):
-        ids = [it.data(0, Qt.UserRole)[1] for it in items if it.data(0, Qt.UserRole)[0] == "def"]
+        ids = [it.data(0, Qt.UserRole)[1] for it in items if it.data(0, Qt.UserRole)[0] == "def" and not it.data(0, Qt.UserRole)[1].startswith("tl")]
+        folders = [it.data(0, Qt.UserRole)[1] for it in items if it.data(0, Qt.UserRole)[0] == "folder"]
         md = QMimeData()
         md.setData(MIME, ",".join(PREFIX + k for k in ids).encode())
+        if folders:
+            md.setData(FOLDER_MIME, ",".join(folders).encode())
         return md
+
+    def _folder_at(self, pos):
+        """The folder a drop at pos lands in: the one under it, the one a compound under it is in, else the top."""
+        it = self.itemAt(pos)
+        while it is not None:
+            d = it.data(0, Qt.UserRole)
+            if d[0] == "folder":
+                return d[1]
+            if d[0] == "def" and not d[1].startswith("tl"):
+                it = it.parent()
+                continue
+            return None
+        return None
+
+    def dragEnterEvent(self, e):
+        e.acceptProposedAction() if e.source() is self else e.ignore()
+
+    def dragMoveEvent(self, e):
+        e.acceptProposedAction() if e.source() is self else e.ignore()
+
+    def dropEvent(self, e):
+        """The model decides; the list is made again from it afterwards."""
+        if e.source() is not self:
+            e.ignore()
+            return
+        folder = self._folder_at(e.position().toPoint())
+        md = e.mimeData()
+        ids = [x[len(PREFIX):] for x in bytes(md.data(MIME)).decode().split(",") if x.startswith(PREFIX)]
+        ids += bytes(md.data(FOLDER_MIME)).decode().split(",") if md.hasFormat(FOLDER_MIME) else []
+        for ident in ids:
+            if ident and ident != folder:
+                self.moved.emit(ident, folder)
+        e.ignore()
 
 
 class CompoundPanel(QWidget):
@@ -69,6 +116,8 @@ class CompoundPanel(QWidget):
     libraryRequested = Signal(str)               # compound id: save it in the user's Library
     cloneRequested = Signal(str)                 # compound or timeline id: a copy of it of its own
     thumbnailRequested = Signal(str)             # compound id (_thumbnail): 套用縮圖
+    newFolderRequested = Signal(object)          # parent folder id or None: a new folder
+    moveRequested = Signal(str, object)          # compound or folder id, folder id or None (the top)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -76,12 +125,13 @@ class CompoundPanel(QWidget):
         self.tree.itemClicked.connect(self._clicked)
         DuplicateKey(self.tree, self.clone_current)
         self.tree.itemDoubleClicked.connect(self._double)
+        self.tree.moved.connect(self.moveRequested)
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
         self.empty = QLabel("這個專案沒有複合片段")
         self.empty.setAlignment(Qt.AlignCenter)
         self.empty.setStyleSheet("color: #777;")
-        self.view = TreeView("compounds", self.tree, folder=lambda it: False, menu=self._menu_for,
+        self.view = TreeView("compounds", self.tree, folder=lambda it: it.data(0, Qt.UserRole)[0] == "folder", menu=self._menu_for,
                              open_item=lambda it: self._double(it, 0))
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -116,7 +166,8 @@ class CompoundPanel(QWidget):
             return None
         holders = [(t["id"], t) for t in proj.get("timelines", [])] + list(proj.get("compounds", {}).items())
         return (tuple(open_path), proj.get("active_timeline"),
-                tuple((kid, h.get("name"), bool(h.get("static")), components.is_component(h), h.get("duration_us"),
+                tuple((f["id"], f.get("name"), f.get("parent")) for f in proj.get("compound_folders") or []),
+                tuple((kid, h.get("name"), h.get("folder"), bool(h.get("static")), components.is_component(h), h.get("duration_us"),
                        tuple((c["id"], c.get("name"), c["start_us"], c["duration_us"], project.ref_of(c))
                              for t in project.all_tracks(h["tracks"]) for c in t["clips"] if project.ref_of(c)))
                       for kid, h in holders))
@@ -144,6 +195,8 @@ class CompoundPanel(QWidget):
                     open_ids.add(project.ref_of(c))
         timelines = [(t["id"], t) for t in proj.get("timelines", [])] if proj else []
         rows = timelines + sorted(comps.items(), key=lambda kv: kv[1].get("name") or "")
+        folders = self._folder_items(proj, expanded)
+        top = []                                            # (the timelines, the folders, then the compounds outside them)
         for kid, comp in rows:
             uses = self.uses.get(kid, [])
             is_tl = kid.startswith("tl")
@@ -178,15 +231,55 @@ class CompoundPanel(QWidget):
                 sub.setToolTip(0, f"{where}：按一下選取，按兩下進入編輯")
                 sub.setFlags(sub.flags() & ~Qt.ItemIsDragEnabled)
                 it.addChild(sub)
-            self.tree.addTopLevelItem(it)
+            home = folders.get(comp.get("folder")) if not is_tl else None
+            (home.addChild if home is not None else top.append)(it)
             if kid in expanded or kid in open_ids:
                 it.setExpanded(True)
+                p = it.parent()
+                while p is not None:                         # (the compound being edited is not hidden in a folder)
+                    p.setExpanded(True)
+                    p = p.parent()
+        roots = [it for it in folders.values() if it.parent() is None]
+        tls = [it for it in top if it.data(0, Qt.UserRole)[1].startswith("tl")]
+        for it in tls + roots + [it for it in top if it not in tls]:
+            self.tree.addTopLevelItem(it)
         self.tree.setVisible(bool(rows))
         self.empty.setVisible(not rows)
 
+    def _folder_items(self, proj, expanded):
+        """{folder id: item}, each inside its parent folder (a folder whose parent is gone, or loops, is at the top); the
+        folders in a folder are listed before its compounds."""
+        out = {}
+        for f in sorted((proj or {}).get("compound_folders") or [], key=lambda f: f.get("name") or ""):
+            it = QTreeWidgetItem(["📁 " + (f.get("name") or "資料夾"), "", ""])
+            it.setData(0, Qt.UserRole, ("folder", f["id"]))
+            it.setToolTip(0, "資料夾：把複合片段拖進來整理；按兩下展開")
+            it.setFlags(it.flags() | Qt.ItemIsDragEnabled)
+            if f["id"] in expanded:
+                it.setExpanded(True)
+            out[f["id"]] = it
+        for f in (proj or {}).get("compound_folders") or []:
+            parent = out.get(f.get("parent"))
+            if parent is not None and f["id"] not in self._ancestors(proj, f.get("parent")):     # (not into its own inside: a loop)
+                parent.addChild(out[f["id"]])
+        return out
+
+    @staticmethod
+    def _ancestors(proj, fid):
+        up, seen = {g["id"]: g.get("parent") for g in proj.get("compound_folders") or []}, set()
+        while fid in up and fid not in seen:
+            seen.add(fid)
+            fid = up[fid]
+        return seen
+
     def _items(self):
-        for i in range(self.tree.topLevelItemCount()):
-            yield self.tree.topLevelItem(i)
+        """The compounds' and folders' rows (not the uses under them), folders' insides too."""
+        todo = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while todo:
+            it = todo.pop()
+            yield it
+            if it.data(0, Qt.UserRole)[0] == "folder":
+                todo += [it.child(i) for i in range(it.childCount())]
 
     def _clicked(self, it, _col):
         d = it.data(0, Qt.UserRole)
@@ -195,7 +288,9 @@ class CompoundPanel(QWidget):
 
     def _double(self, it, _col):
         d = it.data(0, Qt.UserRole)
-        if d[0] == "use":
+        if d[0] == "folder":
+            it.setExpanded(not it.isExpanded())
+        elif d[0] == "use":
             self.openRequested.emit(d[3], list(d[2]) + [d[1]])
         elif d[1].startswith("tl"):
             self.timelineRequested.emit(d[1])
@@ -209,7 +304,7 @@ class CompoundPanel(QWidget):
         """Shift+D: a copy of the current compound or timeline of its own."""
         it = self.tree.currentItem()
         d = it.data(0, Qt.UserRole) if it is not None and it.isSelected() else None
-        if d and d[0] != "use":
+        if d and d[0] not in ("use", "folder"):
             self.cloneRequested.emit(d[1])
 
     def rename_current(self):
@@ -227,10 +322,13 @@ class CompoundPanel(QWidget):
 
     def _menu_for(self, it, at):
         menu = Menu(self)
+        d = it.data(0, Qt.UserRole) if it is not None else None
         if it is not None:
-            self._item_actions(menu, it.data(0, Qt.UserRole), it)
+            self._item_actions(menu, d, it)
             menu.addSeparator()
         self._create_actions(menu)
+        here = d[1] if d and d[0] == "folder" else self.tree._folder_at(self.tree.viewport().mapFromGlobal(at)) if d else None
+        menu.addAction("新資料夾", lambda: self.newFolderRequested.emit(here))
         menu.exec(at)
 
     def _create_actions(self, menu):
@@ -244,8 +342,31 @@ class CompoundPanel(QWidget):
             a.setToolTip(tip)
         menu.setToolTipsVisible(True)
 
+    def _move_menu(self, menu, ident):
+        """移到資料夾 ▸ the top and every folder (a folder not into itself)."""
+        sub = menu.addMenu("移到資料夾")
+        folders = (self.proj or {}).get("compound_folders") or []
+        banned = edit.compound_folder_below(self.proj, ident) if ident.startswith("cf") else set()
+        by_parent = {}
+        for f in sorted(folders, key=lambda f: f.get("name") or ""):
+            by_parent.setdefault(f.get("parent"), []).append(f)
+        sub.addAction("（最外層）", lambda: self.moveRequested.emit(ident, None))
+
+        def walk(parent, depth, seen):
+            for f in by_parent.get(parent, []):
+                if f["id"] in seen:
+                    continue
+                a = sub.addAction("　" * depth + "📁 " + (f.get("name") or "資料夾"), lambda fid=f["id"]: self.moveRequested.emit(ident, fid))
+                a.setEnabled(f["id"] not in banned)
+                walk(f["id"], depth + 1, seen | {f["id"]})
+        walk(None, 0, set())
+
     def _item_actions(self, menu, d, it=None):
-        if d[0] == "use":
+        if d[0] == "folder":
+            menu.addAction("重新命名…", lambda: (inplace.item_hint(self.tree, it), self.renameRequested.emit(d[1])))
+            self._move_menu(menu, d[1])
+            menu.addAction("刪除資料夾（裡面的項目移到上一層）", lambda: self.deleteRequested.emit(d[1]))
+        elif d[0] == "use":
             menu.addAction("選取", lambda: self.showRequested.emit(d[3], list(d[2]), d[1]))
             menu.addAction("進入編輯", lambda: self.openRequested.emit(d[3], list(d[2]) + [d[1]]))
             menu.addSeparator()
@@ -258,6 +379,7 @@ class CompoundPanel(QWidget):
             menu.addAction("重新命名…", lambda: (inplace.item_hint(self.tree, it), self.renameRequested.emit(kid)))
             menu.addAction("建立副本", lambda: self.cloneRequested.emit(kid))
             if not kid.startswith("tl"):
+                self._move_menu(menu, kid)
                 menu.addAction("存到 Library…", lambda: self.libraryRequested.emit(kid))
                 comp = self.comps.get(kid) or {}
                 if components.is_component(comp):

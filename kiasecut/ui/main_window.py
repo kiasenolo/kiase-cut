@@ -733,6 +733,7 @@ class MainWindow(QMainWindow):
         tl.moveRequested.connect(lambda cid, start, tid: self.apply("移動", edit.move, cid, start, tid))
         tl.trimRequested.connect(
             lambda cid, e, t: self.apply("裁切", edit.trim_start if e == "start" else edit.trim_end, cid, t))
+        tl.trimManyRequested.connect(lambda ids, e, dt: self.apply("裁切", edit.trim_many, ids, e, dt))
         tl.groupMoveRequested.connect(lambda ids, dt, dr: self.apply("移動", edit.move_many, ids, dt, dr))
         tl.matteOffsetLive.connect(lambda cid, off: self.on_live_edit([cid], self.matte_group, "t_off", off))
         tl.matteOffsetEdited.connect(self.on_matte_offset)

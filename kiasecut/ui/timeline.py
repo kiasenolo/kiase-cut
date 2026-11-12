@@ -287,6 +287,7 @@ class Timeline(QWidget):
     volumeEdited = Signal(str, object)               # clip id, new volume (number or {"keys": ...})
     moveRequested = Signal(str, int, str)            # clip id, start us, track id
     trimRequested = Signal(str, str, int)            # clip id, "start" | "end", time us
+    trimManyRequested = Signal(list, str, int)       # clip ids, "start" | "end", how far every one's edge moves (us)
     trackAction = Signal(str, str)                   # action, track id
     tracksReordered = Signal(list)                   # every track id of the level, in the new order on screen
     intoGroupRequested = Signal(list, str, str, int)  # clip ids, group id, its track id, start (level time)
@@ -1059,6 +1060,7 @@ class Timeline(QWidget):
         # a clip being moved / trimmed is drawn at its new place (other drags have no ghost)
         dragged = self.drag["clip"] if self.drag and self.drag["moved"] and self.drag["mode"] in ("body", "start", "end")             else None
         group = self.drag["ids"] if self.drag and self.drag["moved"] and self.drag["mode"] == "group" else ()
+        trims = self.drag["trim_ids"] - {dragged["id"]} if dragged and self.drag.get("trim_ids") else ()
         tracks = self.proj["tracks"]
         level = {id(t) for t in project.all_tracks(tracks)}     # (參考 tracks are shown while edited)
         p.save()
@@ -1114,7 +1116,7 @@ class Timeline(QWidget):
             dim = (project.sounds(tr, tracks, level) <= 0) if tr["kind"] == "audio" else not project.visible(tr, level)
             copying = bool(self.drag and self.drag.get("dup"))      # (Alt: the clips stay, copies move)
             for c in tr["clips"]:
-                if copying or (c is not dragged and c["id"] not in group):
+                if copying or (c is not dragged and c["id"] not in group and c["id"] not in trims):
                     self._draw_clip(p, c, y, c["start_us"], c["duration_us"], track=tr, h=self.base_h(i), dim=dim)
             self._draw_lanes(p, i, dim)
             if tr.get("reference"):                         # 參考: dashed lines along its row
@@ -1140,6 +1142,14 @@ class Timeline(QWidget):
                         j = i + dr
                         self._draw_clip(p, c, self.tops[j], c["start_us"] + self.drag["shift"], c["duration_us"],
                                         ghost=True, track=self.rows[j], h=self.base_h(j))
+        if trims:                                         # the other picked clips, their edges moved as far
+            d = self.drag
+            for i, tr in enumerate(self.rows):
+                for c in tr["clips"]:
+                    if c["id"] in trims:
+                        a, b = c["start_us"], c["start_us"] + c["duration_us"]
+                        a, b = (a + d["delta"], b) if d["mode"] == "start" else (a, b + d["delta"])
+                        self._draw_clip(p, c, self.tops[i], a, b - a, ghost=True, track=tr, h=self.base_h(i))
         if dragged:
             d = self.drag
             h = self.base_h(d["row"])
@@ -1863,6 +1873,9 @@ class Timeline(QWidget):
             return
         self.drag = {"clip": c, "mode": zone, "x0": pos.x(), "row0": row, "row": row,
                      "start": c["start_us"], "end": c["start_us"] + c["duration_us"], "moved": False}
+        if zone in ("start", "end") and len(self.selected_ids) > 1 and c["id"] in self.selected_ids:
+            self.drag["trim_ids"] = set(self.selected_ids)       # (an edge of one of several picked clips: every one's edge goes the same way)
+            self.drag["delta"] = 0.0
 
     def _wrap_area(self):
         """Where the pointer wraps in an endless drag: the tracks, scroll bar left out."""
@@ -2136,8 +2149,17 @@ class Timeline(QWidget):
                 d["new"] = "bottom"                     # below the last audio row
         elif d["mode"] == "start":
             d["start"] = min(self._snap(s0 + dt, c), e0 - US / self.fps)
+            if d.get("trim_ids"):
+                group = [k for k in self.level_clips() if k["id"] in d["trim_ids"]]
+                d["delta"] = min(max(d["start"] - s0, -min(k["start_us"] for k in group)),
+                                 min(k["duration_us"] for k in group) - US / self.fps)
+                d["start"] = s0 + d["delta"]
         else:
             d["end"] = max(self._snap(e0 + dt, c), s0 + US / self.fps)
+            if d.get("trim_ids"):
+                group = [k for k in self.level_clips() if k["id"] in d["trim_ids"]]
+                d["delta"] = max(d["end"] - e0, US / self.fps - min(k["duration_us"] for k in group))
+                d["end"] = e0 + d["delta"]
         s1 = d.get("start", s0) if d["mode"] != "end" else s0
         e1 = d.get("end", e0) if d["mode"] != "start" else e0
         self.clipDragging.emit(c["id"], int(round(s1)), int(round(e1 - s1)))
@@ -2264,6 +2286,9 @@ class Timeline(QWidget):
             self.newTrackRequested.emit(c["id"], int(round(d["start"])), d["new"] == "top")
         elif d["mode"] == "body":
             self.moveRequested.emit(c["id"], int(round(d["start"])), self.rows[d["row"]]["id"])
+        elif d.get("trim_ids"):
+            if round(d["delta"]):
+                self.trimManyRequested.emit(sorted(d["trim_ids"]), d["mode"], int(round(d["delta"])))
         elif d["mode"] == "start":
             self.trimRequested.emit(c["id"], "start", int(round(d["start"])))
         else:

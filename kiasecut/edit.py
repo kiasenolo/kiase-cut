@@ -322,6 +322,16 @@ def trim_end(proj, clip_id, new_end_us):
     return c
 
 
+def trim_many(proj, clip_ids, edge, delta_us):
+    """Move the "start" or "end" edge of every clip in clip_ids by delta_us (each as far as it can go)."""
+    for cid in clip_ids:
+        c = find(proj, cid)[1]
+        if edge == "start":
+            trim_start(proj, cid, c["start_us"] + delta_us)
+        else:
+            trim_end(proj, cid, end(c) + delta_us)
+
+
 def split(proj, clip_id, at_us):
     """Cut a clip in two at at_us (timeline time); returns the new right-hand clip. A group
     is cut with its clips (those across at_us are cut too)."""

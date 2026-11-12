@@ -97,6 +97,15 @@ class EditTests(unittest.TestCase):
         edit.trim_end(p, "c1", 9 * S)
         self.assertEqual(edit.find(p, "c1")[1]["duration_us"], 5 * S)
 
+    def test_trim_many_moves_every_edge_by_the_same_amount(self):
+        p = proj()
+        edit.trim_many(p, ["c1", "c3"], "end", S)
+        self.assertEqual(edit.find(p, "c1")[1]["duration_us"], 3 * S)
+        self.assertEqual(edit.find(p, "c3")[1]["duration_us"], 5 * S)
+        edit.trim_many(p, ["c1", "c2"], "start", -S // 2)           # (c1 is at 0: it stops there, c2 goes the whole way)
+        self.assertEqual(edit.find(p, "c1")[1]["start_us"], 0)
+        self.assertEqual(edit.find(p, "c2")[1]["start_us"], 5 * S - S // 2)
+
     def test_undo_redo(self):
         p = proj()
         h = edit.History(p)

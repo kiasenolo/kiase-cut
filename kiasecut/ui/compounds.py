@@ -243,6 +243,14 @@ class CompoundPanel(QWidget):
         tls = [it for it in top if it.data(0, Qt.UserRole)[1].startswith("tl")]
         for it in tls + roots + [it for it in top if it not in tls]:
             self.tree.addTopLevelItem(it)
+        for it in self._items():                             # (only once they are in the tree does being open stick)
+            d = it.data(0, Qt.UserRole)
+            if d[1] in expanded or d[0] == "def" and d[1] in open_ids:
+                it.setExpanded(True)
+                p = it.parent()
+                while p is not None:                         # (the compound being edited is not hidden in a folder)
+                    p.setExpanded(True)
+                    p = p.parent()
         self.tree.setVisible(bool(rows))
         self.empty.setVisible(not rows)
 

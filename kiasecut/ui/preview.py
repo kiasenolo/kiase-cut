@@ -781,6 +781,8 @@ class Preview(PenMixin, _Surface):
         self.view = view
         if view and (self.W, self.H) != (view["width"], view["height"]):
             self.W, self.H = view["width"], view["height"]
+            self.zoom, self.pan = 1.0, QPointF(0, 0)          # (another resolution - a compound of its own size: the view fits it, not as the other one was left)
+            self._view_changed()
             self._report_size()
         self.t_us = t_us
         self.selected_id = selected_id

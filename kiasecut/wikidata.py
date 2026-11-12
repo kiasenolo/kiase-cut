@@ -535,7 +535,7 @@ SECTIONS = {
     "sec:edit": ("剪輯", "把素材排到時間線上、在預覽裡擺好位置、剪成想要的樣子。這一區不需要先懂效果或節點。",
                  ["guide:controls", "guide:project", "guide:editing", "guide:preview", "guide:design", "guide:pen", "guide:compound"]),
     "sec:fx": ("效果", "在片段上加調色、模糊、扭曲這類處理，讓它隨時間變化，還可以自己寫新的。這一區不需要先懂節點。",
-               ["guide:effects", "guide:keyframes", "guide:driven", "fx", "format"]),
+               ["guide:effects", "guide:keyframes", "guide:driven", "guide:expr", "fx", "format"]),
     "sec:nodes": ("節點", "用節點把效果一塊塊接出來。從「節點是什麼」開始，照順序看；後面是查詢用的資料類型、連線規則和每個節點的說明。",
                   ["guide:nodes", "guide:first", "guide:editor", "types", "rules", "guide:blender", "nodes"]),
 }
@@ -709,12 +709,69 @@ GUIDES.update({
 <h3>映射（全局參數）</h3>
 <p>全局參數架（選單「工具」▸ 全局參數架）裡的參數，可以用「映射」換算成另一個範圍或另一條曲線，再綁到片段的參數上。映射有幾種方式，其中「JavaScript」是自己寫運算式：</p>
 <ul>
-<li><b>input</b> 是參數的值，<b>t</b> 是 0–1 的位置，<b>lo</b> 和 <b>hi</b> 是這個數字的最小和最大。也可以直接寫其他全局參數的名字。</li>
+<li>寫法和可用的函式見「[[guide:expr|表達式]]」。<b>input</b> 是參數的值，<b>t</b> 是 0–1 的位置，<b>lo</b> 和 <b>hi</b> 是這個數字的最小和最大。也可以直接寫其他全局參數的名字。</li>
 <li><b>curve(x)</b> 會讀同一個視窗下面那條曲線（x 是 0–1）。</li>
 <li>例：<code>lerp(lo, hi, t * t)</code>、<code>t &gt; 0.5 ? hi : lo</code>、<code>lerp(lo, hi, curve(t))</code>。</li>
 </ul>
 <h3>字體對應</h3>
 <p>專案用到的字體這台電腦沒有時，會先用預設字體顯示，並跳出字體對應的視窗。不處理就關掉，之後可以從「編輯 ▸ 字體對應…」再設定。</p>"""),
+
+    "guide:expr": ("表達式", """<h1>表達式</h1>
+<p>表達式是一小行算式，讓一個數字<b>自己算出來</b>，而不是固定的值或一格一格打關鍵幀。寫法像 JavaScript 或 After Effects 的運算式，但只有一行、沒有變數宣告和迴圈。</p>
+<h3>拿來做什麼</h3>
+<ul>
+<li>讓東西一直在動，不用打一堆關鍵幀：<code>value + wiggle(2, 30)</code> 讓關鍵幀做好的位置再每秒抖動 2 次、幅度 30。</li>
+<li>讓數字跟著別的值走：全局參數的值乘 2 再加一點，就是片段的縮放。</li>
+<li>做規律的變化：<code>100 * Math.abs(Math.sin(time))</code> 讓不透明度一直閃。</li>
+<li>做條件：<code>input &gt; 0.5 ? 1 : 0</code>，超過一半就全開，否則全關。</li>
+</ul>
+<h3>在哪裡用</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><th>位置</th><th>怎麼開</th><th>可以用的名字</th></tr>
+<tr><td>片段自己的數字（位置、縮放、旋轉、不透明度、文字大小、遮罩、音量、形狀的數字）</td><td>右鍵那個欄位 ▸ 自訂表達式…</td><td><b>value</b>：這個數字原本的值（關鍵幀的結果）；<b>time</b>：片段內的秒數；<b>progress</b>：0–1 的進度；<b>duration</b>：片段的秒數；還有全局參數的名字</td></tr>
+<tr><td>全局參數</td><td>全局參數架裡，參數旁的表達式按鈕</td><td><b>input</b>：這個參數自己的值；<b>time</b>：時間線的秒數；其他全局參數的名字（不能繞一圈讀回自己）</td></tr>
+<tr><td>元件的數字參數、映射</td><td>右鍵參數 ▸ 設為元件參數／映射</td><td><b>input</b>、<b>time</b>、<b>progress</b>、<b>duration</b>；映射另有 <b>t</b>（0–1 的位置）、<b>lo</b>、<b>hi</b>（數字的最小和最大）</td></tr>
+</table>
+<p>寫錯的表達式不會讓畫面壞掉：視窗會告訴你錯在哪，套用後數字就維持原本的值。視窗裡會顯示幾個範例值算出來的結果，邊打邊看。</p>
+<h3>寫法</h3>
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><th>種類</th><th>可以寫</th></tr>
+<tr><td>數字與常數</td><td><code>3</code>、<code>0.5</code>、<code>1e3</code>、<code>pi</code>、<code>e</code>、<code>true</code>、<code>false</code></td></tr>
+<tr><td>運算</td><td><code>+ - * / % **</code>（<code>**</code> 是次方）</td></tr>
+<tr><td>比較</td><td><code>&lt; &lt;= &gt; &gt;= == !=</code></td></tr>
+<tr><td>邏輯</td><td><code>&amp;&amp;</code>（而且）、<code>||</code>（或）、<code>!</code>（不是）</td></tr>
+<tr><td>條件</td><td><code>條件 ? 是 : 否</code>，可以連著寫</td></tr>
+<tr><td>括號</td><td><code>( )</code>，運算順序和一般數學一樣</td></tr>
+</table>
+<h3>函式</h3>
+<p>函式前面加 <code>Math.</code> 也可以（<code>Math.sin(x)</code> 和 <code>sin(x)</code> 一樣）。</p>
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><th>函式</th><th>用途</th></tr>
+<tr><td>sin cos tan asin acos atan atan2</td><td>三角函式（弧度）；degrees(x) 轉成角度、radians(x) 轉成弧度</td></tr>
+<tr><td>sqrt abs pow exp log log2 log10 hypot</td><td>開根號、絕對值、次方、指數、對數、斜邊長</td></tr>
+<tr><td>floor ceil round trunc sign fract</td><td>無條件捨去、進位、四捨五入、取整數部分、正負號、取小數部分</td></tr>
+<tr><td>min max</td><td>最小、最大</td></tr>
+<tr><td>clamp(x, 低, 高)</td><td>把 x 限制在低和高之間</td></tr>
+<tr><td>lerp(a, b, t)（或 mix）</td><td>從 a 到 b，t 是 0–1：<code>lerp(0, 100, 0.25)</code> 是 25</td></tr>
+<tr><td>smoothstep(低, 高, x)</td><td>x 從低到高時，結果平滑地從 0 到 1</td></tr>
+<tr><td>step(邊, x)</td><td>x 到了邊就是 1，沒到是 0</td></tr>
+<tr><td>mod(x, m)</td><td>餘數，結果不會是負的（拿來做循環）</td></tr>
+<tr><td>remap(x, a, b, c, d)</td><td>把 x 從 a–b 的範圍換到 c–d 的範圍</td></tr>
+<tr><td>cubicBezier(x1, y1, x2, y2, x)</td><td>CSS 的 cubic-bezier 緩動，x 是 0–1，結果也是 0–1</td></tr>
+<tr><td>noise(x)</td><td>平滑的隨機，結果在 −1 到 1 之間</td></tr>
+<tr><td>random(種子)</td><td>同一個種子永遠得到同一個 0–1 的值</td></tr>
+<tr><td>wiggle(次數/秒, 幅度, 種子)</td><td>抖動：每秒大約變動幾次、最多偏離多少。要有 time 才能用</td></tr>
+<tr><td>curve(x)</td><td>（映射裡）讀映射視窗下面那條曲線，x 是 0–1</td></tr>
+</table>
+<h3>幾個例子</h3>
+<ul>
+<li><code>value + wiggle(2, 30)</code>：原本的值上下抖動。</li>
+<li><code>100 * Math.abs(Math.sin(time * 3))</code>：不透明度 0 到 100 來回閃。</li>
+<li><code>clamp(value * 2, 0, 100)</code>：原本的值兩倍，但不超過 100。</li>
+<li><code>progress &lt; 0.5 ? 0 : 100</code>：片段播到一半才出現。</li>
+<li><code>lerp(lo, hi, cubicBezier(0.42, 0, 0.58, 1, t))</code>：映射裡用緩動曲線從 lo 走到 hi。</li>
+</ul>
+<p>全局參數、映射和 LFO 的用法見「[[guide:driven|節拍、LFO 與全局參數]]」。</p>"""),
 
     "guide:keyframes": ("關鍵幀", """<h1>關鍵幀</h1>
 <p>關鍵幀讓一個數值隨時間改變：在兩個時間點各設一個值，中間的畫面自動漸變。位置、縮放、旋轉、不透明度、效果的數字參數、顏色、內建素材的大小和顏色，大多都能打關鍵幀。</p>

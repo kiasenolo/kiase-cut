@@ -211,7 +211,7 @@ class WavePreview(QWidget):
         p.drawText(QRectF(area.right() - 80, area.bottom() + 3, 80, 16), Qt.AlignRight, f"{t0 + span:.3g} 秒")
 
 
-KEYS = ("wave", "unit", "rate", "amp", "offset", "phase", "fade", "ramp", "ramp_from", "loop", "width", "seed", "bipolar", "rel", "bezier",
+KEYS = ("wave", "unit", "rate", "amp", "offset", "phase", "fade", "fade_out", "ramp", "ramp_from", "loop", "width", "seed", "bipolar", "rel", "bezier",
         "curve")
 
 
@@ -255,7 +255,7 @@ class LfoDialog(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(480)
         s = lfo.make(**{"wave": s["wave"], "unit": s["unit"], "rate": s["rate"], "amp": s["amp"], "offset": s["offset"],
-                        "phase": s["phase"], "fade": s["fade"], "ramp": s.get("ramp", 0.0), "ramp_from": s.get("ramp_from", 0.2), "loop": s["loop"], "width": s["width"],
+                        "phase": s["phase"], "fade": s["fade"], "fade_out": s.get("fade_out", 0.0), "ramp": s.get("ramp", 0.0), "ramp_from": s.get("ramp_from", 0.2), "loop": s["loop"], "width": s["width"],
                         "bezier": s["bezier"], "curve": s.get("curve"), "bipolar": s["bipolar"], "rel": s["rel"],
                         "seed": s.get("seed", 0)})
         lay = QVBoxLayout(self)
@@ -299,6 +299,11 @@ class LfoDialog(QDialog):
         self.fade.setSuffix(" 秒")
         self.fade.setToolTip("從開始起，擺動的幅度花這麼久慢慢長到完整（0：一開始就是完整的）")
         self.form.addRow("漸入", self.fade)
+        self.fade_out = self.mix("fade_out", s["fade_out"], 2)
+        self.fade_out.setSuffix(" 秒")
+        self.fade_out.setToolTip("到片段結尾前，擺動的幅度花這麼久慢慢收到 0（0：不淡出）")
+        if clip:
+            self.form.addRow("淡出", self.fade_out)
         self.ramp = self.mix("ramp", s["ramp"], 2)
         self.ramp.setSuffix(" 秒")
         self.ramp.setToolTip("從開始起，速度花這麼久從慢慢加快到完整的速度（0：一開始就是完整的速度）")
@@ -360,7 +365,7 @@ class LfoDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         lay.addWidget(self.buttons)
-        for w in (self.rate, self.amp, self.offset, self.phase, self.fade, self.ramp, self.ramp_from, self.pulse, self.seed, *self.bz):
+        for w in (self.rate, self.amp, self.offset, self.phase, self.fade, self.fade_out, self.ramp, self.ramp_from, self.pulse, self.seed, *self.bz):
             w.valueChanged.connect(self._changed)
         for w in (self.wave, self.loop, self.unit):
             w.currentIndexChanged.connect(self._changed)
@@ -417,7 +422,7 @@ class LfoDialog(QDialog):
     def _read(self):
         return {"wave": self.wave.currentData(), "unit": self.unit.currentData(), "rate": self.rate.value(),
                 "amp": self.amp.value(), "offset": self.offset.value(), "phase": self.phase.value(),
-                "fade": self.fade.value(), "ramp": self.ramp.value(), "ramp_from": self.ramp_from.value() / 100, "loop": self.loop.currentData(), "width": self.pulse.value(),
+                "fade": self.fade.value(), "fade_out": self.fade_out.value(), "ramp": self.ramp.value(), "ramp_from": self.ramp_from.value() / 100, "loop": self.loop.currentData(), "width": self.pulse.value(),
                 "bezier": [b.value() for b in self.bz], "curve": [list(k) for k in self.cfield.keys],
                 "bipolar": self.bipolar.isChecked(), "rel": self.rel.isChecked(), "seed": self.seed.value()}
 

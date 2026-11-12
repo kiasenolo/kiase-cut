@@ -3859,7 +3859,7 @@ def bake_lfo(tracks, t_us):
                     cur = components.number_at(c, prop, local)
                 except (KeyError, ValueError, TypeError):
                     continue
-                c.update(components._put(c, prop, lfo.safe(text, local / US, cur)))
+                c.update(components._put(c, prop, lfo.safe(text, local / US, cur, (c.get("duration_us") or 0) / US or None)))
             left = {k: x for k, x in (c.get("expr") or {}).items() if not lfo.is_lfo(x)}
             if left:
                 c["expr"] = left

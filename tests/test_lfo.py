@@ -47,6 +47,13 @@ class WaveTests(unittest.TestCase):
         self.assertAlmostEqual(lfo.value(s, 1), 0.5)
         self.assertAlmostEqual(lfo.value(s, 8), 2.0)
 
+    def test_fade_out(self):
+        s = lfo.make("square", rate=1, width=1.0, amp=2, fade_out=4)
+        self.assertAlmostEqual(lfo.value(s, 6, dur=10), 2.0)
+        self.assertAlmostEqual(lfo.value(s, 9, dur=10), 0.5)
+        self.assertAlmostEqual(lfo.value(s, 10, dur=10), 0.0)
+        self.assertAlmostEqual(lfo.value(s, 9), 2.0)                           # (no clip end: no fade)
+
     def test_repeat_and_mirror(self):
         rep = lfo.make("saw", bipolar=False)
         mir = lfo.make("saw", bipolar=False, loop="mirror")

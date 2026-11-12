@@ -450,7 +450,7 @@ def _lfo_over(tracks, t, over):
             cur = number_at(c, prop, 0)
         except (KeyError, ValueError, TypeError):
             continue                                             # (a prop the layer has not got any more)
-        over.setdefault(c["id"], []).append((prop, lfo.safe(c["expr"][prop], t / curves.US, cur)))
+        over.setdefault(c["id"], []).append((prop, lfo.safe(c["expr"][prop], t / curves.US, cur, (c.get("duration_us") or 0) / curves.US or None)))
     for c, _prop in lfo_layers(tracks):
         if c["id"] in over and (LFO_DONE, None) not in over[c["id"]]:
             over[c["id"]].append((LFO_DONE, None))               # (its LFOs have been put in: the renderer must not swing it again)

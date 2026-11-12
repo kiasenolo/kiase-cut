@@ -35,7 +35,7 @@ def at(c, t_us, names=None):
         except (KeyError, ValueError, TypeError):
             continue                                         # (a prop the clip has not got any more)
         if lfo.is_lfo(text):                              # an LFO of its own (lfo.py), seconds into the clip
-            v = lfo.safe(text, t_us / curves.US, cur)
+            v = lfo.safe(text, t_us / curves.US, cur, dur / curves.US)
         elif mapping.is_mapping(text):                   # bound to a parameter of the rack, through a 映射
             x = (names or {}).get(text.get("src", ""))
             v = cur if x is None and text["mode"] != "js" and text.get("src") else \

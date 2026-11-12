@@ -7,33 +7,58 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpin
                                QVBoxLayout)
 
 DEFAULTS = {"move_x": 15.0, "move_y": 15.0, "rot": 20.0, "scale_lo": 75.0, "scale_hi": 130.0, "stretch": 0.0,
-            "differ": True, "keep": False, "seed": 1}
+            "differ": True, "force": False, "gap": 20.0, "seed": 1}
 _last = dict(DEFAULTS)                      # (what was asked for last is offered again)
 
 
+TRIES = 300
+
+
+def _roll(b, p, r):
+    """One random placing of Box b: (x, y, rotation, scale, scale_y) values, and its rectangle on the canvas (left, top, right, bottom)
+    around the turned, scaled clip."""
+    u = r.uniform
+    dx, dy, da = u(-1, 1), u(-1, 1), u(-1, 1)
+    k = u(p["scale_lo"], p["scale_hi"]) / 100
+    sx, sy = (1 + u(-1, 1) * p["stretch"] / 100, 1 + u(-1, 1) * p["stretch"] / 100)
+    cx, cy = b.cx + dx * p["move_x"] / 100 * b.W, b.cy + dy * p["move_y"] / 100 * b.H
+    deg, s, s_y = b.deg + da * p["rot"], b.s * k * sx, b.sy * k * sy
+    w, h = b.bw * abs(s), b.bh * abs(s_y)
+    c, sn = abs(math.cos(math.radians(deg))), abs(math.sin(math.radians(deg)))
+    hw, hh = (w * c + h * sn) / 2, (w * sn + h * c) / 2
+    vals = {"x": round(b.x_at(cx), 5), "y": round(b.y_at(cy), 5), "rotation": round(deg, 3), "scale": round(s, 4), "scale_y": round(s_y, 4)}
+    return vals, (cx - hw, cy - hh, cx + hw, cy + hh)
+
+
+def _overlap(a, rects, gap):
+    """How much rectangle a, made gap px bigger all round, covers of the others (0: they are at least gap apart)."""
+    t = 0.0
+    for o in rects:
+        w = min(a[2] + gap, o[2]) - max(a[0] - gap, o[0])
+        h = min(a[3] + gap, o[3]) - max(a[1] - gap, o[1])
+        if w > 0 and h > 0:
+            t += w * h
+    return t
+
+
 def rolled(base, p):
-    """{clip id: {x, y, rotation, scale, scale_y}} for base = [Box], by the settings p (seed included). With p["keep"] (保持間隔)
-    one roll is made for all of them and applied about their middle: the spaces between the clips stay, as a whole they move, turn and scale."""
-    out = {}
-    keep = p.get("keep") and len(base) > 1
-    mx = sum(b.cx for b in base) / len(base)
-    my = sum(b.cy for b in base) / len(base)
+    """{clip id: {x, y, rotation, scale, scale_y}} for base = [Box], by the settings p (seed included). With p["force"] (強制間隔)
+    each clip, in turn, is rolled again (the same seed gives the same tries) till it is at least p["gap"] px (a 1080 high picture's)
+    from the clips placed before it; if no try is clear it takes the one that covers the least."""
+    out, rects = {}, []
+    force = p.get("force") and len(base) > 1
     for i, b in enumerate(base):
-        r = random.Random(p["seed"] * 1000003 + (i if p["differ"] and not keep else 0))
-        u = r.uniform
-        dx, dy, da = u(-1, 1), u(-1, 1), u(-1, 1)
-        k = u(p["scale_lo"], p["scale_hi"]) / 100
-        sx, sy = (1 + u(-1, 1) * p["stretch"] / 100, 1 + u(-1, 1) * p["stretch"] / 100)
-        ang = da * p["rot"]
-        cx, cy = b.cx, b.cy
-        if keep:
-            c, sn = math.cos(math.radians(ang)), math.sin(math.radians(ang))
-            ox, oy = (cx - mx) * k * sx, (cy - my) * k * sy
-            cx, cy = mx + ox * c - oy * sn, my + ox * sn + oy * c
-        out[b.clip["id"]] = {"x": round(b.x_at(cx + dx * p["move_x"] / 100 * b.W), 5),
-                             "y": round(b.y_at(cy + dy * p["move_y"] / 100 * b.H), 5),
-                             "rotation": round(b.deg + ang, 3),
-                             "scale": round(b.s * k * sx, 4), "scale_y": round(b.sy * k * sy, 4)}
+        base_seed = p["seed"] * 1000003 + (i if p["differ"] or force else 0)
+        best = None
+        for n in range(TRIES if force else 1):
+            vals, rect = _roll(b, p, random.Random(base_seed + n * 7919))
+            miss = _overlap(rect, rects, p["gap"] * b.H / 1080) if force else 0.0
+            if best is None or miss < best[0]:
+                best = (miss, vals, rect)
+            if miss <= 0:
+                break
+        out[b.clip["id"]] = best[1]
+        rects.append(best[2])
     return out
 
 
@@ -69,13 +94,26 @@ class RandomDialog(QDialog):
         self.differ.setChecked(p["differ"])
         self.differ.toggled.connect(self.changed)
         form.addRow("", self.differ)
-        self.keep = QCheckBox("保持間隔")
-        self.keep.setToolTip("選了多個片段時：片段之間的距離與排列不變，整批一起移動、旋轉、縮放")
-        self.keep.setChecked(p["keep"] and len(boxes) > 1)
-        self.keep.setEnabled(len(boxes) > 1)
-        self.keep.toggled.connect(lambda on: (self.differ.setEnabled(not on), self.changed()))
-        self.differ.setEnabled(not self.keep.isChecked())
-        form.addRow("", self.keep)
+        self.force = QCheckBox("強制間隔")
+        self.force.setToolTip("選了多個片段時：隨機到片段重疊或靠太近就重抽，直到每個片段之間至少隔著下面的距離（同一個種子結果一樣）；"
+                              "實在排不開就用重疊最少的")
+        self.force.setChecked(p["force"] and len(boxes) > 1)
+        self.force.setEnabled(len(boxes) > 1)
+        self.gap = QDoubleSpinBox()
+        self.gap.setRange(0, 2000)
+        self.gap.setDecimals(1)
+        self.gap.setSuffix(" px")
+        self.gap.setValue(p["gap"])
+        self.gap.setKeyboardTracking(False)
+        self.gap.setToolTip("1080 高的畫面的像素")
+        self.gap.valueChanged.connect(self.changed)
+        self.force.toggled.connect(lambda on: (self.differ.setEnabled(not on), self.gap.setEnabled(on), self.changed()))
+        self.differ.setEnabled(not self.force.isChecked())
+        self.gap.setEnabled(self.force.isChecked())
+        row = QHBoxLayout()
+        row.addWidget(self.force)
+        row.addWidget(self.gap, 1)
+        form.addRow("", row)
         self.seed = QSpinBox()
         self.seed.setRange(0, 999999999)
         self.seed.setValue(p["seed"])
@@ -96,7 +134,7 @@ class RandomDialog(QDialog):
 
     def settings(self):
         p = {k: s.value() for k, s in self.spins.items()}
-        p.update(differ=self.differ.isChecked(), keep=self.keep.isChecked(), seed=self.seed.value())
+        p.update(differ=self.differ.isChecked(), force=self.force.isChecked(), gap=self.gap.value(), seed=self.seed.value())
         p["scale_hi"] = max(p["scale_hi"], p["scale_lo"])
         return p
 

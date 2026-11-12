@@ -43,6 +43,17 @@ class GroupTests(unittest.TestCase):
         c2t, c2 = edit.find(p, "c2")
         self.assertAlmostEqual(c2["transform"]["x"] + project.anchored(g, c2t, c2["start_us"])[0], 0.9)
 
+    def test_move_out_of_group_keeps_place_and_time(self):
+        p = scene()
+        g = edit.make_group(p, p, ["c1", "c4"])
+        edit.set_param(p, g["id"], "transform", "x", 0.4)
+        before = edit.abs_start(p, "c4")
+        out = edit.move_out_of_group(p, p, ["c4"])
+        self.assertEqual(len(out), 1)
+        self.assertIsNone(edit.group_of(p, edit.find(p, "c4")[0]))
+        self.assertEqual(edit.abs_start(p, "c4"), before)
+        self.assertAlmostEqual(edit.find(p, "c4")[1]["transform"]["x"], 0.4)
+
     def test_copies_of_a_groups_clips_stay_in_it(self):
         """Alt+drag / 複製圖層 of a clip inside a group: the copy goes onto the group's tracks (it used to end in StopIteration)."""
         p = scene()

@@ -2112,6 +2112,31 @@ def ungroup(root, level, group_id):
     return out
 
 
+def move_out_of_group(root, level, clip_ids):
+    """Take picture clips out of their groups onto tracks of the level itself (on top), at the same
+    times and the same on the canvas. Returns the clips."""
+    picked = [find(level, cid) for cid in dict.fromkeys(clip_ids)]
+    picked = [(t, c) for t, c in picked if group_of(level, t) is not None]
+    if not picked:
+        raise EditError("片段已經在最上層")
+    for t, c in picked:
+        if t["kind"] == "audio":
+            raise EditError("群組只放畫面片段：選取裡有聲音片段")
+    every = abs_starts(level)
+    spaces = {id(c): _space(level, t, every[c["id"]]) for t, c in picked}    # (refused before anything changes)
+    out = []
+    for t, c in picked:
+        t["clips"].remove(c)
+        c["start_us"] = every[c["id"]]
+        kind = "text" if t["kind"] == "text" else "video"
+        dst = {"id": new_track_id(level), "kind": kind, "name": f"{kind} {len(level['tracks']) + 1}", "clips": [c]}
+        level["tracks"].append(dst)
+        _refit(c, spaces[id(c)], [])
+        out.append(c)
+    project.link(root)
+    return out
+
+
 def ungroup_many(root, level, group_ids):
     """Several groups taken apart at once (outer ones first: a group in one comes out with
     its clips, then is taken apart too); returns the clips that came out."""

@@ -911,6 +911,7 @@ class MainWindow(QMainWindow):
             lambda lvl: [edit.set_track_flag(lvl, tid, flag, on) for tid in tids]))
         lp.mediaDropped.connect(lambda ids, paths, above, g: self.layer_drop(ids, paths, above, None, g or None))
         lp.movedInto.connect(self.layers_into_group)
+        lp.movedOut.connect(self.layers_out_of_group)
         lp.fxDropped.connect(self.layer_fx_drop)
         lp.replaceDropped.connect(self.replace_source)
         lp.renameRequested.connect(lambda cid: self.on_clip_action("rename", cid))
@@ -3868,6 +3869,22 @@ class MainWindow(QMainWindow):
         if self.apply_root("移入群組", fn) is not None:
             self.layers.opened.add(gid)
             self.timeline.open_groups.add(gid)
+        self._update_layers()                            # (refused: the list as it was)
+
+    def layers_out_of_group(self, ids, order):
+        """Layers dragged out of their groups in the layer list: moved to the level, then stacked as dropped."""
+        if not self.proj:
+            return
+
+        def fn(root):
+            level = self.container(root)
+            out = edit.move_out_of_group(root, level, ids)
+            have = [c["id"] for c in edit.layers(level)]
+            want = [i for i in order if i in have]
+            if sorted(want) == sorted(have) and want != have:
+                edit.set_layer_order(level, want)
+            return out
+        self.apply_root("移出群組", fn)
         self._update_layers()                            # (refused: the list as it was)
 
     def move_into_group(self, ids, gid, track_id=None, start_us=None):

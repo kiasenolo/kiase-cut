@@ -223,6 +223,11 @@ class LayerList(QListWidget):
             above = next((self.item(i) for i in range(r - 1, -1, -1) if not self.item(i).isSelected()), None)
             parent = self._parent_below(above)
             into = [it for it in moving if (it.data(PARENT) or "") != parent]
+            if not parent and into and not any(it.data(ROLE) in {x.data(PARENT) for x in into} for it in moving):
+                order = [self.item(i).data(ROLE) for i in range(self.count())
+                         if (self.item(i).data(PARENT) or "") == "" or self.item(i) in into]
+                self.movedOut.emit([it.data(ROLE) for it in into], order)
+                return
             if parent and into and not any(it.data(ROLE) == parent for it in moving):
                 order = [self.item(i).data(ROLE) for i in range(self.count())
                          if (self.item(i).data(PARENT) or "") == parent or self.item(i) in into]
@@ -317,6 +322,7 @@ class LayerPanel(QWidget):
     shapeRequested = Signal(str)                   # an asset ident (assets.ident): a shape at the top
     mediaDropped = Signal(list, list, int, str)    # idents, file paths, layers above the drop, group id or ""
     movedInto = Signal(list, str, list)            # layer ids, group id, that group's layers then (top first)
+    movedOut = Signal(list, list)                  # layer ids taken out of their groups, the level's layers then (top first)
     fxDropped = Signal(str, str, int)              # effect ref, layer it landed on or "", layers above
     replaceDropped = Signal(str, str)              # media ident, layer it was Alt-dropped on (替換素材)
     paramBind = Signal(str, str, list)             # parameter id ("": a new one), prop, layer ids
@@ -359,6 +365,7 @@ class LayerPanel(QWidget):
         self.list.itemDoubleClicked.connect(self._rename)
         self.list.mediaDropped.connect(self.mediaDropped)
         self.list.movedInto.connect(self.movedInto)
+        self.list.movedOut.connect(self.movedOut)
         self.list.fxDropped.connect(self.fxDropped)
         self.list.replaceDropped.connect(self.replaceDropped)
         self.list.menuRequested.connect(self._menu)

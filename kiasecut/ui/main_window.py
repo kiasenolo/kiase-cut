@@ -989,6 +989,7 @@ class MainWindow(QMainWindow):
         self.layout_key = None          # the layout the panels are in (layouts.py key)
 
         self.player = Player(self)
+        self.player.worker.set_render_width(max(self.render_w.values()))     # (what the preview reported while the window was built)
         self.player.worker.set_rate(self.rate_box.currentData())     # (the 播放速度 used last time)
         self.player.worker.set_keep_pitch(self.pitch_btn.isChecked())
         self.player.worker.set_volume(self.vol_slider.value() / 100)     # (the 預覽音量 as it was left)
@@ -3730,15 +3731,21 @@ class MainWindow(QMainWindow):
         view = {"width": level["width"], "height": level["height"], "fps": self.proj["fps"],
                 "duration_us": at + 1, "tracks": [{"id": "_", "kind": "video", "clips": [c]}],
                 "compounds": comps}
-        if getattr(self, "_thumb_renderer", None) is None:     # (one for all: its pictures are decoded once)
-            self._thumb_renderer = render.Renderer(self._thumb_video)
+        def job():
+            if getattr(self, "_thumb_renderer", None) is None:     # (one for all: its pictures are decoded once)
+                self._thumb_renderer = render.Renderer(self._thumb_video)
+            try:
+                return self._thumb_renderer.render(view, at / US * self.proj["fps"], w, h, alpha=True)
+            finally:
+                self._thumb_renderer.errors.clear()
+        if getattr(self, "_thumb_pool", None) is None:           # (a thread of its own: the filters' OpenGL context made on the UI
+            from concurrent.futures import ThreadPoolExecutor    # thread, beside the preview's, crashed the card's driver when a project opened)
+            self._thumb_pool = ThreadPoolExecutor(1, "layer thumbnails")
         try:
             with gpu.ui_lock:
-                img = self._thumb_renderer.render(view, at / US * self.proj["fps"], w, h, alpha=True)
+                img = self._thumb_pool.submit(job).result()
         except Exception:
             return None
-        finally:
-            self._thumb_renderer.errors.clear()
         out = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
         p = QPainter(out)
         cell = max(2, round(4 * dpr))
@@ -5308,6 +5315,8 @@ class MainWindow(QMainWindow):
     def set_render_width(self, who, w):
         """The preview (or the fullscreen one) shows frames w px wide: draw them that size."""
         self.render_w[who] = w
+        if not hasattr(self, "player"):                  # (the preview reports its size while the window is still being built)
+            return
         self.player.worker.set_render_width(max(self.render_w.values()))
 
     # -- range and export -------------------------------------------------------------------------

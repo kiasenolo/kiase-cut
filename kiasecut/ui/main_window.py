@@ -698,7 +698,6 @@ class MainWindow(QMainWindow):
         self.quality_box.setCurrentIndex(max(0, self.quality_box.findData(q or None)))
         self.quality_box.currentIndexChanged.connect(lambda _i: self.set_preview_quality(self.quality_box.currentData()))
         bar.addWidget(self.quality_box)
-        self.transport.append(self.quality_box)
         bar.addWidget(self.play_btn_menu)
         self.transport.append(self.play_btn_menu)
         head_w = QWidget()
@@ -3705,7 +3704,7 @@ class MainWindow(QMainWindow):
             self.static_btn.setText(static_label(comp))
         for k in ("split",):
             self.buttons[k].setVisible(not static)
-        for b in self.transport:                        # nothing to play in one picture
+        for b in self.transport:                        # nothing to play in one picture (the preview's quality stays: it is drawn too)
             b.setVisible(not static)
         if static and self.player.worker.playing:
             self.player.worker.set_playing(False)

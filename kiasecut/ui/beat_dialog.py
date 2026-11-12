@@ -68,9 +68,6 @@ class BeatDialog(QDialog):
         lay.addWidget(self.wave, 1)
         self.overview = Overview(self.wave)
         lay.addWidget(self.overview)
-        hint = QLabel("下方小圖：整份聲音，亮的是片段用到的，藍框是上面看到的範圍，點一下或拖動可以移動。\n滾輪：左右捲動　Ctrl＋滾輪：縮放　中鍵拖動：移動畫面（Ctrl＋中鍵：縮放）\n變速／變拍點：雙擊或右鍵新增，拖動調整（Alt 不吸附），選中後在上方改數字，Delete 刪除")
-        hint.setStyleSheet("color: #8a8a90")
-        lay.addWidget(hint)
         self.peaks = None
         self._seeking = False
         self._pick = None                       # time of a point just added: picked once the project has it

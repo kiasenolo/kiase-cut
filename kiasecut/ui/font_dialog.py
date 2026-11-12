@@ -43,7 +43,7 @@ class FontMapDialog(QDialog):
             text += f"這台電腦沒有的字體：選一個字體代替，只記在 {system} 上，在另一個系統打開時仍用那邊自己的字體。\n"
         if any(r[2] == "here" for r in rows):
             text += "這台電腦有的字體：選一個新字體，所有用到它的文字都會換掉（Ctrl+Z 可以復原）。\n"
-        hint = QLabel(text + "不處理就關掉這個視窗，之後可以從「編輯 > 字體對應…」再設定。")
+        hint = QLabel(text.rstrip("\n"))
         hint.setWordWrap(True)
         lay.addWidget(hint)
         names = {f["path"]: f["name"] for f in installed}

@@ -2113,10 +2113,6 @@ class ParamPanel(QWidget):
         body = QWidget()
         col = QVBoxLayout(body)
         col.setContentsMargins(4, 4, 4, 4)
-        if not xs:
-            hint = QLabel("還沒有參數。\n按上面的「新增參數」選種類，或從「參數輸入」節點的空插槽拉一條線到另一個節點的參數上。")
-            hint.setWordWrap(True)
-            col.addWidget(hint)
         for i, x in enumerate(xs):
             col.addWidget(self.row(x, i, len(xs)))
         col.addStretch()

@@ -231,10 +231,6 @@ class LfoDialog(QDialog):
             if key in self.mixed:
                 w.setTristate(True)
                 w.setCheckState(Qt.PartiallyChecked)
-        self.hint = QLabel("「--」：選取的片段這一項各不相同；沒有動的項目，每個片段維持自己原本的值。")
-        self.hint.setWordWrap(True)
-        self.hint.setVisible(bool(self.mixed))
-        lay.insertWidget(lay.count() - 1, self.hint)
         self._changed()
 
     def mix(self, key, value, decimals=3):
@@ -250,7 +246,6 @@ class LfoDialog(QDialog):
                 b.mixed = False
                 b.lineEdit().setText(b.textFromValue(b.value()))
         self.touched.add(key)
-        self.hint.setVisible(False)
 
     def _preset(self, i):
         v = self.presets.itemData(i)

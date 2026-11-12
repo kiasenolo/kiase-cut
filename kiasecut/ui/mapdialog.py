@@ -151,11 +151,6 @@ class MapDialog(QDialog):
         self.form.addRow("JavaScript", self.js)
         self.rows["js"] = (self.js, self.form.labelForField(self.js))
         lay.addLayout(self.form)
-        self.hint = QLabel("input 是值、t 是 0–1 的位置、lo 和 hi 是數字的最小和最大；也可以直接寫其他全局參數的名字。"
-                           "curve(x) 會讀下面這條曲線（x 是 0–1）。例：lerp(lo, hi, t * t)、t > 0.5 ? hi : lo、lerp(lo, hi, curve(t))")
-        self.hint.setWordWrap(True)
-        self.hint.setStyleSheet("color: #8a8a90;")
-        lay.addWidget(self.hint)
         self.preview = CurvePreview()
         self.preview.current, self.preview.env = current, dict(env or {})
         self.field = BezierField()                         # (the curve's own editor: drag its two handles)
@@ -231,7 +226,6 @@ class MapDialog(QDialog):
             for w in self.rows[key]:
                 if w is not None:
                     w.setVisible(on)
-        self.hint.setVisible(mode == "js")
         self.field.setVisible(mode == "bezier")
         self.cfield.setVisible(mode in ("curve", "js"))
         self.field.set_value([s.value() for s in self.bz])

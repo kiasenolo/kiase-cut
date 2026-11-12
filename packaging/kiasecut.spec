@@ -21,7 +21,10 @@ app = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[ROOT],
                hiddenimports=["kiasecut.fxthumbs", "kiasecut.wikibuild"],
                datas=[(os.path.join(ROOT, "kiasecut", "filters"), "kiasecut/filters"),
                       (os.path.join(ROOT, "kiasecut", "look"), "kiasecut/look"),
-                      (os.path.join(ROOT, "images"), "images")],
+                      (os.path.join(ROOT, "images"), "images"),
+                      (os.path.join(ROOT, "LICENSE"), "."),
+                      (os.path.join(ROOT, "THIRD-PARTY-NOTICES.md"), "."),
+                      (os.path.join(ROOT, "LICENSES"), "LICENSES")],
                excludes=["tkinter", "kiasecut.engine"])
 app.binaries = no_mlt(app.binaries)
 app_exe = EXE(PYZ(app.pure), app.scripts, [], exclude_binaries=True, name="kiasecut",

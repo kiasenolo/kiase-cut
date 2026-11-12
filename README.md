@@ -872,6 +872,8 @@ how KiaseCut carries it. The license texts are in `LICENSES/` (`GPL-2.0-or-later
 `CC0-1.0.txt`, `CC-BY-4.0.txt`; KiaseCut's own is `LICENSE`). Blender: <https://www.blender.org>, source at
 <https://projects.blender.org/blender/blender>, © Blender Authors.
 
+The full list of what a build carries, with the license texts, is `THIRD-PARTY-NOTICES.md`.
+
 Used, not included: PySide6 / Qt (LGPL-3.0), MLT (LGPL-2.1), FFmpeg (LGPL or GPL, by
 build), numpy (BSD), Pillow (MIT-CMU), moderngl (MIT). An executable from
 `build_exec.bat --bundle-mlt` also carries Kdenlive's MLT, Qt and FFmpeg: hand on their

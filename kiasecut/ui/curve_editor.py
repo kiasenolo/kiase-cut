@@ -654,9 +654,9 @@ class CurveCanvas(QWidget):
             self._paths = None
             self.update()
             return True
-        # claim Delete and Ctrl+A before the window's clip shortcuts see them
+        # claim Delete / X (even with nothing selected: they must not reach the timeline's clips) and Ctrl+A before the window's shortcuts see them
         if e.type() == QEvent.ShortcutOverride:
-            if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.sel:
+            if self._is_delete(e):
                 e.accept()
                 return True
             if e.modifiers() & Qt.ControlModifier and (e.key() == Qt.Key_A or e.key() == Qt.Key_D and self.sel):
@@ -664,8 +664,12 @@ class CurveCanvas(QWidget):
                 return True
         return super().event(e)
 
+    @staticmethod
+    def _is_delete(e):
+        return e.key() in (Qt.Key_Delete, Qt.Key_Backspace, Qt.Key_X) and not e.modifiers() & ~Qt.ShiftModifier
+
     def keyPressEvent(self, e):
-        if e.key() in (Qt.Key_Delete, Qt.Key_Backspace) and self.sel:
+        if self._is_delete(e):
             self.delete_selected()
             e.accept()
         elif e.key() == Qt.Key_D and e.modifiers() & Qt.ControlModifier:

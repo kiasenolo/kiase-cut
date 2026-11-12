@@ -11,12 +11,14 @@ spec {wave, unit, rate, amp, offset, phase, fade, loop, width, bezier, curve, bi
   offset   the centre it swings about (the value of the wave's 0)
   phase    degrees into the cycle at time 0
   fade     seconds the swing takes to grow from nothing to `amp` (0: at once)
+  ramp     seconds the speed takes to grow from `ramp_from` (a share of `rate`, slow) to `rate` (0: at full speed at once)
   loop     repeat: each cycle runs the wave from its start; mirror: forward, then back (saw, square, bezier, curve)
   width    the share of a square wave's cycle that is high
   bipolar  the wave runs -1 - 1 (else 0 - 1); the curves are drawn 0 - 1 either way
   rel      for a clip's number: offset is added to the number as it is (keyframes included) instead of replacing it
 
 value(spec, t) = (number as it is, when rel) + offset + amp * wave * fade-in.
+The cycles gone by at t are the speed's integral: a ramping speed grows linearly, so x = f0 t + (f1 - f0) t² / 2T up to T.
 """
 import copy
 import math
@@ -32,10 +34,10 @@ DEFAULT_BEZIER = (0.42, 0.0, 0.58, 1.0)
 DEFAULT_CURVE = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]]
 
 
-def make(wave="sine", unit="hz", rate=1.0, amp=1.0, offset=0.0, phase=0.0, fade=0.0, loop="repeat", width=0.5,
+def make(wave="sine", unit="hz", rate=1.0, amp=1.0, offset=0.0, phase=0.0, fade=0.0, ramp=0.0, ramp_from=0.2, loop="repeat", width=0.5,
          bezier=DEFAULT_BEZIER, curve=None, bipolar=True, rel=False, seed=0):
     return {"wave": wave, "unit": unit, "rate": float(rate), "amp": float(amp), "offset": float(offset),
-            "phase": float(phase), "fade": float(fade), "loop": loop, "width": float(width),
+            "phase": float(phase), "fade": float(fade), "ramp": float(ramp), "ramp_from": float(ramp_from), "loop": loop, "width": float(width),
             "bezier": [float(x) for x in bezier], "curve": copy.deepcopy(curve or DEFAULT_CURVE),
             "bipolar": bool(bipolar), "rel": bool(rel), "seed": int(seed)}
 
@@ -50,13 +52,15 @@ def check(s):
         return "不認得的波形"
     if s.get("unit") not in dict(UNITS) or s.get("loop") not in dict(LOOPS):
         return "不認得的單位或循環方式"
-    nums = [s.get(k) for k in ("rate", "amp", "offset", "phase", "fade", "width")] + list(s.get("bezier") or [])
+    nums = [s.get(k) for k in ("rate", "amp", "offset", "phase", "fade", "width")] + [s.get("ramp", 0.0), s.get("ramp_from", 0.2)] + list(s.get("bezier") or [])
     if len(s.get("bezier") or []) != 4 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in nums):
         return "數字要是有限的"
     if s["unit"] == "sec" and s["rate"] <= 0:
         return "週期要大於 0 秒"
-    if s["rate"] < 0 or s["fade"] < 0:
+    if s["rate"] < 0 or s["fade"] < 0 or s.get("ramp", 0.0) < 0:
         return "頻率和漸入不能是負的"
+    if not 0.0 <= s.get("ramp_from", 0.2) <= 1.0:
+        return "起始速度要在 0 到 100% 之間"
     if s["wave"] == "bezier" and not (0.0 <= s["bezier"][0] <= 1.0 and 0.0 <= s["bezier"][2] <= 1.0):
         return "cubic-bezier 的 x1、x2 要在 0 到 1 之間"
     keys = s.get("curve")
@@ -70,6 +74,17 @@ def check(s):
 def hz(s):
     """Cycles per second."""
     return s["rate"] if s["unit"] == "hz" else (1.0 / s["rate"] if s["rate"] else 0.0)
+
+
+def cycles(s, t):
+    """Cycles gone by t seconds in (the speed grows from ramp_from × rate to rate over `ramp` seconds, then stays)."""
+    f1, T = hz(s), s.get("ramp", 0.0)
+    if T <= 0:
+        return f1 * t
+    f0 = f1 * s.get("ramp_from", 0.2)
+    if t < T:
+        return f0 * t + (f1 - f0) * t * t / (2 * T)
+    return f0 * T + (f1 - f0) * T / 2 + f1 * (t - T)
 
 
 def unit_wave(s, x):
@@ -104,7 +119,7 @@ def wave(s, x):
 
 def value(s, t, cur=0.0):
     """The LFO's number t seconds in (cur: the number as it is, which a `rel` one adds itself to)."""
-    x = hz(s) * t + s["phase"] / 360.0
+    x = cycles(s, t) + s["phase"] / 360.0
     grow = 1.0 if s["fade"] <= 0 else min(1.0, max(0.0, t / s["fade"]))
     return (cur if s.get("rel") else 0.0) + s["offset"] + s["amp"] * wave(s, x) * grow
 
@@ -117,9 +132,9 @@ def safe(s, t, cur=0.0):
         return cur
 
 
-def points(s, seconds, n=160):
-    """[(t, number)] over the first `seconds` (what the dialog's preview draws)."""
-    return [(seconds * i / n, safe(s, seconds * i / n)) for i in range(n + 1)]
+def points(s, seconds, n=160, start=0.0):
+    """[(t, number)] over `seconds` from `start` (what the dialog's preview draws)."""
+    return [(start + seconds * i / n, safe(s, start + seconds * i / n)) for i in range(n + 1)]
 
 
 def label(s):

@@ -123,6 +123,37 @@ class UseTests(unittest.TestCase):
             ins.show_clips([c], 0, 60)                                         # (the tip joined "表達式：" and a dict: TypeError)
             self.assertIn(said, ins.widgets[("transform", "rotation")].toolTip())
 
+class RampTests(unittest.TestCase):
+    def test_time_ramp_grows_the_speed_from_slow_to_full(self):
+        s = lfo.make("sine", rate=4, ramp=2, ramp_from=0.25)
+        self.assertAlmostEqual(lfo.cycles(s, 0), 0)
+        self.assertAlmostEqual(lfo.cycles(s, 2), 1 * 2 + 3 * 2 / 2)         # 1 Hz -> 4 Hz over 2 s: 5 cycles
+        self.assertAlmostEqual(lfo.cycles(s, 3), 5 + 4)                     # then 4 Hz
+        self.assertAlmostEqual(lfo.cycles(lfo.make(rate=4), 3), 12)         # (no ramp: as before)
+
+    def test_old_specs_without_ramp_still_work(self):
+        s = lfo.make("sine", rate=2)
+        del s["ramp"], s["ramp_from"]
+        self.assertIsNone(lfo.check(s))
+        self.assertAlmostEqual(lfo.value(s, 0.125), lfo.value(lfo.make("sine", rate=2), 0.125))
+
+    def test_preview_zooms_and_resets(self):
+        from kiasecut.ui.lfodialog import WavePreview
+        w = WavePreview()
+        w.resize(400, 200)
+        auto = w.window()
+        w.view = (0.0, auto[1] * 4)
+        self.assertEqual(w.window()[1], auto[1] * 4)
+        w.mouseDoubleClickEvent(None)
+        self.assertEqual(w.window(), auto)
+        w.grab()
+
+    def test_dialog_has_the_ramp_fields(self):
+        from kiasecut.ui.lfodialog import LfoDialog
+        d = LfoDialog(None, "t", lfo.make(ramp=3, ramp_from=0.5))
+        self.assertEqual((d.spec()["ramp"], d.spec()["ramp_from"]), (3.0, 0.5))
+        self.assertTrue(d.ramp_from.isEnabled())
+
 
 if __name__ == "__main__":
     unittest.main()

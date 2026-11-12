@@ -1,5 +1,5 @@
 """LFO (lfo.py): the wave, how fast it goes (Hz or seconds a cycle), how far it swings and about what, where in the
-cycle it starts, how long it takes to swing fully, repeating or mirrored - with a picture of the number over the first
+cycle it starts, how long it takes to swing fully, how long the speed takes to grow from slow, repeating or mirrored - with a picture of the number over the first
 few cycles. The wave can be a cubic-bezier or a curve of any number of points, drawn over one cycle."""
 import copy
 
@@ -16,36 +16,76 @@ from .tools import BezierField
 
 
 class WavePreview(QWidget):
-    """The number over time: seconds across, the number up; the dashed line is the offset."""
+    """The number over time: seconds across, the number up; the dashed line is the offset. The wheel zooms the time
+    (about the pointer), a drag moves along it, a double click goes back to the first few cycles."""
 
     def __init__(self):
         super().__init__()
         self.s = lfo.make()
+        self.view = None                    # (first second, seconds shown) once zoomed or moved, else the first few cycles
+        self.drag = None
         self.setMinimumSize(320, 190)
+        self.setToolTip("滾輪縮放時間（以滑鼠位置為中心），拖曳左右移動，按兩下回到預設")
 
     def set_spec(self, s):
         self.s = s
         self.update()
 
-    def seconds(self):
+    def auto_seconds(self):
         s = self.s
         h = lfo.hz(s) if lfo.check(s) is None else 0.0
         span = 3.0 / h if h > 0 else 4.0
+        ramp = s.get("ramp", 0.0)
+        if ramp > 0 and h > 0:                      # (a ramp from slow: its 3 cycles at full speed come after it)
+            span = ramp + span
         return max(span, s.get("fade", 0.0) * 1.5, 0.05)
+
+    def window(self):
+        return self.view or (0.0, self.auto_seconds())
+
+    def area(self):
+        return QRectF(46, 10, self.width() - 58, self.height() - 34)
+
+    def wheelEvent(self, e):
+        t0, span = self.window()
+        area = self.area()
+        f = min(1.0, max(0.0, (e.position().x() - area.left()) / max(1.0, area.width())))
+        new = min(max(span * (0.8 if e.angleDelta().y() > 0 else 1.25), 0.01), 36000.0)
+        t0 = max(0.0, t0 + (span - new) * f)
+        self.view = (t0, new)
+        self.update()
+        e.accept()
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.drag = (e.position().x(), *self.window())
+
+    def mouseMoveEvent(self, e):
+        if self.drag is not None:
+            x0, t0, span = self.drag
+            self.view = (max(0.0, t0 - (e.position().x() - x0) / max(1.0, self.area().width()) * span), span)
+            self.update()
+
+    def mouseReleaseEvent(self, _e):
+        self.drag = None
+
+    def mouseDoubleClickEvent(self, _e):
+        self.view = None
+        self.update()
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor("#18181b"))
-        area = QRectF(46, 10, self.width() - 58, self.height() - 34)
+        area = self.area()
         p.fillRect(area, QColor("#202024"))
         s = self.s
         if lfo.check(s):
             p.setPen(QColor("#ff7a7a"))
             p.drawText(area, Qt.AlignCenter, "（這個 LFO 算不出來）")
             return
-        span = self.seconds()
-        pts = lfo.points(s, span, 240)
+        t0, span = self.window()
+        pts = lfo.points(s, span, max(240, min(4000, int(area.width() * 2))), t0)
         ys = [y for _x, y in pts] + [s["offset"]]
         y0, y1 = min(ys), max(ys)
         if y1 - y0 < 1e-9:
@@ -54,12 +94,12 @@ class WavePreview(QWidget):
         y0, y1 = y0 - pad, y1 + pad
 
         def at(x, y):
-            return QPointF(area.left() + x / span * area.width(), area.bottom() - (y - y0) / (y1 - y0) * area.height())
+            return QPointF(area.left() + (x - t0) / span * area.width(), area.bottom() - (y - y0) / (y1 - y0) * area.height())
         p.setPen(QPen(QColor("#2c2c31"), 1, Qt.DotLine))
         for f in (0.25, 0.5, 0.75):
             p.drawLine(QPointF(area.left() + f * area.width(), area.top()), QPointF(area.left() + f * area.width(), area.bottom()))
         p.setPen(QPen(QColor("#6a6a72"), 1, Qt.DashLine))
-        p.drawLine(at(0, s["offset"]), at(span, s["offset"]))
+        p.drawLine(at(t0, s["offset"]), at(t0 + span, s["offset"]))
         path = QPainterPath(at(*pts[0]))
         for x, y in pts[1:]:
             path.lineTo(at(x, y))
@@ -69,11 +109,11 @@ class WavePreview(QWidget):
         p.setFont(QFont(p.font().family(), 8))
         p.drawText(QRectF(0, area.top() - 6, 44, 14), Qt.AlignRight | Qt.AlignVCenter, f"{y1:.4g}")
         p.drawText(QRectF(0, area.bottom() - 8, 44, 14), Qt.AlignRight | Qt.AlignVCenter, f"{y0:.4g}")
-        p.drawText(QRectF(area.left(), area.bottom() + 3, 80, 16), Qt.AlignLeft, "0 秒")
-        p.drawText(QRectF(area.right() - 80, area.bottom() + 3, 80, 16), Qt.AlignRight, f"{span:.3g} 秒")
+        p.drawText(QRectF(area.left(), area.bottom() + 3, 80, 16), Qt.AlignLeft, f"{t0:.3g} 秒")
+        p.drawText(QRectF(area.right() - 80, area.bottom() + 3, 80, 16), Qt.AlignRight, f"{t0 + span:.3g} 秒")
 
 
-KEYS = ("wave", "unit", "rate", "amp", "offset", "phase", "fade", "loop", "width", "seed", "bipolar", "rel", "bezier",
+KEYS = ("wave", "unit", "rate", "amp", "offset", "phase", "fade", "ramp", "ramp_from", "loop", "width", "seed", "bipolar", "rel", "bezier",
         "curve")
 
 
@@ -117,7 +157,7 @@ class LfoDialog(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(480)
         s = lfo.make(**{"wave": s["wave"], "unit": s["unit"], "rate": s["rate"], "amp": s["amp"], "offset": s["offset"],
-                        "phase": s["phase"], "fade": s["fade"], "loop": s["loop"], "width": s["width"],
+                        "phase": s["phase"], "fade": s["fade"], "ramp": s.get("ramp", 0.0), "ramp_from": s.get("ramp_from", 0.2), "loop": s["loop"], "width": s["width"],
                         "bezier": s["bezier"], "curve": s.get("curve"), "bipolar": s["bipolar"], "rel": s["rel"],
                         "seed": s.get("seed", 0)})
         lay = QVBoxLayout(self)
@@ -161,6 +201,16 @@ class LfoDialog(QDialog):
         self.fade.setSuffix(" 秒")
         self.fade.setToolTip("從開始起，擺動的幅度花這麼久慢慢長到完整（0：一開始就是完整的）")
         self.form.addRow("漸入", self.fade)
+        self.ramp = self.mix("ramp", s["ramp"], 2)
+        self.ramp.setSuffix(" 秒")
+        self.ramp.setToolTip("從開始起，速度花這麼久從慢慢加快到完整的速度（0：一開始就是完整的速度）")
+        self.form.addRow("時間漸入（由慢到快）", self.ramp)
+        self.ramp_from = self.mix("ramp_from", s["ramp_from"] * 100, 0)
+        self.ramp_from.setRange(0, 100)
+        self.ramp_from.setSingleStep(5)
+        self.ramp_from.setSuffix(" %")
+        self.ramp_from.setToolTip("一開始的速度是完整速度的幾 %")
+        self.form.addRow("　起始速度", self.ramp_from)
         self.pulse = self.mix("width", s["width"], 2)
         self.pulse.setRange(0.0, 1.0)
         self.pulse.setSingleStep(0.05)
@@ -212,7 +262,7 @@ class LfoDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         lay.addWidget(self.buttons)
-        for w in (self.rate, self.amp, self.offset, self.phase, self.fade, self.pulse, self.seed, *self.bz):
+        for w in (self.rate, self.amp, self.offset, self.phase, self.fade, self.ramp, self.ramp_from, self.pulse, self.seed, *self.bz):
             w.valueChanged.connect(self._changed)
         for w in (self.wave, self.loop, self.unit):
             w.currentIndexChanged.connect(self._changed)
@@ -269,13 +319,14 @@ class LfoDialog(QDialog):
     def _read(self):
         return {"wave": self.wave.currentData(), "unit": self.unit.currentData(), "rate": self.rate.value(),
                 "amp": self.amp.value(), "offset": self.offset.value(), "phase": self.phase.value(),
-                "fade": self.fade.value(), "loop": self.loop.currentData(), "width": self.pulse.value(),
+                "fade": self.fade.value(), "ramp": self.ramp.value(), "ramp_from": self.ramp_from.value() / 100, "loop": self.loop.currentData(), "width": self.pulse.value(),
                 "bezier": [b.value() for b in self.bz], "curve": [list(k) for k in self.cfield.keys],
                 "bipolar": self.bipolar.isChecked(), "rel": self.rel.isChecked(), "seed": self.seed.value()}
 
     def _changed(self, *_a):
         s = self.spec()
         w = s["wave"]
+        self.ramp_from.setEnabled(s["ramp"] > 0)
         show = {"loop": w in lfo.MIRRORABLE, "width": w == "square", "seed": w in ("random", "noise"),
                 "presets": w == "bezier", "bezier": w == "bezier"}
         for key, on in show.items():

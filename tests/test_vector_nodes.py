@@ -373,6 +373,15 @@ class OverscanTests(RenderBase):
         for off, on in zip(lit(False, "builtin:blender_glare", {"type": "Bloom", "threshold": 0.0, "size": 1.0}), lit(True, "builtin:blender_glare", {"type": "Bloom", "threshold": 0.0, "size": 1.0})):
             self.assertGreater(on[0], off[0] + 5)
 
+    def test_whole_picture_gives_no_margin_to_a_graph_with_a_node_that_cannot_work_with_one(self):
+        p = proj()
+        eff = edit.add_effect(p, "c1", fx.GRAPH)
+        b = edit.add_graph_node(p, "c1", eff["id"], {"type": "filter", "ref": "builtin:blur"})
+        eff["params"][ng.param_key(b, "full")] = True
+        self.assertEqual(ng.overscan_fraction(eff["graph"], "auto", eff["params"]), 0.5)
+        edit.add_graph_node(p, "c1", eff["id"], {"type": "filter", "ref": "builtin:blender_lens_distortion"})
+        self.assertEqual(ng.overscan_fraction(eff["graph"], "auto", eff["params"]), 0.0)
+
     def test_a_rotate_node_keeps_the_corners(self):
         view = self.graph("builtin:nodes/rotate", {"angle": 45.0})
         for got in self.pixels_of(view):

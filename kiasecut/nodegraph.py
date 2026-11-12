@@ -1610,6 +1610,7 @@ class Cache:
 OVERSCAN_STEPS = (0, 25, 50, 100)                           # 延伸範圍: % of the frame on each side; "auto": GEOMETRY_NODES have 50
 GEOMETRY_NODES = ("rotate", "transform", "map_uv")          # (builtin:nodes/...) and the filters below: what moves a picture, so the part that leaves the frame is wanted again
 GEOMETRY_FILTERS = ("transform", "scale", "translate")
+GLARE = "builtin:blender_glare"            # (reads by place on the card only for Sun Beams' blocks, which it skips under a margin)
 OVERSCAN_IN, OVERSCAN_OUT = "builtin:_overscan_in", "builtin:_overscan_out"
 OVERSCAN_MAX_PX = 8192
 
@@ -1636,8 +1637,9 @@ def overscan_fraction(graph, setting="auto", params=None):
             percent = 0
     bound = binds(graph)
     if any(n["type"] == FILTER and any(p.name == "full" for p in fx.get(n["ref"]).params) and
-           bound_value(params or {}, bound, nid, "full", False) for nid, n in (graph.get("nodes") or {}).items()):
-        percent = max(percent, 50)                                    # (a node with 計算全圖 on: what is round the frame counts too)
+           bound_value(params or {}, bound, nid, "full", False) for nid, n in (graph.get("nodes") or {}).items()) and \
+            all(overscan_safe(fx.get(n["ref"])) or n["ref"] == GLARE for n in nodes):
+        percent = max(percent, 50)       # (a node with 計算全圖 on: what is round the frame counts too - unless a node cannot work with a margin: the picture would be wrong)
     return max(0.0, min(percent, 100.0)) / 100.0
 
 

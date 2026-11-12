@@ -325,10 +325,18 @@ vec3 sun_beams(vec2 uv, vec2 R, float q) {
     vec2 map = src_px;
     int run = max(1, int(floor(min(extra_px.x / map.x, extra_px.y / map.y) / step_px)));    // steps that fit in a block
     vec3 acc = vec3(0.0);
+    bool margin = ov_scale != vec2(1.0);
     for (int c = 0; c < steps; c += run) {
         int e = min(c + run, steps) - 1;
         vec2 pa = (P + dir * ((float(c) + 0.5) / n * L)) / pass_px, pb = (P + dir * ((float(e) + 0.5) / n * L)) / pass_px;
         vec2 lo = min(pa, pb), hi = max(pa, pb);
+        if (margin) {                                          // (a margin round the frame: the blocks are of the frame's picture, the steps run on past it: all are read)
+            for (int i = c; i <= e; i++) {
+                float t = (float(i) + 0.5) / n;
+                acc += (1.0 - t) * (1.0 - t) * H((P + dir * t * L) / pass_px);
+            }
+            continue;
+        }
         if (hi.x < 0.0 || hi.y < 0.0 || lo.x > 1.0 || lo.y > 1.0) continue;
         ivec2 ba = clamp(ivec2(floor(lo * map)), ivec2(0), ivec2(map) - 1), bb = clamp(ivec2(floor(hi * map)), ivec2(0), ivec2(map) - 1);
         bool lit = false;

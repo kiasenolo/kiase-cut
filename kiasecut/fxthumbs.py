@@ -24,9 +24,26 @@ HEADER = struct.Struct("<II")
 ANIM_FRAMES, ANIM_FPS = 24, 12            # (2 seconds, as the thumbnail is shown on hover)
 
 
+DRAWN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "images", "example-filter.png")
+_drawn = {}
+
+
 def sample_picture(w=160, h=90):
-    """A small picture to show what a filter does: colour ramp, a disc, a square and stripes
-    (premultiplied RGBA, uint8)."""
+    """A small picture to show what a filter does: the one drawn by hand (images/example-filter.png) when there is one, else a
+    colour ramp, a disc, a square and stripes (premultiplied RGBA, uint8)."""
+    if (w, h) not in _drawn:
+        try:
+            from PIL import Image
+            with Image.open(DRAWN) as img:
+                a = np.asarray(img.convert("RGBA").resize((w, h), Image.LANCZOS), np.float32)
+            a[..., :3] *= a[..., 3:] / 255.0
+            _drawn[w, h] = np.ascontiguousarray(a.round().astype(np.uint8))
+        except (OSError, ImportError):
+            _drawn[w, h] = _generated(w, h)
+    return _drawn[w, h].copy()
+
+
+def _generated(w, h):
     y, x = np.mgrid[0:h, 0:w].astype(np.float32)
     img = np.zeros((h, w, 4), np.float32)
     img[..., 0] = 255 * x / w

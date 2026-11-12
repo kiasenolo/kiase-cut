@@ -62,6 +62,27 @@ class CornerHandles(unittest.TestCase):
         _, pt = pv.radius_handles(pv.selected_box(), pv._k())[0]
         self.assertAlmostEqual(pt.x(), tl.x() + 30, delta=0.01)
 
+    def test_overlapping_handles_pick_the_nearest_and_double_click_types_a_number(self):
+        from unittest import mock
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        p, pv = scene((960, 540))
+        edit.find(p, "k0")[1]["transform"].update(scale=1.0, radius_tl=2000.0, radius_tr=2000.0, radius_br=2000.0, radius_bl=2000.0)
+        pv.resize(1920, 1080)
+        pv.set_scene(p, 0, "k0", {"k0"})
+        box = pv.selected_box()
+        k = pv._k()
+        hs = dict(pv.radius_handles(box, k))
+        pt = hs["radius_br"] + QPointF(1, 1)               # (the four meet in the middle: the one under the pointer, not the first)
+        self.assertEqual(pv._radius_hit(box, pt, k), "radius_br")
+        got = []
+        pv.paramsCommitted.connect(lambda cid, g, vals: got.append((cid, g, vals)))
+        with mock.patch("kiasecut.ui.preview.QInputDialog.getDouble", return_value=(12.0, True)):
+            pv._ask_radius(box, "radius_tr", False)
+            pv._ask_radius(box, "radius_tr", True)
+        self.assertEqual(got[0], ("k0", "transform", {"radius_tr": 12.0}))
+        self.assertEqual(set(got[1][2]), {"radius_tl", "radius_tr", "radius_br", "radius_bl"})
+
 
 if __name__ == "__main__":
     unittest.main()

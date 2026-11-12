@@ -110,7 +110,7 @@ import types
 
 from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPainterPath, QPen, QPolygonF, QTransform
-from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QLineEdit, QPlainTextEdit, QTextEdit,
+from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QInputDialog, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
 from .. import components, curves, edit, fonts, gizmos, nodegraph, project, render, sharedgl, textlayout, textvars
@@ -1276,7 +1276,7 @@ class Preview(PenMixin, _Surface):
 
     def _has_radius_handles(self, box):
         return (not getattr(box, "group", False) and box.clip["type"] in ("image", "video", "compound") and not box.clip.get("asset")
-                and not getattr(box, "locked", False) and min(box.w, box.h) / self._k() >= 70)
+                and not getattr(box, "locked", False) and min(box.w, box.h) / self._k() >= 44)
 
     def radius_handles(self, box, k):
         """[(radius key, canvas point)]: each handle sits as far in from its corner as that corner is rounded (at least a
@@ -1289,6 +1289,21 @@ class Preview(PenMixin, _Surface):
             ins = min(max(r, floor), min(box.bw, box.bh) / 2)
             out.append((key, xf.map(QPointF(sx * (box.bw / 2 - ins), sy * (box.bh / 2 - ins)))))
         return out
+
+    def _radius_hit(self, box, m, k):
+        """The radius key of the handle under canvas point m, the nearest one where several overlap (big radii meet in the middle)."""
+        near = [(math.hypot(pt.x() - m.x(), pt.y() - m.y()), key) for key, pt in self.radius_handles(box, k) if self._near(pt, m, k)]
+        return min(near)[1] if near else None
+
+    CORNER_NAMES = ("左上", "右上", "右下", "左下")
+
+    def _ask_radius(self, box, key, all_four):
+        """Double click on a 圓角 handle: that corner's radius (px) typed in (Shift: all four)."""
+        now = curves.value((box.clip.get("transform") or {}).get(key, 0.0), box.t)
+        name = "四個角" if all_four else self.CORNER_NAMES[project.CORNERS.index(key)]
+        v, ok = QInputDialog.getDouble(self, "圓角", f"{name} 圓角 px（1080 高的畫面、縮放 1）", float(now), 0.0, 4000.0, 1)
+        if ok:
+            self.paramsCommitted.emit(box.clip["id"], "transform", {k: v for k in (project.CORNERS if all_four else (key,))})
 
     def _radius_values(self, box, d, m, mods):
         """{radius_*: px} of dragging a corner handle to canvas point m: how far in from the corner it is (all four with Shift)."""
@@ -2182,7 +2197,7 @@ class Preview(PenMixin, _Surface):
                              "others": [b for b in self.visible_boxes() if b.clip["id"] != box.clip["id"]]}
                 return
             if self._has_radius_handles(box):
-                corner = next((key for key, pt in self.radius_handles(box, k) if self._near(pt, m, k)), None)
+                corner = self._radius_hit(box, m, k)
                 if corner is not None:
                     self.drag = {"kind": "radius", "box": box, "m0": m, "moved": False, "corner": corner}
                     return
@@ -2697,7 +2712,7 @@ class Preview(PenMixin, _Surface):
                 sx, sy = side
                 cur = (Qt.SizeHorCursor if not sy else Qt.SizeVerCursor if not sx else
                        Qt.SizeFDiagCursor if sx == sy else Qt.SizeBDiagCursor)
-            elif self._has_radius_handles(box) and any(self._near(pt, m, k) for _, pt in self.radius_handles(box, k)):
+            elif self._has_radius_handles(box) and self._radius_hit(box, m, k) is not None:
                 cur = Qt.PointingHandCursor
             elif grabs(box, x, y):
                 cur = Qt.SizeAllCursor
@@ -2775,6 +2790,13 @@ class Preview(PenMixin, _Surface):
         if self.mask_mode:                               # (a text node's frame: its words are typed in as a text clip's)
             self._edit_source_text(QPointF(x, y))
             return
+        box = self.selected_box()
+        if box is not None and not self.multi() and not self.mask_mode and self._has_radius_handles(box):
+            key = self._radius_hit(box, QPointF(x, y), self._k())
+            if key is not None:                           # (a 圓角 handle: its number)
+                self.drag = None
+                self._ask_radius(box, key, bool(e.modifiers() & Qt.ShiftModifier))
+                return
         boxes = [b for b in self.visible_boxes() if not b.locked]
         hit = next((b for b in boxes if b.clip["id"] == self.selected_id and b.contains(x, y)), None) \
             or next((b for b in boxes if b.contains(x, y)), None)

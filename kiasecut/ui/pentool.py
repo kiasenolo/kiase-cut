@@ -778,16 +778,6 @@ class PenMixin:
             p.drawRect(d["rect"])
             p.setBrush(Qt.NoBrush)
 
-    def pen_tip(self):
-        """The line of help shown on the preview while the tool is on."""
-        pen = self.pen
-        if pen["edit"] is None:
-            return "鋼筆：點一下放角點，拖曳放平滑點；點第一個點封閉；Enter / 雙擊 / 右鍵結束；Backspace 退一點；Esc 取消"
-        if pen["cur"] is not None:
-            return "接著畫：點一下加點；點起點封閉、點別條路徑的端點接起來；Enter / 雙擊 / 右鍵結束"
-        return ("編輯路徑：點選／框選節點（Shift 加選），拖動、方向鍵移動，Delete 刪除；點線段加點；Alt+點 切換角點 / 平滑；"
-                "Ctrl+點端點接著畫；Shift+點空白 新增一段；Enter / Esc 結束")
-
 
 # -- the toolbar over the preview while the tool is on ----------------------------------------------------------------------------
 def _icon(kind):

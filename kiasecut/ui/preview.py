@@ -1701,9 +1701,6 @@ class Preview(PenMixin, _Surface):
         if self.box_zoom:
             p.setPen(QColor("#9a9aa0"))
             p.drawText(QRectF(8, 24, 260, 18), Qt.AlignLeft, "拖出要放大的範圍（Esc：取消）")
-        if self.pen is not None:
-            p.setPen(QColor("#9a9aa0"))
-            p.drawText(QRectF(8 + (RULER_PX if self.show_rulers else 0), 6 + (RULER_PX if self.show_rulers else 0), 900, 18), Qt.AlignLeft, self.pen_tip())
         p.setRenderHint(QPainter.Antialiasing)
         p.translate(r.x(), r.y())
         p.scale(r.width() / self.W, r.height() / self.H)

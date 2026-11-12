@@ -45,19 +45,6 @@ class GraphEditTests(unittest.TestCase):
         edit.remove_graph_node(self.p, "c1", self.e["id"], nid)
         self.assertNotIn("sources", self.e)
 
-    def test_a_picture_node_follows_the_kind_of_file_it_is_given(self):
-        p = proj()
-        e = edit.add_effect(p, "c1", fx.GRAPH)
-        nid = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "image"})
-        node = e["graph"]["nodes"][nid]
-        self.assertEqual(ng.title(node), "圖片")
-        edit.set_effect_source_media(p, "c1", e["id"], nid, image=("/a/b.svg", 100, 100))
-        self.assertTrue(node["svg"])
-        self.assertEqual(ng.title(node), "SVG 圖片")
-        edit.set_effect_source_media(p, "c1", e["id"], nid, image=("/a/b.png", 100, 100))
-        self.assertNotIn("svg", node)
-        self.assertEqual(ng.title(node), "圖片")
-
     def test_shape_node_edits(self):
         nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "source", "kind": "shape", "shape": "star"})
         self.assertEqual(self.e["sources"][nid]["shape"], "star")

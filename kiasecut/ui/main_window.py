@@ -850,7 +850,7 @@ class MainWindow(QMainWindow):
         tools.addWidget(self.snap_btn)
         self.follow_btn = tool("follow", "跟隨播放頭：播放時時間線連續捲動，播放頭停在畫面左邊約三成處。\n播放中拖動或左右捲動時間線會自動關掉",
                                lambda: None, checkable=True)
-        self.follow_btn.setChecked(True)
+        self.follow_btn.setChecked(False)
         self.follow_btn.toggled.connect(self.set_follow_play)
         tools.addWidget(self.follow_btn)
         tools.addSpacing(10)

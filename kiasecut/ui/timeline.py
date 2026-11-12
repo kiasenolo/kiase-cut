@@ -349,7 +349,7 @@ class Timeline(QWidget):
         self.drop_many = None                      # (count, across) while several media items hover
         self.tops = []                             # y of each row (on screen)
         self.vzoom = 1.0                           # track height factor
-        self.follow_play = True                    # 跟隨: the view goes with the playhead while playing
+        self.follow_play = False                   # 跟隨: the view goes with the playhead while playing
         self.heights = {}                          # track id -> height set by dragging its edge
         self.scroll_y = 0
         self.vbar = QScrollBar(Qt.Vertical, self)

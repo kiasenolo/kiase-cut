@@ -299,8 +299,8 @@ def asset_def(node):
 # of kind "vector" (node["op"]: "add" | "boolean"); its inputs are the sockets of node["items"] ("v1", "v2"...), each taking the outline of
 # a shape, a text, an SVG file or another vector node (vector.py; the picture of the node is its outlines drawn) ---------------------------
 VECTOR = "vector"
-VECOPS = (("add", "相加"), ("boolean", "布林運算"), ("rotate", "旋轉"), ("move", "移動"), ("scale", "縮放"), ("rasterize", "柵格化"))
-SINGLE_OPS = ("rotate", "move", "scale", "rasterize")                    # the vector nodes that change one vector (the others take many)
+VECOPS = (("add", "相加"), ("boolean", "布林運算"), ("rotate", "旋轉"), ("move", "移動"), ("scale", "縮放"))
+SINGLE_OPS = ("rotate", "move", "scale")                    # the vector nodes that change one vector (the others take many)
 ROTATE_ABOUT = ("自己的中心", "畫面中心")
 BOOLEAN_OPS = (("聯集", "union"), ("差集", "subtract"), ("交集", "intersect"), ("排除", "xor"))
 _vecop_defs = {}
@@ -329,8 +329,7 @@ def vecop_def(node):
                              fx.Param("about", "menu", ROTATE_ABOUT[0], label="繞著", items=list(ROTATE_ABOUT))],
                   "move": [fx.Param("offset", "vec2", [0.0, 0.0], -10000.0, 10000.0, "位移（px）")],
                   "scale": [fx.Param("factor", "vec2", [1.0, 1.0], 0.001, 1000.0, "縮放"),
-                            fx.Param("about", "menu", ROTATE_ABOUT[0], label="以此為中心", items=list(ROTATE_ABOUT))],
-                  "rasterize": [fx.Param("resolution", "float", 100.0, 1.0, 400.0, "解析度 %")]}.get(op, [])
+                            fx.Param("about", "menu", ROTATE_ABOUT[0], label="以此為中心", items=list(ROTATE_ABOUT))]}.get(op, [])
         hit = _vecop_defs[op] = fx.FilterDef("vector:" + op, dict(VECOPS).get(op, "相加"), "", params, "矢量", "")
     return hit
 
@@ -348,9 +347,7 @@ def vecop_of(node, nid, params, t, bound=None):
 def gives_vector(node, source=None):
     """Whether the node's outline can go into a vector node: a built-in shape, a text, a vector node, or an SVG picture
     (source: its entry of the effect's sources, which says the file)."""
-    if is_vecop(node):
-        return node.get("op") != "rasterize"                 # (柵格化 gives a picture: no outline any more)
-    if is_asset(node) or is_text(node):
+    if is_asset(node) or is_text(node) or is_vecop(node):
         return True
     if node.get("type") == SOURCE and node.get("kind") == "image":
         return source is None or str(source.get("image", "")).lower().endswith(".svg") or not source.get("image")

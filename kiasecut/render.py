@@ -263,7 +263,7 @@ class Renderer:
                 angle = curves.value(nodegraph.bound_value(e["params"], bound, nid, "angle", 0.0), t)
                 about = curves.value(nodegraph.bound_value(e["params"], bound, nid, "about", nodegraph.ROTATE_ABOUT[0]), t)
                 return vector.rotated(vector.add(groups), angle, about == nodegraph.ROTATE_ABOUT[1])
-            return vector.add(groups) if op in ("add", "rasterize") else vector.combine(op, groups)
+            return vector.add(groups) if op == "add" else vector.combine(op, groups)
         src = nodegraph.placed_by(src, e["params"], bound, nid, t)
         v = lambda k, d=0.0: curves.value(src.get(k, d), t)
         local = QTransform().translate(v("cx") * disp[0] / 2, -v("cy") * disp[1] / 2).rotate(v("rotation"))
@@ -301,10 +301,6 @@ class Renderer:
         render px per canvas px (a few thousand px at most)."""
         graph = nodegraph.flatten(e["graph"])
         layers = self.vector_layers(e, graph, nid, t, disp, fps)
-        node = graph["nodes"].get(nid) or {}
-        if nodegraph.is_vecop(node) and node.get("op") == "rasterize":          # 柵格化: drawn at the resolution it says, and a picture from then on
-            res = curves.value(nodegraph.bound_value(e["params"], nodegraph.binds(e["graph"]), nid, "resolution", 100.0), t)
-            unit = unit * min(max(float(res), 1.0), 400.0) / 100.0
         k = min(max(unit, 1e-3), MAX_VECTOR_PX / max(disp[0], disp[1], 1.0))
         pw, ph = max(1, round(disp[0] * k)), max(1, round(disp[1] * k))
         key = ("vector", vector.signature(layers), pw, ph)

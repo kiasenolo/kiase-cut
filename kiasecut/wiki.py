@@ -49,7 +49,6 @@ SPECIAL = {
     (ng.SOURCE, "vector", "rotate"): "矢量：旋轉一個矢量，可以繞它自己的中心或畫面中心。",
     (ng.SOURCE, "vector", "move"): "矢量：移動一個矢量。",
     (ng.SOURCE, "vector", "scale"): "矢量：縮放一個矢量。",
-    (ng.SOURCE, "vector", "rasterize"): "把一個矢量畫成圖片（柵格化）：給出的是一般的圖像，可以接濾鏡，不能再接回矢量節點；解析度調低會變成低解析度的圖。",
     (ng.FONT, "", ""): "字體常數：一個字體檔。不是圖片，只能接到文字節點的字體。",
     (ng.STRING, "", ""): "字串常數：一段文字。不是圖片，只能接到文字節點的內容。",
     (ng.VIEWER, "", ""): "編輯器的預覽看這個節點的結果。不會被匯出。",
@@ -317,7 +316,7 @@ def filter_page(ref):
 def special_page(key):
     t, kind, op = key[len("special:"):].split("|")
     label = next((e[2] for _, entries in categories() for e in entries if e[0] == "node" and e[1] == key), kind or t)
-    out = {ng.FONT: "font", ng.STRING: "string"}.get(t, "outline" if t == ng.SOURCE and ((kind == "vector" and op != "rasterize") or kind == "text" or op == "svg") else "image")
+    out = {ng.FONT: "font", ng.STRING: "string"}.get(t, "outline" if t == ng.SOURCE and (kind in ("vector", "text") or op == "svg") else "image")
     ins = ""
     if t == ng.SOURCE and kind == "vector":
         ins = "<p>輸入：矢量輪廓（%s）</p>" % dot("outline")

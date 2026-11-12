@@ -220,6 +220,21 @@ class VectorRenderTests(RenderBase):
         view["tracks"][0]["clips"][0]["effects"] = [eff]
         return view, eff, node
 
+    def test_a_rasterize_node_gives_a_picture_that_no_vector_node_takes(self):
+        view, eff, node = self.single("rasterize")
+        for r in self.renderers:
+            img = r.render(view, 0, W, H)
+            self.assertEqual(r.errors, [], type(r).__name__)
+            self.assertEqual((rgb(img, 12, 18), rgb(img, 32, 18)), (BLACK, WHITE), type(r).__name__)      # (the bar is drawn as it was)
+        p = proj()
+        e = edit.add_effect(p, "c1", fx.GRAPH)
+        ras = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "vector", "op": "rasterize"})
+        add = edit.add_graph_node(p, "c1", e["id"], {"type": "source", "kind": "vector", "op": "add"})
+        self.assertFalse(ng.gives_vector(e["graph"]["nodes"][ras]))
+        with self.assertRaises(edit.EditError):
+            edit.connect_graph(p, "c1", e["id"], ras, add, "v1")
+        edit.connect_graph(p, "c1", e["id"], ras, "output", "src")
+
     def test_move_and_scale_a_vector(self):
         view, eff, node = self.single("move", offset=[720.0, 0.0])           # (canvas px: the 1920 px canvas is 64 px here)
         for r in self.renderers:

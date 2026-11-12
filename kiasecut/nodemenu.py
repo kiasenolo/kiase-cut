@@ -39,7 +39,9 @@ VECTOR = [SHAPES, node("文字", type=ng.SOURCE, kind="text"), node("SVG 圖片"
           node("布林運算（聯集、差集、交集、排除）", type=ng.SOURCE, kind="vector", op="boolean"),
           node("旋轉（矢量）", type=ng.SOURCE, kind="vector", op="rotate"),
           node("移動（矢量）", type=ng.SOURCE, kind="vector", op="move"),
-          node("縮放（矢量）", type=ng.SOURCE, kind="vector", op="scale")]
+          node("縮放（矢量）", type=ng.SOURCE, kind="vector", op="scale"),
+          SEP,
+          node("柵格化（矢量變成圖片）", type=ng.SOURCE, kind="vector", op="rasterize")]
 
 OUTPUT = [node("預覽（編輯器的預覽看這裡）", type=ng.VIEWER)]
 

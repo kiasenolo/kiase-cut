@@ -122,6 +122,11 @@ class GpuMatchesCpu(unittest.TestCase):
         for r in (self.cpu, self.gpu):
             a, b = pixels(r.render(copy.deepcopy(view), 0, W, H)), pixels(r.render(copy.deepcopy(plain), 0, W, H))
             self.assertGreater(int((np.abs(a - b).max(axis=2) > 20).sum()), 500)
+        wide = self.view([self.bg()], [self.top(transform=dict(tf(scale=0.5), **dict(shadow, shadow_spread=12.0)))])
+        self.check("spread", wide)
+        for r in (self.cpu, self.gpu):                                   # (a grown shadow covers more)
+            n = lambda v: int((np.abs(pixels(r.render(copy.deepcopy(v), 0, W, H)) - pixels(r.render(copy.deepcopy(plain), 0, W, H))).max(axis=2) > 20).sum())
+            self.assertGreater(n(wide), n(view) + 300)
 
     def test_a_margin_draws_what_is_outside_the_canvas_round_it(self):
         view = self.view([self.bg(transform=tf(x=0.3, scale=1.4))])                  # (runs over the canvas on the right and the top and bottom)

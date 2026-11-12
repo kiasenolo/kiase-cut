@@ -90,7 +90,8 @@ PARAMS = {
                   ("shadow_opacity", "陰影不透明度 %", 0.0, 100.0, 1.0, 0, 100, 0.5),       # 陰影 (project.shadow_effect): px of a 1080-high canvas
                   ("shadow_x", "陰影 X px", -500.0, 500.0, 0.5, 1, 1, 6.0),
                   ("shadow_y", "陰影 Y px", -500.0, 500.0, 0.5, 1, 1, 6.0),
-                  ("shadow_blur", "陰影模糊 px", 0.0, 200.0, 0.5, 1, 1, 8.0)),
+                  ("shadow_blur", "陰影模糊 px", 0.0, 200.0, 0.5, 1, 1, 8.0),
+                  ("shadow_spread", "陰影擴張 px", 0.0, 64.0, 0.5, 1, 1, 0.0)),
     "mask": (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0),
              ("cy", "中心 Y", -5.0, 5.0, 0.01, 3, 1, 0.0),
              ("w", "寬", 0.0, 10.0, 0.01, 3, 1, 1.0),
@@ -108,7 +109,7 @@ HARD = {("text", "size"): (0.0, None), ("text", "italic_deg"): (-89.0, 89.0),
         ("text", "stroke"): (0.0, None),
         ("text", "box_w"): (0.0, None), ("text", "box_h"): (0.0, None),
         ("transform", "scale"): (0.0, None), ("transform", "scale_y"): (0.0, None),
-        ("transform", "opacity"): (0.0, 1.0), ("transform", "shadow_opacity"): (0.0, 1.0), ("transform", "shadow_blur"): (0.0, None),
+        ("transform", "opacity"): (0.0, 1.0), ("transform", "shadow_opacity"): (0.0, 1.0), ("transform", "shadow_blur"): (0.0, None), ("transform", "shadow_spread"): (0.0, 64.0),
         ("mask", "w"): (0.0, None), ("mask", "h"): (0.0, None), ("mask", "feather"): (0.0, None),
         ("clip", "volume"): (0.0, None), ("fxmix", "mix"): (0.0, 1.0)}
 

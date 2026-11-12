@@ -542,7 +542,7 @@ def shadow_effect(c):
         return None
     return {"id": "~shadow", "filter": SHADOW, "params": {
         "on": on, "color": tf.get("shadow_color", [0.0, 0.0, 0.0, 1.0]), "opacity": tf.get("shadow_opacity", 0.5),
-        "x": tf.get("shadow_x", 6.0), "y": tf.get("shadow_y", 6.0), "blur": tf.get("shadow_blur", 8.0)}}
+        "x": tf.get("shadow_x", 6.0), "y": tf.get("shadow_y", 6.0), "blur": tf.get("shadow_blur", 8.0), "spread": tf.get("shadow_spread", 0.0)}}
 
 
 def visual_effects(c, shadow=False):

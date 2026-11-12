@@ -3291,6 +3291,12 @@ def set_effect_source_media(proj, clip_id, effect_id, param, image=None, video=N
         if not path or not w or not h:
             raise EditError("找不到這張圖片")
         src.update(image=path, img_w=int(w), img_h=int(h))
+        node = ((_effect(c, effect_id).get("graph") or {}).get("nodes") or {}).get(param)
+        if node and node.get("type") == nodegraph.SOURCE and node.get("kind") == "image":      # (a 圖片 node given an SVG becomes an SVG 圖片 one, and back)
+            if str(path).lower().endswith(".svg"):
+                node["svg"] = True
+            else:
+                node.pop("svg", None)
     elif video:
         path, w, h, dur = video
         if not path or not w or not h:

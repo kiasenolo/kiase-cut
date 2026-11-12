@@ -623,6 +623,8 @@ def title(node):
         return node.get("label") or "群組"
     if is_asset(node) or is_vecop(node):
         return node_def(node).name
+    if node["type"] == SOURCE and node.get("kind") == "image" and node.get("svg"):
+        return "SVG 圖片"
     return {"groupin": "群組輸入", "groupout": "群組輸出", STRING: "字串", FONT: "字體", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀", "text": "文字", "vector": "矢量",
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 

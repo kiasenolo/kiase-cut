@@ -4862,6 +4862,7 @@ class MainWindow(QMainWindow):
         v["play_fps"], v["fps"], v["editing"] = self.proj["fps"], self.fps, True
         pathfollow.resolve(v)
         v["selected"] = sorted(self.timeline.selected_ids)              # (空物體 show only while selected)
+        self._frame_viewed(v)
         shown = self._matte_shown = self.matte_target()
         if shown:
             v["matte_preview"] = shown
@@ -4869,6 +4870,32 @@ class MainWindow(QMainWindow):
             sel = self.timeline.selected
             v["thumbs"] = [e["id"] for e in (sel or {}).get("effects") or [] if e.get("filter") == fx.GRAPH]
         return v
+
+    def _frame_viewed(self, v):
+        """While the node editor is in front and a 預覽 node takes a picture node's picture: the clip of that effect is drawn (in this
+        view only, not in the project) moved and scaled so the picture fills the canvas - a picture placed in the middle of a very wide
+        or big clip would otherwise be off the canvas, and the preview black."""
+        if not self.panels.is_active("nodes"):
+            return
+        cid = self.node_clip()
+        if not cid:
+            return
+        for c in project.walk_clips(v["tracks"]):
+            if c["id"] != cid or not c.get("transform"):
+                continue
+            for e in project.visual_effects(c):
+                src = (e.get("sources") or {}).get((nodegraph.viewed(e["graph"]) or ("",))[0]) if e.get("graph") else None
+                if not src or not src.get("w") or not src.get("h"):
+                    continue
+                W, H = v["width"], v["height"]
+                try:
+                    bw, bh = preview_base_size(c, W, H, 0)
+                except Exception:
+                    return
+                k = min(W / (src["w"] * bw), H / (src["h"] * bh))
+                c["transform"] = dict(c["transform"], scale=k, scale_y=k, rotation=0.0, flip_h=False, flip_v=False, pivot_x=0.0, pivot_y=0.0,
+                                      anchor_x=0.0, anchor_y=0.0, x=-k * src.get("cx", 0.0) * bw / W, y=-k * src.get("cy", 0.0) * bh / H)
+                return
 
     def matte_target(self):
         """{clip, opacity} while the 遮罩 tab edits a compound mask that has its compound and
@@ -4939,13 +4966,7 @@ class MainWindow(QMainWindow):
                 lvl, cid, e, name, track=(value, size)))
             return
         if not value:
-            svg = False
-            try:
-                svg = bool(self.container() and edit.find(self.container(), ids[0])[1] and
-                           next(e for e in edit.find(self.container(), ids[0])[1]["effects"] if e["id"] == eid)["graph"]["nodes"][name].get("svg"))
-            except (KeyError, StopIteration, TypeError, edit.EditError):
-                pass
-            what = "SVG 向量圖 (*.svg)" if svg else "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.svg)" if kind == "image" else \
+            what = "圖片 (*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff *.svg)" if kind == "image" else \
                 "影片 (*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.gif)"
             value, _ = QFileDialog.getOpenFileName(self, "效果來源", self.root or "", what)
             if not value:

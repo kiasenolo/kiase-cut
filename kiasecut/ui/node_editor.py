@@ -2724,13 +2724,12 @@ class NodeEditor(QWidget):
         if kind == "media":
             node_kind = self.graph["nodes"][nid]["kind"]
             menu = QMenu(self)
-            svg = bool(self.graph["nodes"][nid].get("svg"))              # (an SVG picture: only SVG files are offered)
-            for value, label in self.media.get(node_kind, []):
-                if not svg or str(value).lower().endswith(".svg"):
-                    menu.addAction(label, lambda value=value: self.mediaChosen.emit(self.eid, nid, value))
+            for value, label in self.media.get(node_kind, []):          # (an SVG file turns the node into an SVG 圖片 one, another picture back: edit.set_effect_source_media)
+                svg = node_kind == "image" and str(value).lower().endswith(".svg")
+                menu.addAction(label + ("（SVG）" if svg and not label.lower().endswith(".svg") else ""), lambda value=value: self.mediaChosen.emit(self.eid, nid, value))
             if node_kind in ("image", "video"):
                 menu.addSeparator()
-                menu.addAction("瀏覽 SVG 檔…" if svg else "瀏覽圖片檔…" if node_kind == "image" else "瀏覽影片檔…", lambda: self.mediaChosen.emit(self.eid, nid, ""))
+                menu.addAction("瀏覽圖片檔…" if node_kind == "image" else "瀏覽影片檔…", lambda: self.mediaChosen.emit(self.eid, nid, ""))
             if menu.isEmpty():
                 menu.addAction("（沒有可選的）").setEnabled(False)
             self.popup(menu, gp)

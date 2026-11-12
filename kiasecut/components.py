@@ -403,15 +403,16 @@ def bound(comp):
 
 
 # -- an instance's picture --------------------------------------------------------------------------
-def content(c, t):
+def content(c, t, dur=None):
     """What compound clip c draws at clip time t: its compound, or for a component instance
     with values of its own a copy of the component with them put into its layers (only what
     they change is copied; the renderers key their stills on the content). A static compound's
-    layers that have an LFO get its value at clip time t: the picture is drawn afresh as the clip plays."""
+    layers that have an LFO get its value at clip time t: the picture is drawn afresh as the clip plays. Their fade-outs and
+    holds count back from the end of the clip showing it (dur: microseconds, a static clip inside is handed the outer one's)."""
     comp = _content(c, t)
     if comp is not None and comp.get("static"):
         over = {}
-        _lfo_over(comp["tracks"], t, over)
+        _lfo_over(comp["tracks"], t, over, dur or c.get("duration_us"))
         if over:
             comp = dict(comp, tracks=_subst(comp["tracks"], over))
     return comp
@@ -438,19 +439,19 @@ def swings(comp, _seen=()):
                if c.get("type") == "compound")
 
 
-def _lfo_over(tracks, t, over):
+def _lfo_over(tracks, t, over, dur=None):
     """over: {layer id: [(prop, value)]} of the LFOs of tracks' layers at clip time t (a static compound's layers are at 0); a
     static clip among the layers that has LFOs inside is handed the time too (passed down: its picture is worked out at t)."""
     for tr in project.all_tracks(tracks):
         for c in tr["clips"]:
             if c.get("type") == "compound" and swings(c.get("compound")):
-                over.setdefault(c["id"], []).append((LFO_INSIDE, t))
+                over.setdefault(c["id"], []).append((LFO_INSIDE, (t, dur)))
     for c, prop in lfo_layers(tracks):
         try:
             cur = number_at(c, prop, 0)
         except (KeyError, ValueError, TypeError):
             continue                                             # (a prop the layer has not got any more)
-        over.setdefault(c["id"], []).append((prop, lfo.safe(c["expr"][prop], t / curves.US, cur, (c.get("duration_us") or 0) / curves.US or None)))
+        over.setdefault(c["id"], []).append((prop, lfo.safe(c["expr"][prop], t / curves.US, cur, (dur or 0) / curves.US or None)))
     for c, _prop in lfo_layers(tracks):
         if c["id"] in over and (LFO_DONE, None) not in over[c["id"]]:
             over[c["id"]].append((LFO_DONE, None))               # (its LFOs have been put in: the renderer must not swing it again)
@@ -551,7 +552,7 @@ def _put(c, prop, v):
     if prop == "place":
         return dict(c, place=v) if c["type"] == "image" else c
     if prop == LFO_INSIDE:
-        return dict(c, compound=content(c, v))
+        return dict(c, compound=content(c, v[0], v[1]))
     if prop == LFO_DONE:
         left = {k: x for k, x in (c.get("expr") or {}).items() if not lfo.is_lfo(x)}
         return dict(c, expr=left)

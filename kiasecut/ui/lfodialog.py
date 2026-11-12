@@ -51,7 +51,7 @@ class WavePreview(QWidget):
         ramp = s.get("ramp", 0.0)
         if ramp > 0 and h > 0:                      # (a ramp from slow: its 3 cycles at full speed come after it)
             span = ramp + span
-        span += s.get("ramp_out", 0.0) + s.get("hold", 0.0)           # (the preview ends where the clip does)
+        span += s.get("ramp_out", 0.0) + s.get("hold", 0.0) + s.get("predelay", 0.0)           # (the preview ends where the clip does)
         return max(span, s.get("fade", 0.0) * 1.5, (s.get("fade_out", 0.0) + s.get("hold", 0.0)) * 1.5, 0.05)
 
     def window(self):
@@ -212,7 +212,7 @@ class WavePreview(QWidget):
         p.drawText(QRectF(area.right() - 80, area.bottom() + 3, 80, 16), Qt.AlignRight, f"{t0 + span:.3g} 秒")
 
 
-KEYS = ("wave", "unit", "rate", "amp", "offset", "phase", "fade", "fade_out", "ramp", "ramp_out", "hold", "ramp_from", "loop", "width", "seed", "bipolar", "rel", "bezier",
+KEYS = ("wave", "unit", "rate", "amp", "offset", "phase", "fade", "fade_out", "ramp", "ramp_out", "hold", "predelay", "ramp_from", "loop", "width", "seed", "bipolar", "rel", "bezier",
         "curve")
 
 
@@ -256,7 +256,7 @@ class LfoDialog(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(480)
         s = lfo.make(**{"wave": s["wave"], "unit": s["unit"], "rate": s["rate"], "amp": s["amp"], "offset": s["offset"],
-                        "phase": s["phase"], "fade": s["fade"], "fade_out": s.get("fade_out", 0.0), "ramp": s.get("ramp", 0.0), "ramp_out": s.get("ramp_out", 0.0), "hold": s.get("hold", 0.0), "ramp_from": s.get("ramp_from", 0.2), "loop": s["loop"], "width": s["width"],
+                        "phase": s["phase"], "fade": s["fade"], "fade_out": s.get("fade_out", 0.0), "ramp": s.get("ramp", 0.0), "ramp_out": s.get("ramp_out", 0.0), "hold": s.get("hold", 0.0), "predelay": s.get("predelay", 0.0), "ramp_from": s.get("ramp_from", 0.2), "loop": s["loop"], "width": s["width"],
                         "bezier": s["bezier"], "curve": s.get("curve"), "bipolar": s["bipolar"], "rel": s["rel"],
                         "seed": s.get("seed", 0)})
         lay = QVBoxLayout(self)
@@ -296,29 +296,36 @@ class LfoDialog(QDialog):
         self.phase = self.mix("phase", s["phase"], 1)
         self.phase.setSuffix(" °")
         self.form.addRow("相位（一開始在週期的哪裡）", self.phase)
+        def pair(label, a, label_b, b, tip_a, tip_b):
+            """Two seconds fields of one kind on a row (the second only for a clip's number)."""
+            row = QWidget()
+            hl = QHBoxLayout(row)
+            hl.setContentsMargins(0, 0, 0, 0)
+            for w, tip in ((a, tip_a), (b, tip_b)):
+                w.setSuffix(" 秒")
+                w.setToolTip(tip)
+            hl.addWidget(a)
+            if clip:
+                hl.addWidget(QLabel(label_b))
+                hl.addWidget(b)
+            else:
+                b.hide()
+            hl.addStretch(1)
+            self.form.addRow(label, row)
+
         self.fade = self.mix("fade", s["fade"], 2)
-        self.fade.setSuffix(" 秒")
-        self.fade.setToolTip("從開始起，擺動的幅度花這麼久慢慢長到完整（0：一開始就是完整的）")
-        self.form.addRow("漸入", self.fade)
         self.fade_out = self.mix("fade_out", s["fade_out"], 2)
-        self.fade_out.setSuffix(" 秒")
-        self.fade_out.setToolTip("到片段結尾前，擺動的幅度花這麼久慢慢收到 0（0：不淡出）")
-        if clip:
-            self.form.addRow("淡出", self.fade_out)
+        pair("漸入", self.fade, "淡出", self.fade_out, "從開始起，擺動的幅度花這麼久慢慢長到完整（0：一開始就是完整的）",
+             "到片段結尾前，擺動的幅度花這麼久慢慢收到 0（0：不淡出）")
         self.ramp = self.mix("ramp", s["ramp"], 2)
-        self.ramp.setSuffix(" 秒")
-        self.ramp.setToolTip("從開始起，速度花這麼久從慢慢加快到完整的速度（0：一開始就是完整的速度）")
-        self.form.addRow("時間漸入（由慢到快）", self.ramp)
         self.ramp_out = self.mix("ramp_out", s["ramp_out"], 2)
-        self.ramp_out.setSuffix(" 秒")
-        self.ramp_out.setToolTip("到片段結尾前，速度花這麼久從完整的速度慢慢降到起始速度（0：不減速）")
-        if clip:
-            self.form.addRow("時間淡出（由快到慢）", self.ramp_out)
+        pair("時間漸入（由慢到快）", self.ramp, "時間淡出（由快到慢）", self.ramp_out,
+             "從開始起，速度花這麼久從慢慢加快到完整的速度（0：一開始就是完整的速度）",
+             "到片段結尾前，速度花這麼久從完整的速度慢慢降到起始速度（0：不減速）")
+        self.predelay = self.mix("predelay", s["predelay"], 2)
         self.hold = self.mix("hold", s["hold"], 2)
-        self.hold.setSuffix(" 秒")
-        self.hold.setToolTip("片段結尾前這麼久，LFO 就停住不動（時間淡出在那之前就結束）")
-        if clip:
-            self.form.addRow("結尾停頓", self.hold)
+        pair("開頭停頓", self.predelay, "結尾停頓", self.hold, "一開始先停住這麼久，才開始擺動（漸入、時間漸入都從那之後算）",
+             "片段結尾前這麼久，LFO 就停住不動（時間淡出在那之前就結束）")
         self.ramp_from = self.mix("ramp_from", s["ramp_from"] * 100, 0)
         self.ramp_from.setRange(0, 100)
         self.ramp_from.setSingleStep(5)
@@ -376,7 +383,7 @@ class LfoDialog(QDialog):
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
         lay.addWidget(self.buttons)
-        for w in (self.rate, self.amp, self.offset, self.phase, self.fade, self.fade_out, self.ramp, self.ramp_out, self.hold, self.ramp_from, self.pulse, self.seed, *self.bz):
+        for w in (self.rate, self.amp, self.offset, self.phase, self.fade, self.fade_out, self.ramp, self.ramp_out, self.hold, self.predelay, self.ramp_from, self.pulse, self.seed, *self.bz):
             w.valueChanged.connect(self._changed)
         for w in (self.wave, self.loop, self.unit):
             w.currentIndexChanged.connect(self._changed)
@@ -433,7 +440,7 @@ class LfoDialog(QDialog):
     def _read(self):
         return {"wave": self.wave.currentData(), "unit": self.unit.currentData(), "rate": self.rate.value(),
                 "amp": self.amp.value(), "offset": self.offset.value(), "phase": self.phase.value(),
-                "fade": self.fade.value(), "fade_out": self.fade_out.value(), "ramp": self.ramp.value(), "ramp_out": self.ramp_out.value(), "hold": self.hold.value(), "ramp_from": self.ramp_from.value() / 100, "loop": self.loop.currentData(), "width": self.pulse.value(),
+                "fade": self.fade.value(), "fade_out": self.fade_out.value(), "ramp": self.ramp.value(), "ramp_out": self.ramp_out.value(), "hold": self.hold.value(), "predelay": self.predelay.value(), "ramp_from": self.ramp_from.value() / 100, "loop": self.loop.currentData(), "width": self.pulse.value(),
                 "bezier": [b.value() for b in self.bz], "curve": [list(k) for k in self.cfield.keys],
                 "bipolar": self.bipolar.isChecked(), "rel": self.rel.isChecked(), "seed": self.seed.value()}
 

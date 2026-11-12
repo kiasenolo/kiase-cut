@@ -70,6 +70,13 @@ class WaveTests(unittest.TestCase):
         both = lfo.make("sine", rate=1, ramp_out=2, ramp_from=0.0, hold=1)
         self.assertAlmostEqual(lfo.cycles(both, 10, 5), 4 - 1.0, places=6)    # (4 s: 2 at full speed, 1 s of slowing from 1 to 0)
 
+    def test_predelay(self):
+        s = lfo.make("saw", rate=1, bipolar=False, predelay=2, fade=2)
+        self.assertAlmostEqual(lfo.value(s, 1), 0.0)                          # (still at the start)
+        self.assertAlmostEqual(lfo.value(s, 3.5), 0.75 * 0.5)                 # (1.5 s in: fade 3/4, the saw half way)
+        out = lfo.make("square", width=1.0, fade_out=2, predelay=1)
+        self.assertAlmostEqual(lfo.value(out, 9, dur=10), 0.5)
+
     def test_repeat_and_mirror(self):
         rep = lfo.make("saw", bipolar=False)
         mir = lfo.make("saw", bipolar=False, loop="mirror")

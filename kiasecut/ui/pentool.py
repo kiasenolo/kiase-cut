@@ -282,7 +282,7 @@ class PenMixin:
 
     def place_penbar(self):
         bar = getattr(self, "penbar", None)
-        if bar is not None and bar.isVisible():
+        if bar is not None and bar.isVisible() and bar.parent() is self:      # (one in the header above the preview stays there)
             bar.adjustSize()
             bar.move(max(4, (self.width() - bar.width()) // 2), self.height() - bar.height() - 10)
             bar.raise_()
@@ -842,17 +842,20 @@ def _icon(kind):
 
 
 class PenBar(QWidget):
-    """Point types (as Blender's handle types) and 封閉 / 開口 for the selected points, floating over the preview's bottom edge."""
+    """Point types (as Blender's handle types) and 封閉 / 開口 for the selected points: in the bar above the preview (parent: the
+    bar) or, without one, floating over the preview's bottom edge."""
 
-    def __init__(self, preview):
-        super().__init__(preview)
+    def __init__(self, preview, parent=None):
+        super().__init__(parent or preview)
         self.pv = preview
+        self.size_px = 28 if parent is not None else 34
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet("PenBar { background: rgba(28, 28, 32, 235); border: 1px solid #4a4a52; border-radius: 4px; }"
+        self.setStyleSheet(("PenBar { background: rgba(28, 28, 32, 235); border: 1px solid #4a4a52; border-radius: 4px; }"
+                            if parent is None else "PenBar { background: transparent; }") +
                            "QPushButton { background: transparent; border: 1px solid transparent; border-radius: 3px; }"
                            "QPushButton:hover { background: #3a3a42; } QPushButton:disabled { opacity: 0.4; }")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(5, 4, 5, 4)
+        lay.setContentsMargins(5, 4, 5, 4) if parent is None else lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
         self.buttons = {}
         for kind, tip in TYPES:
@@ -864,7 +867,7 @@ class PenBar(QWidget):
 
     def _add(self, lay, kind, tip, fn):
         b = QPushButton()
-        b.setFixedSize(34, 32)
+        b.setFixedSize(self.size_px, self.size_px - 2)
         b.setIcon(_icon(kind))
         b.setIconSize(b.size() * 0.85)
         b.setToolTip(tip)

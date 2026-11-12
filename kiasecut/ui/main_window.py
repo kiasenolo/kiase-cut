@@ -67,6 +67,7 @@ from . import androidfiles, appevents, beat_dialog, dialogframe, exprdialog, esc
 from .rack_panel import RackPanel
 from .steadylabel import SteadyLabel
 from .meter import MeterPanel
+from .pentool import PenBar
 from .preview import GL_DEFAULT as PREVIEW_GL_DEFAULT, FullscreenPreview, Preview
 from .preview import base_size as preview_base_size
 from .timebase import button_text, edit_timebase
@@ -658,10 +659,15 @@ class MainWindow(QMainWindow):
         self.quality_box.currentIndexChanged.connect(lambda _i: self.set_preview_quality(self.quality_box.currentData()))
         bar.addWidget(self.quality_box)
         self.transport.append(self.quality_box)
+        head_w = QWidget()
         head = QHBoxLayout()                            # (the preview's own tools sit above it, so the transport row stays short)
         head.setContentsMargins(8, 3, 8, 3)
         head.addWidget(self.viewer_lbl)
         head.addStretch()
+        self.preview.penbar = PenBar(self.preview, head_w)           # (point types, 封閉 / 開口: only while the pen tool is on)
+        self.preview.penbar.hide()
+        head.addWidget(self.preview.penbar)
+        head.addSpacing(10)
         for b in (self.pen_btn, self.guides_btn, self.overflow_btn, full_btn):
             head.addWidget(b)
         head.addSpacing(10)
@@ -669,7 +675,6 @@ class MainWindow(QMainWindow):
         center = QWidget()
         cl = QVBoxLayout(center)
         cl.setContentsMargins(4, 4, 4, 4)
-        head_w = QWidget()
         head_w.setObjectName("bar")
         head_w.setLayout(head)
         bar_w = ToolbarScroll(bar, "bar")               # (the transport row scrolls sideways when the panel is narrower than it)

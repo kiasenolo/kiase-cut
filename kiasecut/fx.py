@@ -14,6 +14,7 @@ that filters (the preview worker, the export) makes its own Engine.
 """
 import glob
 import hashlib
+import math
 import os
 import re
 import shlex
@@ -979,6 +980,7 @@ class Engine:
     compositor's own is shared: glrender.py)."""
 
     def __init__(self, mgl=None, ctx=None):
+        self.window = None                    # (x0, y0, x1, y1) px of the full-size pictures: the passes draw only there (the rest of it is read, not drawn: glrender's static_live compounds)
         self.overscan = None                  # (scale, offset) of the pictures read and of the one drawn, while a node effect with 延伸範圍 runs (nodegraph._evaluate)
         if ctx is None:
             mgl, ctx = make_context()
@@ -1218,11 +1220,17 @@ class Engine:
                 prog.put(name, v)
             dst_fbo.use()
             self.ctx.viewport = (0, 0, tw, th)
+            part = self.window if self.window and (tw, th) == (w, h) else None
+            if part:
+                x0, y0 = max(0, int(part[0])), max(0, int(part[1]))
+                dst_fbo.scissor = (x0, y0, max(1, min(tw, int(math.ceil(part[2]))) - x0), max(1, min(th, int(math.ceil(part[3]))) - y0))
             read.use(0)
             src.use(1)
             if ex is not None:
                 (made[ex][0] or self.blank_texture()).use(7)
             vao.render(self.mgl.TRIANGLE_STRIP)
+            if part:
+                dst_fbo.scissor = None
             read = dst_tex
             made.append((dst_tex, tw, th))
         return read if whole else (read, made)

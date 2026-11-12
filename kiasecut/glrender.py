@@ -472,6 +472,8 @@ SHOWN = 4                             # frames kept out of the layer pool: the p
 class GLRenderer(render.Renderer):
     """render.Renderer's pictures, composited on the GPU (same interface)."""
 
+    window = None                      # (w, h, (x0, y0, x1, y1)) of the layer whose effects only work out that part (a static_live compound)
+
     def __init__(self, video_frame=None, cache_limit=600, shared=False):
         super().__init__(video_frame, cache_limit)
         self.gl = GL(shared)
@@ -753,9 +755,18 @@ class GLRenderer(render.Renderer):
                     vis = vis.intersected(full)
                 if vis.isEmpty():
                     return
+                shown = vis
+                if live and not through:                 # 讀取時間: the whole picture is drawn (a 滾動 loops over all of it), the effects only work out the part that shows
+                    vis = full
                 lw, lh = vis.width() / fit * k, vis.height() / fit * k
-                if max(lw, lh) > MAX_LAYER:
-                    k *= MAX_LAYER / max(lw, lh)
+                cap = MAX_LAYER
+                if vis is full:
+                    try:
+                        cap = max(MAX_LAYER, int(gl.ctx.info["GL_MAX_TEXTURE_SIZE"]))
+                    except Exception:
+                        pass
+                if max(lw, lh) > cap:
+                    k *= cap / max(lw, lh)
                     lw, lh = vis.width() / fit * k, vis.height() / fit * k
                 held = gl.layer(max(1, math.ceil(lw)), max(1, math.ceil(lh)))
                 inner = QTransform()
@@ -774,10 +785,17 @@ class GLRenderer(render.Renderer):
                         gl.release(seen)
                     gl.release(snap)
                     self.outer = (held, under)
+                window, self.window = self.window, None
+                if vis is full:
+                    sx, sy = k / fit, k / fit
+                    px = 0.05 * max(shown.width(), shown.height()) * sx + 64
+                    self.window = (held.w, held.h, ((shown.left() - vis.left()) * sx - px, (shown.top() - vis.top()) * sy - px,
+                                                    (shown.right() - vis.left()) * sx + px, (shown.bottom() - vis.top()) * sy + px))
                 try:
                     self.gl_content(held, inner, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static") and not live
                                     else project.source_time(c, t), k)
                 finally:
+                    self.window = window
                     self.outer, self.clip_dur = outer, outer_dur
                     if under is not None:
                         gl.release(under)
@@ -938,6 +956,7 @@ class GLRenderer(render.Renderer):
                     sources[name] = (pic[0].tex, render.source_map(src, t, disp, world, cur.w, cur.h))
                     if any(q.name == name and q.type == "float" for q in d.params):
                         vals[name + fx.RANGE_MIN], vals[name + fx.RANGE_MAX] = fx.source_range(src, vals.get(name, 0.0), t)
+            gl.fx.window = self.window[2] if self.window and self.window[:2] == (cur.w, cur.h) else None      # (a picture that is more than shows: only the part that shows is worked out)
             try:
                 out = gl.fx.run_tex(d, vals, cur.tex, cur.w, cur.h, time=t / US,
                                     progress=min(1.0, max(0.0, t / max(1, duration))), frame=max(0, round(t * fps / US)),
@@ -946,6 +965,7 @@ class GLRenderer(render.Renderer):
                 self.errors.append(f"濾鏡「{d.name}」：{exc}")
                 continue
             finally:
+                gl.fx.window = None
                 for pic, give_back in pics:
                     if give_back:
                         gl.release(pic)

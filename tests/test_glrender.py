@@ -211,6 +211,36 @@ class GpuMatchesCpu(unittest.TestCase):
                 self.assertGreater(float(np.abs(at(0, True) - at(frame, True)).mean()), 1.0, frame)
                 self.assertGreater(float(at(frame, True).mean()), 20.0, frame)               # (and still there)
 
+    def test_a_scroll_in_a_big_static_clip_loops_over_all_of_it_and_only_the_part_that_shows_is_worked_out(self):
+        view_w = 4 * W
+        clip = self.compound(static=True)
+        comp = clip["compound"]
+        comp["width"], comp["height"] = view_w, H
+        bg = self.bg(transform=dict(tf(scale=4.0), scale_y=1.0))                 # (all of the strip)
+        bg["effects"] = [fx.new_effect("builtin:scroll", "e8")]
+        bg["effects"][0]["params"].update(speed_x=float(view_w) / 4, loop=True)
+        comp["tracks"] = [{"id": "i0", "kind": "video", "name": "v", "clips": [bg]}]
+        clip.update(static_live=True, duration_us=30 * S, transform=tf(scale=4.0))          # (at 1:1: a quarter of it shows)
+        view = self.view([], [clip])
+        gl = self.gpu.gl
+        whole = {}
+        for name, window in (("window", True), ("whole", False)):
+            if not window:
+                real = type(gl.fx)._chain
+                type(gl.fx)._chain = lambda self, *a, **k: (setattr(self, "window", None), real(self, *a, **k))[1]
+            try:
+                whole[name] = pixels(self.gpu.render(copy.deepcopy(view), 45, W, H))
+            finally:
+                if not window:
+                    type(gl.fx)._chain = real
+        self.assertEqual(self.gpu.errors, [])
+        self.assertLessEqual(float(np.abs(whole["window"] - whole["whole"]).mean()), 0.5)
+        self.assertGreater(float(whole["window"].mean()), 20.0)
+        bg["effects"][0]["params"]["speed_x"] = float(view_w)             # (a whole turn of the strip a second: it is where it began, as all of it loops)
+        turn = self.view([], [clip])
+        self.assertLessEqual(float(np.abs(pixels(self.gpu.render(copy.deepcopy(turn), 30, W, H))
+                                          - pixels(self.gpu.render(copy.deepcopy(turn), 0, W, H))).mean()), 1.0)
+
     def test_compounds(self):
         self.check("compound", self.view([self.top()], [self.compound()]))
         self.check("static", self.view([self.top()], [self.compound(static=True)]))

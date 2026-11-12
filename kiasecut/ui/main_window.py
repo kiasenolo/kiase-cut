@@ -678,8 +678,6 @@ class MainWindow(QMainWindow):
         self.play_btn_menu.setToolTip("預覽的播放設定：預覽音量、播放速度（保持音高）。只影響預覽，不影響匯出。")
         self._refresh_play_menu()
         self.rate_box.currentIndexChanged.connect(lambda _i: self._refresh_play_menu())
-        bar.addWidget(self.play_btn_menu)
-        self.transport.append(self.play_btn_menu)
         self.quality_box = QComboBox()                  # 預覽畫質: the size frames are drawn at, as other editors' 1/1 1/2 1/4
         for label, q in QUALITIES:
             self.quality_box.addItem(label, q)
@@ -695,6 +693,8 @@ class MainWindow(QMainWindow):
         self.quality_box.currentIndexChanged.connect(lambda _i: self.set_preview_quality(self.quality_box.currentData()))
         bar.addWidget(self.quality_box)
         self.transport.append(self.quality_box)
+        bar.addWidget(self.play_btn_menu)
+        self.transport.append(self.play_btn_menu)
         head_w = QWidget()
         head = QHBoxLayout()                            # (the preview's own tools sit above it, so the transport row stays short)
         head.setContentsMargins(8, 3, 8, 3)

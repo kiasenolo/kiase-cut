@@ -53,6 +53,7 @@ class LayerList(QListWidget):
     elsewhere report where they land."""
     reordered = Signal(dict)                     # {group id or "": its layers' ids, top first}
     movedInto = Signal(list, str, list)          # layer ids, the group they go into, its layers' ids then (top first)
+    movedOut = Signal(list, list)                # layer ids taken out of their groups, the level's layers' ids then (top first)
     mediaDropped = Signal(list, list, int, str)  # idents, file paths, layers above, group id or ""
     fxDropped = Signal(str, str, int)            # effect ref, the layer it was dropped on ("": between), layers above
     menuRequested = Signal(object)               # global position of a right-click on the selection

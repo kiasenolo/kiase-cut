@@ -198,6 +198,7 @@ class GpuMatchesCpu(unittest.TestCase):
 
     def test_a_static_clip_reads_the_time_when_asked(self):
         clip = self.compound(static=True)
+        clip["duration_us"] = 30 * S                                                        # (longer than the 2 s its layers last)
         clip["compound"]["tracks"][0]["clips"][0]["effects"] = [fx.new_effect("builtin:hue_cycle", "e9")]
         for r in (self.cpu, self.gpu):
             def at(frame, live):
@@ -206,7 +207,9 @@ class GpuMatchesCpu(unittest.TestCase):
                 return pixels(r.render(self.view([self.top()], [c]), frame, W, H))
             self.assertEqual(float(np.abs(at(0, False) - at(30, False)).mean()), 0.0)       # (a still: the same at any time)
             self.assertGreater(float(np.abs(at(0, True) - at(30, True)).mean()), 1.0)       # (drawn afresh: the colours turn)
-            self.assertGreater(float(np.abs(at(0, True) - at(75, True)).mean()), 1.0)       # (and on, past the 2 s its layers last)
+            for frame in (60, 75, 600):                                                     # (and on, at and past the 2 s its layers last)
+                self.assertGreater(float(np.abs(at(0, True) - at(frame, True)).mean()), 1.0, frame)
+                self.assertGreater(float(at(frame, True).mean()), 20.0, frame)               # (and still there)
 
     def test_compounds(self):
         self.check("compound", self.view([self.top()], [self.compound()]))

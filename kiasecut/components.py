@@ -411,7 +411,7 @@ def content(c, t, dur=None):
     holds count back from the end of the clip showing it (dur: microseconds, a static clip inside is handed the outer one's)."""
     comp = _content(c, t)
     if comp is not None and comp.get("static") and project.static_live(c):
-        comp = dict(comp, tracks=_stretch(comp["tracks"], int(t) + 1))        # (its layers last as long as the clip plays)
+        comp = dict(comp, tracks=_stretch(comp["tracks"], int(max(t, project.source_time(c, t))) + curves.US))   # (its layers last as long as the clip plays: past the frame it is drawn at, which is rounded)
     if comp is not None and comp.get("static"):
         over = {}
         _lfo_over(comp["tracks"], t, over, dur or c.get("duration_us"))

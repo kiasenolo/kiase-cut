@@ -666,9 +666,6 @@ class MainWindow(QMainWindow):
             for w in ws:
                 row.addWidget(w, 1 if w is self.vol_slider else 0)
             pl.addLayout(row)
-        note = QLabel("只影響預覽，不影響匯出")
-        note.setStyleSheet("color: #9a9aa0;")
-        pl.addWidget(note)
         self.play_menu = QMenu(self)
         act = QWidgetAction(self.play_menu)
         act.setDefaultWidget(panel)

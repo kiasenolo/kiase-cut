@@ -1122,6 +1122,24 @@ def linked(h):
     return h.get("scale_link", True) is not False
 
 
+def radius_linked(h):
+    """Whether a transform's four 圓角 change together (radius_link; off by default)."""
+    return bool(h.get("radius_link"))
+
+
+def with_linked_radius(h, values):
+    """A transform edit plus what 圓角 linking adds: one corner edited, the other three get its value."""
+    if not radius_linked(h):
+        return values
+    mine = [k for k in values if k in project.CORNERS]
+    if not mine:
+        return values
+    out = dict(values)
+    for k in project.CORNERS:
+        out[k] = values[mine[0]]
+    return out
+
+
 def with_linked_scale(h, values, t):
     """A transform edit (values at clip time t) plus what X / Y scale linking adds: the other
     scale keeps their ratio. While Y has no curve of its own it follows X; unlinked, it keeps
@@ -1157,8 +1175,12 @@ def set_param(proj, clip_id, group, key, value, t=None):
         for k, v in with_linked_scale(h, {key: value}, t).items():
             _set_one(c, h, group, k, v, t)
         return c
-    if group == "transform" and key in ("scale_link", "flip_h", "flip_v"):
+    if group == "transform" and key in ("scale_link", "flip_h", "flip_v", "radius_link"):
         h[key] = bool(value)
+        return c
+    if group == "transform" and key in project.CORNERS and radius_linked(h):
+        for k, v in with_linked_radius(h, {key: value}).items():
+            _set_one(c, h, group, k, v, t)
         return c
     if group == "text" and key == "box_mode":
         return set_text_box(proj, clip_id, value, t)

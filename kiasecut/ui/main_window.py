@@ -245,7 +245,7 @@ class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread
     shaderCompile = Signal(str, bool)          # (filter name, finished): a node's shader is being compiled (by the player's thread)
     PARAM_LABELS = {("transform", "x"): "位置", ("transform", "y"): "位置", ("transform", "scale"): "縮放",
-                    ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
+                    ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動", ("transform", "radius_link"): "圓角關聯", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
                     ("transform", "anchor_x"): "錨點", ("transform", "anchor_y"): "錨點",
@@ -4999,14 +4999,14 @@ class MainWindow(QMainWindow):
     def on_live_edit(self, ids, group, key, value):
         """A value being typed or scrubbed in the inspector: the preview shows it at once
         (the edit itself follows after a short pause)."""
-        if key in ("scale_link", "flip_h", "flip_v"):
+        if key in ("scale_link", "flip_h", "flip_v", "radius_link"):
             return                                  # (drawn when the edit is made)
         view = self.snapshot()
         for c in project.walk_clips(view["tracks"]):
             if c["id"] in ids and (group != "asset" or c.get("asset")):
                 holder = group_holder(c, group, create=True)
                 if group == "transform":
-                    holder.update(edit.with_linked_scale(holder, {key: value}, self.clip_time(c["id"])))
+                    holder.update(edit.with_linked_radius(holder, edit.with_linked_scale(holder, {key: value}, self.clip_time(c["id"]))))
                 else:
                     holder[key] = value
         self.player.worker.set_view(view, self.cache_dir())

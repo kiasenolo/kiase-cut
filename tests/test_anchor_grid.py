@@ -83,6 +83,24 @@ class CornerHandles(unittest.TestCase):
         self.assertEqual(got[0], ("k0", "transform", {"radius_tr": 12.0}))
         self.assertEqual(set(got[1][2]), {"radius_tl", "radius_tr", "radius_br", "radius_bl"})
 
+    def test_linked_corners_change_together(self):
+        from PySide6.QtCore import QPointF, Qt
+        p, pv = scene((960, 540))
+        edit.find(p, "k0")[1]["transform"].update(scale=1.0)
+        pv.resize(1920, 1080)
+        edit.set_param(p, "k0", "transform", "radius_tl", 10.0)
+        edit.set_param(p, "k0", "transform", "radius_link", True)
+        edit.set_param(p, "k0", "transform", "radius_br", 25.0)
+        tf = edit.find(p, "k0")[1]["transform"]
+        self.assertEqual([tf[k] for k in ("radius_tl", "radius_tr", "radius_br", "radius_bl")], [25.0] * 4)
+        pv.set_scene(p, 0, "k0", {"k0"})
+        box = pv.selected_box()
+        got = pv._radius_values(box, {"corner": "radius_tr"}, QPointF(box.corners()[1].x() - 40, box.corners()[1].y() + 40), Qt.NoModifier)
+        self.assertEqual(len(got), 4)                                      # (no Shift needed)
+        edit.set_param(p, "k0", "transform", "radius_link", False)
+        edit.set_param(p, "k0", "transform", "radius_tl", 3.0)
+        self.assertEqual(edit.find(p, "k0")[1]["transform"]["radius_tr"], 25.0)
+
 
 if __name__ == "__main__":
     unittest.main()

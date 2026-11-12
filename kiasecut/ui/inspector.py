@@ -1348,6 +1348,11 @@ class Inspector(QWidget):
         every.edited.connect(lambda v: [self._queue("transform", k, v) for k in project.CORNERS])
         self.widgets["radius_all"] = every
         form.addRow("圓角", every)
+        link = QCheckBox("四個角關聯")
+        link.setToolTip("開：改任何一個角（這裡或在預覽上拉圓點），四個角都跟著變成同一個值；關：各角分開")
+        link.clicked.connect(lambda on: self._emit_now(self.paramEdited, "transform", "radius_link", on))
+        self.widgets["radius_link"] = link
+        form.addRow("", link)
         rows = [r for r in PARAMS["transform"] if r[0] in project.CORNERS]
         self._rows(form, "transform", rows, (("radius_tl", "radius_tr", ""), ("radius_bl", "radius_br", "")))
 
@@ -2040,6 +2045,10 @@ class Inspector(QWidget):
             vals = {round(curves.value(k["transform"].get(r, 0.0), t), 1)
                     for k, t in zip(clips, ts) for r in project.CORNERS}
             self._set("radius_all", vals.pop() if len(vals) == 1 else None)
+        if "radius_link" in w:
+            w["radius_link"].blockSignals(True)
+            w["radius_link"].setChecked(all(edit.radius_linked(k["transform"]) for k in clips))
+            w["radius_link"].blockSignals(False)
         for key in ("flip_h", "flip_v"):
             if key in w:
                 w[key].blockSignals(True)

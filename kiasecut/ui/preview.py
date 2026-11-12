@@ -1300,6 +1300,7 @@ class Preview(PenMixin, _Surface):
     def _ask_radius(self, box, key, all_four):
         """Double click on a 圓角 handle: that corner's radius (px) typed in (Shift: all four)."""
         now = curves.value((box.clip.get("transform") or {}).get(key, 0.0), box.t)
+        all_four = all_four or edit.radius_linked(box.clip.get("transform") or {})
         name = "四個角" if all_four else self.CORNER_NAMES[project.CORNERS.index(key)]
         v, ok = QInputDialog.getDouble(self, "圓角", f"{name} 圓角 px（1080 高的畫面、縮放 1）", float(now), 0.0, 4000.0, 1)
         if ok:
@@ -1313,7 +1314,8 @@ class Preview(PenMixin, _Surface):
         ins = ((box.bw / 2 - sx * q.x()) + (box.bh / 2 - sy * q.y())) / 2
         ins = min(max(ins, 0.0), min(box.bw, box.bh) / 2)
         v = round(ins * 1080 / box.H, 1)
-        return {k: v for k in (project.CORNERS if mods & Qt.ShiftModifier else (d["corner"],))}
+        linked = bool(mods & Qt.ShiftModifier) or edit.radius_linked(box.clip.get("transform") or {})      # (Shift, or 四個角關聯)
+        return {k: v for k in (project.CORNERS if linked else (d["corner"],))}
 
     # -- arrow keys: nudge the selection by a pixel (Shift: ten) ------------------------------------------------
     def _can_nudge(self):

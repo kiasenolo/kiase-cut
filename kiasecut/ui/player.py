@@ -361,6 +361,13 @@ class Worker(QObject):
         h = max(2, round(w * v["height"] / v["width"]))
         self.asked = []
         margin = self.overflow
+        try:
+            limit = int(self.renderer.gl.ctx.info["GL_MAX_TEXTURE_SIZE"])       # (a picture wider than the card's textures cannot be drawn: a compound of another, huge, size)
+        except Exception:
+            limit = 0
+        if limit > 0 and max(w, h) * (1 + 2 * margin) > limit:
+            k = limit / (max(w, h) * (1 + 2 * margin))
+            w, h = max(2, int(w * k)), max(2, int(h * k))
         shown = img = None
         with gpu.ui_lock:                                # (the layer list renders thumbnails on the UI thread: never both at once)
             if sharedgl.ENABLED and getattr(getattr(self.renderer, "gl", None), "shared", False):

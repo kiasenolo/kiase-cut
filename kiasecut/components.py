@@ -410,12 +410,34 @@ def content(c, t, dur=None):
     layers that have an LFO get its value at clip time t: the picture is drawn afresh as the clip plays. Their fade-outs and
     holds count back from the end of the clip showing it (dur: microseconds, a static clip inside is handed the outer one's)."""
     comp = _content(c, t)
+    if comp is not None and comp.get("static") and project.static_live(c):
+        comp = dict(comp, tracks=_stretch(comp["tracks"], int(t) + 1))        # (its layers last as long as the clip plays)
     if comp is not None and comp.get("static"):
         over = {}
         _lfo_over(comp["tracks"], t, over, dur or c.get("duration_us"))
         if over:
             comp = dict(comp, tracks=_subst(comp["tracks"], over))
     return comp
+
+
+def _stretch(tracks, us):
+    """tracks with every clip at least us long (the very list when none is shorter)."""
+    out, changed = [], False
+    for tr in tracks:
+        clips, moved = [], False
+        for c in tr["clips"]:
+            k = c
+            if project.is_group(c):
+                inner = _stretch(c["tracks"], us)
+                if inner is not c["tracks"]:
+                    k = dict(c, tracks=inner)
+            if k["duration_us"] < us:
+                k = dict(k, duration_us=us)
+            moved = moved or k is not c
+            clips.append(k)
+        out.append(dict(tr, clips=clips) if moved else tr)
+        changed = changed or moved
+    return out if changed else tracks
 
 
 def lfo_layers(tracks):

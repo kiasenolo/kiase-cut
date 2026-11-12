@@ -196,6 +196,18 @@ class GpuMatchesCpu(unittest.TestCase):
         return {"id": "k", "type": "compound", "name": "k", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,
                 "compound_id": "k1", "compound": comp, "transform": tf(scale=1.4, rotation=12, x=0.1, opacity=0.9)}
 
+    def test_a_static_clip_reads_the_time_when_asked(self):
+        clip = self.compound(static=True)
+        clip["compound"]["tracks"][0]["clips"][0]["effects"] = [fx.new_effect("builtin:hue_cycle", "e9")]
+        for r in (self.cpu, self.gpu):
+            def at(frame, live):
+                c = copy.deepcopy(clip)
+                c["static_live"] = live
+                return pixels(r.render(self.view([self.top()], [c]), frame, W, H))
+            self.assertEqual(float(np.abs(at(0, False) - at(30, False)).mean()), 0.0)       # (a still: the same at any time)
+            self.assertGreater(float(np.abs(at(0, True) - at(30, True)).mean()), 1.0)       # (drawn afresh: the colours turn)
+            self.assertGreater(float(np.abs(at(0, True) - at(75, True)).mean()), 1.0)       # (and on, past the 2 s its layers last)
+
     def test_compounds(self):
         self.check("compound", self.view([self.top()], [self.compound()]))
         self.check("static", self.view([self.top()], [self.compound(static=True)]))

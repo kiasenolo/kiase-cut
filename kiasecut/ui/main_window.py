@@ -258,7 +258,7 @@ class MainWindow(QMainWindow):
                     ("text", "stroke_align"): "外框位置",
                     ("text", "letter_spacing"): "字距", ("text", "line_spacing"): "行距",
                     ("text", "italic_deg"): "斜體", ("text", "font_path"): "字體", ("text", "align"): "對齊", ("text", "valign"): "垂直對齊",
-                    ("text", "box_mode"): "文字框", ("text", "box_w"): "文字框", ("text", "box_h"): "文字框", ("clip", "blend"): "混合模式",
+                    ("text", "box_mode"): "文字框", ("text", "box_w"): "文字框", ("text", "box_h"): "文字框", ("clip", "blend"): "混合模式", ("clip", "static_live"): "讀取時間",
                     ("mask", "kind"): "遮罩形狀", ("mask", "invert"): "反轉遮罩"}
 
     def __init__(self):

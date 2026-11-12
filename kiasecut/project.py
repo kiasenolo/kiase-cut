@@ -895,6 +895,12 @@ def is_static(c):
     return c.get("type") == "compound" and bool((c.get("compound") or {}).get("static"))
 
 
+def static_live(c):
+    """Whether clip c, which shows a static compound, draws it afresh at its own time (static_live) instead of as a still: the
+    effects inside that read the time (noise, flicker...) move, and what the layers have for the time (LFOs) with them."""
+    return is_static(c) and bool(c.get("static_live"))
+
+
 def shutter_times(c, t_us, fps):
     """動態模糊 (the clip's first 動態模糊 effect that is on: params shutter in degrees, samples):
     the times (us, on the clip's timeline) clip c is drawn at and averaged - the samples spread

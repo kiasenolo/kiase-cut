@@ -616,6 +616,13 @@ class Inspector(QWidget):
                 blend.activated.connect(lambda i: self._emit_now(self.paramEdited, "clip", "blend", blend.itemData(i)))
                 self.widgets["blend"] = blend
                 form.addRow("混合模式", self._with_key(blend, "clip", "blend"))
+                if project.is_static(c):
+                    live = QCheckBox("讀取時間（動畫）")
+                    live.setToolTip("靜態片段平常只畫第一幀，像圖片一樣：裡面讀取時間的效果（雜訊、閃爍……）不會動。\n"
+                                    "開啟後這個片段每一格都照自己的時間重畫（會比較吃效能），那些效果就會動起來。")
+                    live.clicked.connect(lambda v: self._emit_now(self.paramEdited, "clip", "static_live", bool(v)))
+                    self.widgets["static_live"] = live
+                    form.addRow("", live)
         if c["type"] == "group":
             self._build_group(form, c)
         if self.through_row:
@@ -2179,6 +2186,10 @@ class Inspector(QWidget):
             w["normalize_db"].setValue(known[0] if known else normalize.TARGET_DB)
             w["normalize_db"].blockSignals(False)
             w["normalize_db"].setEnabled(bool(known))
+        if "static_live" in w:
+            w["static_live"].blockSignals(True)
+            w["static_live"].setChecked(all(bool(k.get("static_live")) for k in clips))
+            w["static_live"].blockSignals(False)
         if "blend" in w:
             modes = {curves.value(k.get("blend", "normal"), t) for k, t in zip(clips, ts)}
             self._set_combo(w["blend"], modes.pop() if len(modes) == 1 else "--")

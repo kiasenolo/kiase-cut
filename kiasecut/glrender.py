@@ -740,7 +740,8 @@ class GLRenderer(render.Renderer):
                 self.gl_through(tgt, c, comp, to_clip * world, t, fps, k, opacity, (bw, bh), world, inv)
                 return
             through = kind == "compound" and project.passes_through(c)    # (效果穿透, as render.py)
-            if comp.get("static") and not through:
+            live = project.static_live(c)                     # (static_live: drawn afresh at its own time, as a compound)
+            if comp.get("static") and not through and not live:
                 tex = self.gl_still(comp, k, fps).tex
                 rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             else:
@@ -774,7 +775,7 @@ class GLRenderer(render.Renderer):
                     gl.release(snap)
                     self.outer = (held, under)
                 try:
-                    self.gl_content(held, inner, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static")
+                    self.gl_content(held, inner, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static") and not live
                                     else project.source_time(c, t), k)
                 finally:
                     self.outer, self.clip_dur = outer, outer_dur

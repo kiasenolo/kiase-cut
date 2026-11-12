@@ -796,7 +796,8 @@ class Renderer:
             # 效果穿透: what is under it now, for its clips that work on what is under them
             under = self.seen(p, p.device().copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)) \
                 if kind == "compound" and isinstance(p.device(), QImage) and project.passes_through(c) else None
-            if comp.get("static") and under is None:
+            live = project.static_live(c)                     # (static_live: drawn afresh at its own time, as a compound)
+            if comp.get("static") and under is None and not live:
                 pic = self.still(comp, k, fps)
                 draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
                 disp = (bw, bh)
@@ -836,7 +837,7 @@ class Renderer:
                     up.end()
                     self.outer = (lp, seen)
                 try:
-                    self.draw_content(lp, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static")
+                    self.draw_content(lp, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static") and not live
                                       else project.source_time(c, t), k)
                 finally:
                     self.outer, self.clip_dur = outer, outer_dur

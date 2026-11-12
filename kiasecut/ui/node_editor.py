@@ -790,7 +790,7 @@ class NodeItem(QGraphicsItem):
     def hop(self, r, cell):
         key = (r["y"], cell)
         if key not in self.hops:
-            self.hops[key] = motion.Hop(apply=lambda off: self.update())
+            self.hops[key] = motion.Hop(apply=lambda off: shiboken6.isValid(self) and self.update())       # (a node that was rebuilt away while its number was still hopping)
         return self.hops[key]
 
     def hopped(self, box, r, cell=0):
@@ -2820,9 +2820,11 @@ class NodeEditor(QWidget):
             QTimer.singleShot(0, lambda: drop_proxy(proxy))
             if keep:
                 try:
-                    self.set_number(item.nid, row, cell, float(text))
+                    value = float(text)
                 except ValueError:
-                    pass
+                    return
+                nid = item.nid
+                QTimer.singleShot(0, lambda: self.set_number(nid, row, cell, value))      # (a turn later: the edit rebuilds the nodes, and this box with them, while its key is still being handled)
         le.returnPressed.connect(lambda: finish(True))
         le.editingFinished.connect(lambda: finish(False))
         self.edit_finish = finish

@@ -577,6 +577,22 @@ class NodeEditorTests(unittest.TestCase):
         wheel(-120, Qt.ControlModifier)
         self.assertEqual(v.transform().m11(), k0)                       # Ctrl: sideways, not zoom
 
+    def test_enter_in_the_number_box_does_not_rebuild_the_nodes_under_its_own_key(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        seen = []
+        ed.paramEdited.connect(lambda *a: (seen.append(a), ed.rebuild()))               # (what the window does with an edit)
+        it = ed.view.items_by_id["math1"]
+        row = next(r for r in it.rows if r["kind"] == "param" and r["p"].name == "value")
+        ed.field_clicked(it, row, 0, QPointF(0, 0))
+        box = ed.edit_proxy.widget()
+        box.setText("0.7")
+        QTest.keyClick(box, Qt.Key_Return)                                              # (it used to crash here: the box was deleted while it handled the key)
+        QApplication.processEvents()
+        self.assertEqual(seen[-1], ("e1", "math1.value", 0.7))
+
     def test_pressing_elsewhere_closes_the_number_box_keeping_the_text(self):
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
@@ -591,6 +607,7 @@ class NodeEditorTests(unittest.TestCase):
         ed.edit_proxy.widget().setText("0.9")
         self.click(ed, QPointF(-400, -400))                             # an empty place
         self.assertIsNone(ed.edit_proxy)
+        QApplication.processEvents()                                    # (the edit comes a turn after the key: the box is not rebuilt away while it handles it)
         self.assertEqual(got[-1], ("e1", "math1.value", 0.9))
 
     def test_number_field_scrubs_up_and_down(self):
@@ -736,6 +753,7 @@ class NodeEditorTests(unittest.TestCase):
         self.assertIsNotNone(ed.edit_proxy)
         ed.edit_proxy.widget().setText("2.5")
         ed.edit_proxy.widget().returnPressed.emit()
+        QApplication.processEvents()
         self.assertEqual(got[-1], ("e1", "math1.value", 2.5))
 
     def test_ghost_socket_drag_makes_a_parameter(self):

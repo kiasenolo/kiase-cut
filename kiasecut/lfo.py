@@ -13,6 +13,7 @@ spec {wave, unit, rate, amp, offset, phase, fade, fade_out, loop, width, bezier,
   fade     seconds the swing takes to grow from nothing to `amp` (0: at once)
   fade_out seconds the swing takes to shrink to nothing, counted back from the end of the clip (a clip's number only; 0: no fade)
   ramp     seconds the speed takes to grow from `ramp_from` (a share of `rate`, slow) to `rate` (0: at full speed at once)
+  ramp_out seconds the speed takes to slow back down to `ramp_from` × `rate`, counted back from the end of the clip (0: no slowing)
   loop     repeat: each cycle runs the wave from its start; mirror: forward, then back (saw, square, bezier, curve)
   width    the share of a square wave's cycle that is high
   bipolar  the wave runs -1 - 1 (else 0 - 1); the curves are drawn 0 - 1 either way
@@ -35,10 +36,10 @@ DEFAULT_BEZIER = (0.42, 0.0, 0.58, 1.0)
 DEFAULT_CURVE = [[0.0, 0.0, 0.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]]
 
 
-def make(wave="sine", unit="hz", rate=1.0, amp=1.0, offset=0.0, phase=0.0, fade=0.0, fade_out=0.0, ramp=0.0, ramp_from=0.2, loop="repeat", width=0.5,
+def make(wave="sine", unit="hz", rate=1.0, amp=1.0, offset=0.0, phase=0.0, fade=0.0, fade_out=0.0, ramp=0.0, ramp_out=0.0, ramp_from=0.2, loop="repeat", width=0.5,
          bezier=DEFAULT_BEZIER, curve=None, bipolar=True, rel=False, seed=0):
     return {"wave": wave, "unit": unit, "rate": float(rate), "amp": float(amp), "offset": float(offset),
-            "phase": float(phase), "fade": float(fade), "fade_out": float(fade_out), "ramp": float(ramp), "ramp_from": float(ramp_from), "loop": loop, "width": float(width),
+            "phase": float(phase), "fade": float(fade), "fade_out": float(fade_out), "ramp": float(ramp), "ramp_out": float(ramp_out), "ramp_from": float(ramp_from), "loop": loop, "width": float(width),
             "bezier": [float(x) for x in bezier], "curve": copy.deepcopy(curve or DEFAULT_CURVE),
             "bipolar": bool(bipolar), "rel": bool(rel), "seed": int(seed)}
 
@@ -53,12 +54,12 @@ def check(s):
         return "不認得的波形"
     if s.get("unit") not in dict(UNITS) or s.get("loop") not in dict(LOOPS):
         return "不認得的單位或循環方式"
-    nums = [s.get(k) for k in ("rate", "amp", "offset", "phase", "fade", "width")] + [s.get("fade_out", 0.0), s.get("ramp", 0.0), s.get("ramp_from", 0.2)] + list(s.get("bezier") or [])
+    nums = [s.get(k) for k in ("rate", "amp", "offset", "phase", "fade", "width")] + [s.get("fade_out", 0.0), s.get("ramp", 0.0), s.get("ramp_out", 0.0), s.get("ramp_from", 0.2)] + list(s.get("bezier") or [])
     if len(s.get("bezier") or []) != 4 or not all(isinstance(v, (int, float)) and math.isfinite(v) for v in nums):
         return "數字要是有限的"
     if s["unit"] == "sec" and s["rate"] <= 0:
         return "週期要大於 0 秒"
-    if s["rate"] < 0 or s["fade"] < 0 or s.get("fade_out", 0.0) < 0 or s.get("ramp", 0.0) < 0:
+    if s["rate"] < 0 or s["fade"] < 0 or s.get("fade_out", 0.0) < 0 or s.get("ramp", 0.0) < 0 or s.get("ramp_out", 0.0) < 0:
         return "頻率和漸入不能是負的"
     if not 0.0 <= s.get("ramp_from", 0.2) <= 1.0:
         return "起始速度要在 0 到 100% 之間"
@@ -77,9 +78,23 @@ def hz(s):
     return s["rate"] if s["unit"] == "hz" else (1.0 / s["rate"] if s["rate"] else 0.0)
 
 
-def cycles(s, t):
-    """Cycles gone by t seconds in (the speed grows from ramp_from × rate to rate over `ramp` seconds, then stays)."""
+def _speed(s, t, dur):
+    """The speed at t as a share of rate: up from ramp_from over `ramp`, down to it over the last `ramp_out` seconds."""
+    lo, T, To = s.get("ramp_from", 0.2), s.get("ramp", 0.0), s.get("ramp_out", 0.0)
+    k = 1.0 if T <= 0 or t >= T else lo + (1 - lo) * t / T
+    if dur is not None and To > 0 and t > dur - To:
+        k *= 1.0 - (1 - lo) * min(1.0, (t - (dur - To)) / To)
+    return k
+
+
+def cycles(s, t, dur=None):
+    """Cycles gone by t seconds in (the speed grows from ramp_from × rate to rate over `ramp` seconds, then stays; with `ramp_out`
+    it slows again over the clip's last seconds - the two multiply, each piece between their corners is a quadratic: Simpson is exact)."""
     f1, T = hz(s), s.get("ramp", 0.0)
+    if dur is not None and s.get("ramp_out", 0.0) > 0:
+        cuts = sorted({0.0, t, *(c for c in (T, dur - s["ramp_out"], dur) if 0.0 < c < t)})
+        return f1 * sum((b - a) / 6 * (_speed(s, a, dur) + 4 * _speed(s, (a + b) / 2, dur) + _speed(s, b, dur))
+                        for a, b in zip(cuts, cuts[1:]))
     if T <= 0:
         return f1 * t
     f0 = f1 * s.get("ramp_from", 0.2)
@@ -120,7 +135,7 @@ def wave(s, x):
 
 def value(s, t, cur=0.0, dur=None):
     """The LFO's number t seconds in (cur: the number as it is, which a `rel` one adds itself to; dur: seconds the clip lasts, for the fade-out)."""
-    x = cycles(s, t) + s["phase"] / 360.0
+    x = cycles(s, t, dur) + s["phase"] / 360.0
     grow = 1.0 if s["fade"] <= 0 else min(1.0, max(0.0, t / s["fade"]))
     out = s.get("fade_out", 0.0)
     if dur is not None and out > 0:

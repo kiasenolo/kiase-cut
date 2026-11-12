@@ -143,6 +143,7 @@ class Renderer:
         self.level = frozenset()    # ids of the tracks a 參考 track shows on (project.level_tracks)
         self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
         self.outer = None           # (painter / layer, what is under it) of a 效果穿透 compound's layer
+        self.clip_dur = None        # microseconds the outermost compound clip being drawn lasts (components.content)
         self.names = {}             # the names expressions read besides their own (the parameter rack)
         self.cache_dir = None       # the project's cache: where the sound a visualizer looks at is decoded to
         self._probe = None
@@ -767,7 +768,8 @@ class Renderer:
             draw = lambda q=p: q.drawImage(rect, pic)
             disp = (bw, bh)
         elif kind in ("compound", "group"):
-            comp = components.content(c, t) if kind == "compound" else group_content(c, W, H)
+            dur = self.clip_dur or c.get("duration_us")        # (the outermost clip: its LFOs fade out at its end)
+            comp = components.content(c, t, dur) if kind == "compound" else group_content(c, W, H)
             cw, ch = comp["width"], comp["height"]
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
@@ -807,7 +809,8 @@ class Renderer:
                 lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
                 lp.scale(k, k)
                 lp.translate(-ux, -uy)
-                outer = self.outer
+                outer, outer_dur = self.outer, self.clip_dur
+                self.clip_dur = dur
                 if under is not None:                  # (q's device is the size of p's, through the same world)
                     seen = QImage(layer.size(), QImage.Format_ARGB32_Premultiplied)
                     seen.fill(Qt.transparent)
@@ -821,7 +824,7 @@ class Renderer:
                     self.draw_content(lp, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static")
                                       else project.source_time(c, t), k)
                 finally:
-                    self.outer = outer
+                    self.outer, self.clip_dur = outer, outer_dur
                 lp.end()
                 q.drawImage(QRectF(vis.left(), vis.top(), layer.width() / k * fit, layer.height() / k * fit), layer)
             draw = draw or draw_live

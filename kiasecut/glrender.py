@@ -724,7 +724,8 @@ class GLRenderer(render.Renderer):
                 tex, straight = gl.frame_texture(pic)
             rect = render.placed(rect, c.get("place"), bw, bh)
         elif kind in ("compound", "group"):
-            comp = components.content(c, t) if kind == "compound" else render.group_content(c, W, H)
+            dur = self.clip_dur or c.get("duration_us")        # (the outermost clip: its LFOs fade out at its end)
+            comp = components.content(c, t, dur) if kind == "compound" else render.group_content(c, W, H)
             cw, ch = comp["width"], comp["height"]
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
@@ -756,7 +757,8 @@ class GLRenderer(render.Renderer):
                 inner = QTransform()
                 inner.scale(k, k)
                 inner.translate(-(vis.left() + bw / 2) / fit, -(vis.top() + bh / 2) / fit)
-                outer, under = self.outer, None
+                outer, under, outer_dur = self.outer, None, self.clip_dur
+                self.clip_dur = dur
                 if through:                              # what is under it now, mapped into the layer
                     snap = gl.layer(tgt.w, tgt.h)
                     gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
@@ -772,7 +774,7 @@ class GLRenderer(render.Renderer):
                     self.gl_content(held, inner, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static")
                                     else project.source_time(c, t), k)
                 finally:
-                    self.outer = outer
+                    self.outer, self.clip_dur = outer, outer_dur
                     if under is not None:
                         gl.release(under)
                 tex = held.tex

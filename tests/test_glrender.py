@@ -251,6 +251,17 @@ class GpuMatchesCpu(unittest.TestCase):
             size = (lay.w, lay.h)
         self.assertEqual(size, (15360, 1080))                    # (it was cut down to 4096 wide and blown up again)
 
+    def test_dot_matrix_is_dots_on_a_background(self):
+        bg = self.bg()
+        bg["effects"] = [fx.new_effect("builtin:dot_matrix", "e7")]
+        bg["effects"][0]["params"].update(size=16.0, dot_size=0.5, background=[0.0, 0.0, 0.0, 1.0])
+        view = self.view([bg])
+        self.check("dot matrix", view, far_max=0.02)
+        img = pixels(self.gpu.render(copy.deepcopy(view), 0, W, H))
+        dark = float((img.max(axis=2) < 3).mean())                                         # (dots of 8 px on 16 px cells: about 80% is the background)
+        self.assertGreater(dark, 0.6)
+        self.assertLess(dark, 0.95)
+
     def test_compounds(self):
         self.check("compound", self.view([self.top()], [self.compound()]))
         self.check("static", self.view([self.top()], [self.compound(static=True)]))

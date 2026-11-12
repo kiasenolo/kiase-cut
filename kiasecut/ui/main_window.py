@@ -22,7 +22,7 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
                             QStandardPaths, Qt, QProcess, QProcessEnvironment,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QMenuBar, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser, QMenu, QToolButton, QWidgetAction,
                                QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTabBar, QTextEdit, QToolBar,
                                QVBoxLayout,
@@ -530,6 +530,7 @@ class MainWindow(QMainWindow):
         nd.fontEdited.connect(lambda eid, nid, path: self.node_clip() and self.fx_each(
             "字體", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_graph_font(lvl, cid, e, nid, path)))
         ef.nodesRequested.connect(self.open_node_editor)
+        ef.mergeRequested.connect(self.merge_effects_dialog)
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.vfxRequested.connect(self.add_vfx_to)
         nd.unshareRequested.connect(lambda eid: self.node_clip() and self.apply(
@@ -6242,6 +6243,38 @@ class MainWindow(QMainWindow):
             level = self.container(root)
             return [edit.add_vfx_effect(root, cid, v, level=level) for cid in ids]
         self.apply_root("新增效果" + many(ids), fn)
+
+    def merge_effects_dialog(self):
+        """合併成節點: ask which of the selected clip's effects become one node effect."""
+        sel = self.timeline.selected_clips_primary_first()
+        c = sel[0] if len(sel) == 1 else None
+        effects = (c or {}).get("effects") or []
+        if not effects:
+            self.statusBar().showMessage("先選一個有效果的片段", 4000)
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("合併成節點效果")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("選要合併的效果：照它們現在的順序接成一個節點效果（輸入 → … → 輸出），放在第一個被選的效果的位置。"))
+        boxes = []
+        for e in effects:
+            why = edit.merge_problem(e)
+            box = QCheckBox(fx.label(e["filter"]) + (f"　（不能合併：{why}）" if why else ""))
+            box.setEnabled(why is None)
+            box.setChecked(why is None)
+            lay.addWidget(box)
+            boxes.append((box, e["id"]))
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        ids = [eid for box, eid in boxes if box.isChecked()]
+        if not ids:
+            return
+        cid = c["id"]
+        self.apply("合併成節點效果", lambda lvl: edit.merge_effects(lvl, cid, ids))
 
     def selected_visual_ids(self):
         return [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]

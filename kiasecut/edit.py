@@ -2952,6 +2952,55 @@ def put_effect(proj, clip_id, what, index=None):
     return e
 
 
+def merge_problem(e):
+    """Why effect e cannot be one of the nodes of a merged node effect (merge_effects), else None."""
+    if e.get("filter") == fx.GRAPH:
+        return "已經是節點效果"
+    if e.get("mask"):
+        return "有遮罩"
+    if e.get("sources"):
+        return "有圖片來源"
+    if "mix" in e and e["mix"] != 1.0:
+        return "混合程度不是 100%"
+    return None
+
+
+def merge_effects(proj, clip_id, effect_ids):
+    """合併成節點效果: the effects of the clip with effect_ids (the ones merge_problem lets through) become the nodes of one node
+    effect, in the order they were in (輸入 → each → 輸出), where the first of them was; their parameters (keyframes too) go with
+    them, a disabled one is a muted node. Returns the new effect."""
+    _, c = find(proj, clip_id)
+    effects = c.get("effects") or []
+    chosen = [e for e in effects if e["id"] in set(effect_ids)]
+    if not chosen:
+        raise EditError("沒有選要合併的效果")
+    for e in chosen:
+        why = merge_problem(e)
+        if why:
+            raise EditError(f"「{fx.label(e['filter'])}」不能合併：{why}")
+    g = nodegraph.new_graph()
+    params = {}
+    prev, x = "input", -240.0
+    g["links"] = []
+    for e in chosen:
+        x += 260.0
+        nid = nodegraph.add_node(g, {"type": nodegraph.FILTER, "ref": e["filter"]}, x, 0.0)
+        if not e.get("enabled", True):
+            g["nodes"][nid]["mute"] = True
+        nodegraph.connect(g, prev, nid, "src")
+        params.update({nodegraph.param_key(nid, k): copy.deepcopy(v) for k, v in e["params"].items()})
+        prev = nid
+    g["nodes"]["output"]["x"] = x + 260.0
+    nodegraph.connect(g, prev, "output", "src")
+    merged = nodegraph.new_effect(new_effect_id(), g)
+    merged["params"].update(params)
+    at = effects.index(chosen[0])
+    ids = {e["id"] for e in chosen}
+    c["effects"] = [e for e in effects if e["id"] not in ids]
+    c["effects"].insert(at, merged)
+    return merged
+
+
 def add_effects(proj, clip_id, refs):
     """Several filters on a clip, in order (the files picked together in 選擇濾鏡檔案)."""
     return [add_effect(proj, clip_id, ref) for ref in refs]

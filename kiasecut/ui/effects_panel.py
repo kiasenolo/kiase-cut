@@ -136,6 +136,7 @@ class EffectsPanel(QWidget):
     backdropChosen = Signal(list, object, object)   # clip ids, 套用至背景 (or None), 隱藏本體 (or None)
     shapeChosen = Signal(list, str, str, object, object)   # clip ids, effect id, shape node, shape id or None, colour or None
     nodesRequested = Signal(str)                    # effect id: open the node editor on this node effect
+    mergeRequested = Signal()                       # 合併成節點: the main clip's effects into one node effect (main_window asks which)
     docRequested = Signal()
     revealFilter = Signal(str)                      # filter ref: show its file
     effectDropped = Signal(list, str, int)          # clip ids, what FX_MIME carries, place in the chain
@@ -183,6 +184,10 @@ class EffectsPanel(QWidget):
         doc.setToolTip("自己用 GLSL 寫濾鏡的格式、參數與範例")
         doc.clicked.connect(self.docRequested)
         bar.addWidget(self.add_btn)
+        self.merge_btn = QPushButton("合併成節點…")
+        self.merge_btn.setToolTip("把這個片段的幾個效果合併成一個節點效果（會問你要合併哪些）")
+        self.merge_btn.clicked.connect(self.mergeRequested)
+        bar.addWidget(self.merge_btn)
         bar.addStretch(1)
         bar.addWidget(doc)
         hl.addLayout(bar)
@@ -273,6 +278,7 @@ class EffectsPanel(QWidget):
         lay = QVBoxLayout(self.body)
         lay.setContentsMargins(0, 0, 0, 0)
         self.add_btn.setEnabled(bool(self.ids))
+        self.merge_btn.setEnabled(bool(c and c.get("effects")) and count == 1)
         n = len(self.ids)
         if not count:
             lay.addWidget(self._note("在時間軸上選一個片段"))

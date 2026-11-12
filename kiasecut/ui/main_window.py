@@ -532,6 +532,7 @@ class MainWindow(QMainWindow):
             "字體", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_graph_font(lvl, cid, e, nid, path)))
         ef.nodesRequested.connect(self.open_node_editor)
         ef.mergeRequested.connect(self.merge_effects_dialog)
+        ef.vfxSaveRequested.connect(self.save_effect_as_vfx)
         ef.addRequested.connect(lambda ids, ref: self.add_effects_to(ids, [ref]))
         ef.vfxRequested.connect(self.add_vfx_to)
         nd.unshareRequested.connect(lambda eid: self.node_clip() and self.apply(
@@ -6275,6 +6276,16 @@ class MainWindow(QMainWindow):
             level = self.container(root)
             return [edit.add_vfx_effect(root, cid, v, level=level) for cid in ids]
         self.apply_root("新增效果" + many(ids), fn)
+
+    def save_effect_as_vfx(self, eid):
+        """存成 VFX Node: the selected clip's node effect eid becomes a VFX Node of the project (and this clip uses it)."""
+        sel = self.timeline.selected_clips_primary_first()
+        if len(sel) != 1 or not self.proj:
+            return
+        cid = sel[0]["id"]
+        name, ok = QInputDialog.getText(self, "存成 VFX Node", "名稱", text=f"VFX Node {len(self.proj.get('vfx_nodes') or {}) + 1}")
+        if ok and name.strip():
+            self.apply_root("存成 VFX Node", lambda root: edit.vfx_from_effect(root, cid, eid, name, level=self.container(root)))
 
     def merge_effects_dialog(self):
         """合併成節點: ask which of the selected clip's effects become one node effect."""

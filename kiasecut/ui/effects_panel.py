@@ -136,6 +136,7 @@ class EffectsPanel(QWidget):
     backdropChosen = Signal(list, object, object)   # clip ids, 套用至背景 (or None), 隱藏本體 (or None)
     shapeChosen = Signal(list, str, str, object, object)   # clip ids, effect id, shape node, shape id or None, colour or None
     nodesRequested = Signal(str)                    # effect id: open the node editor on this node effect
+    vfxSaveRequested = Signal(str)                  # effect id: this clip's node effect becomes a VFX Node (shared by every clip that uses it)
     mergeRequested = Signal()                       # 合併成節點: the main clip's effects into one node effect (main_window asks which)
     docRequested = Signal()
     revealFilter = Signal(str)                      # filter ref: show its file
@@ -400,6 +401,11 @@ class EffectsPanel(QWidget):
             open_nodes.setToolTip("在節點編輯器裡接這個效果的節點")
             open_nodes.clicked.connect(lambda _=False, eid=e["id"]: self.nodesRequested.emit(eid))
             lay.addWidget(open_nodes)
+            if not e.get("vfx") and len(self.clips) == 1:
+                keep = QPushButton("存成 VFX Node…")
+                keep.setToolTip("把這個節點效果變成專案的 VFX Node：之後可以從 VFX Node 面板拖到別的片段上共用")
+                keep.clicked.connect(lambda _=False, eid=e["id"]: self.vfxSaveRequested.emit(eid))
+                lay.addWidget(keep)
             orow = QHBoxLayout()
             orow.addWidget(QLabel("延伸範圍"))
             over = ComboBox()

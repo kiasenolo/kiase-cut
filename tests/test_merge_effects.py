@@ -39,5 +39,23 @@ class MergeEffects(unittest.TestCase):
             edit.merge_effects(p, "c1", [a["id"]])
 
 
+class VfxNodeDrag(unittest.TestCase):
+    def test_a_merged_effect_can_be_a_vfx_node_and_be_dropped_as_a_filter_clip(self):
+        p = proj()
+        a = edit.add_effect(p, "c1", "builtin:invert")
+        merged = edit.merge_effects(p, "c1", [a["id"]])
+        vid = edit.vfx_from_effect(p, "c1", merged["id"], "我的")
+        clip = edit.add_vfx_filter_clip(p, vid, 0)
+        e = clip["effects"][0]
+        self.assertEqual((e["vfx"], clip["type"], clip["name"]), (vid, "filter", "我的"))
+        self.assertIs(e["graph"], p["vfx_nodes"][vid]["graph"])                  # (shared, not a copy)
+
+    def test_the_drag_payload(self):
+        from kiasecut.ui.vfxnodes import dropped_vfx
+        self.assertEqual(dropped_vfx('{"vfx": "vn3"}'), "vn3")
+        self.assertIsNone(dropped_vfx("builtin:blur"))
+        self.assertIsNone(dropped_vfx('{"effect": {}, "clip": null}'))
+
+
 if __name__ == "__main__":
     unittest.main()

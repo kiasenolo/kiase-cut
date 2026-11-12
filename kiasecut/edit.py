@@ -2710,6 +2710,19 @@ def add_vfx_effect(proj, clip_id, vid, index=None, level=None):
     return e
 
 
+def add_vfx_filter_clip(proj, vid, at_us, track_id=None, own_track=False, level=None):
+    """A filter clip (add_filter_clip) whose one effect is a use of VFX Node vid, over what is below it while it lasts."""
+    m = _vfx(proj, vid)
+    clip = add_filter_clip(level or proj, fx.GRAPH, at_us, track_id=track_id, own_track=own_track)
+    e = fx.new_effect(fx.GRAPH, new_effect_id())
+    e["vfx"] = vid
+    e["params"].update(copy.deepcopy(m.get("params") or {}))
+    project._share_vfx(proj, e)
+    clip["effects"] = [e]
+    clip["name"] = m["name"]
+    return clip
+
+
 def vfx_from_effect(proj, clip_id, effect_id, name=None, level=None):
     """A node effect of a clip becomes a VFX Node (and this clip's use of it). Returns its id."""
     _, c = find(level or proj, clip_id)

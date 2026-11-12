@@ -3,11 +3,40 @@ graph, so editing it in the node editor changes every use, while each clip keeps
 many clips use each; right-click (or the buttons) to apply one to the selected clips, rename, copy, keep it in the user's Library
 (a 效果預設 file with the node effect) or delete it (the clips keep the effect as a copy of their own).
 """
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+import json
+
+from PySide6.QtCore import QMimeData, Qt, Signal
+from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
 
 from .dupkey import DuplicateKey
 from .menukeys import Menu
+
+FX_MIME = "application/x-kiasecut-fx"                # (as vfx_panel: the effects drag format - here carrying {"vfx": id})
+
+
+def dropped_vfx(payload):
+    """The VFX Node id a dragged FX_MIME payload carries, else None (a filter, or an effect of a clip)."""
+    if payload.startswith('{"vfx"'):
+        return json.loads(payload)["vfx"]
+    return None
+
+
+class VfxNodeList(QListWidget):
+    """The VFX Nodes: drag one onto a clip (a use of it joins its effects) or an empty place on the timeline (a filter clip)."""
+
+    def __init__(self):
+        super().__init__()
+        self.setDragEnabled(True)
+        self.setDragDropMode(QAbstractItemView.DragOnly)
+
+    def mimeTypes(self):
+        return [FX_MIME]
+
+    def mimeData(self, items):
+        md = QMimeData()
+        if items:
+            md.setData(FX_MIME, json.dumps({"vfx": items[0].data(Qt.UserRole)}).encode("utf-8"))
+        return md
 
 
 class VfxNodePanel(QWidget):
@@ -23,7 +52,7 @@ class VfxNodePanel(QWidget):
         super().__init__(parent)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
-        self.list = QListWidget()
+        self.list = VfxNodeList()
         self.list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._menu)
         self.list.itemDoubleClicked.connect(lambda it: self.selectRequested.emit(it.data(Qt.UserRole)))
@@ -52,7 +81,7 @@ class VfxNodePanel(QWidget):
             n = len(uses.get(vid, ()))
             it = QListWidgetItem(f"{m['name']}  ×{n}")
             it.setData(Qt.UserRole, vid)
-            it.setToolTip(f"{n} 個片段在用；按兩下選取第一個來編輯" if n else "還沒有片段在用；按「套用到選取的片段」")
+            it.setToolTip((f"{n} 個片段在用；按兩下選取第一個來編輯" if n else "還沒有片段在用") + "；拖到片段上套用，拖到時間軸空的地方會變成濾鏡片段")
             self.list.addItem(it)
             if vid == keep:
                 self.list.setCurrentItem(it)

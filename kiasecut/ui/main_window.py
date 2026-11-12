@@ -62,6 +62,7 @@ from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
+from .vfxnodes import dropped_vfx
 from .vfxnodes import VfxNodePanel
 from . import androidfiles, appevents, beat_dialog, dialogframe, exprdialog, escapekey, fontkeep, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
@@ -3991,9 +3992,13 @@ class MainWindow(QMainWindow):
         if above == 0 and top and top[0]["type"] == "filter":      # on top of a filter layer already: stacked in it
             self.on_filter_dropped(payload, top[0]["id"], "", 0)
             return
-        ref, effect, _src = dropped_fx(payload)
+        vid = dropped_vfx(payload)
+        ref, effect, _src = ("", None, None) if vid else dropped_fx(payload)
         self.layer_drop_at = (above, {c["id"] for c in edit.layers(self.container())}, time.monotonic(), None, None)
-        self.add_filter_clip(ref, "", 0, effect)
+        if vid:
+            self.add_vfx_filter_clip(vid, "", 0)
+        else:
+            self.add_filter_clip(ref, "", 0, effect)
         self.layer_drop_at = None
 
     def toggle_group_matte(self, ids, field="on"):
@@ -6100,11 +6105,24 @@ class MainWindow(QMainWindow):
                                                                  effect=effect, own_track=self.editing_static()),
                    select=lambda c: c["id"])
 
+    def add_vfx_filter_clip(self, vid, track_id="", start_us=None):
+        """A VFX Node dropped on an empty place: a filter clip that uses it."""
+        if not self.proj:
+            return
+        start = self.playhead_us() if start_us is None else start_us
+        self.apply_root("新增濾鏡片段", lambda root: edit.add_vfx_filter_clip(
+            root, vid, start, track_id=track_id or None, own_track=self.editing_static(), level=self.container(root)),
+            select=lambda c: c["id"])
+
     def on_filter_dropped(self, payload, cid, track_id, start_us):
         """A filter dragged from the VFX tab, or an effect from the effects panel (a copy with
         its settings): onto a clip it joins that clip's effects (all the selected ones when it is
         one of them), elsewhere it becomes a filter clip."""
-        ref, effect, _src = dropped_fx(payload)
+        vid = dropped_vfx(payload)
+        if vid and not cid:
+            self.add_vfx_filter_clip(vid, track_id, start_us)
+            return
+        ref, effect, _src = ("", None, None) if vid else dropped_fx(payload)
         if not cid:
             self.add_filter_clip(ref, track_id, start_us, effect)
             return
@@ -6113,6 +6131,10 @@ class MainWindow(QMainWindow):
                if c["type"] in edit.VISUAL] if cid in sel else [cid]
         if cid not in ids:                                   # (a selected layer inside a group is not on the level's rows:
             ids = [cid]                                      # dropping on it must not do nothing)
+        if vid:
+            self.add_vfx_to(ids, vid)
+            self.panels.show("effects")
+            return
         self.apply("複製效果" if effect else "新增效果", lambda lvl: [edit.put_effect(lvl, k, effect or ref) for k in ids])
         self.panels.show("effects")
 
@@ -6120,6 +6142,10 @@ class MainWindow(QMainWindow):
         """Something dropped among the effects of clips ids (the main one's, the others alike) at
         place index: one of its own effects moves there, any other effect is copied there, a
         filter of the VFX tab is added there - in each of them (批量)."""
+        vid = dropped_vfx(payload)
+        if vid:
+            self.add_vfx_to(ids, vid)
+            return
         ref, effect, src = dropped_fx(payload)
         try:
             c = edit.find(self.container(), ids[0])[1]
@@ -6138,6 +6164,8 @@ class MainWindow(QMainWindow):
         """A filter or an effect dropped with Alt onto effect eid of clips ids: that effect (and the
         alike ones of the others, 批量) becomes it, keeping its values when the parameters line up
         (edit.swap_filter)."""
+        if dropped_vfx(payload):
+            return
         ref, effect, _src = dropped_fx(payload)
         if effect and effect["id"] == eid:
             return
@@ -6150,6 +6178,10 @@ class MainWindow(QMainWindow):
     def effects_dropped(self, ids, payload):
         """A filter or an effect (a copy with its settings) dropped in the effects panel while
         the selected clips' effects are not alike: it replaces them all (add_effects_to)."""
+        vid = dropped_vfx(payload)
+        if vid:
+            self.add_vfx_to(ids, vid)
+            return
         ref, effect, _src = dropped_fx(payload)
         self.add_effects_to(ids, [effect or ref], "複製效果" if effect else "新增效果")
 
@@ -6264,6 +6296,12 @@ class MainWindow(QMainWindow):
             box.setChecked(why is None)
             lay.addWidget(box)
             boxes.append((box, e["id"]))
+        share = QCheckBox("同時存成 VFX Node（專案裡共用，之後可以直接拖到別的片段上）")
+        name = QLineEdit(f"VFX Node {len(self.proj.get('vfx_nodes') or {}) + 1}")
+        name.setEnabled(False)
+        share.toggled.connect(name.setEnabled)
+        lay.addWidget(share)
+        lay.addWidget(name)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
@@ -6274,7 +6312,15 @@ class MainWindow(QMainWindow):
         if not ids:
             return
         cid = c["id"]
-        self.apply("合併成節點效果", lambda lvl: edit.merge_effects(lvl, cid, ids))
+        if not share.isChecked():
+            self.apply("合併成節點效果", lambda lvl: edit.merge_effects(lvl, cid, ids))
+            return
+
+        def fn(root):
+            level = self.container(root)
+            e = edit.merge_effects(level, cid, ids)
+            edit.vfx_from_effect(root, cid, e["id"], name.text(), level=level)
+        self.apply_root("合併成節點效果", fn)
 
     def selected_visual_ids(self):
         return [c["id"] for c in self.timeline.selected_clips_primary_first() if c["type"] in edit.VISUAL]

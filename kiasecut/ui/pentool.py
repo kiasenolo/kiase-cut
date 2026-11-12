@@ -29,7 +29,7 @@ from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from .. import assets
 
-PEN_COLOR = "#2dd4ff"
+PEN_COLOR = "#00eeff"
 SEG_PICK_PX = 6
 CLOSE_PICK_PX = 9
 OPS = (("聯集", "union"), ("差集", "subtract"), ("交集", "intersect"), ("排除", "xor"))

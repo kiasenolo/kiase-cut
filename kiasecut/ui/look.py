@@ -23,7 +23,7 @@ from . import bigcombo, motion, smoothscroll, wheel
 FILES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "look").replace("\\", "/")
 FRAME = "#404042"         # Breeze's frame around scroll areas, spin boxes and tool buttons
 BAR = "#161616"           # a bar's (QWidget#bar: the rows above and below the preview) background
-ACCENT = "#5b4731"        # the system's accent colour (apply reads it; this is KDE's as it was):
+ACCENT = "#a4fef8"        # the accent colour when the system gives none (apply reads the system's):
                           # a hovered tool button's frame, a radio button, a progress bar, selections
 ARROW = f"{FILES}/arrow"  # its chevrons: arrow-down.svg, arrow-up.svg ...
 

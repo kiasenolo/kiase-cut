@@ -130,7 +130,7 @@ PICK_PX = 9
 ANGLE_SNAP = 3.0              # degrees within which rotation settles on a right angle
 PIVOT_PICK = 0.7              # the pivot's ring is picked closer than a handle (it sits on the clip)
 RULER_PX = 18                 # width of the rulers along the top and left edge
-GUIDE_COLOR = "#2dd4ff"       # the user's reference lines
+GUIDE_COLOR = "#00eeff"       # the user's reference lines
 ZOOM_STEP = 1.25              # one wheel notch (as Blender's)
 ZOOM_MIN, ZOOM_MAX = 0.05, 64.0   # view zoom, 1 = the canvas fits the widget
 _text_sizes = {}
@@ -1246,7 +1246,7 @@ class Preview(PenMixin, _Surface):
         if self.measure is None or self.drag is not None:
             return
         a, b = self.measure
-        red = QColor("#ff4d4d")
+        red = QColor("#e13333")
         f = p.font()
         f.setPixelSize(round(11 * k))
         p.setFont(f)
@@ -1743,8 +1743,8 @@ class Preview(PenMixin, _Surface):
             for b in self.drag["hits"]:
                 p.drawPolygon(QPolygonF(b.corners()))
         for i, b in enumerate(self.drop_replace):         # an Alt-drop's clips (替換素材)
-            p.setPen(QPen(QColor("#ffb020"), 2 * k))
-            p.setBrush(QColor(255, 176, 32, 40))
+            p.setPen(QPen(QColor("#fcfe67"), 2 * k))
+            p.setBrush(QColor(252, 254, 103, 40))
             p.drawPolygon(QPolygonF(b.corners()))
             if i == 0:
                 n = len(self.drop_replace)
@@ -1764,8 +1764,8 @@ class Preview(PenMixin, _Surface):
                     break
         if self.drop_group is not None:                  # dropped media go into this group
             b = self.drop_group
-            p.setPen(QPen(QColor("#b48ee0"), 2 * k))
-            p.setBrush(QColor(122, 92, 150, 40))
+            p.setPen(QPen(QColor("#8f9fe0"), 2 * k))
+            p.setBrush(QColor(95, 108, 150, 40))
             p.drawPolygon(QPolygonF(b.corners()))
             p.setBrush(Qt.NoBrush)
             f = p.font()
@@ -1775,19 +1775,19 @@ class Preview(PenMixin, _Surface):
             p.drawText(b.corners()[0] + QPointF(6 * k, -6 * k), "移入群組：" + (b.clip.get("name") or ""))
         if self.drop_at is not None:                     # where dropped media will be centred
             d = self.drop_at
-            p.setPen(QPen(QColor("#4aa3ff"), 1.5 * k))
+            p.setPen(QPen(QColor("#70f5ff"), 1.5 * k))
             p.drawLine(d - QPointF(14 * k, 0), d + QPointF(14 * k, 0))
             p.drawLine(d - QPointF(0, 14 * k), d + QPointF(0, 14 * k))
             p.drawEllipse(d, 6 * k, 6 * k)
         if self.mask_guides:
-            p.setPen(QPen(QColor("#ffb020"), 1.5 * k, Qt.DashLine))
+            p.setPen(QPen(QColor("#fcfe67"), 1.5 * k, Qt.DashLine))
             for a, b in self.mask_guides:
                 p.drawLine(a, b)
         for g in self.guides:
             if g[0] == "gap":                            # an equal gap: a line with ends
                 a, b = g[1], g[2]
                 n = QPointF(0, 5 * k) if abs(b.x() - a.x()) > abs(b.y() - a.y()) else QPointF(5 * k, 0)
-                p.setPen(QPen(QColor("#ff5ca8"), 1.5 * k))
+                p.setPen(QPen(QColor("#5cffb8"), 1.5 * k))
                 p.drawLine(a, b)
                 p.drawLine(a - n, a + n)
                 p.drawLine(b - n, b + n)
@@ -1815,7 +1815,7 @@ class Preview(PenMixin, _Surface):
         p.setPen(QPen(QColor("#e6e6e6"), 1 * k))
         p.drawPolygon(QPolygonF(pts))
         if getattr(box, "group", False):                # a group: its outline only (moved by dragging)
-            p.setPen(QPen(QColor("#c9a0ff"), 1 * k, Qt.DashLine))
+            p.setPen(QPen(QColor("#9ec3ff"), 1 * k, Qt.DashLine))
             for kid in box.kids:
                 p.drawPolygon(QPolygonF([box.gxf.map(q) for q in kid.corners()]))
             return
@@ -1828,7 +1828,7 @@ class Preview(PenMixin, _Surface):
         self._handle(p, rh, k, round_=True, color="#e6e6e6")
         if self._has_radius_handles(box):
             for key, pt in self.radius_handles(box, k):
-                self._handle(p, pt, k, round_=True, color="#7fd1ff" if self.drag and self.drag["kind"] == "radius" else "#ffffff")
+                self._handle(p, pt, k, round_=True, color="#5881fe" if self.drag and self.drag["kind"] == "radius" else "#ffffff")
             if self.drag and self.drag["kind"] == "radius":
                 v = (self.live[1] if self.live else {}).get(self.drag["corner"], curves.value((box.clip.get("transform") or {}).get(self.drag["corner"], 0.0), box.t))
                 p.setPen(QColor("#ffffff"))
@@ -1838,7 +1838,7 @@ class Preview(PenMixin, _Surface):
                 p.drawText(dict(self.radius_handles(box, k))[self.drag["corner"]] + QPointF(12 * k, -8 * k), f"圓角 {v:g}")
         an, d = box.anchor_pt(), 4 * k                         # 錨點: a diamond
         diamond = QPolygonF([an + QPointF(0, -d), an + QPointF(d, 0), an + QPointF(0, d), an + QPointF(-d, 0)])
-        for w, col in ((3 * k, "#111114"), (1.25 * k, "#ffb020")):
+        for w, col in ((3 * k, "#111114"), (1.25 * k, "#fcfe67")):
             p.setPen(QPen(QColor(col), w))
             p.setBrush(Qt.NoBrush)
             p.drawPolygon(diamond)
@@ -1872,14 +1872,14 @@ class Preview(PenMixin, _Surface):
         if not (self.gap_hover or dragging):
             return
         gaps = self._gaps(boxes, k)
-        pink = QColor("#ff5ca8")
+        pink = QColor("#5cffb8")
         if dragging or self.gap_hover == "handle":       # where the gaps are (while dragging: its kind)
             area = QPainterPath()
             area.setFillRule(Qt.WindingFill)             # (where gaps cross: tinted once)
             for axis, _, _, rect, _ in gaps:
                 if not dragging or axis == self.drag["axis"]:
                     area.addRect(rect)
-            p.fillPath(area, QColor(255, 92, 168, 50))
+            p.fillPath(area, QColor(92, 255, 184, 50))
         for _, _, bars, _, _ in gaps:                    # pink bars in each gap, drawn on white
             for line in bars:
                 p.setPen(QPen(QColor("#ffffff"), 4 * k, Qt.SolidLine, Qt.RoundCap))
@@ -2073,7 +2073,7 @@ class Preview(PenMixin, _Surface):
         g = MaskGeo(box, self.mask_of(box.clip))
         path = g.outline()
         on = g.m.get("enabled", True)
-        edge = QColor("#ffb020") if on else QColor(255, 176, 32, 110)
+        edge = QColor("#fcfe67") if on else QColor(252, 254, 103, 110)
         if g.is_picture():                     # drawn as the clip's own box is (white, the same handles)
             edge = QColor("#ffffff") if on else QColor(255, 255, 255, 110)
         p.save()
@@ -2088,19 +2088,19 @@ class Preview(PenMixin, _Surface):
         p.restore()
         c = g.centre()
         pic = g.is_picture()
-        hcol = "#ffffff" if pic else "#ffb020"
+        hcol = "#ffffff" if pic else "#fcfe67"
         for name, pt in g.handles(k):
             if name == "rot":
                 u, hh = g.down()
-                p.setPen(QPen(QColor("#ffffff") if pic else QColor("#ffb020"), 1 * k))
+                p.setPen(QPen(QColor("#ffffff") if pic else QColor("#fcfe67"), 1 * k))
                 p.drawLine(c - u * hh if pic else c, pt)
-                self._handle(p, pt, k, round_=True, color="#e6e6e6" if pic else "#ffb020")
+                self._handle(p, pt, k, round_=True, color="#e6e6e6" if pic else "#fcfe67")
             elif name == "feather":
                 u, _ = g.down()
                 n = QPointF(-u.y(), u.x())
                 s = HANDLE_PX * touch.scale() * k
                 p.setPen(QPen(QColor("#070707"), 1 * k))
-                p.setBrush(QColor("#ffb020"))
+                p.setBrush(QColor("#fcfe67"))
                 p.drawPolygon(QPolygonF([pt + u * s * 0.8, pt - u * s * 0.4 + n * s * 0.7, pt - u * s * 0.4 - n * s * 0.7]))
             else:
                 self._handle(p, pt, k, color=hcol)

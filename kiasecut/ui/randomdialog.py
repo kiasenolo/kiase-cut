@@ -1,27 +1,38 @@
 """Alt+Shift+R on the preview: how far the selected clips are moved, turned and stretched at random, with a seed. The
 preview shows the result while the numbers are changed (live, nothing is edited); OK makes it one edit, Cancel puts it back."""
+import math
 import random
 
 from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout, QPushButton, QSpinBox,
                                QVBoxLayout)
 
 DEFAULTS = {"move_x": 15.0, "move_y": 15.0, "rot": 20.0, "scale_lo": 75.0, "scale_hi": 130.0, "stretch": 0.0,
-            "differ": True, "seed": 1}
+            "differ": True, "keep": False, "seed": 1}
 _last = dict(DEFAULTS)                      # (what was asked for last is offered again)
 
 
 def rolled(base, p):
-    """{clip id: {x, y, rotation, scale, scale_y}} for base = [(box, ...)] of Boxes, by the settings p (seed included)."""
+    """{clip id: {x, y, rotation, scale, scale_y}} for base = [Box], by the settings p (seed included). With p["keep"] (保持間隔)
+    one roll is made for all of them and applied about their middle: the spaces between the clips stay, as a whole they move, turn and scale."""
     out = {}
+    keep = p.get("keep") and len(base) > 1
+    mx = sum(b.cx for b in base) / len(base)
+    my = sum(b.cy for b in base) / len(base)
     for i, b in enumerate(base):
-        r = random.Random(p["seed"] * 1000003 + (i if p["differ"] else 0))
+        r = random.Random(p["seed"] * 1000003 + (i if p["differ"] and not keep else 0))
         u = r.uniform
         dx, dy, da = u(-1, 1), u(-1, 1), u(-1, 1)
         k = u(p["scale_lo"], p["scale_hi"]) / 100
         sx, sy = (1 + u(-1, 1) * p["stretch"] / 100, 1 + u(-1, 1) * p["stretch"] / 100)
-        out[b.clip["id"]] = {"x": round(b.x_at(b.cx + dx * p["move_x"] / 100 * b.W), 5),
-                             "y": round(b.y_at(b.cy + dy * p["move_y"] / 100 * b.H), 5),
-                             "rotation": round(b.deg + da * p["rot"], 3),
+        ang = da * p["rot"]
+        cx, cy = b.cx, b.cy
+        if keep:
+            c, sn = math.cos(math.radians(ang)), math.sin(math.radians(ang))
+            ox, oy = (cx - mx) * k * sx, (cy - my) * k * sy
+            cx, cy = mx + ox * c - oy * sn, my + ox * sn + oy * c
+        out[b.clip["id"]] = {"x": round(b.x_at(cx + dx * p["move_x"] / 100 * b.W), 5),
+                             "y": round(b.y_at(cy + dy * p["move_y"] / 100 * b.H), 5),
+                             "rotation": round(b.deg + ang, 3),
                              "scale": round(b.s * k * sx, 4), "scale_y": round(b.sy * k * sy, 4)}
     return out
 
@@ -58,6 +69,13 @@ class RandomDialog(QDialog):
         self.differ.setChecked(p["differ"])
         self.differ.toggled.connect(self.changed)
         form.addRow("", self.differ)
+        self.keep = QCheckBox("保持間隔")
+        self.keep.setToolTip("選了多個片段時：片段之間的距離與排列不變，整批一起移動、旋轉、縮放")
+        self.keep.setChecked(p["keep"] and len(boxes) > 1)
+        self.keep.setEnabled(len(boxes) > 1)
+        self.keep.toggled.connect(lambda on: (self.differ.setEnabled(not on), self.changed()))
+        self.differ.setEnabled(not self.keep.isChecked())
+        form.addRow("", self.keep)
         self.seed = QSpinBox()
         self.seed.setRange(0, 999999999)
         self.seed.setValue(p["seed"])
@@ -78,7 +96,7 @@ class RandomDialog(QDialog):
 
     def settings(self):
         p = {k: s.value() for k, s in self.spins.items()}
-        p.update(differ=self.differ.isChecked(), seed=self.seed.value())
+        p.update(differ=self.differ.isChecked(), keep=self.keep.isChecked(), seed=self.seed.value())
         p["scale_hi"] = max(p["scale_hi"], p["scale_lo"])
         return p
 

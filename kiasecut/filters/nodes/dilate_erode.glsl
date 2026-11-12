@@ -9,6 +9,7 @@
 // @param kind menu 步驟 "步驟|閾值|距離|羽化" "類型"
 // @param falloff_size float 0 0 1000 "衰減大小"
 // @param falloff menu 平滑 "平滑|球形|平方根|反平方|銳利|線性" "衰減"
+// @param full bool false "計算全圖"
 // @enable falloff_size kind == 閾值
 // @enable falloff kind == 羽化
 

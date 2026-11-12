@@ -3,6 +3,7 @@
 // @description 像鏡頭失焦的圓形模糊，亮點會散成一顆顆光斑
 // @param radius float 12 0 60 "半徑"
 // @param highlights float 0.5 0 1 "光斑亮度"
+// @param full bool false "計算全圖"
 vec4 effect(vec2 uv) {
     if (radius < 0.5) return src(uv);
     // a disc of samples on a golden-angle spiral, turned a little per pixel; bright samples

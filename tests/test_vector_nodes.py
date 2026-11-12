@@ -353,6 +353,26 @@ class OverscanTests(RenderBase):
             for got in self.pixels_of(self.graph(ref, params, 0)):
                 self.assertEqual(got, (BLACK, BLACK), ref)                    # (no margin: the shape was cut at the frame first)
 
+    def test_a_node_with_whole_picture_on_counts_what_is_outside_the_frame(self):
+        def lit(full, ref="builtin:blur", params=None):
+            p = proj()
+            eff = edit.add_effect(p, "c1", fx.GRAPH)
+            n = edit.add_graph_node(p, "c1", eff["id"], {"type": "source", "kind": "shape", "asset": {"key": "shape.rect", "colors": ("#ffffff", "#000000")}})
+            eff["sources"][n].update(cx=-1.75, w=0.5, h=1.0)                    # (all of it left of the frame)
+            t = edit.add_graph_node(p, "c1", eff["id"], {"type": "filter", "ref": ref})
+            for k, v in (params or {"radius": 450.0, "radius_y": 450.0}).items():
+                eff["params"][ng.param_key(t, k)] = v
+            eff["params"][ng.param_key(t, "full")] = full
+            edit.connect_graph(p, "c1", eff["id"], n, t, "src")
+            edit.connect_graph(p, "c1", eff["id"], t, "output", "src")
+            view = self.s.view()
+            view["tracks"][0]["clips"][0]["effects"] = [eff]
+            return [[rgb(r.render(view, 0, W, H), x, 18)[0] for x in (1, 30)] for r in self.renderers]
+        for off, on in zip(lit(False), lit(True)):
+            self.assertGreater(on[0], off[0] + 5)
+        for off, on in zip(lit(False, "builtin:blender_glare", {"type": "Bloom", "threshold": 0.0, "size": 1.0}), lit(True, "builtin:blender_glare", {"type": "Bloom", "threshold": 0.0, "size": 1.0})):
+            self.assertGreater(on[0], off[0] + 5)
+
     def test_a_rotate_node_keeps_the_corners(self):
         view = self.graph("builtin:nodes/rotate", {"angle": 45.0})
         for got in self.pixels_of(view):

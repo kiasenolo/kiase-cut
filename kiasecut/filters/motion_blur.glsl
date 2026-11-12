@@ -3,6 +3,7 @@
 // @description 往一個方向拉開的動態模糊
 // @param amount float 40 0 400 "距離"
 // @param angle float 0 0 360 "角度"
+// @param full bool false "計算全圖"
 vec4 effect(vec2 uv) {
     float r = amount;
     if (r < 0.5) return src(uv);

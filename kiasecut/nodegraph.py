@@ -1620,7 +1620,7 @@ def overscan_safe(d):
     return "gl_FragCoord" not in code and "texelFetch" not in code
 
 
-def overscan_fraction(graph, setting="auto"):
+def overscan_fraction(graph, setting="auto", params=None):
     """The margin (a fraction of the frame, on each side) a node effect's graph is worked out with: its 延伸範圍 setting (a number of
     %, or "auto": 50 % when the graph has a node that moves the picture and none that cannot work with a margin)."""
     nodes = [n for n in (graph.get("nodes") or {}).values() if n["type"] == FILTER]
@@ -1634,6 +1634,10 @@ def overscan_fraction(graph, setting="auto"):
             percent = float(setting)
         except (TypeError, ValueError):
             percent = 0
+    bound = binds(graph)
+    if any(n["type"] == FILTER and any(p.name == "full" for p in fx.get(n["ref"]).params) and
+           bound_value(params or {}, bound, nid, "full", False) for nid, n in (graph.get("nodes") or {}).items()):
+        percent = max(percent, 50)                                    # (a node with 計算全圖 on: what is round the frame counts too)
     return max(0.0, min(percent, 100.0)) / 100.0
 
 
@@ -1642,7 +1646,7 @@ def evaluate(eng, graph, params, src_tex, w, h, alloc, free, *args, overscan=Non
     put into `params` while it runs (the shape and the text are drawn from the effect's params) and taken out again after.
     overscan: the effect's 延伸範圍 (overscan_fraction): the graph is worked out on pictures that many times bigger round the frame,
     so what a Rotate or Transform takes out of the frame can come back; the result is the frame's part. None: no margin."""
-    m = 0.0 if overscan is None else overscan_fraction(graph, overscan)
+    m = 0.0 if overscan is None else overscan_fraction(graph, overscan, params)
     mx, my = round(w * m), round(h * m)
     while m > 0 and max(w + 2 * mx, h + 2 * my) > OVERSCAN_MAX_PX:
         mx, my = mx * 3 // 4, my * 3 // 4

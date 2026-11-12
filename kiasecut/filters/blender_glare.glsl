@@ -34,6 +34,7 @@
 // @param color_modulation float 0.25 0 1 "色彩調變"
 // @param diagonal bool true "斜向星芒"
 // @param sun_position vec2 0.5,0.5 0 1 "光源位置"
+// @param full bool false "計算全圖"
 // @enable maximum clamp_on
 // @enable size type == Bloom|Fog Glow|Sun Beams
 // @enable streaks type == Streaks

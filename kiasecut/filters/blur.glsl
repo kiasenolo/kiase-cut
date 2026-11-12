@@ -10,6 +10,7 @@
 // @param extend bool false "延伸邊界"
 // @param separable bool true "分離"
 // @param linear_light bool false "線性光"
+// @param full bool false "計算全圖"
 // @enable radius_y !link_xy
 
 // Reimplementation of Blender's Blur compositor node: its behaviour checked against Blender 5.2 (a comment below says where code was ported from Blender's shaders).

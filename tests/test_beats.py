@@ -607,6 +607,7 @@ class ChangePoints(unittest.TestCase):
         tl = Timeline()
         tl.resize(1200, 300)
         tl.set_project(proj())
+        tl.follow_play = True
         tl.px_per_s, tl.scroll_s = 100.0, 0.0
         pin = tl.header_w + (tl.width() - tl.header_w) * tl.FOLLOW_AT
         tl.set_position(round(2 * tl.fps), follow=True, playing=True)       # before the pin: the view stays

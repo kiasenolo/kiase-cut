@@ -1697,10 +1697,7 @@ class Preview(PenMixin, _Surface):
         if self.zoom != 1.0 or self.pan != QPointF(0, 0):
             p.setPen(QColor("#9a9aa0"))
             px = r.width() * self.devicePixelRatioF() / self.W * 100     # as canvas pixels to screen pixels
-            p.drawText(QRectF(8, 6, 260, 18), Qt.AlignLeft, f"{px:.0f}%（Home：適應視窗）")
-        if self.box_zoom:
-            p.setPen(QColor("#9a9aa0"))
-            p.drawText(QRectF(8, 24, 260, 18), Qt.AlignLeft, "拖出要放大的範圍（Esc：取消）")
+            p.drawText(QRectF(8, 6, 260, 18), Qt.AlignLeft, f"{px:.0f}%")
         p.setRenderHint(QPainter.Antialiasing)
         p.translate(r.x(), r.y())
         p.scale(r.width() / self.W, r.height() / self.H)

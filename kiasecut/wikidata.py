@@ -335,6 +335,8 @@ GUIDES = {
 <tr><td>Shift+H／Shift+V</td><td>（滑鼠在預覽上）左右／上下翻轉</td></tr>
 <tr><td>Ctrl+R</td><td>標尺（從標尺拖出參考線；檢視選單還有格線、吸附）；按住 Alt 指著別的片段會顯示距離</td></tr>
 <tr><td>F</td><td>全螢幕預覽</td></tr>
+<tr><td>Home</td><td>預覽放大或移動之後，回到適應視窗（放大時左上角會顯示目前的百分比）</td></tr>
+<tr><td>Shift+B</td><td>框選放大：接著在預覽拖出要放大的範圍，Esc 取消</td></tr>
 <tr><td>F2</td><td>重新命名</td></tr>
 </table>
 <h3>選取和檢視</h3>

@@ -8,13 +8,13 @@ KiaseCut 本身是 GPL-3.0-or-later（見 `LICENSE`）。這份清單列出打�
 
 ## Carried inside the executable / AppImage 打包進去的
 
-| Component | Version built with | License | Text |
+| Component | Version built with (Linux / Windows) | License | Text |
 |---|---|---|---|
 | PySide6 / shiboken6 (Qt for Python) | 6.12 | LGPL-3.0-only (or GPL-2.0 / GPL-3.0) | `LICENSES/LGPL-3.0-or-later.txt` |
 | Qt 6 (its libraries and plugins, inside the PySide6 wheels) | 6.12 | LGPL-3.0 | same |
 | FFmpeg libraries inside Qt (libavcodec, libavformat, libswscale ...) | by Qt | LGPL-2.1-or-later | `LICENSES/LGPL-3.0-or-later.txt` (LGPL-2.1 allows LGPL-3) |
-| ICU (inside Qt) | 73 | Unicode License (ICU) | <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE> |
-| Python (the interpreter and standard library) | 3.14 | PSF-2.0 | `LICENSES/third-party/Python-PSF-2.0.txt` |
+| ICU (inside Qt, Linux build) | 73 | Unicode License (ICU) | <https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE> |
+| Python (the interpreter and standard library) | 3.14 / 3.15 | PSF-2.0 | `LICENSES/third-party/Python-PSF-2.0.txt` |
 | numpy (with the libraries in its wheel) | 2.5 | BSD-3-Clause and others | `LICENSES/third-party/numpy/` |
 | Pillow | 13.0 | MIT-CMU | `LICENSES/third-party/Pillow-LICENSE.txt` |
 | moderngl | 5.13 | MIT | `LICENSES/third-party/moderngl-LICENSE.txt` |

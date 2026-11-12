@@ -23,7 +23,7 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QComboBox, QDialog, QFileDialog, QHBoxLayout,
-                               QInputDialog, QLabel, QLineEdit, QMainWindow, QMenuBar, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser,
+                               QInputDialog, QLabel, QLineEdit, QMainWindow, QMenuBar, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser, QMenu, QToolButton, QWidgetAction,
                                QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTabBar, QTextEdit, QToolBar,
                                QVBoxLayout,
                                QWidget)
@@ -635,15 +635,54 @@ class MainWindow(QMainWindow):
             rate = 1.0
         self.rate_box.setCurrentIndex(max(0, self.rate_box.findData(rate if rate in RATES else 1.0)))
         self.rate_box.currentIndexChanged.connect(lambda _i: self.set_play_rate(self.rate_box.currentData()))
-        bar.addWidget(self.rate_box)
         self.pitch_btn = QPushButton("保持音高")
         self.pitch_btn.setCheckable(True)
         self.pitch_btn.setFocusPolicy(Qt.NoFocus)
         self.pitch_btn.setToolTip("不是 1× 時，聲音保持原本的音高（開）\n或音高跟著速度變，像錄音帶（關）")
         self.pitch_btn.setChecked(str(self.settings().value("keep_pitch", "true")).lower() not in ("false", "0"))
         self.pitch_btn.toggled.connect(self.set_keep_pitch)
-        bar.addWidget(self.pitch_btn)
-        self.transport += [self.rate_box, self.pitch_btn]
+        self.vol_slider = QSlider(Qt.Horizontal)        # 預覽音量: the preview's own, apart from the 輸出 fader (the project's, heard in the export too)
+        self.vol_slider.setRange(0, 100)
+        self.vol_slider.setFocusPolicy(Qt.NoFocus)
+        self.vol_slider.setToolTip("預覽音量：只影響預覽聽到的聲音，不影響匯出（匯出的音量看右邊的「輸出」）；按兩下回到 100%")
+        self.vol_lbl = QLabel("100%")
+        self.vol_lbl.setMinimumWidth(36)
+        try:
+            vol = int(float(self.settings().value("preview_volume", 100)))
+        except (TypeError, ValueError):
+            vol = 100
+        self.vol_slider.setValue(max(0, min(100, vol)))
+        self.vol_lbl.setText(f"{self.vol_slider.value()}%")
+        self.vol_slider.valueChanged.connect(self.set_preview_volume)
+        self.vol_slider.mouseDoubleClickEvent = lambda e: self.vol_slider.setValue(100)
+        panel = QWidget()
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(10, 8, 10, 8)
+        for text, *ws in (("預覽音量", self.vol_slider, self.vol_lbl), ("播放速度", self.rate_box, self.pitch_btn)):
+            row = QHBoxLayout()
+            lbl = QLabel(text)
+            lbl.setMinimumWidth(60)
+            row.addWidget(lbl)
+            for w in ws:
+                row.addWidget(w, 1 if w is self.vol_slider else 0)
+            pl.addLayout(row)
+        note = QLabel("只影響預覽，不影響匯出")
+        note.setStyleSheet("color: #9a9aa0;")
+        pl.addWidget(note)
+        self.play_menu = QMenu(self)
+        act = QWidgetAction(self.play_menu)
+        act.setDefaultWidget(panel)
+        self.play_menu.addAction(act)
+        self.play_btn_menu = QToolButton()               # 播放設定: preview-only (volume, speed, pitch)
+        self.play_btn_menu.setText("播放設定")
+        self.play_btn_menu.setMenu(self.play_menu)
+        self.play_btn_menu.setPopupMode(QToolButton.InstantPopup)
+        self.play_btn_menu.setFocusPolicy(Qt.NoFocus)
+        self.play_btn_menu.setToolTip("預覽的播放設定：預覽音量、播放速度（保持音高）。只影響預覽，不影響匯出。")
+        self._refresh_play_menu()
+        self.rate_box.currentIndexChanged.connect(lambda _i: self._refresh_play_menu())
+        bar.addWidget(self.play_btn_menu)
+        self.transport.append(self.play_btn_menu)
         self.quality_box = QComboBox()                  # 預覽畫質: the size frames are drawn at, as other editors' 1/1 1/2 1/4
         for label, q in QUALITIES:
             self.quality_box.addItem(label, q)
@@ -953,6 +992,7 @@ class MainWindow(QMainWindow):
         self.player = Player(self)
         self.player.worker.set_rate(self.rate_box.currentData())     # (the 播放速度 used last time)
         self.player.worker.set_keep_pitch(self.pitch_btn.isChecked())
+        self.player.worker.set_volume(self.vol_slider.value() / 100)     # (the 預覽音量 as it was left)
         self.player.worker.set_overflow(OVERFLOW if self.overflow_btn.isChecked() else 0.0)       # (the 畫布外 button as it was left)
         self.player.worker.set_quality(self.quality_box.currentData())
         w = self.player.worker
@@ -5058,6 +5098,18 @@ class MainWindow(QMainWindow):
         self.settings().setValue("play_rate", rate)
         if self.rate_box.currentData() != rate:
             self.rate_box.setCurrentIndex(max(0, self.rate_box.findData(rate)))
+
+    def set_preview_volume(self, v):
+        """預覽音量 (percent), remembered for the next time; the export never hears it."""
+        self.player.worker.set_volume(v / 100)
+        self.vol_lbl.setText(f"{v}%")
+        self.settings().setValue("preview_volume", v)
+        self._refresh_play_menu()
+
+    def _refresh_play_menu(self):
+        """播放設定 button shows when it is not at its defaults."""
+        odd = self.rate_box.currentData() != 1.0 or self.vol_slider.value() != 100
+        self.play_btn_menu.setText("播放設定 •" if odd else "播放設定")
 
     def set_keep_pitch(self, on):
         """保持音高 at other 播放速度 (remembered for the next time)."""

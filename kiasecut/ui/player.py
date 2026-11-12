@@ -102,6 +102,7 @@ class Worker(QObject):
         self.rate = 1.0             # 播放速度
         self.new_rate = False       # it changed while playing: the clock and the sound start over
         self.rate_carry = 0.0       # (speed_pcm's leftover fraction of a sample)
+        self.volume = 1.0           # 預覽音量: the volume of the preview alone (the export never hears it)
         self.keep_pitch = True      # 保持音高: the sound keeps its pitch at other speeds
         self.stretcher = None       # (the stretch.Stretch doing it, from where the sound began)
         self.pending = b""          # the rest of a piece of sound the output had no room for yet
@@ -179,6 +180,10 @@ class Worker(QObject):
             self.rate = max(0.05, float(rate))
             self.new_rate = True
             self.cv.notify()
+
+    def set_volume(self, v):
+        """預覽音量: the preview's sound times v (linear), apart from the project's master volume."""
+        self.volume = max(0.0, float(v))
 
     def set_keep_pitch(self, on):
         """保持音高 at other speeds (else the pitch follows the speed, like a tape)."""
@@ -455,6 +460,8 @@ class Worker(QObject):
             if len(a):
                 peak = np.abs(a.astype(np.int32)).max(axis=0) / 32768.0
                 self.peaks[self.audio_n] = (float(peak[0]), float(peak[-1]))
+            if self.volume != 1.0:
+                pcm = np.clip(a.astype(np.float32) * self.volume, -32768, 32767).astype(np.int16).tobytes()
             if self.keep_pitch and self.rate != 1.0:
                 if self.stretcher is None:
                     self.stretcher = stretch.Stretch(self.rate, CHANNELS)

@@ -7,7 +7,7 @@ viz {kind, source, w, h, channel, attack, decay, color, color2, gradient, bar_w,
            grow from its bottom edge up to its top, a wave or a scope fills its height, a vectorscope its
            shorter side, a circle's outer edge is half the shorter side)
   kind     bars (Spectrum Bars) | wave (Smooth Filled Waveform) | scope (Wave: the sound's line) |
-           oscilloscope (Oscilloscope: a CRT screen with graticule, glowing trace, optional XY) |
+           oscilloscope (Oscilloscope: a graticule, glowing trace, optional XY) |
            vector (Vectorscope: side against mid, as iZotope Ozone Imager draws it)
   source   {type: file, path} - an audio / video file, played from the clip's source_start_us as a
            clip of its own would | {type: compound, id} - what a compound clip plays (from its
@@ -539,13 +539,8 @@ def _vector(p, spec, w, h, u, t_us, window, memo):
 
 
 def _oscilloscope(p, spec, w, h, u, t_us, window, memo):
-    """A CRT oscilloscope: the dark screen, a 10 x 8 graticule, and the trace as a glowing line (the sound
+    """An oscilloscope: a 10 x 8 graticule (no screen behind it), and the trace as a glowing line (the sound
     against time from a rising zero crossing, or with xy the left channel against the right)."""
-    rad = min(w, h) * 0.04
-    screen = QRectF(0, 0, w, h)
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor(4, 16, 9, 235))
-    p.drawRoundedRect(screen, rad, rad)
     pad = min(w, h) * 0.06
     area = QRectF(pad, pad, w - 2 * pad, h - 2 * pad)
     cx, cy = area.center().x(), area.center().y()

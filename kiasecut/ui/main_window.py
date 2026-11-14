@@ -3754,7 +3754,7 @@ class MainWindow(QMainWindow):
             finally:
                 self._thumb_renderer.errors.clear()
         if getattr(self, "_thumb_pool", None) is None:           # (a thread of its own: the filters' OpenGL context made on the UI
-            from concurrent.futures import ThreadPoolExecutor    # thread, beside the preview's, crashed the card's driver when a project opened)
+            from concurrent.futures.thread import ThreadPoolExecutor   # (the submodule: Python 3.15's package lazily imports it, and the name came out a 'lazy_import' object) thread, beside the preview's, crashed the card's driver when a project opened)
             self._thumb_pool = ThreadPoolExecutor(1, "layer thumbnails")
         try:
             with gpu.ui_lock:

@@ -386,7 +386,7 @@ class Hop(QObject):
         self.anim.setDuration(HOP_MS)
         self.anim.setStartValue(1.0)
         self.anim.setEndValue(0.0)
-        self.anim.valueChanged.connect(lambda v: self._set(self.dir * HOP_PX * float(v)))
+        self.anim.valueChanged.connect(lambda v, *_: self._set(self.dir * HOP_PX * float(v)))
         self.anim.finished.connect(lambda: self._set(0.0))
 
     def _set(self, off):

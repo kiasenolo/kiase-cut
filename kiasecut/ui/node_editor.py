@@ -2704,7 +2704,7 @@ class NodeEditor(QWidget):
             self.params[key] = new if not curves.is_animated(self.params.get(key)) else self.params[key]
         self.view.viewport().update()
         if not final:
-            self._scrub = (nid, row, cell, new)
+            self._scrub = (nid, row, cell, new[cell] if isinstance(new, list) else new)   # (a vector's one cell, not the whole list)
             self.paramLive.emit(self.eid, f"fxsrc:{self.eid}:{nid}" if place else "fx:" + self.eid, q.name if place else key, new)
             return
         self._scrub = None

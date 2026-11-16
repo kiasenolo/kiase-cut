@@ -5,7 +5,6 @@ the whole program (the UI thread too) for as long as a heavy frame took. glFinis
 while the render thread waits.
 """
 import ctypes
-import ctypes.util
 import sys
 
 _finish = None
@@ -17,9 +16,14 @@ def _load():
     _tried = True
     names = {"win32": ["opengl32"], "darwin": ["/System/Library/Frameworks/OpenGL.framework/OpenGL"],
              "android": ["libGLESv3.so", "libGLESv2.so"]}.get(sys.platform, ["libGL.so.1", "libGLESv2.so.2", "libEGL.so.1"])
+    if sys.platform != "android":
+        import ctypes.util                     # (Android's ctypes.util wants its `android` module, which the APK does not have; its names are loaded as they are)
     for n in names:
         try:
-            lib = ctypes.CDLL(ctypes.util.find_library(n.split(".")[0].replace("lib", "")) or n) if "/" not in n else ctypes.CDLL(n)
+            if "/" in n or sys.platform == "android":
+                lib = ctypes.CDLL(n)
+            else:
+                lib = ctypes.CDLL(ctypes.util.find_library(n.split(".")[0].replace("lib", "")) or n)
             fn = lib.glFinish
             fn.restype, fn.argtypes = None, []
             _finish = fn

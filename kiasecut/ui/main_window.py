@@ -64,7 +64,7 @@ from .userlib_panel import UserLibraryPanel
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import dropped_vfx
 from .vfxnodes import VfxNodePanel
-from . import androidfiles, appevents, beat_dialog, dialogframe, exprdialog, escapekey, fontkeep, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
+from . import androidbar, androidfiles, appevents, beat_dialog, dialogframe, exprdialog, escapekey, fontkeep, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
 from .steadylabel import SteadyLabel
 from .meter import MeterPanel
@@ -7276,7 +7276,11 @@ def run(argv):
         app.setWindowIcon(QIcon(logo))
     win = MainWindow()
     inputstate.install(win)                          # Ctrl+Alt+Shift+R: lets go of what holds the mouse (inputstate.py)
-    win.show()
+    if sys.platform == "android":
+        androidbar.install(win)                      # our own status bar; Android's are hidden (fullscreen) until a swipe from an edge
+        win.showFullScreen()
+    else:
+        win.show()
     if sys.platform == "android" and not androidfs.can_read():
         QMessageBox.information(win, "需要權限", androidfs.HOW_TO_ALLOW)
     win.begin_session()

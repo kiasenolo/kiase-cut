@@ -1366,7 +1366,8 @@ class Preview(PenMixin, _Surface):
         """The 9-point grid of the inspector: the anchor of every selected clip goes to the clip's corner, edge middle or centre
         (gx, gy: -1 / 0 / 1; y down) without the clip moving (paramsCommitted, one edit each)."""
         for b in self._picked_boxes():
-            self.paramsCommitted.emit(b.clip["id"], "transform", b.anchor_to(gx, gy))
+            if not getattr(b, "followed", False):
+                self.paramsCommitted.emit(b.clip["id"], "transform", b.anchor_to(gx, gy))
 
     def flip(self, key):
         """Shift+H / Shift+V (and the inspector's buttons): the selected clips are turned over - all of them like the
@@ -1390,7 +1391,8 @@ class Preview(PenMixin, _Surface):
 
     def nudge_moves(self, dx, dy):
         """{clip id: {x, y}} of the selected clips moved by dx, dy canvas pixels (y down)."""
-        return {b.clip["id"]: {"x": b.x_at(b.cx + dx), "y": b.y_at(b.cy + dy)} for b in self._nudge_boxes()}
+        return {b.clip["id"]: {"x": b.x_at(b.cx + dx), "y": b.y_at(b.cy + dy)} for b in self._nudge_boxes()
+                if not getattr(b, "followed", False)}
 
     def nudge(self, dx, dy):
         moves = self.nudge_moves(dx, dy)
@@ -1403,7 +1405,7 @@ class Preview(PenMixin, _Surface):
         if (self.pen is not None or not self.interactive or not self.show_guides or self.mask_mode or self.drag is not None or self.text_box is not None
                 or box is None or box.locked):
             return False
-        return kind == "move" or (not self.multi() and not getattr(box, "group", False))
+        return kind == "move" or (not self.multi() and not getattr(box, "group", False) and not getattr(box, "followed", False))
 
     def _grab_begin(self, kind):
         """G (move, the whole selection), R (rotate) or S (scale) of the selected clip: it follows the pointer, X / Y
@@ -1659,7 +1661,8 @@ class Preview(PenMixin, _Surface):
                         if nested and plain and c["id"] in self.selected_ids:
                             b.locked = lock
                             picked.append(b)
-                    b.locked = lock or bool((c.get("transform") or {}).get("_followed"))     # (a clip on a path: its place is the path's, not a drag's)
+                    b.locked = lock
+                    b.followed = bool((c.get("transform") or {}).get("_followed"))     # (a clip on a path: picked, but dragging it slides it along the path)
                     out.append(b)
             return out
         top = boxes(self.view["tracks"], self.t_us, False, True)
@@ -2235,7 +2238,8 @@ class Preview(PenMixin, _Surface):
             if hit is not None:
                 self.drag = {"kind": hit, "box": mbox, "geo": g, "m0": m, "moved": False}
                 return
-        elif box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False) and self.gizmo_effect(box) is None:
+        elif box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False) \
+                and not getattr(box, "followed", False) and self.gizmo_effect(box) is None:
             if self._near(box.rot_handle(k), m, k):
                 self.drag = {"kind": "rotate", "box": box, "m0": m, "moved": False}
                 return
@@ -2410,6 +2414,11 @@ class Preview(PenMixin, _Surface):
             dx, dy = m.x() - d["x0"], m.y() - d["y0"]
             boxes = d.get("boxes") or [box]
             d["dup"] = bool(e.modifiers() & Qt.AltModifier)    # Alt: copies move, the clips stay
+            many = len(boxes) > 1
+            if many:                                           # (a clip on a path slides along it alone, never with the others)
+                boxes = [b for b in boxes if not getattr(b, "followed", False)]
+                if not boxes:
+                    return "moves", {}
             typed = self._typed(d)
             if e.modifiers() & Qt.ControlModifier or typed is not None:    # Ctrl: move freely
                 self.guides = []
@@ -2422,12 +2431,12 @@ class Preview(PenMixin, _Surface):
                     dx, dy = (0.0, typed) if axis == "y" else (typed, 0.0)
                 elif axis:
                     dx, dy = (dx, 0.0) if axis == "x" else (0.0, dy)
-            if len(boxes) == 1 and not d["dup"] and self.follow_progress and not d.get("axis"):     # 路徑跟隨: it slides along the path
+            if not many and not d["dup"] and self.follow_progress:     # 路徑跟隨: it slides along the path
                 prog = self.follow_progress(box.clip["id"], QPointF(box.cx + dx, box.cy + dy))
                 if prog is not None:
                     return "transform", {"path_progress": round(prog, 5)}
             at = {b.clip["id"]: {"x": b.x_at(b.cx + dx), "y": b.y_at(b.cy + dy)} for b in boxes}
-            return ("moves", at) if len(boxes) > 1 or d["dup"] else ("transform", at[box.clip["id"]])
+            return ("moves", at) if many or d["dup"] else ("transform", at[box.clip["id"]])
         if kind == "gap":
             along = m.x() - d["m0"].x() if d["axis"] == "x" else m.y() - d["m0"].y()
             return "moves", self._spread(d["boxes"], d["axis"], max(0.0, round(d["gap0"] + along)))

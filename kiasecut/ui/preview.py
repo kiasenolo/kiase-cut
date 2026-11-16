@@ -2717,6 +2717,14 @@ class Preview(PenMixin, _Surface):
         group, vals = self._values(e, m)
         self._live(d, group, vals)
 
+    def enterEvent(self, e):
+        """The pointer comes over the preview: a number box still holding the focus (a value just typed) lets go, so G / R / S
+        and the other keys of the preview reach it (as Blender's area under the mouse)."""
+        w = QApplication.focusWidget()
+        if isinstance(w, QAbstractSpinBox):
+            w.clearFocus()
+        super().enterEvent(e)
+
     def leaveEvent(self, e):
         if self.gap_hover:
             self.gap_hover = None

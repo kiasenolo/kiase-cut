@@ -7,9 +7,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 BUILD=/mnt/kstore/kiasecut-android
 "$HERE/stage.sh" "$BUILD"
 cp "$HERE/buildozer.spec" "$BUILD/buildozer.spec"
+mkdir -p "$BUILD/deployment" && rm -rf "$BUILD/deployment/recipes" && cp -r "$HERE/recipes" "$BUILD/deployment/recipes"     # (p4a.local_recipes: PySide6 + shiboken6 from the wheels in /mnt/kstore/wheels, numpy 2.3.5)
 export VIRTUAL_ENV=/mnt/kstore/venv-android PATH=/mnt/kstore/venv-android/bin:$PATH
 export JAVA_HOME=/usr/lib/jvm/java-21-openjdk GRADLE_USER_HOME=/mnt/kstore/gradle-home PIP_CACHE_DIR=/mnt/kstore/pip-cache
 export ANDROID_SDK_ROOT=/mnt/kstore/android-sdk ANDROID_HOME=/mnt/kstore/android-sdk
+# what the spec points at inside the build folder: Qt's Java side (jars out of the PySide6 wheel) and the ffmpeg programs
+[ -f "$BUILD/deployment/jar/PySide6/jar/Qt6AndroidBindings.jar" ] || unzip -o -q /mnt/kstore/wheels/pyside6-*.whl 'PySide6/jar/*' -d "$BUILD/deployment/jar"
+mkdir -p "$BUILD/libs/arm64-v8a" && cp /mnt/kstore/ffmpeg-build/out/arm64-v8a/*.so "$BUILD/libs/arm64-v8a/"
 cd "$BUILD"
 buildozer -v android debug < /dev/null
 echo "BUILD EXIT: $?"

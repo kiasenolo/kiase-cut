@@ -1,6 +1,9 @@
 """KiaseCut's own status bar along the top of the window (Android): the time and date in the middle of a black bar, a thin
 white line under it. Drawn after the design (the Lunacy sketch: 7 of 172 high, the line 0.5, the text 3).
 
+Three parts: on the left the window-wide buttons (undo, redo, save), the time exactly in the middle of the bar (it is
+drawn from the bar's width, so what the sides hold never moves it), the right is empty for now.
+
 The window is fullscreen, so Android's own bars are hidden; a swipe from an edge brings them back over this bar for a few
 seconds, and then this one is hidden (androidbars.system_bars_shown is asked a few times a second), to be shown again
 when theirs go. The bar floats over the top of the window, which keeps a margin of the same height so nothing sits under it.
@@ -8,17 +11,21 @@ when theirs go. The bar floats over the top of the window, which keeps a margin 
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QRect, Qt, QTimer
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QToolButton, QWidget
 
 from .. import androidbars
+from . import icons
 
 BAR_OF_WINDOW = 7 / 172            # the bar's height of the window's
 LINE_OF_BAR = 0.5 / 7 / 2          # the line's of the bar's: half of the sketch's, the line is to be thinner
 TEXT_OF_BAR = 3 / 7                # the text's height of the bar's, in the sketch
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 POLL_MS = 150
+ICON_OF_BAR = 0.62                 # a button's icon of the bar's height
+LEFT_BUTTONS = (("undo", "復原（Ctrl+Z）", "do_undo"), ("redo", "重做（Ctrl+Y）", "do_redo"), ("save", "儲存專案（Ctrl+S）", "save_project"))
+BUTTON_STYLE = "QToolButton{background:transparent;border:0}QToolButton:pressed{background:#3a3a3a}"
 
 
 def stamp(now):
@@ -30,8 +37,15 @@ class AndroidBar(QWidget):
     def __init__(self, window):
         super().__init__(window)
         self.window_ = window
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAutoFillBackground(False)
+        self.buttons = {}
+        for key, tip, method in LEFT_BUTTONS:
+            b = QToolButton(self)
+            b.setStyleSheet(BUTTON_STYLE)
+            b.setToolTip(tip)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.clicked.connect(lambda _=False, m=method: getattr(window, m)())      # (not save_project(True): the click's argument is dropped)
+            self.buttons[key] = b
         self.text = ""
         self.bar_h = 0
         self.line_h = 1
@@ -56,6 +70,10 @@ class AndroidBar(QWidget):
             self.bar_h = h
             self.window_.setContentsMargins(0, h, 0, 0)
         self.setGeometry(0, 0, self.window_.width(), h)
+        for i, (key, b) in enumerate(self.buttons.items()):
+            b.setIcon(icons.icon(key))
+            b.setIconSize(QSize(round(h * ICON_OF_BAR), round(h * ICON_OF_BAR)))
+            b.setGeometry(i * h, 0, h, h - self.line_h)
         self.raise_()
         self.update()
 
@@ -64,6 +82,14 @@ class AndroidBar(QWidget):
         if text != self.text:
             self.text = text
             self.update()
+
+    def refresh(self):
+        """The buttons' enabled state, from the window's (its undo history, a project open)."""
+        w = self.window_
+        h = getattr(w, "history", None)
+        self.buttons["undo"].setEnabled(bool(h and h.undo_stack))
+        self.buttons["redo"].setEnabled(bool(h and h.redo_stack))
+        self.buttons["save"].setEnabled(getattr(w, "proj", None) is not None)
 
     def follow_system_bars(self):
         self.setVisible(not androidbars.system_bars_shown())
@@ -82,4 +108,5 @@ class AndroidBar(QWidget):
 def install(window):
     """The bar over the top of `window` (kept by it)."""
     window.android_bar = AndroidBar(window)
+    window.android_bar.refresh()
     return window.android_bar

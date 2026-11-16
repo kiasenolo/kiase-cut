@@ -1301,6 +1301,8 @@ class MainWindow(QMainWindow):
         for k in ("split", "text"):
             self.buttons[k].setEnabled(has)
         self.buttons["delete"].setEnabled(has and self.timeline.selected is not None)
+        if getattr(self, "android_bar", None):
+            self.android_bar.refresh()
 
     def current_tab(self):
         """The tab the editor shows: "cmp:<id>" for a compound open in a tab of its own, else

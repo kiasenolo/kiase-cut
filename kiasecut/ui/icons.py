@@ -86,6 +86,12 @@ def _draw(p, name):
         p.setPen(Qt.NoPen)
         p.setBrush(pen.color())
         _poly(p, [(12 + 9 * s, 11), (12 + 7 * s, 4), (12 + 2 * s, 9.5)])
+    elif name == "save":                                   # a floppy disk
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QPen(pen.color(), 2))
+        p.drawPolygon(QPolygonF([QPointF(5, 4), QPointF(16, 4), QPointF(20, 8), QPointF(20, 20), QPointF(5, 20)]))
+        p.drawRect(QRectF(8, 4, 7, 5))                    # the shutter
+        p.drawRect(QRectF(8, 13, 8, 7))                   # the label
     elif name == "blade":                                  # razor blade (split)
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(pen.color(), 2))

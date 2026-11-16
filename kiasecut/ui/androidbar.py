@@ -11,8 +11,8 @@ when theirs go. The bar floats over the top of the window, which keeps a margin 
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter
+from PySide6.QtCore import QEasingCurve, QEvent, QPointF, QRect, QSize, Qt, QTimer, QVariantAnimation
+from PySide6.QtGui import QColor, QFont, QPainter, QRegion
 from PySide6.QtWidgets import QToolButton, QWidget
 
 from .. import androidbars
@@ -23,6 +23,10 @@ LINE_OF_BAR = 0.5 / 7 / 2          # the line's of the bar's: half of the sketch
 TEXT_OF_BAR = 3 / 7 * 4 / 5         # the text's height of the bar's: the sketch's 3 of 7, four fifths of it
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 POLL_MS = 150
+# the bar goes away like the CSS clip-path from polygon(0 0, 100% 0, 100% 100%, 0 100%) to polygon(0 100%, 100% 100%, 100% 100%, 0 100%)
+# (its top edge sinks to its bottom), and comes back the same way in reverse; the curves are cubic-bezier(x1, y1, x2, y2)
+HIDE_MS, HIDE_CURVE = 500, (.12, .57, .61, .86)
+BACK_MS, BACK_CURVE = 300, (0, .67, .14, .98)
 ICON_OF_BAR = 0.62                 # a button's icon of the bar's height
 LEFT_BUTTONS = (("undo", "復原（Ctrl+Z）", "do_undo"), ("redo", "重做（Ctrl+Y）", "do_redo"), ("save", "儲存專案（Ctrl+S）", "save_project"))
 BUTTON_STYLE = "QToolButton{background:transparent;border:0}QToolButton:pressed{background:#3a3a3a}"
@@ -47,6 +51,9 @@ class AndroidBar(QWidget):
             b.clicked.connect(lambda _=False, m=method: getattr(window, m)())      # (not save_project(True): the click's argument is dropped)
             self.buttons[key] = b
         self.text = ""
+        self.gone = 0.0                  # 0: the whole bar shows, 1: clipped away
+        self.wanted = True
+        self.anim = QVariantAnimation(self, valueChanged=self.clip)
         self.bar_h = 0
         self.line_h = 1
         window.installEventFilter(self)
@@ -75,6 +82,7 @@ class AndroidBar(QWidget):
             b.setIconSize(QSize(round(h * ICON_OF_BAR), round(h * ICON_OF_BAR)))
             b.setGeometry(i * h, 0, h, h - self.line_h)
         self.raise_()
+        self.clip(self.gone)
         self.update()
 
     def tick(self):
@@ -92,7 +100,33 @@ class AndroidBar(QWidget):
         self.buttons["save"].setEnabled(getattr(w, "proj", None) is not None)
 
     def follow_system_bars(self):
-        self.setVisible(not androidbars.system_bars_shown())
+        self.show_bar(not androidbars.system_bars_shown())
+
+    def show_bar(self, on):
+        """The bar away (on False) or back, animated from where it is."""
+        if on == self.wanted:
+            return
+        self.wanted = on
+        ms, (x1, y1, x2, y2) = (BACK_MS, BACK_CURVE) if on else (HIDE_MS, HIDE_CURVE)
+        curve = QEasingCurve(QEasingCurve.BezierSpline)
+        curve.addCubicBezierSegment(QPointF(x1, y1), QPointF(x2, y2), QPointF(1, 1))
+        start, end = self.gone, 0.0 if on else 1.0              # (read first: setting the animation's values moves the bar)
+        self.anim.stop()
+        self.anim.setEasingCurve(curve)
+        self.anim.setStartValue(start)
+        self.anim.setEndValue(end)
+        self.anim.setDuration(max(1, round(ms * abs(end - start))))      # (from half way: the rest of the time)
+        self.anim.start()
+
+    def clip(self, gone):
+        """Only the part of the bar under its sinking top edge shows (the buttons too: a mask)."""
+        self.gone = float(gone)
+        y = round(self.gone * self.height())
+        if self.gone >= 1 or y >= self.height():
+            self.hide()
+            return
+        self.setMask(QRegion(0, y, self.width(), self.height() - y))
+        self.show()
 
     def paintEvent(self, _event):
         p = QPainter(self)

@@ -20,7 +20,7 @@ from . import icons
 
 BAR_OF_WINDOW = 7 / 172            # the bar's height of the window's
 LINE_OF_BAR = 0.5 / 7 / 2          # the line's of the bar's: half of the sketch's, the line is to be thinner
-TEXT_OF_BAR = 3 / 7                # the text's height of the bar's, in the sketch
+TEXT_OF_BAR = 3 / 7 * 4 / 5         # the text's height of the bar's: the sketch's 3 of 7, four fifths of it
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 POLL_MS = 150
 ICON_OF_BAR = 0.62                 # a button's icon of the bar's height

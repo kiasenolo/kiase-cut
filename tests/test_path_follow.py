@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QPointF
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import assets, edit, pathfollow, project  # noqa: E402
@@ -72,6 +73,27 @@ class Follow(unittest.TestCase):
         self.assertFalse(pathfollow.resolve(q))
         self.assertEqual(q["tracks"][0]["clips"][0]["transform"]["x"], x)
         self.assertAlmostEqual(x, (460 - 960) / 960 + 0.1, delta=0.001)
+
+
+class Turn(unittest.TestCase):
+    def test_rotation_follows_the_direction(self):
+        p, f, path = scene()
+        edit.set_path_follow(p, "fol", "path")
+        edit.set_param(p, "fol", "transform", "path_rotate", True, 0)
+        f["transform"]["rotation"] = 10.0
+        view = pathfollow.resolved(p)
+        tf = view["tracks"][0]["clips"][0]["transform"]
+        self.assertAlmostEqual(tf["rotation"], 10.0, delta=0.01)       # (the line runs to the right: no turn but the clip's own)
+        self.assertNotIn("path_rotate", tf)
+        path["transform"]["rotation"] = 90.0
+        tf = pathfollow.resolved(p)["tracks"][0]["clips"][0]["transform"]
+        self.assertAlmostEqual(tf["rotation"], 100.0, delta=0.01)
+
+    def test_progress_near_a_point(self):
+        p, f, path = scene()
+        for want, x in ((0.0, 300), (0.25, 710), (0.5, 960), (1.0, 2000)):
+            got = pathfollow.progress_near(path, QPointF(x, 700), 0, 1920, 1080)
+            self.assertAlmostEqual(got, want, delta=0.01)
 
 
 class TextOnPath(unittest.TestCase):

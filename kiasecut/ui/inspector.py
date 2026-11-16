@@ -1316,6 +1316,12 @@ class Inspector(QWidget):
             form.addRow("文字起點", self._param_row("text", *next(r for r in PARAMS["text"] if r[0] == "path_offset")))
         else:
             form.addRow("路徑進度", self._param_row("transform", *next(r for r in PARAMS["transform"] if r[0] == "path_progress")))
+            turn = QPushButton("↻ 跟隨旋轉")
+            turn.setCheckable(True)
+            turn.setToolTip("片段隨路徑的方向轉動（旋轉的數值變成再加上去的角度）；也可以直接在預覽上拖曳片段來決定路徑進度")
+            turn.clicked.connect(lambda on: self._emit_now(self.paramEdited, "transform", "path_rotate", bool(on)))
+            self.widgets["path_rotate"] = turn
+            form.addRow("", turn)
 
     def _build_flip(self, form):
         """翻轉: the picture turned over across (水平) and / or down (垂直)."""
@@ -2114,7 +2120,7 @@ class Inspector(QWidget):
                 button.setText("--")
                 look.set_sheet(button, "")
             self._key_state(w[("key", "transform", "shadow_color")], [k["transform"].get("shadow_color") for k in clips], clips, ts)
-        for key in ("flip_h", "flip_v"):
+        for key in ("flip_h", "flip_v", "path_rotate"):
             if key in w:
                 w[key].blockSignals(True)
                 w[key].setChecked(all(bool(k["transform"].get(key)) for k in clips))

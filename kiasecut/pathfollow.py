@@ -10,13 +10,14 @@ follower's x / y as the numbers (or, when anything moves, keyframes at every fra
 a second pass leaves it alone. resolved(view) does that on a copy only when something follows.
 """
 import copy
+import math
 
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QTransform
 
 from . import assets, curves, project, vector
 
-FIELDS = ("path_id", "path_progress")
+FIELDS = ("path_id", "path_progress", "path_rotate")
 NOT_PATHS = ("solid", "gradient", "empty", "grid")
 MAX_KEYS = 4000
 MOVING = ("x", "y", "scale", "scale_y", "rotation", "pivot_x", "pivot_y", "anchor_x", "anchor_y")
@@ -90,6 +91,34 @@ def point_at(path_clip, progress, tp, W, H, outline=None):
     return _frame(path_clip, tp, W, H).map(qp.pointAtPercent(min(1.0, max(0.0, float(progress)))))
 
 
+def _angle_at(path_clip, progress, tp, W, H, qp):
+    """Degrees (clockwise on the canvas, as a clip's rotation) of the outline's direction at `progress`."""
+    frame = _frame(path_clip, tp, W, H)
+    e = 0.002
+    a, b = min(1.0, max(0.0, progress - e)), min(1.0, max(0.0, progress + e))
+    if b - a < 1e-9:
+        return 0.0
+    pa, pb = frame.map(qp.pointAtPercent(a)), frame.map(qp.pointAtPercent(b))
+    return math.degrees(math.atan2(pb.y() - pa.y(), pb.x() - pa.x()))
+
+
+def progress_near(path_clip, pt, tp, W, H):
+    """How far along (0 - 1) the path clip's outline the point nearest to canvas point pt (px) is, at the path clip's time tp."""
+    qp = _outline(path_clip)
+    if qp.isEmpty():
+        return None
+    frame = _frame(path_clip, tp, W, H)
+
+    def dist(u):
+        q = frame.map(qp.pointAtPercent(u))
+        return (q.x() - pt.x()) ** 2 + (q.y() - pt.y()) ** 2
+    n = 400
+    best = min(range(n + 1), key=lambda i: dist(i / n))
+    lo, hi = max(0.0, (best - 1) / n), min(1.0, (best + 1) / n)
+    fine = min((lo + (hi - lo) * i / 40 for i in range(41)), key=dist)
+    return fine
+
+
 def _moving(c):
     tf = c.get("transform") or {}
     return any(curves.is_animated(tf.get(k)) for k in MOVING + ("path_progress",)) or tf.get("scale_link") is False
@@ -103,26 +132,42 @@ def _apply(c, p, W, H, fps):
     qp = _outline(p)
     if qp.isEmpty():
         return
+    turn = bool(tf.get("path_rotate"))
+    rot = tf.get("rotation", 0.0)
     still = not curves.is_animated(tf.get("path_progress")) and not _moving(p) and not curves.is_animated(bx) \
-        and not curves.is_animated(by)
+        and not curves.is_animated(by) and not (turn and curves.is_animated(rot))
 
     def at(t):
-        pt = point_at(p, curves.value(tf.get("path_progress", 0.0), t), c["start_us"] + t - p["start_us"], W, H, qp)
-        return ((pt.x() - W / 2) / (W / 2) + curves.value(bx, t), (H / 2 - pt.y()) / (H / 2) + curves.value(by, t))
+        prog = curves.value(tf.get("path_progress", 0.0), t)
+        tp = c["start_us"] + t - p["start_us"]
+        pt = point_at(p, prog, tp, W, H, qp)
+        return ((pt.x() - W / 2) / (W / 2) + curves.value(bx, t), (H / 2 - pt.y()) / (H / 2) + curves.value(by, t),
+                _angle_at(p, min(1.0, max(0.0, prog)), tp, W, H, qp) if turn else 0.0)
     if still:
-        tf["x"], tf["y"] = (round(v, 5) for v in at(0))
+        x, y, a = at(0)
+        tf["x"], tf["y"] = round(x, 5), round(y, 5)
+        if turn:
+            tf["rotation"] = round(curves.value(rot, 0) + a, 3)
         return
     dur = max(int(c.get("duration_us") or 0), 1)
     step = max(1_000_000 / max(fps, 1.0), dur / MAX_KEYS)
     times = [int(i * step) for i in range(int(dur / step) + 1)]
     if times[-1] < dur:
         times.append(dur)
-    xs, ys = [], []
+    xs, ys, rs = [], [], []
+    prev = None
     for t in times:
-        x, y = at(t)
+        x, y, a = at(t)
         xs.append([t, round(x, 5), 0.0, 0.0, 0.0, 0.0])
         ys.append([t, round(y, 5), 0.0, 0.0, 0.0, 0.0])
+        if turn:
+            if prev is not None:                                # (no spin back across the 180° seam)
+                a += 360.0 * round((prev - a) / 360.0)
+            prev = a
+            rs.append([t, round(a + curves.value(rot, t), 3), 0.0, 0.0, 0.0, 0.0])
     tf["x"], tf["y"] = {"keys": xs}, {"keys": ys}
+    if turn:
+        tf["rotation"] = {"keys": rs}
 
 
 def _shifted(param, d):
@@ -177,6 +222,7 @@ def resolve(root):
                 tf["_followed"] = True
                 tf.pop("path_id", None)
                 tf.pop("path_progress", None)
+                tf.pop("path_rotate", None)
     return found
 
 

@@ -378,6 +378,7 @@ class MainWindow(QMainWindow):
         self.preview.groupPicked.connect(self.pick_in_group)
         self.preview.paramsCommitted.connect(self.on_preview_params)
         self.preview.paramsLive.connect(self.live_params)
+        self.preview.follow_progress = self.follow_progress
         self.preview.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
         self.preview.movesCommitted.connect(self.on_preview_moves)
         self.preview.guidesCommitted.connect(self.on_guides)
@@ -2940,7 +2941,7 @@ class MainWindow(QMainWindow):
             label = "刪除關鍵幀" if all(not ch[2] for ch in changes) else "編輯曲線"
             self.apply(label + (f"（另 {n} 個片段）" if n else ""), set_all)
             return
-        view = self.snapshot()
+        view = self.snapshot(resolve=False)
         by_id = {}
         for c_id, g, k, keys, keep in every:
             by_id.setdefault(c_id, []).append((g, k, keys, keep))
@@ -2948,6 +2949,7 @@ class MainWindow(QMainWindow):
             for c in tr["clips"]:
                 for g, k, keys, keep in by_id.get(c["id"], ()):
                     group_holder(c, g, create=True)[k] = {"keys": keys} if keys else keep
+        pathfollow.resolve(view)
         self.player.worker.set_view(view, self.cache_dir())
 
     def _batch_clips(self, cid):
@@ -3168,7 +3170,7 @@ class MainWindow(QMainWindow):
         elif group.startswith("fx:"):
             label = "效果控制點"
         else:
-            label = "翻轉" if "flip_h" in values or "flip_v" in values else \
+            label = "路徑進度" if "path_progress" in values else "翻轉" if "flip_h" in values or "flip_v" in values else \
                 "旋轉" if "rotation" in values else "縮放" if "scale" in values else \
                 "中心點" if "pivot_x" in values else "錨點" if "anchor_x" in values else "移動位置"
 
@@ -4832,6 +4834,28 @@ class MainWindow(QMainWindow):
                 (edit.set_text_path if clips[i]["type"] == "text" else edit.set_path_follow)(level, i, pid)
         self.apply("路徑跟隨" if pid else "取消路徑跟隨", each)
 
+    def follow_progress(self, cid, pt):
+        """Dragging a clip that follows a path: the progress (0 - 1) at which its centre, now at canvas point pt (px), is nearest
+        the path - its own x / y offset from the path left out; None when the clip follows nothing."""
+        try:
+            level = self.container()
+            c = edit.find(level, cid)[1]
+            tf = c.get("transform") or {}
+            pid = tf.get("path_id")
+            if not pid:
+                return None
+            path = edit.find(level, pid)[1]
+            starts = edit.abs_starts(level)
+            root = self.view()
+            W, H = root["width"], root["height"]
+            t = self.playhead_us() - starts.get(pid, path["start_us"])
+            ct = self.clip_time(cid)
+            ox = curves.value(tf.get("x", 0.0), ct) * W / 2
+            oy = -curves.value(tf.get("y", 0.0), ct) * H / 2
+            return pathfollow.progress_near(path, QPointF(pt.x() - ox, pt.y() - oy), t, W, H)
+        except (edit.EditError, KeyError):
+            return None
+
     def preview_view(self):
         """The open level for the preview: the clips that follow a path placed on it."""
         return pathfollow.resolved(self.view()) if self.proj else None
@@ -4856,7 +4880,7 @@ class MainWindow(QMainWindow):
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------
-    def snapshot(self):
+    def snapshot(self, resolve=True):
         """A private copy of the open level for the renderer thread, counted in the editor's
         frames (時間線精度) and played at the project's frame rate. Pickled rather than through
         JSON: it keeps what clips share shared (a compound's content, written out again for each of
@@ -4864,7 +4888,8 @@ class MainWindow(QMainWindow):
         Its 參考 tracks show and sound (editing): an export's copy leaves them out."""
         v = pickle.loads(pickle.dumps(self.view(), pickle.HIGHEST_PROTOCOL))
         v["play_fps"], v["fps"], v["editing"] = self.proj["fps"], self.fps, True
-        pathfollow.resolve(v)
+        if resolve:                                     # (a live edit changes the numbers first, then places the followers)
+            pathfollow.resolve(v)
         v["selected"] = sorted(self.timeline.selected_ids)              # (空物體 show only while selected)
         shown = self._matte_shown = self.matte_target()
         if shown:
@@ -5043,7 +5068,7 @@ class MainWindow(QMainWindow):
     def live_params(self, cid, group, values):
         """While a clip or its mask is dragged on the canvas: draw it so without editing yet
         (a keyframed value shows as if its key held the new value)."""
-        view = self.snapshot()
+        view = self.snapshot(resolve=False)
         parts = list(values.items()) if group == "multi" else [(group, values)]
         for c in project.walk_clips(view["tracks"]):
             if c["id"] == cid:
@@ -5053,6 +5078,7 @@ class MainWindow(QMainWindow):
                         vals = edit.with_linked_scale(holder, vals, self.clip_time(cid))
                         parts[i] = (g, vals)
                     holder.update(vals)
+        pathfollow.resolve(view)
         self.player.worker.set_view(view, self.cache_dir())
         for panel in (self.inspector, self.mask_panel, self.effects):   # the numbers follow the drag
             for g, vals in parts:
@@ -5060,10 +5086,11 @@ class MainWindow(QMainWindow):
 
     def live_moves(self, moves):
         """While several clips are dragged on the canvas: draw them there without editing yet."""
-        view = self.snapshot()
+        view = self.snapshot(resolve=False)
         for c in project.walk_clips(view["tracks"]):
             if c["id"] in moves:
                 group_holder(c, "transform", create=True).update(moves[c["id"]])
+        pathfollow.resolve(view)
         self.player.worker.set_view(view, self.cache_dir())
         for cid, vals in moves.items():
             self.inspector.show_live(cid, "transform", vals)
@@ -5071,7 +5098,7 @@ class MainWindow(QMainWindow):
     def live_dup(self, moves):
         """While copies are Alt-dragged on the canvas: the clips stay, their copies are drawn
         moved, on top of everything (not an edit yet)."""
-        view = self.snapshot()
+        view = self.snapshot(resolve=False)
         copies = []
         for c in project.walk_clips(view["tracks"]):
             if c["id"] in moves:
@@ -5079,6 +5106,7 @@ class MainWindow(QMainWindow):
                 copies.append(dup)
         audio_at = next((i for i, t in enumerate(view["tracks"]) if t["kind"] == "audio"), len(view["tracks"]))
         view["tracks"].insert(audio_at, {"id": "~copies", "kind": "video", "name": "", "clips": copies})
+        pathfollow.resolve(view)
         self.player.worker.set_view(view, self.cache_dir())
 
     def on_live_edit(self, ids, group, key, value):
@@ -5086,7 +5114,7 @@ class MainWindow(QMainWindow):
         (the edit itself follows after a short pause)."""
         if key in ("scale_link", "flip_h", "flip_v", "radius_link"):
             return                                  # (drawn when the edit is made)
-        view = self.snapshot()
+        view = self.snapshot(resolve=False)
         for c in project.walk_clips(view["tracks"]):
             if c["id"] in ids and (group != "asset" or c.get("asset")):
                 holder = group_holder(c, group, create=True)
@@ -5094,6 +5122,7 @@ class MainWindow(QMainWindow):
                     holder.update(edit.with_linked_radius(holder, edit.with_linked_scale(holder, {key: value}, self.clip_time(c["id"]))))
                 else:
                     holder[key] = value
+        pathfollow.resolve(view)
         self.player.worker.set_view(view, self.cache_dir())
 
     @Slot(object, object)

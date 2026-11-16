@@ -617,6 +617,7 @@ class Preview(PenMixin, _Surface):
     selectionPicked = Signal(object, object)    # {clip ids}, the primary one (or None): Shift / Ctrl+click, a box
     paramsLive = Signal(str, str, dict)         # clip id, group, {key: value} while dragging
     paramsCommitted = Signal(str, str, dict)    # the same on release
+    follow_progress = None                      # (clip id, canvas QPointF) -> how far along its path the clip is there (0 - 1), or None
     movesLive = Signal(dict)                    # {clip id: {x, y}} while several clips are dragged
     movesCommitted = Signal(dict)               # the same on release
     groupPicked = Signal(object)                # a group's clip picked by double-clicking the group
@@ -2421,6 +2422,10 @@ class Preview(PenMixin, _Surface):
                     dx, dy = (0.0, typed) if axis == "y" else (typed, 0.0)
                 elif axis:
                     dx, dy = (dx, 0.0) if axis == "x" else (0.0, dy)
+            if len(boxes) == 1 and not d["dup"] and self.follow_progress and not d.get("axis"):     # 路徑跟隨: it slides along the path
+                prog = self.follow_progress(box.clip["id"], QPointF(box.cx + dx, box.cy + dy))
+                if prog is not None:
+                    return "transform", {"path_progress": round(prog, 5)}
             at = {b.clip["id"]: {"x": b.x_at(b.cx + dx), "y": b.y_at(b.cy + dy)} for b in boxes}
             return ("moves", at) if len(boxes) > 1 or d["dup"] else ("transform", at[box.clip["id"]])
         if kind == "gap":

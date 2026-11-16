@@ -22,7 +22,7 @@ from PySide6.QtCore import (QEvent, QFile, QFileSystemWatcher, QMimeData, QObjec
                             QStandardPaths, Qt, QProcess, QProcessEnvironment,
                             QThread, QTimer, QUrl, Signal, Slot)
 from PySide6.QtGui import QAction, QColor, QCursor, QDesktopServices, QDrag, QIcon, QImage, QKeySequence, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog, QDockWidget, QDialogButtonBox, QFileDialog, QHBoxLayout,
                                QInputDialog, QLabel, QLineEdit, QMainWindow, QMenuBar, QPlainTextEdit, QMessageBox, QProgressDialog, QSpinBox, QTextBrowser, QMenu, QToolButton, QWidgetAction,
                                QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QStackedWidget, QTabBar, QTextEdit, QToolBar,
                                QVBoxLayout,
@@ -1253,13 +1253,32 @@ class MainWindow(QMainWindow):
         appevents.watch(self, (QEvent.Enter,), self._hover_focus)
 
     def _hover_focus(self, obj, e):
-        """The preview, the timeline and the node editor take the keyboard focus when the mouse comes over
-        them (as Blender's areas), unless words or a number are being typed somewhere."""
-        if obj in (self.preview, self.timeline, self.nodes) and obj.isVisible() and QApplication.activeWindow() is self:
-            w = QApplication.focusWidget()
-            if w is not obj and not isinstance(w, (QLineEdit, QAbstractSpinBox, QPlainTextEdit, QTextEdit)) \
-                    and not (isinstance(w, QComboBox) and w.isEditable()):
-                obj.setFocus(Qt.MouseFocusReason)
+        """The panel under the mouse has the keyboard focus (as Hyprland's focus follows mouse, and Blender's areas): when the
+        pointer comes into another panel, a field still holding the focus in the one it left lets go (a number or text being
+        edited is kept as it is) and the new panel takes it - the preview, timeline and node editor themselves, any other panel
+        by its own first widget that takes focus, else nobody holds it and the keys are the window's."""
+        if not isinstance(obj, QWidget) or not obj.isVisible() or QApplication.mouseButtons() or QApplication.activePopupWidget() \
+                or QApplication.activeModalWidget() is not None:
+            return False
+        dock = obj
+        while dock is not None and not isinstance(dock, QDockWidget):
+            dock = dock.parentWidget()
+        if dock is None or obj.window() is not QApplication.activeWindow():
+            return False
+        w = QApplication.focusWidget()
+        if w is not None and (w is dock or dock.isAncestorOf(w)):
+            return False                                    # (it is in this panel already)
+        if w is not None:
+            w.clearFocus()
+        inner = dock.widget()
+        target = next((x for x in (self.preview, self.timeline, self.nodes) if x is inner or inner is not None and inner.isAncestorOf(x)),
+                      None)
+        if target is None and inner is not None and inner.focusPolicy() != Qt.NoFocus:
+            target = inner
+        if target is not None:
+            if target.focusPolicy() == Qt.NoFocus:
+                target.setFocusPolicy(Qt.ClickFocus)
+            target.setFocus(Qt.MouseFocusReason)
         return False
 
     def _global_undo_keys(self, obj, e):

@@ -14,6 +14,7 @@ export ANDROID_SDK_ROOT=/mnt/kstore/android-sdk ANDROID_HOME=/mnt/kstore/android
 # what the spec points at inside the build folder: Qt's Java side (jars out of the PySide6 wheel) and the ffmpeg programs
 [ -f "$BUILD/deployment/jar/PySide6/jar/Qt6AndroidBindings.jar" ] || unzip -o -q /mnt/kstore/wheels/pyside6-*.whl 'PySide6/jar/*' -d "$BUILD/deployment/jar"
 mkdir -p "$BUILD/libs/arm64-v8a" && cp /mnt/kstore/ffmpeg-build/out/arm64-v8a/*.so "$BUILD/libs/arm64-v8a/"
+rm -rf "$BUILD/javasrc" && cp -r "$HERE/java" "$BUILD/javasrc"          # (android.add_src: the Java side, SystemBars)
 cd "$BUILD"
 buildozer -v android debug < /dev/null
 echo "BUILD EXIT: $?"

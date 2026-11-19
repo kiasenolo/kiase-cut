@@ -1450,7 +1450,7 @@ class Inspector(QWidget):
         "bar_w": ("條寬 px", 1.0, 400.0, 1.0, 1), "gap": ("間距 px", 0.0, 400.0, 1.0, 1),
         "radius": ("圓角 px", 0.0, 400.0, 1.0, 1),
         "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1), "cycles": ("顯示週期數", 0.5, 16.0, 0.5, 1),
-        "time_ms": ("時間長度 ms", 1.0, 300.0, 1.0, 0),
+        "time_ms": ("時間長度 ms", 1.0, 300.0, 1.0, 0), "span_s": ("顯示秒數", 0.5, 30.0, 0.5, 1),
         "inner": ("內徑 px", 10.0, 3000.0, 10.0, 0), "f_lo": ("頻率下限 Hz", 20.0, 20000.0, 10.0, 0),
         "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2),
         "log": ("對數↔線性頻率軸", 0.0, 1.0, 0.05, 2),
@@ -1461,6 +1461,7 @@ class Inspector(QWidget):
         "wave": ("channel", "attack", "decay", "size", "mirror", "radial", "inner", "smooth", "color"),
         "scope": ("channel", "auto_freq", "cycles", "time_ms", "size", "line_w", "radial", "inner", "smooth", "color"),
         "vector": ("decay", "size", "line_w", "grid", "auto_scale", "color"),
+        "spectrogram": ("channel", "span_s", "size", "f_lo", "f_hi", "log", "floor_db", "top_db", "palette"),
         "oscilloscope": ("channel", "xy", "auto_freq", "cycles", "time_ms", "decay", "size", "line_w", "grid", "smooth", "color")}
     VIZ_GRADIENT = ("bars", "wave")                     # (the kinds that can fill from one colour to another)
     VIZ_TOGGLES = {"auto_freq": "自動頻率", "mirror": "鏡像", "radial": "放射狀",
@@ -1528,6 +1529,18 @@ class Inspector(QWidget):
                         g.clicked.connect(lambda on: self._viz_edit(gradient=bool(on)))
                         self.widgets[("viz", "gradient")] = g
                         form.addRow("", g)
+            elif f == "palette":                             # 色盤: presets, and the stops (editing them makes it 自訂)
+                box = ComboBox()
+                for name in viz.PALETTES:
+                    box.addItem(name, name)
+                box.addItem("自訂", viz.CUSTOM)
+                box.activated.connect(lambda i, box=box: self._viz_edit(palette=box.itemData(i)))
+                self.widgets[("viz", f)] = box
+                form.addRow("色盤", box)
+                ed = GradientEditor()
+                ed.changed.connect(lambda st: self._viz_edit(stops=st))
+                self.widgets[("viz", "stops")] = ed
+                form.addRow("", ed)
             elif f == "level_map":
                 b = QPushButton()
                 b.clicked.connect(self._pick_level_map)
@@ -1612,12 +1625,14 @@ class Inspector(QWidget):
                 i = pick.count() - 1
             pick.setCurrentIndex(i)
         pick.blockSignals(False)
-        for f in self.VIZ_FIELDS[v["kind"]] + ("gradient", "color2", "w", "h"):
+        for f in self.VIZ_FIELDS[v["kind"]] + ("gradient", "color2", "w", "h", "stops"):
             wid = w.get(("viz", f))
             if wid is None:
                 continue
-            if f == "channel":
+            if f in ("channel", "palette"):
                 self._set_combo(wid, v[f])
+            elif f == "stops":
+                wid.set_stops(v[f])
             elif f == "level_map":
                 wid.setText(mapping.label(v[f]))
             elif f in ("color", "color2"):

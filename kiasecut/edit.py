@@ -825,7 +825,7 @@ def set_viz(proj, clip_id, **fields):
     src = new.get("source") or {}
     if src.get("type") not in viz.SOURCE_TYPES:
         raise EditError("來源要是檔案、複合片段或軌道")
-    c["viz"] = viz.clean(new)
+    c["viz"] = viz.clean(viz.with_palette(new, fields))
     c["media"]["width"], c["media"]["height"] = int(round(c["viz"]["w"])), int(round(c["viz"]["h"]))   # (what the picture is)
     c["name"] = c["name"] if c.get("named") else viz.KINDS[c["viz"]["kind"]]
     return c

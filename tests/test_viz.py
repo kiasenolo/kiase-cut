@@ -102,6 +102,31 @@ class VizTests(unittest.TestCase):
                 self.assertEqual((img.width(), img.height()), (W, H))
                 self.assertGreater(alpha_sum(img), 0, (kind, extra))
 
+    def test_a_spectrogram_puts_a_tone_on_its_row_and_stops_after_the_sound(self):
+        c = self.clip(self.both)
+        c["viz"] = viz.make("spectrogram", {"type": "file", "path": self.both}, W, H)
+        c["viz"].update(w=W, h=H, span_s=1.0, f_lo=100.0, f_hi=8000.0, log=1.0)
+        a = lambda t: np.frombuffer(bytes(self.paint(c, t).constBits()), np.uint8).reshape(H, W, 4)
+        img = a(S // 2)                                              # (the tone has played for half a second)
+        rows = img[..., :3].astype(int).sum(axis=(1, 2))
+        want = H * (1.0 - np.log(1000 / 100) / np.log(8000 / 100))   # (the row of 1 kHz, from the top)
+        self.assertLess(abs(int(np.argmax(rows)) - want), 6)
+        self.assertGreater(img[..., :3].sum(), 0)
+        late = a(int(1.9 * S))[:, W // 2:, :3].astype(int).sum()     # (the last half second: silent)
+        early = a(S - 100_000)[:, W // 2:, :3].astype(int).sum()
+        self.assertGreater(early, late)
+
+    def test_palette_presets_overwrite_custom_and_editing_makes_custom(self):
+        v = viz.make("spectrogram", {"type": "file", "path": ""}, W, H)
+        self.assertEqual(v["palette"], "Magma")
+        custom = [[0.0, [0, 0, 1, 1]], [1.0, [1, 0, 0, 1]]]
+        new = viz.clean(viz.with_palette(dict(v, stops=custom), {"stops": custom}))
+        self.assertEqual((new["palette"], new["stops"][1][1][0]), ("custom", 1.0))
+        new = viz.clean(viz.with_palette(dict(new), {"palette": "Viridis"}))     # a preset replaces the custom stops
+        self.assertEqual(new["palette"], "Viridis")
+        self.assertEqual(new["stops"], viz.PALETTES["Viridis"])
+        self.assertEqual(viz.clean({"kind": "spectrogram", "palette": "nope", "stops": "x"})["palette"], "custom")
+
     def test_the_vectorscope_shows_mono_as_a_vertical_line_and_side_as_a_horizontal_one(self):
         c = self.clip(self.both)
         c["viz"] = viz.make("vector", {"type": "file", "path": self.both}, W, H)

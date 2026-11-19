@@ -409,7 +409,8 @@ class MainWindow(QMainWindow):
         ins.paramUnbindRequested.connect(self.unbind_params)
         ins.exprRequested.connect(self.ask_prop_expr)
         ins.menu_extender = self.number_menu
-        ins.vizEdited.connect(lambda ids, fields: self.apply_each("Audio Visualizer", lambda lvl, cid: edit.set_viz(lvl, cid, **fields), ids))
+        ins.vizEdited.connect(lambda ids, fields: self.apply_each("Audio Visualizer", lambda lvl, cid: edit.set_viz(lvl, cid, **fields), ids,
+                                                                   merge=("viz", tuple(ids), tuple(sorted(fields)))))
         ins.exprChosen.connect(lambda ids, prop, text: self.apply_each("綁定全局參數", edit.set_prop_expr, ids, prop, text))
         ins.rack_names = lambda: [p["name"] for p in rack.params(self.proj)] if self.proj else []
         ins.exprCleared.connect(lambda ids, prop: self.apply_each("清除表達式", edit.set_prop_expr, ids, prop, ""))

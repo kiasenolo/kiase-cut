@@ -62,8 +62,8 @@ SCOPE_N = 16384                         # the sound an oscilloscope looks at (ro
 AUTO_BACK = 0.5                         # seconds a vectorscope's 自動縮放 looks back for the widest swing
 AUTO_MAX = 40.0                         # ... and the most it magnifies (a whisper is not blown up into noise)
 MIN_HZ, MAX_HZ = 40.0, 2000.0            # the pitches 自動頻率 looks for
-GRAM_COLS = 320                         # the most columns a spectrogram works out (one per FFT window)
-GRAM_ROWS = 256                         # ... and the most rows
+GRAM_STEP_US = 2000                     # the closest two columns of a spectrogram sit
+FFT_SIZES = (1024, 2048, 4096, 8192, 16384, 32768)
 
 
 def _even(*hexes):
@@ -92,12 +92,12 @@ DEFAULTS = {
     "f_lo": 30.0, "f_hi": 16000.0, "log": 1.0, "smooth": 0.4, "line_w": 4.0, "grid": True,
     "floor_db": FLOOR_DB, "top_db": TOP_DB, "level_map": mapping.make("direct"),
     "auto_scale": True, "xy": False, "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
-    "span_s": 4.0, "palette": "Magma", "stops": PALETTES["Magma"],
+    "span_s": 4.0, "gram_cols": 640.0, "gram_rows": 512.0, "fft": 8192.0, "palette": "Magma", "stops": PALETTES["Magma"],
 }
 LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
           "w": (1.0, 16384.0), "h": (1.0, 16384.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
           "floor_db": (-120.0, -12.0), "top_db": (-60.0, 6.0), "smooth": (0.0, 1.0), "log": (0.0, 1.0), "line_w": (0.5, 100.0), "cycles": (0.5, 16.0), "time_ms": (1.0, 300.0),
-          "span_s": (0.5, 30.0)}
+          "span_s": (0.5, 30.0), "gram_cols": (16.0, 4096.0), "gram_rows": (16.0, 2048.0), "fft": (1024.0, 32768.0)}
 
 
 def make(kind, source, canvas_w=1920, canvas_h=1080):
@@ -181,6 +181,8 @@ def clean(v):
             out[k] = x if mapping.is_mapping(x) and mapping.check(x) is None else mapping.make("direct")
         elif k == "channel":
             out[k] = x if x in "MLRS" and len(str(x)) == 1 else "M"
+    out["fft"] = float(min(FFT_SIZES, key=lambda n: abs(math.log2(n) - math.log2(max(out["fft"], 1.0)))))
+    out["gram_cols"], out["gram_rows"] = float(round(out["gram_cols"])), float(round(out["gram_rows"]))
     if out["top_db"] <= out["floor_db"] + 6.0:
         out["top_db"] = out["floor_db"] + 6.0
     if out["f_hi"] <= out["f_lo"]:
@@ -260,7 +262,7 @@ class Probe:
     def cached(self, key, make):
         got = self.raw.get(key)
         if got is None:
-            if len(self.raw) > 6000:
+            if len(self.raw) > 12000:
                 self.raw.clear()
             got = self.raw[key] = make()
         return got
@@ -286,9 +288,9 @@ def averaged_spectrum(window, t_us, channel):
     return np.sqrt(pw / 3.0)
 
 
-def band_levels(mag, n, f_lo, f_hi, log, floor_db=FLOOR_DB, top_db=TOP_DB):
+def band_levels(mag, n, f_lo, f_hi, log, floor_db=FLOOR_DB, top_db=TOP_DB, nfft=NFFT):
     """0 - 1 for each of n bars: the level (rms) of the frequencies inside it, in dB between floor_db (0) and top_db (1)."""
-    hz = RATE / NFFT
+    hz = RATE / nfft
     log = float(log)
     edges = log * np.geomspace(f_lo, f_hi, n + 1) + (1.0 - log) * np.linspace(f_lo, f_hi, n + 1)
     lo, hi = edges[:-1] / hz, edges[1:] / hz
@@ -678,15 +680,14 @@ def _spectrogram(p, spec, w, h, u, t_us, window, memo):
     ch, lo, hi, lg = spec["channel"], spec["f_lo"], min(spec["f_hi"], RATE / 2 - 1), spec["log"]
     fl, tp = spec["floor_db"], spec["top_db"]
     span = spec["span_s"] * US
-    cols = int(min(GRAM_COLS, max(8, w / 2)))
-    rows = int(min(GRAM_ROWS, max(8, h / 2)))
-    step = max(STEP_US, int(span / cols))                      # (columns sit on a fixed grid: scrolling reuses them)
+    cols, rows, nfft = int(spec["gram_cols"]), int(spec["gram_rows"]), int(spec["fft"])
+    step = max(GRAM_STEP_US, int(span / cols))                      # (columns sit on a fixed grid: scrolling reuses them)
     cols = int(math.ceil(span / step)) + 1
     k = int(math.floor(t_us / step))
 
     def column(tt):
-        return memo("gram", tt, (rows, lo, hi, lg, ch, fl, tp),
-                    lambda: band_levels(spectrum(mono(window(tt, NFFT), ch)), rows, lo, hi, lg, fl, tp)[::-1])
+        return memo("gram", tt, (rows, lo, hi, lg, ch, fl, tp, nfft),
+                    lambda: band_levels(spectrum(mono(window(tt, nfft), ch)), rows, lo, hi, lg, fl, tp, nfft)[::-1])
     levels = np.stack([column((k - cols + 1 + i) * step) for i in range(cols)], axis=1)       # [rows, cols], top row = highest
     lut = palette_lut(spec["stops"])
     rgba = (lut[np.clip((levels * 255).astype(int), 0, 255)] * 255.0 + 0.5).astype(np.uint8)

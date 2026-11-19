@@ -81,6 +81,7 @@ PALETTES = {                            # a spectrogram's colour presets: name -
     "彩虹": _even("#30123b", "#4662d7", "#36aaf9", "#1ae4b6", "#a2fc3c", "#fabb39", "#e4460a", "#7a0403"),
     "冰藍": _even("#000000", "#0b2a5b", "#1f77d0", "#7fd4ff", "#ffffff"),
     "霓虹": _even("#05000f", "#4b1d91", "#ff2fb0", "#00f0ff", "#ffffff"),
+    "銳利": _even("#000000", "#0a0a5a", "#5a1ea0", "#c8286e", "#ff7a1e", "#ffe030", "#ffffff"),
     "灰階": _even("#000000", "#ffffff"),
 }
 CUSTOM = "custom"                       # the palette name once the stops were edited by hand
@@ -92,12 +93,12 @@ DEFAULTS = {
     "f_lo": 30.0, "f_hi": 16000.0, "log": 1.0, "smooth": 0.4, "line_w": 4.0, "grid": True,
     "floor_db": FLOOR_DB, "top_db": TOP_DB, "level_map": mapping.make("direct"),
     "auto_scale": True, "xy": False, "auto_freq": True, "cycles": 2.0, "time_ms": 20.0,
-    "span_s": 4.0, "gram_cols": 640.0, "gram_rows": 512.0, "fft": 8192.0, "palette": "Magma", "stops": PALETTES["Magma"],
+    "span_s": 4.0, "gram_cols": 640.0, "gram_rows": 512.0, "fft": 8192.0, "gamma": 1.0, "gram_smooth": False, "palette": "Magma", "stops": PALETTES["Magma"],
 }
 LIMITS = {"radius": (0.0, 400.0), "attack": (0.0, 2.0), "decay": (0.0, 3.0), "bar_w": (1.0, 400.0), "gap": (0.0, 400.0),
           "w": (1.0, 16384.0), "h": (1.0, 16384.0), "inner": (10.0, 3000.0), "f_lo": (20.0, 20000.0), "f_hi": (40.0, 24000.0),
           "floor_db": (-120.0, -12.0), "top_db": (-60.0, 6.0), "smooth": (0.0, 1.0), "log": (0.0, 1.0), "line_w": (0.5, 100.0), "cycles": (0.5, 16.0), "time_ms": (1.0, 300.0),
-          "span_s": (0.5, 30.0), "gram_cols": (16.0, 4096.0), "gram_rows": (16.0, 2048.0), "fft": (1024.0, 32768.0)}
+          "span_s": (0.5, 30.0), "gram_cols": (16.0, 4096.0), "gram_rows": (16.0, 2048.0), "fft": (1024.0, 32768.0), "gamma": (0.3, 3.0)}
 
 
 def make(kind, source, canvas_w=1920, canvas_h=1080):
@@ -118,6 +119,7 @@ def make(kind, source, canvas_w=1920, canvas_h=1080):
     if kind == "spectrogram":
         v["w"], v["h"] = round(1280.0 * k, 1), round(420.0 * k, 1)
         v["floor_db"], v["top_db"] = -90.0, -10.0
+        v["palette"], v["stops"] = "銳利", copy.deepcopy(PALETTES["銳利"])
     if kind == "vector":
         v["w"] = v["h"] = round(630.0 * k, 1)
         v["decay"] = 0.15
@@ -690,12 +692,14 @@ def _spectrogram(p, spec, w, h, u, t_us, window, memo):
                     lambda: band_levels(spectrum(mono(window(tt, nfft), ch)), rows, lo, hi, lg, fl, tp, nfft)[::-1])
     levels = np.stack([column((k - cols + 1 + i) * step) for i in range(cols)], axis=1)       # [rows, cols], top row = highest
     lut = palette_lut(spec["stops"])
+    if spec["gamma"] != 1.0:
+        levels = levels ** spec["gamma"]
     rgba = (lut[np.clip((levels * 255).astype(int), 0, 255)] * 255.0 + 0.5).astype(np.uint8)
     rgba = np.ascontiguousarray(rgba)
     img = QImage(rgba.data, cols, rows, cols * 4, QImage.Format_RGBA8888_Premultiplied).copy()
     cw = w * step / span                                         # a column's width on the picture
     shift = (t_us / step - k) * cw                               # (the newest column is still being reached)
-    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    p.setRenderHint(QPainter.SmoothPixmapTransform, bool(spec["gram_smooth"]))     # (off: every cell stays a crisp block)
     p.setClipRect(QRectF(0, 0, w, h))
     p.drawImage(QRectF(w - cols * cw - shift, 0, cols * cw, h), img)
     p.setClipping(False)

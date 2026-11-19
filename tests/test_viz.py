@@ -118,7 +118,7 @@ class VizTests(unittest.TestCase):
 
     def test_palette_presets_overwrite_custom_and_editing_makes_custom(self):
         v = viz.make("spectrogram", {"type": "file", "path": ""}, W, H)
-        self.assertEqual(v["palette"], "Magma")
+        self.assertEqual(v["palette"], "銳利")
         custom = [[0.0, [0, 0, 1, 1]], [1.0, [1, 0, 0, 1]]]
         new = viz.clean(viz.with_palette(dict(v, stops=custom), {"stops": custom}))
         self.assertEqual((new["palette"], new["stops"][1][1][0]), ("custom", 1.0))

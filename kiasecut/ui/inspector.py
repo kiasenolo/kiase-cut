@@ -1451,6 +1451,7 @@ class Inspector(QWidget):
         "radius": ("圓角 px", 0.0, 400.0, 1.0, 1),
         "line_w": ("線寬 px", 0.5, 100.0, 0.5, 1), "cycles": ("顯示週期數", 0.5, 16.0, 0.5, 1),
         "time_ms": ("時間長度 ms", 1.0, 300.0, 1.0, 0), "span_s": ("顯示秒數", 0.5, 30.0, 0.5, 1),
+        "gamma": ("對比", 0.3, 3.0, 0.1, 2),
         "gram_cols": ("時間解析度（欄）", 16.0, 4096.0, 32.0, 0), "gram_rows": ("頻率解析度（列）", 16.0, 2048.0, 32.0, 0),
         "inner": ("內徑 px", 10.0, 3000.0, 10.0, 0), "f_lo": ("頻率下限 Hz", 20.0, 20000.0, 10.0, 0),
         "f_hi": ("頻率上限 Hz", 40.0, 24000.0, 100.0, 0), "smooth": ("平滑", 0.0, 1.0, 0.05, 2),
@@ -1462,11 +1463,11 @@ class Inspector(QWidget):
         "wave": ("channel", "attack", "decay", "size", "mirror", "radial", "inner", "smooth", "color"),
         "scope": ("channel", "auto_freq", "cycles", "time_ms", "size", "line_w", "radial", "inner", "smooth", "color"),
         "vector": ("decay", "size", "line_w", "grid", "auto_scale", "color"),
-        "spectrogram": ("channel", "span_s", "gram_cols", "gram_rows", "fft", "size", "f_lo", "f_hi", "log", "floor_db", "top_db", "palette"),
+        "spectrogram": ("channel", "span_s", "gram_cols", "gram_rows", "fft", "gram_smooth", "size", "f_lo", "f_hi", "log", "floor_db", "top_db", "gamma", "palette"),
         "oscilloscope": ("channel", "xy", "auto_freq", "cycles", "time_ms", "decay", "size", "line_w", "grid", "smooth", "color")}
     VIZ_GRADIENT = ("bars", "wave")                     # (the kinds that can fill from one colour to another)
     VIZ_TOGGLES = {"auto_freq": "自動頻率", "mirror": "鏡像", "radial": "放射狀",
-                   "grid": "顯示格線", "auto_scale": "自動縮放", "xy": "XY 模式"}
+                   "grid": "顯示格線", "auto_scale": "自動縮放", "xy": "XY 模式", "gram_smooth": "柔化像素"}
 
     def _viz_edit(self, **fields):
         if self.clip_ids:

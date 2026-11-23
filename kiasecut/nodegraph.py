@@ -1603,7 +1603,7 @@ class Cache:
 OVERSCAN_STEPS = (0, 25, 50, 100)                           # 延伸範圍: % of the frame on each side; "auto": GEOMETRY_NODES have 50
 GEOMETRY_NODES = ("rotate", "transform", "map_uv")          # (builtin:nodes/...) and the filters below: what moves a picture, so the part that leaves the frame is wanted again
 GEOMETRY_FILTERS = ("transform", "scale", "translate")
-GLARE = "builtin:blender_glare"            # (reads by place on the card only for Sun Beams' blocks, which it skips under a margin)
+GLARE = "builtin:blender_glare"            # (reads by place on the card only for its grain's random seeds; Sun Beams reads every step under a margin, not its runs)
 OVERSCAN_IN, OVERSCAN_OUT = "builtin:_overscan_in", "builtin:_overscan_out"
 OVERSCAN_MAX_PX = 8192
 

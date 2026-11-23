@@ -349,30 +349,42 @@ class BuiltinFilterTests(unittest.TestCase):
         got, n = run({"mode": 1}, [0, 1])                         # (pass 1 left out: the last reads pass 0's 0.25)
         self.assertEqual((got[0], n), ((64, 0, 0, 255), 3))
 
-    def test_sun_beams_skip_blocks_without_light_and_change_nothing(self):
-        """The gather leaves out runs of steps in blocks of the highlights with no light: the picture is the one every step
-        read gives (the same shader with the skipping taken out), whatever the sun, size, quality and scale."""
+    def test_sun_beams_runs_match_every_step(self):
+        """The gather reads sums of runs of steps (pass 24) instead of every step: the picture is the one every step read gives
+        (the same shader with the runs taken out) to a few levels, whatever the sun, size, quality and scale, on a smooth
+        picture; a bright speck's beam is a little softer at its edges, except under a sun far away (thousands of steps)."""
         try:
             eng = fx.Engine()
         except fx.FilterError as exc:
             self.skipTest(str(exc))
         d = fx.get("builtin:blender_glare")
-        every = fx.parse(d.code.replace("if (!lit)\n            continue;", ""), "t")
+        every = fx.parse(d.code.replace("steps >= SUN_NEAR + 2 * SUN_RUN", "false"), "t")
         self.assertNotEqual(every.code, d.code)
         rng = np.random.default_rng(3)
-        for (w, h), unit, quality, sun in [((96, 54), 1.0, 0, (0.5, 0.5)), ((101, 61), 0.5, 1, (0.5, -0.05)),
-                                           ((96, 54), 0.37, 2, (1.4, 0.9)), ((101, 61), 1.0, 0, (0.2, 0.7))]:
-            img = np.zeros((h, w, 4), np.uint8)
-            img[..., 3] = 255
-            for _ in range(4):                                        # (a few bright specks: most blocks hold no light)
+        for (w, h), unit, quality, sun in [((192, 108), 1.0, 0, (0.5, 0.5)), ((201, 121), 0.5, 1, (0.5, -0.05)),
+                                           ((192, 108), 0.37, 2, (1.4, 0.9)), ((201, 121), 1.0, 0, (0.2, 0.7)),
+                                           ((192, 108), 1.0, 0, (-50.0, 0.5))]:
+            yy, xx = np.mgrid[0:h, 0:w]
+            smooth = np.zeros((h, w, 4), np.uint8)
+            smooth[..., 3] = 255
+            for c in range(3):                                        # (a few soft blobs)
+                f = sum(np.exp(-((xx - rng.uniform(0, w)) ** 2 + (yy - rng.uniform(0, h)) ** 2) / (2 * rng.uniform(4, 20) ** 2)) for _ in range(5))
+                smooth[..., c] = np.clip(f * 255, 0, 255).astype(np.uint8)
+            specks = np.zeros((h, w, 4), np.uint8)
+            specks[..., 3] = 255
+            for _ in range(4):
                 x, y = rng.integers(0, w - 6), rng.integers(0, h - 6)
-                img[y:y + rng.integers(1, 6), x:x + rng.integers(1, 6), :3] = 255
+                specks[y:y + rng.integers(1, 6), x:x + rng.integers(1, 6), :3] = 255
             vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
-            vals.update({"type": 5, "quality": quality, "sun_position": sun, "size": 0.3 if unit == 0.37 else 1.0, "threshold": 0.4,
+            vals.update({"type": 5, "quality": quality, "sun_position": sun, "size": 0.3 if unit == 0.37 else 1.0, "threshold": 0.1,
                          "smoothness": 0.0, "strength": 1.0})
-            got = eng.run(d, vals, img, unit=unit)
-            self.assertTrue(got[..., :3].max() > 0)
-            self.assertTrue(np.array_equal(got, eng.run(every, vals, img, unit=unit)), (w, h, unit, quality, sun))
+            for img, most in ((smooth, 6), (specks, 2 if sun[0] < -1 else 16)):     # (a speck's beam is a little softer across: runs are read between pixels)
+                got = eng.run(d, vals, img, unit=unit).astype(int)
+                want = eng.run(every, vals, img, unit=unit).astype(int)
+                self.assertTrue(want[..., :3].max() > 0)
+                diff = np.abs(got - want)[..., :3]
+                self.assertLessEqual(diff.max(), most, (w, h, unit, quality, sun))
+                self.assertLess(diff.mean(), 0.3, (w, h, unit, quality, sun))
 
     def test_bloom_is_blenders_chain(self):
         """Bloom normalised by the chain's length: a lit square on black glows evenly all round, and a bigger Size reaches further."""

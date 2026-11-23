@@ -1126,6 +1126,8 @@ class MainWindow(QMainWindow):
         add(m, "分割", "Ctrl+B", self.do_split)
         add(m, "向左裁剪（刪掉播放頭之前）", "Q", lambda: self.do_trim_to_playhead("start"))
         add(m, "向右裁剪（刪掉播放頭之後）", "W", lambda: self.do_trim_to_playhead("end"))
+        add(m, "波紋向左裁剪（後面的片段補上）", "Shift+Q", lambda: self.do_trim_to_playhead("start", True))
+        add(m, "波紋向右裁剪（後面的片段補上）", "Shift+W", lambda: self.do_trim_to_playhead("end", True))
         add(m, "頭尾對齊拍子", "Alt+Q", self.do_snap_beats)
         add(m, "切換 BPM 對齊", "Alt+B", self.do_toggle_beat)
         add(m, "進階對齊編輯器…", "Alt+Shift+B", self.do_open_beat_editor)
@@ -2550,14 +2552,16 @@ class MainWindow(QMainWindow):
 
         self.apply("分割", split_all)
 
-    def do_trim_to_playhead(self, side):
+    def do_trim_to_playhead(self, side, ripple=False):
         """Q / W (向左 / 向右裁剪, as in Jianying): the selected clips - or, none selected, every
-        clip under the playhead - lose what is before / after the playhead."""
+        clip under the playhead - lose what is before / after the playhead; Shift (ripple): the
+        later clips of their tracks close up, as Shift+Delete does."""
         if not self.proj:
             return
         ids = [c["id"] for c in self.timeline.selected_clips()] or [
             k["id"] for tr in self.container()["tracks"] if not project.locked(tr) for k in tr["clips"]]
-        self.apply("向左裁剪" if side == "start" else "向右裁剪", edit.trim_to, ids, self.playhead_us(), side)
+        label = ("波紋" if ripple else "") + ("向左裁剪" if side == "start" else "向右裁剪")
+        self.apply(label, edit.trim_to, ids, self.playhead_us(), side, ripple)
 
     def do_ripple_delete(self):
         """Shift+Delete: the selected clips go and the later clips of their tracks close up."""

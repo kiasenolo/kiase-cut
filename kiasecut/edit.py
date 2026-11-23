@@ -423,18 +423,27 @@ def ripple_delete(proj, clip_ids):
             c["start_us"] -= sum(e - s for s, e in spans if e <= c["start_us"])
 
 
-def trim_to(proj, clip_ids, at_us, side):
+def trim_to(proj, clip_ids, at_us, side, ripple=False):
     """向左裁剪 / 向右裁剪: what is before (side "start") or after ("end") at_us (the level's
-    time) is cut off each clip at_us is inside; the others stay. Returns the clips trimmed."""
-    done = []
+    time) is cut off each clip at_us is inside; the others stay. ripple (Shift+Q / W): the time
+    cut goes too - the clip and the later clips of its track close up, as 波紋刪除 does. Returns
+    the clips trimmed."""
+    done, cut = [], {}                                   # id(track) -> (track, [(start, end) of the time cut])
     for cid in clip_ids:
         t, c = find(proj, cid)
         at = at_us - (abs_start(proj, cid) - c["start_us"])         # (a group's clip: in its group's time)
         if c["start_us"] + MIN_US <= at <= end(c) - MIN_US:
+            span = (c["start_us"], int(at)) if side == "start" else (int(at), end(c))
             (trim_start if side == "start" else trim_end)(proj, cid, at)
             done.append(c)
+            cut.setdefault(id(t), (t, []))[1].append(span)
     if not done:
         raise EditError("播放頭下沒有片段")
+    if ripple:
+        for t, spans in cut.values():
+            for c in t["clips"]:
+                c["start_us"] -= sum(e - s for s, e in spans if e <= c["start_us"])
+            _sort(t)
     return done
 
 

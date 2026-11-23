@@ -296,7 +296,7 @@ GUIDES = {
 <tr><td>Shift+D</td><td>建立副本</td></tr>
 <tr><td>Delete（或 X）</td><td>刪除；加 Shift＝波紋刪除（後面的片段補上空隙）</td></tr>
 <tr><td>Ctrl+B</td><td>在播放頭分割</td></tr>
-<tr><td>Q／W</td><td>刪掉播放頭之前／之後的部分</td></tr>
+<tr><td>Q／W</td><td>刪掉播放頭之前／之後的部分；加 Shift＝波紋（後面的片段補上空隙）</td></tr>
 <tr><td>Ctrl+↑／Ctrl+↓</td><td>把選取的片段移到上面／下面的軌道</td></tr>
 <tr><td>Ctrl+G／Ctrl+Shift+G／Alt+G</td><td>建立群組／解散群組／建立複合片段</td></tr>
 <tr><td rowspan="6">播放與移動</td><td>Space</td><td>播放／暫停</td></tr>

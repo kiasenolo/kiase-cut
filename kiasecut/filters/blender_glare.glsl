@@ -4,13 +4,14 @@
 // @output image "圖像"
 // @output glare "光"
 // @output highlights "亮部"
-// @passes 27
-// @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 0f quality
-// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 0 -
+// @passes 32
+// @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 0 0 0 0 0 0f quality
+// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 - 0 - 25 0 0 -
 // @shared
 // @alone highlights
 // @skip 1-23 type != Bloom
-// @skip 24 type != Sun Beams
+// @skip 24-28 type != Ghosts
+// @skip 29 type != Sun Beams
 // @precision float
 // @bake type
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
@@ -53,7 +54,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // (Blender's code is GPL-2.0-or-later.)
 
-// (Sun Beams uses pass 24 - the glare's size - for the sums of the highlights along short runs of steps towards the sun, which
+// (Ghosts uses passes 24 - 28: see ghost_blur. Sun Beams uses pass 29 - the glare's size - for the sums of the highlights along short runs of steps towards the sun, which
 // its gather reads instead of every step: see sun_runs. Bloom's chain is left out for it, as for the other types.)
 // Pass 0 keeps the highlights (what glows, as Blender computes it). Bloom is Blender's own chain, one
 // pass per step (@levels shrinks them): pass 1 the highlights at the glare's size, passes 2 - 12 the
@@ -166,7 +167,7 @@ vec4 bloom_up(vec2 uv, int l) {
 }
 vec3 bloom(vec2 uv) { return bloom_length() < 2 ? extra(uv).rgb : src(uv).rgb; }
 
-vec3 ghosts(vec2 uv, vec2 R, float q) {
+vec3 ghosts_sampled(vec2 uv, vec2 R, float q) {
     vec2 y = uv - 0.5;
     float D = 2.0 * length(y);
     float cg = 1.0 - clamp(color_modulation, 0.0, 1.0);
@@ -293,6 +294,83 @@ vec3 simple_star(vec2 uv, vec2 R, float q) {
     return g;
 }
 
+// Ghosts by passes, as Blender's: the highlights blurred twice (a Gaussian of 16 / 3 canvas px for the small ghosts, 32 / 3
+// for the big; passes 24 - 27, each one way), the 4 scaled copies of their sum made once (pass 28, ghost_acc), and the
+// gather adds that and 4 scaled copies of it. Every term of ghosts_sampled, which reads the blur at random spots (~320 reads a
+// pixel, then smoothed), comes out of these; under a margin that one is used still.
+const float GHOST_SCALE[4] = float[4](1.3125, -0.87033, 0.9625, -1.257143);
+const float GHOST_OUTER[4] = float[4](0.6125, -2.262857, 0.2625, -11.314286);
+const vec3 GHOST_TINT[4] = vec3[4](vec3(0, 0, 0), vec3(0, 1, 1), vec3(1, 1, 0), vec3(1, 0, 1));
+
+vec4 inside_or_none(vec4 c, vec2 p) { return p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0 ? vec4(0.0) : c; }
+
+// passes 24 - 27: one way of a Gaussian blur of the highlights (24, 26: across, from pass 0; 25, 27: down, from the pass before)
+vec4 ghost_blur(vec2 uv) {
+    bool big = pass_index >= 26, across = pass_index == 24 || pass_index == 26;
+    float sigma = (big ? 32.0 : 16.0) / 3.0 * pass_px.x / resolution.x;         // (this pass's px)
+    int r = int(ceil(3.0 * sigma));
+    vec2 step_ = (across ? vec2(1.0, 0.0) : vec2(0.0, 1.0)) / pass_px;
+    // two neighbouring taps are one read between them, weighed as both (exact where the picture read has this pass's pixels:
+    // the bilinear read is their weighted sum); a pair with a tap past the frame is read tap by tap (none there)
+    bool pairs = (across ? extra_px : src_px) == pass_px;
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    for (int i = -r; i <= r; i += pairs ? 2 : 1) {
+        float w1 = exp(-0.5 * float(i * i) / (sigma * sigma));
+        float w2 = pairs && i < r ? exp(-0.5 * float((i + 1) * (i + 1)) / (sigma * sigma)) : 0.0;
+        vec2 p1 = uv + step_ * float(i), p2 = uv + step_ * float(i + 1);
+        bool in2 = p2.x >= 0.0 && p2.y >= 0.0 && p2.x <= 1.0 && p2.y <= 1.0;
+        bool in1 = p1.x >= 0.0 && p1.y >= 0.0 && p1.x <= 1.0 && p1.y <= 1.0;
+        if (w2 > 0.0 && in1 && in2) {
+            vec2 p = uv + step_ * (float(i) + w2 / (w1 + w2));
+            acc += (w1 + w2) * (across ? extra(p).rgb : src(p).rgb);
+        } else {
+            acc += w1 * (across ? H(p1) : inside_or_none(src(p1), p1).rgb);
+            if (w2 > 0.0)
+                acc += w2 * (across ? H(p2) : inside_or_none(src(p2), p2).rgb);
+        }
+        wsum += w1 + w2;
+    }
+    return vec4(acc / wsum, 1.0);
+}
+// a picture of the blurred highlights read at p, none outside the frame: the small ghosts' (extra) or the big ones' (src)
+vec3 ghost_small(vec2 p) { return inside_or_none(extra(p), p).rgb; }
+vec3 ghost_big(vec2 p) { return inside_or_none(src(p), p).rgb; }
+vec3 ghost_base(vec2 p) {                                       // the small ghost and the big one, as Blender's base
+    vec2 z = p - 0.5;
+    float dz = 2.0 * length(z);
+    float wsm = max(0.0, 1.0 - dz * 2.13), wbg = max(0.0, 1.0 - dz * 0.97);
+    vec3 c = vec3(0.0);
+    if (wsm > 0.0) c += wsm * ghost_small(0.5 + z * 2.13);
+    if (wbg > 0.0) c += wbg * ghost_big(0.5 - z * 0.97);
+    return c;
+}
+vec3 ghost_tint(int i) { return pow(vec3(max(1.0 - clamp(color_modulation, 0.0, 1.0), 1e-6)), GHOST_TINT[i]); }    // (pow(0, 0) is undefined)
+// pass 28: the 4 scaled copies of the base
+vec4 ghost_acc(vec2 uv) {
+    vec2 y = uv - 0.5;
+    float D = 2.0 * length(y);
+    vec3 g = vec3(0.0);
+    for (int i = 0; i < 4; i++) {
+        float a = max(0.0, 1.0 - D * abs(GHOST_SCALE[i])) * 0.25;
+        if (a > 0.0) g += a * ghost_tint(i) * ghost_base(0.5 + y * GHOST_SCALE[i]);
+    }
+    return vec4(g, 1.0);
+}
+// the gather: pass 28's picture and 4 scaled copies of it
+vec3 ghosts(vec2 uv, vec2 R, float q) {
+    if (ov_scale != vec2(1.0)) return ghosts_sampled(uv, R, q);
+    vec2 y = uv - 0.5;
+    float D = 2.0 * length(y);
+    vec3 g = inside_or_none(src(uv), uv).rgb;
+    for (int j = 0; j < 4; j++) {
+        float a = max(0.0, 1.0 - D * abs(GHOST_OUTER[j])) * 0.25;
+        vec2 p = 0.5 + y * GHOST_OUTER[j];
+        if (a > 0.0) g += a * ghost_tint(j) * inside_or_none(src(p), p).rgb;
+    }
+    return g;
+}
+
 // Sun Beams. Every pixel adds up the highlights along the line from it towards the sun, one step per glare pixel (q canvas px;
 // never finer than the gather's own pixels), step i of n weighed (1 - t)^2 at t = (i + 0.5) / n, as Blender's. A sun far
 // away takes thousands of steps per pixel; but the pixels on one line to the sun read the same spots, so pass 24 adds up
@@ -369,7 +447,7 @@ vec3 sun_beams(vec2 uv, vec2 R, float q) {
 // streaks - leave some) is smoothed over a few pixels of this very picture: a small Gaussian
 float grain_sigma() {
     if (type == 3) return 2.0;
-    if (type == 1) return 1.6;
+    if (type == 1) return ov_scale != vec2(1.0) ? 1.6 : 0.0;       // (only the sampled ghosts: the passes' have none)
     if (type == 2 && streak_skip() > 0) return 1.1;
     return 0.0;
 }
@@ -399,7 +477,9 @@ vec3 reduced_highlights_at(vec2 uv) {
 vec4 effect(vec2 uv) {
     if (pass_index == 0)
         return vec4(reduced_highlights(uv), 1.0);
-    if (pass_index == 24) return sun_runs(uv);
+    if (pass_index >= 24 && pass_index <= 27) return ghost_blur(uv);
+    if (pass_index == 28) return ghost_acc(uv);
+    if (pass_index == 29) return sun_runs(uv);
     if (pass_index < 24) {                                     // (Bloom's chain; the other types leave it empty)
         if (type != 0) return vec4(0.0);
         if (pass_index == 1) return src(uv);
@@ -407,7 +487,7 @@ vec4 effect(vec2 uv) {
     }
 
     vec3 g;
-    if (pass_index == 25) {                                    // the light: gathered, then its saturation, colour and strength
+    if (pass_index == 30) {                                    // the light: gathered, then its saturation, colour and strength
         vec2 R = resolution;
         float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;
         g = type == 0 ? bloom(uv) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streak_lines(uv, R, q)
@@ -418,12 +498,12 @@ vec4 effect(vec2 uv) {
         g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * (max(strength, 0.0) / (type == 0 ? float(max(1, bloom_length())) : 1.0));
         return vec4(g, 1.0);
     }
-    if (output_index == 2) {                                   // pass 26, 亮部: what glows, alone (Blender's Highlights output)
+    if (output_index == 2) {                                   // pass 31, 亮部: what glows, alone (Blender's Highlights output)
         vec3 h = quality == 0 ? max(highlights(linear(original(uv)).rgb), vec3(0.0)) : reduced_highlights_at(uv);    // (品質 中 / 低: the reduced picture's, as Blender gives it)
         float ha = clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0);
         return ha > 0.0 ? vec4(lin_to_srgb(h / ha) * ha, ha) : vec4(0.0);
     }
-    float sg = grain_sigma();                                  // pass 26: smooth the grain, add the light to the picture
+    float sg = grain_sigma();                                  // pass 31: smooth the grain, add the light to the picture
     if (sg > 0.0) {
         vec2 px = 1.0 / pass_px;
         vec3 acc = vec3(0.0);

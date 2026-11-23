@@ -386,6 +386,35 @@ class BuiltinFilterTests(unittest.TestCase):
                 self.assertLessEqual(diff.max(), most, (w, h, unit, quality, sun))
                 self.assertLess(diff.mean(), 0.3, (w, h, unit, quality, sun))
 
+    def test_ghosts_by_passes_match_the_sampled_ones(self):
+        """Ghosts worked out by passes (the highlights blurred twice, the scaled copies twice) give the picture the sampled
+        gather gives (random reads of the blur, smoothed after), to its grain; the light's sum the same."""
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:blender_glare")
+        sampled = fx.parse(d.code.replace("if (ov_scale != vec2(1.0)) return ghosts_sampled(uv, R, q);", "return ghosts_sampled(uv, R, q);")
+                           .replace("return ov_scale != vec2(1.0) ? 1.6 : 0.0;", "return 1.6;"), "t")
+        self.assertNotEqual(sampled.code, d.code)
+        rng = np.random.default_rng(5)
+        h, w = 135, 240
+        yy, xx = np.mgrid[0:h, 0:w]
+        img = np.zeros((h, w, 4), np.uint8)
+        img[..., 3] = 255
+        for c in range(3):
+            f = sum(np.exp(-((xx - rng.uniform(0, w)) ** 2 + (yy - rng.uniform(0, h)) ** 2) / (2 * rng.uniform(3, 12) ** 2)) for _ in range(6))
+            img[..., c] = np.clip(f * 255, 0, 255).astype(np.uint8)
+        for quality in (0, 1, 2):
+            vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+            vals.update({"type": 1, "quality": quality, "threshold": 0.3, "strength": 1.0})
+            got = eng.run(d, vals, img).astype(int)
+            want = eng.run(sampled, vals, img).astype(int)
+            diff = np.abs(got - want)[..., :3]
+            self.assertLessEqual(diff.max(), 12, quality)
+            self.assertLess(diff.mean(), 0.5, quality)
+            self.assertAlmostEqual(got[..., :3].mean(), want[..., :3].mean(), delta=0.3)
+
     def test_bloom_is_blenders_chain(self):
         """Bloom normalised by the chain's length: a lit square on black glows evenly all round, and a bigger Size reaches further."""
         import numpy as np

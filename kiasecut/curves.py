@@ -38,12 +38,7 @@ def value(p, t):
         return b[1] if t >= b[0] else a[1]
     x0, x3 = a[0], b[0]
     x1, x2 = x0 + a[4], x3 + b[2]
-    lo, hi = 0.0, 1.0
-    for _ in range(48):
-        s = (lo + hi) / 2
-        x = (1 - s) ** 3 * x0 + 3 * (1 - s) ** 2 * s * x1 + 3 * (1 - s) * s * s * x2 + s ** 3 * x3
-        lo, hi = (s, hi) if x < t else (lo, s)
-    s = (lo + hi) / 2
+    s = _solve(x0, x1, x2, x3, t)
 
     def bez(y0, y1, y2, y3):
         return (1 - s) ** 3 * y0 + 3 * (1 - s) ** 2 * s * y1 + 3 * (1 - s) * s * s * y2 + s ** 3 * y3
@@ -51,6 +46,33 @@ def value(p, t):
     if isinstance(a[1], list):          # colours: each channel follows the same timing,
         return [bez(p, p, q, q) for p, q in zip(a[1], b[1])]   # with flat handles
     return bez(a[1], a[1] + a[5], b[1] + b[3], b[1])
+
+
+def _solve(x0, x1, x2, x3, t):
+    """The s (0 - 1) at which the bezier x0 x1 x2 x3 reaches t. Where it only grows (one s for each t) Newton's steps
+    find it, usually in 2 - 4 (48 halvings took ~5 us, ~15 ms a frame for 200 animated clips); elsewhere, or when they
+    stray, halving as ever."""
+    a, b, c = x1 - x0, x2 - x1, x3 - x2
+    span = x3 - x0
+    if span > 0 and a >= 0 and c >= 0 and (b >= 0 or b * b <= a * c):
+        s = (t - x0) / span
+        for _ in range(12):
+            u = 1 - s
+            err = u * u * u * x0 + 3 * u * u * s * x1 + 3 * u * s * s * x2 + s * s * s * x3 - t
+            if abs(err) <= 1e-10 * span:
+                return s
+            d = 3 * (u * u * a + 2 * u * s * b + s * s * c)
+            if d <= 0:
+                break
+            s -= err / d
+            if not 0.0 <= s <= 1.0:
+                break
+    lo, hi = 0.0, 1.0
+    for _ in range(48):
+        s = (lo + hi) / 2
+        x = (1 - s) ** 3 * x0 + 3 * (1 - s) ** 2 * s * x1 + 3 * (1 - s) * s * s * x2 + s ** 3 * x3
+        lo, hi = (s, hi) if x < t else (lo, s)
+    return (lo + hi) / 2
 
 
 def unit_value(keys, x):

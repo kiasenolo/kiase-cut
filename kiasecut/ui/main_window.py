@@ -445,6 +445,7 @@ class MainWindow(QMainWindow):
         mp.keyToggled.connect(self.on_key_toggled)
         mp.easingChosen.connect(self.on_easing)
         mp.maskKindChosen.connect(self.on_mask_kind)
+        ins.canvasChosen.connect(self.on_canvas)
         mp.maskPathEdit.connect(lambda: (mp.set_mask_edit(True), self.preview.pen_edit_mask()))
         mp.maskInvertChosen.connect(lambda ids, on: self.apply_each_timed("反轉遮罩", edit.set_mask_invert, ids, on))
         mp.maskEnabledChosen.connect(
@@ -5556,6 +5557,17 @@ class MainWindow(QMainWindow):
             col = self.pick_live(QColor(m.get("color") or "#4c8dff"), "標記顏色", [m], anchor)
             if col is not None:
                 self.apply("標記顏色", edit.set_marker_color, mid, col.name())
+
+    def on_canvas(self, ids, own):
+        """畫布 of the compounds the clips ids show: their own (the level's size to start with) or the level's (a group)."""
+        level = self.container()
+        kids = list(dict.fromkeys(edit.find(level, cid)[1].get("compound_id") for cid in ids))
+        kids = [k for k in kids if k]
+        if not kids:
+            return
+        size = self.level_size()
+        self.apply_root("畫布：自己的大小" if own else "畫布：跟外層同一個",
+                        lambda root: [edit.set_canvas(root, k, own, size) for k in kids])
 
     def toggle_mask_edit(self):
         """Shift+M: 編輯遮罩 of the selected clip on or off (the 遮罩 panel comes up when it is not showing)."""

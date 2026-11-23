@@ -2438,6 +2438,36 @@ def _map_value(v, fn):
     return fn(float(v))
 
 
+def set_canvas(root, kid, own, size=None):
+    """畫布 of compound kid: own (自己的大小: size, the level's when None - what Alt+G makes) or the canvas of the level using
+    it (跟外層同一個: what Ctrl+G makes, a group). Every clip showing it becomes a compound clip or a group to match - on
+    the same canvas size it looks the same either way. Not for static ones, components or fit ones (what timelines were)."""
+    comp = (root.get("compounds") or {}).get(kid)
+    if comp is None:
+        raise EditError("沒有這個複合片段")
+    if comp.get("static") or comp.get("fit") or components.is_component(comp):
+        raise EditError("靜態片段、元件和時間線的畫布不能改")
+    uses = [c for k in root["compounds"].values() for t in project.all_tracks(k["tracks"], inline=False)
+            for c in t["clips"] if c.get("compound_id") == kid]
+    if own:
+        w, h = size or (root.get("width", 1920), root.get("height", 1080))
+        comp.pop("canvas", None)
+        comp["width"], comp["height"] = int(w), int(h)
+        for c in uses:
+            c["type"] = "compound"
+            c.pop("tracks", None)
+            c.pop("matte", None)
+    else:
+        comp["canvas"] = "parent"
+        comp.setdefault("matte", dict(GROUP_MATTE_DEFAULT))
+        for c in uses:
+            c["type"] = "group"
+            for k in ("speed", "speed_curve", "freeze", "keep_pitch"):    # (a group plays its content as it is)
+                c.pop(k, None)
+    project.link(root)
+    return uses
+
+
 def set_group_matte(proj, clip_id, on=None, show=None, invert=None, body=None):
     """A group's 遮罩: its bottom track's clips cut the clips above them (on), and are drawn
     too (show) - else only their shape counts; invert (反轉遮罩): the clips above are kept

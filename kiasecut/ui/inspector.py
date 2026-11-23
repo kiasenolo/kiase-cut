@@ -356,6 +356,7 @@ class Inspector(QWidget):
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
     placeEditChanged = Signal()                     # 編輯位置 of a component's picture switched: self.place_edit
     maskEditChanged = Signal()                      # 編輯遮罩 switched (the 遮罩 tab): self.mask_edit
+    canvasChosen = Signal(list, bool)               # clip ids, 畫布: own size (True) or the level's (a group)
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
     pathFollowChosen = Signal(object)               # id of the shape / path clip the clips follow, or None
@@ -626,6 +627,18 @@ class Inspector(QWidget):
                     live.clicked.connect(lambda v: self._emit_now(self.paramEdited, "clip", "static_live", bool(v)))
                     self.widgets["static_live"] = live
                     form.addRow("", live)
+        comp = c.get("compound") or {}
+        if c["type"] in ("group", "compound") and comp and not (comp.get("static") or comp.get("fit")
+                                                                 or components.is_component(comp)):
+            canvas = ComboBox()
+            canvas.addItem("跟外層同一個（群組）", False)
+            canvas.addItem("自己的大小", True)
+            canvas.setCurrentIndex(0 if c["type"] == "group" else 1)
+            canvas.setToolTip("跟外層同一個：片段直接放在外面的畫布上，時間線上可以展開（Ctrl+G 建立的）\n"
+                              "自己的大小：有自己的畫布，雙擊進去編輯（Alt+G 建立的）。用到同一個複合片段的片段會一起改")
+            canvas.activated.connect(lambda i: self._emit_now(self.canvasChosen, bool(canvas.itemData(i))))
+            self.widgets["canvas"] = canvas
+            form.addRow("畫布", canvas)
         if c["type"] == "group":
             self._build_group(form, c)
         if self.through_row:

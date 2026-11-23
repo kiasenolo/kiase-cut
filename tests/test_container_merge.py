@@ -121,6 +121,30 @@ class GroupTests(unittest.TestCase):
         self.assertNotIn(twin["compound_id"], p["compounds"])
 
 
+class CanvasTests(unittest.TestCase):
+    def test_canvas_switch_turns_every_use(self):
+        p = project.new()
+        p["tracks"][:] = [{"id": "t0", "kind": "video", "name": "v", "clips": [pic("a", 0, S)]}]
+        project.link(p)
+        g = edit.make_group(p, p, ["a"])
+        twin = edit.duplicate_clips(p, p, [g["id"]])[0]
+        kid = g["compound_id"]
+        edit.set_canvas(p, kid, True, (1280, 720))                        # 自己的大小
+        comp = p["compounds"][kid]
+        self.assertEqual((comp.get("canvas"), comp["width"], comp["height"]), (None, 1280, 720))
+        for cid in (g["id"], twin["id"]):
+            c = edit.find(p, cid)[1]
+            self.assertEqual(c["type"], "compound")
+            self.assertNotIn("tracks", c)
+        edit.set_canvas(p, kid, False)                                    # back: groups again
+        for cid in (g["id"], twin["id"]):
+            c = edit.find(p, cid)[1]
+            self.assertEqual(c["type"], "group")
+            self.assertIs(c["tracks"], comp["tracks"])
+        with self.assertRaises(edit.EditError):
+            edit.set_canvas(p, "tl1", True)                               # (not what a timeline was)
+
+
 class GroupRenderTests(unittest.TestCase):
     def test_a_trimmed_group_draws_the_part_it_shows(self):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

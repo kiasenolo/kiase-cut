@@ -29,7 +29,7 @@ PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filters")
 DOC_PATH = os.path.join(PKG, "FORMAT.md")
 TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
-MAX_PASSES = 32
+MAX_PASSES = 128
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve", "gradient")
 RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "output_index", "src",
@@ -73,6 +73,7 @@ class FilterDef:
         self.shared = False                      # @shared: only the last pass looks at output_index, the ones before it are drawn once for every output asked
         self.alone = []                          # @alone: outputs the last pass draws from nothing the earlier passes drew (they are not drawn for it)
         self.skips = []                          # @skip: (first pass, last pass, conditions): not drawn while the conditions hold
+        self.slots = {}                          # @slot: {pass: name}: the @levels passes of one name draw into one picture (else each has its own)
         self.bakes = []                          # @bake: menu / bool / int parameters written into the shader as constants (one compile per setting; the driver drops the branches left unused)
         self.input_param = {}                    # @input name "Label" param: the number box of that parameter sits on the input's row, hidden while a link feeds it
         self.input_show = {}                     # @show on an @input: {name: conditions}
@@ -210,20 +211,32 @@ def _enable(rest, params, inputs=(), show=None, word=None):
         into.append((name, op == "!=", [v.strip() for v in vals.split("|")]))
 
 
-SKIP = re.compile(r"^(\d+)(?:\s*-\s*(\d+))?\s+(\w+)\s*(==|!=)\s*(.+)$")
+def _pass_list(word):
+    """`30-125/6` (every 6th from 30 to 125), `30-35` or `30`: the pass numbers."""
+    m = re.fullmatch(r"(\d+)(?:-(\d+)(?:/(\d+))?)?", word)
+    if not m:
+        raise ValueError(f"@slot：看不懂「{word}」（要寫 30、30-35 或 30-125/6）")
+    first = int(m.group(1))
+    return list(range(first, int(m.group(2) or first) + 1, int(m.group(3) or 1)))
+
+
+SKIP = re.compile(r"^(\d+)(?:\s*-\s*(\d+)(?:/(\d+))?)?\s+(\w+)\s*(==|!=)\s*(.+)$")
 
 
 def _skip(rest, params):
-    """`// @skip 1-23 type != Bloom`: passes 1 to 23 (`3`: just that one) are not drawn while the condition holds (a
-    menu parameter's choices, or numbers, as @enable's)."""
+    """`// @skip 1-23 type != Bloom`: passes 1 to 23 (`3`: just that one; `30-125/6`: every 6th of them) are not drawn while
+    the condition holds (a menu parameter's choices, or numbers, as @enable's). [(first, last, conditions)]"""
     m = SKIP.match(rest.strip())
     if not m:
-        raise ValueError("@skip 要寫成：第幾次（或 起-訖） 參數 == 選項（例如 1-23 type != Bloom）")
-    first, last, name, op, vals = m.groups()
+        raise ValueError("@skip 要寫成：第幾次（或 起-訖、起-訖/間隔） 參數 == 選項（例如 1-23 type != Bloom）")
+    first, last, step, name, op, vals = m.groups()
     if all(q.name != name for q in params):
         raise ValueError(f"@skip：沒有叫「{name}」的參數")
     first, last = int(first), int(last if last is not None else first)
-    return first, max(first, last), [(name, op == "!=", [v.strip() for v in vals.split("|")])]
+    conds = [(name, op == "!=", [v.strip() for v in vals.split("|")])]
+    if step:
+        return [(i, i, conds) for i in range(first, last + 1, max(1, int(step)))]
+    return [(first, max(first, last), conds)]
 
 
 def enabled(p, values):
@@ -345,6 +358,11 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head["levels"] = rest.split()
             elif key == "extras":
                 head["extras"] = [None if w == "-" else int(w) for w in rest.split()]
+            elif key == "slot":                           # @slot name passes...: those passes draw into one picture
+                words = rest.split()
+                if len(words) < 2:
+                    raise ValueError("@slot 要寫：名字 第幾次…（例如 a 30-125/6，起-訖/間隔）")
+                head.setdefault("slots", []).append((words[0], [i for w in words[1:] for i in _pass_list(w)]))
             elif key == "precision":
                 if rest.lower() not in ("float", "8bit"):
                     raise ValueError("@precision 要寫 float 或 8bit")
@@ -371,7 +389,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     skipped = []
     for line, rest in skips:
         try:
-            skipped.append(_skip(rest, params))
+            skipped += _skip(rest, params)
         except ValueError as exc:
             error = error or f"{line.strip()}\n{exc}"
     for name in bakes:
@@ -403,6 +421,12 @@ def parse(text, ref, fallback_name="濾鏡"):
     d.input_show = input_show
     d.input_use = input_use
     d.dynamic = head.get("dynamic")
+    for name, passes in head.get("slots", []):
+        for i in passes:
+            if not 0 <= i < len(levels):
+                error = error or f"@slot {name}：第 {i} 次不在 @levels 裡"
+            d.slots[i] = name
+    d.error = d.error or error
     d.input_param = input_param
     for iname, pname in input_param.items():
         if not any(q.name == pname and q.type in ("float", "int") for q in params):
@@ -1216,7 +1240,7 @@ class Engine:
                 if i in skip:                          # (not drawn: it keeps its place in made, and what the pass after reads)
                     made.append((None, tw, th))
                     continue
-                dst_tex, dst_fbo = self._level_target(d, i, tw, th)
+                dst_tex, dst_fbo = self._level_target(d, d.slots.get(i, i), tw, th)
             elif dest is not None and i == d.passes - 1:
                 tw, th = w, h
                 dst_tex, dst_fbo = dest

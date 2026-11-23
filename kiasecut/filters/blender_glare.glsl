@@ -4,14 +4,37 @@
 // @output image "圖像"
 // @output glare "光"
 // @output highlights "亮部"
-// @passes 32
-// @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 0 0 0 0 0 0f quality
-// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 - 0 - 25 0 0 -
+// @passes 128
+// @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 0 0 0 0 0 0f 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 quality
+// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 - 0 - 25 0 0 - - - - - 0 - - - - 35 0 - - - - 41 0 - - - - 47 0 - - - - 53 0 - - - - 59 0 - - - - 65 0 - - - - 71 0 - - - - 77 0 - - - - 83 0 - - - - 89 0 - - - - 95 0 - - - - 101 0 - - - - 107 0 - - - - 113 0 - - - - 119 0 -
 // @shared
 // @alone highlights
 // @skip 1-23 type != Bloom
 // @skip 24-28 type != Ghosts
 // @skip 29 type != Sun Beams
+// @skip 30-125 type != Streaks
+// @skip 32-125/6 iterations == 2
+// @skip 33-125/6 iterations == 2|3
+// @skip 34-125/6 iterations == 2|3|4
+// @skip 36-41 streaks == 1
+// @skip 42-47 streaks == 1|2
+// @skip 48-53 streaks == 1|2|3
+// @skip 54-59 streaks == 1|2|3|4
+// @skip 60-65 streaks == 1|2|3|4|5
+// @skip 66-71 streaks == 1|2|3|4|5|6
+// @skip 72-77 streaks == 1|2|3|4|5|6|7
+// @skip 78-83 streaks == 1|2|3|4|5|6|7|8
+// @skip 84-89 streaks == 1|2|3|4|5|6|7|8|9
+// @skip 90-95 streaks == 1|2|3|4|5|6|7|8|9|10
+// @skip 96-101 streaks == 1|2|3|4|5|6|7|8|9|10|11
+// @skip 102-107 streaks == 1|2|3|4|5|6|7|8|9|10|11|12
+// @skip 108-113 streaks == 1|2|3|4|5|6|7|8|9|10|11|12|13
+// @skip 114-119 streaks == 1|2|3|4|5|6|7|8|9|10|11|12|13|14
+// @skip 120-125 streaks == 1|2|3|4|5|6|7|8|9|10|11|12|13|14|15
+// @slot streak_a 30-125/6 32-125/6 34-125/6
+// @slot streak_b 31-125/6 33-125/6
+// @slot streaks_p 35-125/12
+// @slot streaks_q 41-125/12
 // @precision float
 // @bake type
 // @param type menu Bloom "Bloom|Ghosts|Streaks|Fog Glow|Simple Star|Sun Beams" "類型"
@@ -54,7 +77,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // (Blender's code is GPL-2.0-or-later.)
 
-// (Ghosts uses passes 24 - 28: see ghost_blur. Sun Beams uses pass 29 - the glare's size - for the sums of the highlights along short runs of steps towards the sun, which
+// (Streaks uses passes 30 - 125: see streak_pass. Ghosts uses passes 24 - 28: see ghost_blur. Sun Beams uses pass 29 - the glare's size - for the sums of the highlights along short runs of steps towards the sun, which
 // its gather reads instead of every step: see sun_runs. Bloom's chain is left out for it, as for the other types.)
 // Pass 0 keeps the highlights (what glows, as Blender computes it). Bloom is Blender's own chain, one
 // pass per step (@levels shrinks them): pass 1 the highlights at the glare's size, passes 2 - 12 the
@@ -84,6 +107,9 @@ vec3 highlights(vec3 c) {
     b = smooth_min(mx, b, min(sm, min(abs(mx), range)));
     return v > 0.0 ? c * ((b - thr) / v) : vec3(0.0);
 }
+
+// c read at p: none outside the frame
+vec4 inside_or_none(vec4 c, vec2 p) { return p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0 ? vec4(0.0) : c; }
 
 // pass 0's highlights at p (kept as 16-bit floats, linear); none outside
 vec3 H(vec2 p) {
@@ -254,6 +280,37 @@ vec3 streak_lines(vec2 uv, vec2 R, float q) {
     return acc * exp2(-float(N)) / float(6 - N);               // shorter streaks are attenuated more
 }
 
+// Streaks by passes, as Blender's: every streak is the highlights filtered `iterations` times along its direction, each time
+// with the picture and 3 copies of it 1, 2, 3 steps on (4^k glare pixels a step at iteration k) faded and tinted, halved;
+// the streaks are added up into one picture (passes 30 - 125: six for each of up to 16 streaks - 5 iterations, then the sum;
+// two pictures taking turns for the iterations and two for the sums, @slot). Each pixel reads 4 per iteration instead of
+// every step of streak_lines (4^iterations of them, read every few pixels when long), which is kept for a margin.
+vec4 streak_in(vec2 p, int k) { return k == 0 ? vec4(H(p), 1.0) : inside_or_none(src(p), p); }
+vec4 streak_pass(vec2 uv) {
+    int s = (pass_index - 30) / 6, k = (pass_index - 30) - 6 * s;
+    int N = clamp(iterations, 2, 5), ns = clamp(streaks, 1, 16);
+    if (k == 5) {                                              // the sum: the streaks before it and this one
+        vec3 before = s == 0 ? vec3(0.0) : extra(uv).rgb;
+        if (s >= ns || ov_scale != vec2(1.0)) return vec4(before, 1.0);
+        return vec4(before + src(uv).rgb / float(6 - N), 1.0);    // (shorter streaks are attenuated more)
+    }
+    if (ov_scale != vec2(1.0)) return vec4(0.0);
+    if (k >= N) return streak_in(uv, k);                       // (iterations past the setting: left as it is)
+    float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;
+    float an = radians(streak_angle) + float(s) / float(ns) * 6.2831853;
+    vec2 d = vec2(cos(an), -sin(an)) * q / resolution * exp2(2.0 * float(k));    // (counter-clockwise on the picture, as in Blender)
+    float b = exp2(2.0 * float(k)), fd = clamp(fade, 0.75, 1.0);
+    float c = 1.0 - pow(clamp(color_modulation, 0.0, 1.0), float(k + 1));
+    vec3 g = streak_in(uv, k).rgb
+           + pow(fd, b) * vec3(1.0, c, c) * streak_in(uv + d, k).rgb
+           + pow(fd, 2.0 * b) * vec3(c, c, 1.0) * streak_in(uv + 2.0 * d, k).rgb
+           + pow(fd, 3.0 * b) * vec3(c, 1.0, c) * streak_in(uv + 3.0 * d, k).rgb;
+    return vec4(0.5 * g, 1.0);
+}
+vec3 streaks_of(vec2 uv, vec2 R, float q) {
+    return ov_scale != vec2(1.0) ? streak_lines(uv, R, q) : inside_or_none(src(uv), uv).rgb;
+}
+
 vec3 fog_glow(vec2 uv, vec2 R, float q) {
     vec2 Rh = R / q;                                           // in glare pixels (q canvas px each)
     float K = max(Rh.x, Rh.y);
@@ -301,8 +358,6 @@ vec3 simple_star(vec2 uv, vec2 R, float q) {
 const float GHOST_SCALE[4] = float[4](1.3125, -0.87033, 0.9625, -1.257143);
 const float GHOST_OUTER[4] = float[4](0.6125, -2.262857, 0.2625, -11.314286);
 const vec3 GHOST_TINT[4] = vec3[4](vec3(0, 0, 0), vec3(0, 1, 1), vec3(1, 1, 0), vec3(1, 0, 1));
-
-vec4 inside_or_none(vec4 c, vec2 p) { return p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0 ? vec4(0.0) : c; }
 
 // passes 24 - 27: one way of a Gaussian blur of the highlights (24, 26: across, from pass 0; 25, 27: down, from the pass before)
 vec4 ghost_blur(vec2 uv) {
@@ -448,7 +503,7 @@ vec3 sun_beams(vec2 uv, vec2 R, float q) {
 float grain_sigma() {
     if (type == 3) return 2.0;
     if (type == 1) return ov_scale != vec2(1.0) ? 1.6 : 0.0;       // (only the sampled ghosts: the passes' have none)
-    if (type == 2 && streak_skip() > 0) return 1.1;
+    if (type == 2 && streak_skip() > 0 && ov_scale != vec2(1.0)) return 1.1;     // (only the gather of streak_lines: under a margin)
     return 0.0;
 }
 
@@ -480,6 +535,7 @@ vec4 effect(vec2 uv) {
     if (pass_index >= 24 && pass_index <= 27) return ghost_blur(uv);
     if (pass_index == 28) return ghost_acc(uv);
     if (pass_index == 29) return sun_runs(uv);
+    if (pass_index >= 30 && pass_index < 126) return streak_pass(uv);
     if (pass_index < 24) {                                     // (Bloom's chain; the other types leave it empty)
         if (type != 0) return vec4(0.0);
         if (pass_index == 1) return src(uv);
@@ -487,10 +543,10 @@ vec4 effect(vec2 uv) {
     }
 
     vec3 g;
-    if (pass_index == 30) {                                    // the light: gathered, then its saturation, colour and strength
+    if (pass_index == 126) {                                   // the light: gathered, then its saturation, colour and strength
         vec2 R = resolution;
         float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;
-        g = type == 0 ? bloom(uv) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streak_lines(uv, R, q)
+        g = type == 0 ? bloom(uv) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streaks_of(uv, R, q)
           : type == 3 ? fog_glow(uv, R, q) : type == 4 ? simple_star(uv, R, q) : sun_beams(uv, R, q);
         vec3 hsv = rgb2hsv(max(g, vec3(0.0)));                 // saturation as Blender mixes it
         hsv.y = clamp(hsv.y * max(saturation, 0.0), 0.0, 1.0);
@@ -498,12 +554,12 @@ vec4 effect(vec2 uv) {
         g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * (max(strength, 0.0) / (type == 0 ? float(max(1, bloom_length())) : 1.0));
         return vec4(g, 1.0);
     }
-    if (output_index == 2) {                                   // pass 31, 亮部: what glows, alone (Blender's Highlights output)
+    if (output_index == 2) {                                   // pass 127, 亮部: what glows, alone (Blender's Highlights output)
         vec3 h = quality == 0 ? max(highlights(linear(original(uv)).rgb), vec3(0.0)) : reduced_highlights_at(uv);    // (品質 中 / 低: the reduced picture's, as Blender gives it)
         float ha = clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0);
         return ha > 0.0 ? vec4(lin_to_srgb(h / ha) * ha, ha) : vec4(0.0);
     }
-    float sg = grain_sigma();                                  // pass 31: smooth the grain, add the light to the picture
+    float sg = grain_sigma();                                  // pass 127: smooth the grain, add the light to the picture
     if (sg > 0.0) {
         vec2 px = 1.0 / pass_px;
         vec3 acc = vec3(0.0);

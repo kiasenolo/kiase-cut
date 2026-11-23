@@ -415,6 +415,46 @@ class BuiltinFilterTests(unittest.TestCase):
             self.assertLess(diff.mean(), 0.5, quality)
             self.assertAlmostEqual(got[..., :3].mean(), want[..., :3].mean(), delta=0.3)
 
+    def test_streaks_by_passes_match_every_step(self):
+        """Streaks filtered by passes (4 reads an iteration, the streaks added up) give the picture the gather of every step
+        gives, at 品質 高 (中 / 低 work on the smaller picture, as Blender's do), whatever the streaks, iterations and fade - to
+        that gather's own grain (it reads long streaks every few steps)."""
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:blender_glare")
+        every = fx.parse(d.code.replace("return ov_scale != vec2(1.0) ? streak_lines(uv, R, q) : inside_or_none(src(uv), uv).rgb;",
+                                        "return streak_lines(uv, R, q);"), "t")
+        self.assertNotEqual(every.code, d.code)
+        rng = np.random.default_rng(7)
+        h, w = 108, 192
+        img = np.zeros((h, w, 4), np.uint8)
+        img[..., 3] = 255
+        yy, xx = np.mgrid[0:h, 0:w]
+        for c in range(3):                                            # (soft lights: a sharp speck's streak is a little softer across, as Blender's)
+            f = sum(np.exp(-((xx - rng.uniform(0, w)) ** 2 + (yy - rng.uniform(0, h)) ** 2) / (2 * rng.uniform(2, 6) ** 2)) for _ in range(6))
+            img[..., c] = np.clip(f * 255, 0, 255).astype(np.uint8)
+        for streaks, iterations, fade in ((4, 3, 0.9), (7, 2, 0.8), (3, 5, 0.97)):
+            vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+            vals.update({"type": 2, "quality": 0, "threshold": 0.3, "strength": 1.0, "streaks": streaks, "iterations": iterations,
+                         "fade": fade, "streak_angle": 20.0})
+            got = eng.run(d, vals, img).astype(int)
+            want = eng.run(every, vals, img).astype(int)
+            diff = np.abs(got - want)[..., :3]
+            self.assertGreater(want[..., :3].mean(), 1.0)
+            self.assertLessEqual(diff.max(), 20, (streaks, iterations, fade))        # (long streaks: the gather reads every few steps)
+            self.assertLess(diff.mean(), 0.4, (streaks, iterations, fade))
+            self.assertAlmostEqual(got[..., :3].mean(), want[..., :3].mean(), delta=0.3)
+
+    def test_slots_and_stepped_skips(self):
+        d = fx.parse("// @passes 8\n// @levels 0 0 0 0 0 0\n// @param n int 2 1 3\n// @skip 2-5/2 n == 1\n// @slot a 0-4/2\n"
+                     "vec4 effect(vec2 uv) { return src(uv); }", "t")
+        self.assertIsNone(d.error)
+        self.assertEqual(d.skips, [(2, 2, [("n", False, ["1"])]), (4, 4, [("n", False, ["1"])])])
+        self.assertEqual(d.slots, {0: "a", 2: "a", 4: "a"})
+        self.assertIsNotNone(fx.parse("// @passes 3\n// @levels 0\n// @slot a 2\nvec4 effect(vec2 uv) { return src(uv); }", "t").error)
+
     def test_bloom_is_blenders_chain(self):
         """Bloom normalised by the chain's length: a lit square on black glows evenly all round, and a bigger Size reaches further."""
         import numpy as np

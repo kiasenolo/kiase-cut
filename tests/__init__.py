@@ -12,6 +12,9 @@ if not os.environ.get("KIASECUT_TEST_REAL_HOME"):
     for _k, _d in (("XDG_CONFIG_HOME", ".config"), ("XDG_CACHE_HOME", ".cache"), ("XDG_DATA_HOME", ".local/share")):
         os.environ[_k] = os.path.join(_home, _d)
     os.environ.pop("XDG_DOCUMENTS_DIR", None)
+    # a window draws the wiki's demo pictures into that home's cache in a process of its own (wikibuild): one test's window
+    # left it half way through the folder when test_wiki read it, and every window started one more
+    os.environ["KIASECUT_NO_WIKI_DEMOS"] = "1"
     if os.name == "nt":
         # Windows keeps settings in the registry, which no folder above moves (nor does QSettings.setPath, for the native format):
         # the tests read the user's own settings there and wrote theirs into them. QSettings(organisation, program) is an .ini

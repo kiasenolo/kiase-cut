@@ -2217,7 +2217,7 @@ class Inspector(QWidget):
             now = {build.audio_stream(k) for k in clips}
             self._set_combo(w["audio_stream"], now.pop() if len(now) == 1 else "--")
         if "group_anchor" in w:
-            vals = {bool(k.get("anchor")) for k in clips}
+            vals = {project.group_anchor(k) for k in clips}
             w["group_anchor"].blockSignals(True)
             w["group_anchor"].setTristate(len(vals) > 1)
             w["group_anchor"].setCheckState(Qt.PartiallyChecked if len(vals) > 1 else Qt.Checked if vals.pop() else Qt.Unchecked)

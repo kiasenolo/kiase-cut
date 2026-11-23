@@ -584,14 +584,15 @@ class Timeline(QWidget):
         return sum(1 + self.extra_lanes(ct) for ct in g["tracks"])
 
     def lanes(self, i):
-        """[{group, track, y, h, abs0}] of row i's open groups (nested ones too): each group's
+        """[{group, track, y, h, abs0, lo, hi}] of row i's open groups (nested ones too): each group's
         tracks, top one first, each followed by the lanes of the open groups on it; abs0 is
-        where the group's time 0 is on the timeline."""
+        where the group's content time 0 is on the timeline, lo - hi the part of it the group shows."""
         out, lh = [], self.lane_h()
 
-        def walk(g, y, abs0):
+        def walk(g, y, at):                              # at: where g starts on the timeline
+            abs0 = at - g.get("source_start_us", 0)
             for ct in reversed(g["tracks"]):
-                out.append({"group": g, "track": ct, "y": y, "h": lh, "abs0": abs0})
+                out.append({"group": g, "track": ct, "y": y, "h": lh, "abs0": abs0, "lo": at, "hi": at + g["duration_us"]})
                 y += lh
                 sub = 0
                 for k in ct["clips"]:
@@ -613,7 +614,7 @@ class Timeline(QWidget):
         edge = EDGE_PX * touch.scale()
         for ln in self.lanes(row):
             g = ln["group"]
-            if not (ln["y"] <= pos.y() < ln["y"] + ln["h"]) or not (ln["abs0"] <= sec <= ln["abs0"] + g["duration_us"]):
+            if not (ln["y"] <= pos.y() < ln["y"] + ln["h"]) or not (ln["lo"] <= sec <= ln["hi"]):
                 continue
             for c in ln["track"]["clips"]:
                 x0 = self._x((ln["abs0"] + c["start_us"]) / US)
@@ -666,8 +667,8 @@ class Timeline(QWidget):
         ln = self.into_lane
         if ln is None:
             return
-        x0 = max(self._x(ln["abs0"] / US), self.header_w)
-        x1 = self._x((ln["abs0"] + ln["group"]["duration_us"]) / US)
+        x0 = max(self._x(ln["lo"] / US), self.header_w)
+        x1 = self._x(ln["hi"] / US)
         r = QRectF(x0, ln["y"], max(2.0, x1 - x0), ln["h"] - 1)
         p.fillRect(r, QColor(122, 92, 150, 70))
         p.setPen(QPen(QColor("#b48ee0"), 1.5))
@@ -703,8 +704,8 @@ class Timeline(QWidget):
         w = self.width()
         for ln in self.lanes(i):
             g = ln["group"]
-            x0 = max(self._x(ln["abs0"] / US), self.header_w)
-            x1 = min(self._x((ln["abs0"] + g["duration_us"]) / US), w)
+            x0 = max(self._x(ln["lo"] / US), self.header_w)
+            x1 = min(self._x(ln["hi"] / US), w)
             if x1 <= x0:
                 continue
             p.fillRect(QRectF(x0, ln["y"], x1 - x0, ln["h"] - 1), QColor(0, 0, 0, 70))
@@ -2008,7 +2009,8 @@ class Timeline(QWidget):
             s0, e0 = c["start_us"], c["start_us"] + c["duration_us"]
             if d["mode"] == "lane_body":
                 start = self.on_frame(self._snap_span(abs0 + s0 + dt, e0 - s0, c)) - abs0
-                d["start"] = min(max(0.0, start), g["duration_us"] - (e0 - s0))
+                ss = g.get("source_start_us", 0)               # (inside what the group shows of its content)
+                d["start"] = min(max(float(ss), start), ss + g["duration_us"] - (e0 - s0))
                 d["end"] = d["start"] + (e0 - s0)
                 for ln in self.lanes(d["row"]):          # another lane of the same group, same kind
                     if ln["group"] is g and ln["y"] <= pos.y() < ln["y"] + ln["h"] and \

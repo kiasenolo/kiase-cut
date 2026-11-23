@@ -121,5 +121,26 @@ class GroupTests(unittest.TestCase):
         self.assertNotIn(twin["compound_id"], p["compounds"])
 
 
+class GroupRenderTests(unittest.TestCase):
+    def test_a_trimmed_group_draws_the_part_it_shows(self):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from test_track_source import APP, clip as tclip, pic as tpic  # noqa: F401
+        from kiasecut import glrender, render
+        p = project.new(1920, 1080, 30)
+        red, blue = tclip("r", tpic("#ff0000"), x=-0.5, scale=0.5, start=0, dur=S), \
+            tclip("b", tpic("#0000ff"), x=0.5, scale=0.5, start=S, dur=S)
+        p["tracks"][:] = [{"id": "t0", "kind": "video", "name": "v", "clips": [red, blue]}]
+        project.link(p)
+        g = edit.make_group(p, p, ["r", "b"])
+        edit.trim_start(p, g["id"], S)                                    # shows 1 - 2 s of its content: blue only
+        edit.move(p, g["id"], 0)                                          # ...from 0 s on
+        project.refresh_duration(p)
+        for r in (render.Renderer(None), glrender.GLRenderer(None)):
+            img = r.render(p, 10, 192, 108)
+            left, right = img.pixelColor(48, 54), img.pixelColor(144, 54)
+            self.assertLess(left.red(), 60)                               # (red's time is not shown)
+            self.assertGreater(right.blue(), 200)                         # blue, at content time 1 s + 1/3 s
+
+
 if __name__ == "__main__":
     unittest.main()

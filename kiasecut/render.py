@@ -654,7 +654,7 @@ class Renderer:
         before = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied) if fade else None
         p.save()
         p.setTransform(QTransform(fit, 0, 0, fit, -disp[0] / 2, -disp[1] / 2) * world)
-        self.draw_content(p, comp, comp["width"], comp["height"], fps, t, k, through=True)
+        self.draw_content(p, comp, comp["width"], comp["height"], fps, project.source_time(c, t), k, through=True)
         p.restore()
         if not fade:
             return
@@ -859,7 +859,7 @@ class Renderer:
                     up.end()
                     self.outer = (lp, seen)
                 try:
-                    self.draw_content(lp, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static") and not live
+                    self.draw_content(lp, comp, cw, ch, fps, project.source_time(c, t) if kind == "group" else 0 if comp.get("static") and not live
                                       else project.source_time(c, t), k)
                 finally:
                     self.outer, self.clip_dur = outer, outer_dur
@@ -1262,7 +1262,7 @@ def rounded_path(disp, radii):
 def group_content(g, W, H):
     """A group as compound-like content: its tracks on a canvas the size of its level."""
     return {"width": W, "height": H, "tracks": g["tracks"], "group": True, "matte": g.get("matte"),
-            "anchor": g.get("anchor"), "duration_us": g["duration_us"]}
+            "anchor": project.group_anchor(g), "duration_us": (g.get("compound") or g)["duration_us"]}
 
 
 def clip_world(c, t, W, H):

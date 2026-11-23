@@ -4116,7 +4116,7 @@ class MainWindow(QMainWindow):
         groups = [c for c in (edit.find(self.container(), k)[1] for k in ids) if project.is_group(c)]
         if not groups:
             return
-        on = not all(g.get("anchor") for g in groups)
+        on = not all(project.group_anchor(g) for g in groups)
         self.apply("中心點跟隨最下層物件" if on else "取消中心點跟隨最下層物件",
                    lambda lvl: [edit.set_group_anchor(lvl, g["id"], on) for g in groups])
 

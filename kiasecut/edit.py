@@ -270,13 +270,18 @@ def trim_start(proj, clip_id, new_start_us):
     """Move the clip's left edge, keeping its right edge and its content in place."""
     t, c = find(proj, clip_id)
     g = group_of(proj, t)
+    if g is not None and new_start_us < g.get("source_start_us", 0) and free_range(t, c["start_us"], end(c), ignore=c)[0] == 0:
+        # before what its group shows: the group grows to the left (as far as its own track lets it)
+        if c["type"] in ("video", "audio", "compound", "group") and not project.is_static(c):
+            new_start_us = max(new_start_us, c["start_us"] - c.get("source_start_us", 0) / project.speed(c))
+        new_start_us += _grow_group_left(proj, g, new_start_us)
     e = end(c)
     rng = free_range(t, c["start_us"], e, ignore=c)
     lo = rng[0]
     if c["type"] in ("video", "audio", "compound", "group") and not project.is_static(c):
         lo = max(lo, c["start_us"] - c.get("source_start_us", 0) / project.speed(c))    # not before the source
     if g is not None:
-        lo = max(lo, 0)                                          # not before its group's content starts
+        lo = max(lo, g.get("source_start_us", 0))                # not before what its group shows
     hi = e - MIN_US
     new_start_us = int(min(max(new_start_us, lo), hi))
     d = new_start_us - c["start_us"]
@@ -303,6 +308,37 @@ def trim_end(proj, clip_id, new_end_us):
     new_end_us = int(max(min(new_end_us, hi), lo))
     c["duration_us"] = new_end_us - c["start_us"]
     return c
+
+
+def _grow_group_left(level, g, content_start):
+    """Group g shows its content from content_start (content time) on - as far left as its own track lets it grow. Before
+    its content's start the content moves on to make room (every clip of the level showing it shows it as before). Returns
+    how far the content moved (to add to times in it)."""
+    ss = g.get("source_start_us", 0)
+    if content_start >= ss:
+        return 0
+    t = find(level, g["id"])[0]
+    room = free_range(t, g["start_us"], end(g), ignore=g)
+    d = int(min(ss - content_start, g["start_us"] - (room[0] if room else g["start_us"])))
+    if d <= 0:
+        return 0
+    more = max(0, d - ss)
+    if more:
+        for ct in g["tracks"]:
+            for k in ct["clips"]:
+                k["start_us"] += more
+        comp = g.get("compound")
+        if comp is not None:
+            comp["duration_us"] = (comp.get("duration_us") or 0) + more
+        for u in project.walk_clips(level["tracks"]):
+            if u is not g and u.get("compound_id") and u.get("compound_id") == g.get("compound_id"):
+                u["source_start_us"] = u.get("source_start_us", 0) + more
+        ss += more
+    g["start_us"] -= d
+    g["duration_us"] += d
+    g["source_start_us"] = ss - d
+    shift_keys(g, -d)
+    return more
 
 
 def group_end(g):

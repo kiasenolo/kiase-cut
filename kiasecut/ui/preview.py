@@ -314,7 +314,7 @@ class LayerFrame:
                     if k["id"] == cid:
                         return Box(k, cw, ch, lt), xf
                     if project.is_group(k):
-                        hit = find(k["tracks"], lt, group_xf(k, cw, ch, lt) * xf)
+                        hit = find(k["tracks"], project.source_time(k, lt), group_xf(k, cw, ch, lt) * xf)
                         if hit:
                             return hit
             return None
@@ -1690,7 +1690,7 @@ class Preview(PenMixin, _Surface):
                         lock = True                         # 只當遮罩: not drawn, so a click goes through it (pick it on the timeline)
                     if project.is_group(c):
                         inner = plain and is_identity(group_xf(c, self.W, self.H, t) * QTransform.fromTranslate(*shift))
-                        b = GroupBox(c, self.W, self.H, t, boxes(c["tracks"], t, lock, inner, True, c), shift)
+                        b = GroupBox(c, self.W, self.H, t, boxes(c["tracks"], project.source_time(c, t), lock, inner, True, c), shift)
                     else:
                         b = Box(c, self.W, self.H, t, shift)
                         if nested and plain and c["id"] in self.selected_ids:

@@ -608,7 +608,7 @@ class GLRenderer(render.Renderer):
             if fade:
                 before = gl.layer(tgt.w, tgt.h)
                 gl.ctx.copy_framebuffer(before.tex, tgt.fbo)
-            self.gl_content(tgt, base, comp, comp["width"], comp["height"], fps, t, ppu, through=True)
+            self.gl_content(tgt, base, comp, comp["width"], comp["height"], fps, project.source_time(c, t), ppu, through=True)
             if fade:
                 now = gl.layer(tgt.w, tgt.h)
                 gl.ctx.copy_framebuffer(now.tex, tgt.fbo)
@@ -816,7 +816,7 @@ class GLRenderer(render.Renderer):
                     self.window = (held.w, held.h, ((shown.left() - vis.left()) * sx - px, (shown.top() - vis.top()) * sy - px,
                                                     (shown.right() - vis.left()) * sx + px, (shown.bottom() - vis.top()) * sy + px))
                 try:
-                    self.gl_content(held, inner, comp, cw, ch, fps, t if kind == "group" else 0 if comp.get("static") and not live
+                    self.gl_content(held, inner, comp, cw, ch, fps, project.source_time(c, t) if kind == "group" else 0 if comp.get("static") and not live
                                     else project.source_time(c, t), k)
                 finally:
                     self.window = window

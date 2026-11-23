@@ -117,9 +117,15 @@ class GroupTests(unittest.TestCase):
         edit.trim_end(p, "c4", 6 * S)                                    # c4 1-4 -> 1-6 (group time)
         self.assertEqual((g["start_us"], g["duration_us"]), (2 * S, 6 * S))
         self.assertEqual(edit.find(p, "c4")[1]["duration_us"], 5 * S)
-        edit.trim_start(p, "c1", -S)                                     # before its content's start: no further
-        self.assertEqual((g["start_us"], g["duration_us"]), (2 * S, 6 * S))
-        self.assertEqual((edit.abs_start(p, "c1"), edit.find(p, "c1")[1]["duration_us"]), (2 * S, 2 * S))
+        edit.trim_start(p, "c1", -S)                                     # one second before the group: it grows left
+        self.assertEqual((g["start_us"], g["duration_us"]), (S, 7 * S))
+        self.assertEqual((edit.abs_start(p, "c1"), edit.abs_start(p, "c4")), (S, 3 * S))   # c4 stays put
+        self.assertEqual(edit.find(p, "c1")[1]["duration_us"], 3 * S)
+        self.assertEqual(g["compound"]["duration_us"], 7 * S)            # (its content moved on to make room)
+        p["tracks"][1]["clips"].insert(0, clip("c9", 0, S // 2))         # a neighbour stops the group
+        edit.trim_start(p, "c1", -S)
+        self.assertEqual(g["start_us"], S // 2)
+        self.assertEqual(edit.abs_start(p, "c1"), S // 2)
 
     def test_make_and_ungroup(self):
         p = scene()

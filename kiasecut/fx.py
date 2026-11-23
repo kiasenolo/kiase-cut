@@ -1016,8 +1016,9 @@ class Engine:
                 fn(d.name, False)
             try:
                 if len(d.code) > BIG and not use_gles():          # (gles.py's calls already let go of Python's lock)
-                    with self.ctx:
-                        precompile(shader_source(d, sampled, baked))
+                    # (on this engine's context, current already: a `with self.ctx` here, inside the caller's, let go of an EGL
+                    # context as it ended - every program and texture after it failed, "cannot create program")
+                    precompile(shader_source(d, sampled, baked))
                 try:
                     prog = self.ctx.program(vertex_shader=VERTEX, fragment_shader=shader_source(d, sampled, baked))
                 except Exception as exc:

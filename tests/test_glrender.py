@@ -163,6 +163,23 @@ class GpuMatchesCpu(unittest.TestCase):
                 self.check(f"mask {kind} {feather} {invert}",
                            self.view([self.top(transform=tf(scale=1.2))], [self.bg(mask=mask, transform=tf(rotation=10))]))
 
+    def test_a_big_filter_in_a_node_graph_draws_without_an_error(self):
+        """A filter long enough to be compiled first through ctypes (fx.BIG: Noise Texture) leaves this renderer's context
+        current: a nested `with ctx` let go of an EGL context as it ended, and every program and texture after it failed."""
+        self.assertGreater(len(fx.get("builtin:nodes/tex_noise").code), fx.BIG)
+        g = {"nodes": {"input": {"type": "input"}, "output": {"type": "output"},
+                       "noise": {"type": "filter", "ref": "builtin:nodes/tex_noise"}, "mix": {"type": "filter", "ref": "builtin:nodes/mix"}},
+             "links": [{"from": "input", "to": "mix", "socket": "src"}, {"from": "noise", "to": "mix", "socket": "b"},
+                       {"from": "mix", "to": "output", "socket": "src"}]}
+        r = glrender.GLRenderer()
+        try:
+            fx.compiled.clear()
+            r.render(self.view([self.bg(effects=[{"id": "e1", "filter": fx.GRAPH, "enabled": True, "params": {"mix.fac": 0.5}, "graph": g}])]),
+                     0, W, H)
+            self.assertEqual(r.errors, [])
+        finally:
+            r.gl.ctx.release()
+
     def test_text(self):
         if not project.DEFAULT_FONT:
             self.skipTest("no default font")

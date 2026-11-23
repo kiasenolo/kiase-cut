@@ -5200,6 +5200,8 @@ class MainWindow(QMainWindow):
         fn(arg)
 
     def run_task(self, fn, done, failed, progress=None):
+        if self.closing:                                 # (closed: nothing would take the result, and a thread
+            return                                       # still running as the window goes takes the program down)
         th, task = QThread(self), Task(fn)
         task.moveToThread(th)
         th.started.connect(task.run)
@@ -7339,6 +7341,8 @@ class MainWindow(QMainWindow):
             recovery.end(self.autosave_dir)
         if self.fullscreen:
             self.fullscreen.close()
+        for t in (self.sync_timer, self.ul_timer, self.clock):   # no new background work once closed
+            t.stop()
         self.player.shutdown()
         if getattr(self, "_thumb_engine", None) is not None:
             self._thumb_engine.close()

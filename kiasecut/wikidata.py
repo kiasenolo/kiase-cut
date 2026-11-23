@@ -226,6 +226,20 @@ GUIDES = {
 
     "guide:controls": ("操作總覽：滑鼠與快速鍵", """<h1>操作總覽：滑鼠與快速鍵</h1>
 <p>KiaseCut 的操作習慣大多跟 Blender 一樣：<b>左鍵做事、中鍵移動檢視、右鍵叫出選單、滾輪縮放或捲動</b>，再用 Ctrl、Shift、Alt 改變它的意思。先記住這幾條，每個視圖幾乎都適用。</p>
+<h3>誰的習慣：分區規則</h3>
+<p>KiaseCut 借了幾個軟體的習慣，每一區跟一個，兩邊衝突時照這張表：</p>
+<table border="1" cellspacing="0" cellpadding="4">
+<tr><th>哪裡</th><th>跟誰</th><th>例子</th></tr>
+<tr><td>物件和視圖：預覽、節點編輯器、曲線編輯器、中鍵、右鍵選單</td><td>Blender</td><td>G／R／S 抓取、旋轉、縮放；Shift+A 新增節點；Tab 進出群組和複合片段；中鍵拖曳移動檢視</td></tr>
+<tr><td>時間線上的滑鼠</td><td>FL Studio</td><td>滾輪捲動軌道、Ctrl+滾輪縮放時間、右鍵拖曳選一段時間（入出點）</td></tr>
+<tr><td>剪輯動作的鍵</td><td>Premiere／剪映</td><td>Ctrl+B 分割、Q／W 裁剪、I／O 入出點、↑／↓ 剪輯點、N 吸附</td></tr>
+</table>
+<p>另外每一區都一樣的：</p>
+<ul>
+<li><b>Shift+滾輪</b>一律是左右捲動。</li>
+<li><b>Esc</b> 是離開目前在做的事，做好的東西留下（鋼筆畫的路徑、預覽上打的字、複合片段回上一層）；只有拖曳、抓取（G）、拉線進行到一半時按 Esc 才是取消、回到原狀。數字欄打字打到一半按 Esc 是不要這次輸入。</li>
+<li><b>Ctrl+D</b> 取消選取；沒有東西可取消時，清除入出點。<b>Shift+D</b> 是建立副本。</li>
+</ul>
 <h3>三顆鍵的分工</h3>
 <table border="1" cellspacing="0" cellpadding="4">
 <tr><th>鍵</th><th>平常做什麼</th></tr>
@@ -239,7 +253,7 @@ GUIDES = {
 <tr><th>視圖</th><th>滾輪</th><th>Shift＋滾輪</th><th>Ctrl＋滾輪</th><th>Alt＋滾輪</th><th>中鍵拖曳</th><th>Ctrl＋中鍵拖曳</th></tr>
 <tr><td>時間線</td><td>上下捲動軌道</td><td>左右捲動</td><td>縮放時間（以游標為中心）</td><td>調整所有軌道的高度</td><td>移動檢視</td><td>縮放</td></tr>
 <tr><td>預覽</td><td>縮放（以游標為中心）</td><td>—</td><td>—</td><td>—</td><td>移動畫面</td><td>上下拖曳縮放</td></tr>
-<tr><td>節點編輯器</td><td>縮放（以游標為中心）</td><td>上下捲動</td><td>左右捲動</td><td>在節點裡的曲線上：縮放那條曲線</td><td>移動檢視（Alt＋中鍵：移動背後的預覽圖）</td><td>—</td></tr>
+<tr><td>節點編輯器</td><td>縮放（以游標為中心）</td><td>左右捲動</td><td>上下捲動</td><td>在節點裡的曲線上：縮放那條曲線</td><td>移動檢視（Alt＋中鍵：移動背後的預覽圖）</td><td>—</td></tr>
 <tr><td>曲線編輯器</td><td>上下捲動</td><td>左右捲動</td><td>縮放時間</td><td>縮放數值</td><td>移動檢視</td><td>縮放</td></tr>
 </table>
 <p>觸控板：兩指滑動是移動檢視，兩指捏合是縮放（預覽、節點編輯器）。</p>
@@ -291,10 +305,11 @@ GUIDES = {
 <tr><td>Alt+←／Alt+→</td><td>上一個／下一個關鍵幀</td></tr>
 <tr><td>I／O／Alt+X</td><td>標記入點／出點／清除入出點（右鍵拖曳拉出的也是入出點）</td></tr>
 <tr><td>M</td><td>在播放頭放時間線標記</td></tr>
-<tr><td rowspan="5">檢視</td><td>N</td><td>開關自動吸附</td></tr>
+<tr><td rowspan="6">檢視</td><td>N</td><td>開關自動吸附</td></tr>
 <tr><td>Ctrl+＋／Ctrl+－／Shift+Z</td><td>時間線放大／縮小／縮放到適合</td></tr>
 <tr><td>F</td><td>全螢幕預覽</td></tr>
 <tr><td>Esc</td><td>離開目前的複合片段，回上一層</td></tr>
+<tr><td>Tab</td><td>滑鼠在時間線或預覽上：進入選取的複合片段；選的是群組就展開／摺疊；沒選就回上一層</td></tr>
 <tr><td>Ctrl+PgUp／Ctrl+PgDn</td><td>切換上一個／下一個佈局</td></tr>
 <tr><td rowspan="3">其他</td><td>F1</td><td>這份說明</td></tr>
 <tr><td>F2</td><td>重新命名</td></tr>
@@ -477,7 +492,7 @@ GUIDES = {
 <table border="1" cellspacing="0" cellpadding="4">
 <tr><th>鍵</th><th>結果</th></tr>
 <tr><td>A</td><td>全選</td></tr>
-<tr><td>Ctrl+D、Esc</td><td>取消選取</td></tr>
+<tr><td>Ctrl+D、Esc</td><td>取消選取（Esc：拉線拉到一半時是取消那條線；沒有選取時離開目前的群組）</td></tr>
 <tr><td>X、Delete</td><td>刪除選取的節點</td></tr>
 <tr><td>Ctrl+X</td><td>刪除但把前後的線接起來（溶解）</td></tr>
 <tr><td>Shift+D</td><td>複製選取的節點</td></tr>

@@ -341,7 +341,8 @@ class TextOnPreviewTests(unittest.TestCase):
     def test_double_click_elsewhere_does_nothing(self):
         self.pv.close_text_box()
         self.pv.set_scene(self.p, S // 2, "c1")
-        QTest.mouseDClick(self.pv, Qt.LeftButton, NONE, QPoint(10, 10))   # on the picture c1, no text there
+        QTest.mouseDClick(self.pv, Qt.LeftButton, NONE, QPoint(150, 400))  # on the picture c1, no text there
+        # (not at its corner: a double click on a 圓角 handle there asks for the radius in a dialog)
         self.assertIsNone(self.pv.text_box)
 
 

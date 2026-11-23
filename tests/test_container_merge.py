@@ -145,6 +145,38 @@ class CanvasTests(unittest.TestCase):
             edit.set_canvas(p, "tl1", True)                               # (not what a timeline was)
 
 
+class SoundInGroupTests(unittest.TestCase):
+    def test_sound_goes_into_a_group_and_back_out(self):
+        p = project.new()
+        snd = {"id": "s", "type": "audio", "name": "s", "start_us": 0, "duration_us": S, "source_start_us": 0,
+               "media": {"path": "/x/s.wav", "duration_us": 9 * S}, "volume": 1.0}
+        p["tracks"][:] = [{"id": "t0", "kind": "video", "name": "v", "clips": [pic("a", 0, S)]},
+                          {"id": "a0", "kind": "audio", "name": "a", "clips": [snd]}]
+        project.link(p)
+        g = edit.make_group(p, p, ["a", "s"])                             # (Ctrl+G with a sound: version 6)
+        kinds = [t["kind"] for t in g["tracks"]]
+        self.assertEqual(sorted(kinds), ["audio", "video"])
+        self.assertEqual(edit.find(p, g["id"])[0]["kind"], "video")
+        from kiasecut import audiomix
+        (src,) = audiomix.sources(p["tracks"])                            # (heard from inside it)
+        self.assertEqual(src.clip["id"], "s")
+        out = edit.move_out_of_group(p, p, ["s"])
+        self.assertEqual(edit.find(p, out[0]["id"])[0]["kind"], "audio")
+        edit.move_into_group(p, p, ["s"], g["id"])
+        self.assertTrue(any(k["id"] == "s" for t in g["tracks"] if t["kind"] == "audio" for k in t["clips"]))
+
+    def test_only_sounds_make_a_group_on_a_picture_track(self):
+        p = project.new()
+        snd = {"id": "s", "type": "audio", "name": "s", "start_us": 0, "duration_us": S, "source_start_us": 0,
+               "media": {"path": "/x/s.wav", "duration_us": 9 * S}, "volume": 1.0}
+        p["tracks"][:] = [{"id": "a0", "kind": "audio", "name": "a", "clips": [snd]}]
+        project.link(p)
+        g = edit.make_group(p, p, ["s"])
+        holder = edit.find(p, g["id"])[0]
+        self.assertEqual(holder["kind"], "video")
+        self.assertLess(p["tracks"].index(holder), [t["kind"] for t in p["tracks"]].index("audio"))
+
+
 class GroupRenderTests(unittest.TestCase):
     def test_a_trimmed_group_draws_the_part_it_shows(self):
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

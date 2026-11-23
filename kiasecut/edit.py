@@ -2085,15 +2085,13 @@ GROUP_MATTE_DEFAULT = project.GROUP_MATTE_DEFAULT
 
 
 def make_group(root, level, clip_ids):
-    """Put picture clips of the open level into a new group (Ctrl+G) and return it: it spans
-    them, sits on the topmost picture track they used (or a new one above it when that has no
-    room), and the tracks they were on come along, in order - their clips keep their places
-    on the canvas and in time."""
+    """Put clips of the open level into a new group (Ctrl+G) and return it: it spans them, sits on the topmost picture
+    track they used (or a new one above it when that has no room; with only sounds, a new top picture track), and the
+    tracks they were on come along, in order - their clips keep their places on the canvas and in time. Sounds come
+    along on sound tracks of the group (version 6)."""
     picked = [find(level, cid) for cid in dict.fromkeys(clip_ids)]
     if not picked:
         raise EditError("先選取要放進群組的片段")
-    if any(t["kind"] == "audio" for t, _ in picked):
-        raise EditError("群組只放畫面片段：選取裡有聲音片段")
     owners = {id(group_of(level, t)) for t, _ in picked}
     if len(owners) > 1:
         raise EditError("選取的片段在不同的群組裡")
@@ -2117,7 +2115,8 @@ def make_group(root, level, clip_ids):
              "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
     top = next((t for t in reversed(used) if t["kind"] == "video"), None)
     if top is None or free_range(top, s0, s0 + span) is None:
-        at = holder.index(used[-1]) + 1
+        pics = [t for t in used if t["kind"] == "video"]       # (above the topmost picture track it used, else on top of the pictures)
+        at = holder.index(pics[-1]) + 1 if pics else next((i for i, x in enumerate(holder) if x["kind"] == "audio"), len(holder))
         n = sum(1 for t in holder if t["kind"] == "video") + 1
         top = {"id": "g" + uuid.uuid4().hex[:8] if outer is not None else new_track_id(level), "kind": "video",
                "name": f"video {n}", "clips": []}
@@ -2207,24 +2206,20 @@ def ungroup(root, level, group_id):
 
 
 def move_out_of_group(root, level, clip_ids):
-    """Take picture clips out of their groups onto tracks of the level itself (on top), at the same
+    """Take clips out of their groups onto tracks of the level itself (pictures on top, sounds at the bottom), at the same
     times and the same on the canvas. Returns the clips."""
     picked = [find(level, cid) for cid in dict.fromkeys(clip_ids)]
     picked = [(t, c) for t, c in picked if group_of(level, t) is not None]
     if not picked:
         raise EditError("片段已經在最上層")
-    for t, c in picked:
-        if t["kind"] == "audio":
-            raise EditError("群組只放畫面片段：選取裡有聲音片段")
     every = abs_starts(level)
     spaces = {id(c): _space(level, t, every[c["id"]]) for t, c in picked}    # (refused before anything changes)
     out = []
     for t, c in picked:
         t["clips"].remove(c)
         c["start_us"] = every[c["id"]]
-        kind = "video"
-        dst = {"id": new_track_id(level), "kind": kind, "name": f"{kind} {len(level['tracks']) + 1}", "clips": [c]}
-        level["tracks"].append(dst)
+        dst = add_track(level, t["kind"])                         # (a picture on top of the pictures, a sound below the sounds)
+        dst["clips"].append(c)
         _refit(c, spaces[id(c)], [])
         out.append(c)
     project.link(root)
@@ -2335,7 +2330,7 @@ def _refit(c, out_of, into):
 
 
 def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=None):
-    """移入群組: put picture clips of the open level (on it or in another group of it) into a
+    """移入群組: put clips of the open level (on it or in another group of it; sounds too) into a
     group, the same on the canvas (the groups' places and sizes folded out of theirs and into
     the new one's) and in time; the group grows to take them in. track_id: a track of the group
     to put them on when there is room (else each goes on a track of its kind in the group with
@@ -2349,8 +2344,6 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
     if not picked:
         raise EditError("片段已經在這個群組裡")
     for t, c in picked:
-        if t["kind"] == "audio":
-            raise EditError("群組只放畫面片段：選取裡有聲音片段")
         if c is g or (project.is_group(c) and any(k is g for k in project.walk_clips(c["tracks"]))):
             raise EditError("群組不能放進自己裡面")
     into = [g] + _groups_around(level, gt)
@@ -2400,14 +2393,15 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
     out = []
     for t, c in sorted(picked, key=lambda tc: starts[tc[1]["id"]]):
         c["start_us"] = starts[c["id"]] + shift - g0 + ss
-        kind = "video"
-        want = next((x for x in g["tracks"] if x["id"] == track_id and x["kind"] != "audio"), None)
+        kind = "audio" if t["kind"] == "audio" else "video"
+        want = next((x for x in g["tracks"] if x["id"] == track_id and x["kind"] == kind), None)
         cands = ([want] if want else []) + [x for x in g["tracks"] if x["kind"] == kind]
         dst = next((x for x in cands if free_range(x, c["start_us"], end(c)) is not None), None)
         if dst is None:
             n = sum(1 for x in g["tracks"] if x["kind"] == kind) + 1
             dst = {"id": "g" + uuid.uuid4().hex[:8], "kind": kind, "name": f"{kind} {n}", "clips": []}
-            g["tracks"].append(dst)
+            first_sound = next((i for i, x in enumerate(g["tracks"]) if x["kind"] == "audio"), len(g["tracks"]))
+            g["tracks"].insert(len(g["tracks"]) if kind == "audio" else first_sound, dst)
         dst["clips"].append(c)
         _sort(dst)
         _refit(c, spaces[id(c)], _space(level, dst, starts[c["id"]] + shift))

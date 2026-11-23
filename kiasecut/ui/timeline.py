@@ -632,7 +632,7 @@ class Timeline(QWidget):
     def _into_lane(self, pos, ids=()):
         """The lane of an open group under pos that clips ids (none: new media) could go into."""
         ln = self._lane_hit(pos)[0]
-        if ln is None or ln["track"]["kind"] == "audio":
+        if ln is None or (ln["track"]["kind"] == "audio" and not ids):     # (clips go onto a sound lane too; new media: pictures only)
             return None
         g = ln["group"]
         inside = {g["id"]} | {k["id"] for k in project.walk_clips(g["tracks"])}
@@ -2586,8 +2586,7 @@ class Timeline(QWidget):
                 items = head + [None] + items
             if c.get("matte_only"):
                 items = [("顯示這個片段（不再只當遮罩）", "show_matte")] + [None] + items
-            if all(k["type"] != "audio" for k in self.selected_clips()):
-                items += [None, ("建立群組", "group")]
+            items += [None, ("建立群組", "group")]                  # (sounds too: on sound tracks of the group)
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立靜態片段", "make_static"), ("建立靜態元件", "make_static_component"),
                           ("建立複合片段", "make_compound"), ("建立元件", "make_component")]
@@ -2616,7 +2615,7 @@ class Timeline(QWidget):
             if comp is not None and all(k["type"] != "audio" for k in sel):     # 設為參數 (元件)
                 menu.addSeparator()
                 param_menu(menu, comp, sel, self.paramBind.emit, self.paramUnbind.emit)
-            if all(k["type"] != "audio" for k in sel):           # 移入群組: one of the level's groups
+            if sel or c:                                         # 移入群組: one of the level's groups
                 skip = {k["id"] for g in sel for k in [g] + list(project.walk_clips(g.get("tracks") or []))}
                 every = edit.abs_starts(self.proj)
                 starts = [every[k["id"]] for k in sel or [c]]

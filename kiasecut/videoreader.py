@@ -112,6 +112,7 @@ class Stream:
         self.image = None
         self.used = 0
         self.ahead = collections.deque()     # pictures read ahead of index, not looked at yet
+        self.read_in = -1                    # the frame (Readers.frame) it was last read for
         self.ended = False                   # ffmpeg sent its last frame (what it sent may still be in ahead)
         self.depth = PUMP_AHEAD              # how many the thread keeps waiting
         self.cv = threading.Condition()
@@ -228,6 +229,7 @@ class Readers:
         self.clock = 0
         self.no_gpu = set()                  # files the GPU could not decode: CPU from then on
         self.recent = {}                     # path -> the last few source times asked for
+        self.frame = 0                       # counts the frames drawn (next_frame); 0: not counted
 
     def through_proxy(self, path, w, h):
         """(the file to read, whether it is a proxy): a finished preview proxy of `path` if the picture asked for fits in it."""
@@ -243,6 +245,12 @@ class Readers:
         if got is not None and w <= got[1][0] and h <= got[1][1]:
             return got[0], True
         return path, False
+
+    def next_frame(self):
+        """A new frame is being drawn: a stream another clip read for this one is not taken on further by the next clip
+        of the same file (two clips of one video a second apart took turns pulling one stream forward and starting
+        another - the first frames took 250 - 500 ms)."""
+        self.frame += 1
 
     def get(self, path, us, w, h):
         """QImage of video `path` at source time us, at least w x h (or the source size)."""
@@ -260,6 +268,8 @@ class Readers:
         for s in self.streams:
             if s.path == path and (s.w, s.h) == (sw, sh):
                 i = s.index_of(us)
+                if self.frame and s.read_in == self.frame and i > s.index:
+                    continue                         # (another clip's, this frame)
                 if s.index <= i <= s.index + AHEAD_S * s.fps and (s.index >= 0 or i >= 0):
                     if best is None or i - s.index < best[1] - best[0].index:
                         best = (s, i)
@@ -268,6 +278,7 @@ class Readers:
             img = s.read_to(i) if i > s.index else s.image
             if img is not None:
                 s.used = self.clock
+                s.read_in = self.frame
                 return img
         if not follows and ENGINE and not proxy:     # a jump: the engine is quicker for one picture (a proxy starts in 50 ms)
             return None
@@ -306,6 +317,7 @@ class Readers:
                 return self._start(path, us, w, h, inf)
             return None
         s.used = self.clock
+        s.read_in = self.frame
         self.streams.append(s)
         return img
 

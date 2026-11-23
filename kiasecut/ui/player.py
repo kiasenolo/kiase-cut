@@ -459,6 +459,7 @@ class Worker(QObject):
         kept = self.cache.get(pos, key) if key is not None else None
         self.asked = []
         shown = img = None
+        self.readers.next_frame()
         with gpu.ui_lock:                                # (the layer list renders thumbnails on the UI thread: never both at once)
             if kept is not None:
                 img = kept
@@ -547,6 +548,7 @@ class Worker(QObject):
                     continue
                 if not self.cache.room_for(w * h * 4):
                     break
+                self.readers.next_frame()
                 with gpu.ui_lock:
                     img = self.renderer.render(self.view, p, w, h, margin=margin) if margin else self.renderer.render(self.view, p, w, h)
                 img.setText("margin", repr(margin))

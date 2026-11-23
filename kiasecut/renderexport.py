@@ -342,6 +342,7 @@ def _pictures(view, out, fmt, alpha, size, fps, first, last, opts, sounds, progr
             if broke:
                 break                       # (ffmpeg's own message is below)
             t0 = time.time()
+            readers.next_frame()
             img = renderer.render(view, f, W, H, alpha=alpha)
             t1 = time.time()
             frames.put(img)

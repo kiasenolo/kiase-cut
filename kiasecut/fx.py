@@ -667,12 +667,23 @@ def gradient_uniforms(v):
     return tuple(pos), tuple(col), len(st)
 
 
+_curve_memo = {}                 # (keys, n) -> samples: a curve is sampled again for every frame it is drawn (~0.7 ms each)
+
+
 def curve_samples(v, n=CURVE_N):
     """n samples of a curve parameter's value from x = 0 to 1 (the keyframe editor's curve: the value
     holds before its first key and after its last)."""
-    u = 1_000_000
-    param = {"keys": [[k[0] * u, k[1], k[2] * u, k[3], k[4] * u, k[5]] for k in curve_keys(v)]}
-    return tuple(float(curves.value(param, u * i / (n - 1))) for i in range(n))
+    keys = curve_keys(v)
+    memo = (tuple(tuple(k) for k in keys), n)
+    got = _curve_memo.get(memo)
+    if got is None:
+        u = 1_000_000
+        param = {"keys": [[k[0] * u, k[1], k[2] * u, k[3], k[4] * u, k[5]] for k in keys]}
+        got = tuple(float(curves.value(param, u * i / (n - 1))) for i in range(n))
+        if len(_curve_memo) >= 512:
+            _curve_memo.clear()
+        _curve_memo[memo] = got
+    return got
 
 
 def uniform_value(p, stored, t):

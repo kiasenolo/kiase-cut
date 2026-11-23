@@ -253,7 +253,60 @@ def refresh_duration(p):
 
 
 def is_group(c):
+    """A group (群組) clip: since version 6 a compound clip shown on the same canvas as its level - its content is a compound
+    (compound_id, canvas "parent") that c["tracks"] and c["matte"] point at in memory (link_clip)."""
     return c.get("type") == "group"
+
+
+GROUP_MATTE_DEFAULT = {"on": False, "show": False, "invert": False, "body": True}
+
+
+def linked_keys(c):
+    """The keys of clip c that only point at its compound in memory (left out when it is stored or copied)."""
+    if "compound_id" not in c:
+        return ()
+    return ("compound", "tracks", "matte") if is_group(c) else ("compound",)
+
+
+def unlinked(c):
+    """Clip c without what only points at its compound (to store or copy it; link_clip puts it back)."""
+    keys = linked_keys(c)
+    return {k: v for k, v in c.items() if k not in keys} if keys else c
+
+
+def link_clip(comps, c):
+    """Point compound clip c at its entry of comps: c["compound"]; a group's c["tracks"] (its compound's tracks: every edit of
+    them edits the compound) and c["matte"] (the compound's, made when it has none)."""
+    comp = comps[c["compound_id"]]
+    c["compound"] = comp
+    if is_group(c):
+        c["tracks"] = comp["tracks"]
+        c["matte"] = comp.setdefault("matte", dict(GROUP_MATTE_DEFAULT))
+
+
+def group_anchor(g):
+    """中心點跟隨最下層物件 of group g (kept by its compound)."""
+    return bool((g.get("compound") or g).get("anchor"))
+
+
+def adopt_groups(p, tracks):
+    """Groups of tracks that still hold their clips themselves (saved before version 6, or pasted from one) get a compound of
+    their own for them - canvas "parent", the group's matte and anchor - innermost first. Returns how many."""
+    comps = p.setdefault("compounds", {})
+    n = 0
+    for t in tracks:
+        for c in t["clips"]:
+            if is_group(c) and "compound_id" not in c and "tracks" in c:
+                n += adopt_groups(p, c["tracks"])
+                kid = new_compound_id(p)
+                inner = c.pop("tracks")
+                comps[kid] = {"name": c.get("name") or "群組", "tracks": inner, "canvas": "parent",
+                              "duration_us": max(int(c.get("duration_us") or 0), end_us(inner)),
+                              "matte": c.pop("matte", None) or dict(GROUP_MATTE_DEFAULT), "anchor": bool(c.pop("anchor", False))}
+                c["compound_id"] = kid
+                c.setdefault("source_start_us", 0)
+                n += 1
+    return n
 
 
 def matte_tracks(tracks):
@@ -267,7 +320,7 @@ def anchor_of(g, t_us):
     """中心點跟隨最下層物件: (bottom track, x, y) of group g at group time t_us - its bottom
     object's centre (the bottom track's clip then, else the nearest one), which the clips on
     the tracks above it count their x / y from - or None (off, or nothing above it)."""
-    if not g.get("anchor"):
+    if not group_anchor(g):
         return None
     tracks = matte_tracks(g["tracks"])
     if len(tracks) < 2:
@@ -329,12 +382,13 @@ def walk_clips(tracks):
                 yield from walk_clips(c["tracks"])
 
 
-def all_tracks(tracks):
-    """The tracks and, inside groups, theirs (each group's after the track holding it)."""
+def all_tracks(tracks, inline=True):
+    """The tracks and, inside groups, theirs (each group's after the track holding it) - a level as it is edited. inline
+    False: a group's content is not gone into (it is a compound of its own, walked as one: every compound once)."""
     for t in tracks:
         yield t
         for c in t["clips"]:
-            if is_group(c):
+            if inline and is_group(c) and "tracks" in c:
                 yield from all_tracks(c["tracks"])
 
 
@@ -594,9 +648,9 @@ def _tracks_out(tracks):
     for t in tracks:
         clips = []
         for c in t["clips"]:
-            if "compound_id" in c and "compound" in c:
-                c = {k: v for k, v in c.items() if k != "compound"}
-            elif is_group(c):
+            if "compound_id" in c:
+                c = unlinked(c)
+            elif is_group(c):                              # (a group not yet made a compound's: as it is)
                 c = dict(c, tracks=_tracks_out(c["tracks"]))
             if any(e.get("vfx") for e in c.get("effects") or ()):
                 c = dict(c, effects=[{k: v for k, v in e.items() if k not in ("graph", "sources")} if e.get("vfx") else e
@@ -693,7 +747,7 @@ def inline_vfx(comps, p):
                     if m is not None:
                         e["graph"], e["sources"] = copy.deepcopy(m["graph"]), copy.deepcopy(m.get("sources") or {})
                     e.pop("vfx", None)
-                if is_group(c):
+                if is_group(c) and "tracks" in c and "compound_id" not in c:
                     visit(c["tracks"])
     for comp in comps.values():
         visit(comp["tracks"])
@@ -748,9 +802,11 @@ def link(p):
                         from . import nodegraph
                         nodegraph.migrate(e["graph"])
                 if "compound_id" in c:
-                    c["compound"] = comps[c["compound_id"]]
-                elif is_group(c):
+                    link_clip(comps, c)
+                elif is_group(c) and "tracks" in c:
                     visit(c["tracks"])
+    for comp in list(comps.values()):
+        adopt_groups(p, comp["tracks"])                  # (a group pasted or restored without its compound)
     for comp in comps.values():
         visit(comp["tracks"])
     return p
@@ -774,9 +830,9 @@ def timelines(p):
 
 
 def all_clips(p):
-    """Every clip of every compound (the root one too), each compound once."""
+    """Every clip of every compound (the root one too, groups' content too), each compound once."""
     for comp in p.get("compounds", {}).values():
-        for t in all_tracks(comp["tracks"]):
+        for t in all_tracks(comp["tracks"], inline=False):
             yield from t["clips"]
 
 
@@ -811,6 +867,8 @@ def normalize(p):
             for c in t["clips"]:
                 if "timeline_id" in c:                   # a clip that showed a timeline shows that compound
                     c["compound_id"] = c.pop("timeline_id")
+    for comp in list(comps.values()):                     # version 6: a group's clips are a compound's (canvas "parent")
+        adopt_groups(p, comp["tracks"])
     if p.get("active_timeline") in comps:
         p["tracks"] = comps[p["active_timeline"]]["tracks"]
     _sync(p)
@@ -827,7 +885,7 @@ def normalize(p):
     def visit(tracks):
         for t in tracks:
             for c in t["clips"]:
-                if is_group(c):
+                if is_group(c) and "tracks" in c and "compound_id" not in c:
                     visit(c["tracks"])
                     continue
                 if c.get("type") != "compound" or "compound_id" in c or "timeline_id" in c:
@@ -963,7 +1021,7 @@ def compound_uses(p):
     uses = {k: [] for k in p.get("compounds", {})}
 
     def visit(tl, tracks, path):
-        for t in all_tracks(tracks):
+        for t in all_tracks(tracks, inline=False):
             for c in t["clips"]:
                 if ref_of(c):
                     uses.setdefault(ref_of(c), []).append((tl, list(path), c))
@@ -979,7 +1037,7 @@ def holders_of(p, inner_id):
     (contains() of each compound walks what it shows again for every one asked about)."""
     shown_in = {}                                          # id -> the ids of what shows it
     for kid, comp in p.get("compounds", {}).items():
-        for t in all_tracks(comp["tracks"]):
+        for t in all_tracks(comp["tracks"], inline=False):
             for c in t["clips"]:
                 if ref_of(c):
                     shown_in.setdefault(ref_of(c), set()).add(kid)
@@ -1002,7 +1060,7 @@ def contains(p, outer_id, inner_id):
         if k in seen:
             continue
         seen.add(k)
-        for t in all_tracks(content(p, k)["tracks"]):
+        for t in all_tracks(content(p, k)["tracks"], inline=False):
             for c in t["clips"]:
                 if ref_of(c):
                     if ref_of(c) == inner_id:

@@ -145,7 +145,7 @@ def clips_with_exprs(root):
     from . import project
     holders = list((root.get("compounds") or {}).values()) or [root]
     for h in holders:
-        for t in project.all_tracks(h.get("tracks") or []):
+        for t in project.all_tracks(h.get("tracks") or [], inline=False):
             for c in t["clips"]:
                 if c.get("expr"):
                     yield c

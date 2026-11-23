@@ -75,5 +75,51 @@ class LoadOldTests(unittest.TestCase):
         self.assertEqual([k for k, _ in project.timelines(p)], ["tl1"])
 
 
+def pic(cid, start, dur):
+    return {"id": cid, "type": "image", "name": cid, "start_us": start, "duration_us": dur, "source_start_us": 0,
+            "media": {"path": "/x/a.png", "width": 64, "height": 36},
+            "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
+
+
+class GroupTests(unittest.TestCase):
+    def test_old_groups_become_same_canvas_compounds(self):
+        old = old_project()
+        group = {"id": "g1", "type": "group", "name": "群組 1", "start_us": 3 * S, "duration_us": 2 * S, "source_start_us": 0,
+                 "transform": {"x": 0.0, "y": 0.0}, "matte": {"on": True, "show": False, "invert": False, "body": True},
+                 "anchor": True, "tracks": [{"id": "ga", "kind": "video", "name": "v", "clips": [pic("in1", 0, S)]}]}
+        old["timelines"][0]["tracks"].append({"id": "t1", "kind": "video", "name": "v2", "clips": [group]})
+        p = LoadOldTests().load(old)
+        g = next(c for t in p["tracks"] for c in t["clips"] if c["id"] == "g1")
+        comp = p["compounds"][g["compound_id"]]
+        self.assertEqual((comp["canvas"], comp["name"], comp["duration_us"]), ("parent", "群組 1", 2 * S))
+        self.assertIs(g["tracks"], comp["tracks"])
+        self.assertIs(g["matte"], comp["matte"])
+        self.assertTrue(comp["matte"]["on"] and comp["anchor"] and project.group_anchor(g))
+        self.assertEqual(edit.abs_start(p, "in1"), 3 * S)
+        stored = json.loads(project.dumps(p))
+        sg = next(c for t in stored["compounds"]["tl1"]["tracks"] for c in t["clips"] if c["id"] == "g1")
+        self.assertFalse({"tracks", "matte", "compound"} & set(sg))       # (only its compound_id)
+        q = project.link(json.loads(project.dumps(p)))
+        self.assertIs(next(c for t in q["tracks"] for c in t["clips"] if c["id"] == "g1")["tracks"],
+                      q["compounds"][g["compound_id"]]["tracks"])
+
+    def test_a_trimmed_group_shows_its_part_and_ungroups_copies_when_shared(self):
+        p = project.new()
+        p["tracks"][:] = [{"id": "t0", "kind": "video", "name": "v", "clips": [pic("a", 0, S), pic("b", S, S)]}]
+        project.link(p)
+        g = edit.make_group(p, p, ["a", "b"])
+        edit.trim_start(p, g["id"], S)                                    # shows b only (content 1 - 2 s)
+        self.assertEqual((g["start_us"], g["source_start_us"]), (S, S))
+        self.assertEqual(edit.abs_start(p, "b"), S)                       # (where it is seen: unmoved)
+        twin = edit.duplicate_clips(p, p, [g["id"]])[0]                   # (another clip shows the same content)
+        out = edit.ungroup(p, p, g["id"])
+        self.assertEqual([k["start_us"] for k in out], [S])               # b's copy, where b showed
+        self.assertNotEqual(out[0]["id"], "b")
+        self.assertIn(twin["compound_id"], p["compounds"])                # (the twin still shows it)
+        out = edit.ungroup(p, p, twin["id"])
+        self.assertEqual([k["id"] for k in out], ["b"])                   # the last one: the very clip
+        self.assertNotIn(twin["compound_id"], p["compounds"])
+
+
 if __name__ == "__main__":
     unittest.main()

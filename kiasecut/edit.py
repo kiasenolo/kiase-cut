@@ -135,12 +135,13 @@ def group_of(proj, track):
 
 
 def _level_starts(tracks, off=0):
-    """(clip, its start in the level's time) for every clip of the tracks, groups' included."""
+    """(clip, its start in the level's time) for every clip of the tracks, groups' included (a group's content time 0 is at
+    its start less its source_start_us: the part of its compound it shows)."""
     for t in tracks:
         for c in t["clips"]:
             yield c, off + c["start_us"]
-            if project.is_group(c):
-                yield from _level_starts(c["tracks"], off + c["start_us"])
+            if project.is_group(c) and "tracks" in c:
+                yield from _level_starts(c["tracks"], off + c["start_us"] - c.get("source_start_us", 0))
 
 
 def abs_start(proj, clip_id):
@@ -197,7 +198,7 @@ def source_length(c):
     """How long the clip's source runs, or None when it can be stretched freely."""
     if c["type"] in ("video", "audio"):
         return (c.get("media") or {}).get("duration_us")
-    if c["type"] == "compound" and not project.is_static(c):       # a static one is a picture
+    if c["type"] in ("compound", "group") and c.get("compound") and not project.is_static(c):   # a static one is a picture
         return c["compound"].get("duration_us")
     return None
 
@@ -244,7 +245,7 @@ def move(proj, clip_id, start_us, track_id=None):
     g = group_of(proj, dst)
     if (g is None) != (group_of(proj, src) is None) or (g is not None and g is not group_of(proj, src)):
         raise EditError("片段只能在同一個群組裡的軌道之間移動")
-    limit = g["duration_us"] if g is not None else float("inf")      # a group's clips stay inside it
+    limit = group_end(g) if g is not None else float("inf")      # a group's clips stay inside what it shows
     # land in the gap nearest to where it was dropped
     best = None
     for lo, hi in gaps(dst, ignore=c):
@@ -269,35 +270,20 @@ def trim_start(proj, clip_id, new_start_us):
     """Move the clip's left edge, keeping its right edge and its content in place."""
     t, c = find(proj, clip_id)
     g = group_of(proj, t)
-    if g is not None and new_start_us < 0 and free_range(t, c["start_us"], end(c), ignore=c)[0] == 0:
-        # past its group's start: the group grows to the left (as far as its own track lets it),
-        # its clips counting from its new start
-        if c["type"] in ("video", "audio", "compound") and not project.is_static(c):
-            new_start_us = max(new_start_us, c["start_us"] - c.get("source_start_us", 0) / project.speed(c))
-        if new_start_us < 0:
-            s0 = g["start_us"]
-            trim_start(proj, g["id"], s0 + new_start_us)
-            new_start_us += s0 - g["start_us"]
     e = end(c)
     rng = free_range(t, c["start_us"], e, ignore=c)
     lo = rng[0]
-    if c["type"] in ("video", "audio", "compound") and not project.is_static(c):
+    if c["type"] in ("video", "audio", "compound", "group") and not project.is_static(c):
         lo = max(lo, c["start_us"] - c.get("source_start_us", 0) / project.speed(c))    # not before the source
     if g is not None:
-        lo = max(lo, 0)                                          # not out of its group
+        lo = max(lo, 0)                                          # not before its group's content starts
     hi = e - MIN_US
-    if project.is_group(c):                                      # a group never cuts its clips
-        hi = min(hi, c["start_us"] + _content_span(c)[0])
     new_start_us = int(min(max(new_start_us, lo), hi))
     d = new_start_us - c["start_us"]
     c["start_us"] = new_start_us
     c["duration_us"] = e - new_start_us
     c["source_start_us"] = max(0, round(c.get("source_start_us", 0) + d * project.speed(c)))
     shift_keys(c, d)
-    if project.is_group(c):                                      # its clips stay where they were
-        for ct in c["tracks"]:
-            for k in ct["clips"]:
-                k["start_us"] -= d
     return c
 
 
@@ -310,16 +296,28 @@ def trim_end(proj, clip_id, new_end_us):
     if src_len is not None and project.frozen(c) is None:      # (a frozen clip can be any length)
         hi = min(hi, c["start_us"] + (src_len - c.get("source_start_us", 0)) / project.speed(c))
     g = group_of(proj, t)
-    if g is not None:
-        if min(new_end_us, hi) > g["duration_us"]:               # past its group's end: the group grows
-            trim_end(proj, g["id"], g["start_us"] + min(new_end_us, hi))
-        hi = min(hi, g["duration_us"])                           # not out of its group
+    if g is not None:                                            # past what its group shows: the group grows
+        _grow_group(proj, g, min(new_end_us, hi))
+        hi = min(hi, group_end(g))                               # (not out of it)
     lo = c["start_us"] + MIN_US
-    if project.is_group(c):                                      # a group never cuts its clips
-        lo = max(lo, c["start_us"] + _content_span(c)[1])
     new_end_us = int(max(min(new_end_us, hi), lo))
     c["duration_us"] = new_end_us - c["start_us"]
     return c
+
+
+def group_end(g):
+    """The content time where what group g shows ends (its clips stay before it)."""
+    return g.get("source_start_us", 0) + g["duration_us"]
+
+
+def _grow_group(level, g, content_end):
+    """Group g shows its content up to content_end (content time) at least: its compound lasts that long, and g grows to
+    show it - as far as its own track lets it (group_end tells how far it got)."""
+    comp = g.get("compound")
+    if comp is not None and content_end > (comp.get("duration_us") or 0):
+        comp["duration_us"] = int(content_end)
+    if content_end > group_end(g):
+        trim_end(level, g["id"], g["start_us"] + content_end - g.get("source_start_us", 0))
 
 
 def trim_many(proj, clip_ids, edge, delta_us):
@@ -333,20 +331,18 @@ def trim_many(proj, clip_ids, edge, delta_us):
 
 
 def split(proj, clip_id, at_us):
-    """Cut a clip in two at at_us (timeline time); returns the new right-hand clip. A group
-    is cut with its clips (those across at_us are cut too)."""
+    """Cut a clip in two at at_us (timeline time); returns the new right-hand clip. Both halves of a compound clip - a
+    group's too - show the same shared content, each its part of it."""
     t, c = find(proj, clip_id)
     at_us -= abs_start(proj, clip_id) - c["start_us"]            # (a group's clip: in its group's time)
     if not (c["start_us"] + MIN_US <= at_us <= end(c) - MIN_US):
         raise EditError("the playhead is not inside the clip")
     at_us = int(at_us)
     d = at_us - c["start_us"]
-    right = copy.deepcopy({k: v for k, v in c.items() if k != "compound"})
-    if "compound" in c:
-        right["compound"] = c["compound"]      # both halves show the same shared compound
+    right = copy.deepcopy(project.unlinked(c))
+    if "compound_id" in c and "compound" in c:
+        project.link_clip({c["compound_id"]: c["compound"]}, right)      # both halves show the same shared compound
     right["id"] = new_clip_id(proj)
-    if project.is_group(c):
-        _split_group(c, right, at_us - c["start_us"])
     right["start_us"] = at_us
     right["duration_us"] = end(c) - at_us
     right["source_start_us"] = round(c.get("source_start_us", 0) + d * project.speed(c))
@@ -361,43 +357,14 @@ def split(proj, clip_id, at_us):
     return right
 
 
-def _content_span(g):
-    """(first start, last end) of a group's clips, in its time ((0, MIN_US) when empty)."""
-    clips = [k for t in g["tracks"] for k in t["clips"]]
-    if not clips:
-        return 0, MIN_US
-    return min(k["start_us"] for k in clips), max(end(k) for k in clips)
-
-
 def _reid(c):
-    """New ids for a copied group's clips and tracks (at every depth)."""
-    if project.is_group(c):
+    """New ids for a copied group's clips and tracks (at every depth) - one that still holds them (not a compound's)."""
+    if project.is_group(c) and "compound_id" not in c and "tracks" in c:
         for t in c["tracks"]:
             t["id"] = "g" + uuid.uuid4().hex[:8]
             for k in t["clips"]:
                 k["id"] = new_clip_id()
                 _reid(k)
-
-
-def _split_group(left, right, d):
-    """Share a group's clips between its two halves cut d after its start: right is a copy
-    (its own ids) that keeps what comes after d, shifted to its new start."""
-    for lt, rt in zip(left["tracks"], right["tracks"]):
-        keep_l, keep_r = [], []
-        for lk, rk in zip(list(lt["clips"]), list(rt["clips"])):
-            if end(lk) <= d:
-                keep_l.append(lk)
-            elif lk["start_us"] >= d:
-                rk["start_us"] -= d
-                keep_r.append(rk)
-            else:                                                # across the cut: both halves
-                piece = split({"tracks": [lt]}, lk["id"], d)
-                lt["clips"].remove(piece)
-                piece["start_us"] -= d
-                keep_l.append(lk)
-                keep_r.append(piece)
-        lt["clips"], rt["clips"] = keep_l, keep_r
-    _reid(right)
 
 
 def delete(proj, clip_id):
@@ -582,7 +549,7 @@ def copy_clips(level, clip_ids):
     for cid in clip_ids:
         t, c = find(level, cid)
         items.append({"track": t["id"], "kind": t["kind"], "compound": c.get("compound"),
-                      "clip": copy.deepcopy({k: v for k, v in c.items() if k != "compound"})})
+                      "clip": copy.deepcopy(project.unlinked(c))})
     if not items:
         raise EditError("nothing is selected")
     items.sort(key=lambda i: i["clip"]["start_us"])
@@ -661,9 +628,9 @@ def duplicate_moved(root, level, clip_ids, d_us=0, d_rows=0, moves=None, t_of=No
         at = max(0, anchor + int(d_us))
         if holder is not level:                          # the group grows to hold them, as far as it can
             last = max(end(item["clip"]) for item in items) + at - anchor
-            if last > holder["duration_us"]:
-                trim_end(level, holder["id"], holder["start_us"] + last)
-            if last > holder["duration_us"]:
+            if last > group_end(holder):
+                _grow_group(level, holder, last)
+            if last > group_end(holder):
                 raise EditError("群組後面沒有空間放這些片段")
         copies = paste_clips(root, holder, {"anchor_us": anchor, "items": items}, at)
         made.update((id(item), c) for item, c in zip(items, copies))
@@ -1913,9 +1880,9 @@ def _room_after(proj, t, c, want):
     g = group_of(proj, t)
     if g is not None:
         last = c["start_us"] + min(want, room)
-        if last > g["duration_us"]:
-            trim_end(proj, g["id"], g["start_us"] + last)
-        room = min(room, g["duration_us"] - c["start_us"])
+        if last > group_end(g):
+            _grow_group(proj, g, last)
+        room = min(room, group_end(g) - c["start_us"])
     return room
 
 
@@ -2078,7 +2045,7 @@ def set_mask_offset(proj, clip_id, t_off):
 
 
 # -- groups (群組) ----------------------------------------------------------------------------------
-GROUP_MATTE_DEFAULT = {"on": False, "show": False, "invert": False, "body": True}
+GROUP_MATTE_DEFAULT = project.GROUP_MATTE_DEFAULT
 
 
 def make_group(root, level, clip_ids):
@@ -2129,10 +2096,30 @@ def ungroup(root, level, group_id):
     """Take a group's clips out of it (Ctrl+Shift+G): onto tracks of the level around the
     group's (one of their kind with room, going up from it, else a new one above), at the same
     times, with the group's position, scale and opacity folded into theirs. A turned group,
-    or one whose transform has keyframes, is refused (that cannot be folded in exactly)."""
+    or one whose transform has keyframes, is refused (that cannot be folded in exactly). Its content is a compound: the
+    clips of the part it shows come out (copies when other clips still show the compound, else the very clips, and the
+    compound goes)."""
     t, g = find(level, group_id)
     if not project.is_group(g):
         raise EditError("這不是群組")
+    kid = g.get("compound_id")
+    if kid:
+        ss, shown = g.get("source_start_us", 0), g["duration_us"]
+        others = [u for u in project.compound_uses(root).get(kid, []) if u[2] is not g]
+        tracks = []
+        for ct in g["tracks"]:                                   # (what it shows of its content)
+            clips = [k for k in ct["clips"] if k["start_us"] < ss + shown and end(k) > ss]
+            if others:                                           # (the compound stays for them: copies come out)
+                clips = [dict(copy.deepcopy(project.unlinked(k)), id=new_clip_id()) for k in clips]
+                for k in clips:
+                    _reid(k)
+            for k in clips:
+                k["start_us"] -= ss
+            tracks.append(dict(ct, clips=clips))
+        g = dict(g, tracks=tracks)
+        t["clips"][t["clips"].index(next(k for k in t["clips"] if k["id"] == group_id))] = g
+        if not others:
+            root["compounds"].pop(kid, None)
     tf = g.get("transform") or {}
     if any(curves.is_animated(v) for v in tf.values()) or abs(curves.value(tf.get("rotation", 0.0), 0)) > 1e-9 \
             or tf.get("flip_h") or tf.get("flip_v"):
@@ -2176,6 +2163,9 @@ def ungroup(root, level, group_id):
         _sort(dst)
         at = holder.index(dst)
         out += ct["clips"]
+    for k in out:                                                 # (copies of compound clips show the same compounds)
+        if "compound_id" in k and k["compound_id"] in root["compounds"]:
+            project.link_clip(root["compounds"], k)
     project.link(root)
     return out
 
@@ -2337,34 +2327,43 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
     hi = max(starts[c["id"]] + c["duration_us"] for _, c in picked) + shift
     if lo < 0:
         raise EditError("片段不能放到時間 0 之前")
-    g0 = abs_start(level, group_id)
+    ss = g.get("source_start_us", 0)
+    g0 = abs_start(level, group_id)                                # (where it starts on the level: its content's time ss)
     leaving = {id(c) for _, c in picked}
     room = free_range({"clips": [k for k in gt["clips"] if id(k) not in leaving]}, g["start_us"], end(g), ignore=g) \
         or (g["start_us"], end(g))
     outer = group_of(level, gt)
     if outer is not None:                                          # (a group in a group stays inside it)
         room = (room[0], min(room[1], outer["duration_us"]))
-    if lo < g0:                                                    # grows to the left
+    if lo < g0:                                                    # grows to the left: it shows earlier content
         d = g0 - lo
         if g["start_us"] - d < room[0]:
             raise EditError("群組前面沒有空間放這些片段")
+        if d > ss:                                                 # (before its content's start: the content moves on,
+            more = d - ss                                          # and every clip showing it shows it as before)
+            for ct in g["tracks"]:
+                for k in ct["clips"]:
+                    k["start_us"] += more
+            g["compound"]["duration_us"] = (g["compound"].get("duration_us") or 0) + more
+            for _tl, _path, u in project.compound_uses(root).get(g["compound_id"], []):
+                u["source_start_us"] = u.get("source_start_us", 0) + more
+            ss += more
         g["start_us"] -= d
         g["duration_us"] += d
+        g["source_start_us"] = ss = ss - d
         shift_keys(g, -d)
-        for ct in g["tracks"]:
-            for k in ct["clips"]:
-                k["start_us"] += d
         g0 = lo
     if hi > g0 + g["duration_us"]:                                 # and to the right
         if g["start_us"] + (hi - g0) > room[1]:
             raise EditError("群組後面沒有空間放這些片段")
         g["duration_us"] = hi - g0
+        g["compound"]["duration_us"] = max(g["compound"].get("duration_us") or 0, ss + hi - g0)
     spaces = {id(c): _space(level, t, starts[c["id"]]) for t, c in picked}
     for t, c in picked:
         t["clips"].remove(c)
     out = []
     for t, c in sorted(picked, key=lambda tc: starts[tc[1]["id"]]):
-        c["start_us"] = starts[c["id"]] + shift - g0
+        c["start_us"] = starts[c["id"]] + shift - g0 + ss
         kind = "video"
         want = next((x for x in g["tracks"] if x["id"] == track_id and x["kind"] != "audio"), None)
         cands = ([want] if want else []) + [x for x in g["tracks"] if x["kind"] == kind]
@@ -2430,9 +2429,10 @@ def set_group_anchor(proj, clip_id, on):
     _, g = find(proj, clip_id)
     if not project.is_group(g):
         raise EditError("這不是群組")
-    if bool(g.get("anchor")) == bool(on):
+    holder = g.get("compound") or g                      # (its compound keeps it: every clip showing it alike)
+    if project.group_anchor(g) == bool(on):
         return g
-    g["anchor"] = True                                   # (anchored() reads the moves with it on)
+    holder["anchor"] = True                              # (anchored() reads the moves with it on)
     moves = [(k, project.anchored(g, t, k["start_us"])) for t in g["tracks"] for k in t["clips"]]
     sign = -1 if on else 1
     for k, (ax, ay) in moves:
@@ -2440,7 +2440,7 @@ def set_group_anchor(proj, clip_id, on):
         if ktf is not None and (ax or ay):
             ktf["x"] = _map_value(ktf.get("x", 0.0), lambda v: v + sign * ax)
             ktf["y"] = _map_value(ktf.get("y", 0.0), lambda v: v + sign * ay)
-    g["anchor"] = bool(on)
+    holder["anchor"] = bool(on)
     return g
 
 

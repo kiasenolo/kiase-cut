@@ -117,14 +117,9 @@ class GroupTests(unittest.TestCase):
         edit.trim_end(p, "c4", 6 * S)                                    # c4 1-4 -> 1-6 (group time)
         self.assertEqual((g["start_us"], g["duration_us"]), (2 * S, 6 * S))
         self.assertEqual(edit.find(p, "c4")[1]["duration_us"], 5 * S)
-        edit.trim_start(p, "c1", -S)                                     # one second before the group
-        self.assertEqual((g["start_us"], g["duration_us"]), (S, 7 * S))
-        self.assertEqual((edit.abs_start(p, "c1"), edit.abs_start(p, "c4")), (S, 3 * S))   # c4 stays put
-        self.assertEqual(edit.find(p, "c1")[1]["duration_us"], 3 * S)
-        p["tracks"][1]["clips"].insert(0, clip("c9", 0, S // 2))         # a neighbour stops the group
-        edit.trim_start(p, "c1", -S)
-        self.assertEqual(g["start_us"], S // 2)
-        self.assertEqual(edit.abs_start(p, "c1"), S // 2)
+        edit.trim_start(p, "c1", -S)                                     # before its content's start: no further
+        self.assertEqual((g["start_us"], g["duration_us"]), (2 * S, 6 * S))
+        self.assertEqual((edit.abs_start(p, "c1"), edit.find(p, "c1")[1]["duration_us"]), (2 * S, 2 * S))
 
     def test_make_and_ungroup(self):
         p = scene()
@@ -157,31 +152,29 @@ class GroupTests(unittest.TestCase):
         edit.trim_end(p, "c4", 6 * S)                                       # (longer: the group grows with it)
         self.assertEqual(edit.end(c4), g["duration_us"])
         self.assertEqual(g["duration_us"], 6 * S)
-        edit.trim_end(p, g["id"], S)                                        # a group never cuts its clips
-        self.assertEqual(g["duration_us"], 6 * S)
-        edit.trim_start(p, g["id"], -3 * S)                                 # longer to the left: clips stay
-        self.assertEqual(edit.abs_start(p, "c1"), 0)
+        edit.trim_end(p, g["id"], S)                                        # it shows less of its content (version 6)...
+        self.assertEqual((g["duration_us"], g["compound"]["duration_us"]), (S, 6 * S))    # ...which keeps its clips
+        edit.trim_end(p, g["id"], 9 * S)
+        self.assertEqual(g["duration_us"], 6 * S)                           # (no further than its content)
+        edit.trim_start(p, g["id"], -3 * S)                                 # nothing before its content's start
+        self.assertEqual((g["start_us"], edit.abs_start(p, "c1")), (0, 0))
 
     def test_split(self):
         p = scene()
         g = edit.make_group(p, p, ["c1", "c4"])
         right = edit.split(p, g["id"], 1.5 * S)
         self.assertEqual((g["duration_us"], right["start_us"]), (1.5 * S, 1.5 * S))
-        left_ids = {k["id"] for t in g["tracks"] for k in t["clips"]}
-        right_ids = {k["id"] for t in right["tracks"] for k in t["clips"]}
-        self.assertEqual(left_ids, {"c1", "c4"})
-        self.assertEqual(len(right_ids), 2)                                 # both were across 1.5 s
-        self.assertFalse(left_ids & right_ids)
-        self.assertEqual(sorted(edit.abs_start(p, k) for k in right_ids), [int(1.5 * S)] * 2)
+        self.assertIs(right["tracks"], g["tracks"])                       # both halves show the one content (version 6)
+        self.assertEqual((right["source_start_us"], right["duration_us"]), (1.5 * S, 2.5 * S))
+        self.assertEqual(right["compound_id"], g["compound_id"])
 
-    def test_copy_gets_new_ids(self):
+    def test_a_copy_shares_its_content(self):
         p = scene()
         g = edit.make_group(p, p, ["c1", "c4"])
         new = edit.duplicate_clips(p, p, [g["id"]])
-        inner = [k["id"] for t in new[0]["tracks"] for k in t["clips"]]
-        self.assertNotIn("c1", inner)
-        self.assertEqual(len(set(c["id"] for c in project.walk_clips(p["tracks"]))),
-                         len(list(project.walk_clips(p["tracks"]))))
+        self.assertEqual(new[0]["compound_id"], g["compound_id"])          # (as a compound clip's copy: 設為獨立 to part)
+        self.assertIs(new[0]["tracks"], g["tracks"])
+        self.assertNotEqual(new[0]["id"], g["id"])
 
     def test_ungroup_folds_the_transform(self):
         p = scene()

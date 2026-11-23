@@ -61,6 +61,7 @@ from .settings_dialog import SettingsDialog
 from .still_dialog import StillDialog
 from .subtitle_panel import SubtitlePanel
 from .userlib_panel import UserLibraryPanel
+from .browsers import CATEGORY_BROWSER as BROWSER_OF, MinePage, SourceBrowser
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import dropped_vfx
 from .vfxnodes import VfxNodePanel
@@ -372,6 +373,21 @@ class MainWindow(QMainWindow):
         self.vfx.docRequested.connect(self.show_filter_doc)
         self.assets = AssetsPanel()
         self.assets.addRequested.connect(lambda ident: self.place_asset(ident, "", self.edge_us()))
+        # the browser panels by kind (問17): each with 本專案 / 我的 Library / 內建, the Library's categories spread among them
+        ul, cats = self.ulpanel.panels, dict(userlib.CATEGORIES)
+
+        def mine(keys):
+            return MinePage([(k, (cats[k], ul[k])) for k in keys], self.open_settings)
+        self.mine_pages = {"library": mine(("videos", "images", "sounds")), "assets": mine(("textstyles",)),
+                           "vfx": mine(("filters", "presets")), "compounds": mine(("compounds",))}
+        store = (lambda k, d: self.settings().value(k, d), lambda k, v: self.settings().setValue(k, v))
+        self.browsers = {
+            "library": SourceBrowser("library", {"project": self.library, "mine": self.mine_pages["library"]}, store, "project"),
+            "assets": SourceBrowser("assets", {"mine": self.mine_pages["assets"], "builtin": self.assets}, store, "builtin"),
+            "vfx": SourceBrowser("vfx", {"project": self.vfxnodes, "mine": self.mine_pages["vfx"], "builtin": self.vfx}, store,
+                                 "builtin"),
+            "compounds": SourceBrowser("compounds", {"project": self.compounds, "mine": self.mine_pages["compounds"]}, store,
+                                       "project")}
 
         self.preview = Preview()
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
@@ -955,8 +971,8 @@ class MainWindow(QMainWindow):
         # every panel is a dock: moved, put in tabs, split, floated freely (docks.py); a layout
         # (佈局) is one arrangement of them (layouts.py)
         self.panels = Panels(self, {
-            "library": self.library, "assets": self.assets, "userlib": self.ulpanel, "vfx": self.vfx,
-            "vfxnodes": self.vfxnodes, "compounds": self.compounds, "preview": center, "inspector": scroll, "effects": fx_dock,
+            "library": self.browsers["library"], "assets": self.browsers["assets"], "vfx": self.browsers["vfx"],
+            "compounds": self.browsers["compounds"], "preview": center, "inspector": scroll, "effects": fx_dock,
             "mask": mask_scroll, "beats": beat_scroll, "subtitles": self.subtitles, "curves": cv, "rack": self.rack_panel,
             "nodes": self.nodes, "timeline": lower})
         nd.fullscreenRequested.connect(lambda: self.panels.toggle_fullscreen("nodes"))
@@ -3158,7 +3174,6 @@ class MainWindow(QMainWindow):
         self.nodes.vfx_names = dict(nodes)
         panels = getattr(self, "panels", None)
         if panels is not None:
-            panels.set_usable("vfxnodes", bool(nodes))
             panels.set_usable("compounds", bool(p))      # (always there while a project is open: 時間線 are listed in it too)
 
     def on_easing(self, ids, easing, groups):
@@ -4665,8 +4680,7 @@ class MainWindow(QMainWindow):
             return
         self.ul_epoch += 1
         self.request_ul_sync(0)
-        self.panels.show("userlib")
-        self.ulpanel.show_category("compounds")
+        self.show_library_category("compounds")
         self.statusBar().showMessage(f"已存到 Library > 複合片段：{name.strip()}", 4000)
 
     def save_selected_compound(self, folder):
@@ -5551,6 +5565,15 @@ class MainWindow(QMainWindow):
             self.panels.show("mask")
         self.mask_panel.set_mask_edit(not self.mask_panel.mask_edit)
 
+    def show_library_category(self, key):
+        """Show the user's Library things of category key (videos, filters ...): the browser panel of their kind, on 我的 Library."""
+        where = BROWSER_OF.get(key)
+        if where is None:
+            return
+        self.panels.show(where)
+        self.browsers[where].set_source("mine")
+        self.mine_pages[where].show_category(key)
+
     def do_deselect(self):
         """Ctrl+D: the clips (and tracks) picked on the timeline let go; with nothing picked, the in / out range (入出點) goes."""
         tl = self.timeline
@@ -5973,6 +5996,8 @@ class MainWindow(QMainWindow):
         self.ulib = userlib.UserLibrary(root)
         self.ul_prober = userlib.Prober(root)
         self.ulpanel.set_root(root)
+        for page in self.mine_pages.values():
+            page.set_root(root)
         for key, _ in userlib.CATEGORIES:
             self.ulpanel.panels[key].set_library(self.ulib.lib(key))
         self.refresh_user_filters()
@@ -6174,8 +6199,7 @@ class MainWindow(QMainWindow):
         def done(_r):
             self.ul_epoch += 1
             self.request_ul_sync(0)
-            self.panels.show("userlib")
-            self.ulpanel.show_category(key if key in todo else next(iter(todo)))
+            self.show_library_category(key if key in todo else next(iter(todo)))
             self.statusBar().showMessage(f"已加入 {sum(len(v) for v in todo.values())} 個檔案到 Library", 4000)
 
         self.run_task(work, done, lambda m: QMessageBox.critical(self, "加入失敗", m),
@@ -6191,10 +6215,9 @@ class MainWindow(QMainWindow):
                 items.append(it)
         if not items:
             return
-        self.panels.show("userlib")
         cat = userlib.category_of(items[0]["path"], self.ulib.root)
         if cat in dict(userlib.CATEGORIES):
-            self.ulpanel.show_category(cat)
+            self.show_library_category(cat)
         if place is None:
             self.statusBar().showMessage(f"{len(items)} 個檔案已經在 Library 裡，不需要複製到專案", 5000)
             return
@@ -6391,8 +6414,7 @@ class MainWindow(QMainWindow):
             return
         self.ul_epoch += 1
         self.request_ul_sync(0)
-        self.panels.show("userlib")
-        self.ulpanel.show_category("presets")
+        self.show_library_category("presets")
         self.statusBar().showMessage(f"已存到 Library > 效果預設：{name.strip()}", 4000)
 
     def save_node_preset(self, eid):
@@ -6567,7 +6589,8 @@ class MainWindow(QMainWindow):
             for i, e in enumerate(nodes):
                 edit.new_vfx_node(root, base if len(nodes) == 1 else f"{base} {i + 1}", e["graph"], e.get("sources") or {}, e["params"])
         self.apply_root("從 Library 匯入 VFX Node", fn)
-        self.panels.show("vfxnodes")
+        self.panels.show("vfx")
+        self.browsers["vfx"].set_source("project")
 
     def add_effects_to(self, ids, whats, label="新增效果"):
         """Filters or effects (put_effect's) added to each of clips ids (批量: the picture clips of
@@ -6954,8 +6977,7 @@ class MainWindow(QMainWindow):
             fh.write(text)
         self.ul_epoch += 1
         self.request_ul_sync(0)
-        self.panels.show("userlib")
-        self.ulpanel.show_category("filters")
+        self.show_library_category("filters")
         QDesktopServices.openUrl(QUrl.fromLocalFile(dst))
         self.statusBar().showMessage("已建立濾鏡檔，用編輯器改完存檔，預覽會自動更新（說明：Library > 濾鏡 > 說明）", 8000)
 
@@ -7140,8 +7162,7 @@ class MainWindow(QMainWindow):
         userlib.save_style(base, name.strip(), clips[0])
         self.ul_epoch += 1
         self.request_ul_sync(0)
-        self.panels.show("userlib")
-        self.ulpanel.show_category("textstyles")
+        self.show_library_category("textstyles")
         self.statusBar().showMessage(f"已存到 Library > 文字樣式：{name.strip()}", 4000)
 
     # -- layouts (佈局) -----------------------------------------------------------------------------

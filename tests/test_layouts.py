@@ -81,8 +81,8 @@ class PanelTests(unittest.TestCase):
     def tearDown(self):
         self.win.close()
 
-    def test_library_tabs_for_compounds_and_vfx_nodes_stay_and_say_when_empty(self):
-        for key in ("compounds", "vfxnodes"):
+    def test_library_tabs_for_compounds_stay_and_say_when_empty(self):
+        for key in ("compounds",):
             self.pn.set_usable(key, False)
             QApplication.processEvents()
             self.assertTrue(self.pn[key].isVisible(), key)
@@ -91,9 +91,9 @@ class PanelTests(unittest.TestCase):
             QApplication.processEvents()
             self.assertTrue(self.pn[key].isVisible(), key)
             self.assertEqual(self.pn[key].stack.currentIndex(), 0)
-        self.pn["vfxnodes"].close()                                  # (one closed on purpose stays closed)
-        self.pn.set_usable("vfxnodes", True)
-        self.assertFalse(self.pn["vfxnodes"].isVisible())
+        self.pn["compounds"].close()                                 # (one closed on purpose stays closed)
+        self.pn.set_usable("compounds", True)
+        self.assertFalse(self.pn["compounds"].isVisible())
 
     def test_a_stale_mouse_grab_on_a_panel_is_let_go(self):
         from PySide6.QtCore import QEvent, QPointF
@@ -116,7 +116,7 @@ class PanelTests(unittest.TestCase):
 
     def test_edit_layout_tabs(self):
         tabs = {d.key for d in self.win.tabifiedDockWidgets(self.pn["library"])}
-        self.assertEqual(tabs, {"assets", "userlib", "vfx", "vfxnodes", "compounds"})
+        self.assertEqual(tabs, {"assets", "vfx", "compounds"})
         self.assertEqual(self.win.dockWidgetArea(self.pn["timeline"]), Qt.BottomDockWidgetArea)
         self.assertFalse(self.pn["library"].isFloating())
         self.assertIs(self.pn["preview"].titleBarWidget(), self.pn["preview"].title)   # on its own: a title

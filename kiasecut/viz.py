@@ -275,11 +275,17 @@ def mono(pcm, channel):
     return {"L": l, "R": r, "S": (l - r) * 0.5}.get(channel, (l + r) * 0.5)
 
 
+_hann = {}                              # n -> (Hann window, 2 / its sum): np.hanning(32768) alone took longer than the FFT
+
+
 def spectrum(x):
     """Amplitude (a sine of 1 gives about 1) of each frequency of a window of 4096 samples."""
-    w = np.hanning(len(x))
-    mag = np.abs(np.fft.rfft(x * w)) * 2.0 / max(w.sum(), 1.0)
-    return mag
+    got = _hann.get(len(x))
+    if got is None:
+        w = np.hanning(len(x))
+        got = _hann[len(x)] = (w, 2.0 / max(w.sum(), 1.0))
+    w, k = got
+    return np.abs(np.fft.rfft(x * w)) * k
 
 
 def averaged_spectrum(window, t_us, channel):
@@ -690,12 +696,35 @@ def _spectrogram(p, spec, w, h, u, t_us, window, memo):
     def column(tt):
         return memo("gram", tt, (rows, lo, hi, lg, ch, fl, tp, nfft),
                     lambda: band_levels(spectrum(mono(window(tt, nfft), ch)), rows, lo, hi, lg, fl, tp, nfft)[::-1])
-    levels = np.stack([column((k - cols + 1 + i) * step) for i in range(cols)], axis=1)       # [rows, cols], top row = highest
-    lut = palette_lut(spec["stops"])
-    if spec["gamma"] != 1.0:
-        levels = levels ** spec["gamma"]
-    rgba = (lut[np.clip((levels * 255).astype(int), 0, 255)] * 255.0 + 0.5).astype(np.uint8)
-    rgba = np.ascontiguousarray(rgba)
+
+    # the coloured columns are kept as one picture from frame to frame: playing on, it is moved left by the columns that
+    # went by and only the new ones are worked out and coloured (all of them each frame: ~25 ms at 4096 columns)
+    look = (rows, cols, step, lo, hi, lg, ch, fl, tp, nfft, spec["gamma"], repr(spec["stops"]))
+    st = memo("gram_img", 0, look, dict)
+    lut = st.get("lut")
+    if lut is None:
+        lut = st["lut"] = (palette_lut(spec["stops"]) * 255.0 + 0.5).astype(np.uint8)
+    first = k - cols + 1
+    if "rgba" not in st:
+        st["rgba"], st["first"] = np.zeros((rows, cols, 4), np.uint8), None
+    rgba, was = st["rgba"], st["first"]
+    d = None if was is None else first - was
+    if d is None or abs(d) >= cols:
+        todo = range(cols)
+    elif d > 0:
+        rgba[:, :cols - d] = rgba[:, d:]
+        todo = range(cols - d, cols)
+    elif d < 0:
+        rgba[:, -d:] = rgba[:, :cols + d]
+        todo = range(-d)
+    else:
+        todo = range(0)
+    for i in todo:
+        levels = column((first + i) * step)
+        if spec["gamma"] != 1.0:
+            levels = levels ** spec["gamma"]
+        rgba[:, i] = lut[np.clip((levels * 255).astype(int), 0, 255)]
+    st["first"] = first
     img = QImage(rgba.data, cols, rows, cols * 4, QImage.Format_RGBA8888_Premultiplied).copy()
     cw = w * step / span                                         # a column's width on the picture
     shift = (t_us / step - k) * cw                               # (the newest column is still being reached)

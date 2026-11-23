@@ -447,12 +447,48 @@ class BuiltinFilterTests(unittest.TestCase):
             self.assertLess(diff.mean(), 0.4, (streaks, iterations, fade))
             self.assertAlmostEqual(got[..., :3].mean(), want[..., :3].mean(), delta=0.3)
 
+    def test_fog_glow_rings_match_the_whole_sum(self):
+        """Fog Glow read ring by ring from the highlights' smaller copies (@mipmap) gives the light that adding up every pixel
+        weighed by the spread gives (the same shader with the rings swapped for that): the same sum, the picture to a few
+        levels, with no grain. (The sampled gather it replaces was off by up to 100 levels next to bright spots, against Blender 5.3.)"""
+        try:
+            eng = fx.Engine()
+        except fx.FilterError as exc:
+            self.skipTest(str(exc))
+        d = fx.get("builtin:blender_glare")
+        a, b = d.code.index("    float r0 = 2.5, r1 = max(length(Rh), 3.5);\n    float grow"), d.code.index("    vec2 S = Rh + K;\n    return acc / (wn + fog_psf_ring(r0, sqrt")
+        every = fx.parse(d.code[:a] + """    float r0 = 2.5;
+    ivec2 n = ivec2(src_px);
+    for (int y = 0; y < n.y; y++)
+        for (int x = 0; x < n.x; x++) {
+            float r = length(((vec2(x, y) + 0.5) / src_px - uv) * Rh);
+            if (r > r0) acc += fog_psf(r * dpp) * texelFetch(source, ivec2(x, y), 0).rgb;
+        }
+""" + d.code[b:], "t")
+        h, w = 90, 160
+        yy, xx = np.mgrid[0:h, 0:w]
+        img = np.zeros((h, w, 4), np.uint8)
+        img[..., 3] = 255
+        img[20:40, 30:50, :3] = 255                                   # (two lights)
+        img[55:70, 100:130, 0] = 255
+        img[..., 1] = np.maximum(img[..., 1], np.clip(200 * np.exp(-((xx - 120) ** 2 + (yy - 25) ** 2) / 30.0), 0, 255).astype(np.uint8))
+        for size in (0.8, 1.0):                                      # (a small picture: the far spread only shows at big sizes)
+            vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+            vals.update({"type": 3, "quality": 0, "threshold": 0.1, "smoothness": 0.0, "strength": 4.0, "size": size})
+            got = eng.run(d, vals, img).astype(float)[..., :3]
+            want = eng.run(every, vals, img).astype(float)[..., :3]
+            self.assertAlmostEqual(got.mean(), want.mean(), delta=0.5, msg=size)
+            self.assertGreater(want.mean() - img[..., :3].mean(), 1.5)                  # (the glow shows)
+            self.assertLessEqual(np.abs(got - want).max(), 14, size)    # (a small picture: few, wide rings; 1080p is within ~4 of Blender's)
+            self.assertLess(np.abs(got - want).mean(), 2.0, size)
+
     def test_slots_and_stepped_skips(self):
-        d = fx.parse("// @passes 8\n// @levels 0 0 0 0 0 0\n// @param n int 2 1 3\n// @skip 2-5/2 n == 1\n// @slot a 0-4/2\n"
+        d = fx.parse("// @passes 8\n// @levels 0 0 0 0 0 0\n// @param n int 2 1 3\n// @skip 2-5/2 n == 1\n// @slot a 0-4/2\n// @mipmap 5\n"
                      "vec4 effect(vec2 uv) { return src(uv); }", "t")
         self.assertIsNone(d.error)
         self.assertEqual(d.skips, [(2, 2, [("n", False, ["1"])]), (4, 4, [("n", False, ["1"])])])
         self.assertEqual(d.slots, {0: "a", 2: "a", 4: "a"})
+        self.assertEqual(d.mipmaps, {5})
         self.assertIsNotNone(fx.parse("// @passes 3\n// @levels 0\n// @slot a 2\nvec4 effect(vec2 uv) { return src(uv); }", "t").error)
 
     def test_bloom_is_blenders_chain(self):

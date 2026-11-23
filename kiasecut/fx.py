@@ -29,7 +29,7 @@ PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filters")
 DOC_PATH = os.path.join(PKG, "FORMAT.md")
 TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
-MAX_PASSES = 128
+MAX_PASSES = 256
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve", "gradient")
 RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "output_index", "src",
@@ -73,6 +73,7 @@ class FilterDef:
         self.shared = False                      # @shared: only the last pass looks at output_index, the ones before it are drawn once for every output asked
         self.alone = []                          # @alone: outputs the last pass draws from nothing the earlier passes drew (they are not drawn for it)
         self.skips = []                          # @skip: (first pass, last pass, conditions): not drawn while the conditions hold
+        self.mipmaps = set()                     # @mipmap: @levels passes whose picture gets its smaller copies after it is drawn (read with textureLod)
         self.slots = {}                          # @slot: {pass: name}: the @levels passes of one name draw into one picture (else each has its own)
         self.bakes = []                          # @bake: menu / bool / int parameters written into the shader as constants (one compile per setting; the driver drops the branches left unused)
         self.input_param = {}                    # @input name "Label" param: the number box of that parameter sits on the input's row, hidden while a link feeds it
@@ -358,6 +359,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head["levels"] = rest.split()
             elif key == "extras":
                 head["extras"] = [None if w == "-" else int(w) for w in rest.split()]
+            elif key == "mipmap":                         # @mipmap passes...: those keep smaller copies of their picture (textureLod)
+                head.setdefault("mipmaps", []).extend(i for w in rest.split() for i in _pass_list(w))
             elif key == "slot":                           # @slot name passes...: those passes draw into one picture
                 words = rest.split()
                 if len(words) < 2:
@@ -426,6 +429,10 @@ def parse(text, ref, fallback_name="濾鏡"):
             if not 0 <= i < len(levels):
                 error = error or f"@slot {name}：第 {i} 次不在 @levels 裡"
             d.slots[i] = name
+    for i in head.get("mipmaps", []):
+        if not 0 <= i < len(levels) or i in d.slots:
+            error = error or f"@mipmap：第 {i} 次要在 @levels 裡、不能和別次共用圖（@slot）"
+        d.mipmaps.add(i)
     d.error = d.error or error
     d.input_param = input_param
     for iname, pname in input_param.items():
@@ -1268,6 +1275,8 @@ class Engine:
             if ex is not None:
                 (made[ex][0] or self.blank_texture()).use(7)
             vao.render(self.mgl.TRIANGLE_STRIP)
+            if i in d.mipmaps and i < len(d.levels):
+                dst_tex.build_mipmaps()
             if part:
                 dst_fbo.scissor = None
             read = dst_tex

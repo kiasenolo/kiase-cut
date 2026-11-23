@@ -4,14 +4,16 @@
 // @output image "圖像"
 // @output glare "光"
 // @output highlights "亮部"
-// @passes 128
-// @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 0 0 0 0 0 0f 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 quality
-// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 - 0 - 25 0 0 - - - - - 0 - - - - 35 0 - - - - 41 0 - - - - 47 0 - - - - 53 0 - - - - 59 0 - - - - 65 0 - - - - 71 0 - - - - 77 0 - - - - 83 0 - - - - 89 0 - - - - 95 0 - - - - 101 0 - - - - 107 0 - - - - 113 0 - - - - 119 0 -
+// @passes 129
+// @levels 0f 0 1 2 3 4 5 6 7 8 9 10 11 10 9 8 7 6 5 4 3 2 1 0 0 0 0 0 0 0f 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0f quality
+// @extras - - - - - - - - - - - - - 11 10 9 8 7 6 5 4 3 2 1 0 - 0 - 25 0 0 - - - - - 0 - - - - 35 0 - - - - 41 0 - - - - 47 0 - - - - 53 0 - - - - 59 0 - - - - 65 0 - - - - 71 0 - - - - 77 0 - - - - 83 0 - - - - 89 0 - - - - 95 0 - - - - 101 0 - - - - 107 0 - - - - 113 0 - - - - 119 0 0 -
 // @shared
 // @alone highlights
 // @skip 1-23 type != Bloom
 // @skip 24-28 type != Ghosts
 // @skip 29 type != Sun Beams
+// @skip 126 type != Fog Glow
+// @mipmap 126
 // @skip 30-125 type != Streaks
 // @skip 32-125/6 iterations == 2
 // @skip 33-125/6 iterations == 2|3
@@ -77,7 +79,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // (Blender's code is GPL-2.0-or-later.)
 
-// (Streaks uses passes 30 - 125: see streak_pass. Ghosts uses passes 24 - 28: see ghost_blur. Sun Beams uses pass 29 - the glare's size - for the sums of the highlights along short runs of steps towards the sun, which
+// (Fog Glow uses pass 126: see fog_rings. Streaks uses passes 30 - 125: see streak_pass. Ghosts uses passes 24 - 28: see ghost_blur. Sun Beams uses pass 29 - the glare's size - for the sums of the highlights along short runs of steps towards the sun, which
 // its gather reads instead of every step: see sun_runs. Bloom's chain is left out for it, as for the other types.)
 // Pass 0 keeps the highlights (what glows, as Blender computes it). Bloom is Blender's own chain, one
 // pass per step (@levels shrinks them): pass 1 the highlights at the glare's size, passes 2 - 12 the
@@ -311,6 +313,46 @@ vec3 streaks_of(vec2 uv, vec2 R, float q) {
     return ov_scale != vec2(1.0) ? streak_lines(uv, R, q) : inside_or_none(src(uv), uv).rgb;
 }
 
+// Fog Glow without a margin: the near 5 x 5 pixels as fog_glow, then rings of the far part, log spaced, each weighed by
+// its exact share of the spread (fog_psf_ring) and read at FOG_ANGLES places around, each read from the smaller copy of the
+// highlights (pass 126, @mipmap) whose pixels are as big as its piece of the ring - so the whole ring is seen, with no grain.
+// (fog_glow read 48 random spots of the full picture: cheap to work out, but each one far from the last, ~10 ms at 1080p.)
+const int FOG_RINGS = 8;
+const int FOG_ANGLES = 8;
+vec4 fog_copy(vec2 uv) { return vec4(H(uv), 1.0); }        // pass 126: the highlights again, with its smaller copies
+vec3 fog_rings(vec2 uv, vec2 R, float q) {
+    vec2 Rh = R / q;                                           // in glare pixels (q canvas px each)
+    float K = max(Rh.x, Rh.y);
+    float dpp = mix(180.0, 10.0, pow(clamp(size, 0.0, 1.0), 1.0 / 3.0)) / K;
+    vec3 acc = vec3(0.0);
+    float wn = 0.0;
+    for (int dy = -2; dy <= 2; dy++) {
+        for (int dx = -2; dx <= 2; dx++) {
+            vec2 dd = vec2(float(dx), float(dy));
+            float w = fog_psf(length(dd) * dpp);
+            wn += w;
+            acc += w * H(uv + dd / Rh);
+        }
+    }
+    float r0 = 2.5, r1 = max(length(Rh), 3.5);
+    float grow = pow(r1 / r0, 1.0 / float(FOG_RINGS));
+    float texel = src_px.x / Rh.x;                             // (pass 126's pixels per glare pixel)
+    for (int i = 0; i < FOG_RINGS; i++) {
+        float a = r0 * pow(grow, float(i)), b = a * grow, r = sqrt(a * b);
+        float w = fog_psf_ring(a, b, dpp) / float(FOG_ANGLES);
+        float piece = max(b - a, r * 6.2831853 / float(FOG_ANGLES));
+        float lod = max(0.0, log2(piece * texel));
+        float turn = 0.618034 * float(i);                      // (each ring turned: no spokes)
+        for (int j = 0; j < FOG_ANGLES; j++) {
+            float an = 6.2831853 * (float(j) + turn) / float(FOG_ANGLES);
+            vec2 p = uv + r * vec2(cos(an), sin(an)) / Rh;
+            if (p.x >= 0.0 && p.y >= 0.0 && p.x <= 1.0 && p.y <= 1.0)
+                acc += w * textureLod(source, p, lod).rgb;
+        }
+    }
+    vec2 S = Rh + K;
+    return acc / (wn + fog_psf_ring(r0, sqrt(S.x * S.y / 3.14159265), dpp));
+}
 vec3 fog_glow(vec2 uv, vec2 R, float q) {
     vec2 Rh = R / q;                                           // in glare pixels (q canvas px each)
     float K = max(Rh.x, Rh.y);
@@ -501,7 +543,7 @@ vec3 sun_beams(vec2 uv, vec2 R, float q) {
 // the gathered light's grain (the types that read at random spots - ghosts, fog glow, sun beams, long
 // streaks - leave some) is smoothed over a few pixels of this very picture: a small Gaussian
 float grain_sigma() {
-    if (type == 3) return 2.0;
+    if (type == 3) return ov_scale != vec2(1.0) ? 2.0 : 0.0;     // (the rings have no grain)
     if (type == 1) return ov_scale != vec2(1.0) ? 1.6 : 0.0;       // (only the sampled ghosts: the passes' have none)
     if (type == 2 && streak_skip() > 0 && ov_scale != vec2(1.0)) return 1.1;     // (only the gather of streak_lines: under a margin)
     return 0.0;
@@ -536,6 +578,7 @@ vec4 effect(vec2 uv) {
     if (pass_index == 28) return ghost_acc(uv);
     if (pass_index == 29) return sun_runs(uv);
     if (pass_index >= 30 && pass_index < 126) return streak_pass(uv);
+    if (pass_index == 126) return fog_copy(uv);
     if (pass_index < 24) {                                     // (Bloom's chain; the other types leave it empty)
         if (type != 0) return vec4(0.0);
         if (pass_index == 1) return src(uv);
@@ -543,23 +586,23 @@ vec4 effect(vec2 uv) {
     }
 
     vec3 g;
-    if (pass_index == 126) {                                   // the light: gathered, then its saturation, colour and strength
+    if (pass_index == 127) {                                   // the light: gathered, then its saturation, colour and strength
         vec2 R = resolution;
         float q = quality == 0 ? 1.0 : quality == 1 ? 2.0 : 4.0;
         g = type == 0 ? bloom(uv) : type == 1 ? ghosts(uv, R, q) : type == 2 ? streaks_of(uv, R, q)
-          : type == 3 ? fog_glow(uv, R, q) : type == 4 ? simple_star(uv, R, q) : sun_beams(uv, R, q);
+          : type == 3 ? (ov_scale != vec2(1.0) ? fog_glow(uv, R, q) : fog_rings(uv, R, q)) : type == 4 ? simple_star(uv, R, q) : sun_beams(uv, R, q);
         vec3 hsv = rgb2hsv(max(g, vec3(0.0)));                 // saturation as Blender mixes it
         hsv.y = clamp(hsv.y * max(saturation, 0.0), 0.0, 1.0);
         // (Bloom adds one picture per step of its chain, so Blender divides by the chain's length)
         g = hsv2rgb(hsv) * srgb_to_lin(tint.rgb) * (max(strength, 0.0) / (type == 0 ? float(max(1, bloom_length())) : 1.0));
         return vec4(g, 1.0);
     }
-    if (output_index == 2) {                                   // pass 127, 亮部: what glows, alone (Blender's Highlights output)
+    if (output_index == 2) {                                   // pass 128, 亮部: what glows, alone (Blender's Highlights output)
         vec3 h = quality == 0 ? max(highlights(linear(original(uv)).rgb), vec3(0.0)) : reduced_highlights_at(uv);    // (品質 中 / 低: the reduced picture's, as Blender gives it)
         float ha = clamp(max(h.r, max(h.g, h.b)), 0.0, 1.0);
         return ha > 0.0 ? vec4(lin_to_srgb(h / ha) * ha, ha) : vec4(0.0);
     }
-    float sg = grain_sigma();                                  // pass 127: smooth the grain, add the light to the picture
+    float sg = grain_sigma();                                  // pass 128: smooth the grain, add the light to the picture
     if (sg > 0.0) {
         vec2 px = 1.0 / pass_px;
         vec3 acc = vec3(0.0);

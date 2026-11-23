@@ -355,6 +355,7 @@ class Inspector(QWidget):
     mattePreviewChosen = Signal(bool)               # 預覽複合片段 or its opacity changed
     keyJump = Signal(int)                           # -1 previous keyframe, +1 next
     placeEditChanged = Signal()                     # 編輯位置 of a component's picture switched: self.place_edit
+    maskEditChanged = Signal()                      # 編輯遮罩 switched (the 遮罩 tab): self.mask_edit
     liveEdited = Signal(list, str, str, object)     # clip ids, group, key, value: before the edit is made
     liveCancelled = Signal()                        # a live preview (a colour being picked) was given up
     pathFollowChosen = Signal(object)               # id of the shape / path clip the clips follow, or None
@@ -408,6 +409,7 @@ class Inspector(QWidget):
         self.through_row = False          # the form has 效果穿透 (shape says when)
         self.clip_ids = []
         self.place_edit = None            # image parameter whose picture the preview places (編輯位置)
+        self.mask_edit = False            # 編輯遮罩 (the 遮罩 tab): the preview edits the clip's mask - on only when asked
         self.fps = 60.0                   # the editor's frames per second (凍結幀 counts in them)
         self.playhead_t = 0               # the playhead in the primary clip's time
         self.shape = None                 # what the form was built for
@@ -947,7 +949,7 @@ class Inspector(QWidget):
         for name, k in MASK_NAMES:
             if k is not None:
                 kind.addItem(name, k)
-        kind.activated.connect(lambda i: self._emit_now(self.maskKindChosen, kind.itemData(i)))
+        kind.activated.connect(lambda i: self._mask_kind_chosen(kind.itemData(i)))
         self.widgets["mask_kind"] = kind
         row.addWidget(kind, 1)
         picture = kind_tag(c.get("mask")) in edit.PICTURE_MASKS
@@ -961,6 +963,14 @@ class Inspector(QWidget):
             drop.clicked.connect(lambda: self._emit_now(self.maskKindChosen, None))
             row.addWidget(drop)
         form.addRow("形狀", row)
+        ed = QPushButton("編輯遮罩")
+        ed.setCheckable(True)
+        ed.setChecked(self.mask_edit)
+        ed.setToolTip("開著的時候，在預覽上拖曳是移動、縮放、旋轉遮罩（片段本身不動），按 P 畫路徑遮罩；Shift+M 也能開關。"
+                      "換選別的片段時會自動關掉")
+        ed.toggled.connect(self.set_mask_edit)
+        self.widgets["mask_edit"] = ed
+        form.addRow("", ed)
         if not c.get("mask"):
             return
         if kind_tag(c.get("mask")) == "path":
@@ -1931,6 +1941,27 @@ class Inspector(QWidget):
             look.set_sheet(reset, "color: #6fb3ff;" if own else "")
             self._key_state(self.widgets[("key", "params", p["id"])], ps, clips, ts)
 
+    def _mask_kind_chosen(self, kind):
+        if kind is not None and len(self.clip_ids) == 1:  # a new mask: straight to placing it on the preview
+            self.mask_edit = True
+        elif kind is None:
+            self.set_mask_edit(False)
+        self._emit_now(self.maskKindChosen, kind)
+        self.maskEditChanged.emit()
+
+    def set_mask_edit(self, on):
+        """編輯遮罩: the preview edits the clip's own mask (True) or the clip (False)."""
+        on = bool(on)
+        if on == self.mask_edit:
+            return
+        self.mask_edit = on
+        b = self.widgets.get("mask_edit")
+        if b is not None:
+            b.blockSignals(True)
+            b.setChecked(on)
+            b.blockSignals(False)
+        self.maskEditChanged.emit()
+
     def set_place_edit(self, pid):
         """Place the picture of image parameter pid on the preview (None: not)."""
         if pid == self.place_edit:
@@ -2015,6 +2046,9 @@ class Inspector(QWidget):
             self.curve_rows = bool(clips) and all(k.get("speed_curve") for k in clips)
             self.through_row = through
             self._build(c)
+        if self.mask_edit and (len(clips) != 1 or c["type"] not in edit.MASKABLE or ids != getattr(self, "_mask_edit_ids", ids)):
+            self.set_mask_edit(False)                    # (another clip picked, or several)
+        self._mask_edit_ids = ids
         if self.place_edit and not (c is not None and components.of_clip(c) is not None and
                                     (components.param(components.of_clip(c), self.place_edit) or {}).get("kind") == "image"):
             self.set_place_edit(None)                    # (that picture is not in the selection now)

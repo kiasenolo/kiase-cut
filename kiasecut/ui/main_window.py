@@ -429,7 +429,7 @@ class MainWindow(QMainWindow):
         mp.keyToggled.connect(self.on_key_toggled)
         mp.easingChosen.connect(self.on_easing)
         mp.maskKindChosen.connect(self.on_mask_kind)
-        mp.maskPathEdit.connect(lambda: self.preview.pen_edit_mask())
+        mp.maskPathEdit.connect(lambda: (mp.set_mask_edit(True), self.preview.pen_edit_mask()))
         mp.maskInvertChosen.connect(lambda ids, on: self.apply_each_timed("反轉遮罩", edit.set_mask_invert, ids, on))
         mp.maskEnabledChosen.connect(
             lambda ids, on: self.apply_each("啟用遮罩" if on else "停用遮罩", edit.set_mask_enabled, ids, on))
@@ -973,10 +973,11 @@ class MainWindow(QMainWindow):
             if state is not None:
                 split.restoreState(state)
             split.splitterMoved.connect(lambda *_a, k=key, sp=split: self.settings().setValue(k, sp.saveState()))
-        # the 遮罩 panel in use (or 編輯遮罩 of an effect in the 效果 one) turns the preview into the mask editor
+        # 編輯遮罩 switched on in the 遮罩 panel (or 編輯遮罩 of an effect in the 效果 one) turns the preview into the mask
+        # editor - the panel being open or in use alone does not (it ends when another clip is picked or the panel closes)
         def mask_mode():
             pn = self.panels
-            if pn.is_active("mask"):
+            if self.mask_panel.mask_edit and pn.docks["mask"].isVisible():
                 self.preview.set_mask_mode(True, "mask")
             elif pn.is_active("effects") and ef.mask_edit:
                 self.preview.set_mask_mode(True, "fxmask:" + ef.mask_edit)
@@ -998,7 +999,11 @@ class MainWindow(QMainWindow):
         self.node_source = None         # (effect id, node id) of the picture node selected in the node editor
         self.node_mask_mode = mask_mode
         self.panels.activeChanged.connect(lambda _k: mask_mode())
+        ef.maskEditChanged.connect(lambda: (ef.mask_edit or ef.source_edit) and self.mask_panel.set_mask_edit(False))
         ef.maskEditChanged.connect(mask_mode)
+        self.mask_panel.maskEditChanged.connect(lambda: self.mask_panel.mask_edit and ef.set_mask_edit(None))
+        self.mask_panel.maskEditChanged.connect(mask_mode)
+        self.panels["mask"].visibilityChanged.connect(lambda on: on or self.mask_panel.set_mask_edit(False))
         ins.placeEditChanged.connect(mask_mode)
         self.layout_key = None          # the layout the panels are in (layouts.py key)
 
@@ -1138,6 +1143,7 @@ class MainWindow(QMainWindow):
         add(m, "波紋刪除（後面的片段補上空隙）", ("Shift+Delete", "Shift+Backspace", "Shift+X"), self.do_ripple_delete)
         add(m, "移到上面的軌道", "Ctrl+Up", lambda: self.do_move_rows(-1))
         add(m, "移到下面的軌道", "Ctrl+Down", lambda: self.do_move_rows(1))
+        add(m, "編輯遮罩（開／關）", "Shift+M", self.toggle_mask_edit)
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
         add(m, "取消選取", "Ctrl+D", self.do_deselect)
         add(m, "新增文字", "Ctrl+T", self.do_text)
@@ -5532,6 +5538,18 @@ class MainWindow(QMainWindow):
             col = self.pick_live(QColor(m.get("color") or "#4c8dff"), "標記顏色", [m], anchor)
             if col is not None:
                 self.apply("標記顏色", edit.set_marker_color, mid, col.name())
+
+    def toggle_mask_edit(self):
+        """Shift+M: 編輯遮罩 of the selected clip on or off (the 遮罩 panel comes up when it is not showing)."""
+        c = self.timeline.selected
+        if c is None or c["type"] not in edit.MASKABLE or len(self.timeline.selected_ids) != 1:
+            if not self.mask_panel.mask_edit:
+                self.statusBar().showMessage("先選一個畫面片段", 4000)
+            self.mask_panel.set_mask_edit(False)
+            return
+        if not self.panels.docks["mask"].isVisible():
+            self.panels.show("mask")
+        self.mask_panel.set_mask_edit(not self.mask_panel.mask_edit)
 
     def do_deselect(self):
         """Ctrl+D: the clips (and tracks) picked on the timeline let go; with nothing picked, the in / out range (入出點) goes."""

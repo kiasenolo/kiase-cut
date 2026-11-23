@@ -17,7 +17,8 @@ drags wrap up and down too. The pointer hides while dragging and comes back wher
 ended up.
 
 Times are counted in frames of `fps`, the editor's rate (時間線精度: it can be finer than
-the project's frame rate, which only the export uses); the ruler marks each of them once
+the project's frame rate, which the export uses); clip edges land on the project's frames all the same (on_frame,
+clip_fps) - the finer rate is for the playhead and keyframes. The ruler marks each frame once
 they are far enough apart, and the zoom reaches 40 px per frame. With a BPM timebase (時基,
 `timebase`) the ruler counts bars, beats and their parts instead of seconds; that is only a
 way of reading time: nothing snaps to it.
@@ -920,6 +921,15 @@ class Timeline(QWidget):
         if div < 1:                                      # a line every 2 / 4 beats
             return edit.beat_grid(c, lo, hi, bars) if period_px / div >= BEAT_PX else []
         return [(t, d) for t, d in edit.beat_grid(c, lo, hi, bars) if period_px / max(d, 1) >= BEAT_PX]
+
+    def on_frame(self, t_us):
+        """t_us on the project's frames (clip_fps): where a clip's edge can be (the editor's own 時間線精度 may be finer)."""
+        f = US / (getattr(self, "clip_fps", None) or self.fps)
+        return round(t_us / f) * f
+
+    def frame_us(self):
+        """One of the project's frames, us: the shortest a clip can be made by dragging."""
+        return US / (getattr(self, "clip_fps", None) or self.fps)
 
     def _snap(self, t_us, exclude, playhead=True):
         """Snap a time to the nearest _snap_targets within SNAP_PX. With snapping off, times
@@ -1981,7 +1991,7 @@ class Timeline(QWidget):
             dt = (pos.x() - d["x0"]) / self.px_per_s * US
             s0, e0 = c["start_us"], c["start_us"] + c["duration_us"]
             if d["mode"] == "lane_body":
-                start = self._snap_span(abs0 + s0 + dt, e0 - s0, c) - abs0
+                start = self.on_frame(self._snap_span(abs0 + s0 + dt, e0 - s0, c)) - abs0
                 d["start"] = min(max(0.0, start), g["duration_us"] - (e0 - s0))
                 d["end"] = d["start"] + (e0 - s0)
                 for ln in self.lanes(d["row"]):          # another lane of the same group, same kind
@@ -1989,9 +1999,9 @@ class Timeline(QWidget):
                             ln["track"]["kind"] == ln0["track"]["kind"]:
                         d["lane_to"] = ln
             elif d["mode"] == "lane_start":                     # (past the group's edges: it grows)
-                d["start"] = min(self._snap(abs0 + s0 + dt, c) - abs0, e0 - US / self.fps)
+                d["start"] = min(self.on_frame(self._snap(abs0 + s0 + dt, c)) - abs0, e0 - self.frame_us())
             else:
-                d["end"] = max(self._snap(abs0 + e0 + dt, c) - abs0, s0 + US / self.fps)
+                d["end"] = max(self.on_frame(self._snap(abs0 + e0 + dt, c)) - abs0, s0 + self.frame_us())
             self.clipDragging.emit(c["id"], int(round(abs0 + d["start"])), int(round(d["end"] - d["start"])))
             self.update()
             return
@@ -2143,7 +2153,7 @@ class Timeline(QWidget):
             group = [k for t in self.rows for k in t["clips"] if k["id"] in d["ids"]]
             dt = max(dt, -min(k["start_us"] for k in group))
             # snap the clip under the mouse by its start or its end
-            d["shift"] = self._snap_span(c["start_us"] + dt, c["duration_us"], d["ids"]) - c["start_us"]
+            d["shift"] = self.on_frame(self._snap_span(c["start_us"] + dt, c["duration_us"], d["ids"])) - c["start_us"]
             self.update()
             return
         if not d["moved"] and abs(pos.x() - d["x0"]) < DRAG_PX and self._row_at(pos.y()) == d.get("prow0", d["row0"]):
@@ -2153,7 +2163,7 @@ class Timeline(QWidget):
         dt = (pos.x() - d["x0"]) / self.px_per_s * US
         s0, e0 = c["start_us"], c["start_us"] + c["duration_us"]
         if d["mode"] == "body":
-            start = self._snap_span(max(0.0, s0 + dt), e0 - s0, c)
+            start = max(0.0, self.on_frame(self._snap_span(max(0.0, s0 + dt), e0 - s0, c)))
             d["start"], d["end"] = start, start + (e0 - s0)
             row = self._row_at(pos.y())
             if row is not None and "prow0" in d:         # (a grab: by how many rows the pointer went, not which it is on)
@@ -2173,17 +2183,17 @@ class Timeline(QWidget):
             elif row is None and audio and pos.y() >= self.rows_end:
                 d["new"] = "bottom"                     # below the last audio row
         elif d["mode"] == "start":
-            d["start"] = min(self._snap(s0 + dt, c), e0 - US / self.fps)
+            d["start"] = min(self.on_frame(self._snap(s0 + dt, c)), e0 - self.frame_us())
             if d.get("trim_ids"):
                 group = [k for k in self.level_clips() if k["id"] in d["trim_ids"]]
                 d["delta"] = min(max(d["start"] - s0, -min(k["start_us"] for k in group)),
-                                 min(k["duration_us"] for k in group) - US / self.fps)
+                                 min(k["duration_us"] for k in group) - self.frame_us())
                 d["start"] = s0 + d["delta"]
         else:
-            d["end"] = max(self._snap(e0 + dt, c), s0 + US / self.fps)
+            d["end"] = max(self.on_frame(self._snap(e0 + dt, c)), s0 + self.frame_us())
             if d.get("trim_ids"):
                 group = [k for k in self.level_clips() if k["id"] in d["trim_ids"]]
-                d["delta"] = max(d["end"] - e0, US / self.fps - min(k["duration_us"] for k in group))
+                d["delta"] = max(d["end"] - e0, self.frame_us() - min(k["duration_us"] for k in group))
                 d["end"] = e0 + d["delta"]
         s1 = d.get("start", s0) if d["mode"] != "end" else s0
         e1 = d.get("end", e0) if d["mode"] != "start" else e0
@@ -2433,7 +2443,7 @@ class Timeline(QWidget):
                 row = self._drop_row(pos.y())
                 c = lit if lit is not None and e.mimeData().hasFormat(FX_MIME) else self._fx_target(pos)
                 tid = self.rows[row]["id"] if row is not None and self.rows[row]["kind"] != "audio" else ""
-                self.filterDropped.emit(ref, c["id"] if c else "", tid, int(max(0.0, self._sec(pos.x())) * US))
+                self.filterDropped.emit(ref, c["id"] if c else "", tid, int(round(self.on_frame(max(0.0, self._sec(pos.x())) * US))))
                 e.acceptProposedAction()
             self.update()
             return
@@ -2444,13 +2454,13 @@ class Timeline(QWidget):
             paths = [] if ids else self._file_paths(md)
             if ids or paths:
                 self.groupDropped.emit(ids, paths, ln["group"]["id"], ln["track"]["id"],
-                                       int(max(0.0, self._sec(pos.x())) * US))
+                                       int(round(self.on_frame(max(0.0, self._sec(pos.x())) * US))))
                 e.acceptProposedAction()
             self.update()
             return
         row = self._drop_row(pos.y()) if self.proj else None
         tid = self.rows[row]["id"] if row is not None else ""
-        start = int(max(0.0, self._sec(pos.x())) * US) if self.proj else 0
+        start = int(round(self.on_frame(max(0.0, self._sec(pos.x())) * US))) if self.proj else 0
         if not e.mimeData().hasFormat(MEDIA_MIME):           # files from the file manager
             paths = self._file_paths(e.mimeData())
             if paths:                                         # (stacked, or one after another with Alt)

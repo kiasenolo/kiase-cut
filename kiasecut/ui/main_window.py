@@ -319,7 +319,7 @@ class MainWindow(QMainWindow):
         lb.deleteRequested.connect(self.delete_library)
         lb.moveRequested.connect(self.move_library)
         lb.revealRequested.connect(self.reveal)
-        lb.addRequested.connect(lambda iid: self.place_media(iid, "", self.playhead_us()))
+        lb.addRequested.connect(lambda iid: self.place_media(iid, "", self.edge_us()))
         lb.filesDropped.connect(lambda paths, folder: self.drop_files(paths, folder))
         lb.collectRequested.connect(lambda: self.collect_external(ask=False))
 
@@ -363,7 +363,7 @@ class MainWindow(QMainWindow):
             panel.deleteRequested.connect(lambda idents, k=key: self.ul_delete(k, idents))
             panel.moveRequested.connect(lambda ident, to, k=key: self.ul_move(k, ident, to))
             panel.revealRequested.connect(lambda ident, k=key: self.ul_reveal(k, ident))
-            panel.addRequested.connect(lambda ident: self.place_media(ident, "", self.playhead_us()))
+            panel.addRequested.connect(lambda ident: self.place_media(ident, "", self.edge_us()))
             panel.filesDropped.connect(lambda paths, folder, k=key: self.ul_drop(k, paths, folder))
             panel.extra_menu = lambda menu, ident, k=key: self.ul_menu(k, menu, ident)
         self.vfx = VfxPanel()
@@ -371,7 +371,7 @@ class MainWindow(QMainWindow):
         self.vfx.applyRequested.connect(self.apply_filter_to_selected)
         self.vfx.docRequested.connect(self.show_filter_doc)
         self.assets = AssetsPanel()
-        self.assets.addRequested.connect(lambda ident: self.place_asset(ident, "", self.playhead_us()))
+        self.assets.addRequested.connect(lambda ident: self.place_asset(ident, "", self.edge_us()))
 
         self.preview = Preview()
         self.preview.clipPicked.connect(lambda c: self.timeline.select(c))
@@ -2157,6 +2157,7 @@ class MainWindow(QMainWindow):
         self._thumb_renderer = None                    # (layer thumbnails: the last project's pictures go)
         self.fps = edit_rate(proj)
         self.timeline.edit_fps = self.fps if self.fps != proj["fps"] else None
+        self.timeline.clip_fps = proj["fps"]
         view = proj.get("view") if isinstance(proj.get("view"), dict) else {}
         tbs = view.get("timebases") if isinstance(view.get("timebases"), dict) else {}
         self.timebases = {k: timebase_of(v) for k, v in tbs.items()}
@@ -2533,10 +2534,16 @@ class MainWindow(QMainWindow):
     def playhead_us(self):
         return self.pos / self.fps * US
 
+    def edge_us(self):
+        """The playhead on the project's frames: where a clip edge made there goes (cuts, Q / W, things put at the
+        playhead) - with a finer 時間線精度 the playhead can be between two of them; keyframes keep playhead_us."""
+        f = US / self.proj["fps"] if self.proj else US / self.fps
+        return round(self.playhead_us() / f) * f
+
     def do_split(self):
         if not self.proj:
             return
-        t = self.playhead_us()
+        t = self.edge_us()
         sel = self.timeline.selected_clips()
         starts = edit.abs_starts(self.container())
         targets = [k for k in (sel and [self.placed(k, starts) for k in sel] or [k for tr in self.container()["tracks"]
@@ -2562,7 +2569,7 @@ class MainWindow(QMainWindow):
         ids = [c["id"] for c in self.timeline.selected_clips()] or [
             k["id"] for tr in self.container()["tracks"] if not project.locked(tr) for k in tr["clips"]]
         label = ("波紋" if ripple else "") + ("向左裁剪" if side == "start" else "向右裁剪")
-        self.apply(label, edit.trim_to, ids, self.playhead_us(), side, ripple)
+        self.apply(label, edit.trim_to, ids, self.edge_us(), side, ripple)
 
     def do_ripple_delete(self):
         """Shift+Delete: the selected clips go and the later clips of their tracks close up."""
@@ -2656,7 +2663,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("沒有複製的片段", 3000)
             return
         self._select_new(self.apply_root("貼上", lambda root: edit.paste_clips(
-            root, self.container(root), self.clipboard, self.playhead_us())))
+            root, self.container(root), self.clipboard, self.edge_us())))
 
     def do_duplicate(self):
         ids = [c["id"] for c in self.timeline.selected_clips()]
@@ -2824,7 +2831,7 @@ class MainWindow(QMainWindow):
 
     def do_text(self):
         if self.proj:
-            self.apply("新增文字", edit.add_text, self.playhead_us(), select=lambda c: c["id"])
+            self.apply("新增文字", edit.add_text, self.edge_us(), select=lambda c: c["id"])
 
     def apply_each(self, label, fn, ids, *args, merge=None):
         """fn(level, clip id, *args) for every clip of a selection, as one undo step."""
@@ -3259,7 +3266,7 @@ class MainWindow(QMainWindow):
             return
         level = self.container()
         W, H = level.get("width") or self.proj["width"], level.get("height") or self.proj["height"]
-        start = self.playhead_us()
+        start = self.edge_us()
 
         def fn(lvl):
             if remove:
@@ -3895,7 +3902,7 @@ class MainWindow(QMainWindow):
             return
         before = {c["id"] for c in project.walk_clips(self.container()["tracks"])}
         self.centre_drop = (before, (x, y), time.monotonic())
-        start = self.playhead_us()
+        start = self.edge_us()
         if paths:
             self.drop_files(paths, self.library.current_folder(), ("", start, False))
             return
@@ -4390,7 +4397,7 @@ class MainWindow(QMainWindow):
              "reverse_rows": self.do_reverse_rows}[action]()
             return
         if action in ("new_static", "new_component"):         # (cid is the track's id here)
-            at, comp = self.playhead_us(), action == "new_component"
+            at, comp = self.edge_us(), action == "new_component"
             self.apply_root("新增靜態元件" if comp else "新增靜態片段",
                             lambda root: edit.new_compound(root, self.container(root), at, cid, True, comp),
                             select=lambda c: c["id"])
@@ -4398,7 +4405,7 @@ class MainWindow(QMainWindow):
         if action in ("make_static", "make_static_component", "make_compound", "make_component"):
             sel = self.timeline.selected_ids
             ids = sorted(sel) if cid in sel else [cid]
-            comp, at = action.endswith("component"), self.playhead_us()
+            comp, at = action.endswith("component"), self.edge_us()
             static = action.startswith("make_static")
             mode = self.ask_lfo_kept([edit.find(self.container(), i)[1] for i in ids]) if static else "keep"
             if mode is None:
@@ -4772,7 +4779,7 @@ class MainWindow(QMainWindow):
             return
         level = self.container()
         tr = next((t for t in level["tracks"] if self.sound_track(t)), None)
-        start = round(self.playhead_us() if start_us is None else start_us)
+        start = round(self.edge_us() if start_us is None else start_us)
         if tr is not None:
             source = {"type": "track", "id": tr["id"]}
             dur = max(US, project.end_us([tr]) - start) if project.end_us([tr]) > start else 5 * US
@@ -6188,10 +6195,10 @@ class MainWindow(QMainWindow):
             menu.addAction("套用到選取的片段", lambda: self.apply_filter_to_selected(it["path"]))
             menu.addAction("用編輯器開啟（改完存檔就會更新）", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(it["path"])))
         elif key == "compounds":
-            menu.addAction("放到播放頭", lambda: self.place_library_compound(it["path"], "", self.playhead_us()))
+            menu.addAction("放到播放頭", lambda: self.place_library_compound(it["path"], "", self.edge_us()))
         elif key == "presets":
             menu.addAction("套用到選取的片段", lambda: self.use_effect_preset(it["path"], "", None, clip_ids=True))
-            menu.addAction("放成濾鏡片段（播放頭位置）", lambda: self.use_effect_preset(it["path"], "", self.playhead_us(),
+            menu.addAction("放成濾鏡片段（播放頭位置）", lambda: self.use_effect_preset(it["path"], "", self.edge_us(),
                                                                                   clip_ids=False))
         elif key == "textstyles":
             menu.addAction("套用到選取的文字", lambda: self.apply_text_style(it["path"], new_if_none=False))
@@ -6229,7 +6236,7 @@ class MainWindow(QMainWindow):
         effect: a copy of that one, settings and all)."""
         if not self.proj:
             return
-        start = self.playhead_us() if start_us is None else start_us
+        start = self.edge_us() if start_us is None else start_us
         self.apply("新增濾鏡片段", lambda lvl: edit.add_filter_clip(lvl, ref, start, track_id=track_id or None,
                                                                  effect=effect, own_track=self.editing_static()),
                    select=lambda c: c["id"])
@@ -6238,7 +6245,7 @@ class MainWindow(QMainWindow):
         """A VFX Node dropped on an empty place: a filter clip that uses it."""
         if not self.proj:
             return
-        start = self.playhead_us() if start_us is None else start_us
+        start = self.edge_us() if start_us is None else start_us
         self.apply_root("新增濾鏡片段", lambda root: edit.add_vfx_filter_clip(
             root, vid, start, track_id=track_id or None, own_track=self.editing_static(), level=self.container(root)),
             select=lambda c: c["id"])
@@ -6333,7 +6340,7 @@ class MainWindow(QMainWindow):
             self.apply("套用效果預設", lambda lvl: [edit.put_effect(lvl, cid, e) for cid in ids for e in effects])
             self.panels.show("effects")
             return
-        start = self.playhead_us() if start_us is None else start_us
+        start = self.edge_us() if start_us is None else start_us
 
         def fn(lvl):
             c = edit.add_filter_clip(lvl, effects[0]["filter"], start, track_id=track_id or None, effect=effects[0],
@@ -7097,7 +7104,7 @@ class MainWindow(QMainWindow):
             self.apply("套用文字樣式", lambda lvl: [edit.apply_text_style(lvl, cid, style) for cid in ids])
         elif new_if_none or force_new:
             def make(level):
-                c = edit.add_text(level, self.playhead_us())
+                c = edit.add_text(level, self.edge_us())
                 return edit.apply_text_style(level, c["id"], style)
             self.apply("用樣式新增文字", make, select=lambda c: c["id"])
         else:

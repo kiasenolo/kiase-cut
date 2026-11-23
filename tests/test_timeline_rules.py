@@ -58,6 +58,35 @@ class TakenSpotTests(unittest.TestCase):
         self.assertEqual(edit.find(p, "c2")[1]["start_us"], S)
 
 
+class ProjectFrameTests(unittest.TestCase):
+    def test_dragged_edges_land_on_the_projects_frames(self):
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.timeline import HEADER_W, Timeline
+        _app = QApplication.instance() or QApplication([])
+        p = proj()
+        tl = Timeline()
+        tl.resize(1200, 300)
+        tl.set_project(p)
+        tl.fps, tl.clip_fps = 120.0, 30.0                                  # a finer 時間線精度 than the project
+        tl.snapping = False
+        tl.px_per_s, tl.scroll_s = 50.0, 0.0
+        moved = []
+        tl.moveRequested.connect(lambda cid, start, track: moved.append(start))
+        c = edit.find(p, "c1")[1]
+        tl.select(c)
+        row = next(i for i, t in enumerate(tl.rows) if c in t["clips"])
+        tl._grab_begin(c, row)
+        tl.drag["x0"] = HEADER_W + 100
+        tl.drag.pop("prow0", None)
+        e = type("E", (), {"modifiers": lambda s: Qt.NoModifier})()
+        tl._mouse_move(e, QPointF(HEADER_W + 100 + 51.3, tl.tops[row] + 5))   # 1.026 s: between frames
+        tl._grab_end(True)
+        frame = S / 30
+        self.assertAlmostEqual(moved[-1] / frame, round(moved[-1] / frame), places=3)
+        self.assertAlmostEqual(moved[-1], S, delta=frame)
+
+
 class PictureTrackTests(unittest.TestCase):
     def test_text_tracks_load_as_picture_tracks(self):
         from kiasecut import project

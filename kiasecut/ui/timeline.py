@@ -304,6 +304,7 @@ class Timeline(QWidget):
     filesDropped = Signal(list, str, int, bool)      # file manager paths, track id or "", start us, across (Alt)
     replaceDropped = Signal(str, str)                # media id (library item, "cmp:<id>" or "asset:…"), clip id: Alt + drop
     newTrackRequested = Signal(str, int, bool)       # clip id, start us, on top (else bottom)
+    besideRequested = Signal(str, int, str)          # clip id, start us, the track whose spot was taken: a new one next to it
     clipDragging = Signal(str, int, int)             # clip id, start us, duration us: while dragging
     grabCancelled = Signal()                         # a G grab was put back (Esc / right button)
     peaksReady = Signal(str)                         # emitted from the waveform thread
@@ -1165,7 +1166,12 @@ class Timeline(QWidget):
         if dragged:
             d = self.drag
             h = self.base_h(d["row"])
-            if d.get("new") == "top":                   # landing on a new top track
+            if d.get("new") == "beside":                # a new track opens next to the row: a line where, the clip across it
+                audio = self.rows[d["row"]]["kind"] == "audio"
+                line = self.tops[d["row"]] + (self.row_h(d["row"]) if audio else 0)
+                p.fillRect(QRectF(self.header_w, line - 1, w - self.header_w, 3), QColor("#e6e6e6"))
+                y = line - h / 2
+            elif d.get("new") == "top":                 # landing on a new top track
                 p.fillRect(QRectF(self.header_w, RULER_H, w - self.header_w, 3), QColor("#e6e6e6"))
                 y = RULER_H - h + 2
             elif d.get("new") == "bottom":              # landing on a new last audio track
@@ -2158,6 +2164,10 @@ class Timeline(QWidget):
             if row is not None and (self.rows[row]["kind"] == "audio") == audio and \
                     (row == d["row0"] or not project.locked(self.rows[row])):     # (never onto a locked track)
                 d["row"] = row
+                tr = self.rows[row]
+                if any(k is not c and k["start_us"] < d["end"] and k["start_us"] + k["duration_us"] > d["start"]
+                       for k in tr["clips"]):
+                    d["new"] = "beside"                 # that spot is taken: a new track next to it (pictures above, sound below)
             elif row is None and not audio and pos.y() < RULER_H:
                 d["new"] = "top"                        # above the top layer: a new top track
             elif row is None and audio and pos.y() >= self.rows_end:
@@ -2296,7 +2306,9 @@ class Timeline(QWidget):
             return
         if d["mode"] == "body" and d.get("dup"):
             self.dupMoveRequested.emit([c["id"]], int(round(d["start"] - c["start_us"])),
-                                       0 if d.get("new") else d["row"] - d["row0"])
+                                       0 if d.get("new") in ("top", "bottom") else d["row"] - d["row0"])
+        elif d["mode"] == "body" and d.get("new") == "beside":
+            self.besideRequested.emit(c["id"], int(round(d["start"])), self.rows[d["row"]]["id"])
         elif d["mode"] == "body" and d.get("new"):
             self.newTrackRequested.emit(c["id"], int(round(d["start"])), d["new"] == "top")
         elif d["mode"] == "body":

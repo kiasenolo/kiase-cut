@@ -455,9 +455,10 @@ def display_groups(proj):
 
 def move_many(proj, clip_ids, d_us, d_rows=0):
     """Shift several clips by d_us in time and d_rows rows down the screen (negative: up). Every
-    clip keeps its row distance to the others and stays among pictures / among sound. Refuses
-    (changing nothing) when a clip would land on one that is not moving or outside the tracks;
-    never moves anything before 0."""
+    clip keeps its row distance to the others and stays among pictures / among sound. Where a
+    clip would land on one that is not moving, the clips going to that track go onto a new track
+    next to it instead (pictures: above it, sound: below it), at the time they were dropped.
+    Refuses (changing nothing) outside the tracks; never moves anything before 0."""
     ids = set(clip_ids)
     moving = find_all(proj, clip_ids)
     if not moving:
@@ -474,10 +475,17 @@ def move_many(proj, clip_ids, d_us, d_rows=0):
         if not 0 <= j < len(group):
             raise EditError("no track there")
         plan.append((c, t, group[j]))
-    for c, _, dst in plan:
-        s, e = c["start_us"] + d_us, end(c) + d_us
-        if any(o["id"] not in ids and o["start_us"] < e and end(o) > s for o in dst["clips"]):
+    taken = {id(dst) for c, _, dst in plan
+             if any(o["id"] not in ids and o["start_us"] < end(c) + d_us and end(o) > c["start_us"] + d_us for o in dst["clips"])}
+    if taken:
+        if project.is_group(proj):
             raise EditError("no room there")
+        made = {}
+        for i, (c, src, dst) in enumerate(plan):
+            if id(dst) in taken:
+                if id(dst) not in made:
+                    made[id(dst)] = _track_next_to(proj, dst)
+                plan[i] = (c, src, made[id(dst)])
     for c, src, dst in plan:
         c["start_us"] += d_us
         if dst is not src:
@@ -3748,6 +3756,32 @@ def reordered(ids, moving, slot):
     row that was at index slot (len(ids): at the end)."""
     keep = [i for i in ids[:slot] if i not in moving]
     return keep + [i for i in ids if i in moving] + [i for i in ids[slot:] if i not in moving]
+
+
+def _track_next_to(proj, track):
+    """A new empty track of track's kind next to it on screen: above it for pictures, below it for sound."""
+    kind = track["kind"]
+    n = sum(1 for t in proj["tracks"] if t["kind"] == kind) + 1
+    new = {"id": new_track_id(proj), "kind": kind, "name": f"{kind} {n}", "clips": []}
+    i = proj["tracks"].index(track)
+    proj["tracks"].insert(i + 1, new)                    # (pictures: a later index is higher; sound rows go down)
+    return new
+
+
+def move_beside(proj, clip_id, start_us, track_id):
+    """A clip dropped where track_id already has something at that time: onto a new track next to that one (pictures: above,
+    sound: below), at start_us - where it was dropped."""
+    src, c = find(proj, clip_id)
+    near = track_by_id(proj, track_id)
+    if (near["kind"] == "audio") != (src["kind"] == "audio"):
+        raise EditError("audio clips stay on audio tracks, pictures on picture tracks")
+    if group_of(proj, near) is not None:
+        raise EditError("群組裡沒有空間")
+    track = _track_next_to(proj, near)
+    src["clips"].remove(c)
+    track["clips"].append(c)
+    c["start_us"] = max(0, int(start_us))
+    return c
 
 
 def move_to_new_track(proj, clip_id, start_us, top):

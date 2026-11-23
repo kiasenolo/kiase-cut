@@ -34,6 +34,30 @@ class RippleTrimTests(unittest.TestCase):
         self.assertEqual(starts(p, "t2")[0][1], 2 * S)                    # (another track is left alone)
 
 
+class TakenSpotTests(unittest.TestCase):
+    def test_a_clip_dropped_on_another_opens_a_track_above(self):
+        p = proj()                                                        # t0: c1 0-2 s, c2 5-7 s
+        edit.move_beside(p, "c2", S, "t0")
+        holder = next(t for t in p["tracks"] if any(c["id"] == "c2" for c in t["clips"]))
+        self.assertEqual(p["tracks"].index(holder), 1)                    # (right above t0)
+        self.assertEqual(edit.find(p, "c2")[1]["start_us"], S)            # where it was dropped
+
+    def test_sound_opens_a_track_below(self):
+        p = proj()
+        p["tracks"][2]["clips"].append({"id": "c4", "type": "audio", "name": "b", "start_us": 7 * S, "duration_us": S,
+                                        "source_start_us": 0, "media": {"path": "b.mp3", "duration_us": 9 * S}})
+        edit.move_beside(p, "c4", 3 * S, "t2")
+        self.assertEqual([t["kind"] for t in p["tracks"]], ["video", "video", "audio", "audio"])
+        self.assertEqual(p["tracks"][3]["clips"][0]["id"], "c4")
+
+    def test_several_moved_onto_taken_spots_get_new_tracks(self):
+        p = proj()
+        edit.move_many(p, ["c2"], -4 * S, 0)                              # c2 onto c1's time
+        holder = next(t for t in p["tracks"] if any(c["id"] == "c2" for c in t["clips"]))
+        self.assertNotEqual(holder["id"], "t0")
+        self.assertEqual(edit.find(p, "c2")[1]["start_us"], S)
+
+
 class PictureTrackTests(unittest.TestCase):
     def test_text_tracks_load_as_picture_tracks(self):
         from kiasecut import project

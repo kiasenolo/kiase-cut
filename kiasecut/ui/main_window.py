@@ -772,6 +772,7 @@ class MainWindow(QMainWindow):
         tl.tracksReordered.connect(lambda order: self.apply("移動軌道", edit.set_track_order, order))
         tl.newTrackRequested.connect(
             lambda cid, start, top: self.apply("移到新軌道", edit.move_to_new_track, cid, start, top))
+        tl.besideRequested.connect(lambda cid, start, tid: self.apply("移到新軌道", edit.move_beside, cid, start, tid))
         # timelines (as in DaVinci Resolve: several per project, one open), as tabs
         tabs_row = QHBoxLayout()
         tabs_row.setContentsMargins(6, 2, 6, 0)

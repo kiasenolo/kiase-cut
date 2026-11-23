@@ -127,6 +127,17 @@ class TimelineGrab(unittest.TestCase):
         self.assertEqual(cid, "c1")
         self.assertAlmostEqual(start, 2 * S, delta=S // 10)
 
+    def test_onto_a_taken_spot_asks_for_a_new_track_beside(self):
+        beside = []
+        self.tl.besideRequested.connect(lambda cid, start, track: beside.append((cid, start, track)))
+        self.start()
+        self.drag_by(225)                                           # 4.5 s later: across c2 (5 - 7 s)
+        self.assertEqual(self.tl.drag["new"], "beside")
+        self.tl._grab_end(True)
+        self.assertEqual(self.moved, [])
+        cid, start, track = beside[-1]
+        self.assertEqual((cid, track), ("c1", self.p["tracks"][0]["id"]))
+
     def test_esc_leaves_it_and_says_so(self):
         self.start()
         self.drag_by(100)

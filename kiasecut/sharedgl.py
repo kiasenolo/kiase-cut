@@ -31,6 +31,17 @@ def wanted(setting=True):
     return True
 
 
+def widgets_supported():
+    """Whether Qt's platform can show a QOpenGLWidget: not offscreen or minimal (tests, headless runs), where Qt says
+    "QOpenGLWidget is not supported on this platform" and yet gives the widget a GL context (GLX where there is an X
+    display) - one that is never shown, and that the text a QPainter drew in it ties to the program's fonts: when the
+    font cache is cleared later (QFontDatabase.addApplicationFont), the GL glyph caches make that context current
+    again, and a GLX BadAccess ends the program. Asked before the QApplication too (QT_QPA_PLATFORM then)."""
+    from PySide6.QtGui import QGuiApplication
+    name = QGuiApplication.platformName() if QGuiApplication.instance() is not None else os.environ.get("QT_QPA_PLATFORM", "")
+    return name.split(":")[0].strip().lower() not in ("offscreen", "minimal", "minimalegl", "vnc")
+
+
 def configure_application():
     """Before the QApplication: one share group for all of Qt's GL contexts, and a core 3.3 default format (what moderngl needs)."""
     from PySide6.QtCore import Qt

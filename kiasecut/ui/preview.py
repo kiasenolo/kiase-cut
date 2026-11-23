@@ -600,6 +600,8 @@ def _gl_wanted():
     """Whether the preview is drawn on the GPU (a QOpenGLWidget; 設定 > 預覽用 GPU 繪圖, read once at start - it fixes the base class)."""
     if os.environ.get("KIASECUT_PREVIEW_GL", "1") == "0":
         return False
+    if not sharedgl.widgets_supported():
+        return False
     try:
         from PySide6.QtCore import QSettings
         return str(QSettings("KiaseCut", "KiaseCut").value("preview_gl", GL_DEFAULT)).lower() not in ("false", "0")

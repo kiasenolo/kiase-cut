@@ -1871,6 +1871,8 @@ class GraphView(QGraphicsView):
         try:
             from PySide6.QtOpenGLWidgets import QOpenGLWidget
             from .. import sharedgl
+            if not sharedgl.widgets_supported():
+                return False
             w = QOpenGLWidget()
             w.setFormat(sharedgl.widget_format())            # (4 samples: smooth edges, as the antialiasing of the software viewport)
             w.setUpdateBehavior(QOpenGLWidget.NoPartialUpdate)

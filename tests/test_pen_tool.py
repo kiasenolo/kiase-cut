@@ -101,7 +101,18 @@ class Draw(unittest.TestCase):
         self.assertTrue(self.done[0][0]["closed"])
         self.assertEqual(len(self.done[0][0]["nodes"]), 3)
 
-    def test_escape_drops_the_path(self):
+    def test_escape_keeps_the_path(self):
+        pv = self.pv
+        pv.pen_begin()
+        for pt in ((300, 300), (900, 300)):
+            mouse(pv, "press", pt)
+            mouse(pv, "release", pt)
+        pv.pen_key(type("K", (), {"key": lambda s: Qt.Key_Escape, "modifiers": lambda s: Qt.NoModifier})())()
+        self.assertIsNone(pv.pen)
+        self.assertEqual(len(self.done), 1)
+        self.assertEqual(len(self.done[0][0]["nodes"]), 2)
+
+    def test_escape_with_one_point_makes_nothing(self):
         pv = self.pv
         pv.pen_begin()
         mouse(pv, "press", (300, 300))

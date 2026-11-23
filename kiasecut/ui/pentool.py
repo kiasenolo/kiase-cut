@@ -3,7 +3,7 @@
 P with the mouse over the preview (or the 鋼筆 button) starts a new path: a click puts a corner point, a click and drag a smooth
 one (the drag pulls its out handle, the in handle mirrors it; Alt: only the out one), Shift keeps the next point to a 45° step
 from the last, a click on the first point closes the path (a fill), Enter / double click / the right button ends an open one (a
-line), Backspace takes the last point back, Esc drops the path. It becomes a "path" built-in asset clip (assets.path_params) at the
+line), Backspace takes the last point back, Enter or Esc ends it and keeps it. It becomes a "path" built-in asset clip (assets.path_params) at the
 playhead, which has the usual fill / outline / colour parameters.
 
 A path clip is edited with a double click on it (or Enter with it selected). A clip has one or more paths (parts, holes show
@@ -623,8 +623,8 @@ class PenMixin:
         if k in (Qt.Key_Return, Qt.Key_Enter):
             return self._pen_finish if pen["cur"] is not None else (self.pen_end if editing else self._pen_finish)
         if k == Qt.Key_Escape:
-            if not editing:
-                return self.pen_end
+            if not editing:                                     # a new path: the drawing ends and is kept (as Enter)
+                return self._pen_finish
             if pen["cur"] is not None:
                 return self._pen_finish
             return self._pen_clear_or_end

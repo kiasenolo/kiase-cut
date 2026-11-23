@@ -668,8 +668,9 @@ def duplicate_moved(root, level, clip_ids, d_us=0, d_rows=0, moves=None, t_of=No
 
 
 def add_text(proj, at_us, content="輸入文字", duration_us=3_000_000, track_id=None, style=None):
-    """New text clip at at_us on track_id when that is a text track with room, else on the topmost text track with room,
-    else a new track. style: fields of its text that replace the defaults (textpresets.py)."""
+    """New text clip at at_us on track_id when that is a picture track with room, else on the topmost picture track with room
+    (not a locked one, nor one holding only filters), else a new top picture track. style: fields of its text that replace the
+    defaults (textpresets.py)."""
     clip = {
         "id": new_clip_id(proj), "type": "text", "name": content[:20],
         "start_us": int(at_us), "duration_us": int(duration_us), "source_start_us": 0,
@@ -679,17 +680,19 @@ def add_text(proj, at_us, content="輸入文字", duration_us=3_000_000, track_i
                  "letter_spacing": 0.0, "line_spacing": 0.02, "italic_deg": 0, **copy.deepcopy(style or {})},
         "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0},
     }
-    asked = [t for t in proj["tracks"] if t["id"] == track_id and t["kind"] == "text"]
-    for t in asked + list(reversed(proj["tracks"])):
-        if t["kind"] == "text" and free_range(t, clip["start_us"], end(clip)) is not None:
+    asked = [t for t in proj["tracks"] if t["id"] == track_id and t["kind"] != "audio"]
+    tops = [t for t in reversed(proj["tracks"]) if t["kind"] != "audio" and not project.locked(t)
+            and not (t["clips"] and all(k["type"] == "filter" for k in t["clips"]))]     # (not onto a track of filters only)
+    for t in asked + tops:
+        if free_range(t, clip["start_us"], end(clip)) is not None:
             rng = free_range(t, clip["start_us"], end(clip))
             if rng[1] - clip["start_us"] >= MIN_US:
                 clip["duration_us"] = min(clip["duration_us"], rng[1] - clip["start_us"])
                 t["clips"].append(clip)
                 _sort(t)
                 return clip
-    n = sum(1 for t in proj["tracks"] if t["kind"] == "text") + 1
-    track = {"id": new_track_id(proj), "kind": "text", "name": f"text {n}", "clips": [clip]}
+    n = sum(1 for t in proj["tracks"] if t["kind"] != "audio") + 1
+    track = {"id": new_track_id(proj), "kind": "video", "name": f"video {n}", "clips": [clip]}
     audio_at = next((i for i, t in enumerate(proj["tracks"]) if t["kind"] == "audio"), len(proj["tracks"]))
     proj["tracks"].insert(audio_at, track)       # topmost picture layer, below the audio rows
     return clip
@@ -2185,7 +2188,7 @@ def move_out_of_group(root, level, clip_ids):
     for t, c in picked:
         t["clips"].remove(c)
         c["start_us"] = every[c["id"]]
-        kind = "text" if t["kind"] == "text" else "video"
+        kind = "video"
         dst = {"id": new_track_id(level), "kind": kind, "name": f"{kind} {len(level['tracks']) + 1}", "clips": [c]}
         level["tracks"].append(dst)
         _refit(c, spaces[id(c)], [])
@@ -2354,7 +2357,7 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
     out = []
     for t, c in sorted(picked, key=lambda tc: starts[tc[1]["id"]]):
         c["start_us"] = starts[c["id"]] + shift - g0
-        kind = "text" if t["kind"] == "text" else "video"
+        kind = "video"
         want = next((x for x in g["tracks"] if x["id"] == track_id and x["kind"] != "audio"), None)
         cands = ([want] if want else []) + [x for x in g["tracks"] if x["kind"] == kind]
         dst = next((x for x in cands if free_range(x, c["start_us"], end(c)) is not None), None)
@@ -3622,7 +3625,7 @@ def set_layer_order(level, ids_top_first, parent=None):
     tracks, used = [], set()
     for cid in reversed(ids):                                   # bottom first
         t, c = clips[cid]
-        kind = "text" if c["type"] == "text" else "video"
+        kind = "video"
         keep = {k: v for k, v in t.items() if k in ("hidden", "locked", "color", "name")} if id(t) not in used else {}
         used.add(id(t))
         if not any(x["id"] == t["id"] for x in tracks):
@@ -3673,7 +3676,8 @@ def _visual_slot(proj, top=True):
 def add_track(proj, kind, near_id=None):
     """New empty track of kind: next to near_id (above it on screen), else on top of the
     pictures / below the audio."""
-    if kind not in ("video", "text", "audio"):
+    kind = "video" if kind == "text" else kind              # (tracks are pictures or sounds: texts go on picture tracks)
+    if kind not in ("video", "audio"):
         raise EditError(f"unknown track kind {kind}")
     n = sum(1 for t in proj["tracks"] if t["kind"] == kind) + 1
     tid = "g" + uuid.uuid4().hex[:8] if project.is_group(proj) else new_track_id(proj)   # (a group's tracks: as make_group names them)

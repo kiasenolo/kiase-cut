@@ -10,7 +10,7 @@ project  {format, version, width, height, fps, duration_us, timelines: [timeline
          installed font file}} - per operating system, the font that stands in for one
          the texts name but that system does not have (fonts.py); not part of undo.
 timeline {id, name, tracks: [track]}
-track    {id, kind: video | text | audio, name, clips: [clip],
+track    {id, kind: video | audio, name, clips: [clip],      (video: any picture - texts too; "text" ones load as video)
           muted, solo, hidden, locked, gain, reference}     optional: muted / solo tracks
                      make no sound (solo silences the others), hidden ones draw nothing,
                      locked ones cannot have their clips picked (locked()), gain
@@ -800,6 +800,10 @@ def normalize(p):
         p["timelines"] = [{"id": "tl1", "name": "時間線 1", "tracks": p.get("tracks", [])}]
         p["active_timeline"] = "tl1"
     _sync(p)
+    for tracks in [tl["tracks"] for tl in p["timelines"]] + [c["tracks"] for c in (p.get("compounds") or {}).values()]:
+        for t in all_tracks(tracks):                     # 文字 tracks (before 2026-11-24) are picture tracks
+            if t.get("kind") == "text":
+                t["kind"] = "video"
     comps = p.setdefault("compounds", {})
 
     def key_of(comp):

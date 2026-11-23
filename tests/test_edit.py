@@ -132,9 +132,9 @@ class EditTests(unittest.TestCase):
         p = proj()
         c = edit.add_text(p, 1 * S, "你好")
         self.assertEqual(c["type"], "text")
-        self.assertTrue(any(c in t["clips"] for t in p["tracks"] if t["kind"] == "text"))
-        self.assertLess([t["kind"] for t in p["tracks"]].index("text"),
-                        [t["kind"] for t in p["tracks"]].index("audio"))
+        holder = next(t for t in p["tracks"] if c in t["clips"])
+        self.assertEqual(holder["kind"], "video")                     # (texts go on picture tracks)
+        self.assertLess(p["tracks"].index(holder), [t["kind"] for t in p["tracks"]].index("audio"))
         edit.set_text(p, c["id"], content="再見", letter_spacing=0.2)
         self.assertEqual(c["text"]["content"], "再見")
         edit.set_transform(p, c["id"], "y", -0.5)
@@ -339,12 +339,13 @@ class TextPresetTests(unittest.TestCase):
         p = proj()
         first = edit.add_text(p, 0)
         track = next(t for t in p["tracks"] if any(c["id"] == first["id"] for c in t["clips"]))
-        other = {"id": "tx", "kind": "text", "name": "other", "clips": []}
-        p["tracks"].append(other)
+        other = {"id": "tx", "kind": "video", "name": "other", "clips": []}
+        p["tracks"].insert(0, other)                                  # (the bottom layer: not where a text goes by itself)
         c = edit.add_text(p, 0, track_id="tx")
         self.assertEqual([x["id"] for x in other["clips"]], [c["id"]])
-        d = edit.add_text(p, 0, track_id="v1")                        # (a picture track: the usual place)
+        d = edit.add_text(p, 0, track_id="t2")                        # (a sound track: the usual place instead)
         self.assertNotIn(d, other["clips"])
+        self.assertNotEqual(next(t for t in p["tracks"] if d in t["clips"])["kind"], "audio")
 
 
 if __name__ == "__main__":

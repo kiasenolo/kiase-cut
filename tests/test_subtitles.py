@@ -103,7 +103,7 @@ class CtrlDragTests(unittest.TestCase):
         self.tl.set_project(self.p)
         self.tl.px_per_s, self.tl.scroll_s = 100.0, 0.0
         self.tl._layout()
-        self.row = next(i for i, t in enumerate(self.tl.rows) if t["kind"] == "text")
+        self.row = next(i for i, t in enumerate(self.tl.rows) if any(c["type"] == "text" for c in t["clips"]))
 
     def at(self, c):
         return QPoint(round(self.tl._x((c["start_us"] + c["duration_us"] / 2) / US)),

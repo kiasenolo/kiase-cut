@@ -45,8 +45,8 @@ class TrackTests(unittest.TestCase):
 
     def test_add_move_delete_track(self):
         p = proj()
-        t = edit.add_track(p, "text")
-        self.assertEqual([x["kind"] for x in p["tracks"]], ["video", "text", "audio", "audio"])
+        t = edit.add_track(p, "text")                              # (an old name: a picture track)
+        self.assertEqual([x["kind"] for x in p["tracks"]], ["video", "video", "audio", "audio"])
         edit.move_track(p, t["id"], up=False)                     # below the video layer
         self.assertEqual(p["tracks"][0]["id"], t["id"])
         with self.assertRaises(edit.EditError):

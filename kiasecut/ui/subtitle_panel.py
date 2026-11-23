@@ -76,7 +76,7 @@ class SubtitlePanel(QWidget):
             hint = None
         if hint:
             clips = []
-        self.hint.setText(hint or f"{tracks[0].get('name') or '文字軌道'}：{len(clips)} 個文字片段，一行一個。")
+        self.hint.setText(hint or f"{tracks[0].get('name') or '軌道'}：{len(clips)} 個文字片段，一行一個。")
         self.body.setVisible(bool(clips))
         key = tuple(c["id"] for c in clips)
         contents = [c["text"]["content"] for c in clips]

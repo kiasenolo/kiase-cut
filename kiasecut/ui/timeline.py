@@ -2506,7 +2506,7 @@ class Timeline(QWidget):
             items += [("取消參考軌道" if tr.get("reference") else "設為參考軌道（只在剪輯時看到 / 聽到）",
                        "toggle:reference"), None]
             items += [("上移", "up"), ("下移", "down"), None,
-                      ("新增影片軌道", "add:video"), ("新增文字軌道", "add:text"), ("新增音訊軌道", "add:audio"),
+                      ("新增畫面軌道", "add:video"), ("新增音訊軌道", "add:audio"),
                       None, (f"刪除 {n} 條軌道" if n > 1 else "刪除軌道", "delete"), ("清除空軌道", "clear_empty")]
             for it in items:
                 if it is None:

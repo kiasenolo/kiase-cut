@@ -34,5 +34,27 @@ class RippleTrimTests(unittest.TestCase):
         self.assertEqual(starts(p, "t2")[0][1], 2 * S)                    # (another track is left alone)
 
 
+class PictureTrackTests(unittest.TestCase):
+    def test_text_tracks_load_as_picture_tracks(self):
+        from kiasecut import project
+        p = proj()
+        p["tracks"].insert(1, {"id": "tx", "kind": "text", "name": "字幕", "clips": []})
+        p["compounds"] = {"k": {"name": "k", "width": 1920, "height": 1080, "duration_us": S,
+                                "tracks": [{"id": "ty", "kind": "text", "name": "t", "clips": []}]}}
+        project.normalize(p)
+        self.assertEqual(edit.track_by_id(p, "tx")["kind"], "video")
+        self.assertEqual(edit.track_by_id(p, "tx")["name"], "字幕")
+        self.assertEqual(p["compounds"]["k"]["tracks"][0]["kind"], "video")
+
+    def test_new_text_goes_on_the_topmost_picture_track_with_room(self):
+        p = proj()                                                        # t0 (c1 0-2 s, c2 5-7 s), t1 empty, t2 sound
+        c = edit.add_text(p, 0)
+        self.assertIn(c, edit.track_by_id(p, "t1")["clips"])
+        d = edit.add_text(p, 0)                                           # no room on any: a new top picture track
+        holder = next(t for t in p["tracks"] if d in t["clips"])
+        self.assertEqual(holder["kind"], "video")
+        self.assertEqual(p["tracks"].index(holder), 2)                    # (above t1, below the sound)
+
+
 if __name__ == "__main__":
     unittest.main()

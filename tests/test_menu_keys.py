@@ -19,7 +19,7 @@ from kiasecut.ui.main_window import MainWindow  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 TRACK = ["選取軌道上的所有片段", "重新命名軌道…", "軌道顏色…", "預設顏色", "軌道音量…", "上移", "下移",
-         "新增影片軌道", "新增文字軌道", "新增音訊軌道", "刪除 2 條軌道", "清除空軌道"]
+         "新增畫面軌道", "新增音訊軌道", "刪除 2 條軌道", "清除空軌道"]
 
 
 def keyed(labels):

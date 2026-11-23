@@ -571,11 +571,12 @@ class NodeEditorTests(unittest.TestCase):
         self.assertAlmostEqual(v.transform().m11(), k0, places=3)
         h0, v0 = v.horizontalScrollBar().value(), v.verticalScrollBar().value()
         wheel(-120, Qt.ShiftModifier)
-        self.assertGreaterEqual(v.verticalScrollBar().value(), v0)
-        self.assertEqual(v.horizontalScrollBar().value(), h0)
+        self.assertEqual(v.verticalScrollBar().value(), v0)             # Shift: sideways, as on the timeline
         self.assertEqual(v.transform().m11(), k0)
+        h1 = v.horizontalScrollBar().value()
         wheel(-120, Qt.ControlModifier)
-        self.assertEqual(v.transform().m11(), k0)                       # Ctrl: sideways, not zoom
+        self.assertEqual(v.horizontalScrollBar().value(), h1)           # Ctrl: up / down, not zoom
+        self.assertEqual(v.transform().m11(), k0)
 
     def test_enter_in_the_number_box_does_not_rebuild_the_nodes_under_its_own_key(self):
         def build(e):

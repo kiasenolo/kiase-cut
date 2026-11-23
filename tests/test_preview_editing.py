@@ -311,13 +311,12 @@ class TextOnPreviewTests(unittest.TestCase):
         self.assertIsNone(self.pv.text_box)
         self.assertEqual(self.got, [(self.t["id"], "你好\n世界")])
 
-    def test_esc_puts_the_words_back(self):
+    def test_esc_finishes_keeping_the_words(self):
         tb = self.pv.text_box
-        tb.setPlainText("oops")
-        tb.flush()                                                      # (typing paused: sent)
+        tb.setPlainText("kept")
         QTest.keyClick(tb, Qt.Key_Escape)
         self.assertIsNone(self.pv.text_box)
-        self.assertEqual(self.got[-1], (self.t["id"], "hello"))
+        self.assertEqual(self.got[-1], (self.t["id"], "kept"))
 
     def test_a_click_elsewhere_finishes(self):
         tb = self.pv.text_box

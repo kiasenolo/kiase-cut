@@ -27,7 +27,7 @@ zooms time around the mouse (a touchpad's two-finger scroll moves both ways at o
 pinch zooms time; see wheel.py), the middle button drags the view. Ctrl+middle-drag zooms around
 where the drag started, as in the curve editor: sideways the time, up and down the track
 height (right / up: in). Alt+wheel or the toolbar slider changes the track height; dragging the line under a track header resizes that track
-alone. Ctrl+D clears the selection. Dragging a picture clip above the top row, or a sound clip
+alone. Ctrl+D clears the selection (with none, the time selection). Dragging a picture clip above the top row, or a sound clip
 below the bottom row, puts it on a new track. Holding Alt while dragging clips leaves them
 where they are and drops copies there instead (dupMoveRequested). Media dropped on a clip with Alt held replaces
 that clip's source (the clip lights up while it would).
@@ -40,7 +40,8 @@ it (markerAction). Drags snap to markers too.
 
 Time selection (as in FL Studio): drag with the right button anywhere on the timeline to
 select a span of time (it snaps like clips do); playback then starts at its beginning and
-loops inside it, and it is the range a marked export uses. Ctrl+Shift+D clears it. A right
+loops inside it, and it is the range a marked export uses (入出點: I / O set its ends). Alt+X clears it, so does Ctrl+D when no
+clip is selected. A right
 drag that starts at either end of the selection moves only that end, the other staying where
 it is; one that starts elsewhere selects anew. A right click without dragging opens the menu.
 

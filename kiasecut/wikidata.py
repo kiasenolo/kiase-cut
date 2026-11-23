@@ -289,7 +289,7 @@ GUIDES = {
 <tr><td>←／→（Shift：一秒）</td><td>後退／前進一格</td></tr>
 <tr><td>↑／↓</td><td>上一個／下一個剪輯點</td></tr>
 <tr><td>Alt+←／Alt+→</td><td>上一個／下一個關鍵幀</td></tr>
-<tr><td>I／O／Alt+X</td><td>標記入點／出點／清除</td></tr>
+<tr><td>I／O／Alt+X</td><td>標記入點／出點／清除入出點（右鍵拖曳拉出的也是入出點）</td></tr>
 <tr><td>M</td><td>在播放頭放時間線標記</td></tr>
 <tr><td rowspan="5">檢視</td><td>N</td><td>開關自動吸附</td></tr>
 <tr><td>Ctrl+＋／Ctrl+－／Shift+Z</td><td>時間線放大／縮小／縮放到適合</td></tr>
@@ -325,7 +325,7 @@ GUIDES = {
 <tr><td>N</td><td>開關吸附</td></tr>
 <tr><td>I／O</td><td>在播放頭標記入點、出點；右鍵在時間線上拖也能選一段時間，播放會在那裡循環</td></tr>
 <tr><td>M</td><td>在播放頭放一個標記</td></tr>
-<tr><td>Ctrl+A／Ctrl+D</td><td>全選／取消選取</td></tr>
+<tr><td>Ctrl+A／Ctrl+D</td><td>全選／取消選取（沒有選取時：清除入出點）</td></tr>
 <tr><td>Shift+D</td><td>複製選取的片段</td></tr>
 <tr><td>Ctrl+G</td><td>把選取的圖片片段群組（Ctrl+Shift+G 解散）</td></tr>
 <tr><td>G</td><td>像 Blender 一樣抓取移動（時間線、預覽、節點編輯器都能用）</td></tr>
@@ -356,7 +356,7 @@ GUIDES = {
 </ul>
 <h3>時間的選取和標記</h3>
 <ul>
-<li>在時間線上按右鍵拖曳可以選一段時間：播放會從那裡開始並在其中循環，匯出也可以只匯出這一段。Ctrl+Shift+D 清除。</li>
+<li>在時間線上按右鍵拖曳可以選一段時間：播放會從那裡開始並在其中循環，匯出也可以只匯出這一段。Alt+X 清除；沒有選取片段時 Ctrl+D 也會清除。</li>
 <li>M 在播放頭放一個標記；點它跳過去，拖動可以移動，雙擊改名。</li>
 <li>「精度」決定編輯時一秒有幾步（播放頭、←→、切割、關鍵幀都照它走），預設跟著專案的幀率。</li>
 </ul>"""),

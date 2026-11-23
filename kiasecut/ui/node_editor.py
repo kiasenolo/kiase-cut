@@ -1922,8 +1922,8 @@ class GraphView(QGraphicsView):
         return bool(e.modifiers() & Qt.AltModifier)
 
     def wheelEvent(self, e):
-        """As Blender's 2D views: the wheel zooms (towards the pointer), Ctrl+wheel scrolls sideways, Shift+wheel
-        up / down; a touchpad's two fingers scroll both ways (Ctrl zooms them)."""
+        """The wheel zooms (towards the pointer), as Blender's 2D views; Shift+wheel scrolls sideways, as on the timeline and in
+        the curve editor, and Ctrl+wheel up / down; a touchpad's two fingers scroll both ways (Ctrl zooms them)."""
         from . import wheel
         ctrl, shift = bool(e.modifiers() & Qt.ControlModifier), bool(e.modifiers() & Qt.ShiftModifier)
         if e.modifiers() & Qt.AltModifier and isinstance(self.itemAt(e.position().toPoint()), QGraphicsProxyWidget):
@@ -1931,8 +1931,8 @@ class GraphView(QGraphicsView):
         if wheel.touchpad(e) and not ctrl:
             dx, dy = wheel.pixels(e, 60, 60)
         elif ctrl or shift:
-            n = wheel.notch(e) * 60                        # (Ctrl: the picture moves with the wheel's top going left)
-            dx, dy = (n, 0.0) if ctrl else (0.0, n)
+            n = wheel.notch(e) * 60                        # (Shift: the picture moves with the wheel's top going left)
+            dx, dy = (n, 0.0) if shift else (0.0, n)
         else:
             if wheel.touchpad(e):
                 self.zoom_by(1.15 ** wheel.notch(e), e.position().toPoint())
@@ -1990,10 +1990,13 @@ class GraphView(QGraphicsView):
             if key in (Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter):
                 self._put_down(key == Qt.Key_Escape)
             return
-        if key == Qt.Key_Escape:                           # (it cancels a dragged link, else the selection goes; the window's Esc - 返回上一層 - is not for here)
+        if key == Qt.Key_Escape:                           # (it cancels a dragged link, else the selection goes, else out of the group looked into; the window's Esc - 返回上一層 - is not for here)
             if not self.cancel_drag():
-                self.scene().clearSelection()
-                self.editor.selection_changed()
+                if self.scene().selectedItems():
+                    self.scene().clearSelection()
+                    self.editor.selection_changed()
+                else:
+                    self.editor.leave()
             return
         if key == Qt.Key_A and mods == Qt.NoModifier:
             for it in self.items_by_id.values():

@@ -1134,7 +1134,7 @@ class MainWindow(QMainWindow):
         add(m, "移到上面的軌道", "Ctrl+Up", lambda: self.do_move_rows(-1))
         add(m, "移到下面的軌道", "Ctrl+Down", lambda: self.do_move_rows(1))
         add(m, "全選片段", "Ctrl+A", lambda: self.timeline.select_all())
-        add(m, "取消選取", "Ctrl+D", lambda: self.timeline.select(None))
+        add(m, "取消選取", "Ctrl+D", self.do_deselect)
         add(m, "新增文字", "Ctrl+T", self.do_text)
         viz_menu = m.addMenu("新增 Audio Visualizer")
         for kind, name in viz.KINDS.items():
@@ -1220,8 +1220,7 @@ class MainWindow(QMainWindow):
         m = keyed(self.menuBar().addMenu("播放(&P)"))
         add(m, "標記入點", "I", lambda: self.set_mark("in"))
         add(m, "標記出點", "O", lambda: self.set_mark("out"))
-        add(m, "清除標記", "Alt+X", lambda: self.set_mark(None))
-        add(m, "取消選區", "Ctrl+Shift+D", lambda: self.set_mark(None))
+        add(m, "清除入出點", "Alt+X", lambda: self.set_mark(None))
         add(m, "新增時間線標記", "M", lambda: self.add_marker())
         add(m, "自動吸附", "N", lambda: self.snap_btn.toggle())
         add(m, "跟隨播放頭", None, lambda: self.follow_btn.toggle())
@@ -1254,6 +1253,33 @@ class MainWindow(QMainWindow):
         appevents.watch(self, (QEvent.ShortcutOverride,), self.eventFilter)
         appevents.watch(self, (QEvent.ShortcutOverride,), self._global_undo_keys, first=True)
         appevents.watch(self, (QEvent.Enter,), self._hover_focus)
+        appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress), self._tab_key)
+
+    def _tab_key(self, obj, e):
+        """Tab over the timeline or the preview (as the node editor's, and Blender's): into the selected compound, a group
+        opens or folds, else back to the level above. Not while words or numbers are typed, nor in another window."""
+        if e.key() != Qt.Key_Tab or e.modifiers() & ~Qt.KeypadModifier or not isinstance(obj, QWidget) \
+                or obj.window() is not self or not self.proj or QApplication.mouseButtons():
+            return False
+        if not (self.timeline.underMouse() or self.preview.underMouse()) or self.preview.text_box is not None:
+            return False
+        w = QApplication.focusWidget()
+        if isinstance(w, (QLineEdit, QAbstractSpinBox, QPlainTextEdit, QTextEdit)) or (isinstance(w, QComboBox) and w.isEditable()):
+            return False
+        if e.type() == QEvent.KeyPress:
+            self.tab_level()
+        e.accept()
+        return True
+
+    def tab_level(self):
+        tl = self.timeline
+        c = tl.selected if len(tl.selected_ids) == 1 else None
+        if c is not None and project.is_group(c):
+            tl.toggle_group(c)
+        elif c is not None and c["type"] == "compound":
+            self.on_clip_action("enter", c["id"])
+        elif self.path_ids:
+            self.leave_compound()
 
     def _hover_focus(self, obj, e):
         """The panel under the mouse has the keyboard focus (as Hyprland's focus follows mouse, and Blender's areas): when the
@@ -5492,6 +5518,16 @@ class MainWindow(QMainWindow):
             col = self.pick_live(QColor(m.get("color") or "#4c8dff"), "標記顏色", [m], anchor)
             if col is not None:
                 self.apply("標記顏色", edit.set_marker_color, mid, col.name())
+
+    def do_deselect(self):
+        """Ctrl+D: the clips (and tracks) picked on the timeline let go; with nothing picked, the in / out range (入出點) goes."""
+        tl = self.timeline
+        if tl.selected_ids or tl.selected_id or tl.selected_tracks:
+            tl.select(None)
+            tl.selected_tracks = set()
+            tl.update()
+        elif tl.mark_in is not None or tl.mark_out is not None:
+            self.set_mark(None)
 
     def set_mark(self, which):
         tl = self.timeline

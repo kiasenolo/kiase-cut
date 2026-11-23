@@ -2958,8 +2958,9 @@ class Preview(PenMixin, _Surface):
 
 class TextBox(QPlainTextEdit):
     """The words of a text clip typed in on the preview. Changes go out a moment after typing
-    stops (and when it closes); Esc puts the words it opened with back. A click anywhere else
-    in the program finishes it, as Ctrl+Enter does (the click still does what it does there):
+    stops (and when it closes). Esc finishes it keeping the words, as Ctrl+Enter does (Esc leaves what is being done and
+    keeps what was made; Ctrl+Z takes the words back), and so does a click anywhere else in the program (the click still
+    does what it does there):
     the preview itself, among others, never takes the focus away, so losing it is not enough."""
     edited = Signal(str, str)                   # clip id, words
     finished = Signal()
@@ -2969,7 +2970,7 @@ class TextBox(QPlainTextEdit):
         self.clip_id, self.original, self.sent = clip_id, words, words
         self.source = None                      # (effect id, node id) when it types a text node's words
         self.setPlainText(words)
-        self.setToolTip("Ctrl+Enter 或點別的地方完成，Esc 還原")
+        self.setToolTip("Ctrl+Enter、Esc 或點別的地方完成（Ctrl+Z 復原）")
         self.setStyleSheet("QPlainTextEdit { background: rgba(20, 20, 24, 225); color: #ffffff;"
                            " border: 2px solid #4da3ff; border-radius: 0; font-size: 15px; }")
         self.timer = QTimer(self, singleShot=True, interval=300)
@@ -2999,7 +3000,6 @@ class TextBox(QPlainTextEdit):
 
     def keyPressEvent(self, e):
         if e.key() == Qt.Key_Escape:
-            self.setPlainText(self.original)
             self.finished.emit()
         elif e.key() in (Qt.Key_Return, Qt.Key_Enter) and e.modifiers() & Qt.ControlModifier:
             self.finished.emit()

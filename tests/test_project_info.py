@@ -23,7 +23,6 @@ APP = QApplication.instance() or QApplication([])
 class ProjectInfoTests(unittest.TestCase):
     def test_escape_keeps_the_text(self):
         p = proj()
-        p["timelines"] = [{"id": "tl1", "name": "時間線 1", "tracks": p["tracks"]}]
         p.setdefault("duration_us", 0)
         win = SimpleNamespace(proj=p, path=None, root=None, dirty=False, _tick=lambda: None,
                               _update_title=lambda: None, reveal=lambda _i: None)

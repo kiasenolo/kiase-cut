@@ -1499,7 +1499,7 @@ class Timeline(QWidget):
             p.setPen(QColor("#9a9aa0") if dim else QColor("#ffffff"))
             label = self.clip_label(c).replace("\n", " ")
             if c["type"] == "compound":
-                label = ("⧉ " if c.get("timeline_id") else components.ICON + " " if kind == "component"
+                label = (components.ICON + " " if kind == "component"
                          else "◧ " if kind == "static" else "▣ ") + label
             elif c["type"] == "filter":
                 label = "✦ " + label

@@ -56,7 +56,7 @@ class Layout(Base):
         workspace.save(self.proj, self.path)
         raw = json.load(open(self.path, encoding="utf-8"))
         self.assertEqual(raw["library"]["items"][0]["path"], "Media/a.png")
-        self.assertEqual(raw["timelines"][0]["tracks"][0]["clips"][0]["media"]["path"], "Media/a.png")
+        self.assertEqual(raw["compounds"]["tl1"]["tracks"][0]["clips"][0]["media"]["path"], "Media/a.png")
         back = project.load(self.path)
         self.assertEqual(library.lib(back)["items"][0]["path"], path)
         self.assertEqual(back["tracks"][0]["clips"][0]["media"]["path"], path)

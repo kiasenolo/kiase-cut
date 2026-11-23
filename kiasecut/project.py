@@ -1,15 +1,16 @@
 """Project model: plain JSON-able dicts, saved as *.kiasecut.json.
 
-project  {format, version, width, height, fps, duration_us, timelines: [timeline],
-          active_timeline, tracks, compounds: {id: compound}, master_gain}
-         Several timelines share the media and the compounds (as in DaVinci Resolve);
-         "tracks" is the open timeline's track list (the very list in timelines), so every
-         edit works on the open timeline.  master_gain (optional, 1) scales the
+project  {format, version, width, height, fps, duration_us, active_timeline, tracks,
+          compounds: {id: compound}, master_gain}
+         Every container is a compound (複合片段, version 6): what were timelines are compounds with
+         fit (their length follows their content, they have the project's canvas) - one of them,
+         active_timeline, is edited as the root: "tracks" is its track list (the very list in
+         compounds), so every edit works on it; the others open in tabs like any compound
+         (a "timeline" is only the code's word for a fit one).  master_gain (optional, 1) scales the
          whole output  tracks[0] is the bottom layer; later tracks draw on top
          (as in Jianying).  font_map (optional): {"windows" | "linux" | "mac": {font file:
          installed font file}} - per operating system, the font that stands in for one
          the texts name but that system does not have (fonts.py); not part of undo.
-timeline {id, name, tracks: [track]}
 track    {id, kind: video | audio, name, clips: [clip],      (video: any picture - texts too; "text" ones load as video)
           muted, solo, hidden, locked, gain, reference}     optional: muted / solo tracks
                      make no sound (solo silences the others), hidden ones draw nothing,
@@ -76,8 +77,6 @@ clip     {id, type: image | video | audio | text | compound, name,
           params: {param id: value}                         clips of a component (元件), optional:
                      their own values of its parameters (absent: the component's), animated
                      like any parameter}
-          timeline_id                                       nested timeline clips (as in
-                     DaVinci Resolve): they show another timeline of the project, live
           tracks, matte: {on, show}                         group clips (type "group", 群組):
                      clips of their own on tracks of their own (tracks[0] the bottom one), in
                      the same canvas space as the level they are on, their times counted
@@ -89,6 +88,7 @@ clip     {id, type: image | video | audio | text | compound, name,
                      anchor (中心點跟隨最下層物件): the clips above the bottom track's are placed
                      from the bottom object's centre (anchor_of), so it carries them along
 compound {name, width, height, duration_us, tracks}   reusable content: any number of compound
+         (optional fit: the length follows the content - what timelines were - and it can be the root)
          clips (anywhere, nested too) show the same one, so editing it changes all of them.
          Its children use compound time. optional: static - a static compound (靜態片段)
          is like a picture: it only ever shows its content's first frame (time 0); its clips
@@ -117,7 +117,7 @@ from kiasecut import curves
 
 FORMAT = "kiasecut"
 OLD_FORMATS = ("tesetoa",)        # the program's earlier name: those projects still open
-VERSION = 5                     # 2: shared compounds; 3: several timelines; 4: project folder; 5: Glare 光源位置 y up
+VERSION = 6                     # 2: shared compounds; 3: several timelines; 4: project folder; 5: Glare 光源位置 y up; 6: timelines are compounds
 DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
                                  "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
                                  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -128,7 +128,8 @@ DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
 def new(width=1920, height=1080, fps=60.0):
     p = {"format": FORMAT, "version": VERSION, "width": width, "height": height,
          "fps": fps, "duration_us": 0, "compounds": {},
-         "timelines": [{"id": "tl1", "name": "時間線 1", "tracks": []}], "active_timeline": "tl1"}
+         "active_timeline": "tl1"}
+    p["compounds"]["tl1"] = {"name": "時間線 1", "tracks": [], "width": width, "height": height, "duration_us": 0, "fit": True}
     return link(p)
 
 
@@ -246,8 +247,9 @@ def end_us(tracks):
 
 def refresh_duration(p):
     p["duration_us"] = end_us(p["tracks"])
-    for tl in p.get("timelines", []):                    # (for clips that show a timeline)
-        tl["duration_us"] = end_us(tl["tracks"])
+    for comp in (p.get("compounds") or {}).values():     # (a fit one's length follows what is in it)
+        if comp.get("fit"):
+            comp["duration_us"] = end_us(comp["tracks"])
 
 
 def is_group(c):
@@ -592,7 +594,7 @@ def _tracks_out(tracks):
     for t in tracks:
         clips = []
         for c in t["clips"]:
-            if ("compound_id" in c or "timeline_id" in c) and "compound" in c:
+            if "compound_id" in c and "compound" in c:
                 c = {k: v for k, v in c.items() if k != "compound"}
             elif is_group(c):
                 c = dict(c, tracks=_tracks_out(c["tracks"]))
@@ -605,19 +607,16 @@ def _tracks_out(tracks):
 
 
 def _sync(p):
-    """A list assigned to p["tracks"] becomes the open timeline's tracks."""
-    tls = p.get("timelines")
-    if tls and "tracks" in p:
-        tl = next((t for t in tls if t["id"] == p.get("active_timeline")), tls[0])
-        if tl["tracks"] is not p["tracks"]:
-            tl["tracks"] = p["tracks"]
+    """A list assigned to p["tracks"] becomes the root compound's tracks."""
+    root = (p.get("compounds") or {}).get(p.get("active_timeline"))
+    if root is not None and "tracks" in p and root["tracks"] is not p["tracks"]:
+        root["tracks"] = p["tracks"]
 
 
 def detached(p):
     """The project as stored: links to shared compounds and the open timeline left out."""
     _sync(p)
     out = {k: v for k, v in p.items() if k != "tracks"}
-    out["timelines"] = [dict(t, tracks=_tracks_out(t["tracks"])) for t in p.get("timelines", [])]
     out["compounds"] = {k: dict(v, tracks=_tracks_out(v["tracks"])) for k, v in p.get("compounds", {}).items()}
     return out
 
@@ -725,16 +724,15 @@ def link(p):
     comps = p.setdefault("compounds", {})
     p.setdefault("vfx_nodes", {})
     _sync(p)
-    tls = p.get("timelines") or []
-    if tls:
-        tl = next((t for t in tls if t["id"] == p.get("active_timeline")), tls[0])
-        p["active_timeline"] = tl["id"]
-        p["tracks"] = tl["tracks"]
-
-    by_id = {tl["id"]: tl for tl in tls}
-    for tl in tls:                                       # a timeline shown by a clip is content
-        tl["width"], tl["height"] = p.get("width", 1920), p.get("height", 1080)
-        tl["duration_us"] = end_us(tl["tracks"])
+    if not any(c.get("fit") for c in comps.values()):    # (there is always one to edit)
+        comps[_free_id(comps, "tl")] = {"name": "時間線 1", "tracks": p.get("tracks", []), "fit": True}
+    if not (comps.get(p.get("active_timeline")) or {}).get("fit"):
+        p["active_timeline"] = next(k for k, c in comps.items() if c.get("fit"))
+    p["tracks"] = comps[p["active_timeline"]]["tracks"]
+    for comp in comps.values():                          # a fit one has the project's canvas, its length its content's
+        if comp.get("fit"):
+            comp["width"], comp["height"] = p.get("width", 1920), p.get("height", 1080)
+            comp["duration_us"] = end_us(comp["tracks"])
 
     def visit(tracks):
         for t in tracks:
@@ -751,26 +749,32 @@ def link(p):
                         nodegraph.migrate(e["graph"])
                 if "compound_id" in c:
                     c["compound"] = comps[c["compound_id"]]
-                elif "timeline_id" in c:
-                    c["compound"] = by_id[c["timeline_id"]]
                 elif is_group(c):
                     visit(c["tracks"])
-    for tl in tls or [{"tracks": p.get("tracks", [])}]:
-        visit(tl["tracks"])
     for comp in comps.values():
         visit(comp["tracks"])
     return p
 
 
+def _free_id(taken, prefix):
+    n = 1
+    while f"{prefix}{n}" in taken:
+        n += 1
+    return f"{prefix}{n}"
+
+
 def timeline(p, tl_id=None):
-    return next(t for t in p["timelines"] if t["id"] == (tl_id or p["active_timeline"]))
+    """A compound by id (the root one: None)."""
+    return p["compounds"][tl_id or p["active_timeline"]]
+
+
+def timelines(p):
+    """[(id, compound)] of the fit compounds (what timelines were): the ones that can be edited as the root, in id order."""
+    return [(k, c) for k, c in (p.get("compounds") or {}).items() if c.get("fit")]
 
 
 def all_clips(p):
-    """Every clip of every timeline, compound content included (each compound once)."""
-    for tl in p.get("timelines") or [{"tracks": p["tracks"]}]:
-        for t in all_tracks(tl["tracks"]):
-            yield from t["clips"]
+    """Every clip of every compound (the root one too), each compound once."""
     for comp in p.get("compounds", {}).values():
         for t in all_tracks(comp["tracks"]):
             yield from t["clips"]
@@ -796,15 +800,24 @@ def normalize(p):
     """Bring a loaded or imported project to the current model: compound content written
     inside clips (version 1, Jianying imports) becomes shared entries of p.compounds, one
     per distinct content (copies that differ only in ids are merged), and is linked."""
-    if "timelines" not in p:                               # versions 1 and 2: one timeline
+    comps = p.setdefault("compounds", {})
+    if "timelines" not in p and not any(c.get("fit") for c in comps.values()):     # versions 1 and 2: one timeline
         p["timelines"] = [{"id": "tl1", "name": "時間線 1", "tracks": p.get("tracks", [])}]
         p["active_timeline"] = "tl1"
+    for tl in p.pop("timelines", None) or []:              # versions 3 - 5: timelines become fit compounds (ids kept)
+        comps[tl["id"]] = dict({k: v for k, v in tl.items() if k != "id"}, fit=True)
+    for comp in comps.values():
+        for t in all_tracks(comp["tracks"]):
+            for c in t["clips"]:
+                if "timeline_id" in c:                   # a clip that showed a timeline shows that compound
+                    c["compound_id"] = c.pop("timeline_id")
+    if p.get("active_timeline") in comps:
+        p["tracks"] = comps[p["active_timeline"]]["tracks"]
     _sync(p)
-    for tracks in [tl["tracks"] for tl in p["timelines"]] + [c["tracks"] for c in (p.get("compounds") or {}).values()]:
+    for tracks in [c["tracks"] for c in comps.values()]:
         for t in all_tracks(tracks):                     # 文字 tracks (before 2026-11-24) are picture tracks
             if t.get("kind") == "text":
                 t["kind"] = "video"
-    comps = p.setdefault("compounds", {})
 
     def key_of(comp):
         return json.dumps(_without_ids(_tracks_out(comp["tracks"])), sort_keys=True)             + json.dumps([comp.get("width"), comp.get("height")])
@@ -832,8 +845,6 @@ def normalize(p):
     for cid, comp in list(comps.items()):                  # entries saved before
         visit(comp["tracks"])
         seen.setdefault(key_of(comp), cid)
-    for tl in p["timelines"]:
-        visit(tl["tracks"])
     for comp in comps.values():                            # static compounds once froze at still_us:
         still = comp.pop("still_us", 0)                    # that moment becomes their first frame
         if comp.get("static") and still:
@@ -937,21 +948,19 @@ def compound_holders(c):
 
 
 def ref_of(c):
-    """The compound id or timeline id a clip shows, or None."""
-    return c.get("compound_id") or c.get("timeline_id")
+    """The compound id a clip shows, or None."""
+    return c.get("compound_id")
 
 
 def content(p, ref):
-    """The compound or timeline with id ref (compounds are k…, timelines tl…)."""
-    return p["compounds"][ref] if ref in p.get("compounds", {}) else timeline(p, ref)
+    """The compound with id ref."""
+    return p["compounds"][ref]
 
 
 def compound_uses(p):
-    """{compound or timeline id: [(timeline id, parent path (clip ids), clip)]} for every
-    clip showing one, on every timeline, nested ones reached through every clip that shows
-    their parent."""
+    """{compound id: [(fit compound id, parent path (clip ids), clip)]} for every clip showing one, from every fit compound
+    (what timelines were) down, nested ones reached through every clip that shows their parent."""
     uses = {k: [] for k in p.get("compounds", {})}
-    uses.update({t["id"]: [] for t in p.get("timelines", [])})
 
     def visit(tl, tracks, path):
         for t in all_tracks(tracks):
@@ -960,8 +969,8 @@ def compound_uses(p):
                     uses.setdefault(ref_of(c), []).append((tl, list(path), c))
                     if len(path) < 16:                    # (a loop cannot be made, but stay safe)
                         visit(tl, c["compound"]["tracks"], path + [c["id"]])
-    for tl in p.get("timelines") or [{"id": None, "tracks": p["tracks"]}]:
-        visit(tl["id"], tl["tracks"], [])
+    for tid, tl in timelines(p):
+        visit(tid, tl["tracks"], [])
     return uses
 
 
@@ -969,11 +978,6 @@ def holders_of(p, inner_id):
     """The ids of every compound and timeline that contains() inner_id (itself too), found in one pass over the project
     (contains() of each compound walks what it shows again for every one asked about)."""
     shown_in = {}                                          # id -> the ids of what shows it
-    for tl in p.get("timelines", []):
-        for t in all_tracks(tl["tracks"]):
-            for c in t["clips"]:
-                if ref_of(c):
-                    shown_in.setdefault(ref_of(c), set()).add(tl["id"])
     for kid, comp in p.get("compounds", {}).items():
         for t in all_tracks(comp["tracks"]):
             for c in t["clips"]:

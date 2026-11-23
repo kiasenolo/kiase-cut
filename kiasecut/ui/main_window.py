@@ -1395,7 +1395,7 @@ class MainWindow(QMainWindow):
         while self.tl_tabs.count():
             self.tl_tabs.removeTab(0)
         if self.proj:
-            ids = [tl["id"] for tl in self.proj["timelines"]]
+            ids = [k for k, _ in project.timelines(self.proj)]
             comps = self.proj.get("compounds", {})
             if self.open_tls is None:
                 self.open_tls = list(ids)
@@ -1411,7 +1411,7 @@ class MainWindow(QMainWindow):
                     name = ("◧ " if comp.get("static") else "⧉ ") + (comp.get("name") or "複合片段")
                     tip = "關閉這個分頁（複合片段保留）"
                 else:
-                    name, tip = project.timeline(self.proj, key)["name"], "關閉這個時間線（內容保留，可從「複合片段」重新打開）"
+                    name, tip = project.timeline(self.proj, key)["name"], "關閉這個分頁（內容保留，可從「複合片段」重新打開）"
                 i = self.tl_tabs.addTab(name)
                 self.tl_tabs.setTabData(i, key)
                 close = self.tool("close", tip, lambda _=False, t=key: self.close_timeline(t))
@@ -1449,11 +1449,11 @@ class MainWindow(QMainWindow):
         """Open a compound (or timeline) in a tab of its own (added when it has none)."""
         if not self.proj:
             return
-        key = ref if any(t["id"] == ref for t in self.proj["timelines"]) else OPEN_PREFIX + ref
+        key = ref if self.is_fit(ref) else OPEN_PREFIX + ref
         if key.startswith(OPEN_PREFIX) and ref not in self.proj.get("compounds", {}):
             return
         if self.open_tls is None:
-            self.open_tls = [t["id"] for t in self.proj["timelines"]]
+            self.open_tls = [k for k, _ in project.timelines(self.proj)]
         if key not in self.open_tls:
             self.open_tls.append(key)
         self.open_tab(key)
@@ -1485,6 +1485,10 @@ class MainWindow(QMainWindow):
             self.path_ids = []
             self.open_view(self.tl_views.get(key, {}))
         self._update_title()
+
+    def is_fit(self, kid):
+        """Whether compound kid is a fit one (what a timeline was): it opens as the root, in a tab of its own."""
+        return bool(self.proj and ((self.proj.get("compounds") or {}).get(kid) or {}).get("fit"))
 
     def switch_timeline(self, tl_id):
         """Open another timeline of the project (not an edit: undo does not step through it)."""
@@ -2223,7 +2227,7 @@ class MainWindow(QMainWindow):
         items = library.lib(self.proj)["items"]
         n_clips = sum(1 for _ in project.all_clips(self.proj))
         size = workspace.show_size(workspace.folder_size(mroot)) if mroot and os.path.isdir(mroot) else "—"
-        stats = (f"{len(self.proj['timelines'])} 條時間線，{n_clips} 個片段\n"
+        stats = (f"{len(self.proj.get('compounds') or {})} 個複合片段，{n_clips} 個片段\n"
                  f"素材庫 {len(items)} 個檔案（Media 資料夾 {size}）\n"
                  f"長度 {timecode(self.proj['duration_us'], self.proj['fps'])}")
         dlg = ProjectInfoDialog(self, self.proj, self.path, stats)
@@ -2761,8 +2765,8 @@ class MainWindow(QMainWindow):
             self.timeline.set_selection({c["id"] for c in clips}, clips[-1]["id"])
 
     def delete_compound_item(self, kid):
-        """From the compound list: a timeline, or a compound with the clips that show it."""
-        if kid.startswith("tl"):
+        """From the compound list: a fit compound (what a timeline was), or a compound with the clips that show it."""
+        if self.is_fit(kid):
             self.timeline_do("delete", kid)
             return
         if kid.startswith("cf"):
@@ -2776,8 +2780,8 @@ class MainWindow(QMainWindow):
             self.apply_root("刪除複合片段", lambda root: edit.delete_compound(root, kid, force=True))
 
     def clone_compound_item(self, kid):
-        """From the compound list: a copy of a timeline, or of a compound as one of its own."""
-        if kid.startswith("tl"):
+        """From the compound list: a copy of a fit compound, or of a compound as one of its own."""
+        if self.is_fit(kid):
             self.timeline_do("duplicate", kid)
         else:
             self.apply_root("建立副本", edit.clone_compound, kid)
@@ -4694,7 +4698,7 @@ class MainWindow(QMainWindow):
     def place_compound(self, kid, track_id, start_us):
         if not self.proj:
             return
-        self.apply_root("加入時間線" if kid.startswith("tl") else "加入複合片段",
+        self.apply_root("加入複合片段",
                         lambda root: edit.place_compound(root, self.container(root), kid, track_id or None, start_us),
                         select=lambda c: c["id"])
 
@@ -4709,7 +4713,7 @@ class MainWindow(QMainWindow):
         self.apply_root("移到資料夾", edit.move_to_compound_folder, ident, folder)
 
     def rename_compound(self, kid):
-        if kid.startswith("tl"):                                    # a timeline row
+        if self.is_fit(kid):                                        # (its tab shows the name being typed)
             self.timeline_do("rename", kid)
             return
         if kid.startswith("cf"):
@@ -5602,20 +5606,32 @@ class MainWindow(QMainWindow):
     def export(self):
         if not self.proj:
             return
-        while self.path_ids:
-            self.leave_compound()
-        out_tracks = [t for t in self.proj["tracks"] if project.present(t)]     # (參考 tracks are not exported)
-        total = max(round(project.end_us(out_tracks or self.proj["tracks"]) / US * self.fps), 1)
+        tab = self.current_tab()                         # 匯出 the tab shown: the root, or a compound open in a tab of its own
+        kid = tab[len(OPEN_PREFIX):] if tab.startswith(OPEN_PREFIX) else None
+        comp = self.proj["compounds"].get(kid) if kid else None
+        if comp is not None and comp.get("static"):      # (a picture: the root instead)
+            comp = kid = None
+        if comp is None:
+            while self.path_ids:
+                self.leave_compound()
+        else:
+            self.path_ids = [tab]
+            self._switch_level(self.pos)
+        level = comp or self.proj
+        width, height = (comp.get("width") or self.proj["width"], comp.get("height") or self.proj["height"]) if comp else \
+            (self.proj["width"], self.proj["height"])
+        out_tracks = [t for t in level["tracks"] if project.present(t)]     # (參考 tracks are not exported)
+        total = max(round(project.end_us(out_tracks or level["tracks"]) / US * self.fps), 1)
         default = (os.path.join(workspace.exports_dir(self.root), workspace.project_name(self.path) + ".mp4")
                    if self.root else os.path.join(os.path.expanduser("~"), "Videos", "KiaseCut.mp4"))
-        if len(self.proj["timelines"]) > 1:              # one file per timeline
-            default = default[:-4] + f" - {project.timeline(self.proj)['name']}.mp4"
+        if comp is not None or len(project.timelines(self.proj)) > 1:      # one file per compound
+            default = default[:-4] + f" - {(comp or project.timeline(self.proj)).get('name') or '複合片段'}.mp4"
         try:
             last_spec = json.loads(self.settings().value("export_spec", "") or "{}")
         except (TypeError, ValueError):
             last_spec = {}
         dlg = ExportDialog(self, default, self.fps, total, self.timeline.mark_in, self.timeline.mark_out,
-                           self.proj["width"], self.proj["height"], out_fps=self.proj["fps"], spec=last_spec)
+                           width, height, out_fps=self.proj["fps"], spec=last_spec)
         if dlg.exec() != QDialog.Accepted:
             return
         out, t0, t1, fmt, opts = dlg.result_options()
@@ -5627,6 +5643,10 @@ class MainWindow(QMainWindow):
             return
         self.player.worker.set_playing(False)
         snapshot = json.loads(json.dumps(self.proj))
+        if kid:                                          # a compound of its own: its tracks at its size are the picture
+            snapshot["tracks"] = snapshot["compounds"][kid]["tracks"]
+            snapshot["width"], snapshot["height"] = width, height
+            snapshot["duration_us"] = project.end_us(snapshot["tracks"])
         follows = pathfollow.has_followers(snapshot)
         pathfollow.resolve(snapshot)
         cache = self.cache_dir()

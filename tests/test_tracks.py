@@ -146,8 +146,8 @@ class TimelineTests(unittest.TestCase):
         self.assertNotEqual(copy_["tracks"][0]["clips"][0]["id"], project.timeline(p, first)["tracks"][0]["clips"][0]["id"])
         h.undo()
         h.undo()
-        self.assertEqual([t["id"] for t in p["timelines"]], [first])
-        self.assertIs(p["tracks"], p["timelines"][0]["tracks"])
+        self.assertEqual([k for k, _ in project.timelines(p)], [first])
+        self.assertIs(p["tracks"], project.timeline(p, first)["tracks"])
         with self.assertRaises(edit.EditError):
             edit.delete_timeline(p, first)
 

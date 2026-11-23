@@ -47,14 +47,14 @@ class MarkerEditTests(unittest.TestCase):
         p = proj()
         edit.add_marker(p, S, "A")
         out = project.detached(p)
-        self.assertEqual(out["timelines"][0]["markers"][0]["name"], "A")
+        self.assertEqual(out["compounds"]["tl1"]["markers"][0]["name"], "A")
 
     def test_each_timeline_has_its_own(self):
         p = proj()
         edit.add_marker(p, S)
         edit.add_timeline(p)
         self.assertEqual(edit.markers_of(p), [])
-        edit.open_timeline(p, p["timelines"][0]["id"])
+        edit.open_timeline(p, "tl1")
         self.assertEqual(len(edit.markers_of(p)), 1)
 
 

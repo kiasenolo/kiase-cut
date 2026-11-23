@@ -340,7 +340,7 @@ class ComponentTests(unittest.TestCase):
         project.save(self.p, path)
         with open(path, encoding="utf-8") as fh:
             stored = json.load(fh)
-        clip = next(c for t in stored["timelines"][0]["tracks"] for c in t["clips"] if c["id"] == self.cid)
+        clip = next(c for t in stored["compounds"]["tl1"]["tracks"] for c in t["clips"] if c["id"] == self.cid)
         self.assertEqual(clip["params"][pi["id"]], "media/g.png")
         back = project.load(path)
         c = edit.find(back, self.cid)[1]

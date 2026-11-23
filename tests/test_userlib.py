@@ -70,7 +70,7 @@ class UserLibraryTest(unittest.TestCase):
         project.save(proj, os.path.join(pdir, "p.kiasecut.json"))
         with open(os.path.join(pdir, "p.kiasecut.json"), encoding="utf-8") as fh:
             data = json.load(fh)
-        stored = data["timelines"][0]["tracks"][-1]["clips"][0]["media"]["path"]
+        stored = data["compounds"]["tl1"]["tracks"][-1]["clips"][0]["media"]["path"]
         self.assertEqual(stored, "@library/images/a.png")
         self.assertTrue(library.in_user_library(p))
         self.assertFalse(library.in_user_library("/elsewhere/a.png"))
@@ -198,10 +198,8 @@ class LibraryCompoundTests(unittest.TestCase):
         c = edit.place_compound(q, q, kid, None, 3 * self.S)
         self.assertEqual(c["compound_id"], kid)
         self.assertEqual(edit.add_library_compound(q, userlib.load_compound(path)), kid)   # used again
-        self.assertEqual(len(q["compounds"]), 2)
+        self.assertEqual(len(q["compounds"]), 3)                                      # (and q's own, what its timeline was)
 
-    def test_timelines_are_refused(self):
-        self.p["compounds"][self.kid]["tracks"][0]["clips"][0]["timeline_id"] = "tl1"
-        self.p["compounds"][self.kid]["tracks"][0]["clips"][0].pop("compound_id", None)
-        with self.assertRaises(ValueError):
-            userlib.compound_deps(self.p, self.kid)
+    def test_a_fit_compound_inside_is_saved_with_it(self):
+        self.p["compounds"][self.kid]["tracks"][0]["clips"][0]["compound_id"] = "tl1"      # (what a timeline was: a compound)
+        self.assertIn("tl1", userlib.compound_deps(self.p, self.kid))

@@ -43,7 +43,7 @@ class VfxNodes(unittest.TestCase):
         m = h.do("node", edit.add_graph_node, "c2", b["id"], {"type": "filter", "ref": "builtin:nodes/math"})
         text = project.dumps(p)
         stored = json.loads(text)
-        self.assertNotIn("graph", stored["timelines"][0]["tracks"][0]["clips"][0]["effects"][0])      # (the clip keeps only the link)
+        self.assertNotIn("graph", stored["compounds"]["tl1"]["tracks"][0]["clips"][0]["effects"][0])      # (the clip keeps only the link)
         self.assertIn(m, stored["vfx_nodes"][vid]["graph"]["nodes"])
         q = project.link(project.normalize(json.loads(text)))
         e1 = edit.find(q, "c1")[1]["effects"][0]
@@ -87,7 +87,7 @@ class VfxNodes(unittest.TestCase):
     def test_a_compound_kept_in_the_library_carries_its_nodes(self):
         p, h, vid, a, b = two_uses()
         stored = json.loads(project.dumps(p))
-        fake = {"k1": {"tracks": stored["timelines"][0]["tracks"]}}
+        fake = {"k1": {"tracks": stored["compounds"]["tl1"]["tracks"]}}
         project.inline_vfx(fake, p)
         e = fake["k1"]["tracks"][0]["clips"][0]["effects"][0]
         self.assertNotIn("vfx", e)

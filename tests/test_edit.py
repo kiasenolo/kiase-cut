@@ -249,19 +249,19 @@ class CopyPasteTests(unittest.TestCase):
     def test_delete_compound_with_its_uses(self):
         p = proj()
         tl2 = edit.add_timeline(p)                              # an empty second timeline, now open
-        first = p["timelines"][0]["id"]
+        first = "tl1"
         clip_ = edit.place_compound(p, p, first, None, 0)
         edit.make_unique(p, p, clip_["id"])
-        kid = next(iter(p["compounds"]))
+        kid = clip_["compound_id"]
         with self.assertRaises(edit.EditError):
             edit.delete_compound(p, kid)                        # used: needs force
         edit.delete_compound(p, kid, force=True)
-        self.assertEqual(p["compounds"], {})
+        self.assertEqual(sorted(p["compounds"]), sorted([first, tl2["id"]]))      # (what the timelines were)
         self.assertFalse(any(c["type"] == "compound" for t in tl2["tracks"] for c in t["clips"]))
 
     def test_deleting_the_open_timeline_keeps_the_first(self):
         p = proj()
-        first = p["timelines"][0]["id"]
+        first = "tl1"
         edit.add_timeline(p)                                    # open; the first is not
         second = p["active_timeline"]
         edit.delete_timeline(p, second)
@@ -302,7 +302,7 @@ class CopyPasteTests(unittest.TestCase):
     def test_clone_compound_clip_and_entry(self):
         p = proj()
         edit.add_timeline(p)
-        clip_ = edit.place_compound(p, p, p["timelines"][0]["id"], None, 0)
+        clip_ = edit.place_compound(p, p, "tl1", None, 0)
         edit.make_unique(p, p, clip_["id"])
         kid = clip_["compound_id"]
         new = edit.clone_clips(p, p, [clip_["id"]])             # 建立獨立副本: its own compound

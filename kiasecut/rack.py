@@ -143,7 +143,7 @@ def values(root, t_us):
 def clips_with_exprs(root):
     """Every clip of the project (all timelines, compounds, groups) that has expressions."""
     from . import project
-    holders = list(root.get("timelines") or [root]) + list((root.get("compounds") or {}).values())
+    holders = list((root.get("compounds") or {}).values()) or [root]
     for h in holders:
         for t in project.all_tracks(h.get("tracks") or []):
             for c in t["clips"]:

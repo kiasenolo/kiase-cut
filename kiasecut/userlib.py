@@ -230,12 +230,8 @@ def compound_deps(proj, kid):
         k = todo.pop(0)
         if k in out:
             continue
-        if k.startswith("tl"):
-            raise ValueError("複合片段裡面用到了時間線，不能存到 Library")
         out.append(k)
         for c in project.walk_clips(proj["compounds"][k]["tracks"]):
-            if c.get("timeline_id"):
-                todo.append(c["timeline_id"])
             todo += [h["compound_id"] for h in project.compound_holders(c)
                      if h["compound_id"] in proj["compounds"]]          # (masks and effect sources too)
     return out
@@ -249,6 +245,9 @@ def save_compound(root, folder, name, proj, kid):
     root = library.norm(root)
     stored = project.inline_vfx(json.loads(project.dumps(proj))["compounds"], proj)
     comps = {k: stored[k] for k in compound_deps(proj, kid)}
+    for comp in comps.values():                          # (a fit one - what a timeline was - keeps the length it has now)
+        if comp.pop("fit", None):
+            comp["duration_us"] = project.end_us(comp["tracks"]) or comp.get("duration_us") or 0
     store = os.path.join(category_dir(root, "compounds"), COMPOUND_MEDIA)
     copied = {}
 

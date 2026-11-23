@@ -1,7 +1,5 @@
-"""Compound browser: the project's timelines and shared compounds (reusable like media).
-
-Timelines are listed first: drag one into another timeline to nest it (as in DaVinci
-Resolve; the clip shows that timeline live), double-click to open it.
+"""Compound browser: the project's compounds (reusable like media) - what were timelines among them (version 6: a timeline
+is a compound with fit, project.timelines; it opens in a tab of its own and can be dragged into another like any compound).
 
 Each compound is listed once with how many clips show it; under it, where it is used.
 Static compounds (◧ 靜態片段) are pictures built in the editor: their clips show one moment
@@ -19,7 +17,7 @@ the list to add a timeline, a compound or a static compound (createRequested: "t
 "compound" / "static" / "component" / "static_component"; a new compound starts empty and opens by itself).
 Compounds can be kept in folders (新資料夾, newFolderRequested; root["compound_folders"], edit.add_compound_folder): drag a compound
 or a folder onto a folder (or a gap, for the top) to move it there (moveRequested), or pick 移到資料夾. A folder is renamed and
-deleted like a compound (its contents move up). The timelines stay on top, outside the folders.
+deleted like a compound (its contents move up).
 """
 from PySide6.QtCore import QEvent, QMimeData, Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QTreeWidget, QTreeWidgetItem,
@@ -59,7 +57,7 @@ class CompoundTree(QTreeWidget):
         return [MIME, FOLDER_MIME]
 
     def mimeData(self, items):
-        ids = [it.data(0, Qt.UserRole)[1] for it in items if it.data(0, Qt.UserRole)[0] == "def" and not it.data(0, Qt.UserRole)[1].startswith("tl")]
+        ids = [it.data(0, Qt.UserRole)[1] for it in items if it.data(0, Qt.UserRole)[0] == "def"]
         folders = [it.data(0, Qt.UserRole)[1] for it in items if it.data(0, Qt.UserRole)[0] == "folder"]
         md = QMimeData()
         md.setData(MIME, ",".join(PREFIX + k for k in ids).encode())
@@ -74,7 +72,7 @@ class CompoundTree(QTreeWidget):
             d = it.data(0, Qt.UserRole)
             if d[0] == "folder":
                 return d[1]
-            if d[0] == "def" and not d[1].startswith("tl"):
+            if d[0] == "def":
                 it = it.parent()
                 continue
             return None
@@ -164,10 +162,10 @@ class CompoundPanel(QWidget):
         the edit."""
         if not proj:
             return None
-        holders = [(t["id"], t) for t in proj.get("timelines", [])] + list(proj.get("compounds", {}).items())
+        holders = list(proj.get("compounds", {}).items())
         return (tuple(open_path), proj.get("active_timeline"),
                 tuple((f["id"], f.get("name"), f.get("parent")) for f in proj.get("compound_folders") or []),
-                tuple((kid, h.get("name"), h.get("folder"), bool(h.get("static")), components.is_component(h), h.get("duration_us"),
+                tuple((kid, h.get("name"), h.get("folder"), bool(h.get("static")), components.is_component(h), h.get("duration_us"), bool(h.get("fit")),
                        tuple((c["id"], c.get("name"), c["start_us"], c["duration_us"], project.ref_of(c))
                              for t in project.all_tracks(h["tracks"]) for c in t["clips"] if project.ref_of(c)))
                       for kid, h in holders))
@@ -175,7 +173,7 @@ class CompoundPanel(QWidget):
     def set_project(self, proj, open_path=()):
         """Fill the list; the compound being edited (open_path) is shown in bold."""
         self.open_path = list(open_path)
-        self.tl_count = len(proj.get("timelines", [])) if proj else 1
+        self.tl_count = len(project.timelines(proj)) if proj else 1
         self.proj = proj
         shown = self.shown(proj, open_path)
         if shown is not None and shown == self._shown:
@@ -193,21 +191,19 @@ class CompoundPanel(QWidget):
             for tl, path, c in (u for us in self.uses.values() for u in us):
                 if tl == proj.get("active_timeline") and path + [c["id"]] == self.open_path:
                     open_ids.add(project.ref_of(c))
-        timelines = [(t["id"], t) for t in proj.get("timelines", [])] if proj else []
-        rows = timelines + sorted(comps.items(), key=lambda kv: kv[1].get("name") or "")
+        rows = sorted(comps.items(), key=lambda kv: (not kv[1].get("fit"), kv[1].get("name") or ""))
         folders = self._folder_items(proj, expanded)
-        top = []                                            # (the timelines, the folders, then the compounds outside them)
+        top = []                                            # (the folders, then the compounds outside them)
         for kid, comp in rows:
             uses = self.uses.get(kid, [])
-            is_tl = kid.startswith("tl")
+            is_tl = bool(comp.get("fit"))                   # (what a timeline was: it opens in a tab of its own)
             static = bool(comp.get("static"))
             comp_ = components.is_component(comp)
-            label = ("⧉ " if is_tl else components.ICON + " " if comp_ else "◧ " if static else "▣ ") + \
-                (comp.get("name") or "複合片段")
+            label = (components.ICON + " " if comp_ else "◧ " if static else "▣ ") + (comp.get("name") or "複合片段")
             it = QTreeWidgetItem([label + (f"  ×{len(uses)}" if uses or not is_tl else ""), "",
                                   "靜態" if static else f"{(comp.get('duration_us') or 0) / US:.2f}s"])
             it.setData(0, Qt.UserRole, ("def", kid))
-            it.setToolTip(0, "時間線：拖進另一條時間線使用（巢狀）；按兩下打開" if is_tl
+            it.setToolTip(0, "按兩下在它自己的分頁打開；拖到時間軸上使用" if is_tl
                           else "元件：每個使用它的片段可以在屬性裡設定自己的參數（文字、顏色、圖片、顯示）；"
                                "按兩下進入編輯" + ("（靜態：像圖片一樣使用）" if static else "") if comp_
                           else "靜態片段：像圖片一樣使用，長度隨意；按兩下進入編輯它的畫面（只會顯示第一幀）" if static
@@ -219,7 +215,7 @@ class CompoundPanel(QWidget):
                 it.setFont(0, f)
             if not uses and not is_tl:
                 it.setForeground(0, Qt.gray)
-            names = {t["id"]: t["name"] for t in proj.get("timelines", [])}
+            names = {k: t.get("name") or "" for k, t in project.timelines(proj)}
             for tl, path, c in uses:
                 where = names.get(tl, "") + ("" if not path else f"，{len(path)} 層內")
                 sub = QTreeWidgetItem([c.get("name") or comp.get("name") or "片段", stamp(c["start_us"]),
@@ -231,7 +227,7 @@ class CompoundPanel(QWidget):
                 sub.setToolTip(0, f"{where}：按一下選取，按兩下進入編輯")
                 sub.setFlags(sub.flags() & ~Qt.ItemIsDragEnabled)
                 it.addChild(sub)
-            home = folders.get(comp.get("folder")) if not is_tl else None
+            home = folders.get(comp.get("folder"))
             (home.addChild if home is not None else top.append)(it)
             if kid in expanded or kid in open_ids:
                 it.setExpanded(True)
@@ -240,7 +236,7 @@ class CompoundPanel(QWidget):
                     p.setExpanded(True)
                     p = p.parent()
         roots = [it for it in folders.values() if it.parent() is None]
-        tls = [it for it in top if it.data(0, Qt.UserRole)[1].startswith("tl")]
+        tls = [it for it in top if (comps.get(it.data(0, Qt.UserRole)[1]) or {}).get("fit")]
         for it in tls + roots + [it for it in top if it not in tls]:
             self.tree.addTopLevelItem(it)
         for it in self._items():                             # (only once they are in the tree does being open stick)
@@ -300,7 +296,7 @@ class CompoundPanel(QWidget):
             it.setExpanded(not it.isExpanded())
         elif d[0] == "use":
             self.openRequested.emit(d[3], list(d[2]) + [d[1]])
-        elif d[1].startswith("tl"):
+        elif (self.comps.get(d[1]) or {}).get("fit"):
             self.timelineRequested.emit(d[1])
         elif self.uses.get(d[1]):
             tl, path, c = self.uses[d[1]][0]
@@ -340,8 +336,7 @@ class CompoundPanel(QWidget):
         menu.exec(at)
 
     def _create_actions(self, menu):
-        for text, kind, tip in (("新增時間線", "timeline", "一條新的空白時間線"),
-                                ("新增複合片段", "compound", "空白的複合片段，建立後直接進入編輯；拖到時間軸上使用"),
+        for text, kind, tip in (("新增複合片段", "compound", "空白的複合片段，建立後直接進入編輯；拖到時間軸上使用"),
                                 ("新增靜態複合片段", "static", "空白的靜態片段（像圖片，只顯示第一幀），建立後直接進入編輯"),
                                 ("新增元件", "component", "空白的元件：帶參數的複合片段，每個使用它的片段可以設定自己的文字、"
                                                         "顏色、圖片和顯示開關"),
@@ -381,14 +376,15 @@ class CompoundPanel(QWidget):
             menu.addAction("刪除這個片段", lambda: self.useDeleteRequested.emit(d[3], list(d[2]), d[1]))
         else:
             kid = d[1]
-            if not kid.startswith("tl"):
+            fit = bool((self.comps.get(kid) or {}).get("fit"))
+            if not fit:
                 menu.addAction("進入編輯", lambda: self.entryRequested.emit(kid))
             menu.addAction("在新的分頁開啟", lambda: self.tabRequested.emit(kid))
             menu.addAction("重新命名…", lambda: (inplace.item_hint(self.tree, it), self.renameRequested.emit(kid)))
             menu.addAction("建立副本", lambda: self.cloneRequested.emit(kid))
-            if not kid.startswith("tl"):
-                self._move_menu(menu, kid)
-                menu.addAction("存到 Library…", lambda: self.libraryRequested.emit(kid))
+            self._move_menu(menu, kid)
+            menu.addAction("存到 Library…", lambda: self.libraryRequested.emit(kid))
+            if not fit:
                 comp = self.comps.get(kid) or {}
                 if components.is_component(comp):
                     menu.addAction("轉回靜態片段" if comp.get("static") else "轉回複合片段",
@@ -401,8 +397,8 @@ class CompoundPanel(QWidget):
                 if not comp.get("static") and edit.steady(comp):
                     menu.addAction("轉為" + ("靜態元件" if components.is_component(comp) else "靜態複合片段"),
                                    lambda: self.staticRequested.emit(kid))
-            if kid.startswith("tl"):
-                a = menu.addAction("刪除時間線", lambda: self.deleteRequested.emit(kid))
+            if fit and not self.uses.get(kid):
+                a = menu.addAction("刪除", lambda: self.deleteRequested.emit(kid))
                 a.setEnabled(self.tl_count > 1)
             else:
                 n = len(self.uses.get(kid, []))

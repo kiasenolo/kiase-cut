@@ -61,7 +61,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_autosave_opens_from_its_folder(self):
         media = os.path.join(os.path.dirname(self.path), "Media", "a.png")
-        self.proj["tracks"] = self.proj["timelines"][0]["tracks"]
+        self.proj["tracks"] = self.proj["compounds"]["tl1"]["tracks"]
         self.proj["library"] = {"items": [{"id": "m1", "path": media, "kind": "image"}], "folders": []}
         save = recovery.autosave(self.dir, self.proj, self.path)
         self.assertTrue(os.path.basename(save).startswith("My Video "))

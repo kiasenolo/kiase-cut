@@ -131,7 +131,7 @@ class PanelRefreshTests(unittest.TestCase):
         kb = edit.add_compound(p)
         kc = edit.add_compound(p)
         edit.place_compound(p, p["compounds"][ka], kb, None, 0)         # tl1 > a > b; c alone
-        ids = [t["id"] for t in p["timelines"]] + list(p["compounds"])
+        ids = list(p["compounds"])
         for inner in ids:
             self.assertEqual(project.holders_of(p, inner), {o for o in ids if project.contains(p, o, inner)}, inner)
         self.assertEqual(project.holders_of(p, kb), {"tl1", ka, kb})
@@ -147,10 +147,10 @@ class PanelMenuTests(unittest.TestCase):
         menu = QMenu()
         panel._create_actions(menu)
         acts = [a for a in menu.actions() if not a.isSeparator()]
-        self.assertEqual([a.text() for a in acts], ["新增時間線", "新增複合片段", "新增靜態複合片段", "新增元件", "新增靜態元件"])
+        self.assertEqual([a.text() for a in acts], ["新增複合片段", "新增靜態複合片段", "新增元件", "新增靜態元件"])
         for a in acts:
             a.trigger()
-        self.assertEqual(got, ["timeline", "compound", "static", "component", "static_component"])
+        self.assertEqual(got, ["compound", "static", "component", "static_component"])
 
 
 class ToStaticTests(unittest.TestCase):

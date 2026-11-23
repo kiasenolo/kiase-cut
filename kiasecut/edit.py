@@ -3476,7 +3476,7 @@ def replace_media(proj, clip_id, it, asset=None):
     _, c = find(proj, clip_id)
     kind = it["kind"]
     _source_check(c, kind in ("image", "video"))
-    for k in ("compound", "compound_id", "timeline_id", "asset"):
+    for k in ("compound", "compound_id", "asset"):
         c.pop(k, None)
     if asset is not None:
         c["asset"] = copy.deepcopy(asset)
@@ -3505,17 +3505,17 @@ def replace_with_compound(root, container, clip_id, ref):
     try:
         comp = project.content(root, ref)
     except (StopIteration, KeyError):
-        raise EditError("unknown compound or timeline") from None
+        raise EditError("unknown compound") from None
     if project.contains(root, ref, _container_id(root, container)):
-        raise EditError("a timeline or compound cannot show itself")
-    for k in ("media", "volume", "fade_in_us", "fade_out_us", "compound_id", "timeline_id", "asset"):
+        raise EditError("a compound cannot show itself")
+    for k in ("media", "volume", "fade_in_us", "fade_out_us", "compound_id", "asset"):
         c.pop(k, None)
     c["type"] = "compound"
-    c["timeline_id" if ref.startswith("tl") else "compound_id"] = ref
+    c["compound_id"] = ref
     c["compound"] = comp
     c["source_start_us"] = 0
     if not comp.get("static"):
-        _fit_source(c, project.end_us(comp["tracks"]) if ref.startswith("tl") else
+        _fit_source(c, project.end_us(comp["tracks"]) if comp.get("fit") else
                     comp.get("duration_us") or project.end_us(comp["tracks"]))
     if not c.get("named"):
         c["name"] = comp.get("name") or "複合片段"
@@ -3851,15 +3851,12 @@ def set_audio_stream(proj, clip_id, n):
 
 # -- shared compounds -------------------------------------------------------------------------------
 def _container_id(root, container):
-    """The id of the timeline or compound whose tracks `container` holds."""
+    """The id of the compound whose tracks `container` holds (the root one's: the project itself)."""
     if container is root:
         return root["active_timeline"]
     for k, v in root["compounds"].items():
         if v is container:
             return k
-    for t in root["timelines"]:
-        if t is container:
-            return t["id"]
     return None
 
 
@@ -3912,11 +3909,11 @@ def place_compound(root, container, ref, track_id, start_us):
     if comp.get("static"):
         dur = STILL_DEFAULT_US
     else:
-        dur = int((project.end_us(comp["tracks"]) if ref.startswith("tl")
+        dur = int((project.end_us(comp["tracks"]) if comp.get("fit")
                    else comp.get("duration_us") or project.end_us(comp["tracks"])) or MIN_US)
     clip = {"id": new_clip_id(), "type": "compound", "name": comp.get("name") or "複合片段",
             "start_us": max(0, int(start_us)), "duration_us": dur, "source_start_us": 0,
-            ("timeline_id" if ref.startswith("tl") else "compound_id"): ref, "compound": comp,
+            "compound_id": ref, "compound": comp,
             "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
     track = None
     if track_id:
@@ -4013,7 +4010,7 @@ def kind_name(static, component=False):
 def new_name(comps, static, component=False):
     """"複合片段 n", "靜態片段 n", "元件 n" or "靜態元件 n": the next number of that kind."""
     kind = (component, bool(static))
-    n = sum(1 for k in comps.values() if (components.is_component(k), bool(k.get("static"))) == kind) + 1
+    n = sum(1 for k in comps.values() if not k.get("fit") and (components.is_component(k), bool(k.get("static"))) == kind) + 1
     return f"{kind_name(static, component)} {n}"
 
 
@@ -4191,7 +4188,6 @@ def make_unique(root, container, clip_id):
     if not project.ref_of(c):
         raise EditError("not a compound clip")
     kid = _copy_compound(root, c["compound"])
-    c.pop("timeline_id", None)
     c["compound_id"] = kid
     project.link(root)
     return c
@@ -4293,8 +4289,10 @@ def delete_compound(root, compound_id, force=False):
     uses = project.compound_uses(root).get(compound_id) or []
     if uses and not force:
         raise EditError("still used on a timeline")
+    if compound_id == root.get("active_timeline"):
+        raise EditError("先切到別的時間線再刪除這個")
     shown = {id(c) for _, _, c in uses}
-    for owner in list(root.get("timelines", [])) + list(root.get("compounds", {}).values()):
+    for owner in list(root.get("compounds", {}).values()):
         for t in owner["tracks"]:
             t["clips"] = [c for c in t["clips"] if id(c) not in shown]
     root["compounds"].pop(compound_id, None)
@@ -4313,7 +4311,7 @@ def make_component(root, kid):
     """Make compound kid a component (元件; a static one a 靜態元件): its clips can be given
     parameters, which every clip showing it sets for itself."""
     comp = (root.get("compounds") or {}).get(kid)
-    if not comp:
+    if not comp or comp.get("fit"):
         raise EditError("只有複合片段可以轉成元件（時間線不行）")
     comp["component"] = True
     comp.setdefault("params", [])
@@ -4754,15 +4752,12 @@ def set_master_gain(proj, gain):
 
 # -- timelines ------------------------------------------------------------------------------------
 def _timeline_id(proj):
-    ids = {t["id"] for t in proj["timelines"]}
-    n = len(ids) + 1
-    while f"tl{n}" in ids:
-        n += 1
-    return f"tl{n}"
+    return project._free_id(proj["compounds"], "tl")
 
 
 def add_timeline(proj, name=None, copy_of=None):
-    """A new timeline (empty with V1 / A1, or a copy of timeline copy_of), opened."""
+    """A new fit compound (what a timeline was: the project's canvas, as long as its content - empty with V1 / A1, or a copy
+    of copy_of), opened as the root."""
     tid = _timeline_id(proj)
     if copy_of:
         src = project.timeline(proj, copy_of)
@@ -4774,15 +4769,18 @@ def add_timeline(proj, name=None, copy_of=None):
     else:
         tracks = [{"id": "t0", "kind": "video", "name": "video 1", "clips": []},
                   {"id": "t1", "kind": "audio", "name": "audio 1", "clips": []}]
-    tl = {"id": tid, "name": name or f"時間線 {len(proj['timelines']) + 1}", "tracks": tracks}
-    proj["timelines"].append(tl)
+    tl = {"name": name or f"時間線 {len(project.timelines(proj)) + 1}", "tracks": tracks, "fit": True,
+          "width": proj["width"], "height": proj["height"], "duration_us": 0}
+    proj["compounds"][tid] = tl
     open_timeline(proj, tid)
-    return tl
+    return dict(tl, id=tid)
 
 
 def open_timeline(proj, tl_id):
     project.link(proj)                                   # settle the open timeline first
     tl = project.timeline(proj, tl_id)                   # (raises for an unknown id)
+    if not tl.get("fit"):
+        raise EditError("這個複合片段不能當時間線打開")
     proj["active_timeline"] = tl_id
     proj["tracks"] = tl["tracks"]
     project.link(proj)
@@ -4794,15 +4792,16 @@ def rename_timeline(proj, tl_id, name):
 
 
 def delete_timeline(proj, tl_id):
-    if len(proj["timelines"]) < 2:
+    ids = [k for k, _ in project.timelines(proj)]
+    if len(ids) < 2:
         raise EditError("a project keeps at least one timeline")
     if project.compound_uses(proj).get(tl_id):
         raise EditError("this timeline is used inside another one")
-    tl = project.timeline(proj, tl_id)
-    i = proj["timelines"].index(tl)
+    project.timeline(proj, tl_id)
+    i = ids.index(tl_id)
     if proj["active_timeline"] == tl_id:                 # leave it first: proj["tracks"] is its tracks, and
-        open_timeline(proj, proj["timelines"][i - 1 if i else 1]["id"])   # linking without it would put them in the first timeline
-    proj["timelines"].remove(tl)
+        open_timeline(proj, ids[i - 1 if i else 1])      # linking without it would put them in another
+    proj["compounds"].pop(tl_id)
 
 
 # -- markers (時間線標記) ----------------------------------------------------------------------------
@@ -4813,7 +4812,7 @@ MARKER_COLORS = (("藍", "#4c8dff"), ("紅", "#e5484d"), ("橙", "#f76b15"), ("�
 
 
 def _marker_owner(level):
-    return project.timeline(level) if level.get("timelines") else level
+    return project.timeline(level) if "active_timeline" in level else level
 
 
 def markers_of(level):

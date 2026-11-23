@@ -34,7 +34,7 @@ def is_path(c):
 
 
 def _levels(root):
-    """Every list of tracks that is a level of its own: the timelines' and the compounds'; [(tracks, width, height)]."""
+    """Every list of tracks that is a level of its own: the compounds' (the root one's first); [(tracks, width, height)]."""
     out, seen = [], set()
 
     def add(tracks, w, h):
@@ -42,8 +42,6 @@ def _levels(root):
             seen.add(id(tracks))
             out.append((tracks, w, h))
     add(root["tracks"], root["width"], root["height"])
-    for tl in root.get("timelines") or ():
-        add(tl["tracks"], root["width"], root["height"])
     for comp in (root.get("compounds") or {}).values():
         add(comp["tracks"], comp.get("width") or root["width"], comp.get("height") or root["height"])
     return out

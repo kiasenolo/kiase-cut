@@ -39,6 +39,8 @@ FOLLOW_S = 0.5                # a request this soon after an earlier one (same f
 MAX_STREAMS = 6
 ENGINE = sys.platform != "android"      # (Android has no MLT engine: a jump starts a stream too)
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+PIPE_SIZE = 1031 if sys.platform.startswith("linux") else 0          # (fcntl's F_SETPIPE_SZ)
+PUMP_AHEAD = 3                # frames a stream's thread reads ahead of the renderer
 
 _info = {}
 _info_lock = threading.Lock()
@@ -98,15 +100,22 @@ def alpha_decoder(inf):
 
 class Stream:
     """One ffmpeg process sending frames of `path` from start_us on, at w x h; decoder: the
-    one to use instead of ffmpeg's choice (alpha_decoder)."""
+    one to use instead of ffmpeg's choice (alpha_decoder).
+
+    A thread of its own reads the frames as ffmpeg sends them, straight into new pictures, and keeps up to
+    `depth` of them waiting (PUMP_AHEAD; fill() asks for more): the renderer's thread only takes them. Read
+    and copied there, a 1080p frame cost it ~7 ms of the frame's time."""
 
     def __init__(self, path, start_us, w, h, fps, hw, matrix="auto", decoder=None):
         self.path, self.start_us, self.w, self.h, self.fps, self.hw = path, start_us, w, h, fps, hw
         self.index = -1                      # frame last read (frame i is at start_us + i / fps)
         self.image = None
         self.used = 0
-        self.ahead = collections.deque()     # frames decoded ahead of index, not looked at yet (prefetch)
-        self.ended = False
+        self.ahead = collections.deque()     # pictures read ahead of index, not looked at yet
+        self.ended = False                   # ffmpeg sent its last frame (what it sent may still be in ahead)
+        self.depth = PUMP_AHEAD              # how many the thread keeps waiting
+        self.cv = threading.Condition()
+        self.closed = False
         cmd = [find_ffmpeg(), "-v", "error", "-nostdin"]
         if hw:
             cmd += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
@@ -118,7 +127,62 @@ class Stream:
               else f"scale={w}:{h}:flags=bicubic:{to_rgb}")
         cmd += ["-vf", vf, "-fps_mode", "cfr", "-r", f"{fps:.6f}", "-f", "rawvideo", "-pix_fmt", "rgba", "-"]
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                     bufsize=w * h * 4 * 2, creationflags=NO_WINDOW)
+                                     bufsize=0, creationflags=NO_WINDOW)
+        if PIPE_SIZE:                        # (64 KB by default: a 1080p frame took 128 trips between ffmpeg and us)
+            try:
+                import fcntl
+                fcntl.fcntl(self.proc.stdout.fileno(), PIPE_SIZE, min(w * h * 4, 1 << 20))
+            except (OSError, ImportError):
+                pass
+        self.thread = threading.Thread(target=self._pump, name="video-stream", daemon=True)
+        self.thread.start()
+
+    def _read_picture(self):
+        """The next frame from ffmpeg as a new picture (read into its own memory), or None at the end."""
+        img = QImage(self.w, self.h, QImage.Format_RGBA8888)
+        if img.isNull():
+            return None
+        buf = img.bits()
+        got, size, raw = 0, self.w * self.h * 4, self.proc.stdout
+        while got < size:
+            n = raw.readinto(buf[got:size])           # (without the GIL)
+            if not n:
+                return None
+            got += n
+        return img
+
+    def _pump(self):
+        try:
+            while True:
+                with self.cv:
+                    while not self.closed and len(self.ahead) >= self.depth:
+                        self.cv.wait()
+                    if self.closed:
+                        return
+                img = self._read_picture()
+                with self.cv:
+                    if img is None:
+                        self.ended = True
+                        return
+                    self.ahead.append(img)
+                    self.cv.notify_all()
+        except (OSError, ValueError):                    # (closed under it)
+            pass
+        finally:
+            with self.cv:
+                self.ended = True
+                self.cv.notify_all()
+
+    def _take(self):
+        """The next picture the thread read (waiting for it), or None at the end of the file."""
+        with self.cv:
+            while not self.ahead and not self.ended:
+                self.cv.wait()
+            if not self.ahead:
+                return None
+            img = self.ahead.popleft()
+            self.cv.notify_all()
+            return img
 
     def index_of(self, us):
         return math.floor((us - self.start_us) * self.fps / US + 1e-3)
@@ -126,27 +190,28 @@ class Stream:
     def read_to(self, i):
         """The picture of frame i (i >= index); the last one at the end of the file; None when
         ffmpeg gave nothing at all."""
-        size = self.w * self.h * 4
         while self.index < i:
-            data = self.ahead.popleft() if self.ahead else self.proc.stdout.read(size)
-            if len(data) < size:                 # the end of the file: hold the last picture
+            img = self._take()
+            if img is None:                          # the end of the file: hold the last picture
                 break
             self.index += 1
-            if self.index == i:                  # (frames skipped over are not converted)
-                self.image = QImage(data, self.w, self.h, self.w * 4, QImage.Format_RGBA8888).copy()
+            self.image = img
         return self.image
 
     def fill(self, n, stop=lambda: False):
         """Decode up to n frames past index into memory (stop(): give up between frames)."""
-        size = self.w * self.h * 4
-        while len(self.ahead) < n and not self.ended and not stop():
-            data = self.proc.stdout.read(size)
-            if len(data) < size:
-                self.ended = True
-                break
-            self.ahead.append(data)
+        with self.cv:
+            self.depth = max(PUMP_AHEAD, n)
+            self.cv.notify_all()
+            while len(self.ahead) < n and not self.ended and not stop():
+                self.cv.wait(0.05)
+            self.depth = PUMP_AHEAD                  # (what was read stays until it is used; no more than usual after it)
 
     def close(self):
+        with self.cv:
+            self.closed = True
+            self.ahead.clear()
+            self.cv.notify_all()
         try:
             self.proc.kill()
             self.proc.stdout.close()

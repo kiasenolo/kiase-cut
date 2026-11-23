@@ -259,7 +259,7 @@ class GL:
             if fmt not in (QImage.Format_ARGB32_Premultiplied, QImage.Format_ARGB32):
                 img = img.convertToFormat(QImage.Format_ARGB32_Premultiplied)
             tex.swizzle = "BGRA"                     # ARGB32 is B, G, R, A in memory
-        tex.write(bytes(img.constBits())[: img.width() * img.height() * 4])
+        tex.write(img.constBits())                    # (32-bit rows are never padded; no copy: a video frame is 8 MB at 1080p)
         return img.format() in (QImage.Format_RGBA8888, QImage.Format_ARGB32)    # straight alpha?
 
     def picture(self, img, mipmap=False):

@@ -87,6 +87,25 @@ class ProjectFrameTests(unittest.TestCase):
         self.assertAlmostEqual(moved[-1], S, delta=frame)
 
 
+class BeatGridTests(unittest.TestCase):
+    def test_a_bpm_timebase_snaps_to_its_lines(self):
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.timeline import Timeline, timebase_of
+        _app = QApplication.instance() or QApplication([])
+        tl = Timeline()
+        tl.resize(1200, 300)
+        tl.set_project(proj())
+        tl.px_per_s, tl.fps = 50.0, 60.0
+        self.assertEqual(tl._snap(1.07 * S, None, playhead=False), 1.07 * S)          # (seconds: nothing there)
+        tl.timebase = timebase_of({"kind": "bpm", "bpm": 120, "div": 1, "meter": 4})  # a beat every 0.5 s = 25 px
+        self.assertEqual(tl._snap(1.07 * S, None, playhead=False), S)                 # 3.5 px from beat 3
+        self.assertEqual(tl._snap(1.25 * S, None, playhead=False), 1.25 * S)          # 12.5 px: too far
+        tl.px_per_s = 5.0                                                              # out: lines every 2 bars (4 s)
+        self.assertEqual(tl._grid_line(7.0 * S), 8 * S)
+        tl.snapping = False
+        self.assertEqual(tl._snap(1.07 * S, None, playhead=False), 1.07 * S)
+
+
 class PictureTrackTests(unittest.TestCase):
     def test_text_tracks_load_as_picture_tracks(self):
         from kiasecut import project

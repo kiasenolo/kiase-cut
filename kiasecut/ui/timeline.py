@@ -20,8 +20,8 @@ Times are counted in frames of `fps`, the editor's rate (時間線精度: it can
 the project's frame rate, which the export uses); clip edges land on the project's frames all the same (on_frame,
 clip_fps) - the finer rate is for the playhead and keyframes. The ruler marks each frame once
 they are far enough apart, and the zoom reaches 40 px per frame. With a BPM timebase (時基,
-`timebase`) the ruler counts bars, beats and their parts instead of seconds; that is only a
-way of reading time: nothing snaps to it.
+`timebase`) the ruler counts bars, beats and their parts instead of seconds, and drags and the playhead snap to its lines
+as FL's grid does (_grid_line: finer as the zoom goes in; Ctrl / snapping off: not).
 The drag is only drawn while it happens; the edit is requested when the mouse is released.
 The wheel scrolls the tracks up and down, Shift+wheel scrolls left and right, Ctrl+wheel
 zooms time around the mouse (a touchpad's two-finger scroll moves both ways at once, its
@@ -937,10 +937,26 @@ class Timeline(QWidget):
         if not self.snapping:
             return t_us
         best, limit = t_us, SNAP_PX / self.px_per_s * US
-        for t in self._snap_targets(exclude, playhead):
+        for t in self._snap_targets(exclude, playhead) + [g for g in (self._grid_line(t_us),) if g is not None]:
             if abs(t - t_us) < limit:
                 best, limit = t, abs(t - t_us)
         return best
+
+    def _grid_line(self, t_us):
+        """With a BPM timebase (時基): the ruler's beat line nearest t_us, as FL's grid - the finest of its steps (a part of a
+        beat, a beat, a bar, 2, 4 ... bars) at least two snapping distances apart at this zoom; None on a seconds one."""
+        tb = self.timebase
+        if not tb or tb.get("kind") != "bpm":
+            return None
+        tb = on_frames(tb, self.fps)
+        div = tb["div"]
+        part_s = 60 / tb["bpm"] / div
+        bar = div * (tb["meter"] or 1)
+        steps = ([1] if div > 1 else []) + ([div] if bar > div else []) + [bar * 2 ** i for i in range(40)]
+        step = next(s for s in steps if s * part_s * self.px_per_s >= 2 * SNAP_PX)
+        period = step * part_s * US
+        t = tb["offset_us"] + round((t_us - tb["offset_us"]) / period) * period
+        return t if t >= 0 else None
 
     def _snap_span(self, start, length, exclude):
         """Start of a moved span [start, start + length): snapped by whichever of its ends

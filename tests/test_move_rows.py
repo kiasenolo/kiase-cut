@@ -52,9 +52,11 @@ class MoveRowsTest(unittest.TestCase):
     def test_overlap_with_a_clip_that_stays(self):
         p = project()
         p["tracks"][1]["clips"].append(clip("x", 5 * US))
-        with self.assertRaises(edit.EditError):
-            edit.move_many(p, ["c"], 0, -1)                   # lands on x
-        self.assertEqual(at(p, "c"), "v1")
+        before = [t["id"] for t in p["tracks"]]
+        edit.move_many(p, ["c"], 0, -1)                       # lands on x: a new track right above x's
+        new = next(t for t in p["tracks"] if t["id"] not in before)
+        self.assertEqual(at(p, "c"), new["id"])
+        self.assertEqual(p["tracks"].index(new), p["tracks"].index(edit.track_by_id(p, p["tracks"][1]["id"])) + 1)
 
     def test_sound_stays_with_sound(self):
         p = project()

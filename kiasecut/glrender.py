@@ -489,6 +489,7 @@ class GLRenderer(render.Renderer):
         (left, top, right, bottom as fractions of it), at the same scale (render.frame_geometry)."""
         gl = self.gl
         full_w, full_h, tx, ty, _rect = render.frame_geometry(width, height, margin, region)
+        img = QImage(full_w, full_h, QImage.Format_RGBA8888_Premultiplied if alpha else QImage.Format_RGBA8888)
         with gl.ctx:                    # (another renderer's filters may have made theirs current)
             gl.new_frame()
             self.graph_cache.frame()
@@ -500,11 +501,9 @@ class GLRenderer(render.Renderer):
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
                                frame / view["fps"] * US, width / view["width"])
                 gpusync.finish(gl.ctx)                # (the read below holds the GIL while it waits for the GPU: wait here without it)
-                data = tgt.fbo.read(components=4)
+                tgt.fbo.read_into(img.bits(), components=4)      # (straight into the picture: reading to bytes and copying took ~2.5 ms more at 1080p)
             finally:
                 gl.release(tgt)
-        fmt = QImage.Format_RGBA8888_Premultiplied if alpha else QImage.Format_RGBA8888
-        img = QImage(data, full_w, full_h, full_w * 4, fmt).copy()
         if region:
             img.setText("rect", repr(_rect))
         return img

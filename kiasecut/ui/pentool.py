@@ -15,6 +15,10 @@ Alt+click on a point toggles corner / smooth (all selected ones). Ctrl+click on 
 new part. Enter / Esc end the drawing, then the tool; a click on another clip ends it and picks that clip. Every change is one
 edit (paramsCommitted, group "multi": the paths, the frame they fill and where it sits).
 
+A 路徑 mask (masks.PATH) is drawn and edited the same way in mask mode (the 遮罩 tab open): P with a clip whose mask is not a
+path draws a new one (maskPathDrawn: the parts across the clip, 0 - 1), P or Enter on one whose mask is a path edits its
+nodes (pen["mask"]: paramsCommitted, group "mask", {"paths": the parts across the mask's frame, 0 - 1, y down}).
+
 A bar over the preview's bottom edge sets the kind of the selected points (the last one while drawing): 角點, 自動, 對齊 (handles in
 line, any lengths), 自由 (independent; a 7th value 1 on the node), 向量 (handles toward the neighbours), and 封閉 / 開口 for their path.
 
@@ -27,7 +31,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
-from .. import assets
+from .. import assets, curves, masks
 
 PEN_COLOR = "#00eeff"
 SEG_PICK_PX = 6
@@ -262,12 +266,12 @@ class PenMixin:
     self.pen: {"paths", "cur" (the path being drawn into, or None), "edit" (clip id or None), "box" (its Box), "sel" ({(path, node)}),
     "drag", "hover"}."""
 
-    def pen_begin(self):
-        """Start drawing a new path."""
-        if not self.interactive or not self.view or self.pen is not None or self.drag is not None or self.mask_mode:
+    def pen_begin(self, mask_for=None):
+        """Start drawing a new path (mask_for: a clip id - the path becomes that clip's 路徑 mask; only in mask mode)."""
+        if not self.interactive or not self.view or self.pen is not None or self.drag is not None or (self.mask_mode and not mask_for):
             return False
         self.pen = {"paths": [{"nodes": [], "closed": False}], "cur": 0, "edit": None, "box": None, "sel": set(), "drag": None,
-                    "hover": None}
+                    "hover": None, "mask_for": mask_for}
         self.setCursor(Qt.CrossCursor)
         self._show_penbar()
         self.penToggled.emit(True)
@@ -306,6 +310,21 @@ class PenMixin:
         self.update()
         return True
 
+    def pen_edit_mask(self, box=None):
+        """Edit the nodes of the selected clip's 路徑 mask on the canvas (mask mode)."""
+        box = box or self.selected_box()
+        m = box.clip.get("mask") if box is not None else None
+        if box is None or not self.interactive or self.pen is not None or not m or curves.value(m.get("kind"), box.t) != masks.PATH:
+            return False
+        self.pen = {"paths": [], "cur": None, "edit": box.clip["id"], "box": box, "sel": set(), "drag": None, "hover": None,
+                    "mask": True}
+        self._pen_load(box)
+        self.setCursor(Qt.ArrowCursor)
+        self._show_penbar()
+        self.penToggled.emit(True)
+        self.update()
+        return True
+
     def pen_end(self):
         self.pen = None
         self.guides = []
@@ -317,6 +336,9 @@ class PenMixin:
 
     def _pen_load(self, box):
         """The clip's paths in canvas px (through its transform) into the tool."""
+        if self.pen.get("mask"):
+            self._pen_load_mask(box)
+            return
         q = assets.at(box.clip["asset"], box.t)
         w, h = q["w"], q["h"]
         xf = box.xf()
@@ -333,6 +355,41 @@ class PenMixin:
         pen = self.pen
         pen["paths"], pen["box"] = paths, box
         pen["sel"] = {(pi, ni) for pi, ni in pen["sel"] if pi < len(paths) and ni < len(paths[pi]["nodes"])}
+
+    def _pen_load_mask(self, box):
+        """A 路徑 mask's parts (across its frame, 0 - 1) in canvas px."""
+        xf, fw, fh = self.mask_frame(box)
+        paths = []
+        for sub in curves.value(box.clip["mask"].get("paths"), box.t) or []:
+            nodes = []
+            for n in sub["nodes"]:
+                lx, ly = (n[0] - 0.5) * fw, (n[1] - 0.5) * fh
+                c = xf.map(QPointF(lx, ly))
+                i = xf.map(QPointF(lx + n[2] * fw, ly + n[3] * fh)) - c
+                o = xf.map(QPointF(lx + n[4] * fw, ly + n[5] * fh)) - c
+                nodes.append([c.x(), c.y(), i.x(), i.y(), o.x(), o.y()] + list(n[6:]))
+            paths.append({"nodes": nodes, "closed": bool(sub["closed"])})
+        pen = self.pen
+        pen["paths"], pen["box"] = paths, box
+        pen["sel"] = {(pi, ni) for pi, ni in pen["sel"] if pi < len(paths) and ni < len(paths[pi]["nodes"])}
+
+    @staticmethod
+    def _across(paths, xf, fw, fh):
+        """Canvas-px parts through the inverse of xf (a frame fw x fh, centre origin) as 0 - 1 across it, y down; None when
+        xf cannot be inverted."""
+        inv, ok = xf.inverted()
+        if not ok or fw <= 1e-9 or fh <= 1e-9:
+            return None
+        out = []
+        for sub in paths:
+            nodes = []
+            for n in sub["nodes"]:
+                c = inv.map(QPointF(n[0], n[1]))
+                i = inv.map(QPointF(n[0] + n[2], n[1] + n[3])) - c
+                o = inv.map(QPointF(n[0] + n[4], n[1] + n[5])) - c
+                nodes.append([c.x() / fw + 0.5, c.y() / fh + 0.5, i.x() / fw, i.y() / fh, o.x() / fw, o.y() / fh] + list(n[6:]))
+            out.append({"nodes": nodes, "closed": bool(sub["closed"])})
+        return out
 
     def pen_reload(self):
         """The scene changed (an edit was made): an edited path takes the clip's paths again, or the tool ends if it went."""
@@ -368,14 +425,27 @@ class PenMixin:
             self.update()
             return
         paths = self._pen_tidy()
+        mask_for, box = self.pen.get("mask_for"), self.selected_box()
         self.pen_end()
-        if paths:
+        if paths and mask_for:                           # a new 路徑 mask: across the whole clip
+            if box is not None and box.clip["id"] == mask_for:
+                got = self._across(paths, box.xf(), box.bw, box.bh)
+                if got:
+                    self.maskPathDrawn.emit(mask_for, got)
+        elif paths:
             self.penFinished.emit(paths)
 
     def _pen_commit(self):
-        """An edited path as one edit: its paths in the clip's own frame, the frame they fill and where it sits."""
+        """An edited path as one edit: its paths in the clip's own frame, the frame they fill and where it sits (a 路徑 mask:
+        its parts across the mask's frame)."""
         pen = self.pen
         box = pen["box"]
+        if pen.get("mask"):
+            xf, fw, fh = self.mask_frame(box)
+            got = self._across([s for s in pen["paths"] if len(s["nodes"]) >= 2], xf, fw, fh)
+            if got:
+                self.paramsCommitted.emit(box.clip["id"], "mask", {"paths": got})
+            return
         inv, ok = box.xf().inverted()
         paths = [s for s in pen["paths"] if len(s["nodes"]) >= 2]
         if not ok or not paths:

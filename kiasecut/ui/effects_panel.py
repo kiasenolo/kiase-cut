@@ -469,7 +469,7 @@ class EffectsPanel(QWidget):
         kind = ComboBox()
         kind.addItem("整個畫面", None)
         for name, k in MASK_NAMES:
-            if k is not None:
+            if k is not None and k != "path":           # (a 路徑 mask is drawn with the pen: the clip's own mask only)
                 kind.addItem(name + "遮罩", k)
         kinds = {kind_tag(x.get("mask")) for x in es}
         kind.setCurrentIndex(max(0, kind.findData(kinds.pop())) if len(kinds) == 1 else -1)

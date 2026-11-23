@@ -113,7 +113,7 @@ from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPainterPath, QPen,
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QInputDialog, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
-from .. import components, curves, edit, fonts, gizmos, nodegraph, project, render, sharedgl, textlayout, textvars
+from .. import components, curves, edit, fonts, gizmos, masks, nodegraph, project, render, sharedgl, textlayout, textvars
 from . import appevents, randomdialog, touch, viewglide, wheel
 from .pentool import PenMixin
 from .zoomglide import ZoomGlide
@@ -438,6 +438,9 @@ class MaskGeo:
                 path.lineTo(reach, y)
         elif self.kind == "circle":
             path.addEllipse(QPointF(0, 0), self.hw, self.hh)
+        elif self.kind == masks.PATH:                   # (its parts, over the frame they lie across)
+            path = masks.qpath(curves.value(self.m.get("paths"), self.box.t), 2 * self.hw, 2 * self.hh)
+            path.translate(-self.hw, -self.hh)
         else:
             path.addRect(QRectF(-self.hw, -self.hh, 2 * self.hw, 2 * self.hh))
         return self.xf.map(path)
@@ -454,7 +457,7 @@ class MaskGeo:
     def handles(self, k):
         """[(name, canvas point)]; k = canvas px per screen px."""
         out = []
-        if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place", "shape", "text"):
+        if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place", "shape", "text", masks.PATH):
             out += [("w", self.xf.map(QPointF(self.hw, 0))), ("h", self.xf.map(QPointF(0, -self.hh))),
                     ("wh", self.xf.map(QPointF(self.hw, -self.hh)))]
             if self.is_picture():                   # (the clip box's eight: the sizing is about the centre either way)
@@ -634,6 +637,7 @@ class Preview(PenMixin, _Surface):
     contextRequested = Signal(object, object)   # (global QPoint, id of the clip under the right click or None): the right-click menu is the window's
     penToggled = Signal(bool)                   # the pen tool started or ended
     penFinished = Signal(list)                  # a new path was drawn: its parts [{"nodes": [[x, y, in dx, in dy, out dx, out dy]], "closed"}] (canvas px)
+    maskPathDrawn = Signal(str, list)           # clip id, the parts of a new 路徑 mask drawn on it, across the clip (0 - 1, y down)
     guidesCommitted = Signal(dict)              # {"x": [canvas px], "y": [canvas px]}: the reference lines after one was made, moved or taken away
     grabCancelled = Signal()                    # a G / R / S grab was put back (Esc / right button): draw the clips as they were
 
@@ -818,6 +822,8 @@ class Preview(PenMixin, _Surface):
         self._view_changed()
 
     def set_mask_mode(self, on, group="mask"):
+        if self.pen is not None and (self.pen.get("mask") or self.pen.get("mask_for")) and (not on or group != "mask"):
+            self.pen_end()                               # (a 路徑 mask is drawn and edited in mask mode only)
         self.mask_mode, self.mask_group = on, group
         self.update()
 
@@ -864,6 +870,31 @@ class Preview(PenMixin, _Surface):
                 w, h = text_size(info[3], self.H)
                 return dict(m, w=w / max(box.bw, 1e-6), h=h / max(box.bh, 1e-6))
         return m
+
+    def mask_frame(self, box):
+        """(transform from the clip's 路徑 mask frame - centre origin, y down, clip px - to the canvas, its width, height)."""
+        geo = MaskGeo(box)
+        return geo.xf, 2 * geo.hw, 2 * geo.hh
+
+    def _path_mask_box(self):
+        """The selected clip's box when mask mode edits the clip's own mask (not an effect's), else None."""
+        box = self.selected_box()
+        if not self.mask_mode or self.mask_group != "mask" or box is None or self.multi() or getattr(box, "group", False):
+            return None
+        return box if box.clip["type"] in edit.MASKABLE else None
+
+    def _path_mask_key(self, k):
+        """In mask mode: P draws a 路徑 mask on the selected clip (or edits the one it has), Enter edits it; else None."""
+        box = self._path_mask_box()
+        if box is None or self.pen is not None or self.drag is not None:
+            return None
+        m = box.clip.get("mask") or {}
+        has = curves.value(m.get("kind"), box.t) == masks.PATH
+        if k == Qt.Key_P:
+            return (lambda: self.pen_edit_mask(box)) if has else (lambda: self.pen_begin(mask_for=box.clip["id"]))
+        if k in (Qt.Key_Return, Qt.Key_Enter) and has:
+            return lambda: self.pen_edit_mask(box)
+        return None
 
     def mask_box(self, box):
         """What mask mode edits in: the clip's box, or for 編輯位置 its layer's frame (or None)."""
@@ -1036,6 +1067,8 @@ class Preview(PenMixin, _Surface):
         pad = bool(mods & Qt.KeypadModifier)
         ctrl, shift = bool(mods & Qt.ControlModifier), bool(mods & Qt.ShiftModifier)
         if self.pen is not None and (act := self.pen_key(e)) is not None:
+            return act
+        if k in (Qt.Key_P, Qt.Key_Return, Qt.Key_Enter) and not mods and self.mask_mode and (act := self._path_mask_key(k)):
             return act
         if k == Qt.Key_P and not mods and self.interactive and self.show_guides and self.pen is None and self.drag is None:
             return self.pen_begin

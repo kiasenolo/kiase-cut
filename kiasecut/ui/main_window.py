@@ -383,6 +383,7 @@ class MainWindow(QMainWindow):
         self.preview.movesCommitted.connect(self.on_preview_moves)
         self.preview.guidesCommitted.connect(self.on_guides)
         self.preview.penFinished.connect(self.on_pen_finished)
+        self.preview.maskPathDrawn.connect(lambda cid, paths: self.apply("畫遮罩路徑", lambda lvl: edit.set_mask_path(lvl, cid, paths)))
         self.preview.contextRequested.connect(self.preview_menu)
         self.preview.penToggled.connect(lambda on: self.pen_btn.setChecked(on))
         self.preview.movesLive.connect(self.live_moves)
@@ -428,6 +429,7 @@ class MainWindow(QMainWindow):
         mp.keyToggled.connect(self.on_key_toggled)
         mp.easingChosen.connect(self.on_easing)
         mp.maskKindChosen.connect(self.on_mask_kind)
+        mp.maskPathEdit.connect(lambda: self.preview.pen_edit_mask())
         mp.maskInvertChosen.connect(lambda ids, on: self.apply_each_timed("反轉遮罩", edit.set_mask_invert, ids, on))
         mp.maskEnabledChosen.connect(
             lambda ids, on: self.apply_each("啟用遮罩" if on else "停用遮罩", edit.set_mask_enabled, ids, on))
@@ -3208,7 +3210,7 @@ class MainWindow(QMainWindow):
         edit their keyframe at the playhead)."""
         t = self.clip_time(cid)
         if group == "mask" or group.startswith("fxmask:"):
-            label = "遮罩"
+            label = "遮罩路徑" if "paths" in values else "遮罩"
         elif group.startswith("place:"):
             label = "圖片位置"
         elif group.startswith("fxsrc:"):

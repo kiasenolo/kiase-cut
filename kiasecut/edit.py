@@ -13,7 +13,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fonts, fx, lfo, mapping, nodegraph, project, rack, textlayout, textvars, viz
+from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -953,7 +953,7 @@ TEXT_ANIM_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "strok
 GROUP_FIELDS = {
     "transform": TRANSFORM_FIELDS,
     "text": TEXT_ANIM_FIELDS,
-    "mask": ("cx", "cy", "w", "h", "rotation", "feather", "kind", "invert"),
+    "mask": ("cx", "cy", "w", "h", "rotation", "feather", "kind", "invert", "paths"),     # (paths: a 路徑 mask's)
     "clip": ("volume", "blend"),
 }
 # how a picture mixes with what is under it (render.BLEND_OPS draws them); a group's can also be
@@ -1379,7 +1379,12 @@ PICTURE_FIELDS = {"compound": ("compound_id", "t_off"),        # file's, a video
 
 
 def _new_mask(old, kind, aspect):
-    """A mask of `kind` keeping what it can of the old one (shape keyframes too)."""
+    """A mask of `kind` keeping what it can of the old one (shape keyframes too). A 路徑 mask starts over the whole clip
+    (its path's nodes lie across that frame) with a rectangle across the middle, or the path it had."""
+    if kind == masks.PATH:
+        return {"kind": kind, "invert": old.get("invert", False), "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0,
+                "feather": old.get("feather", 0.0), "paths": old.get("paths") or masks.default_paths(),
+                "pth_w": 1000, "pth_h": max(1, round(1000 / max(aspect, 1e-6)))}
     if kind in PICTURE_MASKS:          # a compound's / an image's picture cuts the clip: chosen next
         m = {"kind": kind, "matte": old.get("matte", "alpha"),
              "invert": old.get("invert", False), "cx": old.get("cx", 0.0), "cy": old.get("cy", 0.0),
@@ -1410,12 +1415,31 @@ def set_mask(proj, clip_id, kind, t=None):
     if kind is None:
         c.pop("mask", None)
         return c
-    if kind not in MASK_KINDS and kind not in PICTURE_MASKS:
+    if kind not in MASK_KINDS and kind not in PICTURE_MASKS and kind != masks.PATH:
         raise EditError(f"unknown mask {kind}")
     old = c.get("mask") or {}
-    if curves.is_animated(old.get("kind")) and kind not in PICTURE_MASKS:
+    if curves.is_animated(old.get("kind")) and kind not in PICTURE_MASKS and kind != masks.PATH:
         return set_param(proj, clip_id, "mask", "kind", kind, t)
     c["mask"] = _new_mask(dict(old, kind=None) if curves.is_animated(old.get("kind")) else old, kind, _aspect(c))
+    if old.get("enabled") is False:
+        c["mask"]["enabled"] = False
+    return c
+
+
+def set_mask_path(proj, clip_id, paths):
+    """A new 路徑 mask drawn with the pen: paths [{"nodes": [[x, y, in dx, in dy, out dx, out dy], ...], "closed"}] across the
+    whole clip (0 - 1, y down). It replaces the clip's mask (keeping its invert and feather), its frame the whole clip."""
+    _, c = find(proj, clip_id)
+    if c["type"] not in MASKABLE:
+        raise EditError("masks go on pictures, videos, texts, compound clips, groups and filters")
+    paths = [{"nodes": [[float(v) for v in n] for n in sub["nodes"]], "closed": bool(sub.get("closed"))}
+             for sub in paths if len(sub.get("nodes") or []) >= 2]
+    if not paths:
+        raise EditError("路徑至少要兩個點")
+    old = c.get("mask") or {}
+    c["mask"] = _new_mask(dict(old, paths=None, kind=None) if curves.is_animated(old.get("kind")) else dict(old, paths=None),
+                          masks.PATH, _aspect(c))
+    c["mask"]["paths"] = paths
     if old.get("enabled") is False:
         c["mask"]["enabled"] = False
     return c

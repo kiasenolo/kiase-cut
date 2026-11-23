@@ -13,6 +13,72 @@ import numpy as np
 from . import curves, project
 
 KINDS = ("line", "mirror", "circle", "rectangle")
+PATH = "path"           # 路徑: a pen path of its own, nodes across the mask's frame (0 - 1, y down), drawn as a picture
+
+
+def default_paths():
+    """A new path mask's path: a rectangle across the middle half of its frame."""
+    return [{"nodes": [[x, y, 0.0, 0.0, 0.0, 0.0] for x, y in ((0.25, 0.25), (0.75, 0.25), (0.75, 0.75), (0.25, 0.75))],
+             "closed": True}]
+
+
+def qpath(paths, w, h):
+    """QPainterPath of a path mask's parts in a w x h frame (origin top left); open parts are filled as if closed."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QPainterPath
+    out = QPainterPath()
+    out.setFillRule(Qt.OddEvenFill)
+    for sub in paths or []:
+        nodes = sub.get("nodes") or []
+        if len(nodes) < 2:
+            continue
+        out.moveTo(nodes[0][0] * w, nodes[0][1] * h)
+        n = len(nodes)
+        for i in range(n if len(nodes) > 2 else n - 1):
+            a, b = nodes[i], nodes[(i + 1) % n]
+            if a[4] == a[5] == b[2] == b[3] == 0:
+                out.lineTo(b[0] * w, b[1] * h)
+            else:
+                out.cubicTo((a[0] + a[4]) * w, (a[1] + a[5]) * h, (b[0] + b[2]) * w, (b[1] + b[3]) * h, b[0] * w, b[1] * h)
+        out.closeSubpath()
+    return out
+
+
+def _box_blur(a, r, axis):
+    if r < 1:
+        return a
+    n = 2 * r + 1
+    pad = [(0, 0)] * a.ndim
+    pad[axis] = (r + 1, r)
+    c = np.cumsum(np.pad(a, pad, mode="edge"), axis=axis, dtype=np.float64)
+    hi = np.take(c, np.arange(n, c.shape[axis]), axis=axis)
+    lo = np.take(c, np.arange(0, c.shape[axis] - n), axis=axis)
+    return ((hi - lo) / n).astype(np.float32)
+
+
+def path_picture(paths, w, h, feather):
+    """The path mask's picture: a w x h QImage, white where the path is (alpha), its edge softened over feather (a fraction
+    of half the frame's smaller side, as the shapes' feather) by three box blurs (close to a Gaussian)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QImage, QPainter
+    w, h = max(1, int(w)), max(1, int(h))
+    im = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+    im.fill(Qt.transparent)
+    p = QPainter(im)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.fillPath(qpath(paths, w, h), QColor("white"))
+    p.end()
+    soft = feather * min(w, h) / 2
+    if soft < 0.5:
+        return im
+    arr = np.ndarray((h, w, 4), np.uint8, buffer=im.bits(), strides=(im.bytesPerLine(), 4, 1))
+    a = arr[..., 3].astype(np.float32)
+    r = max(1, int(round(soft / 1.7)))                 # (three boxes of 2r + 1: about the shapes' ramp of 2 x soft)
+    for _ in range(3):
+        a = _box_blur(_box_blur(a, r, 0), r, 1)
+    a8 = np.clip(a + 0.5, 0, 255).astype(np.uint8)
+    arr[...] = a8[..., None]                           # (premultiplied white: every channel is the alpha)
+    return im
 
 
 def alpha(kind, w, h, feather, xs, ys):

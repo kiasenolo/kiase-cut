@@ -122,7 +122,7 @@ def hard_limits(group, key):
     return HARD.get((group, key), (None, None))
 
 
-MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"),
+MASK_NAMES = (("無", None), ("線性", "line"), ("鏡面", "mirror"), ("圓形", "circle"), ("矩形", "rectangle"), ("路徑", "path"),
               ("複合片段", "compound"), ("圖片", "image"), ("影片", "video"), ("軌道", "track"))
 MATTE_NAMES = (("Alpha（不透明度）", "alpha"), ("明度", "luma"))
 ALIGN_NAMES = (("靠左", "left"), ("置中", "center"), ("靠右", "right"), ("齊頭尾（左右對齊）", "justify"))
@@ -343,6 +343,7 @@ class Inspector(QWidget):
     keyToggled = Signal(list, str, str)             # clip ids, group, key
     easingChosen = Signal(list, str, list)          # clip ids, easing name, parameter groups
     maskKindChosen = Signal(list, object)           # clip ids, kind or None
+    maskPathEdit = Signal()                         # 編輯路徑: the pen on the selected clip's 路徑 mask
     maskInvertChosen = Signal(list, bool)           # clip ids, invert
     maskEnabledChosen = Signal(list, bool)          # clip ids, on
     maskCompoundChosen = Signal(list, str)          # clip ids, compound id (a compound mask's)
@@ -962,6 +963,11 @@ class Inspector(QWidget):
         form.addRow("形狀", row)
         if not c.get("mask"):
             return
+        if kind_tag(c.get("mask")) == "path":
+            edit_path = QPushButton("編輯路徑")
+            edit_path.setToolTip("用鋼筆編輯遮罩的點（滑鼠在預覽上按 P 或 Enter 也可以）；在預覽上按 P 也能直接畫一個新的")
+            edit_path.clicked.connect(self.maskPathEdit.emit)
+            form.addRow("路徑", self._with_key(edit_path, "mask", "paths"))
         if compound:
             pick = ComboBox()
             pick.setPlaceholderText("選擇複合片段…")

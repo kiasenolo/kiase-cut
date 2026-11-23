@@ -429,6 +429,11 @@ class Renderer:
         {image, width, height}; None when it is not one, has none (chosen, deleted, a file that
         is gone) or that compound is being drawn as a mask already."""
         kind = curves.value(mask.get("kind"), t) if mask else None
+        if kind == masks.PATH:                           # 路徑: the path drawn as a picture over the mask's frame
+            paths = curves.value(mask.get("paths"), t)
+            w, h = mask.get("pth_w") or 1000, mask.get("pth_h") or 1000
+            return {"path": paths or [], "width": w, "height": h,
+                    "feather": max(0.0, curves.value(mask.get("feather", 0.0), t))} if paths else None
         if kind == "image":
             path, w, h = mask.get("image"), mask.get("img_w"), mask.get("img_h")
             return {"image": path, "width": w, "height": h} if path and w and h else None
@@ -461,7 +466,7 @@ class Renderer:
     def clip_mask(self, c, t):
         """The mask that cuts clip c now (None: none, off, or a picture mask without its picture)."""
         m = project.active_mask(c)
-        if m and curves.value(m.get("kind"), t) in ("compound", "image", "video", "track") and self.matte_compound(m, t) is None:
+        if m and curves.value(m.get("kind"), t) in ("compound", "image", "video", "track", masks.PATH) and self.matte_compound(m, t) is None:
             return None
         return m
 
@@ -476,6 +481,10 @@ class Renderer:
         a video mask's frame at clip time t + t_off (a white one while it cannot be had)."""
         if comp.get("image"):
             return self.image(comp["image"], comp["width"] * k, comp["height"] * k)
+        if comp.get("path") is not None:
+            k = min(k, self.MATTE_MAX_PX / max(comp["width"], comp["height"]))
+            return masks.path_picture(comp["path"], math.ceil(comp["width"] * k), math.ceil(comp["height"] * k),
+                                      comp["feather"])
         if comp.get("video"):
             w, h = max(1, round(comp["width"] * k)), max(1, round(comp["height"] * k))
             pic = self.video_frame(comp["video"], matte_time(comp, t + mask.get("t_off", 0), fps), w, h) \

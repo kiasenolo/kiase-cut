@@ -43,9 +43,25 @@ def value(p, t):
     def bez(y0, y1, y2, y3):
         return (1 - s) ** 3 * y0 + 3 * (1 - s) ** 2 * s * y1 + 3 * (1 - s) * s * s * y2 + s ** 3 * y3
 
-    if isinstance(a[1], list):          # colours: each channel follows the same timing,
-        return [bez(p, p, q, q) for p, q in zip(a[1], b[1])]   # with flat handles
+    if isinstance(a[1], list):          # colours, a path mask's parts: each number follows the same timing,
+        return blend(a[1], b[1], bez(0.0, 0.0, 1.0, 1.0))      # with flat handles
     return bez(a[1], a[1] + a[5], b[1] + b[3], b[1])
+
+
+def blend(x, y, f):
+    """x and y mixed f of the way (0 - 1): numbers in between, lists and dicts part by part (a path's nodes); parts that
+    do not line up (another number of nodes, a choice) hold x until y's key."""
+    if isinstance(x, bool) or isinstance(y, bool) or isinstance(x, str) or x is None:
+        return y if f >= 1.0 else x
+    if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+        return x + (y - x) * f
+    if isinstance(x, list) and isinstance(y, list) and len(x) == len(y):
+        return [blend(p, q, f) for p, q in zip(x, y)]
+    if isinstance(x, dict) and isinstance(y, dict) and x.keys() == y.keys():
+        if any(len(x[k]) != len(y[k]) for k in x if isinstance(x[k], list) and isinstance(y[k], list)):
+            return y if f >= 1.0 else x
+        return {k: blend(x[k], y[k], f) for k in x}
+    return y if f >= 1.0 else x
 
 
 def _solve(x0, x1, x2, x3, t):

@@ -27,7 +27,7 @@ from .render import TEXT_FIELDS, US, quantize
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
                "color_dodge": 6, "color_burn": 7, "hard_light": 8, "soft_light": 9, "difference": 10,
                "exclusion": 11, "add": 12}
-MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5, "image": 5, "video": 5, "track": 5}
+MASK_INDEX = {"line": 1, "mirror": 2, "circle": 3, "rectangle": 4, "compound": 5, "image": 5, "video": 5, "track": 5, "path": 5}
 MAX_LAYER = 8192
 TEX_CACHE = 160
 FREE_LAYER_BYTES = sysmem.scaled(384 << 20, 64 << 20)         # (the layers waiting to be drawn on again)
@@ -890,7 +890,7 @@ class GLRenderer(render.Renderer):
             tex, _straight = self.gl.picture(self.image(comp["image"], comp["width"] * k, comp["height"] * k),
                                              mipmap=True)
             return Picture(tex), False
-        if comp.get("video"):                            # a video mask: this frame, a texture used once
+        if comp.get("video") or comp.get("path") is not None:     # a video mask's frame, a path mask's picture: a texture used once
             tex, _straight = self.gl.frame_texture(self.matte_image(mask, comp, t, k, fps))
             return Picture(tex), False
         if comp.get("level_t") is not None:              # 軌道: the track drawn alone, at the level's moment

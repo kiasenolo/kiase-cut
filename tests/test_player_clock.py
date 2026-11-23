@@ -148,6 +148,7 @@ class DragPictureTests(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
         self.w = player.Worker()
+        self.w.set_cache(False, False, 0.25)                             # (no RAM preview: every picture here is drawn)
         self.drawn = []                                                  # (frame, width) of each picture
         self.takes = 0.08
         self.th = threading.Thread(target=self.w.run, daemon=True)

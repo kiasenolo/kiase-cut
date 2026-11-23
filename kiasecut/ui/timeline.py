@@ -315,6 +315,7 @@ class Timeline(QWidget):
         self.fps = 60.0
         self.edit_fps = None                       # 時間線精度 (frames per second), None: the project's
         self.timebase = None                       # 時基 of the ruler (timebase_of); None / "time": seconds
+        self.cached = []                           # [(first, end)] frames in the RAM preview (set_cached)
         self.pos = 0
         self.px_per_s = 40.0
         self.scroll_s = 0.0
@@ -523,6 +524,11 @@ class Timeline(QWidget):
         return self.header_w - 6 <= pos.x() <= self.header_w + 2 and pos.y() < RULER_H
 
     FOLLOW_AT = 0.3                                      # where in the view the playhead is held while it is followed
+
+    def set_cached(self, runs):
+        """The runs of frames the RAM preview keeps (framecache.py): a green line under the ruler."""
+        self.cached = list(runs or [])
+        self.update(0, 0, self.width(), RULER_H)
 
     def set_position(self, frame, follow=True, playing=False):
         """Move the playhead. With follow, scroll so it stays in view (keys, a seek). While playing, the 跟隨 switch
@@ -1056,6 +1062,11 @@ class Timeline(QWidget):
                 p.drawLine(int(a), 0, int(a), RULER_H)
             if self.mark_out is not None and b > self.header_w:
                 p.drawLine(int(b), 0, int(b), RULER_H)
+        if self.cached:                                  # RAM 預覽快取: the frames kept (framecache.py), a line under the ruler's marks
+            for a, b in self.cached:
+                x0, x1 = max(self._x(a / self.fps), self.header_w), self._x(b / self.fps)
+                if x1 > x0:
+                    p.fillRect(QRectF(x0, RULER_H - 3, max(1.0, x1 - x0), 2), QColor("#3fbf5a"))
         self._paint_markers(p, w)
         # a clip being moved / trimmed is drawn at its new place (other drags have no ghost)
         dragged = self.drag["clip"] if self.drag and self.drag["moved"] and self.drag["mode"] in ("body", "start", "end")             else None

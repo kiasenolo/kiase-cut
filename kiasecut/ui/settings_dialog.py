@@ -20,7 +20,8 @@ CACHE_CHOICES = ((workspace.CACHE_DEFAULT, "預設（使用者的緩存資料夾
 class SettingsDialog(QDialog):
     def __init__(self, parent, library_dir, default_library, project_dir, autosave_min, use_gpu=True,
                  autosave_limit=30, autosave_dir="", cache_mode=workspace.CACHE_DEFAULT, cache_custom="",
-                 default_cache="", root_dir="", autosave_custom="", ui_scale=100, node_gl=True, preview_gl=True, preview_direct=True, menu_anim=True, preview_proxy=True):
+                 default_cache="", root_dir="", autosave_custom="", ui_scale=100, node_gl=True, preview_gl=True, preview_direct=True, menu_anim=True, preview_proxy=True,
+                 ram_cache=True, ram_idle=True, ram_share=25):
         super().__init__(parent)
         self.setWindowTitle("設定")
         self.setMinimumWidth(600)
@@ -137,6 +138,27 @@ class SettingsDialog(QDialog):
                                        "放在緩存資料夾，匯出不受影響）")
         self.preview_proxy.setChecked(preview_proxy)
         form.addRow("", self.preview_proxy)
+        self.ram_cache = QCheckBox("RAM 預覽快取（畫過的幀留在記憶體，再播放、拖到那裡時直接顯示；時間軸尺規下的綠線）")
+        self.ram_cache.setChecked(ram_cache)
+        form.addRow("", self.ram_cache)
+        self.ram_idle = QCheckBox("停下來時往後先畫好幀（有時間範圍選取時畫那一段）")
+        self.ram_idle.setChecked(ram_idle)
+        row = QHBoxLayout()
+        self.ram_share = QSpinBox()
+        self.ram_share.setRange(5, 75)
+        self.ram_share.setSingleStep(5)
+        self.ram_share.setSuffix(" %")
+        self.ram_share.setValue(int(ram_share))
+        self.ram_size = QLabel("")
+        self.ram_size.setStyleSheet("color: #9a9aa0;")
+        row.addWidget(QLabel("最多用系統記憶體的"))
+        row.addWidget(self.ram_share)
+        row.addWidget(self.ram_size, 1)
+        form.addRow("", self.ram_idle)
+        form.addRow("", row)
+        self.ram_share.valueChanged.connect(self._ram_changed)
+        self.ram_cache.toggled.connect(self._ram_changed)
+        self._ram_changed()
         self.menu_anim = QCheckBox("選單展開 / 收起的動畫（關掉後選單直接出現，最穩定）")
         self.menu_anim.setChecked(menu_anim)
         form.addRow("", self.menu_anim)
@@ -296,6 +318,14 @@ class SettingsDialog(QDialog):
             return
         self.accept()
 
+    def _ram_changed(self, *_):
+        from .. import sysmem
+        from .player import cache_limit
+        on = self.ram_cache.isChecked()
+        self.ram_idle.setEnabled(on)
+        self.ram_share.setEnabled(on)
+        self.ram_size.setText(f"（{sysmem.gb(cache_limit(self.ram_share.value() / 100))}）")
+
     def values(self):
         return {"root": library.norm(self.root.text().strip()) if self.root.text().strip() else "",
                 "autosave_dir": library.norm(self.autosave_dir.text().strip()) if self.autosave_dir.text().strip() else "",
@@ -306,7 +336,8 @@ class SettingsDialog(QDialog):
                 "ui_scale": self.ui_scale.value(),
                 "inertia": {"separate": bool(self.inertia_mode.currentData()), "all": self.inertia_all.value(),
                             **{key: box.value() for key, box in self.inertia_each.items()}},
-                "gpu": self.gpu.isChecked(), "node_gl": self.node_gl.isChecked(), "preview_gl": self.preview_gl.isChecked(), "preview_direct": self.preview_direct.isChecked(), "menu_anim": self.menu_anim.isChecked(), "preview_proxy": self.preview_proxy.isChecked(), "cache_mode": self.cache_mode.currentData(),
+                "gpu": self.gpu.isChecked(), "node_gl": self.node_gl.isChecked(), "preview_gl": self.preview_gl.isChecked(), "preview_direct": self.preview_direct.isChecked(), "menu_anim": self.menu_anim.isChecked(), "preview_proxy": self.preview_proxy.isChecked(),
+                "ram_cache": self.ram_cache.isChecked(), "ram_idle": self.ram_idle.isChecked(), "ram_share": self.ram_share.value(), "cache_mode": self.cache_mode.currentData(),
                 "cache_custom": library.norm(self.cache_custom.text().strip()) if self.cache_custom.text().strip() else ""}
 
 

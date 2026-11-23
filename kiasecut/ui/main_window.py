@@ -1017,6 +1017,8 @@ class MainWindow(QMainWindow):
         w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))  # never modal
         w.stateChanged.connect(self.on_state)
         w.levels.connect(self.meter.bars.feed)
+        w.cacheChanged.connect(self.timeline.set_cached)
+        self.apply_ram_cache()
         self.props_timer = QTimer(self)             # while playing: the selection's panels a few times a second
         self.props_timer.setSingleShot(True)
         self.props_timer.setInterval(PLAYING_PROPS_MS)
@@ -5766,6 +5768,20 @@ class MainWindow(QMainWindow):
         except (TypeError, ValueError):
             return recovery.LIMIT
 
+    def ram_cache_settings(self):
+        """RAM 預覽快取 as 設定 has it: {ram_cache, ram_idle, ram_share (%)}."""
+        s = self.settings()
+        on = lambda k: str(s.value(k, True)).lower() not in ("false", "0")
+        try:
+            share = min(75, max(5, int(s.value("ram_share", 25))))
+        except (TypeError, ValueError):
+            share = 25
+        return {"ram_cache": on("ram_cache"), "ram_idle": on("ram_idle"), "ram_share": share}
+
+    def apply_ram_cache(self):
+        v = self.ram_cache_settings()
+        self.player.worker.set_cache(v["ram_cache"], v["ram_idle"], v["ram_share"] / 100)
+
     def open_settings(self):
         dlg = SettingsDialog(self, self.ulib.root if self.ulib else self.library_root(), self.default_library_root(),
                              self.default_location(), self.autosave_min(), gpu.enabled, self.autosave_limit(),
@@ -5775,7 +5791,7 @@ class MainWindow(QMainWindow):
                              ui_scale=ui_scale(), node_gl=str(self.settings().value("node_gl", True)).lower() not in ("false", "0"),
                              preview_gl=str(self.settings().value("preview_gl", PREVIEW_GL_DEFAULT)).lower() not in ("false", "0"),
                              preview_direct=str(self.settings().value("preview_direct", True)).lower() not in ("false", "0"),
-                             menu_anim=menuanim.enabled, preview_proxy=proxies.enabled)
+                             menu_anim=menuanim.enabled, preview_proxy=proxies.enabled, **self.ram_cache_settings())
         if dlg.exec() != QDialog.Accepted:
             return
         v = dlg.values()
@@ -5796,6 +5812,9 @@ class MainWindow(QMainWindow):
         menuanim.enabled = v["menu_anim"]
         s.setValue("preview_proxy", v["preview_proxy"])
         proxies.enabled = v["preview_proxy"]
+        for k in ("ram_cache", "ram_idle", "ram_share"):
+            s.setValue(k, v[k])
+        self.apply_ram_cache()
         scale_changed = v["ui_scale"] != ui_scale()
         s.setValue("ui_scale", v["ui_scale"])
         inertia.state.update(v["inertia"])

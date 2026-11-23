@@ -534,6 +534,31 @@ class GLRenderer(render.Renderer):
             gl.release(self.shown.pop(0).layer)
         return out
 
+    def read_frame(self, frame):
+        """A GpuFrame of render_gpu as the QImage render() gives (RGBA8888, its text "margin" set), for the RAM preview."""
+        img = QImage(frame.w, frame.h, QImage.Format_RGBA8888)
+        with self.gl.ctx:
+            frame.layer.fbo.read_into(img.bits(), components=4)     # (render_gpu waited for the GPU already)
+        img.setText("margin", repr(frame.margin))
+        return img
+
+    def gpu_frame_of(self, img, margin=0.0):
+        """A picture (a frame the RAM preview kept) as a GpuFrame, as render_gpu gives one."""
+        gl = self.gl
+        with gl.ctx:
+            lay = gl.layer(img.width(), img.height())
+            try:
+                lay.tex.write(img.constBits())
+                gpusync.finish(gl.ctx)                # (what the preview's context draws from must be complete)
+            except BaseException:
+                gl.release(lay)
+                raise
+        out = GpuFrame(lay, img.width(), img.height(), margin)
+        self.shown.append(out)
+        while len(self.shown) > SHOWN:
+            gl.release(self.shown.pop(0).layer)
+        return out
+
     def gl_content(self, tgt, base, comp, W, H, fps, t_us, ppu, through=False):
         """A compound's or a group's tracks (as render.draw_content: a group's matte); through
         (穿透): what tgt has is under them, not a clear layer."""

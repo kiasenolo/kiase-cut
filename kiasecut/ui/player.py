@@ -38,7 +38,7 @@ from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QImage
 from PySide6.QtMultimedia import QAudioFormat, QAudioSink, QMediaDevices
 
-from .. import glrender, gpu, render, sharedgl, stretch, videoreader
+from .. import framecache, fx, glrender, gpu, render, sharedgl, stretch, sysmem, videoreader
 from ..audiomix import CHANNELS, RATE, Mixer
 
 PREVIEW_W = 960            # until the preview reports its size
@@ -52,6 +52,16 @@ ROUGH_OVER_S = 0.05         # ... and are drawn smaller too when one at its size
 RATES = (0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 4.0)     # 播放速度 choices
 PREFETCH_REST_S = 0.15      # the playhead rests this long after a jump: its video streams start ahead
 PREFETCH_S = 0.5            # and decode this much of it into memory
+CACHE_SHARE = 0.25          # RAM 預覽快取: the share of the system's memory its frames may take (設定)
+CACHE_BAR_S = 0.1           # the timeline's bar of kept frames is sent at most this often
+
+
+def cache_limit(share=CACHE_SHARE):
+    """Bytes the RAM preview may keep: share of the system's memory (2 GB where that is not known; a phone or tablet
+    at most 1 GB, its memory being the card's too)."""
+    a = sysmem.available()
+    total = a[1] if a else 8 << 30
+    return int(min(total * share, sysmem.scaled(total, 1 << 30)))
 
 
 def speed_pcm(pcm, rate, carry=0.0):
@@ -78,6 +88,7 @@ class Worker(QObject):
     failed = Signal(str)
     stateChanged = Signal(bool)
     levels = Signal(float, float)       # left / right peak (0..1) of each played frame
+    cacheChanged = Signal(object)       # [(first, end)] runs of frames in the RAM preview at the preview's size
 
     def __init__(self):
         super().__init__()
@@ -116,6 +127,14 @@ class Worker(QObject):
         self.still_took = 0.0       # seconds the last stopped picture drawn at its size took
         self.asked = []             # video pictures the last stopped picture needed (path, us, w, h)
         self.prefetch = None        # those, to stream ahead once the playhead rests (seek prefetch)
+        self.cache = framecache.FrameCache(cache_limit())       # RAM 預覽快取 (framecache.py), on the worker thread
+        self.cache_cfg = None       # (on, draw ahead while resting, share of the memory) asked for by the UI, not taken yet
+        self.cache_on = True
+        self.cache_idle = True      # the frames after the playhead are drawn ahead while it rests
+        self.cache_gen = fx.generation
+        self.fill_pending = False   # frames are still to be drawn ahead (once the playhead rests)
+        self.bar_at = 0.0           # when the timeline's bar was last sent
+        self.bar_sent = None
 
     # called from the UI thread -----------------------------------------------------------
     def set_view(self, view, cache_dir):
@@ -172,6 +191,13 @@ class Worker(QObject):
             if not self.playing and self.view is not None and self.want is None:
                 self.want = self.pos
                 self.cv.notify()
+
+    def set_cache(self, on, idle, share):
+        """RAM 預覽快取: keep the frames drawn (on), draw the next ones while the playhead rests (idle), in up to share
+        of the system's memory."""
+        with self.cv:
+            self.cache_cfg = (bool(on), bool(idle), float(share))
+            self.cv.notify()
 
     def set_loop(self, span):
         """Loop playback inside frames (first, last), or None (FL Studio's time selection)."""
@@ -244,19 +270,26 @@ class Worker(QObject):
         while True:
             with self.cv:
                 while not (self.quit or self.new_view or self.want is not None or self.playing
-                           or was_playing):
-                    if (self.prefetch or self.rough) and not self.cv.wait(PREFETCH_REST_S):
-                        break                           # resting there: stream ahead, the picture at its size (below)
-                    if not (self.prefetch or self.rough):
+                           or was_playing or self.cache_cfg is not None):
+                    later = self.prefetch or self.rough or self.fill_pending
+                    if later and not self.cv.wait(PREFETCH_REST_S):
+                        break                           # resting there: stream ahead, the picture at its size, frames drawn ahead (below)
+                    if not later:
                         self.cv.wait()
                 if self.quit:
                     break
+                cfg, self.cache_cfg = self.cache_cfg, None
                 rest = not (self.new_view or self.want is not None or self.playing or was_playing)
                 new, self.new_view = self.new_view, None
                 want, self.want = self.want, None
                 moved_output, self.new_output = self.new_output, False
                 new_rate, self.new_rate = self.new_rate, False
                 playing = self.playing
+            if cfg is not None:
+                self.cache_on, self.cache_idle = cfg[0], cfg[1]
+                self.cache.set_limit(cache_limit(cfg[2]) if cfg[0] else 0)
+                self.fill_pending = True
+                self._send_bar(force=True)
             if rest:
                 if self.rough and self.view is not None:        # (a drag's smaller picture: now at its size)
                     try:
@@ -265,12 +298,21 @@ class Worker(QObject):
                         self.rough = False
                         self.failed.emit(f"{type(exc).__name__}: {exc}")
                 self._prefetch()
+                try:
+                    self._fill_ahead()
+                except Exception as exc:
+                    self.fill_pending = False
+                    self.failed.emit(f"RAM 預覽：{type(exc).__name__}: {exc}")
                 continue
             try:
                 if new:
                     view, cache = new
                     first = self.view is None
                     self.view = view
+                    self.cache.set_view(view, fx.generation)
+                    self.cache_gen = fx.generation
+                    self.fill_pending = True
+                    self._send_bar()
                     self.cache_dir = self.renderer.cache_dir = cache
                     self.readers.proxy_dir = os.path.join(cache, "proxy") if cache else None     # 預覽代理檔 (proxies.py)
                     if self.mixer is None or self.mixer.dir != os.path.join(cache, "audio"):   # (設定 > 緩存位置)
@@ -303,6 +345,7 @@ class Worker(QObject):
                     self.audio_f, self.peaks, self.rate_carry, self.stretcher, self.pending = None, {}, 0.0, None, b""
                 if want is not None:
                     self.pos = min(want, self.length - 1)
+                self.fill_pending = True                # (once it rests again: draw ahead from where it is)
                 if self.view is None:
                     continue
                 if playing:
@@ -364,15 +407,13 @@ class Worker(QObject):
             sink.stop()
         return None
 
-    def _show(self, pos):
+    def _geometry(self):
+        """(w, h, margin, region) a frame is drawn at now; sets self.big (the canvas is drawn by part)."""
         v = self.view
-        if gpu.enabled != isinstance(self.renderer, glrender.GLRenderer):     # the 設定 switch changed
-            self.renderer = self._renderer()
         w = max(2, round(v["width"] * self.quality)) if self.quality else max(2, min(self.render_w, v["width"]))
         if not self.quality:
             w = max(2, round(w * (self.play_scale if self.playing else PLAY_SCALES[-1] if self.rough else 1.0)))
         h = max(2, round(w * v["height"] / v["width"]))
-        self.asked = []
         margin = self.overflow
         try:
             limit = int(self.renderer.gl.ctx.info["GL_MAX_TEXTURE_SIZE"])       # (a picture wider than the card's textures cannot be drawn: a compound of another, huge, size)
@@ -392,28 +433,130 @@ class Worker(QObject):
             if span > limit:                             # (a view too big for one frame: the whole is drawn smaller)
                 k = limit / span
                 w, h = max(2, int(w * k)), max(2, int(h * k))
+        return w, h, margin, region
+
+    def _cache_key(self, w, h, margin, region):
+        """The RAM preview's geometry of a frame drawn so, or None when such frames are not kept: a canvas drawn by
+        part, a smaller picture of a drag or of a tablet that cannot keep up, the node editor's thumbnails wanted
+        (they come from drawing the frame)."""
+        if not self.cache_on or region is not None or self.rough or (self.playing and self.play_scale != 1.0) \
+                or self.view.get("thumbs"):
+            return None
+        if fx.generation != self.cache_gen:              # (a filter's file changed: the frames drawn with it are old)
+            self.cache.clear()
+            self.cache_gen = fx.generation
+        return (w, h, margin, isinstance(self.renderer, glrender.GLRenderer))
+
+    def _shared(self):
+        return sharedgl.ENABLED and getattr(getattr(self.renderer, "gl", None), "shared", False)
+
+    def _show(self, pos):
+        v = self.view
+        if gpu.enabled != isinstance(self.renderer, glrender.GLRenderer):     # the 設定 switch changed
+            self.renderer = self._renderer()
+        w, h, margin, region = self._geometry()
+        key = self._cache_key(w, h, margin, region)
+        kept = self.cache.get(pos, key) if key is not None else None
+        self.asked = []
         shown = img = None
         with gpu.ui_lock:                                # (the layer list renders thumbnails on the UI thread: never both at once)
-            if sharedgl.ENABLED and getattr(getattr(self.renderer, "gl", None), "shared", False):
-                try:
-                    shown = self.renderer.render_gpu(v, pos, w, h, margin, region)
-                except Exception as exc:                 # (no way to show textures here: pictures from now on)
-                    sharedgl.ENABLED = False
-                    self.failed.emit(f"預覽直接用 GPU 貼圖失敗，改用一般方式：{exc}")
-            if shown is None:
-                img = self.renderer.render(v, pos, w, h, margin=margin, region=region) if margin or region else self.renderer.render(v, pos, w, h)
+            if kept is not None:
+                img = kept
+                if self._shared():
+                    try:
+                        shown = self.renderer.gpu_frame_of(kept, margin)
+                    except Exception:
+                        shown = None
+            else:
+                if self._shared():
+                    try:
+                        shown = self.renderer.render_gpu(v, pos, w, h, margin, region)
+                    except Exception as exc:                 # (no way to show textures here: pictures from now on)
+                        sharedgl.ENABLED = False
+                        self.failed.emit(f"預覽直接用 GPU 貼圖失敗，改用一般方式：{exc}")
+                if shown is None:
+                    img = self.renderer.render(v, pos, w, h, margin=margin, region=region) if margin or region else self.renderer.render(v, pos, w, h)
+                    img.setText("margin", repr(margin))          # (the preview needs to know where the canvas is in it)
+                if key is not None:
+                    self.cache.put(pos, key, img if shown is None else self.renderer.read_frame(shown), self._low_memory)
         if shown is not None:
             self.textureReady.emit(shown, pos)
         else:
-            img.setText("margin", repr(margin))              # (the preview needs to know where the canvas is in it)
             self.frameReady.emit(img, pos)
-        if self.renderer.thumbs:
+        if kept is None and self.renderer.thumbs:
             self.thumbsReady.emit(self.renderer.thumbs)
         if not self.playing:
             self.prefetch = list(self.asked)            # (streamed ahead if the playhead rests here)
         if self.renderer.errors:
             self.failed.emit("；".join(dict.fromkeys(self.renderer.errors)))
             self.renderer.errors.clear()
+        self._send_bar()
+
+    @staticmethod
+    def _low_memory():
+        a = sysmem.available()
+        return a is not None and a[0] < min(max(a[1] * 0.08, 768 << 20), 2 << 30)
+
+    def _send_bar(self, force=False):
+        """The timeline's bar of the frames kept (at most every CACHE_BAR_S)."""
+        if self.view is None or not (force or self.cache.changed):
+            return
+        now = time.monotonic()
+        if not force and now - self.bar_at < CACHE_BAR_S:
+            return
+        self.bar_at = now
+        self.cache.changed = False
+        try:
+            key = self._cache_key(*self._geometry())
+        except Exception:
+            key = None
+        bar = framecache.runs(self.cache.positions(key), self.step()) if key is not None else []
+        if bar != self.bar_sent:
+            self.bar_sent = bar
+            self.cacheChanged.emit(bar)
+
+    def _busy(self):
+        return bool(self.quit or self.new_view or self.want is not None or self.playing or self.cache_cfg is not None)
+
+    def _fill_ahead(self):
+        """While the playhead rests: draw the frames after it that are not kept yet (inside the time selection when
+        there is one, from its start again after its end), as long as they fit in the RAM preview without dropping
+        any it keeps; anything else asked for stops it at once."""
+        if not self.fill_pending:
+            return
+        if not (self.cache_on and self.cache_idle) or self.view is None or self.length <= 0:
+            self.fill_pending = False
+            return
+        w, h, margin, region = self._geometry()
+        key = self._cache_key(w, h, margin, region)
+        if key is None:
+            self.fill_pending = False
+            return
+        step = self.step()
+        lo, hi = (self.loop[0], self.loop[1] + 1) if self.loop else (0, self.length)
+        here = min(max(self.pos, lo), hi - 1)
+        order = list(range(here, hi, step))
+        if self.loop:
+            order += range(here - (here - lo) // step * step, here, step)
+        asked, self.asked = self.asked, []                  # (the video pictures the frame shown asked for stay what is streamed ahead)
+        try:
+            for p in order:
+                if self._busy():
+                    return                                   # (still pending: on from here when it rests again)
+                if self.cache.has(p, key):
+                    continue
+                if not self.cache.room_for(w * h * 4):
+                    break
+                with gpu.ui_lock:
+                    img = self.renderer.render(self.view, p, w, h, margin=margin) if margin else self.renderer.render(self.view, p, w, h)
+                img.setText("margin", repr(margin))
+                self.renderer.errors.clear()                 # (they show when the frame itself is shown)
+                self.cache.put(p, key, img, self._low_memory)
+                self._send_bar()
+        finally:
+            self.asked = asked
+        self.fill_pending = False
+        self._send_bar(force=True)
 
     def _show_still(self, sharp=False):
         """The picture where the playhead stopped. On a tablet (PLAY_SCALES) the pictures of a drag - asked for one

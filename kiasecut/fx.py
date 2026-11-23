@@ -423,6 +423,7 @@ def parse(text, ref, fallback_name="濾鏡"):
 
 
 _cache = {}
+generation = 0                    # counts the filter files read (again): a frame drawn before may look different now (framecache.py)
 
 
 STAT_EVERY = 0.5                  # (s: a filter file is looked at for changes this often at most - the node editor asks for the same few hundred every paint)
@@ -448,6 +449,8 @@ def _file_def(path, ref, fallback):
         d = FilterDef(ref, fallback, "", error=f"讀不到檔案：{exc}")
     else:
         d = parse(text, ref, fallback)
+    global generation
+    generation += 1
     _cache[path] = (key, d, now)
     return d
 

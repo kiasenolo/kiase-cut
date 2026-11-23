@@ -144,10 +144,10 @@ class GroupTests(unittest.TestCase):
         with self.assertRaises(edit.EditError):
             edit.find(p, g["id"])
 
-    def test_sound_is_refused(self):
+    def test_sound_comes_along(self):
         p = scene()
-        with self.assertRaises(edit.EditError):
-            edit.make_group(p, p, ["c1", "c3"])
+        g = edit.make_group(p, p, ["c1", "c3"])                          # (version 6: groups hold sounds)
+        self.assertIn("audio", [t["kind"] for t in g["tracks"]])
 
     def test_clips_stay_inside(self):
         p = scene()

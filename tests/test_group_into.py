@@ -51,8 +51,8 @@ class IntoGroupTests(unittest.TestCase):
         self.assertEqual(len(self.g["tracks"]), n + 1)
 
     def test_refused(self):
-        with self.assertRaises(edit.EditError):
-            edit.move_into_group(self.p, self.p, ["c3"], self.g["id"])  # sound
+        edit.move_into_group(self.p, self.p, ["c3"], self.g["id"])      # sound: onto a sound track of it (version 6)
+        self.assertTrue(any(t["kind"] == "audio" and any(k["id"] == "c3" for k in t["clips"]) for t in self.g["tracks"]))
         with self.assertRaises(edit.EditError):
             edit.move_into_group(self.p, self.p, [self.g["id"]], self.g["id"])
         with self.assertRaises(edit.EditError):

@@ -783,6 +783,7 @@ def link(p):
     if not (comps.get(p.get("active_timeline")) or {}).get("fit"):
         p["active_timeline"] = next(k for k, c in comps.items() if c.get("fit"))
     p["tracks"] = comps[p["active_timeline"]]["tracks"]
+    p.setdefault("duration_us", end_us(p["tracks"]))
     for comp in comps.values():                          # a fit one has the project's canvas, its length its content's
         if comp.get("fit"):
             comp["width"], comp["height"] = p.get("width", 1920), p.get("height", 1080)

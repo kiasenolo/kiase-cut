@@ -646,7 +646,7 @@ class GLRenderer(render.Renderer):
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
-                if render.on_frame(c, t_us, fps):
+                if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok):
                     try:
                         times = project.shutter_times(c, t_us, fps)
                         if times:
@@ -896,6 +896,7 @@ class GLRenderer(render.Renderer):
         if comp.get("level_t") is not None:              # 軌道: the track drawn alone, at the level's moment
             key = "track:" + str(comp["track_id"])
             self._matting.add(key)
+            ok, self._matte_ok = self._matte_ok, render.matte_ids(comp["tracks"])
             try:
                 cw, ch = comp["width"], comp["height"]
                 k = min(k, self.MATTE_MAX_PX / max(cw, ch))
@@ -904,6 +905,7 @@ class GLRenderer(render.Renderer):
                 return lay, True
             finally:
                 self._matting.discard(key)
+                self._matte_ok = ok
         kid = mask.get("compound_id")
         self._matting.add(kid)
         try:

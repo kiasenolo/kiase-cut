@@ -153,6 +153,7 @@ class Renderer:
         self.thumb_memo = {}        # {effect id: {(node id, output): (signature, thumbnail)}}: pictures of nodes that did not change are not read back again
         self.level = frozenset()    # ids of the tracks a 參考 track shows on (project.level_tracks)
         self._matting = set()       # compounds being drawn as a mask now (one cannot cut itself)
+        self._matte_ok = frozenset()  # ids of the 只當遮罩 clips drawn now: those of the track a 軌道 mask is reading
         self.outer = None           # (painter / layer, what is under it) of a 效果穿透 compound's layer
         self.clip_dur = None        # microseconds the outermost compound clip being drawn lasts (components.content)
         self.names = {}             # the names expressions read besides their own (the parameter rack)
@@ -437,10 +438,15 @@ class Renderer:
                     if path and w and h else None)
         if kind == "track":                              # 軌道: that track of this level, at this moment
             tracks, W, H, t_us = self.track_ctx or ((), 0, 0, 0)
-            tid = mask.get("track_id")
-            tr = next((x for x in project.all_tracks(tracks) if x["id"] == tid), None)
+            tid, cid = mask.get("track_id"), mask.get("clip_id")
+            if cid:                                      # 用路徑當遮罩: that one clip, wherever it went
+                tr = next((x for x in project.all_tracks(tracks) if any(k["id"] == cid for k in x["clips"])), None)
+                tr = tr and dict(tr, clips=[k for k in tr["clips"] if k["id"] == cid])
+            else:
+                tr = next((x for x in project.all_tracks(tracks) if x["id"] == tid), None)
             if tr is None or "track:" + str(tid) in self._matting or not W:
                 return None
+            tr = dict(tr, reference=False)               # (a 參考 track cuts in an export too: it is not drawn, not left out)
             return {"width": W, "height": H, "tracks": [tr], "level_t": t_us, "track_id": tid}
         if kind != "compound":
             return None
@@ -481,6 +487,7 @@ class Renderer:
         if comp.get("level_t") is not None:              # 軌道: the track drawn alone, at the level's moment
             key = "track:" + str(comp["track_id"])
             self._matting.add(key)
+            ok, self._matte_ok = self._matte_ok, matte_ids(comp["tracks"])
             try:
                 cw, ch = comp["width"], comp["height"]
                 k = min(k, self.MATTE_MAX_PX / max(cw, ch))
@@ -494,6 +501,7 @@ class Renderer:
                 return im
             finally:
                 self._matting.discard(key)
+                self._matte_ok = ok
         kid = mask.get("compound_id")
         self._matting.add(kid)
         try:
@@ -678,7 +686,7 @@ class Renderer:
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
-                if on_frame(c, t_us, fps):
+                if on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok):
                     try:
                         times = project.shutter_times(c, t_us, fps) if isinstance(p.device(), QImage) else None
                         if times:
@@ -1292,6 +1300,11 @@ def mask_path(mask, t, disp):
         everything.addRect(QRectF(-BIG, -BIG, 2 * BIG, 2 * BIG))
         path = everything.subtracted(path)
     return path
+
+
+def matte_ids(tracks):
+    """Ids of the 只當遮罩 (matte_only) clips on tracks: drawn while a 軌道 mask reads those tracks."""
+    return frozenset(c["id"] for t in tracks for c in t["clips"] if c.get("matte_only"))
 
 
 def on_frame(c, t_us, fps):

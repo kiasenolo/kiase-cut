@@ -1451,6 +1451,7 @@ def set_mask_track(proj, clip_id, track_id, size):
     if not any(tr["id"] == track_id for tr in project.all_tracks(proj["tracks"])):
         raise EditError("找不到這條軌道")
     a, b = _aspect(c), size[0] / size[1]
+    m.pop("clip_id", None)                     # (the whole track again: mask_by_shape's one clip is let go)
     m.update(track_id=track_id, trk_w=int(size[0]), trk_h=int(size[1]))
     m["w"], m["h"] = (1.0, round(a / b, 4)) if b > a else (round(b / a, 4), 1.0)
     return c
@@ -1501,8 +1502,9 @@ def set_text_path(proj, clip_id, path_id):
 
 
 def mask_by_shape(proj, shape_id, clip_ids, size):
-    """用路徑當遮罩: the clips cut by what the shape clip (a pen path or a built-in shape) shows - a 軌道 mask of its track, and
-    that track becomes a 參考 track so the shape itself is not drawn. Returns the clips that got the mask."""
+    """用路徑當遮罩: the clips cut by what the shape clip (a pen path or a built-in shape) shows - a 軌道 mask of its track that
+    reads that one clip (clip_id), and the shape becomes 只當遮罩 (matte_only) so it is not drawn itself; its track and the
+    other clips on it are left as they were. Returns the clips that got the mask."""
     track, shape = find(proj, shape_id)
     if not shape.get("asset"):
         raise EditError("要用內建形狀或鋼筆路徑當遮罩")
@@ -1513,10 +1515,21 @@ def mask_by_shape(proj, shape_id, clip_ids, size):
             continue
         set_mask(proj, cid, "track")
         set_mask_track(proj, cid, track["id"], size)
+        c["mask"]["clip_id"] = shape_id
         out.append(c)
     if out:
-        track["reference"] = True
+        shape["matte_only"] = True
     return out
+
+
+def set_matte_only(proj, clip_id, on):
+    """只當遮罩 (matte_only): the clip is not drawn, only read by the 軌道 masks that use it; off: it shows again."""
+    _, c = find(proj, clip_id)
+    if on:
+        c["matte_only"] = True
+    else:
+        c.pop("matte_only", None)
+    return c
 
 
 def set_mask_enabled(proj, clip_id, on):

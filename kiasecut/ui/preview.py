@@ -1653,6 +1653,8 @@ class Preview(PenMixin, _Surface):
                         continue
                     t = t_us - c["start_us"]
                     lock = locked or project.locked(tr)     # (shown and snapped to, never picked)
+                    if c.get("matte_only") and c["id"] not in self.selected_ids:
+                        lock = True                         # 只當遮罩: not drawn, so a click goes through it (pick it on the timeline)
                     if project.is_group(c):
                         inner = plain and is_identity(group_xf(c, self.W, self.H, t) * QTransform.fromTranslate(*shift))
                         b = GroupBox(c, self.W, self.H, t, boxes(c["tracks"], t, lock, inner, True, c), shift)

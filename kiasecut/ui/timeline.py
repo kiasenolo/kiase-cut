@@ -1388,6 +1388,7 @@ class Timeline(QWidget):
         kind = clip_kind(c)
         col = clip_color(c, track)
         sel = c["id"] in self.selected_ids
+        dim = dim or bool(c.get("matte_only"))           # 只當遮罩: not drawn, only read by masks
         if dim:
             col = col.darker(220)
         # the colour on the outline, a see-through tint of it inside (FILL_ALPHA): light
@@ -1475,6 +1476,8 @@ class Timeline(QWidget):
                 label += "  ✦" + (str(len(c["effects"])) if len(c["effects"]) > 1 else "")
             if c["id"] in self._bound():                 # a parameter of the open component sets it
                 label += "  " + components.ICON
+            if c.get("matte_only"):
+                label = "遮罩用 · " + label
             lr = r.adjusted(4, 0, -2, 0)
             if project.is_group(c):
                 fr = self._fold_rect(x0, y, h)
@@ -2540,6 +2543,8 @@ class Timeline(QWidget):
                 if m.get("on"):
                     head.append(("✓ 反轉遮罩" if m.get("invert") else "反轉遮罩", "group_invert"))
                 items = head + [None] + items
+            if c.get("matte_only"):
+                items = [("顯示這個片段（不再只當遮罩）", "show_matte")] + [None] + items
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立群組", "group")]
             if all(k["type"] != "audio" for k in self.selected_clips()):

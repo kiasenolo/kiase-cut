@@ -277,7 +277,7 @@ class RightClick(unittest.TestCase):
 
 
 class PathMask(unittest.TestCase):
-    def test_path_cuts_the_other_clips_and_its_track_is_reference(self):
+    def test_path_cuts_the_other_clips_and_only_the_path_is_hidden(self):
         from test_edit import S, clip
         from kiasecut import project
         p = project.new()
@@ -287,8 +287,11 @@ class PathMask(unittest.TestCase):
         p = project.link(p)
         out = edit.mask_by_shape(p, "b", ["a", "b"], (1920, 1080))
         self.assertEqual([c["id"] for c in out], ["a"])
-        self.assertEqual((a["mask"]["kind"], a["mask"]["track_id"]), ("track", "t2"))
-        self.assertTrue(p["tracks"][1]["reference"])
+        self.assertEqual((a["mask"]["kind"], a["mask"]["track_id"], a["mask"]["clip_id"]), ("track", "t2", "b"))
+        self.assertTrue(b["matte_only"])
+        self.assertFalse(p["tracks"][1].get("reference"))             # (the track and the rest of it are left alone)
+        edit.set_matte_only(p, "b", False)
+        self.assertNotIn("matte_only", b)
 
 
 def pv_nodes(pv, p):

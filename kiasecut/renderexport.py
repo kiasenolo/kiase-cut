@@ -41,8 +41,8 @@ def needs_renderer(proj):
     compound mask, a speed or a frozen frame, is a group, is a text with a mask (build.py fits a
     text's picture in its own way), or is a built-in asset with keyframes or an outline
     reaching out of its frame, or a component's clip with values of its own (MLT would show
-    the component's), or has rounded corners (圓角)."""
-    return any(c["type"] == "filter" or c.get("effects") or project.is_static(c) or _blend_or_mask_keys(c)
+    the component's), or has rounded corners (圓角), or is 只當遮罩 (MLT would draw it)."""
+    return any(c["type"] == "filter" or c.get("effects") or c.get("matte_only") or project.is_static(c) or _blend_or_mask_keys(c)
                or ((c.get("params") or c.get("places") or components.has_exprs(c.get("compound")))
                    and components.of_clip(c) is not None)
                or project.speed(c) != 1.0 or c.get("speed_curve") or project.frozen(c) is not None or project.is_group(c)

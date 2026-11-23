@@ -4200,6 +4200,10 @@ class MainWindow(QMainWindow):
                     sub.addAction(name).triggered.connect(lambda _=False, op=op, name=name: self.path_boolean(op, name))
             if paths and len(boxes) >= 2:
                 m.addAction("用路徑／形狀當遮罩").triggered.connect(self.mask_by_shape)
+            hidden = [b.clip["id"] for b in boxes if b.clip.get("matte_only")]
+            if hidden:
+                m.addAction("顯示這個片段（不再只當遮罩）").triggered.connect(
+                    lambda: self.apply_each("顯示遮罩形狀", edit.set_matte_only, hidden, False))
             m.addSeparator()
             for key, text in (("flip_h", "水平翻轉（Shift+H）"), ("flip_v", "垂直翻轉（Shift+V）")):
                 m.addAction(text).triggered.connect(lambda _=False, key=key: pv.flip(key))
@@ -4237,7 +4241,7 @@ class MainWindow(QMainWindow):
         self.add_path_clip(paths, "路徑運算：" + name, color, remove=[b.clip["id"] for b in boxes])
 
     def mask_by_shape(self):
-        """選取一個內建形狀或鋼筆路徑，再加選要被切的片段：它們用那個形狀當遮罩（形狀所在的軌道變成參考軌道）。"""
+        """選取一個內建形狀或鋼筆路徑，再加選要被切的片段：它們用那個形狀當遮罩（形狀本身只當遮罩、不畫出來；它的軌道不變）。"""
         tl = self.timeline
         if not self.proj or not tl.selected_ids:
             return
@@ -4342,6 +4346,10 @@ class MainWindow(QMainWindow):
             return
         if action == "paste":
             self.do_paste()
+            return
+        if action == "show_matte":                          # 只當遮罩 off (the selection's, or the clip's)
+            sel = [c["id"] for c in self.timeline.selected_clips() if c.get("matte_only")]
+            self.apply_each("顯示遮罩形狀", edit.set_matte_only, sel if cid in sel else [cid], False)
             return
         if action in ("copy", "cut", "duplicate", "snap_beats", "shuffle", "reverse_rows"):
             {"copy": self.do_copy, "cut": lambda: self.do_copy(cut=True), "duplicate": self.do_duplicate,

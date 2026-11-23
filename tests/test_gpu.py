@@ -77,5 +77,31 @@ class ReaderTests(unittest.TestCase):
             r.close()
 
 
+class RenderCardTests(unittest.TestCase):
+    """The preview draws on the stronger card: Qt's contexts are on the one the screen is on (a laptop's Intel one built
+    in), a context of its own may get the NVIDIA one - then its frames are read back instead of shared."""
+
+    def test_rank(self):
+        from kiasecut.glrender import gpu_rank
+        self.assertEqual([gpu_rank(n) for n in ("llvmpipe (LLVM 17.0.6, 256 bits)", "Mesa Intel(R) UHD Graphics (ADL-S GT1)",
+                                                "AMD Radeon RX 7600 (radeonsi, navi33)", "NVIDIA RTX A3000 12GB Laptop GPU/PCIe/SSE2")],
+                         [0, 1, 2, 3])
+
+    def test_shared_only_when_no_stronger_card(self):
+        from unittest import mock
+        from kiasecut import glrender
+
+        class Fake:
+            def __init__(self, video_frame=None, cache_limit=600, shared=False, card="Mesa Intel(R) UHD Graphics"):
+                self.shared = shared
+                self.gl = mock.Mock()
+                self.gl.ctx.info = {"GL_RENDERER": card if shared else "other"}
+        with mock.patch.object(glrender, "GLRenderer", Fake):
+            for alone, shared in (("NVIDIA RTX A3000 12GB Laptop GPU", False), ("Mesa Intel(R) UHD Graphics", True), (None, True),
+                                  ("llvmpipe (LLVM 17)", True)):
+                with mock.patch.object(glrender, "alone_card", return_value=alone):
+                    self.assertEqual(glrender.make(shared=True).shared, shared, alone)
+
+
 if __name__ == "__main__":
     unittest.main()

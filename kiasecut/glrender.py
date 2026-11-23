@@ -1110,14 +1110,50 @@ class GLRenderer(render.Renderer):
             gl.release(snap)
 
 
+def gpu_rank(name):
+    """How strong a graphics card's GL_RENDERER name says it is, roughly: 3 NVIDIA, 2 AMD, 1 any other card
+    (Intel's, Apple's...), 0 drawn by the CPU (llvmpipe and the like)."""
+    n = (name or "").lower()
+    if any(k in n for k in ("llvmpipe", "softpipe", "swrast", "software", "basic render")):
+        return 0
+    if any(k in n for k in ("nvidia", "geforce", "quadro", "tesla")):
+        return 3
+    if any(k in n for k in ("amd", "radeon")):
+        return 2
+    return 1
+
+
+def alone_card():
+    """The GL_RENDERER of a context of its own (fx.make_context), or None. (Asked before this thread has a context of Qt's
+    current: with one, EGL gave the card Qt's is on.)"""
+    try:
+        mgl, ctx = fx.make_context()
+    except Exception:
+        return None
+    try:
+        return ctx.info.get("GL_RENDERER", "")
+    finally:
+        ctx.release()
+
+
 def make(video_frame=None, shared=False):
     """A GPU renderer, or the CPU one when this computer has no OpenGL 3.3 (or moderngl). shared: in Qt's share group
-    (sharedgl.py; render_gpu) - an ordinary one when that cannot be made."""
+    (sharedgl.py; render_gpu) - an ordinary one when that cannot be made, or when a context of its own gets a stronger card
+    than Qt's, which are on the card the screen is on: on a laptop with two, the weak one built in (an Intel UHD 770 took
+    ~290 ms a frame where the same laptop's NVIDIA RTX A3000 takes 28). Its frames are read back then (~1.3 ms at 1080p)."""
     if shared:
+        alone = alone_card()
         try:
-            return GLRenderer(video_frame, shared=True)
+            r = GLRenderer(video_frame, shared=True)
         except Exception:
-            pass
+            r = None
+        if r is not None:
+            try:
+                mine = r.gl.ctx.info.get("GL_RENDERER", "")
+            except Exception:
+                mine = ""
+            if not (alone and alone != mine and gpu_rank(alone) > gpu_rank(mine)):
+                return r
     try:
         return GLRenderer(video_frame)
     except Exception:

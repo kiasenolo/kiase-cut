@@ -1038,6 +1038,30 @@ class NodeEditorTests(unittest.TestCase):
         self.assertIn("Glare", found("光暈"))
         self.assertIn("映射範圍", found("remap"))
 
+    def test_add_menu_search_lists_the_choices_of_a_menu_and_makes_the_node_with_it(self):
+        ed = self.make()
+        menus = []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        asked = []
+        ed.addRequested.connect(lambda *a: asked.append(a[1]))
+        ed.add_menu(QPointF(5, 6), QPoint(0, 0))
+        menu = menus[0]
+        menu.search.setText("floor")
+        shown = [menu.results.item(i).text() for i in range(menu.results.count())]
+        self.assertTrue(any(t.startswith("數學 ▸ 向下取整") for t in shown), shown)
+        self.assertTrue(any(t.startswith("向量數學 ▸ 向下取整") for t in shown), shown)
+        menu.search.returnPressed.emit()                                       # (the first: the Math node's)
+        self.assertEqual((asked[-1]["ref"], asked[-1]["set"]), ("builtin:nodes/math", {"op": "向下取整"}))
+        menu.search.setText("add")
+        shown = [menu.results.item(i).text() for i in range(menu.results.count())]
+        self.assertTrue(any(t.startswith("混合") for t in shown) and any(t.startswith("數學 ▸ 相加") for t in shown), shown)
+
+    def test_menu_presets_are_in_the_order_of_the_menus(self):
+        from kiasecut import nodemenu
+        for ref, (param, english) in nodemenu.PRESETS.items():
+            q = next(q for q in fx.get("builtin:" + ref).params if q.name == param)
+            self.assertEqual(len(q.items), len(english.split("|")), ref)
+
     def test_search_results_are_a_scrolling_list_and_the_arrow_keys_move_along_it(self):
         ed = self.make()
         asked = []

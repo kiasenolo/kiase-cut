@@ -35,6 +35,14 @@ class GraphEditTests(unittest.TestCase):
         edit.remove_graph_node(self.p, "c1", self.e["id"], nid)
         self.assertFalse([k for k in self.e["params"] if k.startswith(nid)])
 
+    def test_a_node_is_made_with_the_menu_choice_it_is_given(self):
+        nid = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math", "set": {"op": "向下取整"}})
+        self.assertEqual(self.e["params"][nid + ".op"], "向下取整")
+        self.assertEqual(self.e["params"][nid + ".value"], 0.5)                       # (the rest as it starts)
+        other = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math", "set": {"op": "沒有這個", "value": 9}})
+        self.assertEqual(self.e["params"][other + ".op"], "相加")                        # (a choice that is not in the menu, or not a menu: ignored)
+        self.assertEqual(self.e["params"][other + ".value"], 0.5)
+
     def p_clip(self):
         return edit.find(self.p, "c1")[1]
 

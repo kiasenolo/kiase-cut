@@ -65,8 +65,9 @@ class SearchBox:
         self.search.returnPressed.connect(self.first)
         self.search.installEventFilter(Steer(self))
 
-    def add(self, path, name, payload):
-        self.entries.append((path, name, payload))
+    def add(self, path, name, payload, words=None):
+        """words: what this entry alone is found by (its name's words in other languages); None: its name, its path and its payload's."""
+        self.entries.append((path, name, payload, words))
 
     def reset(self, focus=False):
         """Back to the categories (the menu is about to be shown)."""
@@ -83,8 +84,8 @@ class SearchBox:
         self.shown_action.setVisible(False)
         if not text:
             return
-        names = [(f"{name}　（{path}）" if path else name, payload) for path, name, payload in self.entries
-                 if text in name.lower() or text in path.lower() or text in key_of(payload)]
+        names = [(f"{name}　（{path}）" if path else name, payload) for path, name, payload, words in self.entries
+                 if (text in words.lower() if words is not None else text in name.lower() or text in path.lower() or text in key_of(payload))]
         res = self.results
         res.setUpdatesEnabled(False)
         if names:

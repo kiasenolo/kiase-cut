@@ -3342,6 +3342,12 @@ class NodeEditor(QWidget):
                     name = ng.short_name(fx.get(ref).name)
                     target.addAction(name, lambda _=False, n=n: ask(n))
                     entries.add(path, name, n)
+                    key = ref[len("builtin:"):]
+                    if key in nodemenu.PRESETS:                 # (the search also lists each choice of its menu, as Blender's: 數學 ▸ 向下取整)
+                        param, english = nodemenu.PRESETS[key]
+                        q = next(q for q in fx.get(ref).params if q.name == param)
+                        for choice, eng in zip(q.items, english.split("|")):
+                            entries.add(path, f"{name} ▸ {choice}", {**n, "set": {param: choice}}, f"{choice} {eng}")
                 elif it[0] == "node":
                     if feed and it[2].get("type") in (ng.VIEWER, ng.PARAMS, ng.STRING, ng.FONT):
                         continue                              # (these feed nothing a picture input takes)

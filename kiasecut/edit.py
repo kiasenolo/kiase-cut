@@ -2574,6 +2574,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
     inside = node.get("group")                           # (added while looking inside a group: it is a member)
     if node["type"] == nodegraph.FILTER:
         d = fx.get(node["ref"])
+        values = node.get("set") or {}                   # (a menu choice the node starts with: the search's 數學 ▸ 向下取整)
         node = {"type": nodegraph.FILTER, "ref": node["ref"]}
     elif node["type"] == nodegraph.SOURCE:
         if node.get("kind") not in nodegraph.SOURCE_KINDS:
@@ -2609,6 +2610,10 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
     if node["type"] == nodegraph.FILTER:
         for k, v in fx.default_params(d).items():
             e["params"][nodegraph.param_key(nid, k)] = v
+        for k, v in values.items():
+            q = next((q for q in d.params if q.name == k and q.type == "menu"), None)
+            if q is not None and v in q.items:
+                e["params"][nodegraph.param_key(nid, k)] = v
     elif node["type"] == nodegraph.SOURCE:
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
         if node["kind"] == "shape" and shape:

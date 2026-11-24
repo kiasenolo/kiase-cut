@@ -104,9 +104,9 @@ AFTER = [menu("佈局", LAYOUT)]            # (after KiaseCut's own: Blender's G
 # What the add menu's search finds a node by besides its name and its menu: the names Blender and other programs call it by, and what
 # one would type for what it does ("add" finds 混合 and 數學, "bloom" the 眩光). Keyed by the filter's name in the layout above.
 ALIASES = {
-    "nodes/mix": "add subtract multiply divide screen overlay darken lighten difference blend color mix 加 加法 相加 減 乘 除 疊加 混合 色彩混合 正片疊底 濾色 變暗 變亮",
-    "nodes/math": "add subtract multiply divide power sqrt sine cosine tangent min max round floor ceil modulo absolute compare 加 減 乘 除 次方 開根號 最大 最小 四捨五入 運算 計算 數學",
-    "nodes/vector_math": "add subtract multiply divide dot cross distance length normalize scale reflect refract 加 減 乘 除 點積 叉積 距離 長度 向量運算",
+    "nodes/mix": "add subtract multiply divide blend color mix 加 加法 相加 減 乘 除 混合 色彩混合",
+    "nodes/math": "add subtract multiply divide math 加 減 乘 除 運算 計算 數學",
+    "nodes/vector_math": "add subtract multiply divide vector math 加 減 乘 除 向量運算",
     "nodes/vector_rotate": "rotate euler axis 旋轉 歐拉",
     "nodes/map_range": "remap range rescale 重新映射 範圍 對應 重映射",
     "nodes/clamp": "limit min max 限制 夾住 範圍",
@@ -171,6 +171,21 @@ ALIASES = {
     "value_key": "luma key luminance brightness remove background 亮度 去背 摳圖 明度鍵",
     "scale": "resize zoom bigger smaller 縮放 放大 縮小 尺寸",
     "translate": "move position offset 位移 移動 平移 位置",
+}
+
+
+# The choices of a menu parameter that the search lists one by one (as Blender's does: Math > Floor), the node made with that choice
+# set. ref: (the parameter, the choices' English names in the order of the parameter's menu).
+PRESETS = {
+    "nodes/math": ("op", "add|subtract|multiply|divide|multiply add|power|logarithm|square root|inverse square root|absolute|exponent|minimum|maximum|"
+                         "less than|greater than|sign|compare|smooth minimum|smooth maximum|round|floor|ceil ceiling|truncate|fraction|truncated modulo|"
+                         "floored modulo|wrap|snap|ping pong|sine sin|cosine cos|tangent tan|arcsine arcsin|arccosine arccos|arctangent arctan|"
+                         "arctan2 atan2|hyperbolic sine sinh|hyperbolic cosine cosh|hyperbolic tangent tanh|to radians|to degrees"),
+    "nodes/vector_math": ("op", "add|subtract|multiply|divide|multiply add|cross product|project|reflect|refract|faceforward|dot product|distance|length|"
+                                "scale|normalize|absolute|power|sign|minimum|maximum|round|floor|ceil ceiling|fraction|modulo|wrap|snap|sine sin|"
+                                "cosine cos|tangent tan"),
+    "nodes/mix": ("blend", "mix|darken|multiply|color burn|lighten|screen|color dodge|add|overlay|soft light|linear light|difference|exclusion|"
+                           "subtract|divide|hue|saturation|color|value"),
 }
 
 

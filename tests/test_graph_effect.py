@@ -207,7 +207,7 @@ class GraphEditTests(unittest.TestCase):
     def test_a_picture_links_into_a_vector(self):
         g = self.e["graph"]
         m = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": "builtin:nodes/math"}, 100, 0)
-        for ref, kind in (("builtin:blender_tex_voronoi", "vec2"), ("builtin:nodes/vector", "vec3")):
+        for ref, kind in (("builtin:blender_vignette", "vec2"), ("builtin:nodes/vector", "vec3")):
             n = edit.add_graph_node(self.p, "c1", self.e["id"], {"type": "filter", "ref": ref}, 300, 0)
             socket = next((s for s, _ in ng.sockets(g["nodes"][n]) if s.startswith(ng.PARAM)
                            and ng.param_of(g, n, s).type == kind), None)

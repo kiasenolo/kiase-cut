@@ -1,6 +1,6 @@
 """Blender's basic procedural textures drawn as pictures (for the fill and outline of 內建素材 shapes).
 
-The same patterns as the [Blender] texture filters (kiasecut/filters/blender_tex_*.glsl), with
+The same patterns as the node editor's texture filters (kiasecut/filters/nodes/tex_*.glsl), with
 Blender's default settings, in NumPy: checker, brick, noise, voronoi, wave and magic.
 Source: the matching Blender shader nodes (source/blender/gpu/shaders/material/
 gpu_shader_material_tex_*.glsl), rewritten by hand - the same patterns, the cell randomness is

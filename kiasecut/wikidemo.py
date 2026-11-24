@@ -206,7 +206,7 @@ CONSTANTS = ("boolean", "rgb", "integer", "integer_vector", "menu", "value", "ve
 def is_generator(ref, d):
     """A node that makes a picture from nothing - a texture (its main input is a vector), a constant, a "產生" effect: there is no input to show."""
     name = ref.replace("builtin:", "", 1)
-    return (d.socket_type("in", "src") == "vector" or name.startswith("blender_tex_") or d.category == "產生"
+    return (d.socket_type("in", "src") == "vector" or d.category == "產生"
             or (name.startswith("nodes/") and name.split("/", 1)[1] in CONSTANTS))
 
 

@@ -68,13 +68,21 @@ class BuiltinFilterTests(unittest.TestCase):
     def test_node_filters_are_not_in_the_library(self):
         """@nodes: the node editor lists them, the filter library and 新增效果 do not; a clip that has one still draws it."""
         lib, every = set(fx.builtin_refs()), set(fx.builtin_refs(nodes=True))
-        for name in ("blender_tex_noise", "blender_tex_white_noise", "pure_gradient", "one_direction_white_noise"):
+        for name in ("pure_gradient", "one_direction_white_noise"):
             ref = fx.BUILTIN + name
             self.assertNotIn(ref, lib)
             self.assertIn(ref, every)
             self.assertIsNone(fx.get(ref).error)
         self.assertIn(fx.BUILTIN + "blender_glare", lib)
         self.assertIn(fx.BUILTIN + "blender_sensor_noise", lib)
+
+    def test_blender_textures_are_the_node_ones(self):
+        """The [Blender] Texture filters were the node editor's textures twice over: a clip or graph that has one draws the node one."""
+        for k in ("brick", "checker", "gradient", "magic", "noise", "voronoi", "wave", "white_noise"):
+            old = fx.get(fx.BUILTIN + "blender_tex_" + k)
+            self.assertIsNone(old.error, k)
+            self.assertEqual(old.name, fx.get(fx.BUILTIN + "nodes/tex_" + k).name)
+            self.assertNotIn(fx.BUILTIN + "blender_tex_" + k, fx.builtin_refs(nodes=True))
 
     def test_blender_ones_named(self):
         names = {fx.get(ref).name for ref in fx.builtin_refs()}
@@ -105,50 +113,6 @@ class BuiltinFilterTests(unittest.TestCase):
         self.assertGreater(high[25, 55, 3], 0)
         self.assertEqual(high[25, 70, 3], 0)                              # (the highlights stay on it)
         self.assertGreater(image[25, 70, 0], 0)
-
-    def test_textures_give_fac_and_colour_outputs(self):
-        import numpy as np
-        try:
-            eng = fx.Engine()
-        except fx.FilterError as exc:
-            self.skipTest(str(exc))
-        h, w = 36, 64
-        rgba = np.zeros((h, w, 4), np.uint8)
-        for name, outs in (("noise", ["fac", "color"]), ("gradient", ["color", "fac"]), ("wave", ["color", "fac"]),
-                           ("magic", ["color", "fac"]), ("voronoi", ["distance", "color"]), ("checker", ["color", "fac"]),
-                           ("brick", ["color", "fac"])):
-            d = fx.get("builtin:blender_tex_" + name)
-            self.assertIsNone(d.error, name)
-            self.assertEqual([n for n, _ in d.outputs], outs, name)
-            self.assertFalse([p.name for p in d.params if p.name == "amount"], name)
-            vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
-            with eng.ctx:
-                (ta, _), _, _ = eng._targets(w, h)
-                ta.write(rgba.tobytes())
-                pics = [np.frombuffer(eng.run_tex(d, vals, ta, w, h, output=i).read(), np.uint8).reshape(h, w, 4) for i in range(2)]
-            for pic in pics:
-                self.assertTrue((pic[..., 3] == 255).all(), name)              # (opaque, whatever it is put on)
-                self.assertGreater(pic[..., :3].std(), 3, name)                # (and a pattern)
-
-    def test_noise_w_moves_the_4d_noise_only(self):
-        import numpy as np
-        try:
-            eng = fx.Engine()
-        except fx.FilterError as exc:
-            self.skipTest(str(exc))
-        d = fx.get("builtin:blender_tex_noise")
-        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
-        rgba = np.full((48, 64, 4), 255, np.uint8)
-        vals["w"] = 0.0
-        flat = eng.run(d, vals, rgba)
-        vals["w"] = 2.5
-        self.assertTrue((eng.run(d, vals, rgba) == flat).all())                  # (3D: W does nothing)
-        vals["dims"] = 1
-        moved = eng.run(d, vals, rgba)
-        vals["w"] = 0.0
-        self.assertFalse((moved == eng.run(d, vals, rgba)).all())                # (4D: another W, another picture)
-        self.assertFalse(fx.shown(d, "w", {"dims": "3D"}))
-        self.assertTrue(fx.shown(d, "w", {"dims": "4D"}))
 
     def test_value_and_rgb_nodes_are_constants(self):
         import numpy as np
@@ -187,24 +151,6 @@ class BuiltinFilterTests(unittest.TestCase):
         self.assertAlmostEqual(int(out[0, 0, 0]), 100, delta=2)                            # (one stop: twice)
         vals["exposure"] = -1.0
         self.assertAlmostEqual(int(eng.run(d, vals, rgba)[0, 0, 0]), 25, delta=2)
-
-    def test_white_noise_is_random_per_point(self):
-        import numpy as np
-        try:
-            eng = fx.Engine()
-        except fx.FilterError as exc:
-            self.skipTest(str(exc))
-        d = fx.get("builtin:blender_tex_white_noise")
-        self.assertEqual([n for n, _ in d.outputs], ["value", "color"])
-        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
-        rgba = np.full((64, 128, 4), 255, np.uint8)
-        out = eng.run(d, vals, rgba)
-        r = out[..., 0].astype(float)
-        self.assertTrue((out[..., 0] == out[..., 1]).all())              # (the value output: grey)
-        self.assertGreater(r.std(), 60)                                   # (even over 0..255: ~74)
-        self.assertAlmostEqual(r.mean(), 127.5, delta=8)
-        vals["z"] = 3.0
-        self.assertFalse((eng.run(d, vals, rgba)[..., 0] == out[..., 0]).all())     # (another Z, another picture)
 
     def test_sensor_noise_of_a_smaller_preview_is_the_canvas_noise_shrunk(self):
         """At 1/4x a pixel shows 4 x 4 of the canvas: their noise averaged (a quarter as strong), not one at full strength

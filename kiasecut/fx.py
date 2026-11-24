@@ -494,6 +494,9 @@ GRAPH_DEF = FilterDef(GRAPH, "節點效果", "", category="節點", description=
 
 
 _paths = {}                       # ref -> (file path, name when the file has none)
+# filters merged into another: the [Blender] Texture filters were the node editor's textures twice over (filters/nodes/tex_*).
+# A clip or graph that has one draws the other; parameters of other names are at their defaults
+MERGED = {"blender_tex_" + k: "nodes/tex_" + k for k in ("brick", "checker", "gradient", "magic", "noise", "voronoi", "wave", "white_noise")}
 
 
 def get(ref):
@@ -505,7 +508,7 @@ def get(ref):
         if len(_paths) > 4096:
             _paths.clear()
         if ref.startswith(BUILTIN):
-            name = ref[len(BUILTIN):]
+            name = MERGED.get(ref[len(BUILTIN):], ref[len(BUILTIN):])
             got = (os.path.join(PKG, name + ".glsl"), name)
         else:
             got = (ref, os.path.splitext(os.path.basename(ref))[0])

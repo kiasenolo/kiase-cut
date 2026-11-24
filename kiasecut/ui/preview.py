@@ -1615,6 +1615,11 @@ class Preview(PenMixin, _Surface):
             return False
         if t == QEvent.KeyRelease:
             return False
+        if (self.view3d_on and self.view3d.modal is not None and t in (QEvent.ShortcutOverride, QEvent.KeyPress)
+                and isinstance(obj, QWidget) and obj.window() is self.window()):
+            if self.view3d.modal_key(e, t == QEvent.KeyPress):
+                e.accept()
+                return True
         if (self.drag and self.drag.get("modal") and t in (QEvent.ShortcutOverride, QEvent.KeyPress)
                 and isinstance(obj, QWidget) and obj.window() is self.window()):
             if self._grab_key(e, t == QEvent.KeyPress):

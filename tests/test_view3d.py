@@ -120,5 +120,110 @@ class View3DTests(unittest.TestCase):
         self.assertEqual(len(pv.view3d.plane_corners()), 2)
 
 
+class Editing3D(unittest.TestCase):
+    """Picking, the arrows and G / R / S of the planes in the 3D view."""
+
+    def setUp(self):
+        self.pv = Preview()
+        self.pv.resize(960, 540)
+        self.pv.set_scene(scene_view(), S, "c1")
+        self.pv.set_view3d(True)
+        self.picked, self.live, self.done, self.cancelled = [], [], [], []
+        self.pv.clipPicked.connect(self.picked.append)
+        self.pv.selectionPicked.connect(lambda ids, primary: self.picked.append(("sel", ids)))
+        self.pv.paramsLive.connect(lambda *a: self.live.append(a))
+        self.pv.paramsCommitted.connect(lambda *a: self.done.append(a))
+        self.pv.grabCancelled.connect(lambda: self.cancelled.append(1))
+
+    def at(self, world):
+        """Screen point (QPoint) of a world point."""
+        x, y = self.pv.view3d.seen().point(world)
+        r = self.pv._rect()
+        return QPoint(round(r.x() + x / self.pv.W * r.width()), round(r.y() + y / self.pv.H * r.height()))
+
+    def middle_of(self, cid):
+        pts = self.pv.view3d.plane_corners()[cid]
+        return self.at(sum(pts) / 4.0)
+
+    def test_a_click_selects_the_plane_it_lands_on(self):
+        QTest.mouseClick(self.pv, Qt.LeftButton, Qt.NoModifier, self.middle_of("c2"))
+        self.assertEqual(self.picked[-1]["id"], "c2")
+        QTest.mouseClick(self.pv, Qt.LeftButton, Qt.NoModifier, QPoint(5, 5))
+        self.assertEqual(self.picked[-1], ("sel", set()))
+
+    def test_an_arrow_moves_the_plane_along_its_axis_only(self):
+        pv, v = self.pv, self.pv.view3d
+        b = v.selected()
+        o = v.origin(v.values(b))
+        seen = v.seen()
+        tip = seen.point(v.arrows(seen, o, pv._k())["x"][0])
+        r = pv._rect()
+        start = QPoint(round(r.x() + tip[0] / pv.W * r.width()), round(r.y() + tip[1] / pv.H * r.height()))
+        self.assertEqual(v.hit_arrow(QPointF(start))[0], "x")
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(40, 0))
+        QTest.mouseMove(pv, start + QPoint(80, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(80, 0))
+        (cid, group, vals), = self.done
+        self.assertEqual((cid, group, set(vals)), ("c1", "transform", {"x"}))
+        self.assertNotEqual(vals["x"], -0.4)
+        self.assertTrue(self.live)
+        self.assertEqual(v.live, {})                                      # (nothing is left dragging)
+
+    def test_the_middle_moves_it_in_the_pictures_plane(self):
+        pv, v = self.pv, self.pv.view3d
+        start = self.at(v.origin(v.values(v.selected())))
+        self.assertEqual(v.hit_arrow(QPointF(start))[0], "plane")
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(60, -30))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(60, -30))
+        (_cid, _g, vals), = self.done
+        self.assertEqual(set(vals), {"x", "y", "z"})
+        self.assertGreater(vals["y"], 0.0)                                # (it went up)
+
+    def test_g_then_z_moves_along_z_and_escape_puts_it_back(self):
+        pv, v = self.pv, self.pv.view3d
+        key = lambda k, mods=Qt.NoModifier: QKeyEvent(QEvent.KeyPress, k, mods)
+        c = v.selected()
+        v.key_action(key(Qt.Key_G))()
+        self.assertIsNotNone(v.modal)
+        o = v.origin(v.values(c))
+        v.modal["m0"] = QPointF(self.at(o))                               # (the pointer is on the plane when the move begins)
+        v.modal_key(key(Qt.Key_Z), True)
+        far = self.at(o + [0, 0, 400])
+        v.modal_move(QPointF(far))
+        self.assertEqual(set(self.live[-1][2]), {"z"})
+        self.assertGreater(self.live[-1][2]["z"], 0.3)
+        v.modal_key(key(Qt.Key_Escape), True)
+        self.assertIsNone(v.modal)
+        self.assertEqual((self.done, v.live, len(self.cancelled)), ([], {}, 1))
+
+    def test_r_turns_about_y_and_a_click_keeps_it(self):
+        pv, v = self.pv, self.pv.view3d
+        key = lambda k, mods=Qt.NoModifier: QKeyEvent(QEvent.KeyPress, k, mods)
+        v.key_action(key(Qt.Key_R))()
+        v.modal_key(key(Qt.Key_Y), True)
+        m0 = v.modal["m0"]
+        v.modal_move(m0 + QPointF(60, 0))
+        self.assertEqual(self.live[-1][2], {"rot_y": 30.0})
+        QTest.mouseClick(pv, Qt.LeftButton, Qt.NoModifier, QPoint(10, 10))
+        self.assertEqual(self.done[-1], ("c1", "transform", {"rot_y": 30.0}))
+
+    def test_s_scales_both_ways(self):
+        v = self.pv.view3d
+        v.key_action(QKeyEvent(QEvent.KeyPress, Qt.Key_S, Qt.NoModifier))()
+        v.modal_move(v.modal["m0"] + QPointF(100, 0))
+        vals = self.live[-1][2]
+        self.assertAlmostEqual(vals["scale"], 0.5 * 1.5, 3)
+        self.assertAlmostEqual(vals["scale_y"], 0.5 * 1.5, 3)
+        v.modal_end(False)
+
+    def test_the_outline_follows_a_drag_before_the_edit_is_made(self):
+        v = self.pv.view3d
+        before = v.plane_corners()["c1"][0].copy()
+        v.live["c1"] = {"x": 0.0}
+        self.assertNotEqual(float(before[0]), float(v.plane_corners()["c1"][0][0]))
+
+
 if __name__ == "__main__":
     unittest.main()

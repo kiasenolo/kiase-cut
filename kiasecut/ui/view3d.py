@@ -12,8 +12,8 @@ the camera's own view starts from where the camera is.
 import math
 
 import numpy as np
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QPen, QPolygonF
+from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtGui import QColor, QCursor, QPen, QPolygonF
 
 from .. import camera, curves, project
 
@@ -37,6 +37,9 @@ class View3D:
         self.cam = None                  # the view's own camera (plain numbers), None until it is first used
         self.through = False             # looking through the scene's camera (nothing is changed then)
         self.nav = None                  # {"kind": "orbit" | "pan" | "zoom", "pos"}: a drag of the view
+        self.live = {}                   # {clip id: {x, y, z, ...}} being dragged: the outlines follow before the edit is made
+        self.drag = None                 # a drag of an arrow of the selected plane, or its middle
+        self.modal = None                # G / R / S: the selected plane follows the pointer till a click (Esc puts it back)
 
     # -- the cameras ------------------------------------------------------------------------------------------------------------
     def scene_camera(self):
@@ -70,6 +73,8 @@ class View3D:
         return None if self.through else dict(self.cam)
 
     def seen(self):
+        if self.cam is None:
+            self.start()
         cam = self.scene_camera() if self.through else self.cam
         return camera.Seen(cam, self.time() if self.through else 0, self.p.W, self.p.H)
 
@@ -145,12 +150,110 @@ class View3D:
             if c["type"] == "audio" or c.get("transform") is None:
                 continue
             t = project.stepped(c, b.t)
-            hw, hh = b.bw * abs(b.s) / 2.0, b.bh * abs(b.sy) / 2.0
-            out[c["id"]] = camera.world_of(c["transform"], t, W, H, [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)])
+            tf = dict(c["transform"], **self.live.get(c["id"], {}))
+            sx, sy = abs(self.live.get(c["id"], {}).get("scale", b.s)), abs(self.live.get(c["id"], {}).get("scale_y", b.sy))
+            hw, hh = b.bw * sx / 2.0, b.bh * sy / 2.0
+            out[c["id"]] = camera.world_of(tf, t, W, H, [(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)])
         return out
+
+    # -- the selected plane: its arrows ---------------------------------------------------------------------------------------
+    AXES = {"x": (1.0, 0.0, 0.0), "y": (0.0, -1.0, 0.0), "z": (0.0, 0.0, 1.0)}          # (y is up: the world's y goes down)
+    COLORS = {"x": RED, "y": GREEN, "z": BLUE}
+    ARROW_PX = 110                                  # screen px an arrow is long, whatever the distance
+
+    def selected(self):
+        """(box, clip) of the one plane that is selected and can be moved, or None."""
+        if len(self.p.selected_ids) != 1:
+            return None
+        for b in self.p.visible_boxes():
+            if b.clip["id"] == self.p.selected_id and not b.locked and b.clip.get("transform") is not None and b.clip["type"] != "audio":
+                return b
+        return None
+
+    def values(self, b):
+        """The plane's own numbers now (what is being dragged on top of the clip's)."""
+        tf, t = b.clip["transform"], project.stepped(b.clip, b.t)
+        live = self.live.get(b.clip["id"], {})
+        get = lambda key, default=0.0: float(live[key]) if key in live else float(curves.value(tf.get(key, default), t))
+        out = {k: get(k, 1.0 if k == "scale" else 0.0) for k in ("x", "y", "z", "rot_x", "rot_y", "rotation", "scale")}
+        out["scale_y"] = get("scale_y", out["scale"])                 # (without its own it follows the X scale)
+        return out
+
+    def origin(self, v):
+        s = self.p.H / 2.0
+        return np.array([v["x"] * self.p.W / 2.0, -v["y"] * s, v["z"] * s])
+
+    def arrow_length(self, seen, o, k):
+        z = seen.space(o)[2]
+        return max(z, 1e-3) * self.ARROW_PX * k / seen.f
+
+    def arrows(self, seen, o, k):
+        """{axis: (tip world point, tip on the picture or None)} of the three arrows of a plane whose middle is at o."""
+        n = self.arrow_length(seen, o, k)
+        out = {}
+        for a, d in self.AXES.items():
+            tip = o + np.array(d) * n
+            out[a] = (tip, seen.point(tip))
+        return out
+
+    def _canvas(self, pos):
+        return QPointF(*self.p._to_canvas(pos))
+
+    def _ray(self, pos):
+        m = self._canvas(pos)
+        return self.seen().ray(m.x(), m.y())
+
+    @staticmethod
+    def _on_axis(ray, o, axis):
+        """How far along the axis (a unit vector) through o the point nearest the line of sight is, or None when they are parallel."""
+        c, d = ray
+        w = o - c
+        b, dd, ee = float(axis @ d), float(axis @ w), float(d @ w)
+        denom = 1.0 - b * b
+        return None if denom < 1e-6 else (b * ee - dd) / denom
+
+    @staticmethod
+    def _in_plane(ray, o, n):
+        """The point where the line of sight meets the plane through o with normal n, or None."""
+        c, d = ray
+        den = float(d @ n)
+        if abs(den) < 1e-6:
+            return None
+        t = float((o - c) @ n) / den
+        return c + d * t if t > 0 else None
+
+    def hit_arrow(self, pos):
+        """("x" | "y" | "z" | "plane", box) when the pointer is on an arrow of the selected plane or on its middle, else None."""
+        b = self.selected()
+        if b is None or self.through:
+            return None
+        seen, k = self.seen(), self.p._k()
+        o = self.origin(self.values(b))
+        mid = seen.point(o)
+        if mid is None:
+            return None
+        m = self._canvas(pos)
+        near = lambda q, r: q is not None and math.hypot(q[0] - m.x(), q[1] - m.y()) <= r * k
+        for a, (_tip, at) in self.arrows(seen, o, k).items():
+            if near(at, 9):
+                return a, b
+        if near(mid, 9):
+            return "plane", b
+        return None
 
     # -- events ---------------------------------------------------------------------------------------------------------------
     def mouse_press(self, e):
+        if self.modal is not None:                            # (the click that keeps a G / R / S, or the right button that puts it back)
+            if e.button() in (Qt.LeftButton, Qt.RightButton):
+                self.modal_end(e.button() == Qt.LeftButton)
+            return True
+        if e.button() == Qt.LeftButton:
+            hit = self.hit_arrow(e.position())
+            if hit is not None:
+                self.start_drag(hit[0], hit[1], e.position())
+            else:
+                self.pick(e.position(), bool(e.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)))
+            return True
         if e.button() == Qt.MiddleButton:
             mods = e.modifiers()
             kind = "zoom" if mods & Qt.ControlModifier else "pan" if mods & Qt.ShiftModifier else "orbit"
@@ -160,6 +263,12 @@ class View3D:
         return False
 
     def mouse_move(self, e):
+        if self.modal is not None:
+            self.modal_move(e.position())
+            return True
+        if self.drag is not None:
+            self.drag_move(e.position())
+            return True
         if self.nav is None:
             return False
         d = e.position() - self.nav["pos"]
@@ -174,6 +283,9 @@ class View3D:
         return True
 
     def mouse_release(self, e):
+        if self.drag is not None and e.button() == Qt.LeftButton:
+            self.drag_end()
+            return True
         if self.nav is not None and e.button() == Qt.MiddleButton:
             self.nav = None
             self.p.unsetCursor()
@@ -200,6 +312,9 @@ class View3D:
             return lambda: self.look_from(side)
         if mods & Qt.ControlModifier:
             return None
+        grab = {Qt.Key_G: "move", Qt.Key_R: "rotate", Qt.Key_S: "scale"}.get(k)
+        if grab and not self.through and self.selected() is not None and self.drag is None:
+            return lambda: self.modal_begin(grab)
         if k == Qt.Key_0:
             return self.camera_view
         if k == Qt.Key_Home:
@@ -207,6 +322,173 @@ class View3D:
         if k == Qt.Key_Period:
             return lambda: self.frame(self.plane_corners().get(self.p.selected_id))
         return None
+
+    # -- picking and dragging the planes ------------------------------------------------------------------------------------------
+    def pick(self, pos, add):
+        """A click: the nearest plane the line of sight goes through is selected (none: nothing is)."""
+        c, d = self._ray(pos)
+        best = None
+        for cid, pts in self.plane_corners().items():
+            e1, e2 = pts[1] - pts[0], pts[3] - pts[0]
+            n = np.cross(e1, e2)
+            den = float(d @ n)
+            if abs(den) < 1e-9:
+                continue
+            t = float((pts[0] - c) @ n) / den
+            if t <= 0:
+                continue
+            q = c + d * t - pts[0]
+            u, v = float(q @ e1) / float(e1 @ e1), float(q @ e2) / float(e2 @ e2)
+            if 0.0 <= u <= 1.0 and 0.0 <= v <= 1.0 and (best is None or t < best[0]):
+                best = (t, cid)
+        clip = None
+        if best is not None:
+            clip = next((b.clip for b in self.p.visible_boxes() if b.clip["id"] == best[1]), None)
+        if clip is None:
+            if not add:
+                self.p.selectionPicked.emit(set(), None)
+        elif add:
+            ids = set(self.p.selected_ids) ^ {clip["id"]}
+            self.p.selectionPicked.emit(ids, clip["id"] if clip["id"] in ids else next(iter(ids), None))
+        else:
+            self.p.clipPicked.emit(clip)
+
+    def _emit_live(self, b, vals):
+        self.live[b.clip["id"]] = dict(vals)
+        self.p.paramsLive.emit(b.clip["id"], "transform", dict(vals))
+        self.p.update()
+
+    def _end_live(self, b, keep):
+        vals = self.live.pop(b.clip["id"], None)
+        if vals and keep:
+            self.p.paramsCommitted.emit(b.clip["id"], "transform", vals)
+        elif vals:
+            self.p.grabCancelled.emit()
+        self.p.update()
+
+    def _moved(self, v0, dv, keys="xyz"):
+        """The x, y, z that follow a move of dv (world px) from the numbers v0."""
+        s = self.p.H / 2.0
+        out = {}
+        if "x" in keys:
+            out["x"] = round(v0["x"] + dv[0] / (self.p.W / 2.0), 5)
+        if "y" in keys:
+            out["y"] = round(v0["y"] - dv[1] / s, 5)
+        if "z" in keys:
+            out["z"] = round(v0["z"] + dv[2] / s, 5)
+        return out
+
+    def start_drag(self, kind, b, pos):
+        v0 = self.values(b)
+        o0 = self.origin(v0)
+        seen = self.seen()
+        ray = self._ray(pos)
+        if kind == "plane":
+            n = seen.axes[2]
+            self.drag = {"kind": kind, "b": b, "v0": v0, "start": self._in_plane(ray, o0, n), "n": n, "o0": o0, "moved": False}
+        else:
+            a = np.array(self.AXES[kind])
+            self.drag = {"kind": kind, "b": b, "v0": v0, "start": self._on_axis(ray, o0, a), "a": a, "o0": o0, "moved": False}
+
+    def drag_move(self, pos):
+        d = self.drag
+        ray = self._ray(pos)
+        if d["start"] is None:
+            return
+        if d["kind"] == "plane":
+            q = self._in_plane(ray, d["o0"], d["n"])
+            if q is None:
+                return
+            vals = self._moved(d["v0"], q - d["start"])
+        else:
+            s = self._on_axis(ray, d["o0"], d["a"])
+            if s is None:
+                return
+            vals = self._moved(d["v0"], d["a"] * (s - d["start"]), d["kind"])
+        d["moved"] = True
+        self._emit_live(d["b"], vals)
+
+    def drag_end(self):
+        d, self.drag = self.drag, None
+        self._end_live(d["b"], d["moved"])
+
+    # -- G / R / S: the plane follows the pointer ------------------------------------------------------------------------------
+    def modal_begin(self, kind):
+        b = self.selected()
+        if b is None:
+            return
+        pos = QPointF(self.p.mapFromGlobal(QCursor.pos()))
+        v0 = self.values(b)
+        self.modal = {"kind": kind, "b": b, "v0": v0, "o0": self.origin(v0), "m0": pos, "axis": None}
+        self._modal_anchor()
+        self.p.setCursor(Qt.SizeAllCursor)
+        self.p.update()
+
+    def _modal_anchor(self):
+        """Where the line of sight met the plane's axis (or the picture's plane) when the move began - what the move is measured from."""
+        m = self.modal
+        ray = self._ray(m["m0"])
+        if m["axis"]:
+            m["start"] = self._on_axis(ray, m["o0"], np.array(self.AXES[m["axis"]]))
+        else:
+            m["start"] = self._in_plane(ray, m["o0"], self.seen().axes[2])
+
+    def modal_move(self, pos):
+        m = self.modal
+        ray = self._ray(pos)
+        v0, kind = m["v0"], m["kind"]
+        if kind == "move":
+            if m["start"] is None:
+                return
+            if m["axis"]:
+                s = self._on_axis(ray, m["o0"], np.array(self.AXES[m["axis"]]))
+                if s is None:
+                    return
+                vals = self._moved(v0, np.array(self.AXES[m["axis"]]) * (s - m["start"]), m["axis"])
+            else:
+                q = self._in_plane(ray, m["o0"], self.seen().axes[2])
+                if q is None:
+                    return
+                vals = self._moved(v0, q - m["start"])
+        elif kind == "rotate":
+            key = {"x": "rot_x", "y": "rot_y"}.get(m["axis"], "rotation")
+            vals = {key: round(v0[key] + (pos.x() - m["m0"].x()) * 0.5, 3)}
+        else:
+            f = max(0.01, 1.0 + (pos.x() - m["m0"].x()) / 200.0)
+            vals = {"scale": round(v0["scale"] * f, 5), "scale_y": round(v0["scale_y"] * f, 5)}
+        m["moved"] = True
+        self._emit_live(m["b"], vals)
+
+    def modal_key(self, e, act):
+        """A key while G / R / S is on; True when it takes it."""
+        k = e.key()
+        if e.modifiers() & (Qt.ControlModifier | Qt.AltModifier):
+            return False
+        if k == Qt.Key_Escape:
+            if act:
+                self.modal_end(False)
+            return True
+        if k in (Qt.Key_Return, Qt.Key_Enter):
+            if act:
+                self.modal_end(True)
+            return True
+        axis = {Qt.Key_X: "x", Qt.Key_Y: "y", Qt.Key_Z: "z"}.get(k)
+        if axis:
+            if act:
+                m = self.modal
+                m["axis"] = None if m["axis"] == axis else axis
+                if self.live.get(m["b"].clip["id"]):                 # (the other way of moving starts again from where it began)
+                    self.live.pop(m["b"].clip["id"], None)
+                    self.p.grabCancelled.emit()
+                self._modal_anchor()
+                self.p.update()
+            return True
+        return False
+
+    def modal_end(self, keep):
+        m, self.modal = self.modal, None
+        self.p.unsetCursor()
+        self._end_live(m["b"], keep and m.get("moved", False))
 
     # -- painting -------------------------------------------------------------------------------------------------------------
     def paint(self, p, k):
@@ -245,6 +527,39 @@ class View3D:
             p.setBrush(QColor(255, 170, 40, 30) if chosen else Qt.NoBrush)
             p.drawPolygon(QPolygonF([QPointF(*q) for q in scr]))
             p.setBrush(Qt.NoBrush)
+        self._paint_arrows(p, k, seen)
+
+    def _paint_arrows(self, p, k, seen):
+        """The three arrows (X red, Y green, Z blue) and the middle of the selected plane; while G / R is on the axis it is held to is drawn long."""
+        b = self.selected()
+        if b is None:
+            return
+        o = self.origin(self.values(b))
+        mid = seen.point(o)
+        if mid is None:
+            return
+        m0 = QPointF(*mid)
+        axis = self.modal["axis"] if self.modal else None
+        if axis:
+            a = np.array(self.AXES[axis])
+            seg = seen.segment(o - a * self.p.H * 6, o + a * self.p.H * 6)
+            if seg is not None:
+                p.setPen(QPen(self.COLORS[axis], 1.0 * k, Qt.DashLine))
+                p.drawLine(QPointF(*seg[0]), QPointF(*seg[1]))
+        if self.modal is not None:
+            return
+        for name, (_tip, at) in self.arrows(seen, o, k).items():
+            if at is None:
+                continue
+            tip = QPointF(*at)
+            p.setPen(QPen(self.COLORS[name], 2.0 * k))
+            p.drawLine(m0, tip)
+            p.setBrush(self.COLORS[name])
+            p.drawRect(QRectF(tip.x() - 4 * k, tip.y() - 4 * k, 8 * k, 8 * k))
+        p.setPen(QPen(QColor(255, 255, 255), 1.5 * k))
+        p.setBrush(QColor(255, 255, 255, 90))
+        p.drawEllipse(m0, 6 * k, 6 * k)
+        p.setBrush(Qt.NoBrush)
 
     def _paint_camera(self, p, k, seen):
         real = self.scene_camera()

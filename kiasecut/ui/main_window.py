@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, project, recovery,
+from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -251,6 +251,9 @@ class MainWindow(QMainWindow):
                     ("transform", "scale_y"): "縮放", ("transform", "scale_link"): "縮放連動", ("transform", "radius_link"): "圓角關聯", ("transform", "shadow_on"): "陰影", ("transform", "shadow_color"): "陰影顏色",
                     ("transform", "shadow_opacity"): "陰影", ("transform", "shadow_x"): "陰影", ("transform", "shadow_y"): "陰影", ("transform", "shadow_blur"): "陰影", ("transform", "shadow_spread"): "陰影", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
+                    ("transform", "z"): "3D 位置", ("transform", "rot_x"): "3D 旋轉", ("transform", "rot_y"): "3D 旋轉", ("camera", "on"): "攝影機",
+                    ("camera", "fov"): "攝影機視角", ("camera", "x"): "攝影機位置", ("camera", "y"): "攝影機位置", ("camera", "z"): "攝影機位置",
+                    ("camera", "tx"): "攝影機目標", ("camera", "ty"): "攝影機目標", ("camera", "tz"): "攝影機目標",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
                     ("transform", "anchor_x"): "錨點", ("transform", "anchor_y"): "錨點",
                     ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",
@@ -418,6 +421,7 @@ class MainWindow(QMainWindow):
         self.inspector = Inspector()
         ins = self.inspector
         ins.pivot_units = self.pivot_units
+        ins.scene_check = self.in_scene
         ins.textEdited.connect(self.on_text_edited)
         ins.paramEdited.connect(self.on_param_edited)
         ins.picture_of = self.dropped_picture
@@ -1643,7 +1647,16 @@ class MainWindow(QMainWindow):
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"], "compounds": self.proj.get("compounds", {}),
                 "markers": node.get("markers") or [], "guides": node.get("guides"), "rack": self.proj.get("rack") or [],
-                "open_component": node if components.is_component(node) else None}
+                "open_component": node if components.is_component(node) else None,
+                "camera": (walk_path(self.proj, self.path_ids)[-1][0] or {}).get("camera")}
+
+    def in_scene(self, c):
+        """Whether clip c of the open level is drawn by a 攝影機: the level's own, or a group's that holds it (camera.py)."""
+        v = self.view()
+        if camera.on(v.get("camera")) or camera.on(self.proj.get("camera")) and not self.path_ids:
+            return True
+        return any(camera.on(g.get("camera")) and any(k is c or k.get("id") == c.get("id") for k in project.walk_clips(g["tracks"]))
+                   for g in project.walk_clips(v["tracks"]) if project.is_group(g) and g.get("camera"))
 
     def show_compound(self, tl_id, parent_path, cid):
         """From the compound list: open the level holding the clip, select it, seek to it."""

@@ -114,6 +114,36 @@ class GpuMatchesCpu(unittest.TestCase):
         self.check("see-through", self.view([self.bg()], [self.top(transform=tf(scale=0.7, x=-0.3, opacity=0.8))]))
         self.check("svg", self.view([self.bg()], [self.pic("s", self.svg, 100, 100, transform=tf(scale=0.5))]))
 
+    def test_a_camera_draws_the_clips_as_planes_in_space_the_same_by_both(self):
+        cam = {"on": True}
+        plain = self.view([self.bg()], [self.top(transform=tf(scale=0.6, x=-0.2))])
+        seen = dict(plain, camera=cam)
+        self.check("default camera", seen)                               # (the z = 0 plane fills the picture: nothing changes)
+        for r in (self.cpu, self.gpu):
+            a, b = pixels(r.render(copy.deepcopy(plain), 0, W, H)), pixels(r.render(copy.deepcopy(seen), 0, W, H))
+            self.assertLess(float(np.abs(a - b).mean()), 2.0)
+        turned = self.view([self.bg()], [self.top(transform=dict(tf(scale=0.8, x=0.1), rot_y=55, z=-0.3))])
+        turned["camera"] = dict(cam, fov=60)
+        self.check("turned", turned, mean_max=3.0, far_max=0.02)
+        moved = dict(plain, camera={"on": True, "x": 0.4, "tx": 0.0})
+        self.check("camera moved", moved, mean_max=3.0, far_max=0.02)
+        for r in (self.cpu, self.gpu):                                   # (it does look different from the flat one)
+            a, b = pixels(r.render(copy.deepcopy(plain), 0, W, H)), pixels(r.render(copy.deepcopy(turned), 0, W, H))
+            self.assertGreater(float(np.abs(a - b).mean()), 3.0)
+
+    def test_a_nearer_clip_is_drawn_over_a_farther_one_whatever_their_order(self):
+        far = self.bg(transform=tf(scale=0.4, z=0.5))
+        near = self.top(transform=tf(scale=0.5, z=-0.3))
+        for order in ([[far], [near]], [[near], [far]]):
+            v = self.view(*order)
+            v["camera"] = {"on": True}
+            for r in (self.cpu, self.gpu):
+                img = pixels(r.render(copy.deepcopy(v), 0, W, H))
+                yellow = img[H // 2, W // 2]
+                self.assertGreater(yellow[0], 200)                         # (the yellow spot's middle, not the bg's)
+                self.assertGreater(yellow[1], 150)
+                self.assertLess(yellow[2], 120)
+
     def test_a_shadow_is_drawn_under_the_clip_and_the_same_by_both(self):
         shadow = dict(shadow_on=True, shadow_x=20.0, shadow_y=20.0, shadow_blur=6.0, shadow_opacity=1.0, shadow_color=[1.0, 0.0, 0.0])
         view = self.view([self.bg()], [self.top(transform=dict(tf(scale=0.5), **shadow))])

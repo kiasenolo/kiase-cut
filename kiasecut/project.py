@@ -31,6 +31,9 @@ clip     {id, type: image | video | audio | text | compound, name,
                      place its centre while it is not turned or scaled (pivot_shift); optional anchor_x,
                      anchor_y (錨點, the same units and frame): the point of the clip that x / y
                      place - moving the anchor moves the clip the other way, not x / y
+          camera: {on, fov, x, y, z, tx, ty, tz}            groups and compound clips, optional (camera.py): the clips
+                     inside are planes in space seen by the camera (their transform's z, rot_x, rot_y), drawn far to near
+                     with perspective; the project (and a compound's open level) can have one too
           asset: {key, family, w, h, color, ...}            built-in assets (assets.py): an
                      image clip drawn from these parameters, at its own size (picture_size)
           mask: {kind, invert, cx, cy, w, h, rotation, feather, enabled} or None;

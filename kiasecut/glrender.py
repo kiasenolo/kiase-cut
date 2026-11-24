@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, components, curves, fx, gpusync, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
+from . import assets, camera, components, curves, fx, gpusync, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -85,6 +85,7 @@ uniform float opacity;
 uniform int blend;           // 0 normal (GL blending does it), else BLEND_INDEX
 uniform sampler2D backdrop;  // what was there, for the other blend modes
 uniform int cround;          // 圓角: cut the picture's corners round
+uniform int plane;           // 攝影機: dev_uv is a homography (a layer standing in space); nothing behind the camera
 uniform mat3 dev_clip;       // device px -> clip space (origin at the frame's centre, y down)
 uniform vec2 chalf;          // half the frame's size in clip units
 uniform vec4 crad;           // radii: top left, top right, bottom right, bottom left
@@ -129,7 +130,9 @@ vec4 blended(int mode, vec4 s, vec4 b) {
 
 void main() {
     vec2 p = gl_FragCoord.xy;
-    vec2 uv = (dev_uv * vec3(p, 1.0)).xy;
+    vec3 h = dev_uv * vec3(p, 1.0);
+    if (plane == 1 && h.z <= 0.0) discard;
+    vec2 uv = h.xy / h.z;
     vec4 c = texture(tex, uv);
     if (straight == 1) c.rgb *= c.a;
     float a = opacity * mask_at(p) * corner_at(p);
@@ -174,7 +177,7 @@ void main() {
 
 def mat3(t):
     """A QTransform as a GLSL mat3 (column first)."""
-    return (t.m11(), t.m12(), 0.0, t.m21(), t.m22(), 0.0, t.dx(), t.dy(), 1.0)
+    return (t.m11(), t.m12(), t.m13(), t.m21(), t.m22(), t.m23(), t.m31(), t.m32(), t.m33())
 
 
 def rect_uv(r):
@@ -405,6 +408,19 @@ class GL:
         self.composite["cround"].value = 0
         self._common(self.composite, tgt, lay.tex, False, to_uv, opacity, 0, mask, t, disp, inv_world, blend, add)
 
+    def draw_plane(self, tgt, lay, hd, blend=0):
+        """A layer of tgt's size standing in space (攝影機): hd takes its pixels to tgt's (a homography); drawn with a soft edge, in blend."""
+        inv, ok = hd.inverted()
+        if not ok:
+            return
+        self._quad(tgt, [QPointF(0, 0), QPointF(tgt.w, 0), QPointF(0, tgt.h), QPointF(tgt.w, tgt.h)])
+        self.composite["cround"].value = 0
+        self.composite["plane"].value = 1
+        try:
+            self._common(self.composite, tgt, lay.tex, False, inv * QTransform.fromScale(1 / lay.w, 1 / lay.h), 1.0, 1, None, 0, None, None, blend)
+        finally:
+            self.composite["plane"].value = 0
+
     def _common(self, prog, tgt, tex, straight, dev_uv, opacity, edge, mask, t, disp, inv_world, blend, add=False):
         prog["size"].value = (tgt.w, tgt.h)
         prog["dev_uv"].value = mat3(dev_uv)
@@ -499,7 +515,7 @@ class GLRenderer(render.Renderer):
             try:
                 base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(tx, ty)
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
-                               frame / view["fps"] * US, width / view["width"])
+                               frame / view["fps"] * US, width / view["width"], view.get("camera"))
                 gpusync.finish(gl.ctx)                # (the read below holds the GIL while it waits for the GPU: wait here without it)
                 tgt.fbo.read_into(img.bits(), components=4)      # (straight into the picture: reading to bytes and copying took ~2.5 ms more at 1080p)
             finally:
@@ -522,7 +538,7 @@ class GLRenderer(render.Renderer):
             try:
                 base = QTransform.fromScale(width / view["width"], height / view["height"]) * QTransform.fromTranslate(tx, ty)
                 self.gl_tracks(tgt, base, view["tracks"], view["width"], view["height"], view["fps"],
-                               frame / view["fps"] * US, width / view["width"])
+                               frame / view["fps"] * US, width / view["width"], view.get("camera"))
                 gpusync.finish(gl.ctx)                # (what the preview's context draws from must be complete)
             except BaseException:
                 gl.release(tgt)
@@ -567,9 +583,10 @@ class GLRenderer(render.Renderer):
         moved = QTransform.fromTranslate(a[1] * W / 2, -a[2] * H / 2) * base if a else base   # (中心點跟隨最下層物件)
         if not matte.get("on") or len(tracks) < 2:
             i = next(i for i, t in enumerate(comp["tracks"]) if t is a[0]) + 1 if a else len(comp["tracks"])
-            self.gl_tracks(tgt, base, comp["tracks"][:i], W, H, fps, t_us, ppu)
+            cam = comp.get("camera")
+            self.gl_tracks(tgt, base, comp["tracks"][:i], W, H, fps, t_us, ppu, cam)
             if a:
-                self.gl_tracks(tgt, moved, comp["tracks"][i:], W, H, fps, t_us, ppu)
+                self.gl_tracks(tgt, moved, comp["tracks"][i:], W, H, fps, t_us, ppu, cam)
             return
         gl = self.gl
         cut, under, above, kept = (gl.layer(tgt.w, tgt.h) for _ in range(4))
@@ -634,10 +651,13 @@ class GLRenderer(render.Renderer):
         self.gl.draw_layer(lay, snap)
         return lay
 
-    def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu):
+    def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu, cam=None):
         outer, self.track_ctx = self.track_ctx, (tracks, W, H, t_us)     # (what a 軌道 source reads: render.py)
         try:
-            self._gl_tracks(tgt, base, tracks, W, H, fps, t_us, ppu)
+            if camera.on(cam):
+                self.gl_scene(tgt, base, cam, tracks, W, H, fps, t_us, ppu)
+            else:
+                self._gl_tracks(tgt, base, tracks, W, H, fps, t_us, ppu)
         finally:
             self.track_ctx = outer
 
@@ -661,6 +681,40 @@ class GLRenderer(render.Renderer):
                         self.errors.append(f"{c.get('name') or c['type']}: {exc}")
                     except Exception as exc:          # one bad clip must not blank the frame
                         self.errors.append(f"{c.get('name') or c['type']}: {exc}")
+
+    def gl_scene(self, tgt, base, cam, tracks, W, H, fps, t_us, ppu):
+        """The clips of tracks as planes in space seen by the camera cam (camera.py): each drawn flat on a layer of its own, and the layers
+        put on tgt far to near through the perspective; a filter clip works on what is drawn at the end."""
+        gl = self.gl
+        items = []
+        for i, tr in enumerate(tracks):
+            if tr["kind"] == "audio" or not project.visible(tr, self.level):
+                continue
+            for c in tr["clips"]:
+                if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok):
+                    c = propexpr.at(c, t_us - c["start_us"], self.names)
+                    t = project.stepped(c, t_us - c["start_us"])
+                    items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H), len(items), c, i, t))
+        inv_base, _ = base.inverted()
+        for _d, _n, c, i, t in sorted(items, key=lambda it: it[:2]):
+            try:
+                if c["type"] == "filter":
+                    self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu, tracks[:i])
+                    continue
+                q, d = camera.plane(cam, c.get("transform") or {}, t, W, H)
+                if d <= camera.NEAR:
+                    continue
+                lay = gl.layer(tgt.w, tgt.h)
+                try:
+                    lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
+                    self.gl_clip(lay, base, camera.flat(dict(c, blend="normal")), W, H, fps, t_us, ppu)
+                    gl.draw_plane(tgt, lay, inv_base * q * base, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0))
+                finally:
+                    gl.release(lay)
+            except fx.FilterError as exc:
+                self.errors.append(f"{c.get('name') or c['type']}: {exc}")
+            except Exception as exc:
+                self.errors.append(f"{c.get('name') or c['type']}: {exc}")
 
     def gl_blurred(self, tgt, base, c, times, W, H, fps, ppu):
         """動態模糊 (as render.draw_blurred): clip c drawn as it is at each of times on a clear
@@ -755,6 +809,8 @@ class GLRenderer(render.Renderer):
         elif kind in ("compound", "group"):
             dur = self.clip_dur or c.get("duration_us")        # (the outermost clip: its LFOs fade out at its end)
             comp = components.content(c, t, dur) if kind == "compound" else render.group_content(c, W, H)
+            if kind == "compound" and camera.on(c.get("camera")):          # 攝影機 (camera.py): the clip's own
+                comp = dict(comp, camera=c["camera"])
             cw, ch = comp["width"], comp["height"]
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
@@ -767,7 +823,7 @@ class GLRenderer(render.Renderer):
                 return
             through = kind == "compound" and project.passes_through(c)    # (效果穿透, as render.py)
             live = project.static_live(c)                     # (static_live: drawn afresh at its own time, as a compound)
-            if comp.get("static") and not through and not live:
+            if comp.get("static") and not through and not live and not camera.on(comp.get("camera")):
                 tex = self.gl_still(comp, k, fps).tex
                 rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             else:

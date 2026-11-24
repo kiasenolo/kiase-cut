@@ -725,7 +725,7 @@ TEXT_VALIGNS = ("top", "middle", "bottom")               # 垂直對齊 in a 文
 TEXT_STROKE_ALIGNS = ("inside", "center", "outside")
 TEXT_BOX_MODES = ("auto", "auto_h", "fixed")             # 自動寬度 / 自動高度 / 固定大小 (Lunacy's)
 TRANSFORM_FIELDS = ("x", "y", "scale", "scale_y", "rotation", "opacity", "pivot_x", "pivot_y",
-                    "anchor_x", "anchor_y", "path_progress") + project.CORNERS   # (pivot: 中心點, anchor: 錨點; 圓角)
+                    "anchor_x", "anchor_y", "path_progress", "z", "rot_x", "rot_y") + project.CORNERS   # (pivot: 中心點, anchor: 錨點; 圓角)
 
 
 def set_text(proj, clip_id, **fields):
@@ -978,6 +978,7 @@ GROUP_FIELDS = {
     "text": TEXT_ANIM_FIELDS,
     "mask": ("cx", "cy", "w", "h", "rotation", "feather", "kind", "invert", "paths"),     # (paths: a 路徑 mask's)
     "clip": ("volume", "blend"),
+    "camera": ("fov", "x", "y", "z", "tx", "ty", "tz"),                   # 攝影機 of a group or compound (camera.py)
 }
 # how a picture mixes with what is under it (render.BLEND_OPS draws them); a group's can also be
 # pass_through (穿透, as in Photoshop: its clips mix with what is under the group themselves)
@@ -1042,7 +1043,7 @@ def _valid_key(c, group, key):
 def has_param(c, group, key):
     """Whether clip c has the parameter group / key to keyframe: a transform, text or mask
     of its own, a sound for the volume, a picture for the blend mode, that filter."""
-    if group in ("transform", "text", "mask") and not c.get(group):
+    if group in ("transform", "text", "mask", "camera") and not c.get(group):
         return False
     if group == "clip" and (key == "volume" and key not in c or key == "blend" and c["type"] not in VISUAL):
         return False
@@ -1075,6 +1076,10 @@ def _holder(c, group):
         if not c.get("mask"):
             raise EditError("clip has no mask")
         return c["mask"]
+    if group == "camera":
+        if c["type"] not in ("group", "compound"):
+            raise EditError("只有群組和複合片段有攝影機")
+        return c.setdefault("camera", {})
     if group == "text":
         if not c.get("text"):
             raise EditError("not a text clip")
@@ -1207,6 +1212,12 @@ def set_param(proj, clip_id, group, key, value, t=None):
             h["scale_y"] = copy.deepcopy(h.get("scale", 1.0))     # Y gets a curve of its own
         for k, v in with_linked_scale(h, {key: value}, t).items():
             _set_one(c, h, group, k, v, t)
+        return c
+    if group == "camera" and key == "on":
+        h[key] = bool(value)
+        if value:                                # (where it stands is kept, not worked out: a later change of the angle of view does not move it)
+            h.setdefault("fov", 40.0)
+            h.setdefault("z", -1.0 / math.tan(math.radians(curves.value(h["fov"], 0)) / 2))
         return c
     if group == "transform" and key in ("scale_link", "flip_h", "flip_v", "radius_link", "shadow_on", "path_rotate"):
         h[key] = bool(value)

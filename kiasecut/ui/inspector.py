@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
+from .. import assets, camera, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons, look, motion
 from .colorpick import pick_color, qcolor, rgba
@@ -77,6 +77,9 @@ PARAMS = {
                   ("scale", "縮放 X", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("scale_y", "縮放 Y", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
+                  ("z", "3D 位置 Z", -20.0, 20.0, 0.01, 3, 1, 0.0),         # 攝影機 (camera.py): only in a scene
+                  ("rot_x", "3D 旋轉 X °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
+                  ("rot_y", "3D 旋轉 Y °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
                   ("anchor_x", "錨點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 錨點: the point 位置 places (object widths / heights too)
                   ("anchor_y", "錨點 Y", -1.0, 1.0, 0.01, 3, 1, 0.0),
                   ("pivot_x", "中心點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 中心點: turns / scales about it (shown in
@@ -99,6 +102,13 @@ PARAMS = {
              ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
              ("feather", "羽化", 0.0, 1.0, 0.01, 2, 1, 0.0)),
     "clip": (("volume", "音量 %", 0.0, 1000.0, 1.0, 0, 100, 1.0),),
+    "camera": (("fov", "視角 °", 5.0, 150.0, 0.5, 1, 1, 40.0),                  # 攝影機 of a group / compound (camera.py)
+               ("x", "位置 X", -20.0, 20.0, 0.01, 3, 1, 0.0),
+               ("y", "位置 Y", -20.0, 20.0, 0.01, 3, 1, 0.0),
+               ("z", "位置 Z", -50.0, 50.0, 0.01, 3, 1, -2.747),                 # (-1 / tan(fov / 2) for 40°: the z = 0 plane fills the picture)
+               ("tx", "目標 X", -20.0, 20.0, 0.01, 3, 1, 0.0),
+               ("ty", "目標 Y", -20.0, 20.0, 0.01, 3, 1, 0.0),
+               ("tz", "目標 Z", -20.0, 20.0, 0.01, 3, 1, 0.0)),
 }
 PLACE_ROWS = (("cx", "中心 X", -5.0, 5.0, 0.01, 3, 1, 0.0), ("cy", "中心 Y", -5.0, 5.0, 0.01, 3, 1, 0.0),
               ("w", "寬", 0.01, 10.0, 0.01, 3, 1, 1.0), ("h", "高", 0.01, 10.0, 0.01, 3, 1, 1.0))   # (components.PLACE)
@@ -336,6 +346,7 @@ def section(title):
 
 class Inspector(QWidget):
     pivot_units = None                              # (clip, clip time) -> (x, y): half-canvas units per object width / height
+    scene_check = None                              # clip -> whether it is in a 攝影機 scene (its 3D fields show)
     pk = {}
     # every edit names the clips it applies to (the whole selection)
     textEdited = Signal(list, dict)                 # clip ids, {field: value}
@@ -385,7 +396,7 @@ class Inspector(QWidget):
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
         self.part = part
-        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset", "params"]
+        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset", "params", "camera"]
         self.setMinimumWidth(300)
         lay = QVBoxLayout(self)
         lay.addWidget(section("遮罩" if part == "mask" else "屬性"))
@@ -600,8 +611,10 @@ class Inspector(QWidget):
                 if components.of_clip(c) is not None:
                     self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
-                self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS and r[0] != "path_progress" and not r[0].startswith("shadow_")],
-                           (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("anchor_x", "anchor_y", "錨點"),
+                scene = bool(self.scene_check and self.scene_check(c))
+                self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS and r[0] != "path_progress" and not r[0].startswith("shadow_")
+                                               and (scene or r[0] not in ("z", "rot_x", "rot_y"))],
+                           (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("rot_x", "rot_y", "3D 旋轉"), ("anchor_x", "anchor_y", "錨點"),
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
                 self._build_flip(form)
@@ -627,6 +640,8 @@ class Inspector(QWidget):
                     live.clicked.connect(lambda v: self._emit_now(self.paramEdited, "clip", "static_live", bool(v)))
                     self.widgets["static_live"] = live
                     form.addRow("", live)
+        if c["type"] in ("group", "compound") and not components.is_component(c.get("compound")):
+            self._build_camera(form)
         comp = c.get("compound") or {}
         if c["type"] in ("group", "compound") and comp and not (comp.get("static") or comp.get("fit")
                                                                  or components.is_component(comp)):
@@ -1386,6 +1401,16 @@ class Inspector(QWidget):
         grid.setColumnStretch(3, 1)
         form.addRow("錨點位置", box)
 
+    def _build_camera(self, form):
+        """攝影機: with it on the clips inside are planes in space the camera looks at (camera.py): each gets 3D 位置 Z and 3D 旋轉."""
+        form.addRow(section("攝影機"))
+        on = QCheckBox("啟用")
+        on.setToolTip("裡面的片段變成空間裡的平面：多出 Z 位置和 X／Y 旋轉，由近到遠疊起來，用透視看")
+        on.clicked.connect(lambda v: self._emit_now(self.paramEdited, "camera", "on", bool(v)))
+        self.widgets["camera_on"] = on
+        form.addRow("", on)
+        self._rows(form, "camera", list(PARAMS["camera"]), (("x", "y", "位置"), ("tx", "ty", "目標")))
+
     def _build_corners(self, form):
         """圓角: all four at once, then each (top left | top right, bottom left | bottom right)."""
         every = SpinBox()
@@ -2063,7 +2088,7 @@ class Inspector(QWidget):
         # 效果穿透: compound clips with something inside that works on what is under it
         through = bool(clips) and all(k["type"] == "compound" for k in clips) and any(
             k.get("fx_through") or project.backdrop_inside(k.get("compound")) for k in clips)
-        shape = shape and shape + (through,)
+        shape = shape and shape + (through, bool(c and self.scene_check and self.scene_check(c)))
         ids = [k["id"] for k in clips]
         if shape != self.shape or ids != self.clip_ids:
             self._flush()                                # (to the clips it was typed for)
@@ -2154,13 +2179,18 @@ class Inspector(QWidget):
                 self.pk = {"pivot_x": ux, "pivot_y": uy, "anchor_x": ux, "anchor_y": uy}
             except Exception:
                 self.pk = {}
+        if "camera_on" in w:
+            box = w["camera_on"]
+            box.blockSignals(True)
+            box.setChecked(all(camera.on(k.get("camera")) for k in clips))
+            box.blockSignals(False)
         for group, rows in PARAMS.items():
-            if group not in self.groups or (c if group == "clip" else c.get(group)) is None:
+            if group not in self.groups or (c if group == "clip" else c.get(group)) is None and group != "camera":
                 continue
             for key, _l, _lo, _hi, _st, dec, factor, default in rows:
                 if (group, key) not in w:
                     continue
-                hs = [k if group == "clip" else k[group] for k in clips]
+                hs = [k if group == "clip" else k.get(group) or {} if group == "camera" else k[group] for k in clips]
                 if (group, key) == ("transform", "scale_y"):            # absent: follows X
                     ps = [h.get("scale_y", h.get("scale", default)) for h in hs]
                 else:

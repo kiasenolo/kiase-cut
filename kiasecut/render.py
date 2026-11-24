@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, components, curves, fonts, fx, masks, nodegraph, project, propexpr, rack, svgimage, sysmem, textlayout, textvars, vector, viz
+from . import assets, camera, components, curves, fonts, fx, masks, nodegraph, project, propexpr, rack, svgimage, sysmem, textlayout, textvars, vector, viz
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -574,7 +574,7 @@ class Renderer:
         self.begin(view)
         self.names = rack.values(view, frame / view["fps"] * US)
         self.draw_tracks(p, view["tracks"], view["width"], view["height"], view["fps"],
-                         frame / view["fps"] * US, width / view["width"])
+                         frame / view["fps"] * US, width / view["width"], view.get("camera"))
         p.end()
         return img
 
@@ -589,11 +589,12 @@ class Renderer:
         shift = (a[1] * W / 2, -a[2] * H / 2) if a else (0.0, 0.0)      # (中心點跟隨最下層物件)
         if not matte.get("on") or len(tracks) < 2 or not isinstance(p.device(), QImage):
             i = next(i for i, t in enumerate(comp["tracks"]) if t is a[0]) + 1 if a else len(comp["tracks"])
-            self.draw_tracks(p, comp["tracks"][:i], W, H, fps, t_us, px_per_unit)
+            cam = comp.get("camera")
+            self.draw_tracks(p, comp["tracks"][:i], W, H, fps, t_us, px_per_unit, cam)
             if a:
                 p.save()
                 p.translate(*shift)
-                self.draw_tracks(p, comp["tracks"][i:], W, H, fps, t_us, px_per_unit)
+                self.draw_tracks(p, comp["tracks"][i:], W, H, fps, t_us, px_per_unit, cam)
                 p.restore()
             return
         dev = p.device()
@@ -682,11 +683,15 @@ class Renderer:
         q.end()
         return out
 
-    def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit):
-        """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first."""
+    def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit, cam=None):
+        """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first; with a camera (camera.py) as planes in
+        space, far to near."""
         outer, self.track_ctx = self.track_ctx, (tracks, W, H, t_us)     # (what a 軌道 source reads)
         try:
-            self._draw_tracks(p, tracks, W, H, fps, t_us, px_per_unit)
+            if camera.on(cam) and isinstance(p.device(), QImage):
+                self.draw_scene(p, cam, tracks, W, H, fps, t_us, px_per_unit)
+            else:
+                self._draw_tracks(p, tracks, W, H, fps, t_us, px_per_unit)
         finally:
             self.track_ctx = outer
 
@@ -708,6 +713,46 @@ class Renderer:
                             self.draw_clip(p, c, W, H, fps, t_us, px_per_unit)
                     except Exception as exc:          # one bad clip must not blank the preview
                         self.errors.append(f"{c.get('name') or c['type']}: {exc}")
+
+    def draw_scene(self, p, cam, tracks, W, H, fps, t_us, px_per_unit):
+        """draw_tracks with a camera: each clip drawn flat on a layer of its own and the layer put on p through the perspective
+        (as glrender.gl_scene)."""
+        dev = p.device()
+        base = p.worldTransform()
+        inv_base, _ = base.inverted()
+        items = []
+        for i, tr in enumerate(tracks):
+            if tr["kind"] == "audio" or not project.visible(tr, self.level):
+                continue
+            for c in tr["clips"]:
+                if on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok):
+                    c = propexpr.at(c, t_us - c["start_us"], self.names)
+                    t = project.stepped(c, t_us - c["start_us"])
+                    items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H), len(items), c, i, t))
+        for _d, _n, c, i, t in sorted(items, key=lambda it: it[:2]):
+            try:
+                if c["type"] == "filter":
+                    self.draw_filter_clip(p, c, W, H, fps, t_us, px_per_unit, tracks[:i])
+                    continue
+                q, d = camera.plane(cam, c.get("transform") or {}, t, W, H)
+                if d <= camera.NEAR:
+                    continue
+                layer = QImage(dev.width(), dev.height(), QImage.Format_ARGB32_Premultiplied)
+                layer.fill(Qt.transparent)
+                lp = QPainter(layer)
+                lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+                lp.setTransform(base)
+                try:
+                    self.draw_clip(lp, camera.flat(dict(c, blend="normal")), W, H, fps, t_us, px_per_unit)
+                finally:
+                    lp.end()
+                p.save()
+                p.setTransform(inv_base * q * base)
+                p.setCompositionMode(BLEND_OPS.get(curves.value(c.get("blend", "normal"), t), QPainter.CompositionMode_SourceOver))
+                p.drawImage(0, 0, layer)
+                p.restore()
+            except Exception as exc:
+                self.errors.append(f"{c.get('name') or c['type']}: {exc}")
 
     def draw_blurred(self, p, c, times, W, H, fps, px_per_unit):
         """動態模糊: clip c drawn as it is at each of times (project.shutter_times) on a clear layer
@@ -807,6 +852,8 @@ class Renderer:
         elif kind in ("compound", "group"):
             dur = self.clip_dur or c.get("duration_us")        # (the outermost clip: its LFOs fade out at its end)
             comp = components.content(c, t, dur) if kind == "compound" else group_content(c, W, H)
+            if kind == "compound" and camera.on(c.get("camera")):          # 攝影機 (camera.py): the clip's own
+                comp = dict(comp, camera=c["camera"])
             cw, ch = comp["width"], comp["height"]
             fit = min(W / cw, H / ch)
             bw, bh = cw * fit, ch * fit
@@ -819,7 +866,7 @@ class Renderer:
             under = self.seen(p, p.device().copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)) \
                 if kind == "compound" and isinstance(p.device(), QImage) and project.passes_through(c) else None
             live = project.static_live(c)                     # (static_live: drawn afresh at its own time, as a compound)
-            if comp.get("static") and under is None and not live:
+            if comp.get("static") and under is None and not live and not camera.on(comp.get("camera")):
                 pic = self.still(comp, k, fps)
                 draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
                 disp = (bw, bh)
@@ -1262,7 +1309,7 @@ def rounded_path(disp, radii):
 def group_content(g, W, H):
     """A group as compound-like content: its tracks on a canvas the size of its level."""
     return {"width": W, "height": H, "tracks": g["tracks"], "group": True, "matte": g.get("matte"),
-            "anchor": project.group_anchor(g), "duration_us": (g.get("compound") or g)["duration_us"]}
+            "anchor": project.group_anchor(g), "camera": g.get("camera"), "duration_us": (g.get("compound") or g)["duration_us"]}
 
 
 def clip_world(c, t, W, H):

@@ -123,7 +123,7 @@ class ParticleTests(unittest.TestCase):
             self.skipTest("no OpenGL for filters")
         d = fx.get("builtin:particle_system")
         self.assertIsNone(d.error)
-        self.assertEqual((d.particles, d.particle_param, d.particle_copies), (200000, "count", "trail"))
+        self.assertEqual((d.particles, d.particle_param, d.particle_copies, d.particle_children), (200000, "count", "trail", "sub"))
         pic = np.zeros((90, 160, 4), np.uint8)
         unit = 90 / 1080
         base = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
@@ -134,6 +134,16 @@ class ParticleTests(unittest.TestCase):
             out = self.eng.run(d, vals, pic, time=1.0, unit=unit)
             self.assertGreater(int(out[..., :3].sum()), 0, over)
             self.assertTrue((self.eng.run(d, vals, pic, time=1.0, unit=unit) == out).all(), over)
+        self.assertEqual(fx.particle_count(d, dict(base, count=10, trail=3, sub=5)), 90)      # parents and their trails, then the children
+        for mode in range(3):                                                     # sub-particles: at some moment of the parent's life, or where it dies, or where it is born
+            vals = dict(base, sub=4, sub_mode=mode, count=20, trail=2)
+            out = self.eng.run(d, vals, pic, time=1.5, unit=unit)
+            self.assertGreater(int(out[..., :3].sum()), 0, mode)
+            self.assertTrue((self.eng.run(d, vals, pic, time=1.5, unit=unit) == out).all(), mode)
+        only = dict(base, count=20, sub=0, mode=1, period=3.0)
+        kids = dict(base, count=20, sub=6, mode=1, period=3.0, sub_mode=2, sub_life=2.0, life=0.3, life_var=0.0)      # (children outlive their parents)
+        self.assertGreater(int(self.eng.run(d, kids, pic, time=0.9, unit=unit)[..., :3].sum()), 0)
+        self.assertEqual(int(self.eng.run(d, dict(only, life=0.3, life_var=0.0), pic, time=0.9, unit=unit)[..., :3].sum()), 0)
         solid = np.zeros((90, 160, 4), np.uint8)                                 # from a picture: only where it is
         solid[:, :40] = 255
         out = self.eng.run(d, dict(base, emitter=4, speed=0.0, gravity=0.0, count=2000, hide_src=True), solid, time=1.0, unit=unit)

@@ -65,6 +65,11 @@ PARTICLES = (
         "mode": "爆發", "period": 3.0, "count": 260, "life": 2.2, "life_var": 0.25, "origin": [0.5, 0.4], "speed": 480.0, "speed_var": 0.5,
         "gravity": 520.0, "drag": 0.7, "look": "線條", "size": 5.0, "size_var": 0.3, "size_end": 0.5, "trail": 8, "trail_step": 0.03,
         "colors": _grad("0:#fff2c0,0.4:#ffb347,1:#ff3b1a"), "fade_out": 0.5}),
+    ("shells", "煙花彈", "particle_system", {                      # (shells go up with a trail and burst into sparks where they die)
+        "count": 5, "life": 1.5, "life_var": 0.2, "emitter": "線", "origin": [0.5, 0.95], "ewidth": 700.0, "angle": 0.0, "spread": 24.0, "speed": 520.0,
+        "speed_var": 0.15, "gravity": 380.0, "drag": 0.15, "look": "實心圓", "size": 4.0, "size_var": 0.1, "size_end": 1.0, "trail": 12, "trail_step": 0.014,
+        "trail_fade": 0.9, "colors": _grad("0:#fff2c0,1:#ffb347"), "fade_out": 0.0, "sub": 70, "sub_mode": "死亡時", "sub_life": 1.5, "sub_speed": 210.0,
+        "sub_inherit": 0.25, "sub_size": 5.0, "sub_size_end": 0.3, "sub_colors": _grad("0:#ffffff,0.35:#ffd070,1:#ff4a1a")}),
     ("snow", "下雪", "particle_system", {
         "count": 600, "life": 9.0, "life_var": 0.4, "time_offset": 9.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 2400.0,
         "angle": 180.0, "spread": 20.0, "speed": 70.0, "gravity": 40.0, "drag": 0.5, "turb": 70.0, "turb_scale": 260.0, "turb_speed": 0.3,

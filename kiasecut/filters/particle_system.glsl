@@ -1,7 +1,7 @@
 // @filter 粒子系統
 // @category 粒子
 // @description 通用的粒子系統：發射器（點、線、圓、矩形、圖片）、重力／風／阻力／亂流／地面反彈、隨生命變化的大小和顏色、各種粒子形狀、拖尾；火花、雪、煙火、光點都能用它做。套在透明的片段上就是一個粒子物件，套在有圖片的片段上可以從圖片噴出粒子
-// @particles 200000 count*(trail+1)
+// @particles 200000 count*(trail+1)+count*sub
 // @sprite sprite_img
 // @param count int 400 1 20000 "粒子數"
 // @param mode menu 持續 "持續|爆發" "發射方式"
@@ -78,6 +78,26 @@
 // @param trail_fade float 0.8 0 1 "尾巴變淡"
 // @enable trail_step trail
 // @enable trail_fade trail
+// @panel 子粒子
+// @param sub int 0 0 40 "每個粒子生出幾個"
+// @param sub_mode menu 沿路徑 "沿路徑|死亡時|出生時" "什麼時候生"
+// @param sub_from float 0.2 0 1 "路徑上從（占壽命）"
+// @param sub_to float 0.9 0 1 "路徑上到（占壽命）"
+// @param sub_life float 0.8 0.05 10 "子粒子壽命（秒）"
+// @param sub_speed float 90 0 3000 "子粒子初速（像素／秒）"
+// @param sub_inherit float 0.3 0 1 "繼承父粒子的速度"
+// @param sub_size float 4 0.5 100 "子粒子大小（像素）"
+// @param sub_size_end float 0.2 0 4 "結束時大小（倍）"
+// @param sub_colors gradient 0:#ffffff,0.4:#ffcf6a,1:#ff5a1f "子粒子顏色（隨生命）"
+// @enable sub_mode sub
+// @enable sub_from sub_mode == 沿路徑
+// @enable sub_to sub_mode == 沿路徑
+// @enable sub_life sub
+// @enable sub_speed sub
+// @enable sub_inherit sub
+// @enable sub_size sub
+// @enable sub_size_end sub
+// @enable sub_colors sub
 // @param seed float 0 0 100 "種子"
 // @step 10 ewidth eheight speed gravity wind turb turb_scale
 
@@ -85,7 +105,10 @@
 // so any frame is drawn on its own. Slot i is born again every `life` seconds (staggered by i / count) or, as a burst, all of
 // them every `period` seconds; `k` (which birth it is) is part of every random number, so each birth is different.
 // Motion is closed form: v' = acceleration - drag v; with 地面 the vertical motion bounces off the floor (without drag) and
-// 亂流 adds a smooth displacement. A trail is the same particle drawn at `trail` earlier moments: instance = particle * (trail + 1) + copy.
+// 亂流 adds a smooth displacement. A trail is the same particle drawn at `trail` earlier moments, a sub-particle one born where its
+// parent was at some moment of its life (the parent's position then is as easy to work out as now): instances are
+// [count * (trail + 1) parents and their trails][count * sub children] - instance = particle * (trail + 1) + copy, then parent * sub + child.
+// With sub-particles a continuous slot lasts `life` + the children's life, so the children of a parent that has died can finish.
 // Not here, because they need what other particles or the picture did: collisions between particles, pushing by the picture.
 
 float R(int i, float k, float salt) {
@@ -104,46 +127,45 @@ vec4 effect(vec2 uv) {
     return (hide_src && emitter == 4) ? vec4(0.0) : src(uv);
 }
 
-bool particle(int id, out Particle p) {
-    int copies = trail + 1;
-    int i = id / copies;
-    int copy = id - i * copies;
-    float s, k;
+// a parent particle's birth: how far into its slot it is (s), which birth (k), its life, where it starts and how fast, the picture's colour there
+struct Born { float s; float k; float lf; vec2 base; vec2 v0; vec4 pic; };
+
+bool born(int i, out Born b) {
     float tt = time + time_offset;
+    float slot = (mode == 0 && sub > 0) ? life + sub_life : life;
+    float s, k;
     if (mode == 0) {
-        s = tt - float(i) * life / float(count);
+        s = tt - float(i) * slot / float(count);
         if (s < 0.0) return false;
-        k = floor(s / life);
-        s -= k * life;
+        k = floor(s / slot);
+        s -= k * slot;
     } else {
         k = floor(tt / period);
         s = tt - k * period;
     }
-    float lf = life * (1.0 - life_var * R(i, k, 1.0));
-    s -= float(copy) * trail_step;                                 // a trail copy: the same particle, a little earlier
-    if (s < 0.0 || s >= lf) return false;
-    float u = s / lf;
+    b.s = s;
+    b.k = k;
+    b.lf = life * (1.0 - life_var * R(i, k, 1.0));
 
-    // where it starts
     vec2 centre = origin * resolution;
-    vec2 base = centre;
-    vec4 pic = vec4(1.0);
+    b.base = centre;
+    b.pic = vec4(1.0);
     float ra = R(i, k, 2.0), rb = R(i, k, 3.0);
     if (emitter == 1) {
-        base += turn(vec2((ra - 0.5) * ewidth, 0.0), radians(erot));
+        b.base += turn(vec2((ra - 0.5) * ewidth, 0.0), radians(erot));
     } else if (emitter == 2) {
         float rr = 0.5 * ewidth * sqrt(ra), ang = rb * 6.2831853;
-        base += turn(vec2(cos(ang), sin(ang)) * rr, radians(erot));
+        b.base += turn(vec2(cos(ang), sin(ang)) * rr, radians(erot));
     } else if (emitter == 3) {
-        base += turn(vec2((ra - 0.5) * ewidth, (rb - 0.5) * eheight), radians(erot));
+        b.base += turn(vec2((ra - 0.5) * ewidth, (rb - 0.5) * eheight), radians(erot));
     } else if (emitter == 4) {                                     // anywhere the picture is there: a few tries
         bool found = false;
         for (int t = 0; t < 12; t++) {
             vec2 q = vec2(R(i, k, 20.0 + float(t)), R(i, k, 40.0 + float(t)));
             vec4 c = src(q);
             if (c.a > threshold) {
-                base = q * resolution;
-                pic = c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(1.0);
+                b.base = q * resolution;
+                b.pic = c.a > 0.0 ? vec4(c.rgb / c.a, c.a) : vec4(1.0);
                 found = true;
                 break;
             }
@@ -151,19 +173,22 @@ bool particle(int id, out Particle p) {
         if (!found) return false;
         centre = 0.5 * resolution;
     }
-
-    // where it is, s seconds on
     vec2 dir;
-    vec2 away = base - centre;
+    vec2 away = b.base - centre;
     if (outward && length(away) > 0.5) {
         dir = normalize(away);
     } else {
         float a = radians(angle + (R(i, k, 4.0) - 0.5) * spread);
         dir = vec2(sin(a), -cos(a));
     }
-    vec2 v0 = dir * speed * (1.0 - speed_var * R(i, k, 5.0));
+    b.v0 = dir * speed * (1.0 - speed_var * R(i, k, 5.0));
+    return true;
+}
+
+// where a particle that starts at base with velocity v0 is s seconds on, and how fast it goes
+void move(vec2 base, vec2 v0, float s, out vec2 pos, out vec2 vel) {
     vec2 acc = vec2(wind, gravity);
-    vec2 pos = base, vel;
+    pos = base;
     if (drag > 0.001) {
         vec2 vt = acc / drag;
         float e = exp(-drag * s);
@@ -193,15 +218,64 @@ bool particle(int id, out Particle p) {
     }
     if (turb > 0.0) {
         vec2 q = pos / turb_scale;
-        float tz = tt * turb_speed;
+        float tz = (time + time_offset) * turb_speed;
         pos += turb * (1.0 - exp(-3.0 * s)) * (vec2(vnoise(q + vec2(tz, 0.0)), vnoise(q + vec2(17.3, tz))) - 0.5) * 2.0;
     }
+}
+
+bool particle(int id, out Particle p) {
+    float tt = time + time_offset;
+    int copies = trail + 1;
+    int parents = count * copies;
+    bool child = id >= parents;
+    Born b;
+    int i, j = 0, copy = 0;
+    float s, lf, k, sz, fade_t = 1.0;
+    vec2 pos, vel;
+    vec4 c;
+    if (!child) {
+        i = id / copies;
+        copy = id - i * copies;
+        if (!born(i, b)) return false;
+        k = b.k;
+        lf = b.lf;
+        s = b.s - float(copy) * trail_step;                        // a trail copy: the same particle, a little earlier
+        if (s < 0.0 || s >= lf) return false;
+        move(b.base, b.v0, s, pos, vel);
+        fade_t = 1.0 - trail_fade * float(copy) / float(copies);
+    } else {
+        int n = id - parents;
+        i = n / sub;
+        j = n - i * sub;
+        if (!born(i, b)) return false;
+        k = b.k;
+        float fj = float(j);
+        float tau = sub_mode == 1 ? b.lf : sub_mode == 2 ? 0.0
+                  : b.lf * mix(sub_from, sub_to, (fj + R(i, k, 60.0 + fj)) / float(sub));      // when, in the parent's life, it is born
+        lf = sub_life * (1.0 - life_var * R(i, k, 80.0 + fj));
+        s = b.s - tau;
+        if (s < 0.0 || s >= lf) return false;
+        vec2 at, vat;
+        move(b.base, b.v0, min(tau, b.lf), at, vat);               // the parent, where it was then
+        float a = R(i, k, 100.0 + fj) * 6.2831853;
+        vec2 v0 = vat * sub_inherit + vec2(cos(a), sin(a)) * sub_speed * (1.0 - speed_var * R(i, k, 120.0 + fj));
+        move(at, v0, s, pos, vel);
+    }
+    float u = s / lf;
+    float jr = child ? 40.0 + float(j) : 0.0;                      // (a child's own random numbers)
 
     // how it looks
-    float sz = size * (1.0 - size_var * R(i, k, 6.0)) * mix(1.0, size_end, curve_ease(size_curve, u));
+    if (child) {
+        sz = sub_size * (1.0 - size_var * R(i, k, 6.0 + jr)) * mix(1.0, sub_size_end, curve_ease(size_curve, u));
+        c = gradient_eval(sub_colors_p, sub_colors_c, sub_colors_n, u, 2, 0, 0);
+    } else {
+        sz = size * (1.0 - size_var * R(i, k, 6.0)) * mix(1.0, size_end, curve_ease(size_curve, u));
+        c = gradient_eval(colors_p, colors_c, colors_n, u, 2, 0, 0);
+        if (emitter == 4 && tint) c.rgb *= b.pic.rgb;
+    }
     float spd = length(vel);
     vec2 heading = spd > 0.001 ? vel / spd : vec2(1.0, 0.0);
-    p.rot = rotmode == 1 ? R(i, k, 7.0) * 6.2831853 : rotmode == 2 ? R(i, k, 7.0) * 6.2831853 + spin * s : atan(heading.y, heading.x);
+    p.rot = rotmode == 1 ? R(i, k, 7.0 + jr) * 6.2831853 : rotmode == 2 ? R(i, k, 7.0 + jr) * 6.2831853 + spin * s : atan(heading.y, heading.x);
     p.size = vec2(sz);
     if (look == 6 && has_sprite_picture()) {                       // a picture: its own shape, its long side sz
         vec2 ps = sprite_picture_size();
@@ -218,15 +292,13 @@ bool particle(int id, out Particle p) {
         p.rot = 0.0;
     }
 
-    vec4 c = gradient_eval(colors_p, colors_c, colors_n, u, 2, 0, 0);
-    if (emitter == 4 && tint) c.rgb *= pic.rgb;
     float fin = fade_in > 0.0 ? smoothstep(0.0, fade_in, u) : 1.0;
     float fout = fade_out > 0.0 ? 1.0 - smoothstep(1.0 - fade_out, 1.0, u) : 1.0;
-    float tw = 1.0 - twinkle * (0.5 + 0.5 * sin(tt * (8.0 + 10.0 * R(i, k, 8.0)) + 60.0 * R(i, k, 9.0)));
+    float tw = 1.0 - twinkle * (0.5 + 0.5 * sin(tt * (8.0 + 10.0 * R(i, k, 8.0 + jr)) + 60.0 * R(i, k, 9.0 + jr)));
     c.rgb *= brightness * tw;
-    c.a *= alpha * fin * fout * (1.0 - trail_fade * float(copy) / float(copies));
+    c.a *= alpha * fin * fout * fade_t;
     p.color = c;
-    p.data = vec4(u, R(i, k, 10.0), 1.5 / max(min(p.size.x, p.size.y), 1.0), brightness * tw);
+    p.data = vec4(u, R(i, k, 10.0 + jr), 1.5 / max(min(p.size.x, p.size.y), 1.0), brightness * tw);
     return true;
 }
 

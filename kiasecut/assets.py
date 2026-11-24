@@ -47,7 +47,49 @@ CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎�
 PARTICLE_PREFIX = "particle:"
 # 粒子: objects made of a particle filter (filters/*.glsl with @particles): dropping one puts a clip of a see-through solid, as big as
 # the canvas, with that filter on it - its settings are the effect's. (filter file, in the 基礎物件 tab's 粒子 list)
-PARTICLES = ("sparks", "confetti", "bokeh_lights")
+def _grad(text):
+    """A gradient parameter's value from "position:#rrggbb[aa],position:..." (the stops fx.py keeps: [position, [r, g, b, a]])."""
+    out = []
+    for stop in text.split(","):
+        pos, col = stop.split(":")
+        v = [int(col[i:i + 2], 16) / 255 for i in range(1, len(col), 2)]
+        out.append([float(pos), v + [1.0] * (4 - len(v))])
+    return out
+
+
+# (key, name - None: the filter's own, filter file, the parameters that differ from its defaults). The first one is the whole system;
+# the others are settings of it (a menu is given by its choice's name)
+PARTICLES = (
+    ("system", "粒子系統", "particle_system", {}),
+    ("fireworks", "煙火", "particle_system", {
+        "mode": "爆發", "period": 3.0, "count": 260, "life": 2.2, "life_var": 0.25, "origin": [0.5, 0.4], "speed": 480.0, "speed_var": 0.5,
+        "gravity": 520.0, "drag": 0.7, "look": "線條", "size": 5.0, "size_var": 0.3, "size_end": 0.5, "trail": 8, "trail_step": 0.03,
+        "colors": _grad("0:#fff2c0,0.4:#ffb347,1:#ff3b1a"), "fade_out": 0.5}),
+    ("snow", "下雪", "particle_system", {
+        "count": 600, "life": 9.0, "life_var": 0.4, "time_offset": 9.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 2400.0,
+        "angle": 180.0, "spread": 20.0, "speed": 70.0, "gravity": 40.0, "drag": 0.5, "turb": 70.0, "turb_scale": 260.0, "turb_speed": 0.3,
+        "look": "柔邊圓", "softness": 0.35, "size": 15.0, "size_var": 0.6, "size_end": 1.0, "colors": _grad("0:#ffffff,1:#dfeaff"),
+        "fade_in": 0.08, "fade_out": 0.15, "glow": 0.5}),
+    ("fire", "火焰", "particle_system", {
+        "count": 260, "life": 1.3, "life_var": 0.4, "time_offset": 1.3, "emitter": "線", "origin": [0.5, 0.8], "ewidth": 110.0, "angle": 0.0, "spread": 25.0,
+        "speed": 170.0, "gravity": -260.0, "drag": 1.0, "turb": 45.0, "turb_scale": 120.0, "turb_speed": 1.2, "look": "柔邊圓", "softness": 0.8,
+        "size": 30.0, "size_var": 0.4, "size_end": 0.1, "colors": _grad("0:#ffd36a,0.35:#ff7a1e,1:#a01408"), "alpha": 0.3, "brightness": 1.0,
+        "fade_in": 0.1, "fade_out": 0.5}),
+    ("smoke", "煙", "particle_system", {
+        "count": 70, "life": 5.0, "life_var": 0.4, "time_offset": 5.0, "origin": [0.5, 0.85], "angle": 0.0, "spread": 20.0, "speed": 60.0, "gravity": -50.0,
+        "drag": 0.4, "turb": 70.0, "turb_scale": 160.0, "turb_speed": 0.4, "look": "柔邊圓", "softness": 1.0, "size": 50.0, "size_var": 0.4,
+        "size_end": 3.0, "colors": _grad("0:#6b6b6b,1:#bdbdbd"), "alpha": 0.1, "glow": 0.0, "fade_in": 0.15, "fade_out": 0.6}),
+    ("magic", "魔法光點", "particle_system", {
+        "count": 130, "life": 3.0, "life_var": 0.4, "time_offset": 3.0, "emitter": "圓形", "ewidth": 360.0, "speed": 25.0, "gravity": -20.0, "drag": 0.2,
+        "turb": 90.0, "turb_scale": 180.0, "turb_speed": 0.4, "look": "星芒", "size": 16.0, "size_var": 0.5, "size_end": 0.4,
+        "colors": _grad("0:#ffffff,0.5:#bfe3ff,1:#8f7bff"), "twinkle": 0.7, "fade_in": 0.2, "fade_out": 0.4}),
+    ("bounce", "彈跳火花", "particle_system", {
+        "mode": "爆發", "period": 3.5, "count": 90, "life": 3.2, "origin": [0.5, 0.3], "speed": 420.0, "gravity": 1000.0, "drag": 0.0, "look": "實心圓",
+        "size": 7.0, "size_end": 0.8, "floor_on": True, "floor_y": 0.9, "bounce": 0.55, "colors": _grad("0:#fff2c0,1:#ff9a2e"), "fade_out": 0.25}),
+    ("sparks", None, "sparks", {}),
+    ("confetti", None, "confetti", {}),
+    ("bokeh_lights", None, "bokeh_lights", {}),
+)
 DEFAULT_COLORS = ("#ffffff", "#000000")
 SHAPE_PX = 400                             # a new shape's size on a 1080-high canvas
 

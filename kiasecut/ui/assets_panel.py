@@ -73,21 +73,32 @@ def particle_thumbnail(key):
     import math
     import random
     from PySide6.QtCore import QPointF
-    from PySide6.QtGui import QPen
+    from PySide6.QtGui import QPen, QRadialGradient
     w, h = THUMB
     img = QImage(QSize(w, h), QImage.Format_ARGB32_Premultiplied)
     img.fill(QColor("#202024"))
     p = QPainter(img)
     p.setRenderHint(QPainter.Antialiasing)
     rnd = random.Random(key)
-    if key == "sparks":
-        for i in range(34):
+
+    def glow(x, y, r, c, a=0.9):
+        g = QRadialGradient(QPointF(x, y), r)
+        c0, c1 = QColor(c), QColor(c)
+        c0.setAlphaF(a)
+        c1.setAlphaF(0.0)
+        g.setColorAt(0, c0)
+        g.setColorAt(1, c1)
+        p.setPen(Qt.NoPen)
+        p.setBrush(g)
+        p.drawEllipse(QPointF(x, y), r, r)
+
+    if key in ("sparks", "fireworks"):
+        for i in range(34 if key == "sparks" else 28):
             a = rnd.random() * math.tau
             r0, r1 = 3 + rnd.random() * 6, 10 + rnd.random() * 20
-            c = QColor.fromHsvF(0.09 + 0.05 * rnd.random(), 0.7, 1.0)
-            p.setPen(QPen(c, 1.4, Qt.SolidLine, Qt.RoundCap))
-            p.drawLine(QPointF(w / 2 + math.cos(a) * r0, h * 0.6 + math.sin(a) * r0 * 0.8),
-                       QPointF(w / 2 + math.cos(a) * r1, h * 0.6 + math.sin(a) * r1 * 0.8 + r1 * 0.15))
+            p.setPen(QPen(QColor.fromHsvF(0.09 + 0.05 * rnd.random(), 0.7, 1.0), 1.4, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(w / 2 + math.cos(a) * r0, h * 0.55 + math.sin(a) * r0 * 0.8),
+                       QPointF(w / 2 + math.cos(a) * r1, h * 0.55 + math.sin(a) * r1 * 0.8 + r1 * 0.15))
     elif key == "confetti":
         p.setPen(Qt.NoPen)
         for i in range(26):
@@ -97,8 +108,7 @@ def particle_thumbnail(key):
             p.rotate(rnd.random() * 180)
             p.drawRect(QRectF(-3, -1.6, 6, 3.2))
             p.restore()
-    else:
-        p.setPen(Qt.NoPen)
+    elif key == "bokeh_lights":
         for i in range(11):
             c = QColor.fromHsvF(0.05 + 0.12 * rnd.random(), 0.45, 1.0, 0.5)
             r = 4 + rnd.random() * 9
@@ -107,6 +117,38 @@ def particle_thumbnail(key):
             p.setBrush(c)
             p.setPen(QPen(c2, 1))
             p.drawEllipse(QPointF(8 + rnd.random() * (w - 16), 8 + rnd.random() * (h - 16)), r, r)
+    elif key == "snow":
+        for i in range(30):
+            glow(3 + rnd.random() * (w - 6), 3 + rnd.random() * (h - 6), 1.5 + rnd.random() * 2.5, "#ffffff")
+    elif key == "fire":
+        for i in range(16):
+            t = i / 15
+            glow(w / 2 + rnd.uniform(-5, 5) * (1 - t) , h - 6 - t * (h - 8), 9 * (1 - 0.7 * t), QColor.fromHsvF(0.02 + 0.1 * (1 - t), 0.9, 1.0), 0.55)
+    elif key == "smoke":
+        for i in range(8):
+            t = i / 7
+            glow(w / 2 + rnd.uniform(-6, 6) + t * 6, h - 5 - t * (h - 6), 5 + 11 * t, "#9a9a9a", 0.35)
+    elif key == "magic":
+        p.setPen(QPen(QColor("#cfe6ff"), 1, Qt.SolidLine, Qt.RoundCap))
+        for i in range(16):
+            x, y, r = 6 + rnd.random() * (w - 12), 5 + rnd.random() * (h - 10), 1.5 + rnd.random() * 3.5
+            glow(x, y, r * 1.8, "#a8c8ff", 0.5)
+            p.setPen(QPen(QColor("#ffffff"), 1, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(x - r, y), QPointF(x + r, y))
+            p.drawLine(QPointF(x, y - r), QPointF(x, y + r))
+    elif key == "bounce":
+        p.setPen(QPen(QColor(255, 200, 120, 90), 1))
+        p.setBrush(Qt.NoBrush)
+        for i in range(3):
+            x0 = 8 + i * 20
+            p.drawArc(QRectF(x0, h * 0.25, 26, h * 1.0), 0, 180 * 16)
+        p.setPen(Qt.NoPen)
+        for i in range(14):
+            glow(6 + rnd.random() * (w - 12), h - 4 - abs(math.sin(i * 1.3)) * 24 * rnd.random(), 2.6, "#ffd28a")
+    else:                                                  # the whole system: a cloud of glowing dots
+        for i in range(34):
+            a, r = rnd.random() * math.tau, rnd.random() ** 0.6 * 24
+            glow(w / 2 + math.cos(a) * r * 1.5, h / 2 + math.sin(a) * r * 0.7, 2 + rnd.random() * 3.5, QColor.fromHsvF(0.08 + 0.06 * rnd.random(), 0.6, 1.0))
     p.end()
     return QPixmap.fromImage(img)
 
@@ -303,11 +345,11 @@ class AssetsPanel(QWidget):
         lst.itemDoubleClicked.connect(lambda it: self.addRequested.emit(self.ident(it.data(ROLE_KEY))))
         lst.setContextMenuPolicy(Qt.CustomContextMenu)
         lst.customContextMenuRequested.connect(lambda pos, l=lst: self._menu(l, pos))
-        for key in assets.PARTICLES:
-            d = fx.get(fx.BUILTIN + key)
-            it = QListWidgetItem(d.name)
+        for key, name, ref, _params in assets.PARTICLES:
+            d = fx.get(fx.BUILTIN + ref)
+            it = QListWidgetItem(name or d.name)
             it.setData(ROLE_KEY, "particle." + key)
-            it.setToolTip(d.name + "（" + d.description.split("；")[0] + "；拖到時間線加入，設定在效果裡改）")
+            it.setToolTip((name or d.name) + "（" + d.description.split("；")[0] + "；拖到時間線加入，設定在效果裡改）")
             it.setIcon(QIcon(particle_thumbnail(key)))
             lst.addItem(it)
         blay.addWidget(head)

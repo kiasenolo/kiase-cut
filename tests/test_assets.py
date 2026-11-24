@@ -381,11 +381,12 @@ class AssetTests(unittest.TestCase):
         panel.addRequested.connect(got.append)
         lst = panel.lists["particle"]
         self.assertEqual([lst.item(i).text() for i in range(lst.count())],
-                         [fx.get(fx.BUILTIN + k).name for k in assets.PARTICLES])
-        self.assertEqual(bytes(lst.mimeData([lst.item(1)]).data(MEDIA_MIME)).decode(), "particle:confetti")
-        self.assertFalse(lst.item(0).icon().isNull())
+                         [name or fx.get(fx.BUILTIN + ref).name for _k, name, ref, _p in assets.PARTICLES])
+        self.assertEqual(bytes(lst.mimeData([lst.item(1)]).data(MEDIA_MIME)).decode(), "particle:fireworks")
+        for i in range(lst.count()):
+            self.assertFalse(lst.item(i).icon().isNull())
         lst.itemDoubleClicked.emit(lst.item(0))
-        self.assertEqual(got, ["particle:sparks"])
+        self.assertEqual(got, ["particle:system"])
 
     def test_dropping_a_particle_adds_a_see_through_clip_with_its_filter(self):
         import types
@@ -400,8 +401,11 @@ class AssetTests(unittest.TestCase):
         c = made[0]
         self.assertEqual((c["start_us"], c["name"], c["asset"]["family"], c["asset"]["color"]), (2_000_000, fx.get("builtin:sparks").name, "solid", [0.0, 0.0, 0.0, 0.0]))
         self.assertEqual([e["filter"] for e in c["effects"]], ["builtin:sparks"])
+        MainWindow.place_asset(h, "particle:snow", "", 0)                                 # (a setting of the whole system)
+        e = made[1]["effects"][0]
+        self.assertEqual((made[1]["name"], e["filter"], e["params"]["emitter"], e["params"]["count"]), ("下雪", "builtin:particle_system", "線", 600))
         MainWindow.place_asset(h, "particle:nope", "", 0)                                 # (no such particle: nothing added)
-        self.assertEqual(len(made), 1)
+        self.assertEqual(len(made), 2)
 
     def test_inspector(self):
         from kiasecut.ui.inspector import Inspector

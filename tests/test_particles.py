@@ -118,6 +118,28 @@ class ParticleTests(unittest.TestCase):
         end = vals["start"] + vals["spread"] + vals["life"]
         self.assertTrue((self.eng.run(d, vals, pic, time=end + 0.1, unit=unit) == pic).all())
 
+    def test_particle_system(self):
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        d = fx.get("builtin:particle_system")
+        self.assertIsNone(d.error)
+        self.assertEqual((d.particles, d.particle_param, d.particle_copies), (200000, "count", "trail"))
+        pic = np.zeros((90, 160, 4), np.uint8)
+        unit = 90 / 1080
+        base = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        self.assertEqual(fx.particle_count(d, dict(base, count=10, trail=3)), 40)
+        for over in ({}, {"emitter": 1}, {"emitter": 2}, {"emitter": 3}, {"look": 2}, {"look": 3}, {"look": 4}, {"look": 5},
+                     {"trail": 4, "mode": 1}, {"floor_on": True, "drag": 0.0}, {"turb": 80.0}, {"rotmode": 3}):
+            vals = dict(base, **over)
+            out = self.eng.run(d, vals, pic, time=1.0, unit=unit)
+            self.assertGreater(int(out[..., :3].sum()), 0, over)
+            self.assertTrue((self.eng.run(d, vals, pic, time=1.0, unit=unit) == out).all(), over)
+        solid = np.zeros((90, 160, 4), np.uint8)                                 # from a picture: only where it is
+        solid[:, :40] = 255
+        out = self.eng.run(d, dict(base, emitter=4, speed=0.0, gravity=0.0, count=2000, hide_src=True), solid, time=1.0, unit=unit)
+        self.assertGreater(int(out[:, :48, :3].sum()), 0)
+        self.assertEqual(int(out[:, 60:, :3].sum()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

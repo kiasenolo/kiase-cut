@@ -4848,17 +4848,17 @@ class MainWindow(QMainWindow):
             self.add_visualizer(ident[4:], track_id, start_us)
             return
         if ident.startswith(assets.PARTICLE_PREFIX):       # a particle object: a see-through clip as big as the canvas, with the filter on it
-            key = ident[len(assets.PARTICLE_PREFIX):]
-            made = self.new_asset(assets.ident("solid.custom", "#00000000", "#00000000")) if key in assets.PARTICLES else None
+            preset = next((q for q in assets.PARTICLES if q[0] == ident[len(assets.PARTICLE_PREFIX):]), None)
+            made = self.new_asset(assets.ident("solid.custom", "#00000000", "#00000000")) if preset else None
             if made is None:
                 return
             params, path = made
-            name = fx.get(fx.BUILTIN + key).name
+            name = preset[1] or fx.get(fx.BUILTIN + preset[2]).name
 
             def particles(level):
                 c = library.place_item(level, dict(assets.item(params, path), name=name), track_id or None, start_us)
                 c["asset"] = params
-                edit.add_effect(level, c["id"], fx.BUILTIN + key)
+                edit.add_effect(level, c["id"], fx.BUILTIN + preset[2]).setdefault("params", {}).update(copy.deepcopy(preset[3]))
                 return c
             self.apply("加入" + name, particles, select=lambda c: c["id"])
             return

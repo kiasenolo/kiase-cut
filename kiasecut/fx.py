@@ -31,6 +31,7 @@ TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
 MAX_PASSES = 256
 MAX_PARTICLES = 200000
+PARTICLE_COUNT = re.compile(r"^(\w+)(?:\*\((\w+)\+1\))?$")           # count  or  count*(trail+1)
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve", "gradient")
 RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "output_index", "src",
@@ -84,6 +85,7 @@ class FilterDef:
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
         self.particles = 0                       # @particles: the most particles the filter draws (0: it is no particle filter); the last pass is followed by one instanced draw of them
         self.particle_param = None               # ... and the int parameter that says how many of them there are
+        self.particle_copies = None              # ... times (this int parameter + 1), when each particle is drawn more than once (a trail)
 
     def socket_type(self, way, name):
         """What socket `name` ("src" for the main input, "" for the main output) of way "in" / "out" carries: one of SOCKET_TYPES."""
@@ -348,9 +350,10 @@ def parse(text, ref, fallback_name="濾鏡"):
                                 words[2], words[3] if len(words) > 3 else None))
             elif key == "particles":                      # @particles most [count param]: particle() / sprite(), drawn as instanced quads over the last pass
                 words = rest.split()
-                if not words or not words[0].isdigit() or not 1 <= int(words[0]) <= MAX_PARTICLES or len(words) > 2:
-                    raise ValueError(f"@particles 要寫：最多幾個粒子（1 到 {MAX_PARTICLES}）[數量參數的名稱]")
-                head["particles"] = (int(words[0]), words[1] if len(words) > 1 else None)
+                counted = PARTICLE_COUNT.match(words[1]) if len(words) == 2 else None
+                if not words or not words[0].isdigit() or not 1 <= int(words[0]) <= MAX_PARTICLES or len(words) > 2 or (len(words) == 2 and not counted):
+                    raise ValueError(f"@particles 要寫：最多幾個粒子（1 到 {MAX_PARTICLES}）[數量參數的名稱，或 名稱*(拖尾參數+1)]")
+                head["particles"] = (int(words[0]), counted.group(1) if counted else None, counted.group(2) if counted else None)
             elif key == "shared":
                 head["shared"] = True
             elif key == "nodes":                          # made for the node editor: not in the filter library or a clip's 新增效果
@@ -434,9 +437,9 @@ def parse(text, ref, fallback_name="濾鏡"):
     if len(levels) > n or any(e is not None and not 0 <= e < i for i, e in enumerate(head.get("extras", []))):
         error = error or "@levels 不能比 @passes 多；@extras 只能讀前面的繪製"
     if "particles" in head:
-        pcount = head["particles"][1]
-        if pcount and not any(q.name == pcount and q.type == "int" for q in params):
-            error = error or f"@particles：「{pcount}」不是整數參數"
+        for pcount in head["particles"][1:]:
+            if pcount and not any(q.name == pcount and q.type == "int" for q in params):
+                error = error or f"@particles：「{pcount}」不是整數參數"
         if not re.search(r"\bparticle\s*\(", text):
             error = error or "找不到 particle() 函式"
     elif "effect" not in text:
@@ -445,7 +448,7 @@ def parse(text, ref, fallback_name="濾鏡"):
                   head.get("description", ""), n, error, head.get("precise", False), panels, levels, level_param,
                   head.get("extras", []), fixed)
     d.inputs = inputs
-    d.particles, d.particle_param = head.get("particles", (0, None))
+    d.particles, d.particle_param, d.particle_copies = head.get("particles", (0, None, None))
     d.input_show = input_show
     d.input_use = input_use
     d.dynamic = head.get("dynamic")
@@ -1072,7 +1075,7 @@ def particle_count(d, values):
     n = d.particles
     if d.particle_param:
         try:
-            n = min(n, int(values.get(d.particle_param, n)))
+            n = min(n, int(values.get(d.particle_param, n)) * (int(values.get(d.particle_copies, 0)) + 1 if d.particle_copies else 1))
         except (TypeError, ValueError):
             pass
     return max(0, n)

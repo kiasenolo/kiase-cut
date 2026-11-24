@@ -4,6 +4,7 @@
 // @param luminance float 0.1 0 1 "亮度雜訊"
 // @param chroma float 0.05 0 1 "色彩雜訊"
 // @param animated bool false "每格不同"
+// @time animated
 
 // Source: the Sensor Noise node group of Blender's Essentials asset library, rewritten by hand
 // for KiaseCut (exported first with tools/converters/compositor_to_hyprshade.py).

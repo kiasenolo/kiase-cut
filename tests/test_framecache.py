@@ -156,6 +156,11 @@ class PlayerKeeps(unittest.TestCase):
         w.failed.connect(errs.append, player.Qt.DirectConnection)
         w.set_render_width(160)
         w.set_cache(True, True, 0.05)
+        from unittest import mock
+        from kiasecut import sysmem
+        free = mock.patch.object(sysmem, "available", lambda: (64 << 30, 128 << 30))     # (whatever this machine has free now)
+        free.start()
+        self.addCleanup(free.stop)
         th.start()
         try:
             v = view()

@@ -24,6 +24,8 @@
 // @param w_cuty float 0.03 0 1 "Y 走到一半斷掉"
 // @param w_cutxy float 0.02 0 1 "X、Y 都走到一半斷掉"
 // @param w_gone float 0.05 0 1 "消失"
+// @time spread
+// @time rate != 0
 
 // The picture is cut into blocks of one fixed size (blk high, aspect times as wide - the rows
 // lie flat; `trend` makes the blocks along a row fail and fail alike, as a run of memory does).

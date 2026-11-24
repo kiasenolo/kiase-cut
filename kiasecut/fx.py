@@ -254,6 +254,12 @@ def shown(d, name, values):
     return _holds(conds, values)
 
 
+def reads_time(d, values):
+    """Whether filter d reads the time with these parameter values {name: value}: its @time conditions (any of them), or
+    always when it has none."""
+    return not d.time_when or any(_holds(c, values) for c in d.time_when)
+
+
 def _holds(conds, values):
     for other, negate, want in conds:
         v = values.get(other)
@@ -341,6 +347,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head["shared"] = True
             elif key == "nodes":                          # made for the node editor: not in the filter library or a clip's 新增效果
                 head["nodes"] = True
+            elif key == "time":                           # @time cond: it reads the time only while cond holds (read once every @param is known)
+                head.setdefault("time", []).append((line, rest))
             elif key == "bake":                           # (read once every @param is known)
                 bakes += shlex.split(rest)
             elif key == "alone":
@@ -427,6 +435,15 @@ def parse(text, ref, fallback_name="濾鏡"):
     d.input_use = input_use
     d.dynamic = head.get("dynamic")
     d.nodes_only = bool(head.get("nodes"))
+    d.time_when = []                                  # [[conditions]]: it reads the time while any of them holds (stillspans.py)
+    for line, rest in head.get("time", []):
+        m = ENABLE.match("_ " + rest.strip())
+        name = m and (m.group(3) or m.group(4))
+        if not m or all(q.name != name for q in params):
+            d.error = d.error or f"{line.strip()}\n@time 要寫成：勾選參數、!勾選參數，或 參數 == 值|值（例如 animated、rate != 0）"
+            continue
+        d.time_when.append([(name, bool(m.group(2)), None)] if m.group(3) else
+                           [(name, m.group(5) == "!=", [v.strip() for v in m.group(6).split("|")])])
     for name, passes in head.get("slots", []):
         for i in passes:
             if not 0 <= i < len(levels):

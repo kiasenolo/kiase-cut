@@ -71,7 +71,7 @@ class Spans(unittest.TestCase):
             "a video": dict(shape("a", 0, 10), type="video", media={"path": "x.mp4", "width": 100, "height": 100}),
             "a visualizer": shape("a", 0, 10, viz={"kind": "bars"}),
             "a filter reading the time": shape("a", 0, 10, effects=[effect("builtin:shake")]),
-            "a filter reading frame_phase()": shape("a", 0, 10, effects=[effect("builtin:glitch_effect")]),
+            "a filter reading frame_phase()": shape("a", 0, 10, effects=[effect("builtin:glitch_effect", animated=True)]),
             "a node effect's Time node": shape("a", 0, 10, effects=[{"id": "e1", "filter": "nodes:graph", "params": {},
                                                                      "graph": {"nodes": {"n": {"type": "filter", "ref": "builtin:nodes/time"}},
                                                                                "links": []}}]),
@@ -85,6 +85,65 @@ class Spans(unittest.TestCase):
         for name, c in cases.items():
             with self.subTest(name):
                 self.assertEqual(self.spans(c), [], name)
+
+    def test_a_filter_reads_the_time_only_while_its_switch_is_on(self):
+        """@time: 每格不同 off (Sensor Noise, Glitch Effect), 隨時間擴大 off and 每秒變化 0 (memory_*): one picture."""
+        for ref, still, moving in (("builtin:blender_sensor_noise", {"animated": False}, {"animated": True}),
+                                   ("builtin:glitch_effect", {"animated": False}, {"animated": True}),
+                                   ("builtin:memory_blocks", {"spread": False, "rate": 0.0}, {"spread": False, "rate": 60.0}),
+                                   ("builtin:memory_pull", {"spread": False, "rate": 0.0}, {"spread": True, "rate": 0.0})):
+            with self.subTest(ref):
+                self.assertEqual(self.spans(shape("a", 0, 10, effects=[effect(ref, **still)])), [(0, 100)])
+                self.assertEqual(self.spans(shape("a", 0, 10, effects=[effect(ref, **moving)])), [])
+        self.assertEqual(self.spans(shape("a", 0, 10, effects=[effect("builtin:memory_blocks")])), [])   # (its defaults move)
+
+    def test_a_node_reads_the_time_by_its_own_values(self):
+        def graph(params, links=(), nodes=None):
+            nodes = nodes or {"n": {"type": "filter", "ref": "builtin:blender_sensor_noise"}}
+            return shape("a", 0, 10, effects=[{"id": "e1", "filter": "nodes:graph", "params": params,
+                                               "graph": {"nodes": nodes, "links": list(links)}}])
+        self.assertEqual(self.spans(graph({"n.animated": False})), [(0, 100)])
+        self.assertEqual(self.spans(graph({"n.animated": True})), [])
+        fed = {"from": "v", "out": "value", "to": "n", "socket": "param:animated"}     # (its switch fed by another node)
+        self.assertEqual(self.spans(graph({"n.animated": False}, [fed], {
+            "n": {"type": "filter", "ref": "builtin:blender_sensor_noise"},
+            "v": {"type": "filter", "ref": "builtin:nodes/value"}})), [])
+        grouped = {"g": {"type": "group", "inputs": [], "outputs": []},
+                   "t": {"type": "filter", "ref": "builtin:nodes/time", "group": "g"}}
+        self.assertEqual(self.spans(graph({}, (), grouped)), [])                # (a Time node inside a node group)
+
+    def test_a_compound_as_a_source_or_mask(self):
+        """A static compound as an effect's picture or a mask: one picture, read at its own time (讀取時間) too while its
+        layers are all there from 0 and still; a layer that moves in it, or comes later, makes it move."""
+        still = {"width": 160, "height": 90, "static": True, "tracks": [{"id": "i", "kind": "video", "clips": [shape("x", 0, 0.1)]}]}
+        moving = copy.deepcopy(still)
+        moving["tracks"][0]["clips"][0]["effects"] = [effect("builtin:scroll", speed_x=5.0)]
+        later = copy.deepcopy(still)
+        later["tracks"].append({"id": "j", "kind": "video", "clips": [shape("y", 2, 0.1)]})
+
+        def using(comp, live, how):
+            v = view(shape("a", 0, 10, **({"effects": [effect("builtin:blur", radius=2.0) | {"sources": {"radius": {
+                "kind": "compound", "compound_id": "k", "static_live": live}}}]} if how == "source" else
+                {"mask": {"kind": "compound", "compound_id": "k", "static_live": live}})))
+            v["compounds"] = {"k": comp}
+            return stillspans.frame_spans(v, render.frame_count(v))
+        for how in ("source", "mask"):
+            with self.subTest(how):
+                self.assertEqual(using(still, False, how), [(0, 100)])
+                self.assertEqual(using(still, True, how), [(0, 100)])
+                self.assertEqual(using(moving, True, how), [])
+                self.assertEqual(using(later, True, how), [])
+                self.assertEqual(using(later, False, how), [(0, 100)])    # (not read at its time: its first frame)
+                self.assertEqual(using(dict(still, static=False), False, how), [])
+
+    def test_a_time_header_names_a_parameter(self):
+        from kiasecut import fx
+        d = fx.parse('// @param on bool false\n// @time gone\nvec4 effect(vec2 uv) { return src(uv) * time; }', "t")
+        self.assertIn("@time", d.error)
+        d = fx.parse('// @param rate float 1\n// @time rate != 0\nvec4 effect(vec2 uv) { return src(uv) * time; }', "t")
+        self.assertIsNone(d.error)
+        self.assertFalse(fx.reads_time(d, {"rate": 0.0}))
+        self.assertTrue(fx.reads_time(d, {"rate": 2.0}))
 
     def test_still_effects_and_masks_stay_still(self):
         c = shape("a", 0, 10, effects=[effect("builtin:blur", radius=5.0), effect("builtin:blender_glare")],
@@ -176,6 +235,11 @@ class Player(unittest.TestCase):
         w.cacheChanged.connect(bars.append, player.Qt.DirectConnection)
         w.set_render_width(160)
         w.set_cache(True, True, 0.05)
+        from unittest import mock
+        from kiasecut import sysmem
+        free = mock.patch.object(sysmem, "available", lambda: (64 << 30, 128 << 30))     # (whatever this machine has free now)
+        free.start()
+        self.addCleanup(free.stop)
         th.start()
         try:
             w.set_view(view(shape("a", 0, 4), text("t", 1, 2)), d)

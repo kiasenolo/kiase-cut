@@ -53,9 +53,36 @@ def _moves(x):
 
 
 _filter_still = {}
+_ctx = {"compounds": {}, "fps": 30.0}               # (the view frame_spans works on: the compounds a source or a mask names)
+BIG = 1 << 50
 
 
-def _code_still(d):
+def _whole_still(comp, live):
+    """Whether a compound used as a picture (a source of an effect, a mask) is the same picture at every moment: a static
+    one, not swung by an LFO, and when it is read at its own time (讀取時間) its layers all there from 0 and still."""
+    if not comp or not comp.get("static") or components.swings(comp):
+        return False
+    if not live:
+        return True
+    try:
+        ps = pieces(components._stretch(comp.get("tracks") or [], BIG), _ctx["fps"])
+    except Exception:
+        return False
+    return len([q for q in ps if q[0] < BIG // 2]) == 1 and ps[0][2]
+
+
+def _source_still(src):
+    if not isinstance(src, dict) or _moves(src):
+        return False
+    kind = src.get("kind", "image")
+    if kind == "compound":
+        return _whole_still(_ctx["compounds"].get(src.get("compound_id")), src.get("static_live"))
+    return kind in STILL_SOURCES
+
+
+def _code_still(d, values=None):
+    """Whether filter d draws the same at every moment: its code reads no time, or only while its @time conditions hold
+    (每格不同 on ...) and with these values {name: value} they do not."""
     if d is None or d.error:
         return False
     key = (d.ref, d.code)
@@ -64,7 +91,11 @@ def _code_still(d):
         if len(_filter_still) > 512:
             _filter_still.clear()
         got = _filter_still[key] = not TIME_WORDS.search(COMMENTS.sub("", d.code))
-    return got
+    return got or (values is not None and bool(d.time_when) and not fx.reads_time(d, values))
+
+
+def _values(d, params, prefix=""):
+    return {p.name: params.get(prefix + p.name, p.default) for p in d.params}
 
 
 def _effect_still(e):
@@ -78,32 +109,41 @@ def _effect_still(e):
         if not g or _moves(g):
             return False
         from . import nodegraph as ng
-        for node in (g.get("nodes") or {}).values():
+        try:
+            g = ng.flatten(g)                        # (the links through node groups go to their members, which are nodes of the graph)
+        except Exception:
+            return False
+        bound = ng.binds(g)
+        for nid, node in (g.get("nodes") or {}).items():
             t = node.get("type")
             if t == ng.FILTER:
                 try:
-                    if not _code_still(fx.for_node(node)):
+                    d = fx.for_node(node)
+                    own = {q.name: ng.bound_value(e.get("params") or {}, bound, nid, q.name, q.default) for q in d.params}
+                    linked = {l.get("socket", "")[len(ng.PARAM):] for l in g.get("links") or ()
+                              if l.get("to") == nid and str(l.get("socket", "")).startswith(ng.PARAM)
+                              and (nid, l.get("socket")) not in bound}
+                    if any(name in linked for conds in d.time_when for name, _n, _w in conds):
+                        return False                 # (its switch fed by another node: whatever it gives)
+                    if not _code_still(d, own):
                         return False
                 except Exception:
                     return False
             elif t == ng.SOURCE:
-                if node.get("kind") not in STILL_SOURCES:
+                if node.get("kind") not in STILL_SOURCES + ("compound",):    # (a compound's: by its source, below)
                     return False
-        for src in (e.get("sources") or {}).values():
-            if not isinstance(src, dict) or src.get("kind", "image") not in STILL_SOURCES or _moves(src):
-                return False
-        return True
+            elif t not in (ng.INPUT, ng.OUTPUT, ng.PARAMS, ng.REROUTE, ng.FRAME, ng.VIEWER, ng.FONT, ng.STRING, "groupin", "groupout"):
+                return False                         # (a kind of node not known here: counted as moving)
+        return all(_source_still(src) for src in (e.get("sources") or {}).values())
     if ref in project.PLACE_FILTERS:              # (降低幀數, 凍結, 動態模糊: only what moves changes under them)
         return True
     try:
-        if not _code_still(fx.get(ref)):
+        d = fx.get(ref)
+        if not _code_still(d, _values(d, e.get("params") or {})):
             return False
     except Exception:
         return False
-    for src in (e.get("sources") or {}).values():   # (a colour or number from a picture: 使用遮罩)
-        if not isinstance(src, dict) or src.get("kind", "image") not in STILL_SOURCES or _moves(src):
-            return False
-    return True
+    return all(_source_still(src) for src in (e.get("sources") or {}).values())   # (a colour or number from a picture: 使用遮罩)
 
 
 def _mask_still(m):
@@ -115,7 +155,7 @@ def _mask_still(m):
     if kind == "video":
         return False
     if kind == "compound":
-        return False                                 # (a compound's picture: not looked into)
+        return _whole_still(_ctx["compounds"].get(m.get("compound_id")), m.get("static_live"))
     return True                                      # (a shape, a path, a picture; 軌道: its clips are on the level and count there)
 
 
@@ -190,7 +230,12 @@ def _clip_parts(c, s, e, fps, seen):
         return [(s, e, _compound_still(comp))]
     if components.is_component(comp) or c.get("params"):
         return [(s, e, False)]                       # (a component's own values: worked into its layers as it is drawn)
-    inner = pieces(comp.get("tracks") or [], fps, seen + (id(comp),))
+    tracks = comp.get("tracks") or []
+    if comp.get("static"):                           # (讀取時間: drawn afresh at its own time, its layers lasting as long as it plays)
+        if components.swings(comp):
+            return [(s, e, False)]
+        tracks = components._stretch(tracks, int(project.source_time(c, e - s)) + 2 * US)
+    inner = pieces(tracks, fps, seen + (id(comp),))
     f = project.frozen(c)
     if f is not None:
         return [(s, e, _still_at(inner, f))]
@@ -229,6 +274,7 @@ def _first_frame_at(us, fps):
 def frame_spans(view, length=None, least=2):
     """[(first, end)] frames of the view's still stretches, each at least `least` frames long."""
     fps = float(view.get("fps") or 30.0)
+    _ctx["compounds"], _ctx["fps"] = view.get("compounds") or {}, fps
     out = []
     for lo, hi, still in pieces(view.get("tracks") or [], fps):
         if not still:

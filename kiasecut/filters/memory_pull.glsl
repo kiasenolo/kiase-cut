@@ -10,6 +10,8 @@
 // @param null_look menu 花屏 "花屏|透明|黑色|白色" "壞掉的分頁"
 // @param rate float 60 0 240 "每秒變化（60：每格不同）"
 // @param seed float 0 0 100 "種子"
+// @time spread
+// @time rate != 0
 // @enable chaos null_look == 花屏
 
 // The picture is read as memory: pixel (x, y) of the canvas is address y * width + x, in pages

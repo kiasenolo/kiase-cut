@@ -7,6 +7,7 @@
 // @param seed float 0 0 100 "種子"
 // @param posterize bool false "分段"
 // @param steps float 8 2 256 "段數"
+// @time animated
 
 vec3 srgb_to_lin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
 vec3 lin_to_srgb(vec3 c) { c = clamp(c, 0.0, 1.0); return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }

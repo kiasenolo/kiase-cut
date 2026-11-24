@@ -1122,10 +1122,15 @@ class Engine:
     @staticmethod
     def level_size(d, i, values, w, h, canvas):
         """(w, h) pass i of a filter with @levels is drawn at: the canvas shrunk 2^level times (and 2^choice
-        more for the @levels menu), never bigger than the picture it is drawn for."""
+        more for the @levels menu), never bigger than the picture it is drawn for. A @mipmap pass: each side the nearest
+        power of two to that - its smaller copies are then exact halves; how a driver halves an odd side is its own
+        (Mesa 26 left the 5 x 2 copy of a 160 x 90 picture twice as bright, and Fog Glow's far rings with it)."""
         q = 0 if d.fixed and d.fixed[i] else int(values.get(d.level_param, 0) if d.level_param else 0)
         shrink = 2 ** (d.levels[i] + q)
-        return (max(1, min(w, int(canvas[0]) // shrink)), max(1, min(h, int(canvas[1]) // shrink)))
+        tw, th = max(1, min(w, int(canvas[0]) // shrink)), max(1, min(h, int(canvas[1]) // shrink))
+        if i in d.mipmaps:
+            tw, th = (1 << max(0, round(math.log2(v))) for v in (tw, th))
+        return tw, th
 
     def run(self, d, values, rgba, time=0.0, progress=0.0, frame=0, unit=1.0, sources=None):
         """Filter rgba (H x W x 4, uint8, premultiplied) with filter d. values: {param: value

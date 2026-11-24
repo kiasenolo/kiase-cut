@@ -459,10 +459,11 @@ class BuiltinFilterTests(unittest.TestCase):
         a, b = d.code.index("    float r0 = 2.5, r1 = max(length(Rh), 3.5);\n    float grow"), d.code.index("    vec2 S = Rh + K;\n    return acc / (wn + fog_psf_ring(r0, sqrt")
         every = fx.parse(d.code[:a] + """    float r0 = 2.5;
     ivec2 n = ivec2(src_px);
-    for (int y = 0; y < n.y; y++)
+    float area = Rh.x * Rh.y / (src_px.x * src_px.y);           // (glare pixels a pixel of pass 126 covers: it is drawn
+    for (int y = 0; y < n.y; y++)                                //  at the nearest power-of-two size, @mipmap)
         for (int x = 0; x < n.x; x++) {
             float r = length(((vec2(x, y) + 0.5) / src_px - uv) * Rh);
-            if (r > r0) acc += fog_psf(r * dpp) * texelFetch(source, ivec2(x, y), 0).rgb;
+            if (r > r0) acc += fog_psf(r * dpp) * area * texelFetch(source, ivec2(x, y), 0).rgb;
         }
 """ + d.code[b:], "t")
         h, w = 90, 160

@@ -4875,6 +4875,17 @@ class MainWindow(QMainWindow):
                 self.apply("加入文字", lambda lvl: edit.add_text(lvl, round(start_us), track_id=track_id or None, style=style),
                            select=lambda c: c["id"])
             return
+        if ident == "scene3d:camera":                      # 相機: an object of a 3D 場景 that the scene is seen with
+            if self.ensure_project():
+                if not camera.on(self.view().get("camera")):
+                    self.statusBar().showMessage("相機要放在 3D 場景裡：先雙擊進入一個 3D 場景", 4000)
+                    return
+                made = self.new_asset(assets.ident("empty.small", *self.assets.colors))
+                if made is not None:
+                    params, path = made
+                    self.apply("加入相機", lambda lvl: edit.new_camera(lvl, params, path, round(start_us), track_id or None),
+                               select=lambda c: c["id"])
+            return
         if ident.startswith("scene3d:"):                   # 3D 場景: a compound with a camera, entered to put clips in it
             if self.ensure_project():
                 self.apply_root("加入 3D 場景", lambda root: edit.new_scene(root, self.container(root), round(start_us), track_id or None),

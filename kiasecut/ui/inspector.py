@@ -644,6 +644,8 @@ class Inspector(QWidget):
                     form.addRow("", live)
         if c["type"] in ("group", "compound") and not components.is_component(c.get("compound")):
             self._build_camera(form)
+        elif camera.is_clip(c):
+            self._build_camera(form, obj=True)
         comp = c.get("compound") or {}
         if c["type"] in ("group", "compound") and comp and not (comp.get("static") or comp.get("fit")
                                                                  or components.is_component(comp)):
@@ -1403,8 +1405,12 @@ class Inspector(QWidget):
         grid.setColumnStretch(3, 1)
         form.addRow("錨點位置", box)
 
-    def _build_camera(self, form):
+    def _build_camera(self, form, obj=False):
         """攝影機: with it on the clips inside are planes in space the camera looks at (camera.py): each gets 3D 位置 Z and 3D 旋轉."""
+        if obj:                                       # (a 相機 object: where it stands is its 3D 位置; here what it looks at and the lens)
+            form.addRow(section("相機"))
+            self._rows(form, "camera", [r for r in PARAMS["camera"] if r[0] not in ("x", "y", "z")], (("tx", "ty", "目標"),))
+            return
         form.addRow(section("攝影機"))
         on = QCheckBox("啟用")
         on.setToolTip("裡面的片段變成空間裡的平面：多出 Z 位置和 X／Y 旋轉，由近到遠疊起來，用透視看")

@@ -1077,8 +1077,8 @@ def _holder(c, group):
             raise EditError("clip has no mask")
         return c["mask"]
     if group == "camera":
-        if c["type"] not in ("group", "compound"):
-            raise EditError("只有群組和複合片段有攝影機")
+        if c["type"] not in ("group", "compound") and not (c["type"] == "image" and c.get("camera")):
+            raise EditError("只有群組、複合片段和相機物件有攝影機")
         return c.setdefault("camera", {})
     if group == "text":
         if not c.get("text"):
@@ -4248,6 +4248,18 @@ def make_scene(root, container, clip_ids):
     n = sum(1 for k in root["compounds"].values() if str(k.get("name", "")).startswith("3D 場景")) + 1
     comp["name"] = c["name"] = f"3D 場景 {n}"
     c["camera"] = {"on": True, "fov": 40.0, "z": -1.0 / math.tan(math.radians(40.0) / 2)}
+    return c
+
+
+def new_camera(level, params, path, at_us, track_id=None):
+    """相機: a camera object (camera.is_clip) at at_us in the level, a 3D 場景: an 空物體 that draws nothing but a frame while selected, standing
+    where a camera of the scene stands by itself (looking at the middle), with the lens in c["camera"]. params, path: the 空物體 it is made of."""
+    from . import assets, library
+    c = library.place_item(level, assets.item(params, path), track_id, at_us)
+    c["asset"] = params
+    c["name"] = "相機"
+    c.setdefault("transform", {})["z"] = -1.0 / math.tan(math.radians(40.0) / 2)
+    c["camera"] = {"fov": 40.0, "tx": 0.0, "ty": 0.0, "tz": 0.0, "aperture": 0.0}
     return c
 
 

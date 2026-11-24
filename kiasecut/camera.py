@@ -27,6 +27,26 @@ def on(cam):
     return bool(cam) and bool(cam.get("on"))
 
 
+def is_clip(c):
+    """A 相機 object: a clip of the level whose camera it is (it draws nothing) - its place is its transform's x, y, z, what it looks at
+    and the lens are in c["camera"]."""
+    return bool(c.get("camera")) and c.get("type") == "image"
+
+
+def from_clip(c, t):
+    """The camera (numbers at clip time t) that camera object c is: a camera as a group's has it, from the clip's place and lens."""
+    tf, cam = c.get("transform") or {}, c.get("camera") or {}
+    out = {"on": True, "fov": _v(cam, "fov", FOV, t)}
+    for key in ("x", "y", "z"):
+        if key in tf:
+            out[key] = _v(tf, key, 0.0, t)
+    for key in ("tx", "ty", "tz", "aperture"):
+        out[key] = _v(cam, key, 0.0, t)
+    if cam.get("focus") is not None:
+        out["focus"] = _v(cam, "focus", 0.0, t)
+    return out
+
+
 def _v(d, key, default, t):
     return float(curves.value(d.get(key, default), t))
 

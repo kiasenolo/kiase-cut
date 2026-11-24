@@ -157,6 +157,21 @@ class Scene(unittest.TestCase):
         self.assertEqual([k["id"] for tr in c["compound"]["tracks"] for k in tr["clips"]], [t["id"]])
         self.assertEqual([k["id"] for tr in p["tracks"] for k in tr["clips"]], [c["id"]])
 
+    def test_a_camera_object_is_a_clip_with_the_lens_and_keyframes_like_a_groups_camera(self):
+        from kiasecut import assets, edit, project
+        p = project.link(project.new())
+        params = assets.make(assets.get("empty.small"), "#ffffff", "#000000", 1920, 1080)
+        c = edit.new_camera(p, params, "/cam.svg", 0)
+        self.assertTrue(camera.is_clip(c))
+        self.assertEqual(c["name"], "相機")
+        self.assertAlmostEqual(c["transform"]["z"], -2.747, 3)
+        edit.set_param(p, c["id"], "camera", "fov", 60.0, 0)
+        self.assertEqual(c["camera"]["fov"], 60.0)
+        cam = camera.from_clip(c, 0)
+        self.assertEqual((cam["fov"], cam["tx"]), (60.0, 0.0))
+        self.assertAlmostEqual(cam["z"], -2.747, 3)
+        self.assertFalse(camera.is_clip({"type": "compound", "camera": {"on": True}}))
+
 
 if __name__ == "__main__":
     unittest.main()

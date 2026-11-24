@@ -658,7 +658,7 @@ class GLRenderer(render.Renderer):
         outer, self.track_ctx = self.track_ctx, (tracks, W, H, t_us)     # (what a 軌道 source reads: render.py)
         try:
             if camera.on(cam):
-                self.gl_scene(tgt, base, cam, tracks, W, H, fps, t_us, ppu)
+                self.gl_scene(tgt, base, self.level_camera(cam, tracks, fps, t_us), tracks, W, H, fps, t_us, ppu)
             else:
                 self._gl_tracks(tgt, base, tracks, W, H, fps, t_us, ppu)
         finally:
@@ -694,7 +694,7 @@ class GLRenderer(render.Renderer):
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
-                if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok):
+                if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok) and not camera.is_clip(c):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
                     items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t, None))

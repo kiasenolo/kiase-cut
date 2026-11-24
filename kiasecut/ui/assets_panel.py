@@ -174,6 +174,25 @@ def scene_thumbnail():
     return img
 
 
+def camera_thumbnail():
+    """相機: a camera body and its lens on a dark ground."""
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QPolygonF
+    w, h = THUMB
+    img = QImage(QSize(w, h), QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor("#202024"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(230, 230, 235))
+    p.drawRoundedRect(QRectF(12, 12, 34, 24), 4, 4)
+    p.drawPolygon(QPolygonF([QPointF(46, 20), QPointF(60, 12), QPointF(60, 36), QPointF(46, 28)]))
+    p.setBrush(QColor("#202024"))
+    p.drawEllipse(QPointF(24, 24), 6, 6)
+    p.end()
+    return img
+
+
 def viz_thumbnail(kind):
     """A small picture of an Audio Visualizer kind (viz.py) on a dark ground."""
     import math
@@ -420,6 +439,11 @@ class AssetsPanel(QWidget):
         it.setData(ROLE_KEY, "scene3d.scene")
         it.setToolTip("3D 場景（拖到時間線；雙擊進去放片段，片段有 3D 位置和旋轉，攝影機在屬性裡）")
         it.setIcon(QIcon(QPixmap.fromImage(scene_thumbnail())))
+        lst.addItem(it)
+        it = QListWidgetItem("相機")
+        it.setData(ROLE_KEY, "scene3d.camera")
+        it.setToolTip("相機（在 3D 場景裡用：拖到時間線，場景用最上面那台正在播的相機看；位置在 3D 位置，看向哪裡和鏡頭在屬性裡）")
+        it.setIcon(QIcon(QPixmap.fromImage(camera_thumbnail())))
         lst.addItem(it)
         blay.addWidget(head)
         blay.addWidget(lst)

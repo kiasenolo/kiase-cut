@@ -683,13 +683,25 @@ class Renderer:
         q.end()
         return out
 
+    def level_camera(self, cam, tracks, fps, t_us):
+        """The camera a level of planes is seen with at t_us: the topmost 相機 object (camera.is_clip) that is on, else the level's own cam."""
+        if not camera.on(cam) or cam.get("free"):
+            return cam
+        for tr in reversed(tracks):
+            if tr["kind"] == "audio" or not project.visible(tr, self.level):
+                continue
+            for c in reversed(tr["clips"]):
+                if camera.is_clip(c) and on_frame(c, t_us, fps):
+                    return camera.from_clip(c, project.stepped(c, t_us - c["start_us"]))
+        return cam
+
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit, cam=None):
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first; with a camera (camera.py) as planes in
         space, far to near."""
         outer, self.track_ctx = self.track_ctx, (tracks, W, H, t_us)     # (what a 軌道 source reads)
         try:
             if camera.on(cam) and isinstance(p.device(), QImage):
-                self.draw_scene(p, cam, tracks, W, H, fps, t_us, px_per_unit)
+                self.draw_scene(p, self.level_camera(cam, tracks, fps, t_us), tracks, W, H, fps, t_us, px_per_unit)
             else:
                 self._draw_tracks(p, tracks, W, H, fps, t_us, px_per_unit)
         finally:
@@ -725,7 +737,7 @@ class Renderer:
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
-                if on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok):
+                if on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok) and not camera.is_clip(c):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
                     items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t))

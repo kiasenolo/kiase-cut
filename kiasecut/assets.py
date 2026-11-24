@@ -460,7 +460,7 @@ PT_FILE = "particle_system"
 PT_PARAMS = {}                                       # filter parameter name -> fx.Param, in the order of the file
 SECTIONS = {}                                        # field -> the title of the group that starts at it (the inspector)
 PT_INTS = set()
-PT_PX = ("ewidth", "eheight", "speed", "gravity", "wind", "turb", "turb_scale", "size", "sub_speed", "sub_size")   # (lengths: in px of a 1080-high canvas)
+PT_PX = ("ewidth", "eheight", "speed", "gravity", "wind", "turb", "turb_scale", "size", "sub_speed", "sub_size", "origin_z", "ethick", "speed_z", "gravity_z")   # (lengths: in px of a 1080-high canvas)
 
 
 def pt_field(par):

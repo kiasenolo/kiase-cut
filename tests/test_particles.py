@@ -150,6 +150,29 @@ class ParticleTests(unittest.TestCase):
         self.assertGreater(int(out[:, :48, :3].sum()), 0)
         self.assertEqual(int(out[:, 60:, :3].sum()), 0)
 
+    def test_depth_makes_particles_smaller_the_farther_they_are(self):
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        d = fx.get("builtin:particle_system")
+        pic = np.zeros((180, 320, 4), np.uint8)
+        unit = 180 / 1080
+        base = dict({p.name: fx.uniform_value(p, None, 0) for p in d.params}, count=1, speed=0.0, gravity=0.0, drag=0.0, life=30.0, life_var=0.0,
+                    size=200.0, size_var=0.0, size_end=1.0, fade_in=0.0, fade_out=0.0, look=1, glow=0.0, origin_x=0.5, origin_y=0.5)
+        area = lambda vals: int((self.eng.run(d, vals, pic, time=1.0, unit=unit)[..., 3] > 128).sum())
+        flat = area(base)
+        self.assertGreater(flat, 0)
+        self.assertEqual(area(dict(base, origin_z=800.0)), flat)                   # (3D off: no depth, nothing changes)
+        on = dict(base, depth_on=True)
+        self.assertAlmostEqual(area(on) / flat, 1.0, delta=0.05)                   # (at z = 0 as big as flat)
+        far, near = area(dict(on, origin_z=600.0)), area(dict(on, origin_z=-300.0))
+        self.assertLess(far, flat * 0.6)
+        self.assertGreater(near, flat * 1.4)
+        self.assertEqual(area(dict(on, origin_z=-5000.0)), 0)                      # (behind the viewer)
+        moving = dict(on, speed_z=300.0)                                           # (going away: smaller as time goes by)
+        a1 = int((self.eng.run(d, moving, pic, time=0.5, unit=unit)[..., 3] > 128).sum())
+        a2 = int((self.eng.run(d, moving, pic, time=2.0, unit=unit)[..., 3] > 128).sum())
+        self.assertLess(a2, a1)
+
     def test_sprite_picture(self):
         if self.eng is None:
             self.skipTest("no OpenGL for filters")

@@ -50,6 +50,22 @@
 // @enable bounce floor_on
 // @enable turb_scale turb
 // @enable turb_speed turb
+// @panel 3D
+// @param depth_on bool false "3D（透視）"
+// @param persp float 50 10 120 "透視視角（度）"
+// @param origin_z float 0 -2000 2000 "位置 Z（像素，正值是遠）"
+// @param ethick float 0 0 4000 "發射器厚度（像素）"
+// @param speed_z float 0 -3000 3000 "Z 方向初速（像素／秒）"
+// @param zspread float 0 0 1 "Z 方向散開"
+// @param gravity_z float 0 -3000 3000 "Z 方向的力（像素／秒²）"
+// @param fog float 0 0 1 "遠處變淡"
+// @enable persp depth_on
+// @enable origin_z depth_on
+// @enable ethick depth_on
+// @enable speed_z depth_on
+// @enable zspread depth_on
+// @enable gravity_z depth_on
+// @enable fog depth_on
 // @panel 外觀
 // @param look menu 柔邊圓 "柔邊圓|實心圓|方塊|多邊形|星芒|線條|圖片" "形狀"
 // @param sides int 5 3 12 "邊數"
@@ -136,7 +152,7 @@ vec4 effect(vec2 uv) {
 }
 
 // a parent particle's birth: how far into its slot it is (s), which birth (k), its life, where it starts and how fast, the picture's colour there
-struct Born { float s; float k; float lf; vec2 base; vec2 v0; vec4 pic; };
+struct Born { float s; float k; float lf; vec2 base; vec2 v0; vec4 pic; float bz; float vz; };
 
 bool born(int i, out Born b) {
     float tt = time + time_offset;
@@ -190,7 +206,22 @@ bool born(int i, out Born b) {
         dir = vec2(sin(a), -cos(a));
     }
     b.v0 = dir * speed * K() * (1.0 - speed_var * R(i, k, 5.0));
+    b.bz = origin_z * K() + (R(i, k, 14.0) - 0.5) * ethick * K();             // (Z: away from the viewer; only with 3D)
+    b.vz = speed_z * K() + zspread * speed * K() * (R(i, k, 15.0) * 2.0 - 1.0);
     return true;
+}
+
+// the depth of a particle that starts at bz going vz, s seconds on (the same law as the plane: v' = a - drag v), and how fast it goes in Z
+void movez(float bz, float vz, float s, out float z, out float v) {
+    float a = gravity_z * K();
+    if (drag > 0.001) {
+        float vt = a / drag, e = exp(-drag * s);
+        v = vt + (vz - vt) * e;
+        z = bz + vt * s + (vz - vt) * (1.0 - e) / drag;
+    } else {
+        v = vz + a * s;
+        z = bz + vz * s + 0.5 * a * s * s;
+    }
 }
 
 // where a particle that starts at base with velocity v0 is s seconds on, and how fast it goes
@@ -241,6 +272,7 @@ bool particle(int id, out Particle p) {
     int i, j = 0, copy = 0;
     float s, lf, k, sz, fade_t = 1.0;
     vec2 pos, vel;
+    float z = 0.0, vz;
     vec4 c;
     if (!child) {
         i = id / copies;
@@ -251,6 +283,7 @@ bool particle(int id, out Particle p) {
         s = b.s - float(copy) * trail_step;                        // a trail copy: the same particle, a little earlier
         if (s < 0.0 || s >= lf) return false;
         move(b.base, b.v0, s, pos, vel);
+        if (depth_on) movez(b.bz, b.vz, s, z, vz);
         fade_t = 1.0 - trail_fade * float(copy) / float(copies);
     } else {
         int n = id - parents;
@@ -266,9 +299,12 @@ bool particle(int id, out Particle p) {
         if (s < 0.0 || s >= lf) return false;
         vec2 at, vat;
         move(b.base, b.v0, min(tau, b.lf), at, vat);               // the parent, where it was then
+        float zat = 0.0, vzat = 0.0;
+        if (depth_on) movez(b.bz, b.vz, min(tau, b.lf), zat, vzat);
         float a = R(i, k, 100.0 + fj) * 6.2831853;
         vec2 v0 = vat * sub_inherit + vec2(cos(a), sin(a)) * sub_speed * K() * (1.0 - speed_var * R(i, k, 120.0 + fj));
         move(at, v0, s, pos, vel);
+        if (depth_on) movez(zat, vzat * sub_inherit, s, z, vz);
     }
     float u = s / lf;
     float jr = child ? 40.0 + float(j) : 0.0;                      // (a child's own random numbers)
@@ -301,6 +337,16 @@ bool particle(int id, out Particle p) {
     } else if (rotmode == 0) {
         p.rot = 0.0;
     }
+    float near_fade = 1.0;
+    if (depth_on) {                                                // perspective about the middle of the picture: farther is smaller, nearer bigger
+        float d = 0.5 * resolution.y / tan(radians(persp) * 0.5);
+        if (d + z < 0.05 * d) return false;                        // (behind the viewer)
+        float sc = d / (d + z);
+        vec2 mid = 0.5 * resolution;
+        p.pos = mid + (p.pos - mid) * sc;
+        p.size *= sc;
+        near_fade = mix(1.0, clamp(sc, 0.0, 1.0), fog);
+    }
     float facing = 1.0;
     if (flip > 0.0 && look != 5 && stretch <= 0.0) {               // turning over: narrower, and darker on the back
         facing = cos(R(i, k, 11.0 + jr) * 6.2831853 + flip * s * (0.5 + R(i, k, 13.0 + jr)));
@@ -311,7 +357,7 @@ bool particle(int id, out Particle p) {
     float fout = fade_out > 0.0 ? 1.0 - smoothstep(1.0 - fade_out, 1.0, u) : 1.0;
     float tw = 1.0 - twinkle * (0.5 + 0.5 * sin(tt * (8.0 + 10.0 * R(i, k, 8.0 + jr)) + 60.0 * R(i, k, 9.0 + jr)));
     c.rgb *= brightness * tw;
-    c.a *= alpha * fin * fout * fade_t;
+    c.a *= alpha * fin * fout * fade_t * near_fade;
     p.color = c;
     p.data = vec4(u, facing, 1.5 / max(min(p.size.x, p.size.y), 1.0), brightness * tw);
     return true;

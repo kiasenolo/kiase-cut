@@ -280,6 +280,9 @@ def link_clip(comps, c):
     comp = comps[c["compound_id"]]
     c["compound"] = comp
     if is_group(c):
+        if c.get("source_start_us", 0) + c.get("duration_us", 0) > (comp.get("duration_us") or 0) + 1 and \
+                c.get("source_start_us", 0) > 0:          # (past its content: a leftover of before version 6 - from its start)
+            c["source_start_us"] = 0
         c["tracks"] = comp["tracks"]
         c["matte"] = comp.setdefault("matte", dict(GROUP_MATTE_DEFAULT))
 
@@ -304,8 +307,8 @@ def adopt_groups(p, tracks):
                               "duration_us": max(int(c.get("duration_us") or 0), end_us(inner)),
                               "matte": c.pop("matte", None) or dict(GROUP_MATTE_DEFAULT), "anchor": bool(c.pop("anchor", False))}
                 c["compound_id"] = kid
-                c.setdefault("source_start_us", 0)
-                n += 1
+                c["source_start_us"] = 0                 # (a group's content started where it did: its old source_start_us,
+                n += 1                                   # left over from trims, never counted)
     return n
 
 

@@ -103,6 +103,22 @@ class GroupTests(unittest.TestCase):
         self.assertIs(next(c for t in q["tracks"] for c in t["clips"] if c["id"] == "g1")["tracks"],
                       q["compounds"][g["compound_id"]]["tracks"])
 
+    def test_an_old_groups_leftover_source_start_does_not_count(self):
+        """Before version 6 a group's source_start_us (moved by trims) meant nothing: its content starts at 0 after loading
+        - and a group saved with such a leftover past its content (by an earlier version 6) starts at 0 again."""
+        old = old_project()
+        group = {"id": "g1", "type": "group", "name": "Fornt", "start_us": 0, "duration_us": S, "source_start_us": 4 * S,
+                 "transform": {"x": 0.0, "y": 0.0}, "tracks": [{"id": "ga", "kind": "video", "name": "v", "clips": [pic("in1", 0, S)]}]}
+        old["timelines"][0]["tracks"].append({"id": "t1", "kind": "video", "name": "v2", "clips": [group]})
+        p = LoadOldTests().load(old)
+        g = next(c for t in p["tracks"] for c in t["clips"] if c["id"] == "g1")
+        self.assertEqual(g["source_start_us"], 0)
+        stored = json.loads(project.dumps(p))
+        sg = next(c for t in stored["compounds"]["tl1"]["tracks"] for c in t["clips"] if c["id"] == "g1")
+        sg["source_start_us"] = 4 * S                                       # (as an earlier version 6 kept it)
+        q = project.link(stored)
+        self.assertEqual(next(c for t in q["tracks"] for c in t["clips"] if c["id"] == "g1")["source_start_us"], 0)
+
     def test_a_trimmed_group_shows_its_part_and_ungroups_copies_when_shared(self):
         p = project.new()
         p["tracks"][:] = [{"id": "t0", "kind": "video", "name": "v", "clips": [pic("a", 0, S), pic("b", S, S)]}]

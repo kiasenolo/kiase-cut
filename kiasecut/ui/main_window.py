@@ -5014,6 +5014,7 @@ class MainWindow(QMainWindow):
         """The 3D view was switched or moved: draw the picture again from its camera."""
         on = self.preview.view3d_on
         self.view3d_btn.setChecked(on)
+        self.player.worker.set_overflow(OVERFLOW if on or self.overflow_btn.isChecked() else 0.0)   # (the 3D view has no frame: all of it is drawn)
         view = self.snapshot(resolve=False)
         pathfollow.resolve(view)
         self.player.worker.set_view(view, self.cache_dir())
@@ -5519,7 +5520,7 @@ class MainWindow(QMainWindow):
 
     def toggle_overflow(self):
         on = self.overflow_btn.isChecked()
-        self.player.worker.set_overflow(OVERFLOW if on else 0.0)
+        self.player.worker.set_overflow(OVERFLOW if on or self.preview.view3d_on else 0.0)
         self.settings().setValue("show_outside", "true" if on else "false")
 
     def toggle_fullscreen(self):

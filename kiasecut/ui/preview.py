@@ -1855,7 +1855,8 @@ class Preview(PenMixin, _Surface):
 
     def _paint_view(self, _):
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(SURROUND))
+        free = self.view3d_on and self.interactive          # (the 3D view has no canvas: no frame, no dimmed outside)
+        p.fillRect(self.rect(), QColor("black" if free else SURROUND))
         r = self._rect()
         p.fillRect(r, QColor("black"))
         shown = self.img is not None or self.frame is not None
@@ -1867,7 +1868,8 @@ class Preview(PenMixin, _Surface):
             outside.addRect(m)
             canvas = QPainterPath()
             canvas.addRect(r)
-            p.fillPath(outside.subtracted(canvas), QColor(42, 42, 47, 150))
+            if not free:
+                p.fillPath(outside.subtracted(canvas), QColor(42, 42, 47, 150))
         elif shown and self.margin:       # (what lies outside the canvas: drawn dimmed)
             m = QRectF(r.x() - r.width() * self.margin, r.y() - r.height() * self.margin,
                        r.width() * (1 + 2 * self.margin), r.height() * (1 + 2 * self.margin))
@@ -1875,10 +1877,11 @@ class Preview(PenMixin, _Surface):
             outside = QPainterPath()
             outside.addRect(m)
             outside.addRect(r)
-            p.fillPath(outside, QColor(42, 42, 47, 150))
+            if not free:
+                p.fillPath(outside, QColor(42, 42, 47, 150))
         elif shown:
             self._draw_picture(p, r)                   # (no smoothing: zoomed in, the pixels stay square)
-        if self.interactive:                           # (a hair line round the canvas: where it ends, even where the picture is as dark as the surround)
+        if self.interactive and not free:              # (a hair line round the canvas: where it ends, even where the picture is as dark as the surround)
             p.setPen(QPen(QColor(CANVAS_EDGE), 1))
             p.setBrush(Qt.NoBrush)
             p.drawRect(r.adjusted(-0.5, -0.5, 0.5, 0.5))

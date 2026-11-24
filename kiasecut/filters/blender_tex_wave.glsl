@@ -1,5 +1,6 @@
 // @filter [Blender] Texture / Wave
 // @category Blender
+// @nodes
 // @description Blender 的波浪紋理：條紋或同心圓，正弦、鋸齒、三角波，可加噪訊扭曲；調相位可以讓它移動
 // @output color "顏色"
 // @output fac "數值"

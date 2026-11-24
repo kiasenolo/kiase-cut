@@ -1,5 +1,6 @@
 // @filter 純漸層
 // @category 產生
+// @nodes
 // @description 從左到右、右到左、上到下或下到上的純黑白漸層，也可以自己給一個座標向量；有係數和顏色兩個輸出（在線性光裡運算）
 // @output factor "係數"
 // @output output "顏色"

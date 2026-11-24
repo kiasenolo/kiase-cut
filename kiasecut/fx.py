@@ -339,6 +339,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                                 words[2], words[3] if len(words) > 3 else None))
             elif key == "shared":
                 head["shared"] = True
+            elif key == "nodes":                          # made for the node editor: not in the filter library or a clip's 新增效果
+                head["nodes"] = True
             elif key == "bake":                           # (read once every @param is known)
                 bakes += shlex.split(rest)
             elif key == "alone":
@@ -424,6 +426,7 @@ def parse(text, ref, fallback_name="濾鏡"):
     d.input_show = input_show
     d.input_use = input_use
     d.dynamic = head.get("dynamic")
+    d.nodes_only = bool(head.get("nodes"))
     for name, passes in head.get("slots", []):
         for i in passes:
             if not 0 <= i < len(levels):
@@ -538,12 +541,13 @@ def def_of(e):
     return get(e["filter"])
 
 
-def builtin_refs():
-    """Refs of the built-in filters, in the order the menus list them."""
+def builtin_refs(nodes=False):
+    """Refs of the built-in filters, in the order the menus list them; the ones made for the node editor (@nodes) too
+    with nodes (the node editor's lists), not in the filter library. A clip that has one keeps it: the ref still works."""
     out = []
     for path in sorted(glob.glob(os.path.join(PKG, "*.glsl"))):
         name = os.path.splitext(os.path.basename(path))[0]
-        if not name.startswith("_"):
+        if not name.startswith("_") and (nodes or not getattr(get(BUILTIN + name), "nodes_only", False)):
             out.append(BUILTIN + name)
     return sorted(out, key=lambda r: (get(r).category, get(r).name))
 

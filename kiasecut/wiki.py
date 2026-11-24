@@ -121,7 +121,7 @@ def node_refs():
 
 
 def known_refs():
-    return set(fx.builtin_refs()) | set(node_refs())
+    return set(fx.builtin_refs(nodes=True)) | set(node_refs())
 
 
 def categories():

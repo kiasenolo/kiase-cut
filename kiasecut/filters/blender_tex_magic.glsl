@@ -1,5 +1,6 @@
 // @filter [Blender] Texture / Magic
 // @category Blender
+// @nodes
 // @description Blender 的 Magic 紋理：正弦和餘弦疊出來的彩色迷幻圖樣（深度、扭曲）
 // @output color "顏色"
 // @output fac "數值"

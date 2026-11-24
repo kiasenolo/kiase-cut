@@ -7046,7 +7046,7 @@ class MainWindow(QMainWindow):
 
     def check_filters(self):
         """Compile the built-in filters and the ones in the Library; list the ones with mistakes."""
-        refs = fx.builtin_refs() + [it["path"] for it in self.ulib.lib("filters")["items"]] if self.ulib else []
+        refs = fx.builtin_refs(nodes=True) + [it["path"] for it in self.ulib.lib("filters")["items"]] if self.ulib else []
         bad = []
         for ref in refs:
             err = fx.check(ref)

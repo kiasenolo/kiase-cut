@@ -320,7 +320,7 @@ class BuiltinFilters(unittest.TestCase):
         eng = fx.Engine()
         rgba = np.zeros((36, 64, 4), np.uint8)
         rgba[..., 1], rgba[..., 3] = 200, 255
-        for ref in fx.builtin_refs():
+        for ref in fx.builtin_refs(nodes=True):
             self.assertIsNone(fx.check(ref), ref)
             d = fx.get(ref)
             out = eng.run(d, {p.name: fx.uniform_value(p, None, 0) for p in d.params}, rgba, 0.5, 0.5, 15)

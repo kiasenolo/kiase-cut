@@ -1,5 +1,6 @@
 // @filter [Blender] Texture / Gradient
 // @category Blender
+// @nodes
 // @description Blender 的漸層紋理：線性、二次、平滑、對角、球形、放射
 // @output color "顏色"
 // @output fac "數值"

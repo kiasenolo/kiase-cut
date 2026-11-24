@@ -1,5 +1,6 @@
 // @filter 單向白噪訊
 // @category 產生
+// @nodes
 // @description 只沿一個方向變化的白噪訊（水平或垂直），可以換種子、也可以自己給一個座標向量；有顏色和數值兩個輸出（在線性光裡運算）
 // @output color "顏色"
 // @output value "數值"

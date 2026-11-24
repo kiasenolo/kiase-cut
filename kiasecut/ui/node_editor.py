@@ -3279,7 +3279,7 @@ class NodeEditor(QWidget):
         if constant:                                      # (a feeding link: the one constant that fits the input, with the value it holds)
             menu.addAction("常數（保留目前的值）", lambda: ask({"type": ng.FILTER, "ref": constant}))
             menu.addSeparator()
-        known = set(fx.builtin_refs()) | set(node_refs())
+        known = set(fx.builtin_refs(nodes=True)) | set(node_refs())
 
         def fill(target, items, path, top=False):
             """The items of nodemenu (Blender's Add menu, in its order) into the menu `target`."""

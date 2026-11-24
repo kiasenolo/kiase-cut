@@ -944,7 +944,7 @@ class NodeEditorTests(unittest.TestCase):
         for ref in node_refs():
             self.assertIn(ref, nodemenu.placed(), ref)
         for ref in nodemenu.placed():
-            self.assertIn(ref, set(fx.builtin_refs()) | set(node_refs()), ref)
+            self.assertIn(ref, set(fx.builtin_refs(nodes=True)) | set(node_refs()), ref)
 
     def test_add_menu_searches(self):
         ed = self.make()

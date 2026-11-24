@@ -1,5 +1,6 @@
 // @filter [Blender] Texture / Voronoi
 // @category Blender
+// @nodes
 // @description Blender 的 Voronoi 紋理（3D）：F1、F2、平滑 F1、到邊緣的距離、N 球半徑；調 Z 讓格點連貫地飄動
 // @output distance "距離"
 // @output color "顏色"

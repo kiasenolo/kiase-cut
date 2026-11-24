@@ -1,5 +1,6 @@
 // @filter [Blender] Texture / White Noise
 // @category Blender
+// @nodes
 // @description Blender 的白噪訊紋理：每個點各自隨機的雜訊（沒有連貫），有「數值」（灰階）和「顏色」兩個輸出；1D 到 4D，調 Z／W 會整張換一個樣子
 // @output value "數值"
 // @output color "顏色"

@@ -24,7 +24,7 @@ class BuiltinFilterTests(unittest.TestCase):
             self.skipTest("no OpenGL for filters")
         pic = np.zeros((54, 96, 4), np.uint8)
         pic[10:40, 20:70] = (250, 240, 200, 255)
-        for ref in fx.builtin_refs():
+        for ref in fx.builtin_refs(nodes=True):
             d = fx.get(ref)
             with self.subTest(filter=ref):
                 self.assertIsNone(d.error)
@@ -43,7 +43,7 @@ class BuiltinFilterTests(unittest.TestCase):
         """使用遮罩 on a parameter named as something else in the filter's code (z: a vector's .z; an argument of a function)."""
         if self.eng is None:
             self.skipTest("no OpenGL for filters")
-        for ref in fx.builtin_refs():
+        for ref in fx.builtin_refs(nodes=True):
             d = fx.get(ref)
             for p in d.params:
                 if p.type in fx.SOURCE_TYPES:
@@ -64,6 +64,17 @@ class BuiltinFilterTests(unittest.TestCase):
         self.assertTrue(fx.enabled(by["z"], {}))
         bad = fx.parse("// @param x float 1\n// @enable x nothing == 1\nvec4 effect(vec2 uv) { return src(uv); }", "t")
         self.assertIn("nothing", bad.error)
+
+    def test_node_filters_are_not_in_the_library(self):
+        """@nodes: the node editor lists them, the filter library and 新增效果 do not; a clip that has one still draws it."""
+        lib, every = set(fx.builtin_refs()), set(fx.builtin_refs(nodes=True))
+        for name in ("blender_tex_noise", "blender_tex_white_noise", "pure_gradient", "one_direction_white_noise"):
+            ref = fx.BUILTIN + name
+            self.assertNotIn(ref, lib)
+            self.assertIn(ref, every)
+            self.assertIsNone(fx.get(ref).error)
+        self.assertIn(fx.BUILTIN + "blender_glare", lib)
+        self.assertIn(fx.BUILTIN + "blender_sensor_noise", lib)
 
     def test_blender_ones_named(self):
         names = {fx.get(ref).name for ref in fx.builtin_refs()}

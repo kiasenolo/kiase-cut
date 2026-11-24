@@ -1,5 +1,6 @@
 // @filter [Blender] Texture / Brick
 // @category Blender
+// @nodes
 // @description Blender 的磚塊紋理：一排排錯開的磚，磚縫可以調粗細和柔邊
 // @output color "顏色"
 // @output fac "數值"

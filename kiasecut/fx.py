@@ -85,6 +85,7 @@ class FilterDef:
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
         self.particles = 0                       # @particles: the most particles the filter draws (0: it is no particle filter); the last pass is followed by one instanced draw of them
         self.particle_param = None               # ... and the int parameter that says how many of them there are
+        self.sprite = None                       # @sprite: the colour parameter whose picture (a picture, video or compound set on it) is what a particle looks like: sprite_picture(q)
         self.particle_copies = None              # ... times (this int parameter + 1), when each particle is drawn more than once (a trail)
 
     def socket_type(self, way, name):
@@ -354,6 +355,8 @@ def parse(text, ref, fallback_name="濾鏡"):
                 if not words or not words[0].isdigit() or not 1 <= int(words[0]) <= MAX_PARTICLES or len(words) > 2 or (len(words) == 2 and not counted):
                     raise ValueError(f"@particles 要寫：最多幾個粒子（1 到 {MAX_PARTICLES}）[數量參數的名稱，或 名稱*(拖尾參數+1)]")
                 head["particles"] = (int(words[0]), counted.group(1) if counted else None, counted.group(2) if counted else None)
+            elif key == "sprite":                         # @sprite name: a colour parameter whose picture the particles are drawn with
+                head["sprite"] = rest.strip()
             elif key == "shared":
                 head["shared"] = True
             elif key == "nodes":                          # made for the node editor: not in the filter library or a clip's 新增效果
@@ -440,6 +443,8 @@ def parse(text, ref, fallback_name="濾鏡"):
         for pcount in head["particles"][1:]:
             if pcount and not any(q.name == pcount and q.type == "int" for q in params):
                 error = error or f"@particles：「{pcount}」不是整數參數"
+        if head.get("sprite") and not any(q.name == head["sprite"] and q.type == "color" for q in params):
+            error = error or f"@sprite：「{head['sprite']}」不是顏色參數"
         if not re.search(r"\bparticle\s*\(", text):
             error = error or "找不到 particle() 函式"
     elif "effect" not in text:
@@ -449,6 +454,7 @@ def parse(text, ref, fallback_name="濾鏡"):
                   head.get("extras", []), fixed)
     d.inputs = inputs
     d.particles, d.particle_param, d.particle_copies = head.get("particles", (0, None, None))
+    d.sprite = head.get("sprite")
     d.input_show = input_show
     d.input_use = input_use
     d.dynamic = head.get("dynamic")
@@ -999,7 +1005,7 @@ def shader_source(d, sampled=(), baked=()):
     decl = _declarations(d, sampled, baked)
     kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
     code = d.code + (DEFAULT_EFFECT if d.particles and not HAS_EFFECT.search(d.code) else "")
-    return PRELUDE % {"params": decl, "sampled": "\n".join([PARTICLE_STRUCT] * bool(d.particles) + [kinds[n] % {"n": n} for n in sampled])} + code + \
+    return PRELUDE % {"params": decl, "sampled": "\n".join(([PARTICLE_STRUCT, SPRITE_NONE] if d.particles else []) + [kinds[n] % {"n": n} for n in sampled])} + code + \
         EPILOGUE % {"sampled": "".join(f"{n} = {n}_at_(); " for n in sampled)}
 
 
@@ -1025,6 +1031,15 @@ in vec4 pc_;
 in vec4 pd_;
 in vec2 pq_;
 #endif"""
+# sprite_picture(q): the picture a @sprite parameter has (q from -1 to 1 across the particle; premultiplied), with its size, and whether there is one.
+# The program that draws the particles has the picture; the one that draws the filter's own pass has none
+SPRITE_NONE = """vec4 sprite_picture(vec2 q) { return vec4(0.0); }
+vec2 sprite_picture_size() { return vec2(1.0); }
+bool has_sprite_picture() { return false; }"""
+SPRITE_PICTURE = """uniform sampler2D %(n)s_tex_;
+vec4 sprite_picture(vec2 q) { return texture(%(n)s_tex_, vec2(q.x * 0.5 + 0.5, q.y * 0.5 + 0.5)); }
+vec2 sprite_picture_size() { return vec2(textureSize(%(n)s_tex_, 0)); }
+bool has_sprite_picture() { return true; }"""
 DEFAULT_SPRITE = """
 vec4 sprite(vec2 q, vec4 color, vec4 data) {
     float a = 1.0 - smoothstep(0.0, 1.0, length(q));
@@ -1061,9 +1076,11 @@ void main() {
 PARTICLE_FRAGMENT_MAIN = "\nvoid main() { fragColor = sprite(pq_, pc_, pd_); }\n"
 
 
-def particle_sources(d, baked=()):
-    """(vertex shader, fragment shader) that draw the particles of filter d: its parameters are plain uniforms in both."""
-    pre = PRELUDE % {"params": _declarations(d, (), baked), "sampled": PARTICLE_COMMON}
+def particle_sources(d, sampled=(), baked=()):
+    """(vertex shader, fragment shader) that draw the particles of filter d: its parameters are plain uniforms in both (sampled: the
+    colour parameters that have a picture: the @sprite one is what the particles are drawn with)."""
+    sprite = SPRITE_PICTURE % {"n": d.sprite} if d.sprite and d.sprite in sampled else SPRITE_NONE
+    pre = PRELUDE % {"params": _declarations(d, (), baked), "sampled": PARTICLE_COMMON + "\n" + sprite}
     code = d.code + (DEFAULT_SPRITE if not HAS_SPRITE.search(d.code) else "")
     vertex = pre.replace("#version 330\n", "#version 330\n#define VERTEX_STAGE 1\n", 1) \
         .replace("in vec2 uv_;\nout vec4 fragColor;", "out vec2 uv_;\nin vec2 pos;\nuniform vec2 ov_dst_scale;\nuniform vec2 ov_dst_off;", 1)
@@ -1196,7 +1213,7 @@ class Engine:
             vao = self.ctx.vertex_array(prog, [(self.quad, "2f", "pos")])
             parts = None
             if d.particles:                      # (the particles' own program: its vertex shader places the quad of each, instanced)
-                vs, fs = particle_sources(d, baked)
+                vs, fs = particle_sources(d, sampled, baked)
                 try:
                     pprog = self.ctx.program(vertex_shader=vs, fragment_shader=fs)
                 except Exception as exc:

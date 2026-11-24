@@ -86,6 +86,10 @@ PARTICLES = (
     ("bounce", "彈跳火花", "particle_system", {
         "mode": "爆發", "period": 3.5, "count": 90, "life": 3.2, "origin": [0.5, 0.3], "speed": 420.0, "gravity": 1000.0, "drag": 0.0, "look": "實心圓",
         "size": 7.0, "size_end": 0.8, "floor_on": True, "floor_y": 0.9, "bounce": 0.55, "colors": _grad("0:#fff2c0,1:#ff9a2e"), "fade_out": 0.25}),
+    ("pictures", "圖片粒子", "particle_system", {                  # (the picture is chosen next: the effect's 粒子圖片 > 使用圖片)
+        "count": 60, "life": 6.0, "life_var": 0.3, "time_offset": 6.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 2000.0, "angle": 180.0, "spread": 30.0,
+        "speed": 40.0, "gravity": 120.0, "drag": 0.3, "turb": 60.0, "turb_scale": 220.0, "turb_speed": 0.4, "look": "圖片", "size": 60.0, "size_var": 0.4,
+        "size_end": 1.0, "rotmode": "旋轉", "spin": 1.5, "glow": 0.0, "fade_in": 0.05, "fade_out": 0.15}),
     ("sparks", None, "sparks", {}),
     ("confetti", None, "confetti", {}),
     ("bokeh_lights", None, "bokeh_lights", {}),

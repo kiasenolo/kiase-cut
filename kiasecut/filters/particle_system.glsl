@@ -2,6 +2,7 @@
 // @category 粒子
 // @description 通用的粒子系統：發射器（點、線、圓、矩形、圖片）、重力／風／阻力／亂流／地面反彈、隨生命變化的大小和顏色、各種粒子形狀、拖尾；火花、雪、煙火、光點都能用它做。套在透明的片段上就是一個粒子物件，套在有圖片的片段上可以從圖片噴出粒子
 // @particles 200000 count*(trail+1)
+// @sprite sprite_img
 // @param count int 400 1 20000 "粒子數"
 // @param mode menu 持續 "持續|爆發" "發射方式"
 // @param life float 2 0.1 30 "壽命（秒）"
@@ -47,9 +48,11 @@
 // @enable turb_scale turb
 // @enable turb_speed turb
 // @panel 外觀
-// @param look menu 柔邊圓 "柔邊圓|實心圓|方塊|多邊形|星芒|線條" "形狀"
+// @param look menu 柔邊圓 "柔邊圓|實心圓|方塊|多邊形|星芒|線條|圖片" "形狀"
 // @param sides int 5 3 12 "邊數"
 // @param softness float 0.6 0 1 "柔邊"
+// @param sprite_img color #ffffff "粒子圖片（用「使用圖片」選圖片、影片或複合片段）"
+// @param pic_colors bool true "用圖片原本的顏色"
 // @param size float 12 0.5 300 "大小（像素）"
 // @param size_var float 0.4 0 1 "大小差異"
 // @param size_end float 0.3 0 4 "結束時大小（倍）"
@@ -66,6 +69,8 @@
 // @param twinkle float 0 0 1 "閃爍"
 // @enable sides look == 多邊形
 // @enable softness look == 柔邊圓
+// @enable sprite_img look == 圖片
+// @enable pic_colors look == 圖片
 // @enable spin rotmode == 旋轉
 // @panel 拖尾
 // @param trail int 0 0 16 "拖尾段數"
@@ -198,6 +203,11 @@ bool particle(int id, out Particle p) {
     vec2 heading = spd > 0.001 ? vel / spd : vec2(1.0, 0.0);
     p.rot = rotmode == 1 ? R(i, k, 7.0) * 6.2831853 : rotmode == 2 ? R(i, k, 7.0) * 6.2831853 + spin * s : atan(heading.y, heading.x);
     p.size = vec2(sz);
+    if (look == 6 && has_sprite_picture()) {                       // a picture: its own shape, its long side sz
+        vec2 ps = sprite_picture_size();
+        float ratio = ps.x / max(ps.y, 1.0);
+        p.size = ratio >= 1.0 ? vec2(sz, sz / ratio) : vec2(sz * ratio, sz);
+    }
     p.pos = pos;
     if (look == 5 || stretch > 0.0) {                              // a streak: along the motion, the head where the particle is
         float half_len = sz + 0.5 * spd * (look == 5 ? max(stretch, 0.04) : stretch);
@@ -216,7 +226,7 @@ bool particle(int id, out Particle p) {
     c.rgb *= brightness * tw;
     c.a *= alpha * fin * fout * (1.0 - trail_fade * float(copy) / float(copies));
     p.color = c;
-    p.data = vec4(u, R(i, k, 10.0), 1.5 / max(min(p.size.x, p.size.y), 1.0), 0.0);
+    p.data = vec4(u, R(i, k, 10.0), 1.5 / max(min(p.size.x, p.size.y), 1.0), brightness * tw);
     return true;
 }
 
@@ -239,6 +249,14 @@ vec4 sprite(vec2 q, vec4 color, vec4 data) {
         vec2 w = abs(q);
         float cross_ = max((1.0 - w.x) * exp(-w.y * 14.0), (1.0 - w.y) * exp(-w.x * 14.0));
         a = clamp(cross_ + exp(-dot(q, q) * 10.0) * 0.8, 0.0, 1.0) * (1.0 - smoothstep(0.9, 1.0, max(w.x, w.y)));
+    } else if (look == 6) {                                        // a picture (a soft dot while there is none)
+        if (!has_sprite_picture()) {
+            a = 1.0 - smoothstep(0.5, 1.0, length(q));
+        } else {
+            vec4 c = sprite_picture(q);
+            vec3 rgb = pic_colors ? c.rgb * data.w : c.rgb * color.rgb;     // (the colour has the brightness and the flicker in it)
+            return vec4(rgb * color.a, c.a * color.a * (1.0 - glow));
+        }
     } else {                                                       // a streak: dim tail, bright head
         float across = 1.0 - smoothstep(0.0, 1.0, abs(q.y));
         across *= across;

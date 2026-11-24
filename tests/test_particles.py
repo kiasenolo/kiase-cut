@@ -140,6 +140,25 @@ class ParticleTests(unittest.TestCase):
         self.assertGreater(int(out[:, :48, :3].sum()), 0)
         self.assertEqual(int(out[:, 60:, :3].sum()), 0)
 
+    def test_sprite_picture(self):
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        text = SIMPLE.replace("// @param n int", "// @sprite pic\n// @param pic color #ffffff \"p\"\n// @param n int").replace(
+            "p.data = vec4(0.0);", "p.data = vec4(0.0);\n    p.size = vec2(10.0);") + """
+vec4 sprite(vec2 q, vec4 color, vec4 data) { return has_sprite_picture() ? sprite_picture(q) : vec4(0.0, 0.0, 1.0, 1.0); }
+"""
+        d = fx.parse(text, "t")
+        self.assertIsNone(d.error)
+        self.assertEqual(d.sprite, "pic")
+        self.assertIn("@sprite", fx.parse(text.replace("@sprite pic", "@sprite n"), "t").error)
+        pic = np.zeros((60, 100, 4), np.uint8)
+        none = self.eng.run(d, {"n": 1, "pic": [1, 1, 1, 1]}, pic, time=0.0, unit=1.0)
+        self.assertEqual(none[30, 20].tolist(), [0, 0, 255, 255])                # (no picture: the stand-in)
+        red = np.zeros((8, 8, 4), np.uint8)
+        red[...] = (255, 0, 0, 255)
+        got = self.eng.run(d, {"n": 1, "pic": [1, 1, 1, 1]}, pic, time=0.0, unit=1.0, sources={"pic": (red, (1, 0, 0, 0, 1, 0, 0, 0, 1))})
+        self.assertEqual(got[30, 20].tolist(), [255, 0, 0, 255])                 # (the picture)
+
 
 if __name__ == "__main__":
     unittest.main()

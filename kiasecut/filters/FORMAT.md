@@ -370,4 +370,7 @@ vec4 sprite(vec2 q, vec4 color, vec4 data) // 粒子的四邊形上 q 這一點�
 - 參數是同名的 `uniform`，`particle()` 和 `sprite()` 都能直接讀；`resolution`、`time`、`rand()`、`src(uv)` 也都能用。
 - 同一份程式會在頂點和片段兩個階段都編譯：`particle()` 由頂點階段呼叫，`sprite()` 由片段階段呼叫。
   別在 `particle()` 裡用 `discard` 或 `dFdx`，也別拿 `pos` 當全域名字。需要分開寫時，頂點階段有 `#define VERTEX_STAGE`。
-- 粒子濾鏡不能和別的濾鏡合併成一次繪製（`fuse.py`），也不支援讓參數讀圖片。
+- 粒子濾鏡不能和別的濾鏡合併成一次繪製（`fuse.py`）。
+- `// @sprite 顏色參數名`：那個顏色參數在「效果」面板用「使用圖片」選的圖片、影片或複合片段，就是粒子的樣子。`sprite()` 裡用
+  `sprite_picture(q)`（q 在 -1 到 1，回傳預乘透明度的顏色）讀它，`sprite_picture_size()` 是它的像素大小，`has_sprite_picture()` 是有沒有選。
+  影片就是每個粒子都顯示現在這一格。參數讀圖片的其他用法（顏色、數字讀圖片）在粒子濾鏡裡不會有作用。

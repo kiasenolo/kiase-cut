@@ -171,3 +171,74 @@ def deepfocus(cam, c, t, W, H, tc=None):
         e["params"].update(radius=r, link_xy=True)
         out["effects"] = list(c.get("effects") or []) + [e]
     return out
+
+
+# -- seeing the scene from outside (the preview's 3D view, ui/view3d.py) ------------------------------------------------------------
+
+def world_of(tf, t, W, H, local):
+    """World points (px: x right, y down, z away) of points `local` of a plane drawn flat - (u, v) from its centre, canvas px - for a clip
+    with transform tf at clip time t."""
+    s = H / 2.0
+    o = np.array([_v(tf, "x", 0.0, t) * W / 2.0, -_v(tf, "y", 0.0, t) * s, _v(tf, "z", 0.0, t) * s])
+    r = _rot(_v(tf, "rot_x", 0.0, t), _v(tf, "rot_y", 0.0, t), _v(tf, "rotation", 0.0, t))
+    return [o + r @ np.array([u, v, 0.0]) for u, v in local]
+
+
+class Seen:
+    """A camera at one moment for a W x H picture: world points to the picture (canvas px), with lines cut where they pass behind it."""
+
+    def __init__(self, cam, t, W, H):
+        self.W, self.H = W, H
+        self.f, self.c, self.target, self.axes = _pose(cam, t, W, H)
+
+    def space(self, p):
+        """The point in the camera's own axes (x right, y down, z forward), px."""
+        return self.axes @ (np.asarray(p, float) - self.c)
+
+    def screen(self, q):
+        return (self.W / 2.0 + self.f * q[0] / q[2], self.H / 2.0 + self.f * q[1] / q[2])
+
+    def point(self, p):
+        q = self.space(p)
+        return self.screen(q) if q[2] > NEAR * self.H / 2.0 else None
+
+    def segment(self, a, b):
+        """((x0, y0), (x1, y1)) on the picture of the line from world a to b, or None when it is all behind the camera."""
+        qa, qb = self.space(a), self.space(b)
+        near = NEAR * self.H / 2.0
+        if qa[2] <= near and qb[2] <= near:
+            return None
+        if qa[2] <= near:
+            qa = qa + (qb - qa) * ((near - qa[2]) / (qb[2] - qa[2]))
+        elif qb[2] <= near:
+            qb = qb + (qa - qb) * ((near - qb[2]) / (qa[2] - qb[2]))
+        return self.screen(qa), self.screen(qb)
+
+    def ray(self, x, y):
+        """(origin, direction) in the world of the line of sight through picture point (x, y)."""
+        d = np.array([(x - self.W / 2.0) / self.f, (y - self.H / 2.0) / self.f, 1.0])
+        w = self.axes.T @ d
+        return self.c, w / np.linalg.norm(w)
+
+
+def frustum(cam, t, W, H, reach=0.5):
+    """World points of a camera drawn as a pyramid: its position, then the four corners of its picture `reach` of the way to its target."""
+    f, c, tg, axes = _pose(cam, t, W, H)
+    d = max(float(np.linalg.norm(tg - c)), 1e-6) * reach
+    right, down, fwd = axes
+    k = d / f
+    corners = [c + fwd * d + right * sx * W / 2.0 * k + down * sy * H / 2.0 * k for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    return c, corners, tg
+
+
+PRESETS = {"front": (0.0, 0.0), "back": (180.0, 0.0), "right": (-90.0, 0.0), "left": (90.0, 0.0), "top": (0.0, 89.0), "bottom": (0.0, -89.0)}
+
+
+def look_from(cam, t, W, H, name):
+    """{x, y, z} that put the camera on the `name` side of its target (front, back, right, left, top, bottom: the numpad 1, Ctrl+1, 3, Ctrl+3, 7,
+    Ctrl+7 of Blender), the same distance away."""
+    _f, c, tg, _axes = _pose(cam, t, W, H)
+    n = float(np.linalg.norm(c - tg)) or 1.0
+    yaw, pitch = (math.radians(a) for a in PRESETS[name])
+    v = np.array([-math.sin(yaw) * math.cos(pitch), -math.sin(pitch), -math.cos(yaw) * math.cos(pitch)]) * n      # (front: in front of the scene, on the viewer's side; top: above, y is down)
+    return _units(tg + v, W, H)

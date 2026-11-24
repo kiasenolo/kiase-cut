@@ -116,6 +116,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QInput
 from .. import assets, components, curves, edit, fonts, gizmos, masks, nodegraph, project, render, sharedgl, textlayout, textvars
 from . import appevents, randomdialog, touch, viewglide, wheel
 from .pentool import PenMixin
+from .view3d import View3D
 from .zoomglide import ZoomGlide
 from .wrapdrag import WrapDrag
 
@@ -658,6 +659,7 @@ _Surface = QOpenGLWidget if GL_PREVIEW else QWidget
 class Preview(PenMixin, _Surface):
     clipPicked = Signal(object)                 # clip dict
     selectionPicked = Signal(object, object)    # {clip ids}, the primary one (or None): Shift / Ctrl+click, a box
+    view3dChanged = Signal()                    # the 3D view's own camera moved: the picture is drawn again from it
     paramsLive = Signal(str, str, dict)         # clip id, group, {key: value} while dragging
     paramsCommitted = Signal(str, str, dict)    # the same on release
     follow_progress = None                      # (clip id, canvas QPointF) -> how far along its path the clip is there (0 - 1), or None
@@ -736,6 +738,8 @@ class Preview(PenMixin, _Surface):
         self.drop_at = None                     # canvas point a drag from elsewhere is over
         self.drop_replace = []                  # boxes an Alt-drop there would give its media to
         self.drop_group = None                  # the group box a drop there would go into
+        self.view3d = View3D(self)              # (3D 視角, view3d.py: the scene seen from outside)
+        self.view3d_on = False
         self.setAcceptDrops(interactive)
         if interactive:                          # its keys work while the mouse is over it (see _view_key)
             appevents.watch(self, (QEvent.ShortcutOverride, QEvent.KeyPress, QEvent.KeyRelease), self.eventFilter)
@@ -852,6 +856,9 @@ class Preview(PenMixin, _Surface):
         self.t_us = t_us
         self.selected_id = selected_id
         self.selected_ids = (set(selected_ids or ()) | {selected_id}) if selected_id else set()
+        if self.view3d_on and not self.view3d.available():       # (a level without a camera: back to the flat view)
+            self.view3d_on = False
+            self.view3dChanged.emit()
         self.pen_reload()
         if self.drag is None:
             self.update()
@@ -1077,10 +1084,30 @@ class Preview(PenMixin, _Surface):
         self._report_size()
         self.update()
 
+    def set_view3d(self, on):
+        """The 3D 視角 (view3d.py) on or off; it only works for a level whose camera is on."""
+        on = bool(on) and self.view3d.available()
+        if on != self.view3d_on:
+            self.view3d_on = on
+            if on:
+                self.view3d.cam = None
+            self.view3dChanged.emit()
+            self.update()
+        return on
+
+    def render_camera(self):
+        """The 3D view's own camera when it is on (the renderer draws from it), else None."""
+        return self.view3d.render_camera() if self.view3d_on and self.view3d.available() else None
+
     def wheelEvent(self, e):
         if not self.interactive:
             return
         e.accept()
+        if self.view3d_on:
+            n = wheel.notch(e)
+            if n:
+                self.view3d.wheel(n, bool(e.modifiers() & Qt.ShiftModifier), bool(e.modifiers() & Qt.ControlModifier))
+            return
         if wheel.touchpad(e) and not e.modifiers() & Qt.ControlModifier:   # two-finger scroll: moves the view
             self.pan += QPointF(e.pixelDelta())
             self._view_changed()
@@ -1111,6 +1138,8 @@ class Preview(PenMixin, _Surface):
         in Blender (the area under the mouse gets the keys), and nothing is being typed."""
         if not self.view or not self.isVisible() or not self.underMouse() or self._typing():
             return None
+        if self.view3d_on and (act := self.view3d.key_action(e)) is not None:
+            return act
         k, mods = e.key(), e.modifiers()
         pad = bool(mods & Qt.KeypadModifier)
         ctrl, shift = bool(mods & Qt.ControlModifier), bool(mods & Qt.ShiftModifier)
@@ -1849,6 +1878,12 @@ class Preview(PenMixin, _Surface):
             p.drawRect(r.adjusted(-0.5, -0.5, 0.5, 0.5))
         if not self.interactive or not self.show_guides:
             return
+        if self.view3d_on:                             # (the picture is drawn from the 3D view's camera: its grid, axes, camera and planes over it)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.translate(r.x(), r.y())
+            p.scale(r.width() / self.W, r.height() / self.H)
+            self.view3d.paint(p, self._k())
+            return
         if self.zoom != 1.0 or self.pan != QPointF(0, 0):
             p.setPen(QColor("#9a9aa0"))
             px = r.width() * self.devicePixelRatioF() / self.W * 100     # as canvas pixels to screen pixels
@@ -2275,6 +2310,8 @@ class Preview(PenMixin, _Surface):
         return math.hypot(a.x() - b.x(), a.y() - b.y()) <= PICK_PX * touch.scale() * k
 
     def mousePressEvent(self, e):
+        if self.view3d_on and self.view3d.mouse_press(e):
+            return
         if self.drag and self.drag.get("modal"):         # (the click that keeps a grab, or the right button that puts it back)
             if e.button() in (Qt.LeftButton, Qt.RightButton):
                 self._grab_end(e.button() == Qt.LeftButton)
@@ -2760,6 +2797,8 @@ class Preview(PenMixin, _Surface):
             self._view_changed()
 
     def mouseMoveEvent(self, e):
+        if self.view3d_on and self.view3d.mouse_move(e):
+            return
         d = self.drag
         if d is None:
             if self.pen is not None:
@@ -2884,6 +2923,8 @@ class Preview(PenMixin, _Surface):
             self.paramsCommitted.emit(d["box"].clip["id"], *live)
 
     def mouseReleaseEvent(self, e):
+        if self.view3d_on and self.view3d.mouse_release(e):
+            return
         if self.drag and self.drag.get("modal"):
             return
         if self.pen is not None and self.drag is None:

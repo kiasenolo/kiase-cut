@@ -397,6 +397,7 @@ class MainWindow(QMainWindow):
         self.preview.groupPicked.connect(self.pick_in_group)
         self.preview.paramsCommitted.connect(self.on_preview_params)
         self.preview.paramsLive.connect(self.live_params)
+        self.preview.view3dChanged.connect(self.redraw_3d_view)
         self.preview.follow_progress = self.follow_progress
         self.preview.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
         self.preview.movesCommitted.connect(self.on_preview_moves)
@@ -634,6 +635,13 @@ class MainWindow(QMainWindow):
         self.guides_btn.setChecked(str(self.settings().value("show_guides", "true")).lower() not in ("false", "0"))
         self.preview.set_show_guides(self.guides_btn.isChecked())
         self.pen_btn = tool("pen", "鋼筆工具（P，滑鼠在預覽上）：畫貝茲曲線路徑，變成一個可以改填色 / 外框的片段；雙擊路徑片段編輯節點", self.toggle_pen, True)
+        self.view3d_btn = QPushButton("3D")
+        self.view3d_btn.setObjectName("tool")
+        self.view3d_btn.setCheckable(True)
+        self.view3d_btn.setToolTip("3D 視角（只在開了攝影機的 3D 場景裡）：像 Blender 的 3D 視窗從外面看場景。中鍵環繞、Shift+中鍵平移、Ctrl+中鍵或滾輪推拉；"
+                                   "小鍵盤 1 / 3 / 7 正面 / 右側 / 上方（Ctrl 反面），0 看攝影機，Home 看全部，小鍵盤 . 對準選取的片段")
+        self.view3d_btn.clicked.connect(lambda on: self.preview.set_view3d(on))
+        self.view3d_btn.hide()
         self.overflow_btn = tool("outside", "顯示 / 隱藏畫布外的畫面（開：超出畫布的內容也畫出來，畫布外的部分壓暗；只影響預覽，不影響匯出）",
                                  self.toggle_overflow, True)
         self.overflow_btn.setChecked(str(self.settings().value("show_outside", "false")).lower() in ("true", "1"))
@@ -738,7 +746,7 @@ class MainWindow(QMainWindow):
         self.preview.penbar.hide()
         head.addWidget(self.preview.penbar)
         head.addSpacing(10)
-        for b in (self.pen_btn, self.guides_btn, self.overflow_btn, full_btn):
+        for b in (self.pen_btn, self.view3d_btn, self.guides_btn, self.overflow_btn, full_btn):
             head.addWidget(b)
         head.addSpacing(10)
         head.addWidget(self.time_lbl)
@@ -4977,6 +4985,14 @@ class MainWindow(QMainWindow):
         except (edit.EditError, KeyError):
             return None
 
+    def redraw_3d_view(self):
+        """The 3D view was switched or moved: draw the picture again from its camera."""
+        on = self.preview.view3d_on
+        self.view3d_btn.setChecked(on)
+        view = self.snapshot(resolve=False)
+        pathfollow.resolve(view)
+        self.player.worker.set_view(view, self.cache_dir())
+
     def preview_view(self):
         """The open level for the preview: the clips that follow a path placed on it."""
         return pathfollow.resolved(self.view()) if self.proj else None
@@ -4993,6 +5009,7 @@ class MainWindow(QMainWindow):
         self.curves.set_links(*self.curve_links(sel))
         self.preview.set_scene(self.preview_view(), self.playhead_us(),
                                sel["id"] if sel else None, self.timeline.selected_ids)
+        self.view3d_btn.setVisible(bool(self.proj) and self.preview.view3d.available())
         sp = self.preview.spacing() if self.proj else None
         self.inspector.show_spacing(sp[1] if sp else None)
         self._matte_preview_changed()
@@ -5012,6 +5029,9 @@ class MainWindow(QMainWindow):
         if resolve:                                     # (a live edit changes the numbers first, then places the followers)
             pathfollow.resolve(v)
         v["selected"] = sorted(self.timeline.selected_ids)              # (空物體 show only while selected)
+        free = self.preview.render_camera()
+        if free is not None:                               # (3D 視角: drawn from the view's own camera, not the scene's)
+            v["camera"] = free
         shown = self._matte_shown = self.matte_target()
         if shown:
             v["matte_preview"] = shown

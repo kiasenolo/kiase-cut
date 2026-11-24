@@ -41,7 +41,8 @@ class Planes(unittest.TestCase):
         self.assertLess(d, camera.NEAR)
 
     def test_the_camera_is_at_the_time_of_its_container_not_of_the_clip(self):
-        cam = {"on": True, "x": {"keys": [[0, 0.0, 0, 0, 0, 0], [4_000_000, 1.0, 0, 0, 0, 0]]}}
+        ramp = {"keys": [[0, 0.0, 0, 0, 0, 0], [4_000_000, 1.0, 0, 0, 0, 0]]}
+        cam = {"on": True, "x": ramp, "tx": ramp}                 # (it moves sideways, looking the same way)
         here = camera.plane(cam, {}, 0, W, H, 0)[0].map(QPointF(W / 2, H / 2))
         later = camera.plane(cam, {}, 0, W, H, 4_000_000)[0].map(QPointF(W / 2, H / 2))   # (the clip is at its own 0, the camera at 4 s)
         self.assertGreater(here.x() - later.x(), 100)

@@ -4,7 +4,7 @@
 // @description 通用的粒子系統：發射器（點、線、圓、矩形、圖片）、重力／風／阻力／亂流／地面反彈、隨生命變化的大小和顏色、各種粒子形狀、拖尾；火花、雪、煙火、光點都能用它做。套在透明的片段上就是一個粒子物件，套在有圖片的片段上可以從圖片噴出粒子
 // @particles 200000 count*(trail+1)+count*sub
 // @sprite sprite_img
-// @param count int 400 1 20000 "粒子數"
+// @param count int 400 0 20000 "粒子數"
 // @param mode menu 持續 "持續|爆發" "發射方式"
 // @param life float 2 0.1 30 "壽命（秒）"
 // @param life_var float 0.3 0 1 "壽命差異"

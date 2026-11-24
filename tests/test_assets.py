@@ -381,8 +381,8 @@ class AssetTests(unittest.TestCase):
         lst = panel.lists["particle"]
         names = [a.name for a in assets.ASSETS if a.cat == "particle"]
         self.assertEqual([lst.item(i).text() for i in range(lst.count())], names)
-        self.assertEqual(names[:3], ["粒子系統", "火花", "煙火"])
-        self.assertEqual(bytes(lst.mimeData([lst.item(2)]).data(MEDIA_MIME)).decode(), "asset:particle.fireworks:#ffffff:#000000")
+        self.assertEqual(names[:3], ["粒子系統", "火花", "煙花彈"])
+        self.assertEqual(bytes(lst.mimeData([lst.item(2)]).data(MEDIA_MIME)).decode(), "asset:particle.shells:#ffffff:#000000")
         for i in range(lst.count()):
             self.assertFalse(lst.item(i).icon().isNull())
         lst.itemDoubleClicked.emit(lst.item(0))
@@ -392,12 +392,12 @@ class AssetTests(unittest.TestCase):
         from kiasecut import fx
         d = fx.get("builtin:particle_system")
         self.assertIsNone(d.error)
-        a = assets.get("particle.snow")
+        a = assets.get("particle.magic")
         p = assets.make(a, "#ffffff", "#000000", 1920, 1080)
         self.assertEqual((p["family"], p["w"], p["h"]), ("particles", 1920, 1080))
-        self.assertEqual((p["pt_emitter"], p["pt_count"], p["pt_look"]), ("線", 600, "柔邊圓"))
-        self.assertAlmostEqual(p["pt_ewidth"], 2400.0)                              # (written for 360 high: px of a 1080-high canvas)
-        self.assertEqual(len(p["pt_colors_stops"]), 2)
+        self.assertEqual((p["pt_emitter"], p["pt_count"], p["pt_look"]), ("圓形", 0, "星芒"))                  # (they start with none)
+        self.assertAlmostEqual(p["pt_ewidth"], 360.0)                              # (written for 360 high: px of a 1080-high canvas)
+        self.assertEqual(len(p["pt_colors_stops"]), 3)
         for par in d.params:                                                        # every parameter is a field, except the curve
             f = assets.pt_field(par)
             self.assertEqual(f is None, par.type == "curve", par.name)
@@ -410,7 +410,7 @@ class AssetTests(unittest.TestCase):
         self.assertTrue(assets.pt_enabled("pt_ewidth", q))
         self.assertFalse(assets.pt_enabled("pt_threshold", q))
         e = assets.particle_effect(p)                                               # what the renderer runs
-        self.assertEqual((e["filter"], e["params"]["emitter"], e["params"]["count"]), ("builtin:particle_system", "線", 600))
+        self.assertEqual((e["filter"], e["params"]["emitter"], e["params"]["count"]), ("builtin:particle_system", "圓形", 0))
         self.assertNotIn("sprite_img", e["params"])
         self.assertNotIn("sources", e)
         p["pt_sprite_image"] = os.path.join(self.dir, "sprite.png")
@@ -423,7 +423,7 @@ class AssetTests(unittest.TestCase):
 
     def test_a_particle_object_keeps_its_settings_keyframeable_and_runs_the_system(self):
         from kiasecut import project
-        p = assets.make(assets.get("particle.fire"), "#ffffff", "#000000", 1920, 1080)
+        p = assets.make(assets.get("particle.magic"), "#ffffff", "#000000", 1920, 1080)
         p["pt_size"] = {"keys": [[0, 10.0, 0, 0, 0, 0], [1_000_000, 50.0, 0, 0, 0, 0]]}
         p = assets.normalize(p)
         self.assertAlmostEqual(assets.at(p, 500_000)["pt_size"], 30.0, delta=1.0)
@@ -434,7 +434,7 @@ class AssetTests(unittest.TestCase):
 
     def test_a_particle_object_is_never_a_still(self):
         from kiasecut import stillspans
-        p = assets.make(assets.get("particle.snow"), "#ffffff", "#000000", 1920, 1080)
+        p = assets.make(assets.get("particle.magic"), "#ffffff", "#000000", 1920, 1080)
         c = {"id": "c1", "type": "image", "asset": p, "start_us": 0, "duration_us": 1, "media": {"path": "/a.svg"}}
         self.assertFalse(stillspans._own_still(c))
         c["asset"] = assets.make(assets.get("shape.rect"), "#ffffff", "#000000", 1920, 1080)
@@ -443,12 +443,12 @@ class AssetTests(unittest.TestCase):
     def test_inspector_groups_a_particle_objects_settings(self):
         from kiasecut.ui.inspector import Inspector
         p = proj()
-        params = assets.make(assets.get("particle.fire"), "#ffffff", "#000000", 1920, 1080)
+        params = assets.make(assets.get("particle.magic"), "#ffffff", "#000000", 1920, 1080)
         edit.replace_media(p, "c1", assets.item(params, "/a.svg"), params)
         ins = Inspector()
         c = edit.find(p, "c1")[1]
         ins.show_clips([c], 0, 30)
-        self.assertEqual(ins.widgets[("asset", "pt_count")].value(), 260)
+        self.assertEqual(ins.widgets[("asset", "pt_count")].value(), 0)
         rows = ins._asset_rows
         self.assertTrue(ins._asset_form.isRowVisible(rows["pt_ewidth"]))
         self.assertFalse(ins._asset_form.isRowVisible(rows["pt_period"]))         # (only for a burst)

@@ -288,6 +288,7 @@ class ParticleThumbs(QThread):
                 a = assets.get("particle." + key)
                 e = assets.particle_effect(assets.make(a, "#ffffff", "#000000", w, h))
                 d = fx.get(e["filter"])
+                e["params"]["count"] = assets.particle_thumb_count(key)      # (the settings start with none: the thumbnail shows it as it looks)
                 vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), 0) for p in d.params}
                 out = np.ascontiguousarray(eng.run(d, vals, bg, time=t, unit=1.0))
             except Exception:

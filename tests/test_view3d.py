@@ -318,8 +318,8 @@ class ParticleEditing(unittest.TestCase):
         from kiasecut import assets
         self.pv = Preview()
         self.pv.resize(960, 540)
-        a = assets.make(assets.get("particle.snow"), "#ffffff", "#000000", 1920, 1080)
-        a.update(pt_emitter="矩形", pt_ewidth=600.0, pt_eheight=300.0, pt_depth_on=True, pt_ethick=400.0)
+        a = assets.make(assets.get("particle.magic"), "#ffffff", "#000000", 1920, 1080)
+        a.update(pt_emitter="矩形", pt_origin_y=-0.05, pt_ewidth=600.0, pt_eheight=300.0, pt_depth_on=True, pt_ethick=400.0)
         c = clip("c1", 0, 4 * S, transform={"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0, "z": 0.0})
         c["type"], c["asset"] = "image", assets.normalize(a)
         v = {"width": 1920, "height": 1080, "fps": 30, "duration_us": 4 * S, "camera": {"on": True, "fov": 40.0, "z": -2.747},

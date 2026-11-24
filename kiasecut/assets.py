@@ -584,52 +584,20 @@ def _grad(text):
 
 # (key, name, the parameters of the filter that differ from its defaults). Written for a 360-high canvas (_px)
 _PARTICLE_PRESETS = (
-    ("system", "粒子系統", {}),
+    ("system", "粒子系統", {"count": 400}),
     ("sparks", "火花", {
         "count": 600, "life": 1.5, "life_var": 0.4, "origin": [0.5, 0.6], "speed": 500.0, "speed_var": 0.6, "gravity": 700.0, "drag": 0.8,
         "look": "線條", "size": 3.0, "size_var": 0.3, "size_end": 0.4, "stretch": 0.05, "colors": _grad("0:#fff0b0,0.5:#ffc35a,1:#ff3a10"),
         "fade_out": 0.5, "brightness": 1.5, "time_offset": 1.5}),
-    ("fireworks", "煙火", {
-        "mode": "爆發", "period": 3.0, "count": 260, "life": 2.2, "life_var": 0.25, "origin": [0.5, 0.4], "speed": 480.0, "speed_var": 0.5,
-        "gravity": 520.0, "drag": 0.7, "look": "線條", "size": 5.0, "size_var": 0.3, "size_end": 0.5, "trail": 8, "trail_step": 0.03,
-        "colors": _grad("0:#fff2c0,0.4:#ffb347,1:#ff3b1a"), "fade_out": 0.5}),
     ("shells", "煙花彈", {                                  # (shells go up with a trail and burst into sparks where they die)
         "count": 5, "life": 1.5, "life_var": 0.2, "emitter": "線", "origin": [0.5, 0.95], "ewidth": 700.0, "angle": 0.0, "spread": 24.0, "speed": 520.0,
         "speed_var": 0.15, "gravity": 380.0, "drag": 0.15, "look": "實心圓", "size": 4.0, "size_var": 0.1, "size_end": 1.0, "trail": 12, "trail_step": 0.014,
         "trail_fade": 0.9, "colors": _grad("0:#fff2c0,1:#ffb347"), "fade_out": 0.0, "sub": 70, "sub_mode": "死亡時", "sub_life": 1.5, "sub_speed": 210.0,
         "sub_inherit": 0.25, "sub_size": 5.0, "sub_size_end": 0.3, "sub_colors": _grad("0:#ffffff,0.35:#ffd070,1:#ff4a1a")}),
-    ("confetti", "紙屑", {
-        "count": 300, "life": 6.0, "life_var": 0.3, "time_offset": 6.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 700.0, "angle": 180.0,
-        "spread": 20.0, "speed": 30.0, "gravity": 300.0, "drag": 1.5, "turb": 40.0, "turb_scale": 120.0, "turb_speed": 0.8, "look": "方塊",
-        "aspect": 1.8, "size": 10.0, "size_var": 0.3, "size_end": 1.0, "rotmode": "旋轉", "spin": 4.0, "flip": 6.0, "glow": 0.0, "fade_in": 0.0,
-        "fade_out": 0.1, "color_mode": "每個隨機",
-        "colors": _grad("0:#ff4d6d,0.2:#ffd166,0.4:#06d6a0,0.6:#4cc9f0,0.8:#b388ff")}),
-    ("bokeh", "漂浮光斑", {
-        "count": 40, "life": 9.0, "life_var": 0.3, "time_offset": 9.0, "emitter": "矩形", "ewidth": 640.0, "eheight": 360.0, "origin": [0.5, 0.5],
-        "speed": 12.0, "speed_var": 0.5, "gravity": 0.0, "drag": 0.0, "turb": 25.0, "turb_scale": 120.0, "turb_speed": 0.3, "look": "柔邊圓",
-        "softness": 0.3, "size": 80.0, "size_var": 0.6, "size_end": 1.0, "alpha": 0.55, "brightness": 0.8, "color_mode": "每個隨機",
-        "colors": _grad("0:#ffd9a0,0.25:#ffb36b,0.5:#ff8fa3,0.75:#fff2d0,1:#9fd8ff"), "fade_in": 0.25, "fade_out": 0.25}),
-    ("snow", "下雪", {
-        "count": 600, "life": 9.0, "life_var": 0.4, "time_offset": 9.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 800.0,
-        "angle": 180.0, "spread": 20.0, "speed": 23.0, "gravity": 13.0, "drag": 0.5, "turb": 23.0, "turb_scale": 87.0, "turb_speed": 0.3,
-        "look": "柔邊圓", "softness": 0.35, "size": 5.0, "size_var": 0.6, "size_end": 1.0, "colors": _grad("0:#ffffff,1:#dfeaff"),
-        "fade_in": 0.08, "fade_out": 0.15, "glow": 0.5}),
-    ("fire", "火焰", {
-        "count": 260, "life": 1.3, "life_var": 0.4, "time_offset": 1.3, "emitter": "線", "origin": [0.5, 0.8], "ewidth": 37.0, "angle": 0.0, "spread": 25.0,
-        "speed": 57.0, "gravity": -87.0, "drag": 1.0, "turb": 15.0, "turb_scale": 40.0, "turb_speed": 1.2, "look": "柔邊圓", "softness": 0.8,
-        "size": 10.0, "size_var": 0.4, "size_end": 0.1, "colors": _grad("0:#ffd36a,0.35:#ff7a1e,1:#a01408"), "alpha": 0.3, "brightness": 1.0,
-        "fade_in": 0.1, "fade_out": 0.5}),
-    ("smoke", "煙", {
-        "count": 70, "life": 5.0, "life_var": 0.4, "time_offset": 5.0, "origin": [0.5, 0.85], "angle": 0.0, "spread": 20.0, "speed": 20.0, "gravity": -17.0,
-        "drag": 0.4, "turb": 23.0, "turb_scale": 53.0, "turb_speed": 0.4, "look": "柔邊圓", "softness": 1.0, "size": 17.0, "size_var": 0.4,
-        "size_end": 3.0, "colors": _grad("0:#6b6b6b,1:#bdbdbd"), "alpha": 0.1, "glow": 0.0, "fade_in": 0.15, "fade_out": 0.6}),
     ("magic", "魔法光點", {
         "count": 130, "life": 3.0, "life_var": 0.4, "time_offset": 3.0, "emitter": "圓形", "ewidth": 120.0, "speed": 8.0, "gravity": -7.0, "drag": 0.2,
         "turb": 30.0, "turb_scale": 60.0, "turb_speed": 0.4, "look": "星芒", "size": 5.0, "size_var": 0.5, "size_end": 0.4,
         "colors": _grad("0:#ffffff,0.5:#bfe3ff,1:#8f7bff"), "twinkle": 0.7, "fade_in": 0.2, "fade_out": 0.4}),
-    ("bounce", "彈跳火花", {
-        "mode": "爆發", "period": 3.5, "count": 90, "life": 3.2, "origin": [0.5, 0.3], "speed": 140.0, "gravity": 333.0, "drag": 0.0, "look": "實心圓",
-        "size": 2.3, "size_end": 0.8, "floor_on": True, "floor_y": 0.9, "bounce": 0.55, "colors": _grad("0:#fff2c0,1:#ff9a2e"), "fade_out": 0.25}),
     ("pictures", "圖片粒子", {                               # (the picture is chosen next: 粒子圖片)
         "count": 60, "life": 6.0, "life_var": 0.3, "time_offset": 6.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 667.0, "angle": 180.0, "spread": 30.0,
         "speed": 13.0, "gravity": 40.0, "drag": 0.3, "turb": 20.0, "turb_scale": 73.0, "turb_speed": 0.4, "look": "圖片", "size": 20.0, "size_var": 0.4,
@@ -640,7 +608,7 @@ _PARTICLE_PRESETS = (
 def _particle_asset(key, name, values):
     """An Asset of the 粒子 list: the fields from the filter's parameters of `values`."""
     params = {}
-    for n, v in _px(values).items():
+    for n, v in _px(dict(values, count=0)).items():                # (it starts with none: they are added in 粒子數)
         par = PT_PARAMS.get(n)
         if par is not None and pt_field(par):
             params[pt_field(par)] = v
@@ -650,7 +618,13 @@ def _particle_asset(key, name, values):
 def particle_values(key):
     """{filter parameter: value} of the 粒子 list's setting `key` ("fire"), for a 粒子系統 node of the node editor to start with."""
     values = next((v for k, _n, v in _PARTICLE_PRESETS if k == key), None)
-    return {} if values is None else _px(values)
+    return {} if values is None else _px(dict(values, count=0))
+
+
+def particle_thumb_count(key):
+    """How many particles the thumbnail of the 粒子 list's setting `key` shows (the settings themselves start with none)."""
+    values = next((v for k, _n, v in _PARTICLE_PRESETS if k == key), None)
+    return int((values or {}).get("count", 400))
 
 
 if "particles" in FIELDS:

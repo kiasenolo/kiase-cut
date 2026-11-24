@@ -551,3 +551,25 @@ class CameraObjectHandles(unittest.TestCase):
         self.assertEqual((cid, group), ("cam", "multi"))
         self.assertTrue(set(vals["transform"]) <= {"x", "y", "z"} and vals["transform"])
         self.assertNotIn("x", vals.get("camera", {}))
+
+    def test_a_camera_object_without_a_target_turns_by_its_angles_and_its_handles_edit_them(self):
+        pv = self.pv
+        clipd = pv.view["tracks"][-1]["clips"][0]
+        clipd["camera"] = {"fov": 40.0}
+        pv.set_scene(pv.view, S, "cam")
+        box = pv.selected_box()
+        e = pv.gizmo_effect(box)
+        self.assertIn("rot_y", e["camera"])
+        h = next(h for h in __import__("kiasecut.gizmos", fromlist=["x"]).handles(e, box.t, pv.W, pv.H) if h["id"] == "orbit")
+        r = pv._rect()
+        at = lambda local: QPoint(round(r.x() + (pv.W / 2 + local[0]) / pv.W * r.width()), round(r.y() + (pv.H / 2 + local[1]) / pv.H * r.height()))
+        start = at(h["local"])
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(30, 0))
+        QTest.mouseMove(pv, start + QPoint(60, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(60, 0))
+        (cid, group, vals), = self.done
+        self.assertEqual(group, "multi")
+        self.assertIn("rot_y", vals["transform"])
+        v3 = pv.view3d
+        self.assertFalse(v3.has_target())

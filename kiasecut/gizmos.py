@@ -74,6 +74,8 @@ def camera_effect(clip, W, H):
     if camera.is_clip(clip):                           # a 相機 object: its place is the clip's transform, the rest its own; handles over the picture
         tf = clip.get("transform") or {}
         merged = dict(cam, on=True, **{k: tf[k] for k in ("x", "y", "z") if k in tf})
+        if not any(k in cam for k in ("tx", "ty", "tz")):                  # (turned by its angles, not looking at a target)
+            merged.update({k: tf.get(k, 0.0) for k in ("rot_x", "rot_y", "rotation")})
         return {"id": "camera", "filter": CAMERA, "params": {}, "camera": merged, "W": W, "H": H, "asset": True, "canvas": True}
     if clip.get("type") not in ("group", "compound") or not camera.on(cam):
         return None

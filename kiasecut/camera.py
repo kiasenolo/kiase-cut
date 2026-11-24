@@ -45,8 +45,13 @@ def from_clip(c, t):
     for key in ("x", "y", "z"):
         if key in tf:
             out[key] = _v(tf, key, 0.0, t)
-    for key in ("tx", "ty", "tz", "aperture"):
-        out[key] = _v(cam, key, 0.0, t)
+    out["aperture"] = _v(cam, "aperture", 0.0, t)
+    if any(k in cam for k in ("tx", "ty", "tz")):          # (looking at a target)
+        for key in ("tx", "ty", "tz"):
+            out[key] = _v(cam, key, 0.0, t)
+    else:                                                   # (turned like any object: its 旋轉 X, Y, Z)
+        for key in ("rot_x", "rot_y", "rotation"):
+            out[key] = _v(tf, key, 0.0, t)
     if cam.get("focus") is not None:
         out["focus"] = _v(cam, "focus", 0.0, t)
     return out
@@ -73,6 +78,9 @@ def _basis(cam, t, W, H):
     f = s / math.tan(math.radians(fov) / 2.0)                      # px
     cx, cy = _v(cam, "x", 0.0, t) * W / 2.0, -_v(cam, "y", 0.0, t) * s
     cz = _v(cam, "z", -f / s, t) * s if cam.get("z") is not None else -f
+    if any(k in cam for k in ("rot_x", "rot_y", "rotation")):      # (turned by its angles: the camera's axes are a plane's)
+        r = _rot(_v(cam, "rot_x", 0.0, t), _v(cam, "rot_y", 0.0, t), _v(cam, "rotation", 0.0, t))
+        return f, np.array([cx, cy, cz]), np.array([r[:, 0], r[:, 1], r[:, 2]])
     tx, ty, tz = _v(cam, "tx", 0.0, t) * W / 2.0, -_v(cam, "ty", 0.0, t) * s, _v(cam, "tz", 0.0, t) * s
     c = np.array([cx, cy, cz])
     fwd = np.array([tx, ty, tz]) - c
@@ -158,8 +166,46 @@ def _pose(cam, t, W, H):
     """(focal px, position, target, [right, down, forward]) in px of a W x H picture: x to the right, y down, z away."""
     s = H / 2.0
     f, c, axes = _basis(cam, t, W, H)
+    if any(k in cam for k in ("rot_x", "rot_y", "rotation")):       # (no target: the point straight ahead, at the focus or the distance the z = 0 plane fills the picture)
+        ahead = _v(cam, "focus", 0.0, t) * s if cam.get("focus") is not None else f
+        return f, c, c + axes[2] * ahead, axes
     tg = np.array([_v(cam, "tx", 0.0, t) * W / 2.0, -_v(cam, "ty", 0.0, t) * s, _v(cam, "tz", 0.0, t) * s])
     return f, c, tg, axes
+
+
+def euler_of(r):
+    """(rot_x, rot_y, rotation) degrees that _rot() turns into the matrix r."""
+    b = math.asin(max(-1.0, min(1.0, -float(r[2][0]))))
+    a = math.atan2(float(r[2][1]), float(r[2][2]))
+    g = math.atan2(float(r[1][0]), float(r[0][0]))
+    return -math.degrees(a), -math.degrees(b), math.degrees(g)
+
+
+def looking(c, tg):
+    """The angles {rot_x, rot_y, rotation} of a camera at c (px) turned to look at tg, upright."""
+    fwd = np.asarray(tg, float) - np.asarray(c, float)
+    n = np.linalg.norm(fwd)
+    fwd = fwd / n if n > 1e-9 else np.array([0.0, 0.0, 1.0])
+    right = np.cross([0.0, 1.0, 0.0], fwd)
+    m = np.linalg.norm(right)
+    right = right / m if m > 1e-9 else np.array([1.0, 0.0, 0.0])
+    down = np.cross(fwd, right)
+    rx, ry, rz = euler_of(np.stack([right, down, fwd], axis=1))
+    return {"rot_x": round(rx, 3), "rot_y": round(ry, 3), "rotation": round(rz, 3)}
+
+
+def as_angles(cam, t, W, H, vals):
+    """A handle's result (x, y, z of the camera and tx, ty, tz of its target, from track / orbit / dolly) for a camera that is turned by
+    angles: its place, and the angles that make it look at where the target now is (left alone when it only slid)."""
+    _f, c0, tg0, axes0 = _pose(cam, t, W, H)
+    s = H / 2.0
+    c = np.array([vals.get("x", c0[0] / (W / 2.0)) * W / 2.0, -vals.get("y", -c0[1] / s) * s, vals.get("z", c0[2] / s) * s])
+    tg = np.array([vals.get("tx", tg0[0] / (W / 2.0)) * W / 2.0, -vals.get("ty", -tg0[1] / s) * s, vals.get("tz", tg0[2] / s) * s])
+    out = {k: v for k, v in vals.items() if k in ("x", "y", "z", "fov", "aperture", "focus")}
+    fwd = (tg - c) / max(float(np.linalg.norm(tg - c)), 1e-9)
+    if float(fwd @ axes0[2]) < 1.0 - 1e-7:
+        out.update(looking(c, tg))
+    return out
 
 
 def _units(c, W, H, prefix=""):

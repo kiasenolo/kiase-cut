@@ -64,6 +64,11 @@ class View3D:
         view = self.p.view or {}
         return camera.on(view.get("camera")) or camera.has_clips(view.get("tracks") or [])
 
+    def has_target(self):
+        """Whether the scene's camera looks at a target (a 相機 object that is turned by its angles has none)."""
+        obj = self.active_object()
+        return obj is None or any(k in obj["camera"] for k in ("tx", "ty", "tz"))
+
     def active_object(self):
         """The 相機 object (camera.is_clip) the scene is seen with now - the topmost one that is playing - or None."""
         view = self.p.view or {}
@@ -304,7 +309,7 @@ class View3D:
         for a, (_tip, at) in self.arrows(seen, o, k).items():
             if near(at, 9):
                 return a, b
-        if not isinstance(b, CamThing) and not camera.is_clip(b.clip):
+        if not isinstance(b, CamThing):
             ring = self.hit_ring(pos, o, seen, k)
             if ring is not None:
                 return ring, b
@@ -456,7 +461,7 @@ class View3D:
             return None
         grab = {Qt.Key_G: "move", Qt.Key_R: "rotate", Qt.Key_S: "scale"}.get(k)
         sel = self.selected() if grab and not self.through else None
-        if sel is not None and (isinstance(sel, CamThing) or camera.is_clip(sel.clip)) and grab != "move":
+        if sel is not None and (grab != "move" if isinstance(sel, CamThing) else camera.is_clip(sel.clip) and grab == "scale"):
             return None                                        # (the camera is only moved)
         if grab and sel is not None and self.drag is None:
             return lambda: self.modal_begin(grab)
@@ -523,7 +528,7 @@ class View3D:
         seen, k = self.seen(), self.p._k()
         m = self._canvas(pos)
         c, corners, tg = camera.frustum(real, self.time(), self.p.W, self.p.H)
-        at = seen.point(tg)
+        at = seen.point(tg) if self.has_target() else None
         if at is not None and math.hypot(at[0] - m.x(), at[1] - m.y()) <= 10 * k:
             return "target"
         edges = [(c, q) for q in corners] + [(corners[i], corners[(i + 1) % 4]) for i in range(4)]
@@ -995,7 +1000,7 @@ class View3D:
                 what = {"move": "移動", "rotate": "旋轉", "scale": "縮放"}[self.modal["kind"]]
                 p.drawText(QPointF(mid[0] + 14 * k, mid[1] - 14 * k), f"{what}{(' ' + self.modal['axis'].upper()) if self.modal['axis'] else ''}: {self.modal['typed']}")
             return
-        if not isinstance(b, CamThing) and not camera.is_clip(b.clip):
+        if not isinstance(b, CamThing):
             n = self.arrow_length(seen, o, k) * self.RING_AT
             for name, (axis, _key, _u) in self.RINGS.items():
                 col = QColor(self.COLORS[axis])
@@ -1056,11 +1061,12 @@ class View3D:
             line(c, q)
         for i in range(4):
             line(corners[i], corners[(i + 1) % 4])
-        line(c, tg, 0.8)
+        if self.has_target():
+            line(c, tg, 0.8)
         top = (corners[0] + corners[1]) / 2.0 + (corners[0] - corners[3]) * 0.5       # (a triangle on the picture's top: which way is up)
         line(corners[0], top)
         line(corners[1], top)
-        at = seen.point(tg)
+        at = seen.point(tg) if self.has_target() else None
         if at is not None:
             p.setPen(QPen(SELECTED_COLOR if self.sel_cam == "target" else CAMERA_COLOR, 1.5 * k))
             p.drawEllipse(QPointF(*at), 5 * k, 5 * k)

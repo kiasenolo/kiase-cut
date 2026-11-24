@@ -168,9 +168,34 @@ class Scene(unittest.TestCase):
         edit.set_param(p, c["id"], "camera", "fov", 60.0, 0)
         self.assertEqual(c["camera"]["fov"], 60.0)
         cam = camera.from_clip(c, 0)
-        self.assertEqual((cam["fov"], cam["tx"]), (60.0, 0.0))
+        self.assertEqual((cam["fov"], cam["rot_y"]), (60.0, 0.0))             # (turned by its angles: no target)
         self.assertAlmostEqual(cam["z"], -2.747, 3)
         self.assertFalse(camera.is_clip({"type": "compound", "camera": {"on": True}}))
+
+    def test_a_camera_turned_by_angles_sees_what_one_looking_at_a_target_does(self):
+        import numpy as np
+        W_, H_ = 1920, 1080
+        look = {"on": True, "x": 0.4, "y": 0.1, "z": -2.5, "tx": 0.3, "ty": 0.0, "tz": 0.2}
+        _f, c, tg, _ax = camera._pose(look, 0, W_, H_)
+        turned = dict({"on": True, "x": 0.4, "y": 0.1, "z": -2.5}, **camera.looking(c, tg))
+        for tf in ({}, {"x": 0.2, "rot_y": 30}, {"z": 0.5}):
+            a, da = camera.plane(look, tf, 0, W_, H_)
+            b, db = camera.plane(turned, tf, 0, W_, H_)
+            self.assertAlmostEqual(da, db, 3)
+            for pt in (QPointF(0, 0), QPointF(W_, H_), QPointF(300, 700)):
+                self.assertAlmostEqual(a.map(pt).x(), b.map(pt).x(), 1)
+                self.assertAlmostEqual(a.map(pt).y(), b.map(pt).y(), 1)
+        for ang in ((10, 20, 30), (-40, 15, -60), (33, -70, 5)):
+            self.assertTrue(np.allclose(camera._rot(*ang), camera._rot(*camera.euler_of(camera._rot(*ang))), atol=1e-9))
+
+    def test_handles_of_a_turned_camera_become_its_place_and_angles(self):
+        W_, H_ = 1920, 1080
+        cam = {"on": True, "x": 0.0, "y": 0.0, "z": -2.5, "rot_x": 0.0, "rot_y": 0.0, "rotation": 0.0}
+        slid = camera.as_angles(cam, 0, W_, H_, camera.track(cam, 0, W_, H_, 100, 0))
+        self.assertEqual(set(slid), {"x", "y", "z"})                       # (sliding: no angle changes)
+        around = camera.as_angles(cam, 0, W_, H_, camera.orbit(cam, 0, W_, H_, 40, 0))
+        self.assertEqual(set(around), {"x", "y", "z", "rot_x", "rot_y", "rotation"})
+        self.assertNotEqual(around["rot_y"], 0.0)
 
 
 if __name__ == "__main__":

@@ -74,12 +74,12 @@ PARAMS = {
              ("bg_radius", "背景圓角 px", 0.0, 500.0, 0.5, 1, 1, 0.0)),
     "transform": (("x", "位置 X", -10.0, 10.0, 0.01, 3, 1, 0.0),
                   ("y", "位置 Y", -10.0, 10.0, 0.01, 3, 1, 0.0),
+                  ("z", "位置 Z", -20.0, 20.0, 0.01, 3, 1, 0.0),            # 攝影機 (camera.py): only in a scene
                   ("scale", "縮放 X", 0.0, 50.0, 0.01, 3, 1, 1.0),
                   ("scale_y", "縮放 Y", 0.0, 50.0, 0.01, 3, 1, 1.0),
+                  ("rot_x", "旋轉 X °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),    # (in a scene the three turns are together: 旋轉 X, Y, Z)
+                  ("rot_y", "旋轉 Y °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
                   ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
-                  ("z", "3D 位置 Z", -20.0, 20.0, 0.01, 3, 1, 0.0),         # 攝影機 (camera.py): only in a scene
-                  ("rot_x", "3D 旋轉 X °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
-                  ("rot_y", "3D 旋轉 Y °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
                   ("anchor_x", "錨點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 錨點: the point 位置 places (object widths / heights too)
                   ("anchor_y", "錨點 Y", -1.0, 1.0, 0.01, 3, 1, 0.0),
                   ("pivot_x", "中心點 X", -1.0, 1.0, 0.01, 3, 1, 0.0),       # 中心點: turns / scales about it (shown in
@@ -614,9 +614,10 @@ class Inspector(QWidget):
                     self._build_params(form, components.of_clip(c))
                 form.addRow(section("畫面"))
                 scene = bool(self.scene_check and self.scene_check(c))
-                self._rows(form, "transform", [r for r in PARAMS["transform"] if r[0] not in project.CORNERS and r[0] != "path_progress" and not r[0].startswith("shadow_")
+                self._rows(form, "transform", [(r[0], "旋轉 Z °") + r[2:] if scene and r[0] == "rotation" else r for r in PARAMS["transform"]
+                                               if r[0] not in project.CORNERS and r[0] != "path_progress" and not r[0].startswith("shadow_")
                                                and (scene or r[0] not in ("z", "rot_x", "rot_y"))],
-                           (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("rot_x", "rot_y", "3D 旋轉"), ("anchor_x", "anchor_y", "錨點"),
+                           (("x", "y", "位置"), ("scale", "scale_y", "縮放"), ("anchor_x", "anchor_y", "錨點"),
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
                 self._build_flip(form)
@@ -645,7 +646,7 @@ class Inspector(QWidget):
         if c["type"] in ("group", "compound") and not components.is_component(c.get("compound")):
             self._build_camera(form)
         elif camera.is_clip(c):
-            self._build_camera(form, obj=True)
+            self._build_camera(form, obj=c)
         comp = c.get("compound") or {}
         if c["type"] in ("group", "compound") and comp and not (comp.get("static") or comp.get("fit")
                                                                  or components.is_component(comp)):
@@ -1405,11 +1406,13 @@ class Inspector(QWidget):
         grid.setColumnStretch(3, 1)
         form.addRow("錨點位置", box)
 
-    def _build_camera(self, form, obj=False):
+    def _build_camera(self, form, obj=None):
         """攝影機: with it on the clips inside are planes in space the camera looks at (camera.py): each gets 3D 位置 Z and 3D 旋轉."""
-        if obj:                                       # (a 相機 object: where it stands is its 3D 位置; here what it looks at and the lens)
+        if obj is not None:                           # (a 相機 object: where it stands is its 3D 位置; here what it looks at and the lens)
             form.addRow(section("相機"))
-            self._rows(form, "camera", [r for r in PARAMS["camera"] if r[0] not in ("x", "y", "z")], (("tx", "ty", "目標"),))
+            look = any(k in (obj.get("camera") or {}) for k in ("tx", "ty", "tz"))     # (turned like any object unless it looks at a target)
+            self._rows(form, "camera", [r for r in PARAMS["camera"] if r[0] not in ("x", "y", "z") and (look or r[0] not in ("tx", "ty", "tz"))],
+                       (("tx", "ty", "目標"),))
             return
         form.addRow(section("攝影機"))
         on = QCheckBox("啟用")

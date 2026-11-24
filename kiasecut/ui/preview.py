@@ -2593,7 +2593,9 @@ class Preview(PenMixin, _Surface):
             if self.gizmo_node:
                 vals = {f"{self.gizmo_node}.{k}": v for k, v in vals.items()}
             if h["effect"] == "camera" and camera.is_clip(box.clip):      # (a 相機 object's: where it stands is its transform)
-                where = {k: v for k, v in vals.items() if k in ("x", "y", "z")}
+                if not any(k in box.clip["camera"] for k in ("tx", "ty", "tz")):        # (turned by angles: the handles' target becomes them)
+                    vals = camera.as_angles(camera.from_clip(box.clip, project.stepped(box.clip, box.t)), 0, box.W, box.H, vals)
+                where = {k: v for k, v in vals.items() if k in ("x", "y", "z", "rot_x", "rot_y", "rotation")}
                 lens = {k: v for k, v in vals.items() if k not in where}
                 return "multi", {g: v for g, v in (("transform", where), ("camera", lens)) if v}
             if h["effect"] == "camera":                        # (a group's or compound's camera: its own fields)

@@ -160,7 +160,7 @@ EGL_FUNCS = {                                              # name: (result, argu
     "eglGetCurrentSurface": (vp, [i32]), "eglGetCurrentDisplay": (vp, []),
 }
 GL_FUNCS = {
-    "glGetString": (C.c_char_p, [u32]), "glGetError": (u32, []), "glFinish": (None, []),
+    "glGetString": (C.c_char_p, [u32]), "glGetIntegerv": (None, [u32, ip]), "glGetError": (u32, []), "glFinish": (None, []),
     "glGenTextures": (None, [i32, up]), "glDeleteTextures": (None, [i32, up]), "glBindTexture": (None, [u32, u32]),
     "glActiveTexture": (None, [u32]), "glTexParameteri": (None, [u32, u32, i32]),
     "glTexImage2D": (None, [u32, i32, i32, i32, i32, i32, u32, u32, vp]),
@@ -276,6 +276,10 @@ class Context:
         self._viewport, self._blend = (0, 0, 0, 0), (ONE, ZERO)
         self.info = {k: (gl.glGetString(v) or b"").decode() for k, v in (("vendor", 0x1F00), ("renderer", 0x1F01),
                                                                          ("version", 0x1F02))}
+        biggest = C.c_int(0)
+        gl.glGetIntegerv(0x0D33, C.byref(biggest))                                    # GL_MAX_TEXTURE_SIZE
+        self.info.update({"GL_VENDOR": self.info["vendor"], "GL_RENDERER": self.info["renderer"],     # (moderngl's names, which
+                          "GL_VERSION": self.info["version"], "GL_MAX_TEXTURE_SIZE": biggest.value})  # glrender and the player read)
         gl.glPixelStorei(UNPACK_ALIGNMENT, 1)
         gl.glPixelStorei(PACK_ALIGNMENT, 1)
         self.scratch_fbo = None
@@ -546,6 +550,20 @@ class Framebuffer:
         if dtype == "f1":
             return np.clip(np.rint(out * 255.0), 0, 255).astype(np.uint8).tobytes()
         return out.astype(DTYPES[dtype][2]).tobytes()
+
+    def read_into(self, buffer, components=4, dtype="f1"):
+        """read() into a writable buffer (a QImage's bits()) of at least its size: an 8-bit target is read straight into it."""
+        w, h = self.size
+        if components != 4 or dtype not in DTYPES:
+            raise GLError(f"reading {components} components as {dtype}")
+        dst = (C.c_char * (w * h * DTYPES[dtype][3])).from_buffer(buffer)
+        if dtype == self.dtype == "f1":
+            gl = self.ctx.gl
+            gl.glBindFramebuffer(GL_FRAMEBUFFER, self.glo)
+            gl.glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, C.addressof(dst))
+            return
+        data = self.read(components, dtype)
+        C.memmove(dst, data, len(data))
 
     def __del__(self):
         glo = getattr(self, "glo", 0)

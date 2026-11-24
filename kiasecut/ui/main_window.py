@@ -1039,7 +1039,7 @@ class MainWindow(QMainWindow):
         self.nodes.view.backdropToggled.connect(lambda: self.nodes.view.set_backdrop(self.preview.image()))
         w.thumbsReady.connect(self.nodes.set_thumbs)
         w.loaded.connect(self.on_loaded)
-        w.failed.connect(lambda m: self.statusBar().showMessage(f"預覽錯誤：{m}", 10000))  # never modal
+        w.failed.connect(self.on_preview_failed)
         w.stateChanged.connect(self.on_state)
         w.levels.connect(self.meter.bars.feed)
         w.cacheChanged.connect(self.timeline.set_cached)
@@ -5265,6 +5265,11 @@ class MainWindow(QMainWindow):
         self.preview.show_texture(frame)
         seen = bool(self.fullscreen) or (self.nodes.view.backdrop_visible and self.nodes.view.isVisible())
         self.after_frame(self.preview.image() if seen else None, pos)
+
+    def on_preview_failed(self, message):
+        """The player's error, never modal. A method, not a lambda: a lambda ran on the player's thread and made the status bar's
+        label there (Qt: "Cannot create children for a parent that is in a different thread")."""
+        self.statusBar().showMessage(f"預覽錯誤：{message}", 10000)
 
     def texture_failed(self, why):
         self.statusBar().showMessage(f"預覽直接用 GPU 貼圖失敗，改用一般方式：{why}", 10000)

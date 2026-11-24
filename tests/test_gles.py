@@ -101,6 +101,20 @@ class ContextTest(unittest.TestCase):
         px = self.draw("void main() { fragColor = vec4(2.5, -1.0, 0.25, 1.0); }", dtype="f2")
         self.assertEqual(px[0, 0].tolist(), [2.5, -1.0, 0.25, 1.0])
 
+    def test_read_into_a_picture_and_the_info_glrender_reads(self):
+        from PySide6.QtGui import QImage
+        data = bytes(range(0, 32))                                   # 4 x 2 pixels
+        img = QImage(4, 2, QImage.Format_RGBA8888)
+        self.ctx.texture((4, 2), 4, data).framebuffer().read_into(img.bits(), components=4)
+        self.assertEqual(bytes(img.constBits()), data)
+        wide = self.ctx.texture((4, 2), 4, dtype="f4")               # (a float target: through read(), then copied)
+        wide.write((np.frombuffer(data, np.uint8) / 255.0).astype("f4").tobytes())
+        img.fill(0)
+        wide.framebuffer().read_into(img.bits(), components=4)
+        self.assertEqual(bytes(img.constBits()), data)
+        self.assertGreaterEqual(int(self.ctx.info["GL_MAX_TEXTURE_SIZE"]), 2048)
+        self.assertEqual(self.ctx.info["GL_RENDERER"], self.ctx.info["renderer"])
+
     def test_texture_write_read_swizzle_and_copy(self):
         ctx = self.ctx
         data = bytes(range(0, 32))                                   # 4 x 2 pixels, with zero bytes in it

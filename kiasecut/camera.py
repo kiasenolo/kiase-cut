@@ -90,3 +90,52 @@ def flat(c):
     for k in ("x", "y", "rotation", "pivot_x", "pivot_y", "anchor_x", "anchor_y"):
         tf.pop(k, None)
     return dict(c, transform=tf)
+
+
+# -- what the preview's handles do (gizmos.camera_handles): each takes the camera as it was when the drag began and says what it is now ----
+
+def _pose(cam, t, W, H):
+    """(focal px, position, target, [right, down, forward]) in px of a W x H picture: x to the right, y down, z away."""
+    s = H / 2.0
+    f, c, axes = _basis(cam, t, W, H)
+    tg = np.array([_v(cam, "tx", 0.0, t) * W / 2.0, -_v(cam, "ty", 0.0, t) * s, _v(cam, "tz", 0.0, t) * s])
+    return f, c, tg, axes
+
+
+def _units(c, W, H, prefix=""):
+    s = H / 2.0
+    return {prefix + "x": float(c[0] / (W / 2.0)), prefix + "y": float(-c[1] / s), prefix + "z": float(c[2] / s)}
+
+
+def track(cam, t, W, H, dx, dy):
+    """平移: the picture follows a drag of dx, dy picture px - the camera and its target move the other way, in the plane of the picture."""
+    f, c, tg, (right, down, _fwd) = _pose(cam, t, W, H)
+    k = max(float(np.linalg.norm(tg - c)), 1e-6) / f
+    move = -(dx * right + dy * down) * k
+    return dict(_units(c + move, W, H), **_units(tg + move, W, H, "t"))
+
+
+def orbit(cam, t, W, H, dx, dy, per_px=0.25):
+    """環繞: the camera goes round its target - dx picture px turn it about the vertical, dy up and down (a drag down takes it up)."""
+    _f, c, tg, _axes = _pose(cam, t, W, H)
+    v = c - tg
+    a = math.radians(dx * per_px)
+    v = np.array([v[0] * math.cos(a) + v[2] * math.sin(a), v[1], -v[0] * math.sin(a) + v[2] * math.cos(a)])
+    n = float(np.linalg.norm(v))
+    if n < 1e-6:
+        return _units(c, W, H)
+    right = np.cross([0.0, 1.0, 0.0], -v)
+    m = np.linalg.norm(right)
+    right = right / m if m > 1e-9 else np.array([1.0, 0.0, 0.0])
+    elev = math.asin(max(-1.0, min(1.0, -v[1] / n)))                 # (up is -y)
+    elev2 = max(math.radians(-85), min(math.radians(85), elev + math.radians(dy * per_px)))
+    th = elev2 - elev
+    ax = right                                                       # rotate v about the camera's right axis
+    v = v * math.cos(-th) + np.cross(ax, v) * math.sin(-th) + ax * float(ax @ v) * (1 - math.cos(-th))
+    return _units(tg + v, W, H)
+
+
+def dolly(cam, t, W, H, dy, per_px=0.004):
+    """推拉: the camera goes towards its target (a drag up) or away from it."""
+    _f, c, tg, _axes = _pose(cam, t, W, H)
+    return _units(tg + (c - tg) * math.exp(dy * per_px), W, H)

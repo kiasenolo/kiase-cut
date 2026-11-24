@@ -47,6 +47,41 @@ class Planes(unittest.TestCase):
         self.assertEqual(c["transform"]["x"], 0.3)
 
 
+class Moves(unittest.TestCase):
+    cam = {"on": True, "fov": 40.0, "z": -2.747}
+
+    def centre(self, cam):
+        q, d = camera.plane(cam, {}, 0, W, H)               # (the clip in the middle of the z = 0 plane)
+        return q.map(QPointF(W / 2, H / 2)), d
+
+    def test_tracking_takes_the_picture_along_with_the_drag(self):
+        c0, _ = self.centre(self.cam)
+        new = dict(self.cam, **camera.track(self.cam, 0, W, H, 100, -40))
+        c1, _ = self.centre(new)
+        self.assertAlmostEqual(c1.x() - c0.x(), 100, 3)
+        self.assertAlmostEqual(c1.y() - c0.y(), -40, 3)
+
+    def test_orbiting_keeps_the_target_in_the_middle_and_the_distance(self):
+        _c, d0 = self.centre(self.cam)
+        new = dict(self.cam, **camera.orbit(self.cam, 0, W, H, 120, 40))
+        c1, d1 = self.centre(new)
+        self.assertAlmostEqual(c1.x(), W / 2, 3)
+        self.assertAlmostEqual(c1.y(), H / 2, 3)
+        self.assertAlmostEqual(d1, d0, 4)
+        self.assertLess(new["x"], 0)                        # (a drag to the right takes it to the left)
+
+    def test_a_drag_down_takes_the_camera_up(self):
+        new = camera.orbit(self.cam, 0, W, H, 0, 40)
+        self.assertGreater(new["y"], 0)
+
+    def test_dollying_goes_nearer_with_a_drag_up(self):
+        _c, d0 = self.centre(self.cam)
+        near = dict(self.cam, **camera.dolly(self.cam, 0, W, H, -100))
+        far = dict(self.cam, **camera.dolly(self.cam, 0, W, H, 100))
+        self.assertLess(self.centre(near)[1], d0)
+        self.assertGreater(self.centre(far)[1], d0)
+
+
 class Editing(unittest.TestCase):
     def test_a_group_gets_a_camera_and_keeps_its_keyframes(self):
         from kiasecut import edit, project

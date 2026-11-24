@@ -51,6 +51,7 @@ SPECS = {
 
 
 PARTICLES = "builtin:particle_system"
+CAMERA = "builtin:camera"                    # (not a filter: the 攝影機 of a group or compound clip, handles that move it)
 ACCEL_SCALE = 0.25                           # the gravity / wind arrow: a px of it is this many px/s² (of a 1080-high canvas)
 SPEED_SCALE = 0.25                           # the velocity handle: its distance is the way a particle goes in this many seconds (without forces)
 
@@ -64,6 +65,40 @@ def particle_effect(clip):
     e = assets.particle_effect(p)
     e["asset"] = True                        # (its handles edit the object's fields, not an effect's parameters)
     return e
+
+
+def camera_effect(clip, W, H):
+    """The camera of a group or compound clip, as an effect with its own handles - None when it has none on. W x H: the size of its picture."""
+    from . import camera
+    cam = clip.get("camera")
+    if clip.get("type") not in ("group", "compound") or not camera.on(cam):
+        return None
+    if clip["type"] == "compound":
+        comp = clip.get("compound") or {}
+        W, H = comp.get("width", W), comp.get("height", H)
+    return {"id": "camera", "filter": CAMERA, "params": {}, "camera": cam, "W": W, "H": H, "asset": True}
+
+
+def camera_handles(e, t, bw, bh):
+    """Four handles that stay where they are on the picture - the camera looks at its target, so that is always the middle - and change
+    the camera by how far they are dragged: the middle moves it sideways (平移), one beside goes round the target (環繞), one on the other
+    side goes nearer or farther (推拉), the one above widens or narrows the angle of view (視角). Clip-local px of the picture."""
+    from . import camera
+    cam, W, H = e["camera"], e["W"], e["H"]
+    k = W / max(bw, 1e-9)                                         # picture px per clip px
+    r = 0.22 * bh
+
+    def drag(fn, home):
+        return lambda pt, st, snap: {key: round(v, 4) for key, v in fn((pt[0] - home[0]) * k, (pt[1] - home[1]) * k).items()}
+    fov0 = float(curves.value(cam.get("fov", camera.FOV), t))
+    pos = {"pan": (0.0, 0.0), "orbit": (r, 0.0), "dolly": (-r, 0.0), "fov": (0.0, -r)}
+    return [
+        _custom("pan", pos["pan"], "cross", "平移", drag(lambda dx, dy: camera.track(cam, t, W, H, dx, dy), pos["pan"])),
+        _custom("orbit", pos["orbit"], "round", "環繞", drag(lambda dx, dy: camera.orbit(cam, t, W, H, dx, dy), pos["orbit"]), pos["pan"]),
+        _custom("dolly", pos["dolly"], "round", "推拉", drag(lambda dx, dy: camera.dolly(cam, t, W, H, dy), pos["dolly"]), pos["pan"]),
+        _custom("fov", pos["fov"], "round", "視角",
+                drag(lambda dx, dy: {"fov": min(150.0, max(5.0, fov0 - dy / H * 100.0))}, pos["fov"]), pos["pan"]),
+    ]
 
 
 def _custom(id_, local, style, label, apply, origin=None, **more):
@@ -227,6 +262,8 @@ def handles(e, t, bw, bh):
     (the preview takes the last under the pointer first: a point is under a radius or an angle that sits on the same spot)."""
     if e["filter"] == PARTICLES:
         return particle_handles(e, t, bw, bh)
+    if e["filter"] == CAMERA:
+        return camera_handles(e, t, bw, bh)
     d = fx.def_of(e)
     out = []
     for item in spec_of(e["filter"]):

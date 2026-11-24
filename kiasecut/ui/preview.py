@@ -875,6 +875,10 @@ class Preview(PenMixin, _Surface):
 
     def gizmo_effect(self, box):
         """The effect (of box's clip) whose handles are shown, or None."""
+        if box is not None and not self.mask_mode and not self.multi() and box.clip["type"] in ("group", "compound"):
+            cam = gizmos.camera_effect(box.clip, box.W, box.H)         # (a camera that is on: its handles are always there)
+            if cam is not None:
+                return cam
         if box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False):
             own = gizmos.particle_effect(box.clip)               # (a particle object: its handles are always there)
             if own is not None:
@@ -2527,6 +2531,8 @@ class Preview(PenMixin, _Surface):
                                   turn_snap=lambda v: snap_angle(v, free))
             if self.gizmo_node:
                 vals = {f"{self.gizmo_node}.{k}": v for k, v in vals.items()}
+            if h["effect"] == "camera":                        # (a group's or compound's camera: its own fields)
+                return "camera", vals
             if h["effect"] == "particles":                     # (a particle object: the handles change its fields)
                 return "asset", {assets.PT + k: v for k, v in vals.items()}
             return "fx:" + h["effect"], vals

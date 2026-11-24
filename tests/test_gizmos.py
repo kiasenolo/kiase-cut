@@ -230,6 +230,26 @@ class GizmoPreviewTests(unittest.TestCase):
             edit.set_param(self.p, cid, group, key, v, 0)
         self.assertAlmostEqual(edit.find(self.p, "c1")[1]["asset"]["pt_origin_x"], 0.625, places=2)
 
+    def test_a_cameras_handles_are_on_the_selected_group_and_change_its_camera(self):
+        g = edit.make_group(self.p, self.p, ["c1"])
+        gid = g["id"] if isinstance(g, dict) else g
+        edit.set_param(self.p, gid, "camera", "on", True)
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.set_scene(self.p, S // 2, gid)
+        e = pv.gizmo_effect(pv.selected_box())
+        self.assertEqual(e["filter"], "builtin:camera")
+        self.assertEqual({h["id"] for h in gizmos.handles(e, 0, BW, BH)}, {"pan", "orbit", "dolly", "fov"})
+        got, live = self.drag(pv, QPoint(480, 270), QPoint(540, 240))               # (the 平移 handle, in the middle)
+        self.assertTrue(live)
+        (cid, group, vals), = got
+        self.assertEqual((cid, group), (gid, "camera"))
+        self.assertLess(vals["x"], 0.0)                                              # (the picture follows the pointer, right and up: the camera goes left and down)
+        self.assertLess(vals["y"], 0.0)
+        for key, v in vals.items():
+            edit.set_param(self.p, cid, group, key, v, 0)
+        self.assertAlmostEqual(edit.find(self.p, gid)[1]["camera"]["x"], vals["x"], places=3)
+
     def test_without_a_picked_effect_the_clip_moves_as_before(self):
         pv = self.preview("builtin:swirl")
         pv.set_gizmo(None)

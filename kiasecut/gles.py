@@ -178,7 +178,7 @@ GL_FUNCS = {
     "glGenVertexArrays": (None, [i32, up]), "glDeleteVertexArrays": (None, [i32, up]),
     "glBindVertexArray": (None, [u32]), "glEnableVertexAttribArray": (None, [u32]),
     "glVertexAttribPointer": (None, [u32, i32, u32, C.c_ubyte, i32, vp]),
-    "glDrawArrays": (None, [u32, i32, i32]),
+    "glDrawArrays": (None, [u32, i32, i32]), "glDrawArraysInstanced": (None, [u32, i32, i32, i32]),
     "glCreateShader": (u32, [u32]), "glShaderSource": (None, [u32, i32, C.POINTER(C.c_char_p), vp]),
     "glCompileShader": (None, [u32]), "glGetShaderiv": (None, [u32, u32, ip]),
     "glGetShaderInfoLog": (None, [u32, i32, ip, C.c_char_p]), "glDeleteShader": (None, [u32]),
@@ -744,10 +744,14 @@ class VertexArray:
             self.vertices = buf.size // (n * 4)
         gl.glBindVertexArray(0)
 
-    def render(self, mode=TRIANGLE_STRIP, vertices=-1, first=0):
+    def render(self, mode=TRIANGLE_STRIP, vertices=-1, first=0, instances=-1):
         self.ctx.use_program(self.program.glo)
         self.gl.glBindVertexArray(self.glo)
-        self.gl.glDrawArrays(mode, first, self.vertices if vertices < 0 else vertices)
+        count = self.vertices if vertices < 0 else vertices
+        if instances < 0:
+            self.gl.glDrawArrays(mode, first, count)
+        else:
+            self.gl.glDrawArraysInstanced(mode, first, count, instances)
 
     def __del__(self):
         glo = getattr(self, "glo", 0)

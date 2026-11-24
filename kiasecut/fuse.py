@@ -76,7 +76,7 @@ def analyse(d):
     if got is not False:
         return got
     d._fuse = None
-    if d.error or d.passes != 1 or d.levels or d.extras or d.shared or d.skips or d.precise:
+    if d.error or d.passes != 1 or d.particles or d.levels or d.extras or d.shared or d.skips or d.precise:
         return None
     code = strip(d.code)
     if _FORBIDDEN.search(code):

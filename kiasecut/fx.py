@@ -30,6 +30,7 @@ DOC_PATH = os.path.join(PKG, "FORMAT.md")
 TEMPLATE_PATH = os.path.join(PKG, "_template.glsl")
 BUILTIN = "builtin:"
 MAX_PASSES = 256
+MAX_PARTICLES = 200000
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve", "gradient")
 RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "time", "progress", "frame", "scale", "pass_index", "output_index", "src",
@@ -81,6 +82,8 @@ class FilterDef:
         self.dynamic = None                      # @dynamic: the name of the generator that makes this filter's text from a node's items (dynamic.py)
         self.input_use = {}                      # @use: {input or "src": conditions}: the picture is read only while they hold (else it is not worked out at all)
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
+        self.particles = 0                       # @particles: the most particles the filter draws (0: it is no particle filter); the last pass is followed by one instanced draw of them
+        self.particle_param = None               # ... and the int parameter that says how many of them there are
 
     def socket_type(self, way, name):
         """What socket `name` ("src" for the main input, "" for the main output) of way "in" / "out" carries: one of SOCKET_TYPES."""
@@ -343,6 +346,11 @@ def parse(text, ref, fallback_name="濾鏡"):
                     raise ValueError("@socket 要寫：in 或 out、插槽名稱（- 是主要的）、種類（" + " / ".join(SOCKET_TYPES) + "）[\"顯示名稱\"]")
                 sockets.append((words[0], "" if words[1] == "-" and words[0] == "out" else "src" if words[1] == "-" else words[1],
                                 words[2], words[3] if len(words) > 3 else None))
+            elif key == "particles":                      # @particles most [count param]: particle() / sprite(), drawn as instanced quads over the last pass
+                words = rest.split()
+                if not words or not words[0].isdigit() or not 1 <= int(words[0]) <= MAX_PARTICLES or len(words) > 2:
+                    raise ValueError(f"@particles 要寫：最多幾個粒子（1 到 {MAX_PARTICLES}）[數量參數的名稱]")
+                head["particles"] = (int(words[0]), words[1] if len(words) > 1 else None)
             elif key == "shared":
                 head["shared"] = True
             elif key == "nodes":                          # made for the node editor: not in the filter library or a clip's 新增效果
@@ -425,12 +433,19 @@ def parse(text, ref, fallback_name="濾鏡"):
     n = head.get("passes", 1)
     if len(levels) > n or any(e is not None and not 0 <= e < i for i, e in enumerate(head.get("extras", []))):
         error = error or "@levels 不能比 @passes 多；@extras 只能讀前面的繪製"
-    if "effect" not in text:
+    if "particles" in head:
+        pcount = head["particles"][1]
+        if pcount and not any(q.name == pcount and q.type == "int" for q in params):
+            error = error or f"@particles：「{pcount}」不是整數參數"
+        if not re.search(r"\bparticle\s*\(", text):
+            error = error or "找不到 particle() 函式"
+    elif "effect" not in text:
         error = error or "找不到 effect() 函式"
     d = FilterDef(ref, head.get("filter") or fallback_name, text, params, head.get("category", ""),
                   head.get("description", ""), n, error, head.get("precise", False), panels, levels, level_param,
                   head.get("extras", []), fixed)
     d.inputs = inputs
+    d.particles, d.particle_param = head.get("particles", (0, None))
     d.input_show = input_show
     d.input_use = input_use
     d.dynamic = head.get("dynamic")
@@ -950,9 +965,8 @@ def baked_values(d, values):
                  for n in d.bakes if n in by)
 
 
-def shader_source(d, sampled=(), baked=()):
-    """The fragment shader of filter d; sampled: its colour and number parameters that read a
-    picture; baked: ((name, value), ...) of its @bake parameters, written in as constants."""
+def _declarations(d, sampled=(), baked=()):
+    """The uniform declarations (and constants of the @bake parameters) of filter d's parameters and inputs."""
     consts = dict(baked)
     decl = "\n".join((f"uniform float {p.name}_p[{GRADIENT_N}];\nuniform vec4 {p.name}_c[{GRADIENT_N}];\nuniform int {p.name}_n;"
                       if p.type == "gradient" else
@@ -962,13 +976,106 @@ def shader_source(d, sampled=(), baked=()):
         if p.name in consts:
             decl += f"\nconst {GLSL_TYPES[p.type]} {p.name} = " + ("true" if consts[p.name] else "false") * (p.type == "bool") + \
                     str(consts[p.name]) * (p.type != "bool") + ";"
-    kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
     for name, _label in d.inputs:
         decl += (f"\nuniform sampler2D inp_{name}_;\nuniform bool inp_{name}_on_;\n"
                  f"bool has_input_{name}() {{ return inp_{name}_on_; }}\n"
                  f"vec4 input_{name}(vec2 uv) {{ return texture(inp_{name}_, ov_(uv)); }}")
-    return PRELUDE % {"params": decl, "sampled": "\n".join(kinds[n] % {"n": n} for n in sampled)} + d.code + \
+    return decl
+
+
+# a particle filter without an effect() leaves the picture as it is under its particles
+DEFAULT_EFFECT = "\nvec4 effect(vec2 uv) { return src(uv); }\n"
+HAS_EFFECT = re.compile(r"\beffect\s*\(")
+HAS_SPRITE = re.compile(r"\bsprite\s*\(")
+
+
+def shader_source(d, sampled=(), baked=()):
+    """The fragment shader of filter d; sampled: its colour and number parameters that read a
+    picture; baked: ((name, value), ...) of its @bake parameters, written in as constants."""
+    consts = dict(baked)
+    decl = _declarations(d, sampled, baked)
+    kinds = {p.name: SAMPLED if p.type == "color" else SAMPLED_NUMBER for p in d.params}
+    code = d.code + (DEFAULT_EFFECT if d.particles and not HAS_EFFECT.search(d.code) else "")
+    return PRELUDE % {"params": decl, "sampled": "\n".join([PARTICLE_STRUCT] * bool(d.particles) + [kinds[n] % {"n": n} for n in sampled])} + code + \
         EPILOGUE % {"sampled": "".join(f"{n} = {n}_at_(); " for n in sampled)}
+
+
+# -- particles ---------------------------------------------------------------------------------------------------
+# A filter with @particles writes particle(i, p) (what particle number i is at the filter's time: nothing is kept from one
+# frame to the next, so any frame can be drawn on its own) and, if it likes, sprite(q, colour, data) (the colour of the point q,
+# -1 to 1 across the particle's quad). One quad is drawn for each particle, instanced, over the picture of the last pass.
+# The same text is compiled for both stages (VERTEX_STAGE tells which); sprite() is read by the fragment one, particle() by the vertex one.
+PARTICLE_STRUCT = """struct Particle {
+    vec2 pos;          // canvas px, from the top left
+    vec2 size;         // half the quad's width and height, canvas px
+    float rot;         // radians, the quad turned this much (clockwise on the screen)
+    vec4 color;        // straight (not premultiplied) RGBA
+    vec4 data;         // whatever sprite() wants to know
+};"""
+PARTICLE_COMMON = PARTICLE_STRUCT + """
+#ifdef VERTEX_STAGE
+out vec4 pc_;
+out vec4 pd_;
+out vec2 pq_;
+#else
+in vec4 pc_;
+in vec4 pd_;
+in vec2 pq_;
+#endif"""
+DEFAULT_SPRITE = """
+vec4 sprite(vec2 q, vec4 color, vec4 data) {
+    float a = 1.0 - smoothstep(0.0, 1.0, length(q));
+    return vec4(color.rgb * color.a * a, color.a * a);
+}
+"""
+PARTICLE_VERTEX_MAIN = """
+void main() {
+    Particle p;
+    p.pos = vec2(0.0);
+    p.size = vec2(0.0);
+    p.rot = 0.0;
+    p.color = vec4(0.0);
+    p.data = vec4(0.0);
+    if (!particle(gl_InstanceID, p) || p.color.a <= 0.0) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        pc_ = vec4(0.0);
+        pd_ = vec4(0.0);
+        pq_ = vec2(0.0);
+        uv_ = vec2(0.0);
+        return;
+    }
+    float c = cos(p.rot), s = sin(p.rot);
+    vec2 off = pos * p.size;
+    off = vec2(c * off.x - s * off.y, s * off.x + c * off.y);
+    vec2 at = (p.pos + off) / resolution;
+    uv_ = at;
+    gl_Position = vec4((at * ov_dst_scale + ov_dst_off) * 2.0 - 1.0, 0.0, 1.0);
+    pc_ = p.color;
+    pd_ = p.data;
+    pq_ = pos;
+}
+"""
+PARTICLE_FRAGMENT_MAIN = "\nvoid main() { fragColor = sprite(pq_, pc_, pd_); }\n"
+
+
+def particle_sources(d, baked=()):
+    """(vertex shader, fragment shader) that draw the particles of filter d: its parameters are plain uniforms in both."""
+    pre = PRELUDE % {"params": _declarations(d, (), baked), "sampled": PARTICLE_COMMON}
+    code = d.code + (DEFAULT_SPRITE if not HAS_SPRITE.search(d.code) else "")
+    vertex = pre.replace("#version 330\n", "#version 330\n#define VERTEX_STAGE 1\n", 1) \
+        .replace("in vec2 uv_;\nout vec4 fragColor;", "out vec2 uv_;\nin vec2 pos;\nuniform vec2 ov_dst_scale;\nuniform vec2 ov_dst_off;", 1)
+    return vertex + code + PARTICLE_VERTEX_MAIN, pre + code + PARTICLE_FRAGMENT_MAIN
+
+
+def particle_count(d, values):
+    """How many particles of filter d are drawn with these parameter values."""
+    n = d.particles
+    if d.particle_param:
+        try:
+            n = min(n, int(values.get(d.particle_param, n)))
+        except (TypeError, ValueError):
+            pass
+    return max(0, n)
 
 
 def use_gles():
@@ -1057,6 +1164,7 @@ class Engine:
         quad = np.array([-1, -1, 1, -1, -1, 1, 1, 1], dtype="f4")
         self.quad = self.ctx.buffer(quad.tobytes())
         self.programs = {}
+        self.particle_progs = {}     # the same keys -> (Prog, vertex array) that draws a particle filter's particles
         self.targets = {}            # (w, h) -> [(texture, fbo)] x 3
         self.mid_targets = {}        # (w, h) -> [(texture, fbo)] x 2, 16-bit floats (@precision float)
         self.level_targets = {}      # (filter key, pass, w, h) -> (texture, fbo): a pass of @levels (16-bit floats, kept)
@@ -1083,8 +1191,19 @@ class Engine:
                 for fn in compile_listeners:
                     fn(d.name, True)
             vao = self.ctx.vertex_array(prog, [(self.quad, "2f", "pos")])
+            parts = None
+            if d.particles:                      # (the particles' own program: its vertex shader places the quad of each, instanced)
+                vs, fs = particle_sources(d, baked)
+                try:
+                    pprog = self.ctx.program(vertex_shader=vs, fragment_shader=fs)
+                except Exception as exc:
+                    raise FilterError(f"{d.name}：{exc}") from exc
+                parts = (Prog(pprog), self.ctx.vertex_array(pprog, [(self.quad, "2f", "pos")]))
             if len(self.programs) > 64:
                 self.programs.clear()
+                self.particle_progs.clear()
+            if parts:
+                self.particle_progs[key] = parts
             self.programs[key] = prog = (Prog(prog), vao)
         return prog
 
@@ -1201,45 +1320,51 @@ class Engine:
         pass alone; any other is drawn all over again for every output."""
         types = {p.name: p.type for p in d.params}
         sources = {n: v for n, v in (sources or {}).items() if types.get(n) in SOURCE_TYPES}
-        prog, vao = self._program(d, tuple(sorted(sources)), baked_values(d, values))
+        sampled, baked = tuple(sorted(sources)), baked_values(d, values)
+        prog, vao = self._program(d, sampled, baked)
+        parts = self.particle_progs.get((d.key(), sampled, baked)) if d.particles else None
         targets = self._targets(w, h)
         unit = unit if unit > 1e-9 else 1.0
         ov = self.overscan or ((1.0, 1.0, 0.0, 0.0), (1.0, 1.0, 0.0, 0.0))        # (the pictures read, the one drawn: scale x y, offset x y)
-        for name, v in (("resolution", (w / unit * ov[1][0], h / unit * ov[1][1])), ("ov_scale", ov[0][:2]), ("ov_off", ov[0][2:]),
-                        ("ov_dst_scale", ov[1][:2]), ("ov_dst_off", ov[1][2:]), ("time", float(time)), ("progress", float(progress)),
-                        ("frame", int(frame)), ("scale", 1.0)):
-            prog.put(name, v)
-        for p in d.params:
-            if p.type == "gradient" and p.name in values:
-                pos, col, n = values[p.name]
-                for u, v in ((p.name + "_p", np.array(pos, "f4")), (p.name + "_c", np.array(col, "f4"))):
-                    if u in prog:
-                        prog[u].write(v.tobytes())
-                prog.put(p.name + "_n", n)
-            elif p.name in values:
-                prog.put(p.name, values[p.name])
-        prog.put("source", 0)
-        prog.put("original_", 1)
-        for i, (name, (tex, m)) in enumerate(sorted(sources.items())):
-            tex.use(2 + i)
-            own = ((name + "_col_", tuple(values.get(name, (1.0, 1.0, 1.0, 1.0)))) if types[name] == "color"
-                   else (name + "_val_", float(values.get(name, 0.0))))
-            more = [] if types[name] == "color" else [
-                (name + "_min_", float(values.get(name + RANGE_MIN, 0.0))),
-                (name + "_max_", float(values.get(name + RANGE_MAX, values.get(name, 0.0))))]
-            for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)), own, *more):
-                prog.put(u, v)
-        for k, (name, _label) in enumerate(d.inputs):
-            tex = (inputs or {}).get(name)
-            if tex is None:
-                tex = self.blank_texture()
-            tex.use(8 + k)
-            prog.put("inp_" + name + "_", 8 + k)
-            prog.put("inp_" + name + "_on_", (inputs or {}).get(name) is not None)
-        prog.put("src_on_", bool(src_on))
-        prog.put("extra_", 7)
+        def fill(prog):
+            for name, v in (("resolution", (w / unit * ov[1][0], h / unit * ov[1][1])), ("ov_scale", ov[0][:2]), ("ov_off", ov[0][2:]),
+                            ("ov_dst_scale", ov[1][:2]), ("ov_dst_off", ov[1][2:]), ("time", float(time)), ("progress", float(progress)),
+                            ("frame", int(frame)), ("scale", 1.0)):
+                prog.put(name, v)
+            for p in d.params:
+                if p.type == "gradient" and p.name in values:
+                    pos, col, n = values[p.name]
+                    for u, v in ((p.name + "_p", np.array(pos, "f4")), (p.name + "_c", np.array(col, "f4"))):
+                        if u in prog:
+                            prog[u].write(v.tobytes())
+                    prog.put(p.name + "_n", n)
+                elif p.name in values:
+                    prog.put(p.name, values[p.name])
+            prog.put("source", 0)
+            prog.put("original_", 1)
+            for i, (name, (tex, m)) in enumerate(sorted(sources.items())):
+                tex.use(2 + i)
+                own = ((name + "_col_", tuple(values.get(name, (1.0, 1.0, 1.0, 1.0)))) if types[name] == "color"
+                       else (name + "_val_", float(values.get(name, 0.0))))
+                more = [] if types[name] == "color" else [
+                    (name + "_min_", float(values.get(name + RANGE_MIN, 0.0))),
+                    (name + "_max_", float(values.get(name + RANGE_MAX, values.get(name, 0.0))))]
+                for u, v in ((name + "_tex_", 2 + i), (name + "_map_", tuple(float(x) for x in m)), own, *more):
+                    prog.put(u, v)
+            for k, (name, _label) in enumerate(d.inputs):
+                tex = (inputs or {}).get(name)
+                if tex is None:
+                    tex = self.blank_texture()
+                tex.use(8 + k)
+                prog.put("inp_" + name + "_", 8 + k)
+                prog.put("inp_" + name + "_on_", (inputs or {}).get(name) is not None)
+            prog.put("src_on_", bool(src_on))
+            prog.put("extra_", 7)
+        fill(prog)
+        if parts:
+            fill(parts[0])
         self.ctx.disable(self.mgl.BLEND)
-        run = (d, prog, vao, values, src, w, h, (w / unit, h / unit), targets, self._skipped(d, values))
+        run = (d, prog, vao, values, src, w, h, (w / unit, h / unit), targets, self._skipped(d, values), parts)
         last = d.passes - 1
         if not (d.shared and last > 0):
             return [self._chain(run, 0, d.passes, src, [], k, dst) for k, dst in outs]
@@ -1266,11 +1391,14 @@ class Engine:
         results being made [(texture, w, h)] (it is added to); output: the output_index to draw (None: leave as it was);
         dest: where the last pass of the filter goes. Returns the texture holding the result - or, with whole False,
         (that, made)."""
-        d, prog, vao, values, src, w, h, canvas, targets, skip = run
+        d, prog, vao, values, src, w, h, canvas, targets, skip, parts = run
+        both = (prog, parts[0]) if parts else (prog,)
         if output is not None:
-            prog.put("output_index", int(output))
+            for pr in both:
+                pr.put("output_index", int(output))
         for i in range(first, stop):
-            prog.put("pass_index", i)
+            for pr in both:
+                pr.put("pass_index", i)
             if i < len(d.levels):
                 tw, th = self.level_size(d, i, values, w, h, canvas)
                 if i in skip:                          # (not drawn: it keeps its place in made, and what the pass after reads)
@@ -1292,7 +1420,8 @@ class Engine:
             ov = self.overscan or ((1.0, 1.0, 0.0, 0.0), (1.0, 1.0, 0.0, 0.0))     # (the sizes a filter is told are those of the frame's part)
             for name, v in (("pass_px", (float(tw) * ov[1][0], float(th) * ov[1][1])), ("src_px", (float(sw) * ov[0][0], float(sh) * ov[0][1])),
                             ("extra_px", (float(made[ex][1]) * ov[0][0], float(made[ex][2]) * ov[0][1]) if ex is not None else (1.0, 1.0))):
-                prog.put(name, v)
+                for pr in both:
+                    pr.put(name, v)
             dst_fbo.use()
             self.ctx.viewport = (0, 0, tw, th)
             part = self.window if self.window and (tw, th) == (w, h) else None
@@ -1304,6 +1433,8 @@ class Engine:
             if ex is not None:
                 (made[ex][0] or self.blank_texture()).use(7)
             vao.render(self.mgl.TRIANGLE_STRIP)
+            if parts and i == d.passes - 1:
+                self._particles(d, parts, values)
             if i in d.mipmaps and i < len(d.levels):
                 dst_tex.build_mipmaps()
             if part:
@@ -1311,6 +1442,19 @@ class Engine:
             read = dst_tex
             made.append((dst_tex, tw, th))
         return read if whole else (read, made)
+
+    def _particles(self, d, parts, values):
+        """Draw the particles of filter d over what the pass just drew: one instanced quad each, premultiplied (a
+        particle that gives alpha 0 and a colour adds to the picture, as light does)."""
+        n = particle_count(d, values)
+        if n <= 0:
+            return
+        self.ctx.enable(self.mgl.BLEND)
+        self.ctx.blend_func = (self.mgl.ONE, self.mgl.ONE_MINUS_SRC_ALPHA)
+        try:
+            parts[1].render(self.mgl.TRIANGLE_STRIP, instances=n)
+        finally:
+            self.ctx.disable(self.mgl.BLEND)
 
     def close(self):
         try:

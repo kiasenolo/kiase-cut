@@ -15,7 +15,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QCursor, QPen, QPolygonF
 
-from .. import camera, curves, project
+from .. import assets, camera, curves, fx, gizmos, project
 
 ORBIT_PER_PX = 0.4            # degrees a screen px of drag turns the view
 ZOOM_PER_PX = 0.006           # (exponent of the distance)
@@ -27,6 +27,9 @@ GRID_COLOR = QColor(255, 255, 255, 38)
 CAMERA_COLOR = QColor(255, 255, 255, 200)
 PLANE_COLOR = QColor(120, 200, 255, 190)
 SELECTED_COLOR = QColor(255, 170, 40)
+
+PARTICLE_COLOR = QColor(255, 200, 60)
+PARTICLE_HANDLES = ("ewidth", "eheight", "erot", "speed", "spread_a", "spread_b", "aim", "accel")      # (the emitter's place is the plane's: its arrows)
 
 NUMPAD = {Qt.Key_1: ("front", "back"), Qt.Key_3: ("right", "left"), Qt.Key_7: ("top", "bottom")}
 
@@ -51,6 +54,8 @@ class View3D:
         self.live = {}                   # {clip id: {x, y, z, ...}} being dragged: the outlines follow before the edit is made
         self.drag = None                 # a drag of an arrow of the selected plane, or its middle
         self.modal = None                # G / R / S: the selected plane follows the pointer till a click (Esc puts it back)
+        self.pdrag = None                # a drag of a handle of the selected particle system's emitter
+        self.plive = {}                  # {field: value} of that drag (the handles follow before the edit is made)
         self.sel_cam = None              # "camera" | "target": the scene's camera or its target is what is selected (not a plane)
 
     # -- the cameras ------------------------------------------------------------------------------------------------------------
@@ -290,6 +295,8 @@ class View3D:
             hit = self.hit_arrow(e.position())
             if hit is not None:
                 self.start_drag(hit[0], hit[1], e.position())
+            elif self.start_phandle(e.position()):
+                pass
             elif self.on_body(e.position()):
                 self.start_drag("plane", self.selected(), e.position())
             else:
@@ -310,6 +317,9 @@ class View3D:
         if self.drag is not None:
             self.drag_move(e.position())
             return True
+        if self.pdrag is not None:
+            self.phandle_move(e.position(), bool(e.modifiers() & Qt.AltModifier))
+            return True
         if self.nav is None:
             return False
         d = e.position() - self.nav["pos"]
@@ -326,6 +336,9 @@ class View3D:
     def mouse_release(self, e):
         if self.drag is not None and e.button() == Qt.LeftButton:
             self.drag_end()
+            return True
+        if self.pdrag is not None and e.button() == Qt.LeftButton:
+            self.phandle_end()
             return True
         if self.nav is not None and e.button() == Qt.MiddleButton:
             self.nav = None
@@ -632,7 +645,178 @@ class View3D:
             p.setBrush(QColor(255, 170, 40, 30) if chosen else Qt.NoBrush)
             p.drawPolygon(QPolygonF([QPointF(*q) for q in scr]))
             p.setBrush(Qt.NoBrush)
+        self._paint_particles(p, k, seen)
         self._paint_arrows(p, k, seen)
+
+    # -- a particle system's emitter ------------------------------------------------------------------------------------------
+    def particle(self):
+        """(box, effect with the edit being dragged in it) of the selected particle object, or None."""
+        b = self.selected()
+        if b is None or isinstance(b, CamThing) or self.through:
+            return None
+        e = gizmos.particle_effect(b.clip)
+        if e is None:
+            return None
+        e["params"] = dict(e["params"], **self.plive)
+        return b, e
+
+    def _frame(self, b):
+        """(where the plane's middle is, its turn) in the world, with what is being dragged on it."""
+        tf = dict(b.clip["transform"], **self.live.get(b.clip["id"], {}))
+        t = project.stepped(b.clip, b.t)
+        W, H, s = self.p.W, self.p.H, self.p.H / 2.0
+        o = np.array([camera._v(tf, "x", 0.0, t) * W / 2.0, -camera._v(tf, "y", 0.0, t) * s, camera._v(tf, "z", 0.0, t) * s])
+        return o, camera._rot(camera._v(tf, "rot_x", 0.0, t), camera._v(tf, "rot_y", 0.0, t), camera._v(tf, "rotation", 0.0, t))
+
+    @staticmethod
+    def _pv(e, t, name, default=0.0):
+        v, par = gizmos._value(e, fx.def_of(e), name, t)
+        if v is not None and par.type == "menu":
+            v = fx.menu_index(par, v)
+        return default if v is None else float(v)
+
+    def emitter_loops(self, e, t):
+        """The emitter's shape as lines in the plane's own space (u, v, w): [(points, closed)], and the points the two faces of a thick one join at."""
+        W, H = self.p.W, self.p.H
+        K = H / 1080.0
+        pv = lambda n, d=0.0: self._pv(e, t, n, d)
+        deep = bool(pv("depth_on"))
+        c = np.array([(pv("origin_x", 0.5) - 0.5) * W, (pv("origin_y", 0.5) - 0.5) * H, pv("origin_z") * K if deep else 0.0])
+        kind, w, h = int(pv("emitter")), pv("ewidth") * K, pv("eheight") * K
+        a = math.radians(pv("erot"))
+        ax, ay = np.array([math.cos(a), math.sin(a), 0.0]), np.array([-math.sin(a), math.cos(a), 0.0])
+        circle = lambda r, x, y: [c + (x * math.cos(i * math.pi / 12) + y * math.sin(i * math.pi / 12)) * r for i in range(24)]
+        ex, ey, ez = np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), np.array([0, 0, 1.0])
+        if kind == 0:
+            r = 0.04 * H
+            return [([c - ax * r, c + ax * r], False), ([c - ay * r, c + ay * r], False)], []
+        if kind == 1:
+            face = [c - ax * w / 2, c + ax * w / 2]
+            closed = False
+        elif kind == 2:
+            face, closed = circle(w / 2, ax, ay), True
+        elif kind == 3:
+            face = [c + ax * sx * w / 2 + ay * sy * h / 2 for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+            closed = True
+        elif kind == 5:
+            return [(circle(w / 2, ex, ey), True), (circle(w / 2, ex, ez), True), (circle(w / 2, ey, ez), True)], []
+        else:
+            return [], []
+        th = pv("ethick") * K / 2 if deep else 0.0
+        if th <= 0:
+            return [(face, closed)], []
+        n = np.array([0.0, 0.0, th])
+        step = max(1, len(face) // 4)
+        return [([q - n for q in face], closed), ([q + n for q in face], closed)], [(q - n, q + n) for q in face[::step]]
+
+    def phandles(self):
+        """[(handle, its place in the world)] of the selected particle system: those of the picture's own handles that are about the emitter
+        and the motion (the plane's x, y, z places it), and its thickness (a handle on the plane's normal: dict kind "thick")."""
+        got = self.particle()
+        if got is None:
+            return []
+        b, e = got
+        o, r = self._frame(b)
+        t = b.t
+        out = []
+        for h in gizmos.handles(e, t, self.p.W, self.p.H):
+            if h["id"] in PARTICLE_HANDLES:
+                out.append((h, o + r @ np.array([h["local"][0], h["local"][1], 0.0])))
+        if self._pv(e, t, "depth_on") and int(self._pv(e, t, "emitter")) in (1, 2, 3):
+            K = self.p.H / 1080.0
+            W, H = self.p.W, self.p.H
+            c = np.array([(self._pv(e, t, "origin_x", 0.5) - 0.5) * W, (self._pv(e, t, "origin_y", 0.5) - 0.5) * H, self._pv(e, t, "origin_z") * K])
+            reach = max(self._pv(e, t, "ethick") * K / 2, 0.1 * H)
+            out.append(({"kind": "thick", "id": "ethick", "style": "square", "label": "厚度", "centre": c}, o + r @ (c + np.array([0, 0, reach]))))
+        return out
+
+    def start_phandle(self, pos):
+        """A press on a handle of the particle system starts its drag; True when it did."""
+        got = self.particle()
+        if got is None:
+            return False
+        seen, k = self.seen(), self.p._k()
+        m = self._canvas(pos)
+        best = None
+        for h, wp in self.phandles():
+            q = seen.point(wp)
+            d = None if q is None else math.hypot(q[0] - m.x(), q[1] - m.y())
+            if d is not None and d <= 9 * k and (best is None or d < best[0]):
+                best = (d, h)
+        if best is None:
+            return False
+        self.pdrag = {"h": best[1], "b": got[0], "state": {}, "moved": False, "vals": None}
+        return True
+
+    def phandle_move(self, pos, free):
+        d = self.pdrag
+        b, h = d["b"], d["h"]
+        o, r = self._frame(b)
+        ray = self._ray(pos)
+        K = self.p.H / 1080.0
+        if h["kind"] == "thick":
+            c = o + r @ h["centre"]
+            s = self._on_axis(ray, c, r[:, 2])
+            if s is None:
+                return
+            vals = {"ethick": round(min(4000.0, abs(s) * 2 / K), 1)}
+        else:
+            q = self._in_plane(ray, o, r[:, 2])
+            if q is None:
+                return
+            u, v, _w = r.T @ (q - o)
+            vals = h["apply"]((float(u), float(v)), d["state"], not free)
+        d["moved"], d["vals"] = True, vals
+        self.plive = dict(self.plive, **vals)
+        self.p.paramsLive.emit(b.clip["id"], "asset", {assets.PT + k: v for k, v in vals.items()})
+        self.p.update()
+
+    def phandle_end(self):
+        d, self.pdrag = self.pdrag, None
+        vals, self.plive = self.plive, {}
+        if d["moved"] and vals:
+            self.p.paramsCommitted.emit(d["b"].clip["id"], "asset", {assets.PT + k: v for k, v in vals.items()})
+        self.p.update()
+
+    def _paint_particles(self, p, k, seen):
+        """The emitter as lines in the plane's space and the particle system's handles (orange)."""
+        got = self.particle()
+        if got is None or self.modal is not None:
+            return
+        b, e = got
+        o, r = self._frame(b)
+        loops, links = self.emitter_loops(e, b.t)
+        world = lambda q: o + r @ q
+        p.setPen(QPen(PARTICLE_COLOR, 1.25 * k))
+        p.setBrush(Qt.NoBrush)
+
+        def line(a, c):
+            seg = seen.segment(world(a), world(c))
+            if seg is not None:
+                p.drawLine(QPointF(*seg[0]), QPointF(*seg[1]))
+        for pts, closed in loops:
+            for i in range(len(pts) - 1 + (1 if closed else 0)):
+                line(pts[i], pts[(i + 1) % len(pts)])
+        for a, c in links:
+            line(a, c)
+        for h, wp in self.phandles():
+            at = seen.point(wp)
+            if at is None:
+                continue
+            frm = h.get("from") if h["kind"] != "thick" else None
+            base = seen.point(o + r @ np.array([frm[0], frm[1], 0.0])) if frm is not None else (
+                seen.point(o + r @ h["centre"]) if h["kind"] == "thick" else None)
+            if base is not None:
+                p.setPen(QPen(PARTICLE_COLOR, 1.0 * k, Qt.DashLine))
+                p.drawLine(QPointF(*base), QPointF(*at))
+            p.setPen(QPen(QColor(30, 30, 30), 1.0 * k))
+            p.setBrush(PARTICLE_COLOR)
+            sz = 4.5 * k
+            if h.get("style") in ("round", "arrow", "cross"):
+                p.drawEllipse(QPointF(*at), sz, sz)
+            else:
+                p.drawRect(QRectF(at[0] - sz, at[1] - sz, 2 * sz, 2 * sz))
+            p.setBrush(Qt.NoBrush)
 
     def _paint_arrows(self, p, k, seen):
         """The three arrows (X red, Y green, Z blue) and the middle of the selected plane; while G / R is on the axis it is held to is drawn long."""

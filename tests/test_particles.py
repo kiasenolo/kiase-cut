@@ -173,6 +173,23 @@ class ParticleTests(unittest.TestCase):
         a2 = int((self.eng.run(d, moving, pic, time=2.0, unit=unit)[..., 3] > 128).sum())
         self.assertLess(a2, a1)
 
+    def test_a_ball_emitter_spreads_in_all_three_directions(self):
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        d = fx.get("builtin:particle_system")
+        pic = np.zeros((180, 320, 4), np.uint8)
+        unit = 180 / 1080
+        base = dict({p.name: fx.uniform_value(p, None, 0) for p in d.params}, count=200, speed=0.0, gravity=0.0, drag=0.0, life=30.0, life_var=0.0,
+                    size=20.0, size_var=0.0, size_end=1.0, fade_in=0.0, fade_out=0.0, look=1, glow=0.0, origin_x=0.5, origin_y=0.5,
+                    emitter=5, ewidth=800.0, depth_on=True)
+        img = self.eng.run(d, base, pic, time=25.0, unit=unit)[..., 3] > 128
+        ys, xs = np.nonzero(img)
+        self.assertGreater(len(xs), 100)
+        self.assertGreater(xs.max() - xs.min(), 100)                                 # (it fills a round part of the picture)
+        self.assertGreater(ys.max() - ys.min(), 50)
+        small = [int((self.eng.run(d, dict(base, origin_z=z), pic, time=25.0, unit=unit)[..., 3] > 128).sum()) for z in (-300.0, 600.0)]
+        self.assertGreater(small[0], small[1])                                       # (the ball farther away is smaller)
+
     def test_sprite_picture(self):
         if self.eng is None:
             self.skipTest("no OpenGL for filters")

@@ -131,7 +131,7 @@ def particle_handles(e, t, bw, bh):
 
     out.append(_custom("origin", o, "cross", "發射位置",
                        lambda pt, st, snap: {"origin_x": round(pt[0] / bw + 0.5, 4), "origin_y": round(pt[1] / bh + 0.5, 4)}))
-    if emitter in (1, 2, 3):
+    if emitter in (1, 2, 3, 5):
         w = float(val("ewidth"))
         out.append(_custom("ewidth", at(ax, w * k / 2), "square", "寬",
                            lambda pt, st, snap: {"ewidth": round(min(4000.0, abs(along(pt, ax)) * 2 / k), 1)}, o))

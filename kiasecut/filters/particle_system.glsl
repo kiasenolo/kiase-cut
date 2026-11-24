@@ -13,7 +13,7 @@
 // @param time_offset float 0 0 120 "時間偏移（秒）"
 // @param seed float 0 0 100 "種子"
 // @panel 發射器
-// @param emitter menu 點 "點|線|圓形|矩形|圖片" "形狀"
+// @param emitter menu 點 "點|線|圓形|矩形|圖片|球體" "形狀"
 // @param origin_x float 0.5 -1 2 "位置 X（0 左、1 右）"
 // @param origin_y float 0.5 -1 2 "位置 Y（0 上、1 下）"
 // @param ewidth float 400 0 4000 "寬（像素）"
@@ -173,6 +173,8 @@ bool born(int i, out Born b) {
 
     vec2 centre = vec2(origin_x, origin_y) * resolution;
     b.base = centre;
+    float zoff = 0.0;
+    vec3 out3 = vec3(0.0);
     b.pic = vec4(1.0);
     float ra = R(i, k, 2.0), rb = R(i, k, 3.0);
     if (emitter == 1) {
@@ -182,6 +184,12 @@ bool born(int i, out Born b) {
         b.base += turn(vec2(cos(ang), sin(ang)) * rr, radians(erot));
     } else if (emitter == 3) {
         b.base += turn(vec2((ra - 0.5) * ewidth, (rb - 0.5) * eheight) * K(), radians(erot));
+    } else if (emitter == 5) {                                     // a ball (in 3D; a disc seen flat): anywhere inside it
+        float rc = R(i, k, 16.0), ct = 2.0 * rb - 1.0, st = sqrt(max(0.0, 1.0 - ct * ct)), ph = 6.2831853 * rc;
+        out3 = vec3(st * cos(ph), st * sin(ph), ct);
+        float rr = 0.5 * ewidth * K() * pow(ra, 1.0 / 3.0);
+        b.base += out3.xy * rr;
+        zoff = out3.z * rr;
     } else if (emitter == 4) {                                     // anywhere the picture is there: a few tries
         bool found = false;
         for (int t = 0; t < 12; t++) {
@@ -206,8 +214,9 @@ bool born(int i, out Born b) {
         dir = vec2(sin(a), -cos(a));
     }
     b.v0 = dir * speed * K() * (1.0 - speed_var * R(i, k, 5.0));
-    b.bz = origin_z * K() + (R(i, k, 14.0) - 0.5) * ethick * K();             // (Z: away from the viewer; only with 3D)
+    b.bz = origin_z * K() + zoff + (R(i, k, 14.0) - 0.5) * ethick * K();             // (Z: away from the viewer; only with 3D)
     b.vz = speed_z * K() + zspread * speed * K() * (R(i, k, 15.0) * 2.0 - 1.0);
+    if (outward && emitter == 5) b.vz += out3.z * speed * K() * (1.0 - speed_var * R(i, k, 5.0));      // (away from the middle of the ball, in Z too)
     return true;
 }
 

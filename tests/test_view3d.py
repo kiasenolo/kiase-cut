@@ -309,3 +309,66 @@ class CameraThing(Editing3D):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ParticleEditing(unittest.TestCase):
+    """The emitter of a particle system in the 3D view: its outline and handles."""
+
+    def setUp(self):
+        from kiasecut import assets
+        self.pv = Preview()
+        self.pv.resize(960, 540)
+        a = assets.make(assets.get("particle.snow"), "#ffffff", "#000000", 1920, 1080)
+        a.update(pt_emitter="矩形", pt_ewidth=600.0, pt_eheight=300.0, pt_depth_on=True, pt_ethick=400.0)
+        c = clip("c1", 0, 4 * S, transform={"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0, "z": 0.0})
+        c["type"], c["asset"] = "image", assets.normalize(a)
+        v = {"width": 1920, "height": 1080, "fps": 30, "duration_us": 4 * S, "camera": {"on": True, "fov": 40.0, "z": -2.747},
+             "tracks": [{"id": "t0", "kind": "video", "name": "v", "clips": [c]}]}
+        self.pv.set_scene(v, S, "c1")
+        self.pv.set_view3d(True)
+        self.live, self.done = [], []
+        self.pv.paramsLive.connect(lambda *a: self.live.append(a))
+        self.pv.paramsCommitted.connect(lambda *a: self.done.append(a))
+
+    def at(self, world):
+        x, y = self.pv.view3d.seen().point(world)
+        r = self.pv._rect()
+        return QPoint(round(r.x() + x / self.pv.W * r.width()), round(r.y() + y / self.pv.H * r.height()))
+
+    def test_a_box_emitter_has_an_outline_with_depth_and_handles(self):
+        v = self.pv.view3d
+        b, e = v.particle()
+        loops, links = v.emitter_loops(e, b.t)
+        self.assertEqual((len(loops), len(links)), (2, 4))                 # (two faces, four edges between them)
+        ids = [h["id"] for h, _w in v.phandles()]
+        for want in ("ewidth", "eheight", "ethick"):
+            self.assertIn(want, ids)
+        self.assertNotIn("origin", ids)
+
+    def test_dragging_the_width_handle_edits_the_systems_width(self):
+        pv, v = self.pv, self.pv.view3d
+        w = dict((h["id"], wp) for h, wp in v.phandles())["ewidth"]
+        start = self.at(w)
+        self.assertTrue(v.start_phandle(QPointF(start)))
+        v.pdrag = None
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(40, 0))
+        QTest.mouseMove(pv, start + QPoint(80, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(80, 0))
+        (_cid, group, vals), = self.done
+        self.assertEqual(group, "asset")
+        self.assertEqual(set(vals), {"pt_ewidth"})
+        self.assertGreater(vals["pt_ewidth"], 600.0)
+        self.assertEqual(v.plive, {})
+
+    def test_the_thickness_handle_is_dragged_along_the_planes_normal(self):
+        pv, v = self.pv, self.pv.view3d
+        z = dict((h["id"], wp) for h, wp in v.phandles())["ethick"]
+        start = self.at(z)
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(30, 0))
+        QTest.mouseMove(pv, start + QPoint(70, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(70, 0))
+        (_cid, group, vals), = self.done
+        self.assertEqual(set(vals), {"pt_ethick"})
+        self.assertNotEqual(vals["pt_ethick"], 400.0)

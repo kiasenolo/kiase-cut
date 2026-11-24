@@ -694,20 +694,20 @@ class GLRenderer(render.Renderer):
                 if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
-                    items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H), len(items), c, i, t))
+                    items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t))
         inv_base, _ = base.inverted()
         for _d, _n, c, i, t in sorted(items, key=lambda it: it[:2]):
             try:
                 if c["type"] == "filter":
                     self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu, tracks[:i])
                     continue
-                q, d = camera.plane(cam, c.get("transform") or {}, t, W, H)
+                q, d = camera.plane(cam, c.get("transform") or {}, t, W, H, t_us)
                 if d <= camera.NEAR:
                     continue
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
                     lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
-                    self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H), W, H, fps, t_us, ppu)
+                    self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
                     gl.draw_plane(tgt, lay, inv_base * q * base, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0))
                 finally:
                     gl.release(lay)

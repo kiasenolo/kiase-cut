@@ -40,6 +40,13 @@ class Planes(unittest.TestCase):
         _q, d = camera.plane({"on": True}, {"z": -5.0}, 0, W, H)
         self.assertLess(d, camera.NEAR)
 
+    def test_the_camera_is_at_the_time_of_its_container_not_of_the_clip(self):
+        cam = {"on": True, "x": {"keys": [[0, 0.0, 0, 0, 0, 0], [4_000_000, 1.0, 0, 0, 0, 0]]}}
+        here = camera.plane(cam, {}, 0, W, H, 0)[0].map(QPointF(W / 2, H / 2))
+        later = camera.plane(cam, {}, 0, W, H, 4_000_000)[0].map(QPointF(W / 2, H / 2))   # (the clip is at its own 0, the camera at 4 s)
+        self.assertGreater(here.x() - later.x(), 100)
+        self.assertEqual(camera.plane(cam, {}, 4_000_000, W, H)[0].map(QPointF(W / 2, H / 2)).x(), later.x())
+
     def test_the_flat_drawing_is_in_the_middle_and_not_turned(self):
         c = {"transform": {"x": 0.3, "y": 0.1, "rotation": 20, "scale": 0.5, "rot_y": 10}}
         tf = camera.flat(c)["transform"]

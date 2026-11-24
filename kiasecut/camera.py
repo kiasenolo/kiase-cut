@@ -60,12 +60,13 @@ def _basis(cam, t, W, H):
     return f, c, np.array([right, down, fwd])
 
 
-def plane(cam, tf, t, W, H):
-    """(QTransform, depth): where a clip with transform tf is drawn at clip time t. The transform takes a point of the clip drawn flat
+def plane(cam, tf, t, W, H, tc=None):
+    """(QTransform, depth): where a clip with transform tf is drawn at clip time t (the camera is at its own time tc: the container's, not the
+    clip's; default t). The transform takes a point of the clip drawn flat
     on the W x H picture (its centre in the middle) to the picture; depth is how far its centre is from the camera in half-heights
     (<= 0: behind it, nothing to draw)."""
     s = H / 2.0
-    f, c, cam = _basis(cam, t, W, H)
+    f, c, cam = _basis(cam, t if tc is None else tc, W, H)
     o = np.array([_v(tf, "x", 0.0, t) * W / 2.0, -_v(tf, "y", 0.0, t) * s, _v(tf, "z", 0.0, t) * s])
     r = _rot(_v(tf, "rot_x", 0.0, t), _v(tf, "rot_y", 0.0, t), _v(tf, "rotation", 0.0, t))
     a = np.stack([cam @ r[:, 0], cam @ r[:, 1], cam @ (o - c)], axis=1)       # (u, v, 1) -> camera space
@@ -75,28 +76,29 @@ def plane(cam, tf, t, W, H):
     return q, float(a[2][2]) / s
 
 
-def depth(cam, tf, t, W, H):
+def depth(cam, tf, t, W, H, tc=None):
     """How far the centre of a clip with transform tf is in front of the camera (half-heights)."""
     s = H / 2.0
-    _f, c, cam_axes = _basis(cam, t, W, H)
+    _f, c, cam_axes = _basis(cam, t if tc is None else tc, W, H)
     o = np.array([_v(tf, "x", 0.0, t) * W / 2.0, -_v(tf, "y", 0.0, t) * s, _v(tf, "z", 0.0, t) * s])
     return float((cam_axes @ (o - c))[2]) / s
 
 
-def blur(cam, tf, t, W, H):
+def blur(cam, tf, t, W, H, tc=None):
     """景深: the radius (px of the flat picture, as a 模糊 effect takes it) a clip with transform tf is blurred by - the farther it is from
     the focus (cam["focus"], half-heights from the camera; without it the target's distance), the more, as a lens does: aperture (光圈,
     0: no depth of field) x |distance - focus| / distance of a fiftieth of the picture's height. It is the blur on the picture, so it
     is divided by the plane's scale (a far plane is drawn smaller)."""
-    aperture = _v(cam, "aperture", 0.0, t)
+    tc = t if tc is None else tc
+    aperture = _v(cam, "aperture", 0.0, tc)
     if aperture <= 0:
         return 0.0
-    f, c, tg, _axes = _pose(cam, t, W, H)
+    f, c, tg, _axes = _pose(cam, tc, W, H)
     s = H / 2.0
-    d = depth(cam, tf, t, W, H)
+    d = depth(cam, tf, t, W, H, tc)
     if d <= NEAR:
         return 0.0
-    focus = _v(cam, "focus", 0.0, t) if cam.get("focus") is not None else float(np.linalg.norm(tg - c)) / s
+    focus = _v(cam, "focus", 0.0, tc) if cam.get("focus") is not None else float(np.linalg.norm(tg - c)) / s
     scale = f / s / d                                          # the plane's size on the picture, in its own
     return aperture * H / 50.0 * abs(d - focus) / d / max(scale, 1e-6)
 
@@ -159,11 +161,11 @@ def dolly(cam, t, W, H, dy, per_px=0.004):
     return _units(tg + (c - tg) * math.exp(dy * per_px), W, H)
 
 
-def deepfocus(cam, c, t, W, H):
+def deepfocus(cam, c, t, W, H, tc=None):
     """The clip drawn flat for the scene (flat()), with the 景深 blur its distance gives it as the last of its effects."""
     from . import fx
     out = flat(dict(c, blend="normal"))
-    r = blur(cam, c.get("transform") or {}, t, W, H)
+    r = blur(cam, c.get("transform") or {}, t, W, H, tc)
     if r >= 0.25:
         e = fx.new_effect("builtin:blur", "~dof")
         e["params"].update(radius=r, link_xy=True)

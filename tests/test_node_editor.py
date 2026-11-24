@@ -1069,6 +1069,23 @@ class NodeEditorTests(unittest.TestCase):
         menu.search.setText("blur")
         self.assertEqual(menu.results.item(0).text().split("　")[0], "模糊")
 
+    def test_clearing_the_search_brings_the_categories_back(self):
+        ed = self.make()
+        menus = []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        ed.add_menu(QPointF(5, 6), QPoint(0, 0))
+        menu = menus[0]
+        menu.show()
+        APP.processEvents()
+        menu.search.setText("blur")
+        self.assertFalse(menu.results.isHidden())
+        menu.search.setText("")
+        APP.processEvents()
+        self.assertTrue(menu.results.isHidden())                               # (it was left up over the categories)
+        menu.search.setText("mul")
+        self.assertFalse(menu.results.isHidden())
+        menu.close()
+
     def test_menu_presets_are_in_the_order_of_the_menus(self):
         from kiasecut import nodemenu
         for ref, (param, english) in nodemenu.PRESETS.items():

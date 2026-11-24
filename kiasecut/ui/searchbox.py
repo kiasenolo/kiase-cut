@@ -111,7 +111,9 @@ class SearchBox:
         for act in self.groups:
             act.setVisible(not text)
         self.shown_action.setVisible(False)
+        self.results.hide()                        # (the widget of a hidden action stays up, over the categories, when it is not hidden itself)
         if not text:
+            self.menu.adjustSize()
             return
         ranked, seen = [], set()
         for i, (path, name, payload, words) in enumerate(self.entries):
@@ -137,6 +139,7 @@ class SearchBox:
             self.found.append((none, None))
         res.setUpdatesEnabled(True)
         res.setFixedHeight(min(len(self.found), ROWS) * res.sizeHintForRow(0) + 2 * res.frameWidth() + 2)
+        self.results.show()
         self.shown_action.setVisible(True)         # (the menu lays itself out again when an action appears, not when a widget is resized)
         self.menu.adjustSize()
 

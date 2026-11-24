@@ -684,8 +684,9 @@ class Renderer:
         return out
 
     def level_camera(self, cam, tracks, fps, t_us):
-        """The camera a level of planes is seen with at t_us: the topmost 相機 object (camera.is_clip) that is on, else the level's own cam."""
-        if not camera.on(cam) or cam.get("free"):
+        """The camera a level of planes is seen with at t_us, or None for a flat level: the topmost 相機 object (camera.is_clip) that is playing,
+        else the level's own cam, else - with a 相機 object somewhere in the level - the default camera (which changes nothing)."""
+        if cam and cam.get("free"):
             return cam
         for tr in reversed(tracks):
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
@@ -693,15 +694,18 @@ class Renderer:
             for c in reversed(tr["clips"]):
                 if camera.is_clip(c) and on_frame(c, t_us, fps):
                     return camera.from_clip(c, project.stepped(c, t_us - c["start_us"]))
-        return cam
+        if camera.on(cam):
+            return cam
+        return {"on": True} if camera.has_clips(tracks) else cam
 
     def draw_tracks(self, p, tracks, W, H, fps, t_us, px_per_unit, cam=None):
         """Draw every visible clip at time t_us (us) on a W x H canvas, bottom track first; with a camera (camera.py) as planes in
         space, far to near."""
         outer, self.track_ctx = self.track_ctx, (tracks, W, H, t_us)     # (what a 軌道 source reads)
         try:
+            cam = self.level_camera(cam, tracks, fps, t_us)
             if camera.on(cam) and isinstance(p.device(), QImage):
-                self.draw_scene(p, self.level_camera(cam, tracks, fps, t_us), tracks, W, H, fps, t_us, px_per_unit)
+                self.draw_scene(p, cam, tracks, W, H, fps, t_us, px_per_unit)
             else:
                 self._draw_tracks(p, tracks, W, H, fps, t_us, px_per_unit)
         finally:
@@ -878,7 +882,7 @@ class Renderer:
             under = self.seen(p, p.device().copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)) \
                 if kind == "compound" and isinstance(p.device(), QImage) and project.passes_through(c) else None
             live = project.static_live(c)                     # (static_live: drawn afresh at its own time, as a compound)
-            if comp.get("static") and under is None and not live and not camera.on(comp.get("camera")):
+            if comp.get("static") and under is None and not live and not camera.on(comp.get("camera")) and not camera.has_clips(comp["tracks"]):
                 pic = self.still(comp, k, fps)
                 draw = lambda q=p: q.drawImage(QRectF(-bw / 2, -bh / 2, bw, bh), pic)
                 disp = (bw, bh)

@@ -136,8 +136,7 @@ class GpuMatchesCpu(unittest.TestCase):
         own = dict(plain, camera={"on": True, "x": 0.4, "tx": 0.3})
         obj = {"id": "cam", "type": "image", "name": "相機", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,
                "camera": {"fov": 40.0, "tx": 0.3, "ty": 0.0, "tz": 0.0, "aperture": 0.0}, "transform": tf(x=0.4, z=-2.7474774)}
-        mine = copy.deepcopy(plain)
-        mine["camera"] = {"on": True}
+        mine = copy.deepcopy(plain)                                                     # (no camera on the level: the object alone makes it a scene)
         mine["tracks"].append({"id": "tc", "kind": "video", "name": "c", "clips": [obj]})
         for r in (self.cpu, self.gpu):
             a, b = pixels(r.render(copy.deepcopy(own), 0, W, H)), pixels(r.render(copy.deepcopy(mine), 0, W, H))
@@ -147,7 +146,9 @@ class GpuMatchesCpu(unittest.TestCase):
         self.assertGreater(float(np.abs(flat - pixels(self.gpu.render(copy.deepcopy(mine), 0, W, H))).mean()), 3.0)     # (it does look different)
         later = copy.deepcopy(mine)                                                     # (not playing yet: the scene's own camera)
         later["tracks"][-1]["clips"][0]["start_us"] = S
-        self.assertLess(float(np.abs(flat - pixels(self.gpu.render(later, 0, W, H))).mean()), 0.8)
+        for r in (self.cpu, self.gpu):
+            own_flat = pixels(r.render(copy.deepcopy(dict(plain, camera={"on": True})), 0, W, H))
+            self.assertLess(float(np.abs(own_flat - pixels(r.render(copy.deepcopy(later), 0, W, H))).mean()), 0.3)
 
     def test_particles_in_a_scene_are_drawn_through_its_camera(self):
         from kiasecut import assets

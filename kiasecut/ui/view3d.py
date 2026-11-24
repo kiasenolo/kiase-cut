@@ -59,10 +59,15 @@ class View3D:
         self.sel_cam = None              # "camera" | "target": the scene's camera or its target is what is selected (not a plane)
 
     # -- the cameras ------------------------------------------------------------------------------------------------------------
+    def level_on(self):
+        """Whether the open level is a scene: its camera is on, or it has a 相機 object."""
+        view = self.p.view or {}
+        return camera.on(view.get("camera")) or camera.has_clips(view.get("tracks") or [])
+
     def active_object(self):
         """The 相機 object (camera.is_clip) the scene is seen with now - the topmost one that is playing - or None."""
         view = self.p.view or {}
-        if not camera.on(view.get("camera")):
+        if not self.level_on():
             return None
         t_us, fps = self.time(), view.get("fps", 30)
         for tr in reversed(view.get("tracks") or []):
@@ -76,6 +81,8 @@ class View3D:
     def scene_camera(self):
         """The camera the scene is seen with (a 相機 object's, else the scene's own), with what is being dragged on top of it."""
         cam = (self.p.view or {}).get("camera")
+        if not camera.on(cam):
+            cam = {"on": True} if self.level_on() else cam
         if cam is None:
             return None
         obj = self.active_object()

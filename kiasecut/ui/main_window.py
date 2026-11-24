@@ -1662,7 +1662,7 @@ class MainWindow(QMainWindow):
     def in_scene(self, c):
         """Whether clip c of the open level is drawn by a 攝影機: the level's own, or a group's that holds it (camera.py)."""
         v = self.view()
-        if camera.on(v.get("camera")) or camera.on(self.proj.get("camera")) and not self.path_ids:
+        if camera.on(v.get("camera")) or camera.on(self.proj.get("camera")) and not self.path_ids or camera.has_clips(v["tracks"]):
             return True
         return any(camera.on(g.get("camera")) and any(k is c or k.get("id") == c.get("id") for k in project.walk_clips(g["tracks"]))
                    for g in project.walk_clips(v["tracks"]) if project.is_group(g) and g.get("camera"))
@@ -4877,9 +4877,6 @@ class MainWindow(QMainWindow):
             return
         if ident == "scene3d:camera":                      # 相機: an object of a 3D 場景 that the scene is seen with
             if self.ensure_project():
-                if not camera.on(self.view().get("camera")):
-                    self.statusBar().showMessage("相機要放在 3D 場景裡：先雙擊進入一個 3D 場景", 4000)
-                    return
                 made = self.new_asset(assets.ident("empty.small", *self.assets.colors))
                 if made is not None:
                     params, path = made
@@ -5005,8 +5002,6 @@ class MainWindow(QMainWindow):
     def on_scene_camera_edited(self, values):
         """The camera of the 3D 場景 that is open, moved in the 3D view: an edit of the camera of the clip showing it (keyframed values get
         or edit their keyframe at the playhead)."""
-        if not self.path_ids:
-            return
         obj = self.preview.view3d.active_object()
         if obj is not None:                                # (a 相機 object's: its own fields, at its own time)
             oid = obj["id"]
@@ -5018,6 +5013,8 @@ class MainWindow(QMainWindow):
                 for key, v in values.items():
                     edit.set_param(level, oid, "camera", key, v, t)
             self.apply_root("相機", fn_obj)
+            return
+        if not self.path_ids:
             return
         cid = walk_path(self.proj, self.path_ids)[-1][0]
         if cid is None:

@@ -657,8 +657,9 @@ class GLRenderer(render.Renderer):
     def gl_tracks(self, tgt, base, tracks, W, H, fps, t_us, ppu, cam=None):
         outer, self.track_ctx = self.track_ctx, (tracks, W, H, t_us)     # (what a 軌道 source reads: render.py)
         try:
+            cam = self.level_camera(cam, tracks, fps, t_us)
             if camera.on(cam):
-                self.gl_scene(tgt, base, self.level_camera(cam, tracks, fps, t_us), tracks, W, H, fps, t_us, ppu)
+                self.gl_scene(tgt, base, cam, tracks, W, H, fps, t_us, ppu)
             else:
                 self._gl_tracks(tgt, base, tracks, W, H, fps, t_us, ppu)
         finally:
@@ -847,7 +848,7 @@ class GLRenderer(render.Renderer):
                 return
             through = kind == "compound" and project.passes_through(c)    # (效果穿透, as render.py)
             live = project.static_live(c)                     # (static_live: drawn afresh at its own time, as a compound)
-            if comp.get("static") and not through and not live and not camera.on(comp.get("camera")):
+            if comp.get("static") and not through and not live and not camera.on(comp.get("camera")) and not camera.has_clips(comp["tracks"]):
                 tex = self.gl_still(comp, k, fps).tex
                 rect = QRectF(-bw / 2, -bh / 2, bw, bh)
             else:

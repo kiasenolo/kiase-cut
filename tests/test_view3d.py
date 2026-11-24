@@ -484,3 +484,15 @@ class CameraObject(unittest.TestCase):
         v.modal_key(QKeyEvent(QEvent.KeyPress, Qt.Key_Return, Qt.NoModifier), True)
         (vals,) = self.edited
         self.assertEqual(set(vals), {"tx"})
+
+    def test_a_camera_object_alone_makes_the_level_a_scene(self):
+        pv = Preview()
+        pv.resize(960, 540)
+        v = scene_view(on=False)
+        obj = clip("cam", 0, 4 * S, transform={"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0, "z": -2.7})
+        obj["type"], obj["asset"] = "image", {"family": "empty", "w": 100, "h": 100}
+        obj["camera"] = {"fov": 40.0}
+        v["tracks"].append({"id": "t2", "kind": "video", "name": "c", "clips": [obj]})
+        pv.set_scene(v, S, None)
+        self.assertTrue(pv.set_view3d(True))
+        self.assertEqual(pv.view3d.active_object()["id"], "cam")

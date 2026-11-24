@@ -33,6 +33,11 @@ def is_clip(c):
     return bool(c.get("camera")) and c.get("type") == "image"
 
 
+def has_clips(tracks):
+    """Whether the level has a 相機 object anywhere in time: then it is a scene (its clips are planes in space) whether or not its container has a camera on."""
+    return any(is_clip(c) for tr in tracks if tr["kind"] != "audio" for c in tr["clips"])
+
+
 def from_clip(c, t):
     """The camera (numbers at clip time t) that camera object c is: a camera as a group's has it, from the clip's place and lens."""
     tf, cam = c.get("transform") or {}, c.get("camera") or {}

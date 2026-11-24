@@ -4570,7 +4570,9 @@ class MainWindow(QMainWindow):
             probes, bad = result
             if self.root != root:
                 return
+            before = {id(it) for it in library.lib(self.proj)["items"]}
             items = library.add_files(self.proj, list(probes), folder, probes, reuse=True)
+            had = sum(1 for it in dict((id(i), i) for i in items).values() if id(it) in before)
             self.dirty = True
             self.fs_epoch += 1
             self.refresh_library()
@@ -4580,7 +4582,9 @@ class MainWindow(QMainWindow):
                 self._select_new(self.apply_root("匯入素材並加入時間軸", add_and_place, [it["id"] for it in items],
                                                  select=lambda cs: cs[-1]["id"]))
             elif items:
-                self.statusBar().showMessage(f"已匯入 {len(items)} 個素材", 4000)
+                new = len({id(i) for i in items}) - had
+                self.statusBar().showMessage(f"已匯入 {new} 個素材" + (f"（{had} 個已經在素材庫裡，沒有重複加入）" if had else ""),
+                                             5000)
             if bad:
                 QMessageBox.warning(self, "部分檔案無法匯入", "讀不到：\n" + "\n".join(bad))
 

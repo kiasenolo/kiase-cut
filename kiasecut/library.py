@@ -145,13 +145,43 @@ def delete(proj, ident):
         L["items"].remove(item(proj, ident))
 
 
+def _stamp(path):
+    """(name, size, modified time to the second) of a file - what its copies (import_copy, collect: copy2) share - or None."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return os.path.basename(path).lower(), st.st_size, int(st.st_mtime)
+
+
+def same_item(proj, path):
+    """The library's item for the file at path, or None: the one with that path (however it is spelled: slashes, case
+    on Windows), else one whose file has the same name, size and time - a copy of it (in Media, say)."""
+    key = project._fold(norm(path))
+    items = lib(proj)["items"]
+    have = next((it for it in items if project._fold(norm(it["path"])) == key), None)
+    if have is not None:
+        return have
+    stamp = _stamp(path)
+    if stamp is None:
+        return None
+    name = os.path.basename(path).lower()
+    for it in items:
+        if os.path.basename(it["path"]).lower() == name:
+            st = _stamp(it["path"])
+            if st is not None and st[1] == stamp[1] and abs(st[2] - stamp[2]) <= 1:
+                return it
+    return None
+
+
 def add_files(proj, paths, to_folder=None, probes=None, reuse=False):
     """Import files (probe results may be passed in when done off the UI thread). With reuse,
-    a file that is already in the library is not added twice: its item is returned."""
+    a file that is already in the library - that path, or a copy of the file (same_item) - is
+    not added twice: its item is returned."""
     added = []
     for p in paths:
         p = os.path.abspath(p).replace("\\", "/")
-        have = next((it for it in lib(proj)["items"] if it["path"] == p), None) if reuse else None
+        have = same_item(proj, p) if reuse else None
         if have is not None:
             added.append(have)
             continue
@@ -408,6 +438,17 @@ def apply_scan(proj, root, res):
     L = lib(proj)
     mroot = norm(mroot_of(root))
     changed = dedupe(proj)
+    outside = [it for it in L["items"] if not within(it["path"], mroot)]
+    if outside:                                    # an item of a file outside Media whose copy is in it: one row, the copy's
+        by_name = {}                               # (the clips keep their path: 整理素材 is what moves them)
+        for f in res["files"]:
+            by_name.setdefault(os.path.basename(f).lower(), []).append(f)
+        for it in outside:
+            cands = by_name.get(os.path.basename(it["path"]).lower())
+            st = _stamp(it["path"]) if cands else None
+            if st and any((s := _stamp(f)) and s[1] == st[1] and abs(s[2] - st[2]) <= 1 for f in cands):
+                L["items"].remove(it)
+                changed = True
     byrel = {folder_rel(proj, f["id"]): f for f in L["folders"]}
     for rel in res["dirs"]:
         if rel not in byrel:

@@ -225,5 +225,56 @@ class Editing3D(unittest.TestCase):
         self.assertNotEqual(float(before[0]), float(v.plane_corners()["c1"][0][0]))
 
 
+class CameraThing(Editing3D):
+    """The scene's camera and its target can be selected and moved in the view."""
+
+    def test_the_camera_and_its_target_are_picked_by_clicking_them(self):
+        v = self.pv.view3d
+        real = v.scene_camera()
+        c, corners, tg = camera.frustum(real, S, 1920, 1080)
+        QTest.mouseClick(self.pv, Qt.LeftButton, Qt.NoModifier, self.at(tg))
+        self.assertEqual(v.sel_cam, "target")
+        self.assertEqual(self.picked[-1], ("sel", set()))                 # (no plane is selected then)
+        QTest.mouseClick(self.pv, Qt.LeftButton, Qt.NoModifier, self.at((corners[0] + corners[1]) / 2.0))
+        self.assertEqual(v.sel_cam, "camera")
+        QTest.mouseClick(self.pv, Qt.LeftButton, Qt.NoModifier, self.middle_of("c2"))
+        self.assertIsNone(v.sel_cam)
+
+    def test_an_arrow_moves_the_camera_and_the_edit_is_its_fields(self):
+        pv, v = self.pv, self.pv.view3d
+        edited = []
+        pv.sceneCameraEdited.connect(edited.append)
+        v.sel_cam = "camera"
+        b = v.selected()
+        o = v.origin(v.values(b))
+        seen = v.seen()
+        tip = seen.point(v.arrows(seen, o, pv._k())["x"][0])
+        r = pv._rect()
+        start = QPoint(round(r.x() + tip[0] / pv.W * r.width()), round(r.y() + tip[1] / pv.H * r.height()))
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(50, 0))
+        self.assertNotEqual(v.scene_camera()["x"], 0.0)                   # (the pyramid follows)
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(50, 0))
+        (vals,) = edited
+        self.assertEqual(set(vals), {"x"})
+        self.assertEqual(self.done, [])                                   # (not an edit of a plane)
+        self.assertEqual(pv.view["camera"], {"on": True, "fov": 40.0, "z": -2.747})
+
+    def test_the_target_edit_is_in_the_targets_fields(self):
+        pv, v = self.pv, self.pv.view3d
+        edited = []
+        pv.sceneCameraEdited.connect(edited.append)
+        v.sel_cam = "target"
+        v.key_action(QKeyEvent(QEvent.KeyPress, Qt.Key_G, Qt.NoModifier))()
+        v.modal["m0"] = QPointF(self.at(v.origin(v.values(v.selected()))))
+        v.modal_key(QKeyEvent(QEvent.KeyPress, Qt.Key_Y, Qt.NoModifier), True)
+        v.modal_move(v.modal["m0"] + QPointF(0, -40))
+        v.modal_end(True)
+        (vals,) = edited
+        self.assertEqual(set(vals), {"ty"})
+        self.assertGreater(vals["ty"], 0.0)
+        self.assertIsNone(v.key_action(QKeyEvent(QEvent.KeyPress, Qt.Key_R, Qt.NoModifier)))      # (the camera is only moved)
+
+
 if __name__ == "__main__":
     unittest.main()

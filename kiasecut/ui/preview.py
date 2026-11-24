@@ -659,6 +659,7 @@ _Surface = QOpenGLWidget if GL_PREVIEW else QWidget
 class Preview(PenMixin, _Surface):
     clipPicked = Signal(object)                 # clip dict
     selectionPicked = Signal(object, object)    # {clip ids}, the primary one (or None): Shift / Ctrl+click, a box
+    sceneCameraEdited = Signal(dict)            # the 3D view moved the scene's camera or its target: {x, y, z} or {tx, ty, tz}
     view3dChanged = Signal()                    # the 3D view's own camera moved: the picture is drawn again from it
     paramsLive = Signal(str, str, dict)         # clip id, group, {key: value} while dragging
     paramsCommitted = Signal(str, str, dict)    # the same on release

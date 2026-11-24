@@ -398,6 +398,7 @@ class MainWindow(QMainWindow):
         self.preview.paramsCommitted.connect(self.on_preview_params)
         self.preview.paramsLive.connect(self.live_params)
         self.preview.view3dChanged.connect(self.redraw_3d_view)
+        self.preview.sceneCameraEdited.connect(self.on_scene_camera_edited)
         self.preview.follow_progress = self.follow_progress
         self.preview.selectionPicked.connect(lambda ids, primary: self.timeline.set_selection(ids, primary))
         self.preview.movesCommitted.connect(self.on_preview_moves)
@@ -4984,6 +4985,25 @@ class MainWindow(QMainWindow):
             return pathfollow.progress_near(path, QPointF(pt.x() - ox, pt.y() - oy), t, W, H)
         except (edit.EditError, KeyError):
             return None
+
+    def on_scene_camera_edited(self, values):
+        """The camera of the 3D 場景 that is open, moved in the 3D view: an edit of the camera of the clip showing it (keyframed values get
+        or edit their keyframe at the playhead)."""
+        if not self.path_ids:
+            return
+        cid = walk_path(self.proj, self.path_ids)[-1][0]
+        if cid is None:
+            return
+        cid = cid["id"]
+
+        def fn(root):
+            steps = walk_path(root, self.path_ids[:-1])
+            level = steps[-1][1] if steps else root
+            c = edit.find(level, cid)[1]
+            t = min(max(self.playhead_us(), 0), c["duration_us"])
+            for key, v in values.items():
+                edit.set_param(level, cid, "camera", key, v, t)
+        self.apply_root("攝影機", fn)
 
     def redraw_3d_view(self):
         """The 3D view was switched or moved: draw the picture again from its camera."""

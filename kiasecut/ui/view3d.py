@@ -31,6 +31,17 @@ SELECTED_COLOR = QColor(255, 170, 40)
 NUMPAD = {Qt.Key_1: ("front", "back"), Qt.Key_3: ("right", "left"), Qt.Key_7: ("top", "bottom")}
 
 
+class CamThing:
+    """The scene's camera or its target as something the arrows move (stands where a plane's box does)."""
+    clip_type = None
+
+    def __init__(self, kind):
+        self.kind = kind                                   # "camera" | "target"
+        self.clip = {"id": "~" + kind, "type": "camera"}
+        self.locked = False
+        self.t = 0
+
+
 class View3D:
     def __init__(self, preview):
         self.p = preview
@@ -40,10 +51,19 @@ class View3D:
         self.live = {}                   # {clip id: {x, y, z, ...}} being dragged: the outlines follow before the edit is made
         self.drag = None                 # a drag of an arrow of the selected plane, or its middle
         self.modal = None                # G / R / S: the selected plane follows the pointer till a click (Esc puts it back)
+        self.sel_cam = None              # "camera" | "target": the scene's camera or its target is what is selected (not a plane)
 
     # -- the cameras ------------------------------------------------------------------------------------------------------------
     def scene_camera(self):
-        return (self.p.view or {}).get("camera")
+        """The scene's camera (what is being dragged on top of it)."""
+        cam = (self.p.view or {}).get("camera")
+        if cam is None:
+            return None
+        for name in ("camera", "target"):
+            live = self.live.get("~" + name)
+            if live:
+                cam = dict(cam, **{(("t" if name == "target" else "") + k): v for k, v in live.items() if k in "xyz"})
+        return cam
 
     def available(self):
         return bool(self.p.view) and camera.on(self.scene_camera())
@@ -163,6 +183,8 @@ class View3D:
 
     def selected(self):
         """(box, clip) of the one plane that is selected and can be moved, or None."""
+        if self.sel_cam and not self.through and camera.on(self.scene_camera()):
+            return CamThing(self.sel_cam)
         if len(self.p.selected_ids) != 1:
             return None
         for b in self.p.visible_boxes():
@@ -172,6 +194,10 @@ class View3D:
 
     def values(self, b):
         """The plane's own numbers now (what is being dragged on top of the clip's)."""
+        if isinstance(b, CamThing):
+            _f, c, tg, _axes = camera._pose(self.scene_camera(), self.time(), self.p.W, self.p.H)
+            u = camera._units(c if b.kind == "camera" else tg, self.p.W, self.p.H)
+            return dict(u, rot_x=0.0, rot_y=0.0, rotation=0.0, scale=1.0, scale_y=1.0)
         tf, t = b.clip["transform"], project.stepped(b.clip, b.t)
         live = self.live.get(b.clip["id"], {})
         get = lambda key, default=0.0: float(live[key]) if key in live else float(curves.value(tf.get(key, default), t))
@@ -313,7 +339,10 @@ class View3D:
         if mods & Qt.ControlModifier:
             return None
         grab = {Qt.Key_G: "move", Qt.Key_R: "rotate", Qt.Key_S: "scale"}.get(k)
-        if grab and not self.through and self.selected() is not None and self.drag is None:
+        sel = self.selected() if grab and not self.through else None
+        if sel is not None and isinstance(sel, CamThing) and grab != "move":
+            return None                                        # (the camera is only moved)
+        if grab and sel is not None and self.drag is None:
             return lambda: self.modal_begin(grab)
         if k == Qt.Key_0:
             return self.camera_view
@@ -326,6 +355,13 @@ class View3D:
     # -- picking and dragging the planes ------------------------------------------------------------------------------------------
     def pick(self, pos, add):
         """A click: the nearest plane the line of sight goes through is selected (none: nothing is)."""
+        thing = self.pick_camera(pos)
+        if thing is not None:
+            self.sel_cam = thing
+            self.p.selectionPicked.emit(set(), None)
+            self.p.update()
+            return
+        self.sel_cam = None
         c, d = self._ray(pos)
         best = None
         for cid, pts in self.plane_corners().items():
@@ -353,14 +389,43 @@ class View3D:
         else:
             self.p.clipPicked.emit(clip)
 
+    def pick_camera(self, pos):
+        """"camera" when the pointer is on the scene's camera (its apex or a line of its pyramid), "target" on the point it looks at, else None."""
+        real = self.scene_camera()
+        if not camera.on(real) or self.through:
+            return None
+        seen, k = self.seen(), self.p._k()
+        m = self._canvas(pos)
+        c, corners, tg = camera.frustum(real, self.time(), self.p.W, self.p.H)
+        at = seen.point(tg)
+        if at is not None and math.hypot(at[0] - m.x(), at[1] - m.y()) <= 10 * k:
+            return "target"
+        edges = [(c, q) for q in corners] + [(corners[i], corners[(i + 1) % 4]) for i in range(4)]
+        for a, b in edges:
+            seg = seen.segment(a, b)
+            if seg is None:
+                continue
+            (x0, y0), (x1, y1) = seg
+            dx, dy = x1 - x0, y1 - y0
+            n = dx * dx + dy * dy
+            t = 0.0 if n < 1e-9 else min(1.0, max(0.0, ((m.x() - x0) * dx + (m.y() - y0) * dy) / n))
+            if math.hypot(x0 + t * dx - m.x(), y0 + t * dy - m.y()) <= 7 * k:
+                return "camera"
+        return None
+
     def _emit_live(self, b, vals):
         self.live[b.clip["id"]] = dict(vals)
-        self.p.paramsLive.emit(b.clip["id"], "transform", dict(vals))
+        if not isinstance(b, CamThing):
+            self.p.paramsLive.emit(b.clip["id"], "transform", dict(vals))
         self.p.update()
 
     def _end_live(self, b, keep):
         vals = self.live.pop(b.clip["id"], None)
-        if vals and keep:
+        if isinstance(b, CamThing):                          # (the camera: an edit of its own fields)
+            if vals and keep:
+                self.p.sceneCameraEdited.emit({(("t" if b.kind == "target" else "") + k): v for k, v in vals.items()})
+            self.p.update()
+        elif vals and keep:
             self.p.paramsCommitted.emit(b.clip["id"], "transform", vals)
         elif vals:
             self.p.grabCancelled.emit()
@@ -567,10 +632,12 @@ class View3D:
             return
         c, corners, tg = camera.frustum(real, self.time(), self.p.W, self.p.H)
 
+        color = SELECTED_COLOR if self.sel_cam == "camera" else CAMERA_COLOR
+
         def line(a, b, width=1.25):
             seg = seen.segment(a, b)
             if seg is not None:
-                p.setPen(QPen(CAMERA_COLOR, width * k))
+                p.setPen(QPen(color, width * k))
                 p.drawLine(QPointF(*seg[0]), QPointF(*seg[1]))
         for q in corners:
             line(c, q)
@@ -582,5 +649,5 @@ class View3D:
         line(corners[1], top)
         at = seen.point(tg)
         if at is not None:
-            p.setPen(QPen(CAMERA_COLOR, 1.25 * k))
-            p.drawEllipse(QPointF(*at), 3 * k, 3 * k)
+            p.setPen(QPen(SELECTED_COLOR if self.sel_cam == "target" else CAMERA_COLOR, 1.5 * k))
+            p.drawEllipse(QPointF(*at), 5 * k, 5 * k)

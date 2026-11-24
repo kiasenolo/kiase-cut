@@ -3257,6 +3257,8 @@ class MainWindow(QMainWindow):
             label = "編輯路徑" if "nodes" in (values.get("asset") or {}) else "調整大小"
         elif group.startswith("fx:"):
             label = "效果控制點"
+        elif group == "asset":
+            label = "粒子控制點"
         else:
             label = "路徑進度" if "path_progress" in values else "翻轉" if "flip_h" in values or "flip_v" in values else \
                 "旋轉" if "rotation" in values else "縮放" if "scale" in values else \

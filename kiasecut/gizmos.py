@@ -50,6 +50,101 @@ SPECS = {
 }
 
 
+PARTICLES = "builtin:particle_system"
+ACCEL_SCALE = 0.25                           # the gravity / wind arrow: a px of it is this many px/s² (of a 1080-high canvas)
+SPEED_SCALE = 0.25                           # the velocity handle: its distance is the way a particle goes in this many seconds (without forces)
+
+
+def particle_effect(clip):
+    """The particle system of a particle object (clip["asset"]), as an effect with its own handles - None for any other clip."""
+    from . import assets
+    p = clip.get("asset")
+    if not p or p.get("family") != "particles":
+        return None
+    e = assets.particle_effect(p)
+    e["asset"] = True                        # (its handles edit the object's fields, not an effect's parameters)
+    return e
+
+
+def _custom(id_, local, style, label, apply, origin=None, **more):
+    return dict({"kind": "custom", "item": {"kind": "custom"}, "param": id_, "id": id_, "local": local, "style": style, "label": label,
+                 "apply": apply, "range": (0.0, 0.0), "from": origin}, **more)
+
+
+def particle_handles(e, t, bw, bh):
+    """The handles of a particle system e: its place, the size and turn of its emitter, where the particles go (a velocity handle and the
+    two edges of the spread), the gravity and the wind as one arrow, the floor. All in the clip-local px of the picture."""
+    d = fx.def_of(e)
+
+    def val(name, default=0.0):
+        v, par = _value(e, d, name, t)
+        if v is not None and par.type == "menu":
+            v = fx.menu_index(par, v)
+        return default if v is None else v
+    k = bh / 1080.0
+    ox, oy = float(val("origin_x", 0.5)), float(val("origin_y", 0.5))
+    o = ((ox - 0.5) * bw, (oy - 0.5) * bh)
+    emitter, rot = int(val("emitter")), math.radians(float(val("erot")))
+    ax, ay = (math.cos(rot), math.sin(rot)), (-math.sin(rot), math.cos(rot))
+    out = []
+
+    def at(v, along):
+        return (o[0] + v[0] * along, o[1] + v[1] * along)
+
+    def along(pt, v):
+        return (pt[0] - o[0]) * v[0] + (pt[1] - o[1]) * v[1]
+
+    out.append(_custom("origin", o, "cross", "發射位置",
+                       lambda pt, st, snap: {"origin_x": round(pt[0] / bw + 0.5, 4), "origin_y": round(pt[1] / bh + 0.5, 4)}))
+    if emitter in (1, 2, 3):
+        w = float(val("ewidth"))
+        out.append(_custom("ewidth", at(ax, w * k / 2), "square", "寬",
+                           lambda pt, st, snap: {"ewidth": round(min(4000.0, abs(along(pt, ax)) * 2 / k), 1)}, o))
+    if emitter == 3:
+        h = float(val("eheight"))
+        out.append(_custom("eheight", at(ay, h * k / 2), "square", "高",
+                           lambda pt, st, snap: {"eheight": round(min(4000.0, abs(along(pt, ay)) * 2 / k), 1)}, o))
+    if emitter in (1, 3):
+        reach = float(val("ewidth")) * k / 2 + 0.06 * bh
+        out.append(_custom("erot", at(ax, reach), "round", "旋轉",
+                           lambda pt, st, snap: {"erot": round(math.degrees(math.atan2(pt[1] - o[1], pt[0] - o[0])), 1)}, o))
+    speed = float(val("speed"))
+    length = min(max(speed * k * SPEED_SCALE, 0.07 * bh), 0.45 * bh)
+    if bool(val("outward")):                                   # (away from the place: only how fast)
+        out.append(_custom("speed", (o[0] + length, o[1]), "round", "初速",
+                           lambda pt, st, snap: {"speed": round(min(4000.0, max(0.0, abs(pt[0] - o[0]) / (k * SPEED_SCALE))), 1)}, o))
+    else:
+        ang, spread = math.radians(float(val("angle"))), float(val("spread"))
+
+        def direction(a):
+            return (math.sin(a), -math.cos(a))
+
+        def aim(pt, st, snap):
+            dx, dy = pt[0] - o[0], pt[1] - o[1]
+            a = math.degrees(math.atan2(dx, -dy))
+            if snap:
+                a = round(a / 5) * 5 if abs(a - round(a / 15) * 15) > 1.5 else round(a / 15) * 15
+            return {"angle": round(a, 1), "speed": round(min(4000.0, math.hypot(dx, dy) / (k * SPEED_SCALE)), 1)}
+
+        def edge(pt, st, snap):
+            a = math.degrees(math.atan2(pt[0] - o[0], -(pt[1] - o[1]))) - math.degrees(ang)
+            a = abs((a + 180.0) % 360.0 - 180.0)
+            return {"spread": round(min(360.0, a * 2), 1)}
+        for sign, name in ((1, "spread_b"), (-1, "spread_a")):
+            out.append(_custom(name, at(direction(ang + sign * math.radians(spread) / 2), length), "square", "散開" if sign > 0 else "", edge, o))
+        out.append(_custom("aim", at(direction(ang), length), "round", "方向和初速", aim, o))
+    anchor = (0.38 * bw, -0.34 * bh)
+    wind, gravity = float(val("wind")), float(val("gravity"))
+    out.append(_custom("accel", (anchor[0] + wind * k * ACCEL_SCALE, anchor[1] + gravity * k * ACCEL_SCALE), "arrow", "重力／風",
+                       lambda pt, st, snap: {"wind": round(max(-2000.0, min(2000.0, (pt[0] - anchor[0]) / (k * ACCEL_SCALE))), 0),
+                                             "gravity": round(max(-3000.0, min(3000.0, (pt[1] - anchor[1]) / (k * ACCEL_SCALE))), 0)}, anchor))
+    if bool(val("floor_on")):
+        fy = (float(val("floor_y")) - 0.5) * bh
+        out.append(_custom("floor", (0.0, fy), "hline", "地面",
+                           lambda pt, st, snap: {"floor_y": round(max(0.0, min(1.0, pt[1] / bh + 0.5)), 4)}, None, span=bw))
+    return out
+
+
 def node_effect(e, nid):
     """Node nid of node effect e as an effect of its own (its parameters without the node's name), or None when it has no
     handles: not a filter node, or its place is set by a link or by a parameter of the effect."""
@@ -130,6 +225,8 @@ def shown(e, item):
 def handles(e, t, bw, bh):
     """[{"kind", "param", "local": (x, y), "item", ...}] the handles of effect e at clip time t on a bw x bh picture, in their order
     (the preview takes the last under the pointer first: a point is under a radius or an angle that sits on the same spot)."""
+    if e["filter"] == PARTICLES:
+        return particle_handles(e, t, bw, bh)
     d = fx.def_of(e)
     out = []
     for item in spec_of(e["filter"]):
@@ -177,6 +274,8 @@ def dragged(h, pt, bw, bh, state, snap=True, turn_snap=None):
     (the angle is followed round, turn after turn); snap: points settle on the middle (and a third) of the picture;
     turn_snap(degrees) -> degrees, for the angle."""
     kind, item = h["kind"], h["item"]
+    if kind == "custom":                                       # (a particle system's: it knows what it changes)
+        return h["apply"](pt, state, snap)
     lo, hi = h["range"]
     if kind == "point":
         u, v = uv_of_local(pt, item["up"], bw, bh)

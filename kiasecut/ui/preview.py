@@ -113,7 +113,7 @@ from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPainterPath, QPen,
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QInputDialog, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
-from .. import components, curves, edit, fonts, gizmos, masks, nodegraph, project, render, sharedgl, textlayout, textvars
+from .. import assets, components, curves, edit, fonts, gizmos, masks, nodegraph, project, render, sharedgl, textlayout, textvars
 from . import appevents, randomdialog, touch, viewglide, wheel
 from .pentool import PenMixin
 from .zoomglide import ZoomGlide
@@ -509,6 +509,41 @@ def draw_handle(p, pt, k, round_=False, color="#ffffff"):
         p.drawRect(QRectF(pt.x() - s / 2, pt.y() - s / 2, s, s))
 
 
+def paint_custom_handle(p, h, pt, xf, k, col):
+    """A handle of a particle system (gizmos.particle_handles): its style says how it looks, "from" a point it hangs on by a dashed line."""
+    style = h["style"]
+    if h.get("from") is not None:
+        o = xf.map(QPointF(*h["from"]))
+        for pen in (QPen(QColor("#070707"), 3 * k), QPen(col, 1.25 * k, Qt.DashLine)):
+            p.setPen(pen)
+            p.drawLine(o, pt)
+        if style == "arrow":
+            p.setBrush(col)
+            p.drawEllipse(o, 2.5 * k, 2.5 * k)
+            p.setBrush(Qt.NoBrush)
+    if style == "hline":
+        a, b = xf.map(QPointF(-h["span"] / 2, h["local"][1])), xf.map(QPointF(h["span"] / 2, h["local"][1]))
+        for pen in (QPen(QColor("#070707"), 3.5 * k), QPen(col, 1.5 * k, Qt.DashLine)):
+            p.setPen(pen)
+            p.drawLine(a, b)
+        draw_handle(p, pt, k, color=GIZMO_COLOR)
+    elif style == "cross":
+        r = 5 * k
+        for w, c in ((3 * k, "#111114"), (1.25 * k, GIZMO_COLOR)):
+            p.setPen(QPen(QColor(c), w))
+            p.drawEllipse(pt, r, r)
+            p.drawLine(pt - QPointF(2 * r, 0), pt + QPointF(2 * r, 0))
+            p.drawLine(pt - QPointF(0, 2 * r), pt + QPointF(0, 2 * r))
+    else:
+        draw_handle(p, pt, k, round_=style in ("round", "arrow"), color=GIZMO_COLOR)
+    if h.get("label"):
+        f = p.font()
+        f.setPixelSize(round(13 * k))
+        p.setFont(f)
+        p.setPen(col)
+        p.drawText(pt + QPointF(9 * k, -7 * k), h["label"])
+
+
 def paint_gizmo(p, e, box, k):
     """The handles of effect e (gizmos.handles) of the clip in box, drawn in canvas px with k canvas px to a screen px: a ring with a
     cross for a place, a square on a circle for a size, a round handle on a line for a turn."""
@@ -519,6 +554,9 @@ def paint_gizmo(p, e, box, k):
         pt = xf.map(QPointF(*h["local"]))
         kind = h["kind"]
         p.setBrush(Qt.NoBrush)
+        if kind == "custom":                                   # (a particle system's)
+            paint_custom_handle(p, h, pt, xf, k, col)
+            continue
         if kind in ("radius", "angle"):
             c = h["centre"]
             ring = QPainterPath()
@@ -837,6 +875,10 @@ class Preview(PenMixin, _Surface):
 
     def gizmo_effect(self, box):
         """The effect (of box's clip) whose handles are shown, or None."""
+        if box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False):
+            own = gizmos.particle_effect(box.clip)               # (a particle object: its handles are always there)
+            if own is not None:
+                return own
         if not self.gizmo or box is None or self.mask_mode or self.multi() or getattr(box, "group", False):
             return None
         e = next((e for e in box.clip.get("effects") or [] if e["id"] == self.gizmo), None)
@@ -2485,6 +2527,8 @@ class Preview(PenMixin, _Surface):
                                   turn_snap=lambda v: snap_angle(v, free))
             if self.gizmo_node:
                 vals = {f"{self.gizmo_node}.{k}": v for k, v in vals.items()}
+            if h["effect"] == "particles":                     # (a particle object: the handles change its fields)
+                return "asset", {assets.PT + k: v for k, v in vals.items()}
             return "fx:" + h["effect"], vals
         c = QPointF(box.cx, box.cy)
         if kind == "scale":

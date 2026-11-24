@@ -21,6 +21,54 @@ NONE = Qt.KeyboardModifier.NoModifier
 BW, BH = 1920.0, 1080.0
 
 
+class ParticleHandleTests(unittest.TestCase):
+    """A particle object's own handles: place, emitter size, the velocity and spread, the gravity arrow, the floor."""
+
+    def object(self, **fields):
+        from kiasecut import assets
+        a = assets.make(assets.get("particle.system"), "#ffffff", "#000000", 1920, 1080)
+        a.update({"pt_" + k: v for k, v in fields.items()})
+        return {"id": "c1", "type": "image", "asset": assets.normalize(a)}
+
+    def test_only_a_particle_object_has_them(self):
+        self.assertIsNone(gizmos.particle_effect({"id": "c", "type": "image", "asset": {"family": "rect"}}))
+        self.assertIsNone(gizmos.particle_effect({"id": "c", "type": "image"}))
+        e = gizmos.particle_effect(self.object())
+        self.assertEqual(e["filter"], "builtin:particle_system")
+
+    def test_handles_follow_the_settings_and_a_drag_gives_the_fields_values(self):
+        e = gizmos.particle_effect(self.object(origin_x=0.25, origin_y=0.75, emitter="矩形", ewidth=600.0, eheight=200.0, erot=0.0, angle=90.0,
+                                               spread=60.0, speed=400.0, floor_on=True, floor_y=0.9))
+        hs = {h["id"]: h for h in gizmos.handles(e, 0, BW, BH)}
+        self.assertEqual(set(hs), {"origin", "ewidth", "eheight", "erot", "spread_a", "spread_b", "aim", "accel", "floor"})
+        ox, oy = (0.25 - 0.5) * BW, (0.75 - 0.5) * BH
+        self.assertEqual(hs["origin"]["local"], (ox, oy))
+        self.assertAlmostEqual(hs["ewidth"]["local"][0], ox + 300.0)                 # (half the width, along the emitter)
+        self.assertAlmostEqual(hs["eheight"]["local"][1], oy + 100.0)
+        self.assertAlmostEqual(hs["aim"]["local"][0] - ox, 100.0)                    # (90 degrees: to the right, speed * 0.25 s long)
+        self.assertAlmostEqual(hs["aim"]["local"][1], oy, places=6)
+        self.assertEqual(gizmos.dragged(hs["origin"], (0.0, 0.0), BW, BH, {}), {"origin_x": 0.5, "origin_y": 0.5})
+        self.assertEqual(gizmos.dragged(hs["ewidth"], (ox + 450.0, oy), BW, BH, {}), {"ewidth": 900.0})
+        got = gizmos.dragged(hs["aim"], (ox, oy - 300.0), BW, BH, {}, snap=False)   # (up, 300 px: 1200 px/s)
+        self.assertEqual((got["angle"], got["speed"]), (0.0, 1200.0))
+        self.assertEqual(gizmos.dragged(hs["spread_a"], (ox + 100.0, oy - 100.0), BW, BH, {}), {"spread": 90.0})
+        self.assertEqual(gizmos.dragged(hs["floor"], (0.0, 0.0), BW, BH, {}), {"floor_y": 0.5})
+        got = gizmos.dragged(hs["accel"], (0.38 * BW + 100.0, -0.34 * BH + 50.0), BW, BH, {})
+        self.assertEqual(got, {"wind": 400.0, "gravity": 200.0})
+
+    def test_which_handles_there_are(self):
+        e = gizmos.particle_effect(self.object(emitter="點", outward=True, floor_on=False))
+        self.assertEqual({h["id"] for h in gizmos.handles(e, 0, BW, BH)}, {"origin", "speed", "accel"})
+        e = gizmos.particle_effect(self.object(emitter="線"))
+        self.assertEqual({h["id"] for h in gizmos.handles(e, 0, BW, BH)},
+                         {"origin", "ewidth", "erot", "spread_a", "spread_b", "aim", "accel"})
+
+    def test_the_canvas_size_scales_the_lengths(self):
+        e = gizmos.particle_effect(self.object(emitter="線", ewidth=600.0, erot=0.0, origin_x=0.5, origin_y=0.5))
+        h = next(h for h in gizmos.handles(e, 0, 960.0, 540.0) if h["id"] == "ewidth")       # (a 540-high canvas: half the px)
+        self.assertAlmostEqual(h["local"][0], 150.0)
+
+
 class GizmoMathTests(unittest.TestCase):
     def setUp(self):
         self.p = proj()
@@ -163,6 +211,24 @@ class GizmoPreviewTests(unittest.TestCase):
         (cid, group, vals), = got
         self.assertEqual(group, "fx:" + self.e["id"])
         self.assertAlmostEqual(vals["radius"], 0.4, places=2)
+
+    def test_a_particle_objects_handles_are_always_there_and_edit_its_fields(self):
+        from kiasecut import assets
+        params = assets.make(assets.get("particle.system"), "#ffffff", "#000000", 1920, 1080)
+        edit.replace_media(self.p, "c1", assets.item(params, "/a.svg"), params)
+        pv = Preview()
+        pv.resize(960, 540)
+        pv.set_scene(self.p, S // 2, "c1")                                          # (no effect picked: still its handles)
+        self.assertEqual(pv.gizmo_effect(pv.selected_box())["filter"], "builtin:particle_system")
+        got, live = self.drag(pv, QPoint(480, 270), QPoint(600, 135))
+        self.assertTrue(live)
+        (cid, group, vals), = got
+        self.assertEqual((cid, group), ("c1", "asset"))
+        self.assertAlmostEqual(vals["pt_origin_x"], 0.625, places=2)
+        self.assertAlmostEqual(vals["pt_origin_y"], 0.25, places=2)
+        for key, v in vals.items():                                                 # (and a valid edit)
+            edit.set_param(self.p, cid, group, key, v, 0)
+        self.assertAlmostEqual(edit.find(self.p, "c1")[1]["asset"]["pt_origin_x"], 0.625, places=2)
 
     def test_without_a_picked_effect_the_clip_moves_as_before(self):
         pv = self.preview("builtin:swirl")

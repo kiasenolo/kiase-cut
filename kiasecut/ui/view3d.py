@@ -184,6 +184,9 @@ class View3D:
     # -- the selected plane: its arrows ---------------------------------------------------------------------------------------
     AXES = {"x": (1.0, 0.0, 0.0), "y": (0.0, -1.0, 0.0), "z": (0.0, 0.0, 1.0)}          # (y is up: the world's y goes down)
     COLORS = {"x": RED, "y": GREEN, "z": BLUE}
+    RINGS = {"rx": ("x", "rot_x", (0.0, 1.0, 0.0)), "ry": ("y", "rot_y", (1.0, 0.0, 0.0)), "rz": ("z", "rotation", (1.0, 0.0, 0.0))}   # (axis, field, a point of the plane that goes round it)
+    NORMALS = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}      # (right-handed: for the angles; the picture's y goes down)
+    RING_AT = 0.8                                   # a ring's radius, of an arrow's length
     BOX_AT = 0.55                                   # where on an arrow's length the scale box of its axis is
     ARROW_PX = 110                                  # screen px an arrow is long, whatever the distance
 
@@ -276,7 +279,67 @@ class View3D:
         for a, (_tip, at) in self.arrows(seen, o, k).items():
             if near(at, 9):
                 return a, b
+        if not isinstance(b, CamThing):
+            ring = self.hit_ring(pos, o, seen, k)
+            if ring is not None:
+                return ring, b
         return None
+
+    def ring_points(self, o, axis, r):
+        n = np.array(self.NORMALS[axis])
+        b1 = np.cross(n, [0.0, 0.0, 1.0] if axis != "z" else [1.0, 0.0, 0.0])
+        b1 /= np.linalg.norm(b1)
+        b2 = np.cross(n, b1)
+        return [o + r * (b1 * math.cos(i * math.pi / 24) + b2 * math.sin(i * math.pi / 24)) for i in range(49)]
+
+    def hit_ring(self, pos, o, seen, k):
+        """"rx" | "ry" | "rz" when the pointer is on one of the three rings round the selected plane."""
+        n = self.arrow_length(seen, o, k) * self.RING_AT
+        m = self._canvas(pos)
+        best = None
+        for name, (axis, _key, _u) in self.RINGS.items():
+            pts = self.ring_points(o, axis, n)
+            for a, b in zip(pts, pts[1:]):
+                seg = seen.segment(a, b)
+                if seg is None:
+                    continue
+                (x0, y0), (x1, y1) = seg
+                dx, dy = x1 - x0, y1 - y0
+                L = dx * dx + dy * dy
+                t = 0.0 if L < 1e-9 else min(1.0, max(0.0, ((m.x() - x0) * dx + (m.y() - y0) * dy) / L))
+                d = math.hypot(x0 + t * dx - m.x(), y0 + t * dy - m.y())
+                if d <= 6 * k and (best is None or d < best[0]):
+                    best = (d, name)
+        return None if best is None else best[1]
+
+    def _ring_angle(self, ray, o, axis):
+        n = np.array(self.NORMALS[axis])
+        q = self._in_plane(ray, o, n)
+        if q is None:
+            return None
+        b1 = np.cross(n, [0.0, 0.0, 1.0] if axis != "z" else [1.0, 0.0, 0.0])
+        b1 /= np.linalg.norm(b1)
+        b2 = np.cross(n, b1)
+        d = q - o
+        return math.atan2(float(d @ b2), float(d @ b1))
+
+    def _ring_sign(self, v0, name):
+        """+1 when a bigger number in the ring's field turns the plane the way the ring's angle grows (-1 the other way)."""
+        axis, key, u = self.RINGS[name]
+        u = np.array(u)
+        n = np.array(self.NORMALS[axis])
+        b1 = np.cross(n, [0.0, 0.0, 1.0] if axis != "z" else [1.0, 0.0, 0.0])
+        b1 /= np.linalg.norm(b1)
+        b2 = np.cross(n, b1)
+
+        def ang(value):
+            tf = {"rot_x": v0["rot_x"], "rot_y": v0["rot_y"], "rotation": v0["rotation"]}
+            tf[key] = value
+            r = camera._rot(tf["rot_x"], tf["rot_y"], tf["rotation"])
+            q = r @ u
+            return math.atan2(float(q @ b2), float(q @ b1))
+        step = (ang(v0[key] + 5.0) - ang(v0[key]) + math.pi) % (2 * math.pi) - math.pi
+        return 1.0 if step >= 0 else -1.0
 
     def on_body(self, pos):
         """True when the pointer is on the selected plane (a drag from there moves it in the picture's plane)."""
@@ -488,6 +551,9 @@ class View3D:
             mid, m = seen.point(o0), self._canvas(pos)
             r = math.hypot(m.x() - mid[0], m.y() - mid[1]) if mid else 0.0
             self.drag = {"kind": kind, "b": b, "v0": v0, "start": max(r, 1.0), "mid": mid, "moved": False}
+        elif kind in self.RINGS:
+            a0 = self._ring_angle(ray, o0, self.RINGS[kind][0])
+            self.drag = {"kind": kind, "b": b, "v0": v0, "start": a0, "last": a0, "cum": 0.0, "sign": self._ring_sign(v0, kind), "o0": o0, "moved": False}
         elif kind in ("sx", "sy"):
             a = np.array(self.AXES[kind[1]])
             s0 = self._on_axis(ray, o0, a)
@@ -505,6 +571,14 @@ class View3D:
             m, mid = self._canvas(pos), d["mid"]
             f = max(0.01, math.hypot(m.x() - mid[0], m.y() - mid[1]) / d["start"])
             vals = {"scale": round(d["v0"]["scale"] * f, 5), "scale_y": round(d["v0"]["scale_y"] * f, 5)}
+        elif d["kind"] in self.RINGS:
+            ang = self._ring_angle(ray, d["o0"], self.RINGS[d["kind"]][0])
+            if ang is None:
+                return
+            d["cum"] += (ang - d["last"] + math.pi) % (2 * math.pi) - math.pi
+            d["last"] = ang
+            key = self.RINGS[d["kind"]][1]
+            vals = {key: round(d["v0"][key] + d["sign"] * math.degrees(d["cum"]), 3)}
         elif d["kind"] in ("sx", "sy"):
             s = self._on_axis(ray, d["o0"], d["a"])
             if s is None:
@@ -551,8 +625,32 @@ class View3D:
         else:
             m["start"] = self._in_plane(ray, m["o0"], self.seen().axes[2])
 
+    def _typed_vals(self):
+        """The edit that the number typed while G / R / S is on makes (None for none yet): G the move in the numbers of the fields along the held axis
+        (X without one), R the degrees, S the factor."""
+        m = self.modal
+        try:
+            num = float(m["typed"])
+        except ValueError:
+            return None
+        v0, kind = m["v0"], m["kind"]
+        if kind == "move":
+            a = m["axis"] or "x"
+            return {a: round(v0[a] + num, 5)}
+        if kind == "rotate":
+            key = {"x": "rot_x", "y": "rot_y"}.get(m["axis"], "rotation")
+            return {key: round(v0[key] + num, 3)}
+        return {"scale": round(v0["scale"] * num, 5), "scale_y": round(v0["scale_y"] * num, 5)}
+
     def modal_move(self, pos):
         m = self.modal
+        m["pos"] = pos
+        if m.get("typed"):                                       # (a typed number rules, not the pointer)
+            vals = self._typed_vals()
+            if vals is not None:
+                m["moved"] = True
+                self._emit_live(m["b"], vals)
+            return
         ray = self._ray(pos)
         v0, kind = m["v0"], m["kind"]
         if kind == "move":
@@ -590,6 +688,27 @@ class View3D:
             if act:
                 self.modal_end(True)
             return True
+        text = {Qt.Key_Period: ".", Qt.Key_Minus: "-"}.get(k, str(k - Qt.Key_0) if Qt.Key_0 <= k <= Qt.Key_9 else None)
+        if text is not None or k == Qt.Key_Backspace:
+            if act:
+                m = self.modal
+                typed = m.get("typed", "")
+                if text is None:
+                    typed = typed[:-1]
+                elif text == "-":
+                    typed = typed[1:] if typed.startswith("-") else "-" + typed
+                else:
+                    typed += text
+                m["typed"] = typed
+                if not typed:                                     # (all rubbed out: the pointer again from where it is)
+                    self.live.pop(m["b"].clip["id"], None)
+                    self.p.grabCancelled.emit()
+                    m["m0"] = m.get("pos", m["m0"])
+                    self._modal_anchor()
+                else:
+                    self.modal_move(m.get("pos", m["m0"]))
+                self.p.update()
+            return True
         axis = {Qt.Key_X: "x", Qt.Key_Y: "y", Qt.Key_Z: "z"}.get(k)
         if axis:
             if act:
@@ -599,6 +718,8 @@ class View3D:
                     self.live.pop(m["b"].clip["id"], None)
                     self.p.grabCancelled.emit()
                 self._modal_anchor()
+                if m.get("typed"):
+                    self.modal_move(m.get("pos", m["m0"]))
                 self.p.update()
             return True
         return False
@@ -836,7 +957,25 @@ class View3D:
                 p.setPen(QPen(self.COLORS[axis], 1.0 * k, Qt.DashLine))
                 p.drawLine(QPointF(*seg[0]), QPointF(*seg[1]))
         if self.modal is not None:
+            if self.modal.get("typed"):
+                p.setPen(QColor(255, 255, 255))
+                f = p.font()
+                f.setPixelSize(round(15 * k))
+                p.setFont(f)
+                what = {"move": "移動", "rotate": "旋轉", "scale": "縮放"}[self.modal["kind"]]
+                p.drawText(QPointF(mid[0] + 14 * k, mid[1] - 14 * k), f"{what}{(' ' + self.modal['axis'].upper()) if self.modal['axis'] else ''}: {self.modal['typed']}")
             return
+        if not isinstance(b, CamThing):
+            n = self.arrow_length(seen, o, k) * self.RING_AT
+            for name, (axis, _key, _u) in self.RINGS.items():
+                col = QColor(self.COLORS[axis])
+                col.setAlpha(150)
+                p.setPen(QPen(col, 1.5 * k))
+                pts = self.ring_points(o, axis, n)
+                for a, c in zip(pts, pts[1:]):
+                    seg = seen.segment(a, c)
+                    if seg is not None:
+                        p.drawLine(QPointF(*seg[0]), QPointF(*seg[1]))
         for name, (_tip, at) in self.arrows(seen, o, k).items():
             if at is None:
                 continue

@@ -212,6 +212,60 @@ class Editing3D(unittest.TestCase):
         self.assertGreater(vals["scale"], v0["scale"])
         self.assertEqual(vals["scale_y"], v0["scale_y"])
 
+    def test_a_ring_turns_the_plane_the_way_the_pointer_goes_round(self):
+        import math
+        pv, v = self.pv, self.pv.view3d
+        b = v.selected()
+        o = v.origin(v.values(b))
+        seen, k = v.seen(), pv._k()
+        n = v.arrow_length(seen, o, k) * v.RING_AT
+        pts = v.ring_points(o, "z", n)
+        i0 = 6
+        start = self.at(pts[i0])
+        self.assertEqual(v.hit_arrow(QPointF(start))[0], "rz")
+        corners = lambda: v.plane_corners()["c1"]
+        edge = lambda: corners()[1] - corners()[0]
+        a0 = math.atan2(edge()[1], edge()[0])
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        for j in range(i0 + 1, i0 + 5):                       # (round the ring by 4 steps of 7.5 degrees: 30)
+            QTest.mouseMove(pv, self.at(pts[j]))
+        a1 = math.atan2(edge()[1], edge()[0])
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, self.at(pts[i0 + 4]))
+        (_cid, group, vals), = self.done
+        self.assertEqual((group, set(vals)), ("transform", {"rotation"}))
+        step = math.degrees((a1 - a0 + math.pi) % (2 * math.pi) - math.pi)
+        self.assertAlmostEqual(step, 30.0, delta=6.0)           # (the plane went round with the pointer)
+
+    def test_a_typed_number_gives_the_move_exactly(self):
+        pv, v = self.pv, self.pv.view3d
+        key = lambda k: QKeyEvent(QEvent.KeyPress, k, Qt.NoModifier)
+        v.key_action(key(Qt.Key_G))()
+        x0 = v.values(v.selected())["x"]
+        for k in (Qt.Key_X, Qt.Key_1, Qt.Key_Period, Qt.Key_5):
+            v.modal_key(key(k), True)
+        self.assertEqual(v.modal["typed"], "1.5")
+        self.assertAlmostEqual(self.live[-1][2]["x"], x0 + 1.5, 4)
+        v.modal_key(key(Qt.Key_Backspace), True)
+        self.assertAlmostEqual(self.live[-1][2]["x"], x0 + 1.0, 4)
+        v.modal_key(key(Qt.Key_Minus), True)
+        self.assertAlmostEqual(self.live[-1][2]["x"], x0 - 1.0, 4)
+        v.modal_key(key(Qt.Key_Return), True)
+        self.assertAlmostEqual(self.done[-1][2]["x"], x0 - 1.0, 4)
+
+    def test_typing_a_turn_or_a_scale(self):
+        pv, v = self.pv, self.pv.view3d
+        key = lambda k: QKeyEvent(QEvent.KeyPress, k, Qt.NoModifier)
+        v.key_action(key(Qt.Key_R))()
+        v.modal_key(key(Qt.Key_Y), True)
+        for k in (Qt.Key_4, Qt.Key_5):
+            v.modal_key(key(k), True)
+        self.assertEqual(self.live[-1][2], {"rot_y": 45.0})
+        v.modal_key(key(Qt.Key_Escape), True)
+        v.key_action(key(Qt.Key_S))()
+        v.modal_key(key(Qt.Key_2), True)
+        self.assertEqual(set(self.live[-1][2]), {"scale", "scale_y"})
+        self.assertAlmostEqual(self.live[-1][2]["scale"], 1.0, 4)             # (c1's scale is 0.5)
+
     def test_g_then_z_moves_along_z_and_escape_puts_it_back(self):
         pv, v = self.pv, self.pv.view3d
         key = lambda k, mods=Qt.NoModifier: QKeyEvent(QEvent.KeyPress, k, mods)

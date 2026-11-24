@@ -72,5 +72,35 @@ class TimelineViewTests(unittest.TestCase):
         self.assertEqual((self.tl.vzoom, self.tl.heights["x0"]), (1.0, 61))
 
 
+class AlmostOutOfViewTests(unittest.TestCase):
+    def test_a_video_clip_one_pixel_in_view_does_not_stop_the_painting(self):
+        """A video clip starting a pixel or so from the view's right edge (and going on past it) drew its name from a
+        waveform place it had not worked out: the paint stopped there, the tracks under it went undrawn (they flickered
+        while zooming, as clips came in from the right)."""
+        tl = Timeline()
+        tl.resize(900, 300)
+        p = {"width": 320, "height": 180, "fps": 30.0, "duration_us": 20_000_000, "compounds": {}, "tracks": [
+            {"id": "v", "kind": "video", "name": "v", "clips": [{"id": "a", "type": "video", "name": "far", "start_us": 10_000_000,
+                                                                 "duration_us": 5_000_000, "source_start_us": 0,
+                                                                 "media": {"path": "x.mp4", "width": 320, "height": 180}}]},
+            {"id": "t", "kind": "video", "name": "t", "clips": [{"id": "b", "type": "text", "name": "under", "start_us": 0,
+                                                                 "duration_us": 20_000_000, "source_start_us": 0,
+                                                                 "text": {"content": "under"},
+                                                                 "transform": {"x": 0, "y": 0, "scale": 1, "rotation": 0, "opacity": 1}}]}]}
+        tl.set_project(p)
+        tl.set_vzoom(2.0)                                 # (a row tall enough for the name to sit above the strip)
+        from PySide6.QtGui import QImage, QPainter
+        for frac in (0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.5):    # (the clip's start 0 - 2.5 px left of the view's right edge)
+            tl.px_per_s = 100.0
+            tl.scroll_s = 10.0 - (tl.width() - tl.header_w - frac) / tl.px_per_s
+            img = QImage(tl.width(), tl.height(), QImage.Format_ARGB32_Premultiplied)
+            painter = QPainter(img)
+            tl.paint_span = (0, tl.width())
+            try:
+                tl._paint(painter)                        # (raised: what paintEvent lost the rest of the timeline to)
+            finally:
+                painter.end()
+
+
 if __name__ == "__main__":
     unittest.main()

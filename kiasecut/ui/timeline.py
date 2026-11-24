@@ -1482,12 +1482,13 @@ class Timeline(QWidget):
             p.drawRect(near.adjusted(1, 1, -1, -1))
         audio = c["type"] == "audio"
         wx0, wx1 = max(r.left() + 1, self.header_w), min(r.right() - 1, w)
+        # sound clips: the waveform under the label; video: a thin strip at the bottom (where the label ends too: set
+        # even when no waveform shows - a clip almost out of view raised here, and the rest of the timeline went undrawn)
+        wt, wh = (r.top() + 15, r.height() - 17) if audio else (r.bottom() - 10, 9)
+        if not audio and r.height() > 40:                # tall video rows: a bigger strip
+            wt, wh = r.top() + r.height() / 2, r.height() / 2 - 1
+        wt, wh = round(wt), round(wh)
         if wx1 - wx0 >= 2:
-            # sound clips: the waveform under the label; video: a thin strip at the bottom
-            wt, wh = (r.top() + 15, r.height() - 17) if audio else (r.bottom() - 10, 9)
-            if not audio and r.height() > 40:            # tall video rows: a bigger strip
-                wt, wh = r.top() + r.height() / 2, r.height() / 2 - 1
-            wt, wh = round(wt), round(wh)
             tiles = self._wave(c, x0, wx0, wx1, wh) if wh >= 4 and (audio or r.height() >= 24) else []
             if tiles:
                 p.save()

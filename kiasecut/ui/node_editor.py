@@ -2944,33 +2944,35 @@ class NodeEditor(QWidget):
         ed.setFocus()
 
     def _choose_font(self, item, row, path, done):
-        """A font, picked from a list right in the node (type to narrow it): one of the installed fonts, or a font file;
-        done(path) hears the choice."""
-        from PySide6.QtWidgets import QCompleter, QFileDialog
+        """A font, picked from a list opened under the node's field: a search box on top, the installed fonts below (as tall as the
+        node editor leaves room for), and a font file to browse; done(path) hears the choice."""
+        from PySide6.QtCore import QRect
+        from PySide6.QtWidgets import QFileDialog
+        from . import bigcombo
         browse = "瀏覽字型檔…"
-        names = [f["name"] for f in self.fonts] + [browse]
-        combo = QComboBox()
-        combo.setEditable(True)
-        combo.setInsertPolicy(QComboBox.NoInsert)
-        combo.addItems(names)
+        combo = QComboBox(self)                                 # (only holds the names for the list; it is never shown)
+        combo.hide()
+        combo.addItems([f["name"] for f in self.fonts] + [browse])
         combo.setCurrentIndex(next((i for i, f in enumerate(self.fonts) if f["path"] == path), 0))
-        combo.completer().setFilterMode(Qt.MatchContains)
-        combo.completer().setCaseSensitivity(Qt.CaseInsensitive)
-        proxy, finish = self._inline(item, row, combo)
+        field = item.field_rect(row)
+        scene_box = item.mapRectToScene(field).toRect()
+        top_left = self.view.viewport().mapToGlobal(self.view.mapFromScene(scene_box.topLeft()))
+        bottom_right = self.view.viewport().mapToGlobal(self.view.mapFromScene(scene_box.bottomRight()))
+        anchor = QRect(top_left, bottom_right)
+        view = self.view.viewport()
+        bounds = QRect(view.mapToGlobal(view.rect().topLeft()), view.mapToGlobal(view.rect().bottomRight()))
 
         def chosen(name):
             if name == browse:
-                finish(False)
                 got, _ = QFileDialog.getOpenFileName(self, "選擇字型檔", "", "字型 (*.ttf *.otf *.ttc *.otc)")
                 if got:
                     done(got.replace("\\", "/"))
-            elif any(f["name"] == name for f in self.fonts):
-                finish(True, lambda: done(next(f["path"] for f in self.fonts if f["name"] == name)))
+            else:
+                hit = next((f["path"] for f in self.fonts if f["name"] == name), None)
+                if hit is not None:
+                    done(hit)
         combo.textActivated.connect(chosen)
-        combo.lineEdit().returnPressed.connect(lambda: chosen(combo.currentText()))
-        combo.lineEdit().selectAll()
-        combo.setFocus()
-        QTimer.singleShot(0, combo.showPopup)
+        self.font_popup = bigcombo.Popup(combo, anchor, bounds)
 
     def ask_text(self, title, text, multi=False):
         from PySide6.QtWidgets import QInputDialog

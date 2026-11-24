@@ -174,7 +174,6 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(len(got), 1)                                             # (Esc: not kept)
 
     def test_a_font_is_picked_from_a_list_in_the_node(self):
-        from PySide6.QtWidgets import QComboBox
         def build(e):
             ng.add_node(e["graph"], {"type": ng.FONT, "value": ""}, 0, 150, base="f")
         ed = self.make(build)
@@ -184,11 +183,29 @@ class NodeEditorTests(unittest.TestCase):
         it = ed.view.items_by_id["f1"]
         r = next(r for r in it.rows if r["kind"] == "fontvalue")
         ed.field_clicked(it, r, 0, QPointF(0, 0))
-        combo = ed.edit_proxy.widget()
-        self.assertIsInstance(combo, QComboBox)
-        self.assertEqual([combo.itemText(i) for i in range(combo.count())][:2], ["甲", "乙"])
-        combo.textActivated.emit("乙")
+        pop = ed.font_popup
+        self.assertEqual([pop.list.item(i).text() for i in range(pop.list.count())][:2], ["甲", "乙"])
+        pop.search.setText("乙")                                                   # (the search narrows the list)
+        self.assertEqual(pop.list.count(), 1)
+        pop.pick(pop.list.item(0))
         self.assertEqual(got, [("e1", "f1", "/b.ttf")])
+
+    def test_the_font_list_stays_inside_the_node_editor(self):
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FONT, "value": ""}, 0, 150, base="f")
+        ed = self.make(build)
+        ed.resize(500, 260)
+        ed.fonts = [{"name": "字體%d" % i, "path": "/f%d.ttf" % i} for i in range(300)]
+        it = ed.view.items_by_id["f1"]
+        r = next(r for r in it.rows if r["kind"] == "fontvalue")
+        ed.view.centerOn(it)                                                       # (the node is on show, as when it is clicked)
+        ed.field_clicked(it, r, 0, QPointF(0, 0))
+        pop = ed.font_popup
+        vp = ed.view.viewport()
+        view_box = vp.rect().translated(vp.mapToGlobal(vp.rect().topLeft()))
+        self.assertLessEqual(pop.height(), view_box.height())
+        self.assertGreaterEqual(pop.y(), view_box.top())
+        self.assertLessEqual(pop.y() + pop.height(), view_box.bottom() + 1)
 
     def test_shows_nothing_without_a_node_effect(self):
         ed = NodeEditor()

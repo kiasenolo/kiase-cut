@@ -1,7 +1,7 @@
 """A combo box with many items (the fonts: hundreds) opens a search box over a list with a scroll bar of its own, in place of Qt's list of
 every item, which has to size them all each time and scrolls by arrows only. Any combo box (not editable: those have a search of their own, the
 completer) with more than BIG items; polish() in look.py calls watch()."""
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QAbstractItemView, QComboBox, QFrame, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout
 
@@ -12,7 +12,10 @@ ROWS = 14                                          # the list shows this many at
 
 
 class Popup(QFrame):
-    def __init__(self, combo):
+    """anchor: the field it opens from, in global coordinates (the combo box's own rectangle when None); bounds: where it has to stay
+    inside, global too (the screen when None) - it opens on the side with more room and gets only as tall as that."""
+
+    def __init__(self, combo, anchor=None, bounds=None):
         super().__init__(combo.window(), Qt.Popup)
         self.combo = combo
         self.setObjectName("bigcombo")
@@ -44,14 +47,22 @@ class Popup(QFrame):
         self.search.textChanged.connect(self.fill)
         self.search.returnPressed.connect(lambda: self.pick(self.list.currentItem()))
         self.search.installEventFilter(self)
-        self.setFixedWidth(max(combo.width(), 260))
-        height = min(self.list.count(), ROWS) * max(self.list.sizeHintForRow(0), 20) + 8 + self.search.sizeHint().height() + 8
+        if anchor is None:
+            anchor = QRect(combo.mapToGlobal(QPoint(0, 0)), combo.size())
+        if bounds is None:
+            screen = QGuiApplication.screenAt(anchor.bottomLeft()) or QGuiApplication.primaryScreen()
+            bounds = screen.availableGeometry()
+        self.setFixedWidth(max(anchor.width(), 260))
+        row = max(self.list.sizeHintForRow(0), 20)
+        extra = 8 + self.search.sizeHint().height() + 8                      # (what is not the list: the search box, the margins)
+        wanted = min(self.list.count(), ROWS) * row + extra
+        room_below = bounds.bottom() - anchor.bottom()
+        room_above = anchor.top() - bounds.top()
+        below = room_below >= min(wanted, room_above)
+        height = max(min(wanted, room_below if below else room_above), extra + row)
         self.setFixedHeight(height)
-        below = combo.mapToGlobal(QPoint(0, combo.height()))
-        screen = QGuiApplication.screenAt(below) or QGuiApplication.primaryScreen()
-        if below.y() + height > screen.availableGeometry().bottom():
-            below = combo.mapToGlobal(QPoint(0, -height))
-        self.move(below)
+        x = min(anchor.left(), max(bounds.left(), bounds.right() - self.width()))
+        self.move(QPoint(x, anchor.bottom() + 1 if below else anchor.top() - height))
         current = combo.currentIndex()
         if current in self.rows:
             self.list.setCurrentRow(self.rows.index(current))

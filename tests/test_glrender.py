@@ -201,6 +201,27 @@ class GpuMatchesCpu(unittest.TestCase):
         self.assertLess(int(np.abs(shot["behind"][mid] - plain[mid]).max()), 12)       # (behind the picture: hidden)
         self.assertGreater(int(np.abs(shot["front"][mid] - plain[mid]).max()), 25)     # (in front of it: drawn)
 
+    def test_a_solid_text_stands_where_the_flat_one_does_and_has_sides_when_turned(self):
+        def shot(solid, camera=True, depth=150.0, **t):
+            c = {"id": "tx", "type": "text", "name": "t", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0, "transform": tf(**t),
+                 "text": {"content": "KIASE", "size": 20.0, "color": [1.0, 1.0, 1.0], "align": "center", "stroke_on": False}}
+            if solid:
+                c["solid"] = {"on": True, "depth": depth, "bevel": 0.0}
+            v = self.view([c])
+            if camera:
+                v["camera"] = {"on": True}
+            img = pixels(self.gpu.render(v, 0, W, H))
+            self.assertEqual(self.gpu.errors, [])
+            return img.max(axis=2) > 100
+        flat, solid = shot(False), shot(True, depth=0.0)
+        self.assertGreater(int(flat.sum()), 200)
+        both, either = int((flat & solid).sum()), int((flat | solid).sum())
+        self.assertGreater(both / either, 0.8)                                    # (the same letters in the same place: only their anti-aliased edges differ)
+        turned = shot(True, rot_y=50)
+        thin = shot(False, rot_y=50)
+        self.assertGreater(int(turned.sum()), int(thin.sum()) * 1.2)              # (its sides show)
+        self.assertEqual(int((shot(True, camera=False) ^ shot(False, camera=False)).sum()), 0)    # (outside a scene it is the flat text)
+
     def test_depth_of_field_blurs_what_is_out_of_focus_the_same_by_both(self):
         near, far = self.bg(transform=tf(scale=0.5, x=-0.4)), self.bg(transform=tf(scale=0.5, x=0.4, z=1.5))
         v = self.view([near, far])

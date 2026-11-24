@@ -102,6 +102,10 @@ PARAMS = {
              ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
              ("feather", "羽化", 0.0, 1.0, 0.01, 2, 1, 0.0)),
     "clip": (("volume", "音量 %", 0.0, 1000.0, 1.0, 0, 100, 1.0),),
+    "solid": (("depth", "厚度 px", 0.0, 1000.0, 1.0, 1, 1, 40.0),                # 立體 (mesh3d.DEFAULTS)
+              ("bevel", "倒角 px", 0.0, 200.0, 0.5, 1, 1, 3.0),
+              ("metallic", "金屬度 %", 0.0, 100.0, 1.0, 0, 100, 0.0),
+              ("roughness", "粗糙度 %", 0.0, 100.0, 1.0, 0, 100, 0.4)),
     "camera": (("fov", "視角 °", 5.0, 150.0, 0.5, 1, 1, 40.0),                  # 攝影機 of a group / compound (camera.py)
                ("x", "位置 X", -20.0, 20.0, 0.01, 3, 1, 0.0),
                ("y", "位置 Y", -20.0, 20.0, 0.01, 3, 1, 0.0),
@@ -398,7 +402,7 @@ class Inspector(QWidget):
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
         self.part = part
-        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset", "params", "camera"]
+        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset", "params", "camera", "solid"]
         self.setMinimumWidth(300)
         lay = QVBoxLayout(self)
         lay.addWidget(section("遮罩" if part == "mask" else "屬性"))
@@ -621,6 +625,8 @@ class Inspector(QWidget):
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
                 self._build_flip(form)
+                if scene and c["type"] == "text":
+                    self._build_solid(form)
                 self._build_path_follow(form, c)
                 if c["type"] in ("image", "video", "compound") and not c.get("asset"):
                     self._build_corners(form)
@@ -1405,6 +1411,16 @@ class Inspector(QWidget):
                 grid.addWidget(b, gy + 1, gx + 1)
         grid.setColumnStretch(3, 1)
         form.addRow("錨點位置", box)
+
+    def _build_solid(self, form):
+        """立體: in a scene a text's letters can be pushed out into solids, lit and mirroring the studio round the scene (mesh3d.py)."""
+        form.addRow(section("立體"))
+        on = QCheckBox("啟用")
+        on.setToolTip("文字拉出厚度，變成有光影和反射的立體字（遮罩、效果、外框、陰影、背景在立體字上不畫）")
+        on.clicked.connect(lambda v: self._emit_now(self.paramEdited, "solid", "on", bool(v)))
+        self.widgets["solid_on"] = on
+        form.addRow("", on)
+        self._rows(form, "solid", list(PARAMS["solid"]), ())
 
     def _build_camera(self, form, obj=None):
         """攝影機: with it on the clips inside are planes in space the camera looks at (camera.py): each gets 3D 位置 Z and 3D 旋轉."""
@@ -2195,13 +2211,18 @@ class Inspector(QWidget):
             box.blockSignals(True)
             box.setChecked(all(camera.on(k.get("camera")) for k in clips))
             box.blockSignals(False)
+        if "solid_on" in w:
+            box = w["solid_on"]
+            box.blockSignals(True)
+            box.setChecked(all((k.get("solid") or {}).get("on", False) for k in clips))
+            box.blockSignals(False)
         for group, rows in PARAMS.items():
-            if group not in self.groups or (c if group == "clip" else c.get(group)) is None and group != "camera":
+            if group not in self.groups or (c if group == "clip" else c.get(group)) is None and group not in ("camera", "solid"):
                 continue
             for key, _l, _lo, _hi, _st, dec, factor, default in rows:
                 if (group, key) not in w:
                     continue
-                hs = [k if group == "clip" else k.get(group) or {} if group == "camera" else k[group] for k in clips]
+                hs = [k if group == "clip" else k.get(group) or {} if group in ("camera", "solid") else k[group] for k in clips]
                 if (group, key) == ("transform", "scale_y"):            # absent: follows X
                     ps = [h.get("scale_y", h.get("scale", default)) for h in hs]
                 else:

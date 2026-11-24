@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, camera, components, curves, fx, gpusync, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
+from . import assets, camera, components, curves, fx, gpusync, mesh, mesh3d, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -242,6 +242,7 @@ class GL:
         self.vao = {id(p): ctx.vertex_array(p, [(self.vbo, "2f", "pos")])
                     for p in (self.composite, self.mixer, self.coverer)}
         self.fx = fx.Engine(mgl, ctx)
+        self.solids = None              # mesh3d.Drawer, made when a 立體 object is first drawn
         self.textures = {}              # QImage cacheKey -> texture (pictures, texts)
         self.tex_bytes = 0
         self.tex_frame = {}             # the same keys -> (self.frame_no when last drawn, its bytes)
@@ -724,7 +725,9 @@ class GLRenderer(render.Renderer):
                 try:
                     lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
                     blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
-                    if project.has_particles(c):          # (its particles are drawn through the camera one by one, not the picture as a plane)
+                    if mesh3d.on(c):                      # (立體: a solid of its own, not the picture as a plane)
+                        self.gl_solid(tgt, lay, base, cam, c, t, W, H, fps, t_us, blend)
+                    elif project.has_particles(c):          # (its particles are drawn through the camera one by one, not the picture as a plane)
                         gl.fx.scene = camera.scene_matrix(cam, c.get("transform") or {}, t, W, H, t_us) + (zr or (-1e30, 1e30))
                         try:
                             self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
@@ -740,6 +743,35 @@ class GLRenderer(render.Renderer):
                 self.errors.append(f"{c.get('name') or c['type']}: {exc}")
             except Exception as exc:
                 self.errors.append(f"{c.get('name') or c['type']}: {exc}")
+
+    def gl_solid(self, tgt, lay, base, cam, c, t, W, H, fps, t_us, blend):
+        """A 立體 text of a scene: its letters pushed out into a solid (mesh.py), lit and seen by the camera (mesh3d.py), drawn on lay and
+        put on tgt. Its mask and effects, and the flat text's outline, shadow and background, are not drawn."""
+        tf = c.get("transform") or {}
+        opacity = min(1.0, max(0.0, curves.value(tf.get("opacity", 1.0), t)))
+        if opacity <= 0:
+            return
+        tx = c["text"]
+        size = tx.get("size", 5.0)
+        if curves.is_animated(size) and not any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size"):
+            ref = curves.max_abs(size) or 1.0                      # (a growing text is one mesh made bigger, not a mesh a frame)
+            spec = textvars.spec_at(tx, t, TEXT_FIELDS, fps)
+            spec["size"] = ref
+            grown = curves.value(size, t) / ref
+        else:
+            spec, grown = textvars.spec_at(tx, t, TEXT_FIELDS, fps), 1.0
+        k = H / 1080.0
+        data = mesh.text_mesh(spec, H, mesh3d.setting(c, "depth", t) * k, mesh3d.setting(c, "bevel", t) * k)
+        if not len(data):
+            return
+        gl = self.gl
+        if gl.solids is None:
+            gl.solids = mesh3d.Drawer(gl.mgl, gl.ctx)
+        p = gl.solids.program
+        p["metallic"].value = min(1.0, max(0.0, mesh3d.setting(c, "metallic", t)))
+        p["roughness"].value = min(1.0, max(0.0, mesh3d.setting(c, "roughness", t)))
+        gl.solids.draw(lay.fbo, lay.w, lay.h, data, cam, tf, t, W, H, base, t_us, grown)
+        gl.draw_layer(tgt, lay, opacity=opacity, blend=blend)
 
     def gl_blurred(self, tgt, base, c, times, W, H, fps, ppu):
         """動態模糊 (as render.draw_blurred): clip c drawn as it is at each of times on a clear

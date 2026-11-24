@@ -113,7 +113,7 @@ from PySide6.QtGui import QColor, QCursor, QImage, QPainter, QPainterPath, QPen,
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox, QInputDialog, QLineEdit, QPlainTextEdit, QTextEdit,
                                QWidget)
 
-from .. import assets, components, curves, edit, fonts, gizmos, masks, nodegraph, project, render, sharedgl, textlayout, textvars
+from .. import assets, camera, components, curves, edit, fonts, gizmos, masks, nodegraph, project, render, sharedgl, textlayout, textvars
 from . import appevents, randomdialog, touch, viewglide, wheel
 from .pentool import PenMixin
 from .view3d import View3D
@@ -286,6 +286,18 @@ class Box:
         """Canvas point of the rotation handle (above the top edge; k = canvas px per screen px)."""
         up = QPointF(math.sin(self.rot), -math.cos(self.rot))
         return QPointF(self.cx, self.cy) + up * (self.h / 2 + ROT_PX * k)
+
+
+class CanvasFrame:
+    """A stand-in for a Box whose handles are over the whole picture (a 相機 object's: they work on what the camera sees, not on the clip's
+    small frame): the canvas, its middle the origin of the handles' places."""
+
+    def __init__(self, box):
+        self.clip, self.t, self.locked = box.clip, box.t, box.locked
+        self.bw, self.bh, self.W, self.H = box.W, box.H, box.W, box.H
+
+    def xf(self):
+        return QTransform.fromTranslate(self.W / 2.0, self.H / 2.0)
 
 
 class LayerFrame:
@@ -883,7 +895,7 @@ class Preview(PenMixin, _Surface):
 
     def gizmo_effect(self, box):
         """The effect (of box's clip) whose handles are shown, or None."""
-        if box is not None and not self.mask_mode and not self.multi() and box.clip["type"] in ("group", "compound"):
+        if box is not None and not self.mask_mode and not self.multi() and (box.clip["type"] in ("group", "compound") or camera.is_clip(box.clip)):
             cam = gizmos.camera_effect(box.clip, box.W, box.H)         # (a camera that is on: its handles are always there)
             if cam is not None:
                 return cam
@@ -903,6 +915,8 @@ class Preview(PenMixin, _Surface):
         e = self.gizmo_effect(box)
         if e is None:
             return None
+        if e.get("canvas"):
+            box = CanvasFrame(box)
         xf = box.xf()
         for h in reversed(gizmos.handles(e, box.t, box.bw, box.bh)):
             pt = xf.map(QPointF(*h["local"]))
@@ -2250,7 +2264,7 @@ class Preview(PenMixin, _Surface):
         """The handles of the effect picked for 編輯控制點."""
         e = self.gizmo_effect(box)
         if e is not None:
-            paint_gizmo(p, e, box, k)
+            paint_gizmo(p, e, CanvasFrame(box) if e.get("canvas") else box, k)
 
     def gizmo_frame(self):
         """(clip id, effect, box, node id or None) whose handles the preview shows now, or None: the node editor draws them on
@@ -2357,7 +2371,8 @@ class Preview(PenMixin, _Surface):
         box = self.selected_box()
         mbox = self.mask_box(box)
         if (h := self.gizmo_hit(box, m, k)) is not None:                # a handle of the effect picked for 編輯控制點
-            self.drag = {"kind": "gizmo", "box": box, "m0": m, "moved": False, "handle": h, "grab": h["canvas"] - m, "turn": {}}
+            fbox = CanvasFrame(box) if camera.is_clip(box.clip) and h["effect"] == "camera" else box
+            self.drag = {"kind": "gizmo", "box": fbox, "m0": m, "moved": False, "handle": h, "grab": h["canvas"] - m, "turn": {}}
             return
         if mbox is not None and self.masking(mbox):
             g = MaskGeo(mbox, self.mask_of(box.clip))
@@ -2577,6 +2592,10 @@ class Preview(PenMixin, _Surface):
                                   turn_snap=lambda v: snap_angle(v, free))
             if self.gizmo_node:
                 vals = {f"{self.gizmo_node}.{k}": v for k, v in vals.items()}
+            if h["effect"] == "camera" and camera.is_clip(box.clip):      # (a 相機 object's: where it stands is its transform)
+                where = {k: v for k, v in vals.items() if k in ("x", "y", "z")}
+                lens = {k: v for k, v in vals.items() if k not in where}
+                return "multi", {g: v for g, v in (("transform", where), ("camera", lens)) if v}
             if h["effect"] == "camera":                        # (a group's or compound's camera: its own fields)
                 return "camera", vals
             if h["effect"] == "particles":                     # (a particle object: the handles change its fields)

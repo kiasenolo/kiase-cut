@@ -472,6 +472,22 @@ class CameraObject(unittest.TestCase):
         self.assertEqual(v.hit_arrow(QPointF(self.at(o)))[0], "plane")      # (no scale box or rings on a camera)
         self.assertIsNone(v.key_action(QKeyEvent(QEvent.KeyPress, Qt.Key_S, Qt.NoModifier)))
 
+    def test_dragging_its_arrow_in_the_3d_view_edits_the_clips_place(self):
+        pv, v = self.pv, self.pv.view3d
+        done = []
+        pv.paramsCommitted.connect(lambda *a: done.append(a))
+        b = v.selected()
+        o = v.origin(v.values(b))
+        seen = v.seen()
+        start = self.at(v.arrows(seen, o, pv._k())["x"][0])
+        self.assertEqual(v.hit_arrow(QPointF(start))[0], "x")
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(30, 0))
+        QTest.mouseMove(pv, start + QPoint(60, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(60, 0))
+        (cid, group, vals), = done
+        self.assertEqual((cid, group, set(vals)), ("cam", "transform", {"x"}))
+
     def test_the_target_is_edited_in_the_camera_objects_fields(self):
         pv, v = self.pv, self.pv.view3d
         _c, _corners, tg = camera.frustum(v.scene_camera(), S, 1920, 1080)
@@ -496,3 +512,42 @@ class CameraObject(unittest.TestCase):
         pv.set_scene(v, S, None)
         self.assertTrue(pv.set_view3d(True))
         self.assertEqual(pv.view3d.active_object()["id"], "cam")
+
+
+class CameraObjectHandles(unittest.TestCase):
+    """A selected 相機 object has the camera's handles (平移 環繞 推拉 視角) over the picture in the flat view."""
+
+    def setUp(self):
+        self.pv = Preview()
+        self.pv.resize(960, 540)
+        v = scene_view()
+        obj = clip("cam", 0, 4 * S, transform={"x": 0.3, "y": 0.1, "scale": 1.0, "rotation": 0.0, "opacity": 1.0, "z": -2.5})
+        obj["type"], obj["asset"] = "image", {"family": "empty", "w": 100, "h": 100}
+        obj["camera"] = {"fov": 40.0, "tx": 0.0, "ty": 0.0, "tz": 0.0}
+        v["tracks"].append({"id": "t2", "kind": "video", "name": "c", "clips": [obj]})
+        self.pv.set_scene(v, S, "cam")
+        self.done, self.live = [], []
+        self.pv.paramsCommitted.connect(lambda *a: self.done.append(a))
+        self.pv.paramsLive.connect(lambda *a: self.live.append(a))
+
+    def test_the_handles_are_there_and_a_drag_edits_the_object(self):
+        from kiasecut import gizmos
+        pv = self.pv
+        box = pv.selected_box()
+        self.assertIsNotNone(box)
+        e = pv.gizmo_effect(box)
+        self.assertIsNotNone(e)
+        hs = gizmos.handles(e, box.t, pv.W, pv.H)
+        self.assertEqual({h["id"] for h in hs}, {"pan", "orbit", "dolly", "fov"})
+        h = next(h for h in hs if h["id"] == "orbit")
+        r = pv._rect()
+        at = lambda local: QPoint(round(r.x() + (pv.W / 2 + local[0]) / pv.W * r.width()), round(r.y() + (pv.H / 2 + local[1]) / pv.H * r.height()))
+        start = at(h["local"])
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(30, 0))
+        QTest.mouseMove(pv, start + QPoint(60, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(60, 0))
+        (cid, group, vals), = self.done
+        self.assertEqual((cid, group), ("cam", "multi"))
+        self.assertTrue(set(vals["transform"]) <= {"x", "y", "z"} and vals["transform"])
+        self.assertNotIn("x", vals.get("camera", {}))

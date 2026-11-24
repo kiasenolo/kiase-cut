@@ -71,6 +71,10 @@ def camera_effect(clip, W, H):
     """The camera of a group or compound clip, as an effect with its own handles - None when it has none on. W x H: the size of its picture."""
     from . import camera
     cam = clip.get("camera")
+    if camera.is_clip(clip):                           # a 相機 object: its place is the clip's transform, the rest its own; handles over the picture
+        tf = clip.get("transform") or {}
+        merged = dict(cam, on=True, **{k: tf[k] for k in ("x", "y", "z") if k in tf})
+        return {"id": "camera", "filter": CAMERA, "params": {}, "camera": merged, "W": W, "H": H, "asset": True, "canvas": True}
     if clip.get("type") not in ("group", "compound") or not camera.on(cam):
         return None
     if clip["type"] == "compound":

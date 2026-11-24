@@ -13,7 +13,11 @@ on, and for an 空物體 whether it is selected; an Audio Visualizer's also has 
 from the start to the end of the clips that were added, removed or changed are dropped. Anything else that
 draws every frame (the size, the frame rate, the tracks themselves, the parameter rack, the filters' files)
 drops them all.
+
+Still stretches (stillspans.py): where nothing on the level changes with time every frame is the same picture, so one
+frame kept there stands for the whole stretch - it is green at once, and drawing ahead passes over it.
 """
+import bisect
 import collections
 import hashlib
 import pickle
@@ -88,6 +92,10 @@ class FrameCache:
         self.clips = {}
         self.changed = True                   # what is kept changed since the last look (the timeline's bar)
         self.puts = 0
+        self.still = []                       # [(first, end)] frames of the view's still stretches (stillspans.py)
+        self._still_lo = []
+        self._reps = {}                       # still stretch -> the frame kept that stands for it
+        self._misses = {}                     # (stretch, geometry) -> self.puts when it was looked for in vain
 
     def set_limit(self, limit):
         self.limit = max(0, int(limit))
@@ -113,6 +121,46 @@ class FrameCache:
             for lo, hi in spans:
                 self.drop(lo - PAD, hi + PAD)
         self.whole, self.clips = whole, clips
+        try:
+            from . import render, stillspans
+            still = stillspans.frame_spans(view, render.frame_count(view))
+        except Exception:                     # (a project it cannot read: every frame is drawn)
+            still = []
+        self.set_still(still)
+
+    def set_still(self, spans):
+        """The frames [(first, end)] that are each one picture (see the module's text)."""
+        self.still = sorted(spans)
+        self._still_lo = [a for a, _b in self.still]
+        self._reps, self._misses = {}, {}
+        self.changed = True
+
+    def _span(self, pos):
+        i = bisect.bisect_right(self._still_lo, pos) - 1
+        return self.still[i] if i >= 0 and pos < self.still[i][1] else None
+
+    def _rep(self, span, geometry):
+        """The frame kept in still stretch span at this geometry, or None."""
+        p = self._reps.get(span)
+        hit = self.frames.get(p) if p is not None else None
+        if hit is not None and hit[0] == geometry:
+            return p
+        if self._misses.get((span, geometry)) == self.puts:     # (nothing kept since it was looked for: none still)
+            return None
+        p = next((q for q, (g, _i, _n) in self.frames.items() if span[0] <= q < span[1] and g == geometry), None)
+        if p is not None:
+            self._reps[span] = p
+        else:
+            self._misses[(span, geometry)] = self.puts
+        return p
+
+    def _kept(self, pos, geometry):
+        """The frame kept for pos: itself, or the one standing for its still stretch."""
+        hit = self.frames.get(pos)
+        if hit is not None and hit[0] == geometry:
+            return pos
+        span = self._span(pos)
+        return self._rep(span, geometry) if span else None
 
     def drop(self, lo, hi):
         """Forget frames lo .. hi - 1."""
@@ -121,15 +169,14 @@ class FrameCache:
             self.changed = True
 
     def get(self, pos, geometry):
-        hit = self.frames.get(pos)
-        if hit is None or hit[0] != geometry:
+        p = self._kept(pos, geometry)
+        if p is None:
             return None
-        self.frames.move_to_end(pos)
-        return hit[1]
+        self.frames.move_to_end(p)
+        return self.frames[p][1]
 
     def has(self, pos, geometry):
-        hit = self.frames.get(pos)
-        return hit is not None and hit[0] == geometry
+        return self._kept(pos, geometry) is not None
 
     def room_for(self, nbytes):
         """Whether a frame of nbytes fits without dropping any kept one (drawing ahead stops there)."""
@@ -141,6 +188,13 @@ class FrameCache:
         nbytes = img.sizeInBytes()
         if nbytes > self.limit:
             return
+        span = self._span(pos)
+        if span is not None:
+            rep = self._rep(span, geometry)
+            if rep is not None and rep != pos:      # (its stretch has its picture already)
+                self.frames.move_to_end(rep)
+                return
+            self._reps[span] = pos
         old = self.frames.pop(pos, None)
         if old is not None:
             self.bytes -= old[2]
@@ -158,8 +212,12 @@ class FrameCache:
             self.changed = True
 
     def positions(self, geometry):
-        """The positions of the frames kept at this geometry."""
-        return [p for p, (g, _i, _n) in self.frames.items() if g == geometry]
+        """The positions of the frames kept at this geometry: every frame of a still stretch one of them stands for."""
+        out = [p for p, (g, _i, _n) in self.frames.items() if g == geometry]
+        for span in self.still:
+            if self._rep(span, geometry) is not None:
+                out += range(span[0], span[1])
+        return out
 
 
 def runs(positions, step=1):

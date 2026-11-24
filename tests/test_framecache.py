@@ -15,12 +15,13 @@ from kiasecut import framecache  # noqa: E402
 
 APP = QGuiApplication.instance() or QGuiApplication([])
 S = 1_000_000
+MOVING = {"keys": [[0, 1.0, 0, 0, 0, 0], [S, 1.0, 0, 0, 0, 0]]}     # (keyframes: each frame its own, not a still stretch)
 
 
 def shape(cid, start_s, dur_s, x=0.0, **kw):
     c = {"id": cid, "type": "image", "name": cid, "start_us": int(start_s * S), "duration_us": int(dur_s * S),
          "source_start_us": 0, "media": {"path": ":shape:rect", "width": 100, "height": 100},
-         "transform": {"x": x, "y": 0.0, "scale": 0.5, "rotation": 0.0, "opacity": 1.0}}
+         "transform": {"x": x, "y": 0.0, "scale": 0.5, "rotation": 0.0, "opacity": MOVING}}
     c.update(kw)
     return c
 
@@ -28,7 +29,8 @@ def shape(cid, start_s, dur_s, x=0.0, **kw):
 def view():
     return {"width": 320, "height": 180, "fps": 10.0, "play_fps": 10.0, "duration_us": 10 * S, "compounds": {},
             "rack": [], "tracks": [{"id": "t1", "kind": "video", "name": "v1", "clips": [shape("a", 0, 4), shape("b", 5, 3)]},
-                                   {"id": "t2", "kind": "video", "name": "v2", "clips": [shape("c", 2, 2)]}]}
+                                   {"id": "t2", "kind": "video", "name": "v2", "clips": [shape("c", 2, 2)]},
+                                   {"id": "t3", "kind": "video", "name": "bg", "clips": [shape("bg", 0, 10)]}]}
 
 
 def pic():
@@ -99,12 +101,12 @@ class Invalidation(unittest.TestCase):
         fc = filled(v)
         w = copy.deepcopy(v)
         w["markers"] = [{"t": 1}]
-        w["tracks"][2]["clips"].append({"id": "s", "type": "audio", "start_us": 0, "duration_us": S, "media": {"path": "x.wav"}})
+        w["tracks"][3]["clips"].append({"id": "s", "type": "audio", "start_us": 0, "duration_us": S, "media": {"path": "x.wav"}})
         fc.set_view(w)
         self.assertEqual(len(fc.frames), 100)
         v["tracks"][1]["clips"][0]["viz"] = {"kind": "bars"}
         fc = filled(v)
-        fc.set_view(copy.deepcopy(w) | {"tracks": [*copy.deepcopy(v["tracks"][:2]), w["tracks"][2]]})
+        fc.set_view(copy.deepcopy(w) | {"tracks": [*copy.deepcopy(v["tracks"][:3]), w["tracks"][3]]})
         self.assertEqual(set(range(100)) - set(fc.frames), set(range(19, 41)))
 
 

@@ -979,6 +979,23 @@ class NodeEditorTests(unittest.TestCase):
         menu.search.returnPressed.emit()
         self.assertEqual(asked[-1]["kind"], "shape")
 
+    def test_add_menu_search_knows_other_names(self):
+        ed = self.make()
+        menus = []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        ed.add_menu(QPointF(5, 6), QPoint(0, 0))
+        menu = menus[0]
+
+        def found(text):
+            menu.search.setText(text)
+            return " ".join(menu.results.item(i).text() for i in range(menu.results.count()))
+        add = found("add")
+        self.assertIn("混合", add)
+        self.assertIn("數學", add)
+        self.assertIn("Glare", found("bloom"))
+        self.assertIn("Glare", found("光暈"))
+        self.assertIn("映射範圍", found("remap"))
+
     def test_search_results_are_a_scrolling_list_and_the_arrow_keys_move_along_it(self):
         ed = self.make()
         asked = []

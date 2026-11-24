@@ -9,12 +9,15 @@ import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QAbstractItemView, QFrame, QLineEdit, QListWidget, QListWidgetItem, QWidgetAction
 
+from .. import nodemenu
+
 ROWS = 12                                          # the list shows this many matches at a time
 
 
 def key_of(payload):
-    """What of a payload is searched besides its name: a node's filter ref (or shape), a ref given as it is."""
-    return (str(payload.get("ref", payload.get("shape", ""))) if isinstance(payload, dict) else str(payload)).lower()
+    """What of a payload is searched besides its name: a node's filter ref (or shape), a ref given as it is, and the words nodemenu.ALIASES gives it."""
+    ref = str(payload.get("ref", payload.get("shape", ""))) if isinstance(payload, dict) else str(payload)
+    return (ref + " " + nodemenu.aliases_of(ref)).lower()
 
 
 class Steer(QObject):

@@ -1056,6 +1056,19 @@ class NodeEditorTests(unittest.TestCase):
         shown = [menu.results.item(i).text() for i in range(menu.results.count())]
         self.assertTrue(any(t.startswith("混合") for t in shown) and any(t.startswith("數學 ▸ 相加") for t in shown), shown)
 
+    def test_search_puts_the_best_fit_first_and_lists_a_node_once(self):
+        ed = self.make()
+        menus = []
+        ed.popup = lambda menu, pos: menus.append(menu)
+        ed.add_menu(QPointF(5, 6), QPoint(0, 0))
+        menu = menus[0]
+        menu.search.setText("mul")
+        shown = [menu.results.item(i).text().split("　")[0] for i in range(menu.results.count())]
+        self.assertTrue(shown[0].endswith("相乘"), shown)                      # (the choice named multiply, before the nodes only called so)
+        self.assertEqual(len(shown), len(set(shown)), shown)                  # (a node in two menus: once)
+        menu.search.setText("blur")
+        self.assertEqual(menu.results.item(0).text().split("　")[0], "模糊")
+
     def test_menu_presets_are_in_the_order_of_the_menus(self):
         from kiasecut import nodemenu
         for ref, (param, english) in nodemenu.PRESETS.items():

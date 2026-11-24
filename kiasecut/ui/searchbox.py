@@ -5,6 +5,8 @@ the categories (hundreds of menu actions made a menu taller than the screen and 
     box.add("色彩 ▸ 調整", "曝光", payload)   # every entry the search looks through (path, name, payload; a dict's ref, or the payload itself when it is a ref, is searched too)
     box.groups.append(action)               # what is hidden while a search is typed (the categories, the separators)
 pick(payload) hears a choice (click, Enter on the highlighted one); Up / Down in the box move along the matches."""
+import json
+
 import shiboken6
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer
 from PySide6.QtWidgets import QAbstractItemView, QFrame, QLineEdit, QListWidget, QListWidgetItem, QWidgetAction
@@ -18,6 +20,33 @@ def key_of(payload):
     """What of a payload is searched besides its name: a node's filter ref (or shape), a ref given as it is, and the words nodemenu.ALIASES gives it."""
     ref = str(payload.get("ref", payload.get("shape", ""))) if isinstance(payload, dict) else str(payload)
     return (ref + " " + nodemenu.aliases_of(ref)).lower()
+
+
+def score(text, path, name, payload, words):
+    """How well an entry fits what is typed, lower is better (None: not at all). An entry with its own words (a choice of a menu: 數學 ▸
+    向下取整) goes by those: a word that is it, or starts with it, comes first. A node: its name first, then its file name, then the
+    words it is also called by, then its menu."""
+    if words is not None:
+        w = words.lower()
+        parts = w.split()
+        return 1.0 if text in parts else 1.2 if any(x.startswith(text) for x in parts) else 2.0 if text in w else None
+    n = name.lower()
+    ref = key_of(payload)
+    own = ref.split(" ", 1)[0]                                    # (the filter's file name, before its added words)
+    extra = ref[len(own):]
+    if n.startswith(text):
+        return 0.0
+    if own.rsplit("/", 1)[-1].startswith(text):
+        return 0.5
+    if text in n:
+        return 1.5
+    if text in own:
+        return 2.5
+    if any(x.startswith(text) for x in extra.split()):
+        return 3.0
+    if text in extra:
+        return 3.5
+    return 4.0 if text in path.lower() else None
 
 
 class Steer(QObject):
@@ -84,8 +113,17 @@ class SearchBox:
         self.shown_action.setVisible(False)
         if not text:
             return
-        names = [(f"{name}　（{path}）" if path else name, payload) for path, name, payload, words in self.entries
-                 if (text in words.lower() if words is not None else text in name.lower() or text in path.lower() or text in key_of(payload))]
+        ranked, seen = [], set()
+        for i, (path, name, payload, words) in enumerate(self.entries):
+            at = score(text, path, name, payload, words)
+            if at is None:
+                continue
+            same = json.dumps(payload, sort_keys=True, default=str)       # (a node in several menus is one match: the first)
+            if same in seen:
+                continue
+            seen.add(same)
+            ranked.append((at, i, f"{name}　（{path}）" if path else name, payload))
+        names = [(t, p) for _, _, t, p in sorted(ranked, key=lambda r: r[:2])]
         res = self.results
         res.setUpdatesEnabled(False)
         if names:

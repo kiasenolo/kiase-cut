@@ -100,6 +100,24 @@ class ParticleTests(unittest.TestCase):
             self.assertGreater(int(out[..., :3].sum()), 0, over)
             self.assertTrue((self.eng.run(d, vals, pic, time=0.5, unit=90 / 1080) == out).all(), over)
 
+    def test_shatter(self):
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        d = fx.get("builtin:shatter")
+        self.assertIsNone(d.error)
+        pic = np.full((90, 160, 4), 255, np.uint8)
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        unit = 90 / 1080
+        whole = self.eng.run(d, vals, pic, time=0.1, unit=unit)               # before the start: the picture as it is
+        self.assertTrue((whole == pic).all())
+        broken = self.eng.run(d, vals, pic, time=1.2, unit=unit)
+        self.assertTrue(0 < int(broken[..., 3].astype(int).sum()) < int(pic[..., 3].astype(int).sum()))
+        self.assertTrue((self.eng.run(d, vals, pic, time=1.2, unit=unit) == broken).all())
+        self.assertEqual(int(self.eng.run(d, vals, pic, time=20.0, unit=unit)[..., 3].sum()), 0)     # all gone
+        vals["reverse"] = True                                                # played backwards: back in one piece at the end
+        end = vals["start"] + vals["spread"] + vals["life"]
+        self.assertTrue((self.eng.run(d, vals, pic, time=end + 0.1, unit=unit) == pic).all())
+
 
 if __name__ == "__main__":
     unittest.main()

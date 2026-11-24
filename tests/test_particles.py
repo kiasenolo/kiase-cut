@@ -74,6 +74,19 @@ class ParticleTests(unittest.TestCase):
         vals["period"] = 30.0
         self.assertEqual(int(self.eng.run(d, vals, pic, time=20.0, unit=90 / 1080)[..., :3].sum()), 0)
 
+    def test_confetti(self):
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        d = fx.get("builtin:confetti")
+        self.assertIsNone(d.error)
+        pic = np.zeros((90, 160, 4), np.uint8)
+        for over in ({"time_offset": 6.0}, {"time_offset": 6.0, "shape": 1}, {"mode": 1}):
+            vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+            vals.update(over)
+            out = self.eng.run(d, vals, pic, time=0.5, unit=90 / 1080)
+            self.assertGreater(int(out[..., 3].sum()), 0, over)
+            self.assertTrue((self.eng.run(d, vals, pic, time=0.5, unit=90 / 1080) == out).all(), over)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4240,6 +4240,17 @@ def new_compound(root, container, at_us, track_id=None, static=False, component=
     return place_compound(root, container, kid, track_id, at_us)
 
 
+def make_scene(root, container, clip_ids):
+    """建立 3D 場景: the clips go into a new 3D 場景 (new_scene's) and one clip showing it stands where they were. They look as they did
+    (the camera looks straight at the z = 0 they are on) and can now be moved in depth."""
+    c = make_compound(root, container, clip_ids)
+    comp = c["compound"]
+    n = sum(1 for k in root["compounds"].values() if str(k.get("name", "")).startswith("3D 場景")) + 1
+    comp["name"] = c["name"] = f"3D 場景 {n}"
+    c["camera"] = {"on": True, "fov": 40.0, "z": -1.0 / math.tan(math.radians(40.0) / 2)}
+    return c
+
+
 def new_scene(root, container, at_us, track_id=None):
     """3D 場景: a new empty compound with a camera on (camera.py) and a clip showing it at at_us (new_compound's). Enter the clip to put clips
     in it; they get 3D 位置 and 3D 旋轉, the camera is in 屬性."""

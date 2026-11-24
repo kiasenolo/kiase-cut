@@ -2590,7 +2590,7 @@ class Timeline(QWidget):
             items += [None, ("建立群組", "group")]                  # (sounds too: on sound tracks of the group)
             if all(k["type"] != "audio" for k in self.selected_clips()):
                 items += [None, ("建立靜態片段", "make_static"), ("建立靜態元件", "make_static_component"),
-                          ("建立複合片段", "make_compound"), ("建立元件", "make_component")]
+                          ("建立複合片段", "make_compound"), ("建立元件", "make_component"), ("建立 3D 場景", "make_scene")]
             else:
                 items += [None, ("建立複合片段", "make_compound"), ("建立元件", "make_component")]
             streams = build.audio_streams(c["media"]["path"]) if c["type"] in ("audio", "video") and c.get("media") else []

@@ -147,6 +147,16 @@ class Scene(unittest.TestCase):
         self.assertEqual(c2["compound"]["name"], "3D 場景 2")
         self.assertAlmostEqual(c["camera"]["z"], -2.747, 3)
 
+    def test_clips_made_into_a_scene_stay_where_they_are(self):
+        from kiasecut import edit, project
+        p = project.link(project.new())
+        t = edit.add_text(p, 0)
+        c = edit.make_scene(p, p, [t["id"]])
+        self.assertEqual((c["type"], c["compound"]["name"]), ("compound", "3D 場景 1"))
+        self.assertTrue(camera.on(c["camera"]))
+        self.assertEqual([k["id"] for tr in c["compound"]["tracks"] for k in tr["clips"]], [t["id"]])
+        self.assertEqual([k["id"] for tr in p["tracks"] for k in tr["clips"]], [c["id"]])
+
 
 if __name__ == "__main__":
     unittest.main()

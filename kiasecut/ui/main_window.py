@@ -4466,6 +4466,11 @@ class MainWindow(QMainWindow):
                             lambda root: edit.make_compound(root, self.container(root), ids, at, static, comp, mode),
                             select=lambda c: c["id"])
             return
+        if action == "make_scene":
+            sel = self.timeline.selected_ids
+            ids = sorted(sel) if cid in sel else [cid]
+            self.apply_root("建立 3D 場景", lambda root: edit.make_scene(root, self.container(root), ids), select=lambda c: c["id"])
+            return
         if action in ("to_component", "from_component"):
             self.component_kind(edit.find(self.container(), cid)[1]["compound_id"], action == "to_component")
             return

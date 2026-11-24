@@ -38,6 +38,11 @@ vec4 effect(vec2 uv) {
     if (animated)
         p.y += hash11(float(frame) * 4096.0 * 0.0173 + 0.5);    // a new pattern each frame
     vec3 n = vec3(white2(p), white2(p + vec2(17.1, 3.7)), white2(p + vec2(5.3, 21.9)));
+    // a preview smaller than the canvas (1/4x) shows in one pixel what the canvas shows in many: the average of their noise,
+    // which is fainter (a quarter as strong over 4 x 4 pixels), not one of them at full strength. Cells of the noise: 8192 on
+    // the long side, so a canvas wider than that has fewer different values than pixels
+    float cells = min(max(resolution.x, resolution.y), 8192.0);
+    n = 0.5 + (n - 0.5) * min(1.0, max(pass_px.x, pass_px.y) / cells);
 
     vec3 hsv = rgb2hsv(c);
     hsv.x = fract(hsv.x + dot(n - 0.5, vec3(1.0 / 3.0)) * chroma);

@@ -195,6 +195,26 @@ class BuiltinFilterTests(unittest.TestCase):
         vals["z"] = 3.0
         self.assertFalse((eng.run(d, vals, rgba)[..., 0] == out[..., 0]).all())     # (another Z, another picture)
 
+    def test_sensor_noise_of_a_smaller_preview_is_the_canvas_noise_shrunk(self):
+        """At 1/4x a pixel shows 4 x 4 of the canvas: their noise averaged (a quarter as strong), not one at full strength
+        (02-PastRedemption looked grainy at 1/4x)."""
+        if self.eng is None:
+            self.skipTest("no OpenGL for filters")
+        d = fx.get("builtin:blender_sensor_noise")
+        vals = {p.name: fx.uniform_value(p, None, 0) for p in d.params}
+        vals.update(luminance=1.0, chroma=0.0)
+        lin = lambda c: np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)     # (the noise is made in linear light)
+
+        def grey(h, w, unit=1.0):
+            pic = np.full((h, w, 4), 100, np.uint8)
+            pic[..., 3] = 255
+            return lin(self.eng.run(d, vals, pic, unit=unit)[..., 1] / 255.0)
+        full, small = grey(256, 448), grey(64, 112, 0.25)
+        shrunk = full.reshape(64, 4, 112, 4).mean(axis=(1, 3))
+        self.assertGreater(full.std(), 0.05)
+        self.assertAlmostEqual(small.std() / shrunk.std(), 1.0, delta=0.15)
+        self.assertAlmostEqual(small.mean(), shrunk.mean(), delta=0.005)
+
     def test_memory_pull_garbles_what_is_under_it(self):
         import numpy as np
         try:

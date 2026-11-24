@@ -647,6 +647,12 @@ def _particle_asset(key, name, values):
     return Asset(f"particle.{key}", "particle", name, "particles", ("#ffffff", "#000000"), **params)
 
 
+def particle_values(key):
+    """{filter parameter: value} of the 粒子 list's setting `key` ("fire"), for a 粒子系統 node of the node editor to start with."""
+    values = next((v for k, _n, v in _PARTICLE_PRESETS if k == key), None)
+    return {} if values is None else _px(values)
+
+
 if "particles" in FIELDS:
     ASSETS.extend(_particle_asset(k, n, v) for k, n, v in _PARTICLE_PRESETS)
     _BY_KEY.update({a.key: a for a in ASSETS if a.cat == "particle"})

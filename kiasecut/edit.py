@@ -2622,9 +2622,10 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         for k, v in fx.default_params(d).items():
             e["params"][nodegraph.param_key(nid, k)] = v
         for k, v in values.items():
-            q = next((q for q in d.params if q.name == k and q.type == "menu"), None)
-            if q is not None and v in q.items:
-                e["params"][nodegraph.param_key(nid, k)] = v
+            q = next((q for q in d.params if q.name == k), None)
+            if q is not None and (v in q.items if q.type == "menu" else q.type not in ("color", "image", "curve")
+                                  or isinstance(v, (list, tuple))):
+                e["params"][nodegraph.param_key(nid, k)] = copy.deepcopy(v)
     elif node["type"] == nodegraph.SOURCE:
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
         if node["kind"] == "shape" and shape:

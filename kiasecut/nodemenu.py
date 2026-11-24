@@ -11,6 +11,7 @@ from . import nodegraph as ng
 
 SEP = "-"
 SHAPES = "@shapes"
+PARTICLES = "@particles"                    # (the 粒子 settings, a submenu of 粒子系統 nodes that start with them)
 
 
 def node(label, **kw):
@@ -28,7 +29,7 @@ INPUT = [
     node("圖片", type=ng.SOURCE, kind="image"), node("影片", type=ng.SOURCE, kind="video"),
     node("複合片段", type=ng.SOURCE, kind="compound"), node("時間線（軌道）", type=ng.SOURCE, kind="track"),
     node("文字", type=ng.SOURCE, kind="text"),
-    "nodes/image_info", "nodes/coordinate", SHAPES,
+    "nodes/image_info", "nodes/coordinate", SHAPES, PARTICLES,
     SEP,
     menu("場景", ["nodes/time"]),
 ]
@@ -203,7 +204,7 @@ def placed(items=None):
     out = set()
     for it in (ROOT + AFTER if items is None else items):
         if isinstance(it, str):
-            if it != SEP and it != SHAPES:
+            if it not in (SEP, SHAPES, PARTICLES):
                 out.add(ref_of(it))
         elif it[0] == "menu":
             out |= placed(it[2])

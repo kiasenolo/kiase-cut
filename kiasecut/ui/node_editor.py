@@ -3334,6 +3334,13 @@ class NodeEditor(QWidget):
                             n = {"type": ng.SOURCE, "kind": "shape", "asset": {"key": a.key}}
                             sub.addAction(a.name, lambda _=False, n=n: ask(n))
                             entries.add(path + " ▸ 形狀", a.name, n)
+                elif it == nodemenu.PARTICLES:
+                    sub = target.addMenu("粒子")
+                    for a in assets.ASSETS:               # a 粒子系統 node that starts with the setting (all its parameters are the node's)
+                        if a.cat == "particle":
+                            n = {"type": ng.FILTER, "ref": "builtin:particle_system", "set": assets.particle_values(a.key.split(".", 1)[1])}
+                            sub.addAction(a.name, lambda _=False, n=n: ask(n))
+                            entries.add(path + " ▸ 粒子", a.name, n)
                 elif isinstance(it, str):
                     ref = nodemenu.ref_of(it)
                     if ref not in known:

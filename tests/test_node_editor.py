@@ -71,6 +71,21 @@ class NodeEditorTests(unittest.TestCase):
         v.items_by_id["c1"].setPos(600, 100)                    # (the link into it follows)
         self.assertAlmostEqual(far.path().currentPosition().y(), v.items_by_id["c1"].input_pos("src").y(), places=3)
 
+    def test_a_particle_node_starts_with_a_setting_and_draws_without_an_input(self):
+        from kiasecut import edit, assets, nodemenu
+        self.assertIn(nodemenu.PARTICLES, nodemenu.INPUT)
+        values = assets.particle_values("fire")
+        self.assertEqual(values["origin_y"], 0.8)
+        self.assertEqual(values["speed"], 57.0 * 3)                           # (px of a 1080-high canvas)
+        proj = {"tracks": [{"id": "t", "kind": "video", "clips": [clip_with()]}]}
+        proj = edit.find(proj, "c1") and proj
+        e = proj["tracks"][0]["clips"][0]["effects"][0]
+        nid = edit.add_graph_node(proj, "c1", "e1", {"type": ng.FILTER, "ref": "builtin:particle_system", "set": values}, 0, 0)
+        self.assertEqual(e["params"][nid + ".origin_y"], 0.8)
+        self.assertEqual(e["params"][nid + ".look"], "柔邊圓")
+        self.assertEqual(e["params"][nid + ".colors"], values["colors"])
+        self.assertEqual(e["params"][nid + ".count"], 260)
+
     def test_a_vector_node_shows_its_own_fields(self):
         """縮放 / 移動（矢量） have vec2 fields: they showed no value, and drawing the node threw (a blank editor)."""
         def build(e):

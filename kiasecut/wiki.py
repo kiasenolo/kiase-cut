@@ -133,6 +133,8 @@ def categories():
         for it in items:
             if it == nodemenu.SEP:
                 continue
+            if it == nodemenu.PARTICLES:
+                continue
             if it == nodemenu.SHAPES:
                 entries.append(("node", "shapes", "形狀"))
             elif isinstance(it, str):

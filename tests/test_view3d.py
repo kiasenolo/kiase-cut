@@ -2,6 +2,7 @@
 import os
 import sys
 import unittest
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -170,16 +171,46 @@ class Editing3D(unittest.TestCase):
         self.assertTrue(self.live)
         self.assertEqual(v.live, {})                                      # (nothing is left dragging)
 
-    def test_the_middle_moves_it_in_the_pictures_plane(self):
+    def test_dragging_the_plane_moves_it_in_the_pictures_plane(self):
         pv, v = self.pv, self.pv.view3d
-        start = self.at(v.origin(v.values(v.selected())))
-        self.assertEqual(v.hit_arrow(QPointF(start))[0], "plane")
+        mid = self.at(v.origin(v.values(v.selected())))
+        start = mid + QPoint(25, 20)                                      # (on the plane, off the handles)
+        self.assertIsNone(v.hit_arrow(QPointF(start)))
+        self.assertTrue(v.on_body(QPointF(start)))
         QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
         QTest.mouseMove(pv, start + QPoint(60, -30))
         QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(60, -30))
         (_cid, _g, vals), = self.done
         self.assertEqual(set(vals), {"x", "y", "z"})
         self.assertGreater(vals["y"], 0.0)                                # (it went up)
+
+    def test_the_middle_box_scales_all_round(self):
+        pv, v = self.pv, self.pv.view3d
+        start = self.at(v.origin(v.values(v.selected())))
+        self.assertEqual(v.hit_arrow(QPointF(start))[0], "su")
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(40, 0))
+        QTest.mouseMove(pv, start + QPoint(80, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(80, 0))
+        (_cid, _g, vals), = self.done
+        self.assertEqual(set(vals), {"scale", "scale_y"})
+        self.assertGreater(vals["scale"], v.values(v.selected())["scale"])
+
+    def test_the_x_box_scales_only_x(self):
+        pv, v = self.pv, self.pv.view3d
+        seen, k = v.seen(), pv._k()
+        o = v.origin(v.values(v.selected()))
+        n = v.arrow_length(seen, o, k)
+        start = self.at(o + np.array(v.AXES["x"]) * n * v.BOX_AT)
+        self.assertEqual(v.hit_arrow(QPointF(start))[0], "sx")
+        v0 = v.values(v.selected())
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(30, 0))
+        QTest.mouseMove(pv, start + QPoint(60, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(60, 0))
+        (_cid, _g, vals), = self.done
+        self.assertGreater(vals["scale"], v0["scale"])
+        self.assertEqual(vals["scale_y"], v0["scale_y"])
 
     def test_g_then_z_moves_along_z_and_escape_puts_it_back(self):
         pv, v = self.pv, self.pv.view3d

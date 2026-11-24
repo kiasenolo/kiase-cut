@@ -179,6 +179,7 @@ class View3D:
     # -- the selected plane: its arrows ---------------------------------------------------------------------------------------
     AXES = {"x": (1.0, 0.0, 0.0), "y": (0.0, -1.0, 0.0), "z": (0.0, 0.0, 1.0)}          # (y is up: the world's y goes down)
     COLORS = {"x": RED, "y": GREEN, "z": BLUE}
+    BOX_AT = 0.55                                   # where on an arrow's length the scale box of its axis is
     ARROW_PX = 110                                  # screen px an arrow is long, whatever the distance
 
     def selected(self):
@@ -260,12 +261,24 @@ class View3D:
             return None
         m = self._canvas(pos)
         near = lambda q, r: q is not None and math.hypot(q[0] - m.x(), q[1] - m.y()) <= r * k
+        if near(mid, 8):
+            return ("plane" if isinstance(b, CamThing) else "su"), b
+        if not isinstance(b, CamThing):
+            n = self.arrow_length(seen, o, k)
+            for a in ("x", "y"):
+                if near(seen.point(o + np.array(self.AXES[a]) * n * self.BOX_AT), 8):
+                    return "s" + a, b
         for a, (_tip, at) in self.arrows(seen, o, k).items():
             if near(at, 9):
                 return a, b
-        if near(mid, 9):
-            return "plane", b
         return None
+
+    def on_body(self, pos):
+        """True when the pointer is on the selected plane (a drag from there moves it in the picture's plane)."""
+        b = self.selected()
+        if b is None or isinstance(b, CamThing) or self.through:
+            return False
+        return self.nearest(pos) == b.clip["id"]
 
     # -- events ---------------------------------------------------------------------------------------------------------------
     def mouse_press(self, e):
@@ -277,6 +290,8 @@ class View3D:
             hit = self.hit_arrow(e.position())
             if hit is not None:
                 self.start_drag(hit[0], hit[1], e.position())
+            elif self.on_body(e.position()):
+                self.start_drag("plane", self.selected(), e.position())
             else:
                 self.pick(e.position(), bool(e.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)))
             return True
@@ -362,6 +377,21 @@ class View3D:
             self.p.update()
             return
         self.sel_cam = None
+        cid = self.nearest(pos)
+        clip = None
+        if cid is not None:
+            clip = next((b.clip for b in self.p.visible_boxes() if b.clip["id"] == cid), None)
+        if clip is None:
+            if not add:
+                self.p.selectionPicked.emit(set(), None)
+        elif add:
+            ids = set(self.p.selected_ids) ^ {clip["id"]}
+            self.p.selectionPicked.emit(ids, clip["id"] if clip["id"] in ids else next(iter(ids), None))
+        else:
+            self.p.clipPicked.emit(clip)
+
+    def nearest(self, pos):
+        """The id of the plane nearest the viewer that the line of sight through pos goes through, or None."""
         c, d = self._ray(pos)
         best = None
         for cid, pts in self.plane_corners().items():
@@ -377,17 +407,7 @@ class View3D:
             u, v = float(q @ e1) / float(e1 @ e1), float(q @ e2) / float(e2 @ e2)
             if 0.0 <= u <= 1.0 and 0.0 <= v <= 1.0 and (best is None or t < best[0]):
                 best = (t, cid)
-        clip = None
-        if best is not None:
-            clip = next((b.clip for b in self.p.visible_boxes() if b.clip["id"] == best[1]), None)
-        if clip is None:
-            if not add:
-                self.p.selectionPicked.emit(set(), None)
-        elif add:
-            ids = set(self.p.selected_ids) ^ {clip["id"]}
-            self.p.selectionPicked.emit(ids, clip["id"] if clip["id"] in ids else next(iter(ids), None))
-        else:
-            self.p.clipPicked.emit(clip)
+        return None if best is None else best[1]
 
     def pick_camera(self, pos):
         """"camera" when the pointer is on the scene's camera (its apex or a line of its pyramid), "target" on the point it looks at, else None."""
@@ -451,6 +471,14 @@ class View3D:
         if kind == "plane":
             n = seen.axes[2]
             self.drag = {"kind": kind, "b": b, "v0": v0, "start": self._in_plane(ray, o0, n), "n": n, "o0": o0, "moved": False}
+        elif kind == "su":
+            mid, m = seen.point(o0), self._canvas(pos)
+            r = math.hypot(m.x() - mid[0], m.y() - mid[1]) if mid else 0.0
+            self.drag = {"kind": kind, "b": b, "v0": v0, "start": max(r, 1.0), "mid": mid, "moved": False}
+        elif kind in ("sx", "sy"):
+            a = np.array(self.AXES[kind[1]])
+            s0 = self._on_axis(ray, o0, a)
+            self.drag = {"kind": kind, "b": b, "v0": v0, "start": s0 if s0 and abs(s0) > 1e-6 else None, "a": a, "o0": o0, "moved": False}
         else:
             a = np.array(self.AXES[kind])
             self.drag = {"kind": kind, "b": b, "v0": v0, "start": self._on_axis(ray, o0, a), "a": a, "o0": o0, "moved": False}
@@ -460,7 +488,19 @@ class View3D:
         ray = self._ray(pos)
         if d["start"] is None:
             return
-        if d["kind"] == "plane":
+        if d["kind"] == "su":
+            m, mid = self._canvas(pos), d["mid"]
+            f = max(0.01, math.hypot(m.x() - mid[0], m.y() - mid[1]) / d["start"])
+            vals = {"scale": round(d["v0"]["scale"] * f, 5), "scale_y": round(d["v0"]["scale_y"] * f, 5)}
+        elif d["kind"] in ("sx", "sy"):
+            s = self._on_axis(ray, d["o0"], d["a"])
+            if s is None:
+                return
+            f = max(0.01, s / d["start"])
+            vals = {"scale": d["v0"]["scale"], "scale_y": d["v0"]["scale_y"]}
+            key = "scale" if d["kind"] == "sx" else "scale_y"
+            vals[key] = round(vals[key] * f, 5)
+        elif d["kind"] == "plane":
             q = self._in_plane(ray, d["o0"], d["n"])
             if q is None:
                 return
@@ -620,10 +660,29 @@ class View3D:
             p.setPen(QPen(self.COLORS[name], 2.0 * k))
             p.drawLine(m0, tip)
             p.setBrush(self.COLORS[name])
-            p.drawRect(QRectF(tip.x() - 4 * k, tip.y() - 4 * k, 8 * k, 8 * k))
-        p.setPen(QPen(QColor(255, 255, 255), 1.5 * k))
-        p.setBrush(QColor(255, 255, 255, 90))
-        p.drawEllipse(m0, 6 * k, 6 * k)
+            dx, dy = tip.x() - m0.x(), tip.y() - m0.y()
+            ln = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / ln, dy / ln
+            h, w = 14 * k, 5 * k                                     # (the arrow's head)
+            base = QPointF(tip.x() - ux * h, tip.y() - uy * h)
+            p.drawPolygon(QPolygonF([QPointF(tip.x() + ux * 4 * k, tip.y() + uy * 4 * k),
+                                     QPointF(base.x() - uy * w, base.y() + ux * w),
+                                     QPointF(base.x() + uy * w, base.y() - ux * w)]))
+        if not isinstance(b, CamThing):                              # (the boxes scale: along X, along Y)
+            n = self.arrow_length(seen, o, k)
+            for name in ("x", "y"):
+                at = seen.point(o + np.array(self.AXES[name]) * n * self.BOX_AT)
+                if at is not None:
+                    p.setPen(QPen(QColor(30, 30, 30), 1.0 * k))
+                    p.setBrush(self.COLORS[name])
+                    p.drawRect(QRectF(at[0] - 4.5 * k, at[1] - 4.5 * k, 9 * k, 9 * k))
+            p.setPen(QPen(QColor(30, 30, 30), 1.0 * k))
+            p.setBrush(QColor(235, 235, 235))
+            p.drawRect(QRectF(m0.x() - 5 * k, m0.y() - 5 * k, 10 * k, 10 * k))
+        else:
+            p.setPen(QPen(QColor(255, 255, 255), 1.5 * k))
+            p.setBrush(QColor(255, 255, 255, 90))
+            p.drawEllipse(m0, 6 * k, 6 * k)
         p.setBrush(Qt.NoBrush)
 
     def _paint_camera(self, p, k, seen):

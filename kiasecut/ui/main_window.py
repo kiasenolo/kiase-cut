@@ -253,7 +253,7 @@ class MainWindow(QMainWindow):
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("transform", "z"): "3D 位置", ("transform", "rot_x"): "3D 旋轉", ("transform", "rot_y"): "3D 旋轉", ("camera", "on"): "攝影機",
                     ("camera", "fov"): "攝影機視角", ("camera", "x"): "攝影機位置", ("camera", "y"): "攝影機位置", ("camera", "z"): "攝影機位置",
-                    ("camera", "tx"): "攝影機目標", ("camera", "ty"): "攝影機目標", ("camera", "tz"): "攝影機目標",
+                    ("camera", "aperture"): "景深", ("camera", "focus"): "景深", ("camera", "tx"): "攝影機目標", ("camera", "ty"): "攝影機目標", ("camera", "tz"): "攝影機目標",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
                     ("transform", "anchor_x"): "錨點", ("transform", "anchor_y"): "錨點",
                     ("clip", "volume"): "音量", ("text", "size"): "字號", ("text", "color"): "文字顏色",

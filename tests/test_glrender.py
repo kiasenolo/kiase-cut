@@ -131,6 +131,19 @@ class GpuMatchesCpu(unittest.TestCase):
             a, b = pixels(r.render(copy.deepcopy(plain), 0, W, H)), pixels(r.render(copy.deepcopy(turned), 0, W, H))
             self.assertGreater(float(np.abs(a - b).mean()), 3.0)
 
+    def test_depth_of_field_blurs_what_is_out_of_focus_the_same_by_both(self):
+        near, far = self.bg(transform=tf(scale=0.5, x=-0.4)), self.bg(transform=tf(scale=0.5, x=0.4, z=1.5))
+        v = self.view([near, far])
+        v["camera"] = {"on": True, "aperture": 0.0}
+        sharp = copy.deepcopy(v)
+        v["camera"] = {"on": True, "aperture": 6.0}
+        self.check("dof", v, mean_max=3.0, far_max=0.03)
+        edge = lambda img, x0, x1: float((np.diff(img[:, x0:x1].astype(float), n=2, axis=1) ** 2).sum())
+        for r in (self.cpu, self.gpu):
+            a, b = pixels(r.render(copy.deepcopy(sharp), 0, W, H)), pixels(r.render(copy.deepcopy(v), 0, W, H))
+            self.assertLess(edge(b, W // 2, W), 0.8 * edge(a, W // 2, W))          # (the far one, on the right, is softer)
+            self.assertAlmostEqual(edge(b, 0, W // 2), edge(a, 0, W // 2), delta=0.05 * edge(a, 0, W // 2))   # (the one in focus is as it was)
+
     def test_a_nearer_clip_is_drawn_over_a_farther_one_whatever_their_order(self):
         far = self.bg(transform=tf(scale=0.4, z=0.5))
         near = self.top(transform=tf(scale=0.5, z=-0.3))

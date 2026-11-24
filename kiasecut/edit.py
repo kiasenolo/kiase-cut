@@ -978,7 +978,7 @@ GROUP_FIELDS = {
     "text": TEXT_ANIM_FIELDS,
     "mask": ("cx", "cy", "w", "h", "rotation", "feather", "kind", "invert", "paths"),     # (paths: a 路徑 mask's)
     "clip": ("volume", "blend"),
-    "camera": ("fov", "x", "y", "z", "tx", "ty", "tz"),                   # 攝影機 of a group or compound (camera.py)
+    "camera": ("fov", "x", "y", "z", "tx", "ty", "tz", "aperture", "focus"),                   # 攝影機 of a group or compound (camera.py)
 }
 # how a picture mixes with what is under it (render.BLEND_OPS draws them); a group's can also be
 # pass_through (穿透, as in Photoshop: its clips mix with what is under the group themselves)

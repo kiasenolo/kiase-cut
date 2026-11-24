@@ -707,7 +707,7 @@ class GLRenderer(render.Renderer):
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
                     lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
-                    self.gl_clip(lay, base, camera.flat(dict(c, blend="normal")), W, H, fps, t_us, ppu)
+                    self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H), W, H, fps, t_us, ppu)
                     gl.draw_plane(tgt, lay, inv_base * q * base, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0))
                 finally:
                     gl.release(lay)

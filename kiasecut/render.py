@@ -743,7 +743,7 @@ class Renderer:
                 lp.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
                 lp.setTransform(base)
                 try:
-                    self.draw_clip(lp, camera.flat(dict(c, blend="normal")), W, H, fps, t_us, px_per_unit)
+                    self.draw_clip(lp, camera.deepfocus(cam, c, t, W, H), W, H, fps, t_us, px_per_unit)
                 finally:
                     lp.end()
                 p.save()

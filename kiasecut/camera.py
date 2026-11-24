@@ -83,6 +83,24 @@ def depth(cam, tf, t, W, H):
     return float((cam_axes @ (o - c))[2]) / s
 
 
+def blur(cam, tf, t, W, H):
+    """景深: the radius (px of the flat picture, as a 模糊 effect takes it) a clip with transform tf is blurred by - the farther it is from
+    the focus (cam["focus"], half-heights from the camera; without it the target's distance), the more, as a lens does: aperture (光圈,
+    0: no depth of field) x |distance - focus| / distance of a fiftieth of the picture's height. It is the blur on the picture, so it
+    is divided by the plane's scale (a far plane is drawn smaller)."""
+    aperture = _v(cam, "aperture", 0.0, t)
+    if aperture <= 0:
+        return 0.0
+    f, c, tg, _axes = _pose(cam, t, W, H)
+    s = H / 2.0
+    d = depth(cam, tf, t, W, H)
+    if d <= NEAR:
+        return 0.0
+    focus = _v(cam, "focus", 0.0, t) if cam.get("focus") is not None else float(np.linalg.norm(tg - c)) / s
+    scale = f / s / d                                          # the plane's size on the picture, in its own
+    return aperture * H / 50.0 * abs(d - focus) / d / max(scale, 1e-6)
+
+
 def flat(c):
     """Clip c with the transform of its flat drawing: at the middle of the picture, not turned - where plane() puts it, the rest
     (scale, flips, mask, effects) as it is."""
@@ -139,3 +157,15 @@ def dolly(cam, t, W, H, dy, per_px=0.004):
     """推拉: the camera goes towards its target (a drag up) or away from it."""
     _f, c, tg, _axes = _pose(cam, t, W, H)
     return _units(tg + (c - tg) * math.exp(dy * per_px), W, H)
+
+
+def deepfocus(cam, c, t, W, H):
+    """The clip drawn flat for the scene (flat()), with the 景深 blur its distance gives it as the last of its effects."""
+    from . import fx
+    out = flat(dict(c, blend="normal"))
+    r = blur(cam, c.get("transform") or {}, t, W, H)
+    if r >= 0.25:
+        e = fx.new_effect("builtin:blur", "~dof")
+        e["params"].update(radius=r, link_xy=True)
+        out["effects"] = list(c.get("effects") or []) + [e]
+    return out

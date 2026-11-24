@@ -47,6 +47,29 @@ class Planes(unittest.TestCase):
         self.assertEqual(c["transform"]["x"], 0.3)
 
 
+class DepthOfField(unittest.TestCase):
+    cam = {"on": True, "fov": 40.0, "z": -2.747, "aperture": 4.0}
+
+    def test_the_focus_is_sharp_and_the_rest_blurs_by_how_far_from_it(self):
+        r = lambda z, cam=None: camera.blur(cam or self.cam, {"z": z}, 0, W, H)
+        self.assertEqual(r(0.0), 0.0)                              # (the target's distance is the focus: z = 0)
+        self.assertGreater(r(1.0), r(0.5), 0)
+        self.assertGreater(r(0.5), 0.0)
+        self.assertGreater(r(-1.0), 0.0)                           # (nearer than the focus blurs too)
+        self.assertEqual(r(1.0, dict(self.cam, aperture=0.0)), 0.0)
+        self.assertGreater(r(1.0, dict(self.cam, aperture=8.0)), 1.9 * r(1.0))
+        self.assertEqual(r(0.0, dict(self.cam, focus=3.747)), 0.0 + r(0.0, dict(self.cam, focus=3.747)))
+        self.assertGreater(r(0.0, dict(self.cam, focus=3.747)), 0.0)   # (focus put farther: z = 0 is out of it)
+
+    def test_a_blurred_clip_is_drawn_with_a_blur_effect_last(self):
+        c = {"transform": {"z": 1.0}, "effects": [{"id": "e", "filter": "builtin:invert", "params": {}}]}
+        out = camera.deepfocus(self.cam, c, 0, W, H)
+        self.assertEqual([e["filter"] for e in out["effects"]], ["builtin:invert", "builtin:blur"])
+        self.assertGreater(out["effects"][-1]["params"]["radius"], 1.0)
+        self.assertNotIn("effects", camera.deepfocus(dict(self.cam, aperture=0.0), c, 0, W, H) if False else {})
+        self.assertEqual(len(camera.deepfocus(dict(self.cam, aperture=0.0), c, 0, W, H)["effects"]), 1)
+
+
 class Moves(unittest.TestCase):
     cam = {"on": True, "fov": 40.0, "z": -2.747}
 

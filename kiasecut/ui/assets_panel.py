@@ -5,13 +5,16 @@ Drag one onto the timeline (hold Alt over a picture clip to replace its source),
 double-click to add it at the playhead. The two colours at the top paint the shapes and the
 自訂 solid / gradients; presets keep their own colours. Once placed, everything about it
 (size, colours, corners, outline…) is set in the inspector's 素材參數."""
-from PySide6.QtCore import QByteArray, QMimeData, QRectF, QSize, Qt, Signal
+import queue
+import time
+
+from PySide6.QtCore import QByteArray, QMimeData, QRectF, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
-from .. import assets, textlayout, textpresets, viz
+from .. import assets, fx, textlayout, textpresets, viz
 from .colorpick import hex_of, pick_color, qcolor
 from .timeline import MEDIA_MIME
 from .menukeys import Menu
@@ -216,7 +219,71 @@ def viz_thumbnail(kind):
     return QPixmap.fromImage(img)
 
 
+THUMB_SCALE = 2                                  # (the particle thumbnails are drawn this much larger than they show)
+THUMB_LOOP = 6.0                                 # s: the hover animation plays this long, then again
+STILL_T = 1.0                                    # s: the moment a still thumbnail shows
+
+
+class ParticleThumbs(QThread):
+    """Draws the particle objects' thumbnails with the real particle system, on a thread of its own (it has its own GL context):
+    ask(key, t) wants the picture of preset `key` at time t; only the latest ask of each preset is drawn; frame(key, image) is the answer.
+    Nothing is drawn where there is no OpenGL: the thumbnails keep their painted pictures."""
+    frame = Signal(str, QImage)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.jobs = queue.Queue()
+        self.latest = {}
+        self.stopping = False
+
+    def ask(self, key, t):
+        self.latest[key] = t
+        self.jobs.put(key)
+        if not self.isRunning():
+            self.start()
+
+    def stop(self):
+        self.stopping = True
+        self.jobs.put(None)
+        self.wait(3000)
+
+    def run(self):
+        import numpy as np
+        try:
+            eng = fx.Engine()
+        except Exception:
+            return
+        w, h = THUMB[0] * THUMB_SCALE, THUMB[1] * THUMB_SCALE
+        yy = np.linspace(0.0, 1.0, h, dtype="f4")[:, None, None]
+        bg = np.empty((h, w, 4), np.uint8)
+        bg[..., :3] = (np.array([24, 24, 32], "f4") * (1 - yy) + np.array([14, 14, 20], "f4") * yy).astype(np.uint8)
+        bg[..., 3] = 255
+        while not self.stopping:
+            key = self.jobs.get()
+            if key is None:
+                break
+            t = self.latest.pop(key, None)
+            if t is None:                                  # (a newer ask of it has been drawn already)
+                continue
+            try:
+                a = assets.get("particle." + key)
+                e = assets.particle_effect(assets.make(a, "#ffffff", "#000000", w, h))
+                d = fx.get(e["filter"])
+                vals = {p.name: fx.uniform_value(p, e["params"].get(p.name), 0) for p in d.params}
+                out = np.ascontiguousarray(eng.run(d, vals, bg, time=t, unit=1.0))
+            except Exception:
+                continue
+            self.frame.emit(key, QImage(out.data, w, h, 4 * w, QImage.Format_RGBA8888).copy())
+        eng.close()
+
+
 class AssetList(QListWidget):
+    left = Signal()                                   # the pointer left the list
+
+    def leaveEvent(self, e):
+        super().leaveEvent(e)
+        self.left.emit()
+
     def __init__(self, panel):
         super().__init__()
         self.panel = panel
@@ -345,8 +412,66 @@ class AssetsPanel(QWidget):
             b.hide()
             toggles[0].toggled.connect(b.setChecked)
         self.view_row.addWidget(toggles[0])
+        self._thumbs_setup()
         self.refresh()
         self.setMinimumWidth(260)
+
+    def _thumbs_setup(self):
+        """The 粒子 list: real pictures of the particle system instead of the painted ones as soon as they are drawn, and an animation
+        while the pointer is over one."""
+        self.thumbs = ParticleThumbs(self)
+        self.thumbs.frame.connect(self._thumb_frame)
+        lst = self.lists.get("particle")
+        if lst is None:
+            return
+        self.hover = None                                   # (key, when it began) of the preset the pointer is over
+        self.hover_timer = QTimer(self)
+        self.hover_timer.setInterval(70)
+        self.hover_timer.timeout.connect(self._hover_tick)
+        lst.setMouseTracking(True)
+        lst.itemEntered.connect(self._hover_begin)
+        lst.left.connect(self._hover_end)
+        self.destroyed.connect(self.thumbs.stop)
+        self.still_timer = QTimer(self)                      # (asked once the tab shows, one preset after another, not all at once)
+        self.still_timer.setSingleShot(True)
+        self.still_timer.timeout.connect(self._ask_stills)
+        self.pending_stills = []
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        if getattr(self, "pending_stills", None) is not None and not getattr(self, "stills_asked", False):
+            self.stills_asked = True
+            self.pending_stills = [a.key.split(".", 1)[1] for a in assets.ASSETS if a.cat == "particle"]
+            self.still_timer.start(200)
+
+    def _ask_stills(self):
+        if self.pending_stills:
+            self.thumbs.ask(self.pending_stills.pop(0), STILL_T)
+            self.still_timer.start(40)
+
+    def _thumb_frame(self, key, img):
+        lst = self.lists.get("particle")
+        for i in range(lst.count()) if lst else ():
+            it = lst.item(i)
+            if it.data(ROLE_KEY) == "particle." + key:
+                it.setIcon(QIcon(QPixmap.fromImage(img)))
+
+    def _hover_begin(self, it):
+        key = it.data(ROLE_KEY)
+        self.hover = (key.split(".", 1)[1], time.monotonic()) if key and key.startswith("particle.") else None
+        if self.hover:
+            self.hover_timer.start()
+
+    def _hover_end(self):
+        was, self.hover = self.hover, None
+        self.hover_timer.stop()
+        if was:                                              # (back to the still one)
+            self.thumbs.ask(was[0], STILL_T)
+
+    def _hover_tick(self):
+        if self.hover:
+            key, t0 = self.hover
+            self.thumbs.ask(key, (time.monotonic() - t0) % THUMB_LOOP)
 
     def ident(self, key):
         if key.startswith("viz."):

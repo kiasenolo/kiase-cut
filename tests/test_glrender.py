@@ -160,6 +160,28 @@ class GpuMatchesCpu(unittest.TestCase):
         self.assertLess(xs, x0 - 20)
         self.assertEqual(lit({"on": True}, z=-5.0)[0], 0)                   # (behind the camera)
 
+    def test_a_particle_is_behind_or_in_front_of_a_plane_by_its_own_depth(self):
+        from kiasecut import assets
+        p = assets.make(assets.get("particle.system"), "#ffffff", "#000000", 640, 360)
+        p.update(pt_count=1, pt_speed=0.0, pt_gravity=0.0, pt_drag=0.0, pt_life=30.0, pt_life_var=0.0, pt_size=120.0, pt_size_var=0.0,
+                 pt_size_end=1.0, pt_fade_in=0.0, pt_fade_out=0.0, pt_look="實心圓", pt_glow=0.0, pt_origin_x=0.5, pt_origin_y=0.5,
+                 pt_depth_on=True, pt_color=[1.0, 1.0, 1.0, 1.0])
+        shot = {}
+        for name, oz in (("behind", 600.0), ("front", -400.0)):
+            q = assets.normalize(dict(p, pt_origin_z=oz))
+            c = self.pic("pt", self.spot, 640, 360, transform=tf())             # (the system's own plane is at the same depth as the picture's)
+            c["asset"], c["start_us"], c["duration_us"] = q, 0, 2 * S
+            v = self.view([self.bg(transform=tf(scale=3.0))], [c])
+            v["camera"] = {"on": True}
+            shot[name] = pixels(self.gpu.render(v, 30, W, H))
+            self.assertEqual(self.gpu.errors, [])
+        v = self.view([self.bg(transform=tf(scale=3.0))])
+        v["camera"] = {"on": True}
+        plain = pixels(self.gpu.render(v, 0, W, H))
+        mid = (H // 2, W // 2)
+        self.assertLess(int(np.abs(shot["behind"][mid] - plain[mid]).max()), 12)       # (behind the picture: hidden)
+        self.assertGreater(int(np.abs(shot["front"][mid] - plain[mid]).max()), 25)     # (in front of it: drawn)
+
     def test_depth_of_field_blurs_what_is_out_of_focus_the_same_by_both(self):
         near, far = self.bg(transform=tf(scale=0.5, x=-0.4)), self.bg(transform=tf(scale=0.5, x=0.4, z=1.5))
         v = self.view([near, far])

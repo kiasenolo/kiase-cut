@@ -485,6 +485,9 @@ class GpuFrame:
 SHOWN = 4                             # frames kept out of the layer pool: the preview may still be drawing one of the last few
 
 
+MAX_SLICES = 9                              # a particle system in a 3D 場景 is drawn in at most this many stretches of depth (one more than the planes it is among)
+
+
 class GLRenderer(render.Renderer):
     """render.Renderer's pictures, composited on the GPU (same interface)."""
 
@@ -694,9 +697,21 @@ class GLRenderer(render.Renderer):
                 if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
-                    items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t))
+                    items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t, None))
+        planes = sorted({-it[0] for it in items if it[2]["type"] != "filter" and not project.has_particles(it[2])})
+        if planes and len(planes) <= MAX_SLICES - 1:           # (particles between planes: the system is drawn again for each stretch of depth between them, in its place in the order)
+            cuts, out = [-1e30] + planes + [1e30], []
+            for it in items:
+                if it[2]["type"] == "filter" or not project.has_particles(it[2]):
+                    out.append(it)
+                    continue
+                for j in range(len(cuts) - 1):
+                    lo, hi = cuts[j], cuts[j + 1]
+                    mid = hi + 1.0 if hi > 1e29 else lo - 1.0 if lo < -1e29 else (lo + hi) / 2.0
+                    out.append((-mid, it[1] + j * 1e-3, it[2], it[3], it[4], (lo * H / 2.0, hi * H / 2.0)))
+            items = out
         inv_base, _ = base.inverted()
-        for _d, _n, c, i, t in sorted(items, key=lambda it: it[:2]):
+        for _d, _n, c, i, t, zr in sorted(items, key=lambda it: it[:2]):
             try:
                 if c["type"] == "filter":
                     self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu, tracks[:i])
@@ -709,7 +724,7 @@ class GLRenderer(render.Renderer):
                     lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
                     blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
                     if project.has_particles(c):          # (its particles are drawn through the camera one by one, not the picture as a plane)
-                        gl.fx.scene = camera.scene_matrix(cam, c.get("transform") or {}, t, W, H, t_us)
+                        gl.fx.scene = camera.scene_matrix(cam, c.get("transform") or {}, t, W, H, t_us) + (zr or (-1e30, 1e30))
                         try:
                             self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
                         finally:

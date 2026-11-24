@@ -351,6 +351,7 @@ bool particle(int id, out Particle p) {
         vec2 mid = 0.5 * resolution;
         vec4 cs = scene_m * vec4(p.pos - mid, depth_on ? z : 0.0, 1.0);
         if (cs.z <= 0.0005 * resolution.y) return false;           // (behind the camera)
+        if (cs.z < scene_z.x || cs.z >= scene_z.y) return false;   // (another stretch of depth's: drawn with the planes it is among)
         float sc = scene_f / cs.z;
         p.pos = mid + cs.xy * sc;
         p.size *= sc;

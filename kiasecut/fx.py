@@ -34,7 +34,7 @@ MAX_PARTICLES = 200000
 PARTICLE_COUNT = re.compile(r"^(\w+)(?:\*\((\w+)\+1\))?(?:\+\1\*(\w+))?$")           # count, count*(trail+1), count*(trail+1)+count*sub
 BIG = 40000                      # a filter this long is first compiled with Python's lock let go (precompile())
 TYPES = ("float", "int", "bool", "color", "vec2", "vec3", "menu", "curve", "gradient")
-RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "scene_m", "scene_f", "time", "progress", "frame", "scale", "pass_index", "output_index", "src",
+RESERVED = {"extra", "extra_", "pass_px", "src_px", "extra_px", "source", "original_", "resolution", "scene_m", "scene_f", "scene_z", "time", "progress", "frame", "scale", "pass_index", "output_index", "src",
             "original", "effect", "curve_ease", "gradient_eval", "unpremultiply", "premultiply", "rand", "uv_", "fragColor", "main"}
 
 
@@ -812,6 +812,7 @@ uniform vec2 ov_scale;                              // (a node effect's 延伸�
 uniform vec2 ov_off;
 uniform mat4 scene_m;                               // (a particle system in a 3D 場景: its own space to the scene camera's, and that camera's focal length in px - 0: not in one)
 uniform float scene_f;
+uniform vec2 scene_z;                               // (and the stretch of depth - the camera's z, px - whose particles it draws)
 vec2 ov_(vec2 uv) { return clamp(uv * ov_scale + ov_off, 0.0, 1.0); }
 // whether a uv has a picture under it: the frame, and with 延伸範圍 the margin round it (what a transform may bring into the frame)
 bool in_picture(vec2 uv) {
@@ -1447,7 +1448,8 @@ class Engine:
             ov = self.overscan or ((1.0, 1.0, 0.0, 0.0), (1.0, 1.0, 0.0, 0.0))     # (the sizes a filter is told are those of the frame's part)
             for name, v in (("pass_px", (float(tw) * ov[1][0], float(th) * ov[1][1])), ("src_px", (float(sw) * ov[0][0], float(sh) * ov[0][1])),
                             ("extra_px", (float(made[ex][1]) * ov[0][0], float(made[ex][2]) * ov[0][1]) if ex is not None else (1.0, 1.0)),
-                            ("scene_m", self.scene[0] if self.scene else _NO_SCENE), ("scene_f", self.scene[1] if self.scene else 0.0)):
+                            ("scene_m", self.scene[0] if self.scene else _NO_SCENE), ("scene_f", self.scene[1] if self.scene else 0.0),
+                            ("scene_z", tuple(self.scene[2:4]) if self.scene and len(self.scene) > 3 else (-1e30, 1e30))):
                 for pr in both:
                     pr.put(name, v)
             dst_fbo.use()

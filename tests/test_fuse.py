@@ -9,7 +9,15 @@ import numpy as np  # noqa: E402
 
 from kiasecut import fuse, fx, nodegraph as ng  # noqa: E402
 
-fx.BIG = 1 << 60                       # (a big shader is compiled ahead on a second context: in a test with no window that leaves the next compile failing; tools/make_wiki_demos.py does the same)
+_BIG = fx.BIG
+
+
+def setUpModule():
+    fx.BIG = 1 << 60                   # (a big shader is compiled ahead on a second context: in a test with no window that leaves the next compile failing; tools/make_wiki_demos.py does the same)
+
+
+def tearDownModule():
+    fx.BIG = _BIG                      # (set at import, it held for every module of a run that loads them all first: test_glrender's big filter failed)
 
 
 def engine():

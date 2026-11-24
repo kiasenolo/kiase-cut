@@ -707,8 +707,17 @@ class GLRenderer(render.Renderer):
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
                     lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
-                    self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
-                    gl.draw_plane(tgt, lay, inv_base * q * base, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0))
+                    blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
+                    if project.has_particles(c):          # (its particles are drawn through the camera one by one, not the picture as a plane)
+                        gl.fx.scene = camera.scene_matrix(cam, c.get("transform") or {}, t, W, H, t_us)
+                        try:
+                            self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
+                        finally:
+                            gl.fx.scene = None
+                        gl.draw_layer(tgt, lay, blend=blend)
+                    else:
+                        self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
+                        gl.draw_plane(tgt, lay, inv_base * q * base, blend)
                 finally:
                     gl.release(lay)
             except fx.FilterError as exc:

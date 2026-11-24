@@ -76,6 +76,21 @@ def plane(cam, tf, t, W, H, tc=None):
     return q, float(a[2][2]) / s
 
 
+def scene_matrix(cam, tf, t, W, H, tc=None):
+    """(16 numbers of a mat4 by columns, focal px): a clip with transform tf is a space of its own (u, v from its centre in canvas px as it is
+    drawn flat, w away from the viewer along its normal); the matrix takes a point of it to the camera's axes (x right, y down, z forward, px)
+    - what a particle system in the scene (3D 場景) draws its particles through: farther is smaller by f / z."""
+    s = H / 2.0
+    f, c, cam_axes = _basis(cam, t if tc is None else tc, W, H)
+    o = np.array([_v(tf, "x", 0.0, t) * W / 2.0, -_v(tf, "y", 0.0, t) * s, _v(tf, "z", 0.0, t) * s])
+    r = _rot(_v(tf, "rot_x", 0.0, t), _v(tf, "rot_y", 0.0, t), _v(tf, "rotation", 0.0, t))
+    cols = [cam_axes @ r[:, 0], cam_axes @ r[:, 1], cam_axes @ r[:, 2], cam_axes @ (o - c)]
+    out = []
+    for i, col in enumerate(cols):
+        out += [float(col[0]), float(col[1]), float(col[2]), 1.0 if i == 3 else 0.0]
+    return tuple(out), float(f)
+
+
 def depth(cam, tf, t, W, H, tc=None):
     """How far the centre of a clip with transform tf is in front of the camera (half-heights)."""
     s = H / 2.0

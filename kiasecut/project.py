@@ -607,6 +607,13 @@ def shadow_effect(c):
         "x": tf.get("shadow_x", 6.0), "y": tf.get("shadow_y", 6.0), "blur": tf.get("shadow_blur", 8.0), "spread": tf.get("shadow_spread", 0.0)}}
 
 
+def has_particles(c):
+    """True when clip c draws a particle system: a particle object, or a clip with the 粒子系統 effect on."""
+    if (c.get("asset") or {}).get("family") == "particles":
+        return True
+    return any(e.get("filter", "").endswith("particle_system") and not e.get("disabled") for e in c.get("effects") or ())
+
+
 def visual_effects(c, shadow=False):
     """The effects that change a clip's picture: on, and not a time effect (stepped()) or 動態模糊. shadow: the clip's 陰影 too,
     last (as it is drawn: the clip's own drawing, not what a filter clip or 套用至背景 works on)."""

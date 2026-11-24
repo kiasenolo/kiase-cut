@@ -338,7 +338,15 @@ bool particle(int id, out Particle p) {
         p.rot = 0.0;
     }
     float near_fade = 1.0;
-    if (depth_on) {                                                // perspective about the middle of the picture: farther is smaller, nearer bigger
+    if (scene_f > 0.0) {                                           // in a 3D 場景: through the scene's camera, from the clip's own place and turn
+        vec2 mid = 0.5 * resolution;
+        vec4 cs = scene_m * vec4(p.pos - mid, depth_on ? z : 0.0, 1.0);
+        if (cs.z <= 0.0005 * resolution.y) return false;           // (behind the camera)
+        float sc = scene_f / cs.z;
+        p.pos = mid + cs.xy * sc;
+        p.size *= sc;
+        near_fade = mix(1.0, clamp(sc * scene_m[3].z / scene_f, 0.0, 1.0), fog);
+    } else if (depth_on) {                                         // perspective about the middle of the picture: farther is smaller, nearer bigger
         float d = 0.5 * resolution.y / tan(radians(persp) * 0.5);
         if (d + z < 0.05 * d) return false;                        // (behind the viewer)
         float sc = d / (d + z);

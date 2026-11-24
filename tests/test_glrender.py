@@ -131,6 +131,35 @@ class GpuMatchesCpu(unittest.TestCase):
             a, b = pixels(r.render(copy.deepcopy(plain), 0, W, H)), pixels(r.render(copy.deepcopy(turned), 0, W, H))
             self.assertGreater(float(np.abs(a - b).mean()), 3.0)
 
+    def test_particles_in_a_scene_are_drawn_through_its_camera(self):
+        from kiasecut import assets
+        p = assets.make(assets.get("particle.system"), "#ffffff", "#000000", 640, 360)
+        p.update(pt_count=1, pt_speed=0.0, pt_gravity=0.0, pt_drag=0.0, pt_life=30.0, pt_life_var=0.0, pt_size=120.0, pt_size_var=0.0,
+                 pt_size_end=1.0, pt_fade_in=0.0, pt_fade_out=0.0, pt_look="實心圓", pt_glow=0.0, pt_origin_x=0.5, pt_origin_y=0.5)
+        p = assets.normalize(p)
+
+        def clip(**t):
+            c = self.pic("pt", self.spot, 640, 360, transform=tf(**t))
+            c["asset"] = p
+            c["start_us"], c["duration_us"] = 0, 2 * S
+            return c
+
+        def lit(cam, **t):
+            v = self.view([clip(**t)])
+            v["camera"] = cam
+            img = pixels(self.gpu.render(v, 30, W, H))
+            self.assertEqual(self.gpu.errors, [])
+            ys, xs = np.nonzero(img.max(axis=2) > 128)
+            return len(xs), (float(xs.mean()) if len(xs) else None)
+        n0, x0 = lit({"on": True})
+        self.assertGreater(n0, 50)
+        self.assertAlmostEqual(x0, W / 2, delta=3)
+        far, _x = lit({"on": True}, z=1.5)                                  # (farther: smaller)
+        self.assertLess(far, n0 * 0.5)
+        _n, xs = lit({"on": True, "x": 0.5, "tx": 0.5}, z=0.0)             # (the camera slid right: it is left of the middle)
+        self.assertLess(xs, x0 - 20)
+        self.assertEqual(lit({"on": True}, z=-5.0)[0], 0)                   # (behind the camera)
+
     def test_depth_of_field_blurs_what_is_out_of_focus_the_same_by_both(self):
         near, far = self.bg(transform=tf(scale=0.5, x=-0.4)), self.bg(transform=tf(scale=0.5, x=0.4, z=1.5))
         v = self.view([near, far])

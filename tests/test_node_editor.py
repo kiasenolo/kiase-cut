@@ -31,6 +31,10 @@ def clip_with(graph_fn=None):
     return {"id": "c1", "type": "image", "effects": [e]}
 
 
+def fx_menu_index(p, v):
+    return fx.menu_index(p, v)
+
+
 def fx_ghost():
     from kiasecut.ui.node_editor import GHOST
     return GHOST
@@ -695,6 +699,44 @@ class NodeEditorTests(unittest.TestCase):
         self.assertEqual(ed.view.socket_at(a), ("in", "math1", "b"))
         self.drag(ed, a, a + QPointF(-250, 120))                          # (the empty)
         self.assertEqual(asked, [("math1", "b")])
+
+    def test_ctrl_wheel_over_a_field_changes_its_value(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QWheelEvent
+
+        def build(e):
+            ng.add_node(e["graph"], {"type": ng.FILTER, "ref": "builtin:nodes/math"}, 0, 150)
+            e["params"].update(ng.default_params(e["graph"]))
+        ed = self.make(build)
+        got = []
+        ed.paramEdited.connect(lambda *a: (got.append(a), ed.params.__setitem__(a[1], a[2])))     # (the main window keeps the value: here the test)
+        it = ed.view.items_by_id["math1"]
+        v = ed.view
+
+        def wheel(row, delta, mods=Qt.ControlModifier):
+            at = QPointF(v.mapFromScene(it.mapToScene(it.field_rect(row).center())))
+            v.wheelEvent(QWheelEvent(at, v.mapToGlobal(at.toPoint()), QPoint(0, 0), QPoint(0, delta), Qt.NoButton, mods, Qt.NoScrollPhase, False))
+        tick = next(r for r in it.rows if r["kind"] == "param" and r["p"].name == "clamp_on")
+        wheel(tick, 120)
+        self.assertEqual(got[-1], ("e1", "math1.clamp_on", True))              # up: on
+        before = len(got)
+        wheel(tick, 120)
+        self.assertEqual(len(got), before)                                      # (already on: nothing)
+        wheel(tick, -120)
+        self.assertEqual(got[-1], ("e1", "math1.clamp_on", False))              # down: off
+        num = next(r for r in it.rows if r["kind"] == "param" and r["p"].type == "float")
+        was = ed.field_number("math1", num, 0)
+        wheel(num, 120)
+        self.assertAlmostEqual(got[-1][2], was + 0.01, places=4)                # a notch: 0.01
+        wheel(num, -240)
+        self.assertAlmostEqual(got[-1][2], was - 0.01, places=4)
+        menu = next(r for r in it.rows if r["kind"] == "param" and r["p"].type == "menu")
+        now = fx_menu_index(menu["p"], ed.node_values("math1").get(menu["p"].name))
+        wheel(menu, -120)                                                       # down: the next choice
+        self.assertEqual(got[-1][2], menu["p"].items[now + 1])
+        n = len(got)
+        wheel(num, 120, Qt.NoModifier)                                          # (without Ctrl: the view zooms, nothing is edited)
+        self.assertEqual(len(got), n)
 
     def test_tick_flips_and_menu_choices_are_asked_for(self):
         def build(e):

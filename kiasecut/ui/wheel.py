@@ -80,3 +80,18 @@ class Style(QProxyStyle):
                 or widget.metaObject().className() == "QDockWidgetGroupWindow"):
             return 0
         return super().styleHint(hint, option, widget, data)
+
+
+_left = [0.0, None]      # the part of a notch not used yet, and what it was for
+
+
+def whole_notches(e, key):
+    """The whole notches wheel event e adds up to for `key` (a widget, a field): a touchpad's small motions are gathered till they make
+    one; the rest waits for the next event (up is positive; it starts again when the wheel turns the other way or goes to another key)."""
+    n = notch(e)
+    if _left[1] != key or _left[0] * n < 0:
+        _left[0], _left[1] = 0.0, key
+    _left[0] += n
+    whole = int(_left[0])
+    _left[0] -= whole
+    return whole

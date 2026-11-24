@@ -18,7 +18,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractScrollArea, QComboBox, QFrame, QMenu, QStyle, QStyleOptionButton,
                                QStyleOptionMenuItem, QStyleOptionProgressBar, QStyleOptionTab, QStyleOptionToolButton, QMenuBar, QTabBar)
 
-from . import bigcombo, motion, smoothscroll, wheel
+from . import bigcombo, ctrlwheel, motion, smoothscroll, wheel
 
 FILES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "look").replace("\\", "/")
 FRAME = "#404042"         # Breeze's frame around scroll areas, spin boxes and tool buttons
@@ -432,3 +432,4 @@ def apply(app):
     if hasattr(hints, "setColorScheme"):                  # Qt 6.8 on: Windows' title bars go dark
         hints.setColorScheme(Qt.ColorScheme.Dark)
     app.setStyleSheet(style_sheet())
+    ctrlwheel.install()                                   # (Ctrl + the wheel over a value changes it)

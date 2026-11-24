@@ -1928,6 +1928,8 @@ class GraphView(QGraphicsView):
         the curve editor, and Ctrl+wheel up / down; a touchpad's two fingers scroll both ways (Ctrl zooms them)."""
         from . import wheel
         ctrl, shift = bool(e.modifiers() & Qt.ControlModifier), bool(e.modifiers() & Qt.ShiftModifier)
+        if e.modifiers() == Qt.ControlModifier and self.editor.ctrl_wheel(self, e):
+            return                                         # (Ctrl + the wheel over a field changes its value, as in the panels)
         if e.modifiers() & Qt.AltModifier and isinstance(self.itemAt(e.position().toPoint()), QGraphicsProxyWidget):
             return super().wheelEvent(e)                   # (Alt over a curve in a node: the curve's own zoom)
         if wheel.touchpad(e) and not ctrl:
@@ -2723,6 +2725,41 @@ class NodeEditor(QWidget):
         if self._scrub is not None:
             nid, row, cell, value = self._scrub
             self.set_number(nid, row, cell, value)
+
+    def ctrl_wheel(self, view, e):
+        """Ctrl + the wheel over a field of a node: a number goes up / down 0.01 a notch (a whole number one), a tick is set by up and
+        cleared by down, a menu goes to the previous / next choice. True when the event was for a field."""
+        from . import wheel
+        item = view.itemAt(e.position().toPoint())
+        while item is not None and not isinstance(item, NodeItem):
+            item = item.parentItem()
+        if item is None or not self.eid:
+            return False
+        hit = item.field_at(item.mapFromScene(view.mapToScene(e.position().toPoint())))
+        if hit is None or hit[0]["kind"] != "param":
+            return False
+        row, cell = hit
+        q, nid = row["p"], item.nid
+        key = ng.param_key(nid, q.name)
+        v = self.node_values(nid).get(q.name)
+        steps = wheel.whole_notches(e, (nid, q.name, cell))
+        if q.type not in ("bool", "menu", "float", "int", "vec2", "vec3"):
+            return False
+        if not steps:
+            return True
+        if q.type == "bool":
+            if bool(v) != (steps > 0):
+                self.paramEdited.emit(self.eid, key, steps > 0)
+        elif q.type == "menu" and q.items:
+            now = fx.menu_index(q, v)
+            new = min(max(now - steps, 0), len(q.items) - 1)
+            if new != now:
+                self.paramEdited.emit(self.eid, key, q.items[new])
+        elif q.type in ("float", "int", "vec2", "vec3"):
+            cur = self.field_number(nid, row, cell)
+            if cur is not None:
+                self.set_number(nid, row, cell, cur + steps * (1 if q.type == "int" else 0.01))
+        return True
 
     def field_clicked(self, item, row, cell, global_pos):
         """A field pressed and let go without dragging: a tick turns over, a menu / colour / text box opens."""

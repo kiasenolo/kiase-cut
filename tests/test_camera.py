@@ -127,5 +127,18 @@ class Editing(unittest.TestCase):
         self.assertIn("rot_y", edit.GROUP_FIELDS["transform"])
 
 
+class Scene(unittest.TestCase):
+    def test_a_3d_scene_is_a_compound_with_a_camera_on(self):
+        from kiasecut import edit, project
+        p = project.link(project.new())
+        c = edit.new_scene(p, p, 0)
+        self.assertEqual(c["type"], "compound")
+        self.assertTrue(camera.on(c["camera"]))
+        self.assertEqual(c["compound"]["name"], "3D 場景 1")
+        c2 = edit.new_scene(p, p, 10_000_000)
+        self.assertEqual(c2["compound"]["name"], "3D 場景 2")
+        self.assertAlmostEqual(c["camera"]["z"], -2.747, 3)
+
+
 if __name__ == "__main__":
     unittest.main()

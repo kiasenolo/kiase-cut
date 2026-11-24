@@ -4240,6 +4240,18 @@ def new_compound(root, container, at_us, track_id=None, static=False, component=
     return place_compound(root, container, kid, track_id, at_us)
 
 
+def new_scene(root, container, at_us, track_id=None):
+    """3D 場景: a new empty compound with a camera on (camera.py) and a clip showing it at at_us (new_compound's). Enter the clip to put clips
+    in it; they get 3D 位置 and 3D 旋轉, the camera is in 屬性."""
+    c = new_compound(root, container, at_us, track_id)
+    comp = c["compound"]
+    n = sum(1 for k in root["compounds"].values() if str(k.get("name", "")).startswith("3D 場景")) + 1
+    comp["name"] = f"3D 場景 {n}"
+    c["name"] = comp["name"]
+    c["camera"] = {"on": True, "fov": 40.0, "z": -1.0 / math.tan(math.radians(40.0) / 2)}
+    return c
+
+
 def _copy_compound(root, src):
     """A new compound entry with a copy of src's content (a compound, or a nested timeline),
     named "… 副本". Returns its id (link the project afterwards)."""

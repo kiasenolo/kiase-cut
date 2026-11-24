@@ -67,6 +67,7 @@ def text_thumbnail(key):
     return QPixmap.fromImage(img)
 
 
+SCENE_CAT = ("scene3d", "3D")                   # (a 3D 場景: a compound with a camera)
 VIZ_CAT = ("viz", "Audio Visualizer")           # (after the presets: drawn from sound, not from colours)
 
 
@@ -153,6 +154,24 @@ def particle_thumbnail(key):
             glow(w / 2 + math.cos(a) * r * 1.5, h / 2 + math.sin(a) * r * 0.7, 2 + rnd.random() * 3.5, QColor.fromHsvF(0.08 + 0.06 * rnd.random(), 0.6, 1.0))
     p.end()
     return QPixmap.fromImage(img)
+
+
+def scene_thumbnail():
+    """3D 場景: two planes in perspective on a dark ground."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    w, h = THUMB
+    img = QImage(QSize(w, h), QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor("#202024"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(80, 140, 230, 200))
+    p.drawPolygon(QPolygonF([QPointF(8, 14), QPointF(40, 8), QPointF(40, 32), QPointF(8, 28)]))
+    p.setBrush(QColor(240, 170, 70, 220))
+    p.drawPolygon(QPolygonF([QPointF(34, 12), QPointF(64, 15), QPointF(64, 31), QPointF(34, 36)]))
+    p.end()
+    return img
 
 
 def viz_thumbnail(kind):
@@ -392,6 +411,18 @@ class AssetsPanel(QWidget):
         blay.addWidget(head)
         blay.addWidget(lst)
         self.lists[TEXT_CAT[0]] = lst
+        head = QLabel(SCENE_CAT[1])                         # 3D 場景: its clips are planes in space seen by a camera
+        head.setStyleSheet("font-weight: bold; margin-top: 4px;")
+        lst = AssetList(self)
+        lst.itemDoubleClicked.connect(lambda it: self.addRequested.emit(self.ident(it.data(ROLE_KEY))))
+        it = QListWidgetItem("3D 場景")
+        it.setData(ROLE_KEY, "scene3d.scene")
+        it.setToolTip("3D 場景（拖到時間線；雙擊進去放片段，片段有 3D 位置和旋轉，攝影機在屬性裡）")
+        it.setIcon(QIcon(QPixmap.fromImage(scene_thumbnail())))
+        lst.addItem(it)
+        blay.addWidget(head)
+        blay.addWidget(lst)
+        self.lists[SCENE_CAT[0]] = lst
         head = QLabel(VIZ_CAT[1])                           # Audio Visualizer: a picture drawn from sound
         head.setStyleSheet("font-weight: bold; margin-top: 4px;")
         lst = AssetList(self)
@@ -478,6 +509,8 @@ class AssetsPanel(QWidget):
             return "viz:" + key[4:]
         if key.startswith("text."):
             return textpresets.ident(key[5:])
+        if key.startswith("scene3d."):
+            return "scene3d:" + key[8:]
         return assets.ident(key, *self.colors)
 
     def refresh(self):

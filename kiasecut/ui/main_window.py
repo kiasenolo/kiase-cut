@@ -3979,7 +3979,7 @@ class MainWindow(QMainWindow):
             for ident in idents:
                 if ident.startswith("cmp:"):
                     self.place_compound(ident[4:], tid, start)
-                elif ident.startswith((assets.PREFIX, "viz:", textpresets.PREFIX)):
+                elif ident.startswith((assets.PREFIX, "viz:", "scene3d:", textpresets.PREFIX)):
                     self.place_asset(ident, tid, start)
                 elif ident.startswith("m"):
                     self.place_media(ident, tid, start)
@@ -4860,6 +4860,11 @@ class MainWindow(QMainWindow):
             if style is not None and self.ensure_project():
                 self.apply("加入文字", lambda lvl: edit.add_text(lvl, round(start_us), track_id=track_id or None, style=style),
                            select=lambda c: c["id"])
+            return
+        if ident.startswith("scene3d:"):                   # 3D 場景: a compound with a camera, entered to put clips in it
+            if self.ensure_project():
+                self.apply_root("加入 3D 場景", lambda root: edit.new_scene(root, self.container(root), round(start_us), track_id or None),
+                                select=lambda c: c["id"])
             return
         if ident.startswith("viz:"):                       # an Audio Visualizer of the 內建素材 tab
             self.add_visualizer(ident[4:], track_id, start_us)

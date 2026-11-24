@@ -175,6 +175,46 @@ class PlayerKeeps(unittest.TestCase):
             th.wait(5000)
             gpu.enabled = True
 
+    def test_drawing_ahead_short_of_memory_keeps_what_is_behind(self):
+        """The system short of memory before the RAM preview is full: drawing ahead stops there. It halved what was kept
+        (the frames behind first) and drew on, so the kept frames walked off forward (20260705_1930_射京, 15 GB, 4 GB free)."""
+        from unittest import mock
+        from kiasecut import gpu, sysmem
+        from kiasecut.ui import player
+        gpu.enabled = False
+        th = player.QThread()
+        w = player.Worker()
+        w.moveToThread(th)
+        th.started.connect(w.run)
+        bars = []
+        w.cacheChanged.connect(bars.append, player.Qt.DirectConnection)
+        w.set_render_width(160)
+        w.set_cache(True, True, 0.5)
+        frame = 160 * 90 * 4
+        floor = 768 << 20                                # (the least the player leaves the system: 8 % of 1 GB is less)
+        free = mock.patch.object(sysmem, "available", lambda: (floor + 25 * frame - w.cache.bytes, 1 << 30))
+        free.start()
+        th.start()
+        try:
+            w.set_view(view(), self.dir)
+            w.request_seek(10)
+            self.wait(lambda: bars and not w.fill_pending and w.cache.bytes, what=lambda: bars[-3:])
+            first = bars[-1]
+            self.assertEqual(first[0][0], 10)
+            self.assertLess(first[-1][1], 40)            # (stopped where the memory ran short)
+            w.request_seek(60)
+            time.sleep(1.0)
+            self.wait(lambda: not w.fill_pending)
+            kept = set(w.cache.frames)
+            self.assertGreaterEqual(len(kept & set(range(10, 30))), 15)      # (what was drawn before stays)
+            self.assertFalse(kept & set(range(70, 100)))                     # (and nothing walked off forward)
+        finally:
+            free.stop()
+            w.stop()
+            th.quit()
+            th.wait(5000)
+            gpu.enabled = True
+
     def wait(self, cond, timeout=20.0, what=None):
         end = time.monotonic() + timeout
         while time.monotonic() < end:

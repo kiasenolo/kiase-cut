@@ -494,9 +494,10 @@ class Worker(QObject):
         self._send_bar()
 
     @staticmethod
-    def _low_memory():
+    def _low_memory(more=0):
+        """Whether the system is short of memory (with `more` bytes more taken): below 8 % of it, 768 MB to 2 GB."""
         a = sysmem.available()
-        return a is not None and a[0] < min(max(a[1] * 0.08, 768 << 20), 2 << 30)
+        return a is not None and a[0] - more < min(max(a[1] * 0.08, 768 << 20), 2 << 30)
 
     def _send_bar(self, force=False):
         """The timeline's bar of the frames kept (at most every CACHE_BAR_S)."""
@@ -521,8 +522,9 @@ class Worker(QObject):
 
     def _fill_ahead(self):
         """While the playhead rests: draw the frames after it that are not kept yet (inside the time selection when
-        there is one, from its start again after its end), as long as they fit in the RAM preview without dropping
-        any it keeps; anything else asked for stops it at once."""
+        there is one, from its start again after its end), as long as they fit in the RAM preview and in what the system
+        has left without dropping any it keeps (short of memory, it halved what was kept and drew on: the kept frames
+        walked off forward, the ones behind dropped); anything else asked for stops it at once."""
         if not self.fill_pending:
             return
         if not (self.cache_on and self.cache_idle) or self.view is None or self.length <= 0:
@@ -546,14 +548,14 @@ class Worker(QObject):
                     return                                   # (still pending: on from here when it rests again)
                 if self.cache.has(p, key):
                     continue
-                if not self.cache.room_for(w * h * 4):
-                    break
+                if not self.cache.room_for(w * h * 4) or self._low_memory(w * h * 4):
+                    break                                    # (what the system has left too: never drop kept frames to draw ahead)
                 self.readers.next_frame()
                 with gpu.ui_lock:
                     img = self.renderer.render(self.view, p, w, h, margin=margin) if margin else self.renderer.render(self.view, p, w, h)
                 img.setText("margin", repr(margin))
                 self.renderer.errors.clear()                 # (they show when the frame itself is shown)
-                self.cache.put(p, key, img, self._low_memory)
+                self.cache.put(p, key, img)                  # (no halving when memory runs short: drawing ahead stops above)
                 self._send_bar()
         finally:
             self.asked = asked

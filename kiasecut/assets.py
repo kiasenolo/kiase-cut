@@ -44,6 +44,10 @@ from . import curves, textures
 FOLDER = ".內建素材"
 PREFIX = "asset:"
 CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎形狀"), ("empty", "空物體")]
+PARTICLE_PREFIX = "particle:"
+# 粒子: objects made of a particle filter (filters/*.glsl with @particles): dropping one puts a clip of a see-through solid, as big as
+# the canvas, with that filter on it - its settings are the effect's. (filter file, in the 基礎物件 tab's 粒子 list)
+PARTICLES = ("sparks", "confetti", "bokeh_lights")
 DEFAULT_COLORS = ("#ffffff", "#000000")
 SHAPE_PX = 400                             # a new shape's size on a 1080-high canvas
 

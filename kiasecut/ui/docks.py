@@ -29,7 +29,7 @@ STATE_VERSION = 1
 LEFT = ("library", "assets", "vfx", "compounds")    # the browsers by kind (browsers.py): 本專案 / 我的 Library / 內建 in each
 SIDE = ("inspector", "effects", "mask", "beats", "subtitles", "curves", "rack")
 WITH_TIMELINE = ("nodes",)                  # side panels that sit with the timeline: they want room
-TITLES = {"library": "素材", "assets": "文字與形狀", "vfx": "VFX", "compounds": "複合片段",
+TITLES = {"library": "素材", "assets": "基礎物件", "vfx": "VFX", "compounds": "複合片段",
           "preview": "預覽", "inspector": "屬性", "effects": "效果", "mask": "遮罩", "beats": "節拍",
           "subtitles": "字幕", "curves": "關鍵幀曲線", "rack": "全局參數架", "nodes": "節點", "timeline": "時間線"}
 ORDER = LEFT + ("preview",) + SIDE + WITH_TIMELINE + ("timeline",)

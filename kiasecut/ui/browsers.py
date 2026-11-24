@@ -1,4 +1,4 @@
-"""The browser panels by kind (問17, 2026-11-24): 素材, 文字與形狀, VFX and 複合片段 each show their things from wherever they
+"""The browser panels by kind (問17, 2026-11-24): 素材, 基礎物件, VFX and 複合片段 each show their things from wherever they
 come from - 本專案 (this project's), 我的 Library (the user's own folder, every project's) and 內建 (KiaseCut's) - picked
 with the row of buttons at the top. A kind that has nothing from one of the three has no button for it. The source picked
 last is remembered per panel. The pages themselves are the panels there were before (library.LibraryPanel, assets_panel,

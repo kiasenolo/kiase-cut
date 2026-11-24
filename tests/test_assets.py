@@ -372,6 +372,37 @@ class AssetTests(unittest.TestCase):
         MainWindow.place_asset(h, "text:nope", "", 0)                                     # (no such preset: nothing added)
         self.assertEqual(len(made), 1)
 
+    def test_particles_are_a_category_of_the_panel(self):
+        from kiasecut import fx
+        from kiasecut.ui.assets_panel import AssetsPanel
+        from kiasecut.ui.timeline import MEDIA_MIME
+        panel = AssetsPanel()
+        got = []
+        panel.addRequested.connect(got.append)
+        lst = panel.lists["particle"]
+        self.assertEqual([lst.item(i).text() for i in range(lst.count())],
+                         [fx.get(fx.BUILTIN + k).name for k in assets.PARTICLES])
+        self.assertEqual(bytes(lst.mimeData([lst.item(1)]).data(MEDIA_MIME)).decode(), "particle:confetti")
+        self.assertFalse(lst.item(0).icon().isNull())
+        lst.itemDoubleClicked.emit(lst.item(0))
+        self.assertEqual(got, ["particle:sparks"])
+
+    def test_dropping_a_particle_adds_a_see_through_clip_with_its_filter(self):
+        import types
+        from kiasecut import fx
+        from kiasecut.ui.main_window import MainWindow
+        p = proj()
+        made = []
+        params = assets.make(assets.get("solid.custom"), "#00000000", "#00000000", 1920, 1080)
+        h = types.SimpleNamespace(ensure_project=lambda: True, apply=lambda _n, fn, select=None: made.append(fn(p)),
+                                  new_asset=lambda ident: (params, "/a.svg"))
+        MainWindow.place_asset(h, "particle:sparks", "", 2_000_000)
+        c = made[0]
+        self.assertEqual((c["start_us"], c["name"], c["asset"]["family"], c["asset"]["color"]), (2_000_000, fx.get("builtin:sparks").name, "solid", [0.0, 0.0, 0.0, 0.0]))
+        self.assertEqual([e["filter"] for e in c["effects"]], ["builtin:sparks"])
+        MainWindow.place_asset(h, "particle:nope", "", 0)                                 # (no such particle: nothing added)
+        self.assertEqual(len(made), 1)
+
     def test_inspector(self):
         from kiasecut.ui.inspector import Inspector
         p = proj()

@@ -5007,6 +5007,18 @@ class MainWindow(QMainWindow):
         or edit their keyframe at the playhead)."""
         if not self.path_ids:
             return
+        obj = self.preview.view3d.active_object()
+        if obj is not None:                                # (a 相機 object's: its own fields, at its own time)
+            oid = obj["id"]
+
+            def fn_obj(root):
+                level = self.container(root)
+                c = edit.find(level, oid)[1]
+                t = min(max(self.playhead_us() - c["start_us"], 0), c["duration_us"])
+                for key, v in values.items():
+                    edit.set_param(level, oid, "camera", key, v, t)
+            self.apply_root("相機", fn_obj)
+            return
         cid = walk_path(self.proj, self.path_ids)[-1][0]
         if cid is None:
             return

@@ -426,3 +426,61 @@ class ParticleEditing(unittest.TestCase):
         (_cid, group, vals), = self.done
         self.assertEqual(set(vals), {"pt_ethick"})
         self.assertNotEqual(vals["pt_ethick"], 400.0)
+
+
+class CameraObject(unittest.TestCase):
+    """A 相機 object of the scene is the camera that is drawn, picked as a clip and moved with the clip's arrows."""
+
+    def setUp(self):
+        self.pv = Preview()
+        self.pv.resize(960, 540)
+        v = scene_view()
+        obj = clip("cam", 0, 4 * S, transform={"x": 0.3, "y": 0.1, "scale": 1.0, "rotation": 0.0, "opacity": 1.0, "z": -2.5})
+        obj["type"] = "image"
+        obj["asset"] = {"family": "empty", "w": 100, "h": 100}
+        obj["camera"] = {"fov": 40.0, "tx": 0.0, "ty": 0.0, "tz": 0.0, "aperture": 0.0}
+        v["tracks"].append({"id": "t2", "kind": "video", "name": "c", "clips": [obj]})
+        self.pv.set_scene(v, S, "cam")
+        self.pv.set_view3d(True)
+        self.picked, self.done, self.edited = [], [], []
+        self.pv.clipPicked.connect(self.picked.append)
+        self.pv.paramsCommitted.connect(lambda *a: self.done.append(a))
+        self.pv.sceneCameraEdited.connect(self.edited.append)
+
+    def at(self, world):
+        x, y = self.pv.view3d.seen().point(world)
+        r = self.pv._rect()
+        return QPoint(round(r.x() + x / self.pv.W * r.width()), round(r.y() + y / self.pv.H * r.height()))
+
+    def test_the_scene_camera_is_the_object_and_it_has_no_plane_of_its_own(self):
+        v = self.pv.view3d
+        cam = v.scene_camera()
+        self.assertEqual((cam["x"], cam["y"], cam["z"]), (0.3, 0.1, -2.5))
+        self.assertNotIn("cam", v.plane_corners())
+        self.assertIs(v.active_object()["id"] == "cam", True)
+
+    def test_clicking_its_pyramid_picks_the_clip_and_its_arrows_move_the_clip(self):
+        pv, v = self.pv, self.pv.view3d
+        c, corners, _tg = camera.frustum(v.scene_camera(), S, 1920, 1080)
+        QTest.mouseClick(pv, Qt.LeftButton, Qt.NoModifier, self.at((corners[0] + corners[1]) / 2.0))
+        self.assertEqual(self.picked[-1]["id"], "cam")
+        pv.set_scene(pv.view, S, "cam")                                   # (as the window selects it)
+        b = v.selected()
+        self.assertEqual(b.clip["id"], "cam")
+        seen, k = v.seen(), pv._k()
+        o = v.origin(v.values(b))
+        self.assertEqual(v.hit_arrow(QPointF(self.at(o)))[0], "plane")      # (no scale box or rings on a camera)
+        self.assertIsNone(v.key_action(QKeyEvent(QEvent.KeyPress, Qt.Key_S, Qt.NoModifier)))
+
+    def test_the_target_is_edited_in_the_camera_objects_fields(self):
+        pv, v = self.pv, self.pv.view3d
+        _c, _corners, tg = camera.frustum(v.scene_camera(), S, 1920, 1080)
+        QTest.mouseClick(pv, Qt.LeftButton, Qt.NoModifier, self.at(tg))
+        self.assertEqual(v.sel_cam, "target")
+        v.key_action(QKeyEvent(QEvent.KeyPress, Qt.Key_G, Qt.NoModifier))()
+        v.modal_key(QKeyEvent(QEvent.KeyPress, Qt.Key_X, Qt.NoModifier), True)
+        for k in (Qt.Key_1,):
+            v.modal_key(QKeyEvent(QEvent.KeyPress, k, Qt.NoModifier), True)
+        v.modal_key(QKeyEvent(QEvent.KeyPress, Qt.Key_Return, Qt.NoModifier), True)
+        (vals,) = self.edited
+        self.assertEqual(set(vals), {"tx"})

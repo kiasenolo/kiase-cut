@@ -59,11 +59,29 @@ class View3D:
         self.sel_cam = None              # "camera" | "target": the scene's camera or its target is what is selected (not a plane)
 
     # -- the cameras ------------------------------------------------------------------------------------------------------------
+    def active_object(self):
+        """The 相機 object (camera.is_clip) the scene is seen with now - the topmost one that is playing - or None."""
+        view = self.p.view or {}
+        if not camera.on(view.get("camera")):
+            return None
+        t_us, fps = self.time(), view.get("fps", 30)
+        for tr in reversed(view.get("tracks") or []):
+            if tr["kind"] == "audio" or not project.visible(tr):
+                continue
+            for c in reversed(tr["clips"]):
+                if camera.is_clip(c) and c["start_us"] <= t_us < c["start_us"] + c["duration_us"]:
+                    return c
+        return None
+
     def scene_camera(self):
-        """The scene's camera (what is being dragged on top of it)."""
+        """The camera the scene is seen with (a 相機 object's, else the scene's own), with what is being dragged on top of it."""
         cam = (self.p.view or {}).get("camera")
         if cam is None:
             return None
+        obj = self.active_object()
+        if obj is not None:
+            c = dict(obj, transform=dict(obj.get("transform") or {}, **self.live.get(obj["id"], {})))
+            cam = camera.from_clip(c, project.stepped(obj, self.time() - obj["start_us"]))
         for name in ("camera", "target"):
             live = self.live.get("~" + name)
             if live:
@@ -95,7 +113,7 @@ class View3D:
         """The camera the renderer draws from, or None for the scene's own (looking through it)."""
         if self.cam is None:
             self.start()
-        return None if self.through else dict(self.cam)
+        return None if self.through else dict(self.cam, free=True)
 
     def seen(self):
         if self.cam is None:
@@ -172,7 +190,7 @@ class View3D:
         W, H = self.p.W, self.p.H
         for b in self.p.visible_boxes():
             c = b.clip
-            if c["type"] == "audio" or c.get("transform") is None:
+            if c["type"] == "audio" or c.get("transform") is None or camera.is_clip(c):       # (a camera object is drawn as the camera)
                 continue
             t = project.stepped(c, b.t)
             tf = dict(c["transform"], **self.live.get(c["id"], {}))
@@ -270,8 +288,8 @@ class View3D:
         m = self._canvas(pos)
         near = lambda q, r: q is not None and math.hypot(q[0] - m.x(), q[1] - m.y()) <= r * k
         if near(mid, 8):
-            return ("plane" if isinstance(b, CamThing) else "su"), b
-        if not isinstance(b, CamThing):
+            return ("plane" if isinstance(b, CamThing) or camera.is_clip(b.clip) else "su"), b
+        if not isinstance(b, CamThing) and not camera.is_clip(b.clip):
             n = self.arrow_length(seen, o, k)
             for a in ("x", "y"):
                 if near(seen.point(o + np.array(self.AXES[a]) * n * self.BOX_AT), 8):
@@ -279,7 +297,7 @@ class View3D:
         for a, (_tip, at) in self.arrows(seen, o, k).items():
             if near(at, 9):
                 return a, b
-        if not isinstance(b, CamThing):
+        if not isinstance(b, CamThing) and not camera.is_clip(b.clip):
             ring = self.hit_ring(pos, o, seen, k)
             if ring is not None:
                 return ring, b
@@ -431,7 +449,7 @@ class View3D:
             return None
         grab = {Qt.Key_G: "move", Qt.Key_R: "rotate", Qt.Key_S: "scale"}.get(k)
         sel = self.selected() if grab and not self.through else None
-        if sel is not None and isinstance(sel, CamThing) and grab != "move":
+        if sel is not None and (isinstance(sel, CamThing) or camera.is_clip(sel.clip)) and grab != "move":
             return None                                        # (the camera is only moved)
         if grab and sel is not None and self.drag is None:
             return lambda: self.modal_begin(grab)
@@ -447,6 +465,11 @@ class View3D:
     def pick(self, pos, add):
         """A click: the nearest plane the line of sight goes through is selected (none: nothing is)."""
         thing = self.pick_camera(pos)
+        obj = self.active_object()
+        if thing == "camera" and obj is not None:             # (a camera object is a clip: picked like one)
+            self.sel_cam = None
+            self.p.clipPicked.emit(obj)
+            return
         if thing is not None:
             self.sel_cam = thing
             self.p.selectionPicked.emit(set(), None)
@@ -965,7 +988,7 @@ class View3D:
                 what = {"move": "移動", "rotate": "旋轉", "scale": "縮放"}[self.modal["kind"]]
                 p.drawText(QPointF(mid[0] + 14 * k, mid[1] - 14 * k), f"{what}{(' ' + self.modal['axis'].upper()) if self.modal['axis'] else ''}: {self.modal['typed']}")
             return
-        if not isinstance(b, CamThing):
+        if not isinstance(b, CamThing) and not camera.is_clip(b.clip):
             n = self.arrow_length(seen, o, k) * self.RING_AT
             for name, (axis, _key, _u) in self.RINGS.items():
                 col = QColor(self.COLORS[axis])
@@ -991,7 +1014,7 @@ class View3D:
             p.drawPolygon(QPolygonF([QPointF(tip.x() + ux * 4 * k, tip.y() + uy * 4 * k),
                                      QPointF(base.x() - uy * w, base.y() + ux * w),
                                      QPointF(base.x() + uy * w, base.y() - ux * w)]))
-        if not isinstance(b, CamThing):                              # (the boxes scale: along X, along Y)
+        if not isinstance(b, CamThing) and not camera.is_clip(b.clip):                              # (the boxes scale: along X, along Y)
             n = self.arrow_length(seen, o, k)
             for name in ("x", "y"):
                 at = seen.point(o + np.array(self.AXES[name]) * n * self.BOX_AT)
@@ -1014,7 +1037,8 @@ class View3D:
             return
         c, corners, tg = camera.frustum(real, self.time(), self.p.W, self.p.H)
 
-        color = SELECTED_COLOR if self.sel_cam == "camera" else CAMERA_COLOR
+        obj = self.active_object()
+        color = SELECTED_COLOR if self.sel_cam == "camera" or (obj is not None and obj["id"] in self.p.selected_ids) else CAMERA_COLOR
 
         def line(a, b, width=1.25):
             seg = seen.segment(a, b)

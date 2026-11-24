@@ -1,5 +1,6 @@
 // @filter 漂浮光斑
 // @category 粒子
+// @nodes
 // @description 大小不一的圓形（或多邊形）光斑在畫面上慢慢飄，一邊淡入淡出；遠近不同，對焦以外的光斑比較柔、比較小，邊緣可以比中間亮，像鏡頭失焦的光點
 // @particles 5000 count
 // @param count int 60 1 5000 "數量"

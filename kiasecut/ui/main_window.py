@@ -3962,7 +3962,7 @@ class MainWindow(QMainWindow):
             for ident in idents:
                 if ident.startswith("cmp:"):
                     self.place_compound(ident[4:], tid, start)
-                elif ident.startswith((assets.PREFIX, "viz:", textpresets.PREFIX, assets.PARTICLE_PREFIX)):
+                elif ident.startswith((assets.PREFIX, "viz:", textpresets.PREFIX)):
                     self.place_asset(ident, tid, start)
                 elif ident.startswith("m"):
                     self.place_media(ident, tid, start)
@@ -4847,21 +4847,6 @@ class MainWindow(QMainWindow):
         if ident.startswith("viz:"):                       # an Audio Visualizer of the 內建素材 tab
             self.add_visualizer(ident[4:], track_id, start_us)
             return
-        if ident.startswith(assets.PARTICLE_PREFIX):       # a particle object: a see-through clip as big as the canvas, with the filter on it
-            preset = next((q for q in assets.PARTICLES if q[0] == ident[len(assets.PARTICLE_PREFIX):]), None)
-            made = self.new_asset(assets.ident("solid.custom", "#00000000", "#00000000")) if preset else None
-            if made is None:
-                return
-            params, path = made
-            name = preset[1] or fx.get(fx.BUILTIN + preset[2]).name
-
-            def particles(level):
-                c = library.place_item(level, dict(assets.item(params, path), name=name), track_id or None, start_us)
-                c["asset"] = params
-                edit.add_effect(level, c["id"], fx.BUILTIN + preset[2]).setdefault("params", {}).update(copy.deepcopy(preset[3]))
-                return c
-            self.apply("加入" + name, particles, select=lambda c: c["id"])
-            return
         made = self.new_asset(ident)
         if made is None:
             return
@@ -4880,8 +4865,8 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         picture = True
-        if ident.startswith(("viz:", textpresets.PREFIX, assets.PARTICLE_PREFIX)):
-            self.statusBar().showMessage("Audio Visualizer、文字和粒子不能用來替換素材", 4000)
+        if ident.startswith(("viz:", textpresets.PREFIX)):
+            self.statusBar().showMessage("Audio Visualizer 和文字不能用來替換素材", 4000)
             return
         if ident.startswith(assets.PREFIX):
             made = self.new_asset(ident)

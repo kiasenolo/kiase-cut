@@ -1,5 +1,6 @@
 // @filter 紙屑／彩帶
 // @category 粒子
+// @nodes
 // @description 彩色紙屑或彩帶：從上面飄落，或從一點噴出再慢慢落下；紙片翻面時變窄、變暗，彩帶會扭動。顏色從漸變裡隨機挑
 // @particles 20000 count
 // @param count int 300 1 20000 "數量"

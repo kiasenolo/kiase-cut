@@ -39,66 +39,11 @@ import math
 import os
 import re
 
-from . import curves, textures
+from . import curves, fx, textures
 
 FOLDER = ".內建素材"
 PREFIX = "asset:"
-CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎形狀"), ("empty", "空物體")]
-PARTICLE_PREFIX = "particle:"
-# 粒子: objects made of a particle filter (filters/*.glsl with @particles): dropping one puts a clip of a see-through solid, as big as
-# the canvas, with that filter on it - its settings are the effect's. (filter file, in the 基礎物件 tab's 粒子 list)
-def _grad(text):
-    """A gradient parameter's value from "position:#rrggbb[aa],position:..." (the stops fx.py keeps: [position, [r, g, b, a]])."""
-    out = []
-    for stop in text.split(","):
-        pos, col = stop.split(":")
-        v = [int(col[i:i + 2], 16) / 255 for i in range(1, len(col), 2)]
-        out.append([float(pos), v + [1.0] * (4 - len(v))])
-    return out
-
-
-# (key, name - None: the filter's own, filter file, the parameters that differ from its defaults). The first one is the whole system;
-# the others are settings of it (a menu is given by its choice's name)
-PARTICLES = (
-    ("system", "粒子系統", "particle_system", {}),
-    ("fireworks", "煙火", "particle_system", {
-        "mode": "爆發", "period": 3.0, "count": 260, "life": 2.2, "life_var": 0.25, "origin": [0.5, 0.4], "speed": 480.0, "speed_var": 0.5,
-        "gravity": 520.0, "drag": 0.7, "look": "線條", "size": 5.0, "size_var": 0.3, "size_end": 0.5, "trail": 8, "trail_step": 0.03,
-        "colors": _grad("0:#fff2c0,0.4:#ffb347,1:#ff3b1a"), "fade_out": 0.5}),
-    ("shells", "煙花彈", "particle_system", {                      # (shells go up with a trail and burst into sparks where they die)
-        "count": 5, "life": 1.5, "life_var": 0.2, "emitter": "線", "origin": [0.5, 0.95], "ewidth": 700.0, "angle": 0.0, "spread": 24.0, "speed": 520.0,
-        "speed_var": 0.15, "gravity": 380.0, "drag": 0.15, "look": "實心圓", "size": 4.0, "size_var": 0.1, "size_end": 1.0, "trail": 12, "trail_step": 0.014,
-        "trail_fade": 0.9, "colors": _grad("0:#fff2c0,1:#ffb347"), "fade_out": 0.0, "sub": 70, "sub_mode": "死亡時", "sub_life": 1.5, "sub_speed": 210.0,
-        "sub_inherit": 0.25, "sub_size": 5.0, "sub_size_end": 0.3, "sub_colors": _grad("0:#ffffff,0.35:#ffd070,1:#ff4a1a")}),
-    ("snow", "下雪", "particle_system", {
-        "count": 600, "life": 9.0, "life_var": 0.4, "time_offset": 9.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 2400.0,
-        "angle": 180.0, "spread": 20.0, "speed": 70.0, "gravity": 40.0, "drag": 0.5, "turb": 70.0, "turb_scale": 260.0, "turb_speed": 0.3,
-        "look": "柔邊圓", "softness": 0.35, "size": 15.0, "size_var": 0.6, "size_end": 1.0, "colors": _grad("0:#ffffff,1:#dfeaff"),
-        "fade_in": 0.08, "fade_out": 0.15, "glow": 0.5}),
-    ("fire", "火焰", "particle_system", {
-        "count": 260, "life": 1.3, "life_var": 0.4, "time_offset": 1.3, "emitter": "線", "origin": [0.5, 0.8], "ewidth": 110.0, "angle": 0.0, "spread": 25.0,
-        "speed": 170.0, "gravity": -260.0, "drag": 1.0, "turb": 45.0, "turb_scale": 120.0, "turb_speed": 1.2, "look": "柔邊圓", "softness": 0.8,
-        "size": 30.0, "size_var": 0.4, "size_end": 0.1, "colors": _grad("0:#ffd36a,0.35:#ff7a1e,1:#a01408"), "alpha": 0.3, "brightness": 1.0,
-        "fade_in": 0.1, "fade_out": 0.5}),
-    ("smoke", "煙", "particle_system", {
-        "count": 70, "life": 5.0, "life_var": 0.4, "time_offset": 5.0, "origin": [0.5, 0.85], "angle": 0.0, "spread": 20.0, "speed": 60.0, "gravity": -50.0,
-        "drag": 0.4, "turb": 70.0, "turb_scale": 160.0, "turb_speed": 0.4, "look": "柔邊圓", "softness": 1.0, "size": 50.0, "size_var": 0.4,
-        "size_end": 3.0, "colors": _grad("0:#6b6b6b,1:#bdbdbd"), "alpha": 0.1, "glow": 0.0, "fade_in": 0.15, "fade_out": 0.6}),
-    ("magic", "魔法光點", "particle_system", {
-        "count": 130, "life": 3.0, "life_var": 0.4, "time_offset": 3.0, "emitter": "圓形", "ewidth": 360.0, "speed": 25.0, "gravity": -20.0, "drag": 0.2,
-        "turb": 90.0, "turb_scale": 180.0, "turb_speed": 0.4, "look": "星芒", "size": 16.0, "size_var": 0.5, "size_end": 0.4,
-        "colors": _grad("0:#ffffff,0.5:#bfe3ff,1:#8f7bff"), "twinkle": 0.7, "fade_in": 0.2, "fade_out": 0.4}),
-    ("bounce", "彈跳火花", "particle_system", {
-        "mode": "爆發", "period": 3.5, "count": 90, "life": 3.2, "origin": [0.5, 0.3], "speed": 420.0, "gravity": 1000.0, "drag": 0.0, "look": "實心圓",
-        "size": 7.0, "size_end": 0.8, "floor_on": True, "floor_y": 0.9, "bounce": 0.55, "colors": _grad("0:#fff2c0,1:#ff9a2e"), "fade_out": 0.25}),
-    ("pictures", "圖片粒子", "particle_system", {                  # (the picture is chosen next: the effect's 粒子圖片 > 使用圖片)
-        "count": 60, "life": 6.0, "life_var": 0.3, "time_offset": 6.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 2000.0, "angle": 180.0, "spread": 30.0,
-        "speed": 40.0, "gravity": 120.0, "drag": 0.3, "turb": 60.0, "turb_scale": 220.0, "turb_speed": 0.4, "look": "圖片", "size": 60.0, "size_var": 0.4,
-        "size_end": 1.0, "rotmode": "旋轉", "spin": 1.5, "glow": 0.0, "fade_in": 0.05, "fade_out": 0.15}),
-    ("sparks", None, "sparks", {}),
-    ("confetti", None, "confetti", {}),
-    ("bokeh_lights", None, "bokeh_lights", {}),
-)
+CATEGORIES = [("solid", "純色"), ("gradient", "漸變色"), ("shape", "基礎形狀"), ("empty", "空物體"), ("particle", "粒子")]
 DEFAULT_COLORS = ("#ffffff", "#000000")
 SHAPE_PX = 400                             # a new shape's size on a 1080-high canvas
 
@@ -459,7 +404,7 @@ def at(p, t):
             v = hex_of(v)
         elif FIELD_INFO[f][1] == "stops":
             v = [[x, hex_of(c)] for x, c in v]
-        elif f in ("sides", "points", "gcols", "grows"):
+        elif f in ("sides", "points", "gcols", "grows") or f in PT_INTS:
             v = int(round(v))
         elif f in ("w", "h"):
             v = round(v, 2)
@@ -503,6 +448,209 @@ def _svg(w, h, body, defs="", pad=0.0):
     vb = f"{-pad:g} {-pad:g} {w + 2 * pad:g} {h + 2 * pad:g}" if pad else f"0 0 {w} {h}"
     return (f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{w + 2 * pad:g}" height="{h + 2 * pad:g}" viewBox="{vb}">\n'
             + (f"<defs>{defs}</defs>\n" if defs else "") + body + "\n</svg>\n")
+
+
+# -- 粒子 (family "particles") ------------------------------------------------------------------------
+# A particle object is a see-through picture as big as the canvas that the particle system (filters/particle_system.glsl) draws into at each
+# moment, from its own settings: every parameter of that filter is a field here, named pt_<parameter> (a gradient pt_<parameter>_stops,
+# the sprite picture pt_sprite_image), so the inspector shows it with its ◆ and it keyframes like a shape's. The effect the renderer runs
+# (particle_effect()) is made from the fields, not kept on the clip: it is not in the 效果 tab.
+PT = "pt_"
+PT_FILE = "particle_system"
+PT_PARAMS = {}                                       # filter parameter name -> fx.Param, in the order of the file
+SECTIONS = {}                                        # field -> the title of the group that starts at it (the inspector)
+PT_INTS = set()
+PT_PX = ("ewidth", "eheight", "speed", "gravity", "wind", "turb", "turb_scale", "size", "sub_speed", "sub_size")   # (lengths: in px of a 1080-high canvas)
+
+
+def pt_field(par):
+    """The field of filter parameter par (an fx.Param), or None for one that has none (a curve: kept at its default)."""
+    if par.type == "curve":
+        return None
+    if par.type == "gradient":
+        return PT + par.name + "_stops"
+    if par.type == "color":
+        return PT + "sprite_image" if par.name == "sprite_img" else PT + par.name
+    return PT + par.name
+
+
+def _pt_setup():
+    try:
+        d = fx.get(fx.BUILTIN + PT_FILE)
+    except Exception:
+        return
+    if d.error:
+        return
+    fields, panel = [], object()
+    for par in d.params:
+        f = pt_field(par)
+        if f is None:
+            continue
+        PT_PARAMS[par.name] = par
+        fields.append(f)
+        if par.panel != panel:
+            SECTIONS[f] = par.panel or "基本"
+            panel = par.panel
+        label = par.label
+        if par.type in ("float", "int"):
+            span = par.hi - par.lo
+            step = par.step or (0.01 if span <= 10 else 0.1 if span <= 100 else 1.0)
+            if par.type == "int":
+                step = 1
+                PT_INTS.add(f)
+            FIELD_INFO[f] = (label, "number", par.lo, par.hi, step, 0 if step >= 1 else 1 if step >= 0.1 else 2)
+            _DEFAULTS[f] = par.default
+        elif par.type == "bool":
+            FIELD_INFO[f] = (label, "toggle")
+            _DEFAULTS[f] = bool(par.default)
+        elif par.type == "menu":
+            FIELD_INFO[f] = (label, "choice", tuple((n, n) for n in par.items))
+            _DEFAULTS[f] = par.default if par.default in par.items else par.items[0]
+        elif par.type == "gradient":
+            FIELD_INFO[f] = (label, "stops")
+            _DEFAULTS[f] = [[x, list(c)] for x, c in par.default]
+        elif par.name == "sprite_img":
+            FIELD_INFO[f] = (label, "image")
+            _DEFAULTS[f] = ""
+        else:
+            FIELD_INFO[f] = (label, "color")
+            _DEFAULTS[f] = list(par.default)
+    FIELDS["particles"] = tuple(fields)
+
+
+_pt_setup()
+
+
+def pt_enabled(f, q):
+    """Whether field f of particle parameters q (as at() gives them) does anything with the other values (the filter's @enable lines)."""
+    par = next((x for n, x in PT_PARAMS.items() if pt_field(x) == f), None)
+    if par is None or not (par.enable or par.show):
+        return True
+    values = {n: q.get(pt_field(x)) for n, x in PT_PARAMS.items() if pt_field(x) in q}
+    return fx.enabled(par, values)
+
+
+_image_sizes = {}
+
+
+def _image_size(path):
+    got = _image_sizes.get(path)
+    if got is None:
+        from PySide6.QtGui import QImageReader
+        sz = QImageReader(path).size()
+        got = _image_sizes[path] = (sz.width(), sz.height()) if sz.isValid() else (0, 0)
+        if len(_image_sizes) > 256:
+            _image_sizes.clear()
+    return got
+
+
+def particle_effect(p):
+    """The effect that draws a particle object p (its parameters, not at(): values and keyframes as stored) over its see-through picture."""
+    params = {}
+    for name, par in PT_PARAMS.items():
+        v = p.get(pt_field(par))
+        if v is not None and par.type != "color" or (par.type == "color" and name != "sprite_img" and v is not None):
+            params[name] = v
+    e = {"id": "particles", "filter": fx.BUILTIN + PT_FILE, "enabled": True, "params": params}
+    path = p.get(PT + "sprite_image")
+    if isinstance(path, str) and path:
+        w, h = _image_size(path)
+        if w and h:
+            e["sources"] = {"sprite_img": {"kind": "image", "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0, "image": path,
+                                           "img_w": w, "img_h": h}}
+    return e
+
+
+def _px(values, k=3.0):
+    """A preset written for a 360-high canvas, in the px of a 1080-high one; origin [x, y] split into the two parameters."""
+    out = dict(values)
+    for n in PT_PX:
+        if n in out:
+            out[n] = out[n] * k
+    if "origin" in out:
+        out["origin_x"], out["origin_y"] = out.pop("origin")
+    return out
+
+
+def _grad(text):
+    """A gradient parameter's value from "position:#rrggbb[aa],position:..." (the stops fx.py keeps: [position, [r, g, b, a]])."""
+    out = []
+    for stop in text.split(","):
+        pos, col = stop.split(":")
+        v = [int(col[i:i + 2], 16) / 255 for i in range(1, len(col), 2)]
+        out.append([float(pos), v + [1.0] * (4 - len(v))])
+    return out
+
+
+# (key, name, the parameters of the filter that differ from its defaults). Written for a 360-high canvas (_px)
+_PARTICLE_PRESETS = (
+    ("system", "粒子系統", {}),
+    ("sparks", "火花", {
+        "count": 600, "life": 1.5, "life_var": 0.4, "origin": [0.5, 0.6], "speed": 500.0, "speed_var": 0.6, "gravity": 700.0, "drag": 0.8,
+        "look": "線條", "size": 3.0, "size_var": 0.3, "size_end": 0.4, "stretch": 0.05, "colors": _grad("0:#fff0b0,0.5:#ffc35a,1:#ff3a10"),
+        "fade_out": 0.5, "brightness": 1.5, "time_offset": 1.5}),
+    ("fireworks", "煙火", {
+        "mode": "爆發", "period": 3.0, "count": 260, "life": 2.2, "life_var": 0.25, "origin": [0.5, 0.4], "speed": 480.0, "speed_var": 0.5,
+        "gravity": 520.0, "drag": 0.7, "look": "線條", "size": 5.0, "size_var": 0.3, "size_end": 0.5, "trail": 8, "trail_step": 0.03,
+        "colors": _grad("0:#fff2c0,0.4:#ffb347,1:#ff3b1a"), "fade_out": 0.5}),
+    ("shells", "煙花彈", {                                  # (shells go up with a trail and burst into sparks where they die)
+        "count": 5, "life": 1.5, "life_var": 0.2, "emitter": "線", "origin": [0.5, 0.95], "ewidth": 700.0, "angle": 0.0, "spread": 24.0, "speed": 520.0,
+        "speed_var": 0.15, "gravity": 380.0, "drag": 0.15, "look": "實心圓", "size": 4.0, "size_var": 0.1, "size_end": 1.0, "trail": 12, "trail_step": 0.014,
+        "trail_fade": 0.9, "colors": _grad("0:#fff2c0,1:#ffb347"), "fade_out": 0.0, "sub": 70, "sub_mode": "死亡時", "sub_life": 1.5, "sub_speed": 210.0,
+        "sub_inherit": 0.25, "sub_size": 5.0, "sub_size_end": 0.3, "sub_colors": _grad("0:#ffffff,0.35:#ffd070,1:#ff4a1a")}),
+    ("confetti", "紙屑", {
+        "count": 300, "life": 6.0, "life_var": 0.3, "time_offset": 6.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 700.0, "angle": 180.0,
+        "spread": 20.0, "speed": 30.0, "gravity": 300.0, "drag": 1.5, "turb": 40.0, "turb_scale": 120.0, "turb_speed": 0.8, "look": "方塊",
+        "aspect": 1.8, "size": 10.0, "size_var": 0.3, "size_end": 1.0, "rotmode": "旋轉", "spin": 4.0, "flip": 6.0, "glow": 0.0, "fade_in": 0.0,
+        "fade_out": 0.1, "color_mode": "每個隨機",
+        "colors": _grad("0:#ff4d6d,0.2:#ffd166,0.4:#06d6a0,0.6:#4cc9f0,0.8:#b388ff")}),
+    ("bokeh", "漂浮光斑", {
+        "count": 40, "life": 9.0, "life_var": 0.3, "time_offset": 9.0, "emitter": "矩形", "ewidth": 640.0, "eheight": 360.0, "origin": [0.5, 0.5],
+        "speed": 12.0, "speed_var": 0.5, "gravity": 0.0, "drag": 0.0, "turb": 25.0, "turb_scale": 120.0, "turb_speed": 0.3, "look": "柔邊圓",
+        "softness": 0.3, "size": 80.0, "size_var": 0.6, "size_end": 1.0, "alpha": 0.55, "brightness": 0.8, "color_mode": "每個隨機",
+        "colors": _grad("0:#ffd9a0,0.25:#ffb36b,0.5:#ff8fa3,0.75:#fff2d0,1:#9fd8ff"), "fade_in": 0.25, "fade_out": 0.25}),
+    ("snow", "下雪", {
+        "count": 600, "life": 9.0, "life_var": 0.4, "time_offset": 9.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 800.0,
+        "angle": 180.0, "spread": 20.0, "speed": 23.0, "gravity": 13.0, "drag": 0.5, "turb": 23.0, "turb_scale": 87.0, "turb_speed": 0.3,
+        "look": "柔邊圓", "softness": 0.35, "size": 5.0, "size_var": 0.6, "size_end": 1.0, "colors": _grad("0:#ffffff,1:#dfeaff"),
+        "fade_in": 0.08, "fade_out": 0.15, "glow": 0.5}),
+    ("fire", "火焰", {
+        "count": 260, "life": 1.3, "life_var": 0.4, "time_offset": 1.3, "emitter": "線", "origin": [0.5, 0.8], "ewidth": 37.0, "angle": 0.0, "spread": 25.0,
+        "speed": 57.0, "gravity": -87.0, "drag": 1.0, "turb": 15.0, "turb_scale": 40.0, "turb_speed": 1.2, "look": "柔邊圓", "softness": 0.8,
+        "size": 10.0, "size_var": 0.4, "size_end": 0.1, "colors": _grad("0:#ffd36a,0.35:#ff7a1e,1:#a01408"), "alpha": 0.3, "brightness": 1.0,
+        "fade_in": 0.1, "fade_out": 0.5}),
+    ("smoke", "煙", {
+        "count": 70, "life": 5.0, "life_var": 0.4, "time_offset": 5.0, "origin": [0.5, 0.85], "angle": 0.0, "spread": 20.0, "speed": 20.0, "gravity": -17.0,
+        "drag": 0.4, "turb": 23.0, "turb_scale": 53.0, "turb_speed": 0.4, "look": "柔邊圓", "softness": 1.0, "size": 17.0, "size_var": 0.4,
+        "size_end": 3.0, "colors": _grad("0:#6b6b6b,1:#bdbdbd"), "alpha": 0.1, "glow": 0.0, "fade_in": 0.15, "fade_out": 0.6}),
+    ("magic", "魔法光點", {
+        "count": 130, "life": 3.0, "life_var": 0.4, "time_offset": 3.0, "emitter": "圓形", "ewidth": 120.0, "speed": 8.0, "gravity": -7.0, "drag": 0.2,
+        "turb": 30.0, "turb_scale": 60.0, "turb_speed": 0.4, "look": "星芒", "size": 5.0, "size_var": 0.5, "size_end": 0.4,
+        "colors": _grad("0:#ffffff,0.5:#bfe3ff,1:#8f7bff"), "twinkle": 0.7, "fade_in": 0.2, "fade_out": 0.4}),
+    ("bounce", "彈跳火花", {
+        "mode": "爆發", "period": 3.5, "count": 90, "life": 3.2, "origin": [0.5, 0.3], "speed": 140.0, "gravity": 333.0, "drag": 0.0, "look": "實心圓",
+        "size": 2.3, "size_end": 0.8, "floor_on": True, "floor_y": 0.9, "bounce": 0.55, "colors": _grad("0:#fff2c0,1:#ff9a2e"), "fade_out": 0.25}),
+    ("pictures", "圖片粒子", {                               # (the picture is chosen next: 粒子圖片)
+        "count": 60, "life": 6.0, "life_var": 0.3, "time_offset": 6.0, "emitter": "線", "origin": [0.5, -0.05], "ewidth": 667.0, "angle": 180.0, "spread": 30.0,
+        "speed": 13.0, "gravity": 40.0, "drag": 0.3, "turb": 20.0, "turb_scale": 73.0, "turb_speed": 0.4, "look": "圖片", "size": 20.0, "size_var": 0.4,
+        "size_end": 1.0, "rotmode": "旋轉", "spin": 1.5, "glow": 0.0, "fade_in": 0.05, "fade_out": 0.15}),
+)
+
+
+def _particle_asset(key, name, values):
+    """An Asset of the 粒子 list: the fields from the filter's parameters of `values`."""
+    params = {}
+    for n, v in _px(values).items():
+        par = PT_PARAMS.get(n)
+        if par is not None and pt_field(par):
+            params[pt_field(par)] = v
+    return Asset(f"particle.{key}", "particle", name, "particles", ("#ffffff", "#000000"), **params)
+
+
+if "particles" in FIELDS:
+    ASSETS.extend(_particle_asset(k, n, v) for k, n, v in _PARTICLE_PRESETS)
+    _BY_KEY.update({a.key: a for a in ASSETS if a.cat == "particle"})
+
 
 
 def _grad_def(gid, a, b, gtype, angle, w, h, stops=None):
@@ -905,6 +1053,8 @@ def svg(p, editing=False, part=None):
     w, h = p["w"], p["h"]
     if p["family"] == "empty":
         return _empty(w, h) if editing else _svg(w, h, "")
+    if p["family"] == "particles":
+        return _svg(w, h, "")                    # (a particle object: see-through; the particle system draws into it)
     if p["family"] == "solid":
         return _svg(w, h, f'<rect width="{w}" height="{h}" {_fill(p["color"])}/>')
     if p["family"] == "gradient":

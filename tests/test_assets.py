@@ -89,7 +89,7 @@ class AssetTests(unittest.TestCase):
             if a.cat not in ("shape", "empty"):             # fills the canvas
                 self.assertEqual((p["w"], p["h"]), (1920, 1080), a.key)
             img = svgimage.raster(path, 64)
-            if a.cat in ("empty", "path"):                  # nothing to see in the file (a pen path has no nodes yet)
+            if a.cat in ("empty", "path", "particle"):      # nothing to see in the file (a pen path has no nodes yet; particles are drawn at each moment)
                 self.assertEqual(sum(img.pixelColor(x, y).alpha() for x in range(0, 64, 4) for y in range(0, img.height(), 2)), 0)
                 continue
             self.assertGreater(sum(img.pixelColor(x, y).alpha() for x in range(0, 64, 4)
@@ -373,39 +373,87 @@ class AssetTests(unittest.TestCase):
         self.assertEqual(len(made), 1)
 
     def test_particles_are_a_category_of_the_panel(self):
-        from kiasecut import fx
         from kiasecut.ui.assets_panel import AssetsPanel
         from kiasecut.ui.timeline import MEDIA_MIME
         panel = AssetsPanel()
         got = []
         panel.addRequested.connect(got.append)
         lst = panel.lists["particle"]
-        self.assertEqual([lst.item(i).text() for i in range(lst.count())],
-                         [name or fx.get(fx.BUILTIN + ref).name for _k, name, ref, _p in assets.PARTICLES])
-        self.assertEqual(bytes(lst.mimeData([lst.item(1)]).data(MEDIA_MIME)).decode(), "particle:fireworks")
+        names = [a.name for a in assets.ASSETS if a.cat == "particle"]
+        self.assertEqual([lst.item(i).text() for i in range(lst.count())], names)
+        self.assertEqual(names[:3], ["粒子系統", "火花", "煙火"])
+        self.assertEqual(bytes(lst.mimeData([lst.item(2)]).data(MEDIA_MIME)).decode(), "asset:particle.fireworks:#ffffff:#000000")
         for i in range(lst.count()):
             self.assertFalse(lst.item(i).icon().isNull())
         lst.itemDoubleClicked.emit(lst.item(0))
-        self.assertEqual(got, ["particle:system"])
+        self.assertEqual(got, ["asset:particle.system:#ffffff:#000000"])
 
-    def test_dropping_a_particle_adds_a_see_through_clip_with_its_filter(self):
-        import types
+    def test_a_particle_object_has_the_systems_settings_as_fields(self):
         from kiasecut import fx
-        from kiasecut.ui.main_window import MainWindow
+        d = fx.get("builtin:particle_system")
+        self.assertIsNone(d.error)
+        a = assets.get("particle.snow")
+        p = assets.make(a, "#ffffff", "#000000", 1920, 1080)
+        self.assertEqual((p["family"], p["w"], p["h"]), ("particles", 1920, 1080))
+        self.assertEqual((p["pt_emitter"], p["pt_count"], p["pt_look"]), ("線", 600, "柔邊圓"))
+        self.assertAlmostEqual(p["pt_ewidth"], 2400.0)                              # (written for 360 high: px of a 1080-high canvas)
+        self.assertEqual(len(p["pt_colors_stops"]), 2)
+        for par in d.params:                                                        # every parameter is a field, except the curve
+            f = assets.pt_field(par)
+            self.assertEqual(f is None, par.type == "curve", par.name)
+            if f:
+                self.assertIn(f, p, par.name)
+                self.assertIn(f, assets.FIELD_INFO)
+        q = assets.at(p, 0)
+        self.assertIsInstance(q["pt_count"], int)
+        self.assertFalse(assets.pt_enabled("pt_period", q))                         # 爆發間隔: only for a burst
+        self.assertTrue(assets.pt_enabled("pt_ewidth", q))
+        self.assertFalse(assets.pt_enabled("pt_threshold", q))
+        e = assets.particle_effect(p)                                               # what the renderer runs
+        self.assertEqual((e["filter"], e["params"]["emitter"], e["params"]["count"]), ("builtin:particle_system", "線", 600))
+        self.assertNotIn("sprite_img", e["params"])
+        self.assertNotIn("sources", e)
+        p["pt_sprite_image"] = os.path.join(self.dir, "sprite.png")
+        from PySide6.QtGui import QImage
+        img = QImage(20, 10, QImage.Format_ARGB32)
+        img.fill(0xff00ff00)
+        img.save(p["pt_sprite_image"])
+        src = assets.particle_effect(p)["sources"]["sprite_img"]
+        self.assertEqual((src["kind"], src["img_w"], src["img_h"]), ("image", 20, 10))
+
+    def test_a_particle_object_keeps_its_settings_keyframeable_and_runs_the_system(self):
+        from kiasecut import project
+        p = assets.make(assets.get("particle.fire"), "#ffffff", "#000000", 1920, 1080)
+        p["pt_size"] = {"keys": [[0, 10.0, 0, 0, 0, 0], [1_000_000, 50.0, 0, 0, 0, 0]]}
+        p = assets.normalize(p)
+        self.assertAlmostEqual(assets.at(p, 500_000)["pt_size"], 30.0, delta=1.0)
+        c = {"id": "c1", "type": "image", "asset": p, "effects": [], "start_us": 0, "duration_us": 1}
+        effects = project.visual_effects(c)
+        self.assertEqual([e["filter"] for e in effects], ["builtin:particle_system"])
+        self.assertTrue(effects[0]["params"]["size"].get("keys"))                  # (the keyframes go to the filter as they are)
+
+    def test_a_particle_object_is_never_a_still(self):
+        from kiasecut import stillspans
+        p = assets.make(assets.get("particle.snow"), "#ffffff", "#000000", 1920, 1080)
+        c = {"id": "c1", "type": "image", "asset": p, "start_us": 0, "duration_us": 1, "media": {"path": "/a.svg"}}
+        self.assertFalse(stillspans._own_still(c))
+        c["asset"] = assets.make(assets.get("shape.rect"), "#ffffff", "#000000", 1920, 1080)
+        self.assertTrue(stillspans._own_still(c))
+
+    def test_inspector_groups_a_particle_objects_settings(self):
+        from kiasecut.ui.inspector import Inspector
         p = proj()
-        made = []
-        params = assets.make(assets.get("solid.custom"), "#00000000", "#00000000", 1920, 1080)
-        h = types.SimpleNamespace(ensure_project=lambda: True, apply=lambda _n, fn, select=None: made.append(fn(p)),
-                                  new_asset=lambda ident: (params, "/a.svg"))
-        MainWindow.place_asset(h, "particle:sparks", "", 2_000_000)
-        c = made[0]
-        self.assertEqual((c["start_us"], c["name"], c["asset"]["family"], c["asset"]["color"]), (2_000_000, fx.get("builtin:sparks").name, "solid", [0.0, 0.0, 0.0, 0.0]))
-        self.assertEqual([e["filter"] for e in c["effects"]], ["builtin:sparks"])
-        MainWindow.place_asset(h, "particle:snow", "", 0)                                 # (a setting of the whole system)
-        e = made[1]["effects"][0]
-        self.assertEqual((made[1]["name"], e["filter"], e["params"]["emitter"], e["params"]["count"]), ("下雪", "builtin:particle_system", "線", 600))
-        MainWindow.place_asset(h, "particle:nope", "", 0)                                 # (no such particle: nothing added)
-        self.assertEqual(len(made), 2)
+        params = assets.make(assets.get("particle.fire"), "#ffffff", "#000000", 1920, 1080)
+        edit.replace_media(p, "c1", assets.item(params, "/a.svg"), params)
+        ins = Inspector()
+        c = edit.find(p, "c1")[1]
+        ins.show_clips([c], 0, 30)
+        self.assertEqual(ins.widgets[("asset", "pt_count")].value(), 260)
+        rows = ins._asset_rows
+        self.assertTrue(ins._asset_form.isRowVisible(rows["pt_ewidth"]))
+        self.assertFalse(ins._asset_form.isRowVisible(rows["pt_period"]))         # (only for a burst)
+        self.assertFalse(ins._asset_form.isRowVisible(rows["pt_sub_life"]))       # (no sub-particles)
+        self.assertIn(("key", "asset", "pt_size"), ins.widgets)                    # (every one has ◆)
 
     def test_inspector(self):
         from kiasecut.ui.inspector import Inspector

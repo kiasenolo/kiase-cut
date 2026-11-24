@@ -167,8 +167,8 @@ def _compound_still(comp):
 def _own_still(c):
     """Whether clip c itself (not what a compound shows) is the same at every moment."""
     t = c.get("type")
-    if t in ("video", "audio") or c.get("viz") or c.get("expr"):
-        return False
+    if t in ("video", "audio") or c.get("viz") or c.get("expr") or (c.get("asset") or {}).get("family") == "particles":
+        return False                                 # (a particle object moves by itself)
     if _moves({k: v for k, v in c.items() if k not in LINKED + ("effects", "mask")}):
         return False
     if not all(_effect_still(e) for e in c.get("effects") or ()):

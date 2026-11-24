@@ -370,6 +370,7 @@ vec4 sprite(vec2 q, vec4 color, vec4 data) // 粒子的四邊形上 q 這一點�
 - 參數是同名的 `uniform`，`particle()` 和 `sprite()` 都能直接讀；`resolution`、`time`、`rand()`、`src(uv)` 也都能用。
 - 同一份程式會在頂點和片段兩個階段都編譯：`particle()` 由頂點階段呼叫，`sprite()` 由片段階段呼叫。
   別在 `particle()` 裡用 `discard` 或 `dFdx`，也別拿 `pos` 當全域名字。需要分開寫時，頂點階段有 `#define VERTEX_STAGE`。
+- 內建的粒子濾鏡（`@nodes`）不在「新增效果」裡：粒子是「基礎物件」的一種（`assets.py` 的 particles：每個參數是一個 `pt_` 開頭的素材參數，在「屬性」裡改），節點編輯器裡照樣能叫出來。長度（像素）以 1080 高的畫布為準，畫布大小不同時看起來一樣。
 - 粒子濾鏡不能和別的濾鏡合併成一次繪製（`fuse.py`）。
 - `// @sprite 顏色參數名`：那個顏色參數在「效果」面板用「使用圖片」選的圖片、影片或複合片段，就是粒子的樣子。`sprite()` 裡用
   `sprite_picture(q)`（q 在 -1 到 1，回傳預乘透明度的顏色）讀它，`sprite_picture_size()` 是它的像素大小，`has_sprite_picture()` 是有沒有選。

@@ -1705,6 +1705,8 @@ class Inspector(QWidget):
             lay.addWidget(self._key_button("asset", f))
         form.addRow("大小 px", row)
         fields = ("color",) + assets.FIELDS[family]
+        if family == "particles":                         # (the particle system's settings, in groups: no colour of its own)
+            fields = assets.FIELDS[family]
         if "fill" in fields:                              # the shape's own, then fill, then outline
             own = tuple(f for f in fields if f not in assets.STROKE and f != "color")
             fields = own + ("fill", "fill_type", "color") + tuple(f for f in assets.STROKE if f not in ("fill", "fill_type"))
@@ -1713,11 +1715,15 @@ class Inspector(QWidget):
             info = assets.FIELD_INFO[f]
             if info[1] == "path":                         # (a pen path's nodes: edited on the canvas)
                 continue
+            if f in assets.SECTIONS:                      # (a group of the particle system's settings starts here)
+                form.addRow(section(assets.SECTIONS[f]))
             if info[1] == "toggle":
                 box = QCheckBox(info[0])
                 box.clicked.connect(lambda on, f=f: self._emit_now(self.paramEdited, "asset", f, bool(on)))
                 self.widgets[("asset", f)] = box
-                form.addRow("", self._with_key(box, "asset", f))
+                row = self._with_key(box, "asset", f)
+                form.addRow("", row)
+                self._asset_rows[f] = row
             elif info[1] == "stops":
                 ed = GradientEditor()
                 ed.changed.connect(lambda st, f=f: self._queue("asset", f, st))
@@ -1800,6 +1806,17 @@ class Inspector(QWidget):
             if ("key", "asset", f) in self.widgets:
                 self._key_state(self.widgets[("key", "asset", f)], ps, clips, ts)
         self._asset_paint_rows(clips, ts)
+        self._asset_enabled_rows(clips, ts)
+
+    def _asset_enabled_rows(self, clips, ts):
+        """A particle object: show only the settings that do something with the others' values (the filter's @enable lines)."""
+        form, rows = getattr(self, "_asset_form", None), getattr(self, "_asset_rows", {})
+        if form is None or clips[0]["asset"].get("family") != "particles":
+            return
+        q = assets.at(clips[0]["asset"], ts[0])
+        for f in assets.FIELDS["particles"]:
+            if f in rows:
+                form.setRowVisible(rows[f], assets.pt_enabled(f, q))
 
     def _asset_paint_rows(self, clips, ts):
         """Show only what the chosen fill / outline type uses (a gradient: colour 2, its shape and

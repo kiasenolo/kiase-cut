@@ -1,5 +1,6 @@
 // @filter 火花
 // @category 粒子
+// @nodes
 // @description 從一點噴出的火花：有重力和空氣阻力，沿著運動方向拉出拖尾，顏色從亮到暗；可以持續噴，也可以一次爆發（煙火）
 // @particles 20000 count
 // @param count int 600 1 20000 "粒子數"

@@ -608,6 +608,9 @@ def visual_effects(c, shadow=False):
     """The effects that change a clip's picture: on, and not a time effect (stepped()) or 動態模糊. shadow: the clip's 陰影 too,
     last (as it is drawn: the clip's own drawing, not what a filter clip or 套用至背景 works on)."""
     out = [e for e in c.get("effects") or () if not e.get("disabled") and e.get("filter") not in PLACE_FILTERS]
+    if (c.get("asset") or {}).get("family") == "particles":       # a particle object: the particle system, from its own settings, first
+        from . import assets
+        out.insert(0, assets.particle_effect(c["asset"]))
     sh = shadow_effect(c) if shadow else None
     return out + [sh] if sh else out
 

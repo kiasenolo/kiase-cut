@@ -1,5 +1,5 @@
 """The 內建素材 tab: solid colours, gradients and basic shapes (see assets.py), the text presets (textpresets.py; ident "text:<key>") and the four Audio
-Visualizers (viz.py; their ident is "viz:<kind>") and the particles (assets.PARTICLES; "particle:<filter>").
+Visualizers (viz.py; their ident is "viz:<kind>").
 
 Drag one onto the timeline (hold Alt over a picture clip to replace its source), or
 double-click to add it at the playhead. The two colours at the top paint the shapes and the
@@ -11,7 +11,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
-from .. import assets, fx, textlayout, textpresets, viz
+from .. import assets, textlayout, textpresets, viz
 from .colorpick import hex_of, pick_color, qcolor
 from .timeline import MEDIA_MIME
 from .menukeys import Menu
@@ -65,7 +65,6 @@ def text_thumbnail(key):
 
 
 VIZ_CAT = ("viz", "Audio Visualizer")           # (after the presets: drawn from sound, not from colours)
-PARTICLE_CAT = ("particle", "粒子")              # (a see-through clip with a particle filter on it, see assets.PARTICLES)
 
 
 def particle_thumbnail(key):
@@ -92,7 +91,7 @@ def particle_thumbnail(key):
         p.setBrush(g)
         p.drawEllipse(QPointF(x, y), r, r)
 
-    if key in ("sparks", "fireworks"):
+    if key in ("sparks", "fireworks", "shells"):
         for i in range(34 if key == "sparks" else 28):
             a = rnd.random() * math.tau
             r0, r1 = 3 + rnd.random() * 6, 10 + rnd.random() * 20
@@ -108,7 +107,7 @@ def particle_thumbnail(key):
             p.rotate(rnd.random() * 180)
             p.drawRect(QRectF(-3, -1.6, 6, 3.2))
             p.restore()
-    elif key == "bokeh_lights":
+    elif key == "bokeh":
         for i in range(11):
             c = QColor.fromHsvF(0.05 + 0.12 * rnd.random(), 0.45, 1.0, 0.5)
             r = 4 + rnd.random() * 9
@@ -339,22 +338,6 @@ class AssetsPanel(QWidget):
         blay.addWidget(head)
         blay.addWidget(lst)
         self.lists[VIZ_CAT[0]] = lst
-        head = QLabel(PARTICLE_CAT[1])                      # 粒子: a see-through clip with a particle filter on it
-        head.setStyleSheet("font-weight: bold; margin-top: 4px;")
-        lst = AssetList(self)
-        lst.itemDoubleClicked.connect(lambda it: self.addRequested.emit(self.ident(it.data(ROLE_KEY))))
-        lst.setContextMenuPolicy(Qt.CustomContextMenu)
-        lst.customContextMenuRequested.connect(lambda pos, l=lst: self._menu(l, pos))
-        for key, name, ref, _params in assets.PARTICLES:
-            d = fx.get(fx.BUILTIN + ref)
-            it = QListWidgetItem(name or d.name)
-            it.setData(ROLE_KEY, "particle." + key)
-            it.setToolTip((name or d.name) + "（" + d.description.split("；")[0] + "；拖到時間線加入，設定在效果裡改）")
-            it.setIcon(QIcon(particle_thumbnail(key)))
-            lst.addItem(it)
-        blay.addWidget(head)
-        blay.addWidget(lst)
-        self.lists[PARTICLE_CAT[0]] = lst
         blay.addStretch(1)
         toggles = [list_toggle("assets", lst, QSize(*THUMB), QSize(THUMB[0] + 18, THUMB[1] + 34), QSize(*THUMB))
                    for lst in self.lists.values()]
@@ -368,8 +351,6 @@ class AssetsPanel(QWidget):
     def ident(self, key):
         if key.startswith("viz."):
             return "viz:" + key[4:]
-        if key.startswith("particle."):
-            return assets.PARTICLE_PREFIX + key[9:]
         if key.startswith("text."):
             return textpresets.ident(key[5:])
         return assets.ident(key, *self.colors)
@@ -383,7 +364,10 @@ class AssetsPanel(QWidget):
                 a = assets.get(it.data(ROLE_KEY))
                 if a is None:                                   # (an Audio Visualizer: no colours of the panel's)
                     continue
-                if a.custom or it.icon().isNull():
+                if a.cat == "particle":
+                    if it.icon().isNull():
+                        it.setIcon(QIcon(particle_thumbnail(a.key.split(".", 1)[1])))
+                elif a.custom or it.icon().isNull():
                     it.setIcon(QIcon(thumbnail(a, *self.colors)))
 
     def _pick(self, k):

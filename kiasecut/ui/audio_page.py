@@ -832,19 +832,27 @@ class AudioPage(QWidget):
         self.master_slot = QHBoxLayout()
         self.master_slot.setContentsMargins(3, 4, 3, BAND)
         row.addLayout(self.master_slot)
-        self.spectrum = Spectrum()
-        row.addWidget(self.spectrum)
         self.wires = Cables(self, mixer)
         bar_ = self.strip_area.horizontalScrollBar()
         bar_.valueChanged.connect(lambda _v: self.wires.update())
         bar_.rangeChanged.connect(lambda *_a: QTimer.singleShot(0, self._level_master))
         mixer.setMinimumHeight(370)
-        self.vsplit.addWidget(mixer)
+        mixer.setMinimumWidth(320)
+        self.mixsplit = QSplitter(Qt.Horizontal)        # the mixer | the output's spectrum: as wide as it is dragged
+        self.mixsplit.setChildrenCollapsible(False)
+        self.mixsplit.addWidget(mixer)
+        self.spectrum = Spectrum()
+        self.mixsplit.addWidget(self.spectrum)
+        self.mixsplit.setStretchFactor(0, 1)            # (a wider window: the mixer takes it)
+        self.mixsplit.setStretchFactor(1, 0)
+        self.mixsplit.setSizes([1100, 260])
+        self.vsplit.addWidget(self.mixsplit)
         self.vsplit.setStretchFactor(0, 1)
         self.vsplit.setSizes([460, 400])
         lay.addWidget(self.vsplit, 1)
         self.setStyleSheet("QWidget#audiopage { background: #0d0d0d; }")
-        for key, split in (("audio/vsplit", self.vsplit), ("audio/hsplit", self.hsplit), ("audio/right", self.right)):
+        for key, split in (("audio/vsplit", self.vsplit), ("audio/hsplit", self.hsplit), ("audio/right", self.right),
+                           ("audio/mixsplit", self.mixsplit)):
             state = win.settings().value(key)
             if state is not None:
                 split.restoreState(state)

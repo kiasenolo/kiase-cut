@@ -268,6 +268,9 @@ class _Transport:
         w = self.win.player.worker
         w.request_seek(round(us / US * self.win.fps))      # (not MainWindow.seek, which stops playing)
 
+    def alone(self, mono):
+        self.win.player.worker.set_alone(mono)
+
 
 class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread

@@ -1,7 +1,8 @@
 """聲音轉數值 (soundmeter.py): which channel a global parameter listens to, the box of the spectrum it
 measures - dragged on the spectrum of the moment the cursor is at - how fast the number rises and
 falls, and the number over the seconds round the cursor, worked out as the project will read it.
-The project goes on playing while the dialog is open (its button, or Space), the cursor with it."""
+The project goes on playing while the dialog is open (its button, or Space), the cursor with it;
+or only the sound that is measured is played."""
 import math
 import threading
 import time
@@ -9,8 +10,8 @@ import time
 import numpy as np
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPainter, QPainterPath, QPen, QShortcut
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QHBoxLayout, QLabel,
+                               QPushButton, QVBoxLayout, QWidget)
 
 from .. import soundmeter
 from . import icons
@@ -228,12 +229,14 @@ class SoundDialog(QDialog):
 
     def __init__(self, parent, title, root, spec, level, cache_dir, t_us, transport=None):
         """spec: what the parameter listens to now, or None. level: the open level's id.
-        transport: the preview's playback - playing(), time_us(), toggle(), seek(us) - or None."""
+        transport: the preview's playback - playing(), time_us(), toggle(), seek(us), alone(mono
+        or None) - or None."""
         super().__init__(parent)
         self.setWindowTitle(title)
         self.root, self.cache_dir = root, cache_dir
         self.pcm = None
         self.job = None                     # the cancel event of the measuring under way
+        self.alone = None                   # the 只聽被量的聲音 box, when there is playback
         self.transport = transport
         self.sought = None                  # (where the preview was told to go and has not got to yet, until when)
         self.heard_at = None                # what the playback's time was last, to follow it only when it moves
@@ -261,6 +264,10 @@ class SoundDialog(QDialog):
             self.spectrum.box = {k: spec[k] for k in self.spectrum.box}
         lay.addWidget(self.spectrum, 1)
         lay.addWidget(self.curve)
+        if transport is not None:
+            self.alone = QCheckBox("只聽被量的聲音")
+            self.alone.setFocusPolicy(Qt.NoFocus)
+            self.alone.toggled.connect(lambda _on: self._heard_alone())
         row = QHBoxLayout()
         self.play = None
         if transport is not None:
@@ -296,7 +303,12 @@ class SoundDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self.ok = buttons.button(QDialogButtonBox.Ok)
-        lay.addWidget(buttons)
+        below = QHBoxLayout()
+        if self.alone is not None:
+            below.addWidget(self.alone)
+        below.addStretch()
+        below.addWidget(buttons)
+        lay.addLayout(below)
         self._fill_channels(spec["channel"] if spec else None)
         self.spectrum.changed.connect(self._dragged)
         self.curve.moved.connect(self.scrub)
@@ -307,6 +319,8 @@ class SoundDialog(QDialog):
         self.curve.at_s = max(0.0, t_us / US)
         self.curve.first = max(0.0, self.curve.at_s - WINDOW_S / 3)
         self.finished.connect(lambda _r: self._stop())
+        if transport is not None:
+            self.finished.connect(lambda _r: transport.alone(None))
         self.measure()
         if transport is not None:
             self.heard_at = transport.time_us()
@@ -317,6 +331,12 @@ class SoundDialog(QDialog):
             self.finished.connect(lambda _r: self.follow_timer.stop())
 
     # -- playing -------------------------------------------------------------------------------------
+    def _heard_alone(self):
+        """What is played: the channel that is measured (silence until it is), or the project."""
+        if self.alone is not None:
+            on = self.alone.isChecked()
+            self.transport.alone((self.pcm if self.pcm is not None else np.zeros(0, np.float32)) if on else None)
+
     def _icon(self, playing):
         if self.play.property("playing") != playing:
             self.play.setProperty("playing", playing)
@@ -389,6 +409,7 @@ class SoundDialog(QDialog):
     def measure(self):
         self._stop()
         self.pcm = None
+        self._heard_alone()
         self.show_all()
         try:
             _snap, names, waits = soundmeter.needs(self.root, self.spec())
@@ -435,6 +456,7 @@ class SoundDialog(QDialog):
         if job is not self.job:
             return
         self.pcm = pcm
+        self._heard_alone()
         self.status.setText(why if why else "" if len(pcm) else "這裡沒有聲音")
         self.show_all()
 

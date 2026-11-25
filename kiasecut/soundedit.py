@@ -4,6 +4,7 @@ A target says whose chain or channel is meant: ("clip", id), ("track", id), ("bu
 ("master", ""). level: the open level - the project (its root) or a compound.
 """
 import copy
+import math
 import uuid
 
 from . import curves, edit, expr, mapping, project, soundfx, soundnodes
@@ -258,18 +259,23 @@ def channel_of(level, target):
 def side_sources(level, target):
     """[(id, name)] of the channels an effect of target can listen to: not its own, none its
     own sound goes on into (that would be a loop). The master's effects: any."""
-    channels = {t["id"]: t for t in level["tracks"]}
-    channels.update({b["id"]: b for b in buses(level)})
+    every = channels(level)
     own = channel_of(level, target)
     downstream, stack = {own}, [own] if own else []
     while stack:
-        h = channels.get(stack.pop())
-        for d in ([h.get("output")] + [s.get("bus") for s in h.get("sends") or ()] if h else []):
-            if d and d not in downstream:
-                downstream.add(d)
-                stack.append(d)
-    sounds = lambda i, h: not (h.get("kind") == "video" and not any(sounding(c) for c in h.get("clips", ())))
-    return [(i, h.get("name") or i) for i, h in channels.items() if i not in downstream and sounds(i, h)]
+        h = every.get(stack.pop())
+        for r in soundfx.routes_of(h) if h else ():
+            if r["to"] not in downstream:
+                downstream.add(r["to"])
+                stack.append(r["to"])
+    fed = fed_channels(level)
+    sounds = lambda i, h: i in fed or h.get("kind") != "video" or any(sounding(c) for c in h.get("clips", ()))
+    return [(i, h.get("name") or i) for i, h in every.items() if i not in downstream and sounds(i, h)]
+
+
+def fed_channels(level):
+    """The ids of the channels something is sent to."""
+    return {r["to"] for h in channels(level).values() for r in soundfx.routes_of(h)}
 
 
 # -- graphs (soundnodes.py) ------------------------------------------------------------------------
@@ -353,21 +359,143 @@ def reroute_link(g, link, x, y):
 
 
 # -- channels: tracks, buses, the master ------------------------------------------------------------
-def destinations(level, target):
-    """The buses target (a track or bus) may send to: not itself, none that would make a loop."""
-    all_buses = {b["id"]: b for b in buses(level)}
-    if target[0] != "bus":
-        return list(all_buses.values())
+MASTER_TARGET = ("master", "")
 
-    def reaches(i, goal, seen):
-        if i == goal:
-            return True
-        b = all_buses.get(i)
-        if b is None or i in seen:
+
+def channels(level):
+    """{id: holder} of the level's tracks and buses."""
+    return {h["id"]: h for h in [*level["tracks"], *buses(level)]}
+
+
+def routes(level, target):
+    """The routes of a track or bus that lead somewhere there is."""
+    every = channels(level)
+    return soundfx.live_routes(holder(level, target), set(every) | {soundfx.MASTER}, target[1])
+
+
+def route_to(level, target, dest):
+    """The route from target to channel id dest (soundfx.MASTER: the master), or None."""
+    return next((r for r in routes(level, target) if r["to"] == dest), None)
+
+
+def can_route(level, target, dest):
+    """Whether target (a track or bus) may send to channel id dest: not itself, and nothing
+    that would come round to it again."""
+    if target[0] not in ("track", "bus") or dest == target[1]:
+        return False
+    if dest == soundfx.MASTER:
+        return True
+    every = channels(level)
+    if dest not in every:
+        return False
+    seen, todo = set(), [dest]
+    while todo:
+        i = todo.pop()
+        if i == target[1]:
             return False
-        seen.add(i)
-        return any(reaches(d, goal, seen) for d in [b.get("output")] + [s.get("bus") for s in b.get("sends") or ()] if d)
-    return [b for i, b in all_buses.items() if not reaches(i, target[1], set())]
+        if i in every and i not in seen:
+            seen.add(i)
+            todo += [r["to"] for r in soundfx.routes_of(every[i])]
+    return True
+
+
+def destinations(level, target):
+    """The channel ids target may send to."""
+    return [i for i in [*channels(level), soundfx.MASTER] if can_route(level, target, i)]
+
+
+def _keep_routes(h, found):
+    h.pop("output", None)
+    h.pop("sends", None)
+    if found == soundfx.to_master():
+        h.pop("routes", None)
+    else:
+        h["routes"] = found
+
+
+def _own_routes(level, target):
+    """target's routes, written out, to be changed and kept again."""
+    return copy.deepcopy(routes(level, target))
+
+
+def set_route(level, target, dest, on):
+    """Connect target to dest, or take that line away."""
+    found = _own_routes(level, target)
+    there = next((r for r in found if r["to"] == dest), None)
+    if on and there is None:
+        if not can_route(level, target, dest):
+            raise edit.EditError("不能接到那裡（會接成迴圈）")
+        found.append({"to": dest})
+    elif not on and there is not None:
+        found.remove(there)
+    _keep_routes(holder(level, target), found)
+
+
+def set_routes(level, targets, dest, on):
+    """The same for several channels at once; those that cannot be connected are left."""
+    todo = [t for t in targets if not on or route_to(level, t, dest) or can_route(level, t, dest)]
+    if not todo:
+        raise edit.EditError("不能接到那裡（會接成迴圈）")
+    for t in todo:
+        set_route(level, t, dest, on)
+
+
+def route_only(level, targets, dest):
+    """Send these channels to dest alone."""
+    todo = [t for t in targets if can_route(level, t, dest)]
+    if not todo:
+        raise edit.EditError("不能接到那裡（會接成迴圈）")
+    for t in todo:
+        keep = route_to(level, t, dest) or {"to": dest}
+        _keep_routes(holder(level, t), [copy.deepcopy(keep)])
+
+
+def to_new_bus(level, targets, name=None):
+    """A new bus (into the master) that these channels are sent to instead of where they went."""
+    ident = add_bus(level, name)
+    route_only(level, [t for t in targets if t[0] in ("track", "bus")], ident)
+    return ident
+
+
+def _route(level, target, dest):
+    """The route as it is kept in target, to be written to."""
+    found = _own_routes(level, target)
+    r = next((r for r in found if r["to"] == dest), None)
+    if r is None:
+        raise edit.EditError("沒有接到那裡")
+    return found, r
+
+
+def set_route_level(level, target, dest, gain=None, pre=None, t=None):
+    """gain: dB of the line; pre: taken before the fader."""
+    found, r = _route(level, target, dest)
+    if gain is not None:
+        _set_number(r, "gain", round(float(max(soundfx.SEND_OFF_DB, min(12.0, gain))), 2), t)
+    if pre is not None:
+        if pre:
+            r["pre"] = True
+        else:
+            r.pop("pre", None)
+    if r.get("gain") == 0.0:
+        r.pop("gain")
+    _keep_routes(holder(level, target), found)
+
+
+def toggle_route_key(level, target, dest, t):
+    found, r = _route(level, target, dest)
+    _toggle_number(r, "gain", 0.0, t)
+    if r.get("gain") == 0.0:
+        r.pop("gain")
+    _keep_routes(holder(level, target), found)
+
+
+def nudge_route_level(level, targets, dest, delta, t=None):
+    """Turn the lines of these channels to dest by delta dB, each from where it is."""
+    for target in targets:
+        r = route_to(level, target, dest)
+        if r is not None:
+            now = float(curves.value(r.get("gain", 0.0), t or 0))
+            set_route_level(level, target, dest, now + delta, None, t)
 
 
 def set_gain(level, target, gain):
@@ -401,53 +529,79 @@ def set_flag(level, target, flag, on):
         h.pop(flag, None)
 
 
-def _check_destination(level, target, bus_id):
-    if all(b["id"] != bus_id for b in destinations(level, target)):
-        raise edit.EditError("不能接到那裡（會接成迴圈）")
+# -- several channels at once -------------------------------------------------------------------------
+GAIN_DB = (-60.0, 12.0)                 # the faders' ends: at the lower one, silent
 
 
-def set_output(level, target, bus_id):
-    """Where a track's or bus's output goes: a bus id, or None for the master."""
-    h = holder(level, target)
-    if bus_id:
-        _check_destination(level, target, bus_id)
-        h["output"] = bus_id
-    else:
-        h.pop("output", None)
+def gain_db(gain):
+    return GAIN_DB[0] if gain <= 10 ** (GAIN_DB[0] / 20) else min(GAIN_DB[1], 20 * math.log10(gain))
 
 
-def add_send(level, target, bus_id):
-    _check_destination(level, target, bus_id)
-    sends = holder(level, target).setdefault("sends", [])
-    if any(s["bus"] == bus_id for s in sends):
-        raise edit.EditError("已經有傳送到那個 bus")
-    sends.append({"bus": bus_id, "gain": 0.0})
+def db_gain(db):
+    return 0.0 if db <= GAIN_DB[0] else 10 ** (min(GAIN_DB[1], db) / 20)
 
 
-def _send(level, target, bus_id):
-    s = next((s for s in holder(level, target).get("sends") or () if s["bus"] == bus_id), None)
-    if s is None:
-        raise edit.EditError("找不到這個傳送")
-    return s
+def nudge_gain(level, targets, delta):
+    """Move the faders of these channels by delta dB, each from where it is."""
+    for t in targets:
+        if t[0] != "master":
+            set_gain(level, t, db_gain(gain_db(holder(level, t).get("gain", 1.0)) + delta))
 
 
-def remove_send(level, target, bus_id):
-    h = holder(level, target)
-    h["sends"].remove(_send(level, target, bus_id))
-    if not h["sends"]:
-        h.pop("sends")
+def nudge_pan(level, targets, delta):
+    for t in targets:
+        if t[0] != "master":
+            set_pan(level, t, holder(level, t).get("pan", 0.0) + delta)
 
 
-def set_send(level, target, bus_id, gain=None, pre=None, t=None):
-    """gain: dB; pre: taken before the fader."""
-    s = _send(level, target, bus_id)
-    if gain is not None:
-        _set_number(s, "gain", round(float(max(soundfx.SEND_OFF_DB, min(12.0, gain))), 2), t)
-    if pre is not None:
-        if pre:
-            s["pre"] = True
+def set_flags(level, targets, flag, on):
+    for t in targets:
+        if t[0] != "master":
+            set_flag(level, t, flag, on)
+
+
+def add_effects(level, targets, kind):
+    """The effect added to each of these (one of its own on each); {target: id}."""
+    return {t: add_effect(level, t, kind) for t in targets}
+
+
+def add_presets(level, targets, saved):
+    for t in targets:
+        add_preset(level, t, saved)
+
+
+def set_color(level, targets, color):
+    """A strip's colour on the mixer ("#rrggbb"; None: its kind's)."""
+    for t in targets:
+        h = holder(level, t, make=True)
+        if color:
+            h["mix_color"] = color
         else:
-            s.pop("pre", None)
+            h.pop("mix_color", None)
+            if t[0] == "master":
+                _prune(level, t)
+
+
+def ordered(level, ids):
+    """ids in the order the mixer's strips are in: as they were dragged, any other after the
+    one it follows in ids."""
+    kept = [i for i in mix_holder(level).get("mixer_order") or () if i in ids]
+    for at, i in enumerate(ids):
+        if i not in kept:
+            kept.insert(kept.index(ids[at - 1]) + 1 if at and ids[at - 1] in kept else 0 if not at else len(kept), i)
+    return kept
+
+
+def move_strips(level, ids, moving, before):
+    """Put the strips `moving` (of ids, as they are shown) before strip `before` (None: last).
+    Only the mixer's order: the timeline's tracks stay where they are."""
+    moving = [i for i in ids if i in moving]
+    rest = [i for i in ids if i not in moving]
+    if before in moving:                                    # (dropped among themselves: where the block begins)
+        after = ids[ids.index(before):]
+        before = next((i for i in after if i not in moving), None)
+    at = rest.index(before) if before in rest else len(rest)
+    mix_holder(level)["mixer_order"] = rest[:at] + moving + rest[at:]
 
 
 def add_bus(level, name=None):
@@ -467,21 +621,27 @@ def rename_bus(level, bus_id, name):
     bus(level, bus_id)["name"] = name
 
 
+def remove_buses(level, ids):
+    for i in ids:
+        remove_bus(level, i)
+
+
 def remove_bus(level, bus_id):
-    """Take a bus out: what went into it goes to the master, and nothing listens to it."""
+    """Take a bus out: what went only into it goes to the master, and nothing listens to it."""
     mix = mix_holder(level)
     gone = bus(level, bus_id)
+    went = {i: _own_routes(level, ("track" if any(t["id"] == i for t in level["tracks"]) else "bus", i))
+            for i in channels(level) if i != bus_id}
     mix["buses"].remove(gone)
     if not mix["buses"]:
         mix.pop("buses")
+    for i, h in channels(level).items():
+        if any(r["to"] == bus_id for r in went[i]):
+            _keep_routes(h, [r for r in went[i] if r["to"] != bus_id] or soundfx.to_master())
+    if mix.get("mixer_order"):
+        mix["mixer_order"] = [i for i in mix["mixer_order"] if i != bus_id]
     chains = [mix.get(soundfx.MASTER) or {}]
     for h in list(level["tracks"]) + list(mix.get("buses") or ()):
-        if h.get("output") == bus_id:
-            h.pop("output")
-        if h.get("sends"):
-            h["sends"] = [s for s in h["sends"] if s["bus"] != bus_id]
-            if not h["sends"]:
-                h.pop("sends")
         chains.append(h)
         chains += h.get("clips", [])
     for h in chains:

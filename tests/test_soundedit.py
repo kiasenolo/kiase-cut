@@ -62,25 +62,81 @@ class BusTests(unittest.TestCase):
     def test_routes_make_no_loop(self):
         p = make()
         a, b = soundedit.add_bus(p), soundedit.add_bus(p)
-        soundedit.set_output(p, ("bus", a), b)
-        self.assertEqual(soundedit.destinations(p, ("bus", b)), [])
+        soundedit.set_route(p, ("bus", a), b, True)
+        self.assertEqual(soundedit.destinations(p, ("bus", b)), ["t0", "t1", "master"])
         with self.assertRaises(edit.EditError):
-            soundedit.set_output(p, ("bus", b), a)
-        with self.assertRaises(edit.EditError):
-            soundedit.add_send(p, ("bus", b), a)
+            soundedit.set_route(p, ("bus", b), a, True)
+        soundedit.set_route(p, ("track", "t0"), a, True)                       # a -> b, so b may not reach t0
+        self.assertFalse(soundedit.can_route(p, ("bus", b), "t0"))
+        self.assertFalse(soundedit.can_route(p, ("bus", b), b))
+        self.assertTrue(soundedit.can_route(p, ("track", "t1"), "t0"))         # a track may feed a track
+
+    def test_lines_as_in_fl(self):
+        p = make()
+        t = ("track", "t0")
+        a = soundedit.add_bus(p)
+        self.assertEqual(soundedit.routes(p, t), [{"to": "master"}])
+        soundedit.set_route(p, t, a, True)                                    # another line, the master's stays
+        self.assertEqual([r["to"] for r in soundedit.routes(p, t)], ["master", a])
+        soundedit.set_route_level(p, t, a, gain=-12.0, pre=True)
+        self.assertEqual(soundedit.route_to(p, t, a), {"to": a, "gain": -12.0, "pre": True})
+        soundedit.nudge_route_level(p, [t, ("track", "t1")], a, 3.0)          # only who has the line
+        self.assertEqual(soundedit.route_to(p, t, a)["gain"], -9.0)
+        self.assertIsNone(soundedit.route_to(p, ("track", "t1"), a))
+        soundedit.route_only(p, [t], a)
+        self.assertEqual([r["to"] for r in soundedit.routes(p, t)], [a])
+        soundedit.set_route(p, t, a, False)                                   # nowhere at all is allowed
+        self.assertEqual(soundedit.routes(p, t), [])
+        self.assertTrue(soundfx.routed(p["tracks"][0]))
+        soundedit.set_route(p, t, "master", True)
+        self.assertNotIn("routes", p["tracks"][0])                            # as it was: nothing written
+
+    def test_several_at_once(self):
+        p = make()
+        both = [("track", "t0"), ("track", "t1")]
+        soundedit.set_gain(p, both[1], 0.5)
+        soundedit.nudge_gain(p, both + [("master", "")], -6.0206)
+        self.assertAlmostEqual(p["tracks"][0]["gain"], 0.5, delta=1e-3)
+        self.assertAlmostEqual(p["tracks"][1]["gain"], 0.25, delta=1e-3)
+        soundedit.nudge_pan(p, both, 0.4)
+        soundedit.set_flags(p, both, "muted", True)
+        self.assertTrue(all(t["muted"] and t["pan"] == 0.4 for t in p["tracks"]))
+        bus = soundedit.to_new_bus(p, both)
+        self.assertEqual([[r["to"] for r in soundedit.routes(p, t)] for t in both], [[bus], [bus]])
+        soundedit.set_routes(p, both + [("bus", bus)], "master", True)         # the bus has it already
+        made = soundedit.add_effects(p, [both[0], ("bus", bus), ("master", "")], "gain")
+        self.assertEqual(len(set(made.values())), 3)
+        soundedit.set_color(p, both, "#112233")
+        self.assertEqual(p["tracks"][1]["mix_color"], "#112233")
+        soundedit.set_color(p, both, None)
+        self.assertNotIn("mix_color", p["tracks"][1])
+
+    def test_strip_order(self):
+        p = make()
+        a, b = soundedit.add_bus(p), soundedit.add_bus(p)
+        ids = ["t0", "t1", a, b]
+        self.assertEqual(soundedit.ordered(p, ids), ids)
+        soundedit.move_strips(p, ids, [b, "t1"], "t0")
+        self.assertEqual(soundedit.ordered(p, ids), ["t1", b, "t0", a])
+        self.assertEqual(soundedit.ordered(p, ids + ["new"]), ["t1", b, "new", "t0", a])    # next to what it follows
+        self.assertEqual([t["id"] for t in p["tracks"]], ["t0", "t1"])        # the timeline's are left
+        soundedit.move_strips(p, soundedit.ordered(p, ids), ["t1"], None)
+        self.assertEqual(soundedit.ordered(p, ids), [b, "t0", a, "t1"])
 
     def test_removing_a_bus_lets_go_of_it(self):
         p = make()
-        a = soundedit.add_bus(p, "混響")
-        soundedit.set_output(p, ("track", "t0"), a)
-        soundedit.add_send(p, ("track", "t1"), a)
+        a, other = soundedit.add_bus(p, "混響"), soundedit.add_bus(p)
+        soundedit.route_only(p, [("track", "t0")], a)
+        soundedit.set_route(p, ("track", "t1"), a, True)
+        soundedit.set_route(p, ("track", "t1"), "master", False)
+        soundedit.set_route(p, ("track", "t1"), other, True)
         e = soundedit.add_effect(p, ("clip", "c1"), "gain")
         soundedit.set_side(p, ("clip", "c1"), e, a)
-        soundedit.remove_bus(p, a)
-        self.assertNotIn("output", p["tracks"][0])
-        self.assertNotIn("sends", p["tracks"][1])
+        soundedit.remove_buses(p, [a])
+        self.assertNotIn("routes", p["tracks"][0])                            # had only that one: the master again
+        self.assertEqual(p["tracks"][1]["routes"], [{"to": other}])
         self.assertNotIn("side", edit.find(p, "c1")[1]["sound_effects"][0])
-        self.assertEqual(soundedit.buses(p), [])
+        self.assertEqual([b["id"] for b in soundedit.buses(p)], [other])
 
     def test_saved_and_undone(self):
         p = make()

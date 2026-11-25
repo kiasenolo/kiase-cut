@@ -280,9 +280,39 @@ def pan_of(holder):
     return holder.get("pan", 0.0)
 
 
+def to_master():
+    return [{"to": MASTER}]
+
+
+def routes_of(holder):
+    """Where a track or bus sends its sound, as in FL Studio: [{"to": channel id or MASTER,
+    "gain"?: dB (keyframeable), "pre"?: taken before the fader}]. None written: into the
+    master as it is; an empty list: nowhere."""
+    if "routes" in holder:
+        return holder["routes"]
+    if holder.get("output") or holder.get("sends"):         # (as first written: one output, and sends)
+        return [{"to": holder.get("output") or MASTER}] + \
+            [{"to": s["bus"], **{k: s[k] for k in ("gain", "pre") if k in s}} for s in holder.get("sends") or ()]
+    return to_master()
+
+
+def live_routes(holder, ids, own):
+    """The routes of channel `own` that lead to a channel there is (ids, the master among
+    them). One that has lost every channel it went to goes to the master."""
+    routes = routes_of(holder)
+    found, seen = [], set()
+    for r in routes:
+        if r.get("to") in ids and r["to"] != own and r["to"] not in seen:
+            seen.add(r["to"])
+            found.append(r)
+    if routes and not any(r.get("to") in ids for r in routes):
+        return to_master()
+    return found
+
+
 def routed(holder):
     """Whether a track or bus is set to anything but straight into the master, unchanged."""
-    return bool(active(holder.get("sound_effects")) or holder.get("output") or holder.get("sends")
+    return bool(active(holder.get("sound_effects")) or routes_of(holder) != to_master()
                 or holder.get("pan", 0.0) != 0.0)
 
 

@@ -149,6 +149,27 @@ class GraphTests(Base):
         v["buses"][0]["muted"] = True
         self.assertAlmostEqual(rms(self.sound(v)), REF, delta=0.002)          # the other one only
 
+    def test_tracks_feed_tracks_and_several_places(self):
+        # a: into track 2 (which has its own) at half, and nowhere else
+        v = self.view([{"clips": [self.clip("a", self.low)], "routes": [{"to": "t2", "gain": -6.0206}]},
+                       {"clips": [], "sound_effects": [fx("gain", "e", gain=-6.0206)]}])
+        self.assertAlmostEqual(rms(self.sound(v)), REF / 4, delta=0.002)
+        v["tracks"][0]["routes"] = [{"to": "t2"}, {"to": "master"}]           # both ways at once
+        self.assertAlmostEqual(rms(self.sound(v)), REF * 1.5, delta=0.004)
+        v["tracks"][0]["routes"] = []                                          # nowhere
+        self.assertLess(rms(self.sound(v)), 1e-4)
+        v["tracks"][0]["routes"] = [{"to": "gone"}]                            # lost: the master
+        self.assertAlmostEqual(rms(self.sound(v)), REF, delta=0.002)
+
+    def test_solo_hears_what_feeds_it_that_way_only(self):
+        v = self.view([{"clips": [self.clip("a", self.low)], "routes": [{"to": "master"}, {"to": "b1"}]},
+                       {"clips": [self.clip("b", self.high)]}],
+                      buses=[{"id": "b1", "gain": 0.5, "solo": True}])
+        self.assertAlmostEqual(rms(self.sound(v)), REF / 2, delta=0.002)       # not a's own way to the master
+        v["buses"][0].pop("solo")
+        v["tracks"][0]["solo"] = True                                          # a soloed track: all its ways
+        self.assertAlmostEqual(rms(self.sound(v)), REF * 1.5, delta=0.004)
+
     def test_bus_loop_is_cut(self):
         v = self.view([{"clips": [self.clip("a", self.low)], "output": "b1"}],
                       buses=[{"id": "b1", "output": "b2"}, {"id": "b2", "output": "b1"}])

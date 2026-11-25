@@ -55,7 +55,7 @@ clip     {id, type: image | video | audio | text | compound, name,
                 box_w / box_h: the 文字框 (textlayout.py; absent or 0: as big as the words)
           volume, fade_in_us, fade_out_us                   clips with sound
           sound_effects                                     optional: the clip's 聲音效果 (soundfx.py,
-                     which also says what pan, output, sends and sound_effects a track
+                     which also says what pan, routes and sound_effects a track
                      has, and the buses and master a compound keeps for its level)
           backdrop: {on, hide}                              visual clips with effects, optional:
                      套用至背景 - the effects work on what is under the clip, inside its

@@ -15,11 +15,14 @@ import os
 
 import numpy as np
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-                               QInputDialog, QMessageBox, QScrollArea, QSlider, QSplitter, QVBoxLayout, QWidget)
+                               QApplication, QColorDialog, QInputDialog, QMessageBox, QScrollArea, QSlider, QSplitter,
+                               QVBoxLayout, QWidget)
 
 from .. import curves, dsp, edit, project, rack, soundedit, soundfx, soundnodes, userlib
 from . import icons, inplace, linkmark, sound_follow
+from .mixer_routing import BAND, Cables, Knob
 from .sound_node_editor import SoundNodeEditor
 from .sound_visuals import BAND_COLORS, Dynamics, Response, Spectrum
 from .inspector import SpinBox
@@ -30,6 +33,8 @@ US = 1_000_000
 RATE = 48000
 STRIP_W = 104
 KIND_COLOR = {"track": "#3f8a5a", "bus": "#3f6fa8", "master": "#a8473f", "clip": "#b3702f"}
+STRIP_COLORS = (("紅", "#b5433c"), ("橙", "#c2762c"), ("黃", "#c9b23a"), ("綠", "#3f8a5a"), ("青", "#2f8f95"),
+                ("藍", "#3f6fa8"), ("紫", "#7255a8"), ("粉紅", "#a84f83"), ("灰", "#66666e"))
 SLIDER_STEPS = 1000
 
 
@@ -397,6 +402,44 @@ class ChainPanel(QWidget):
 
 
 # -- one channel of the mixer ------------------------------------------------------------------------
+class NameButton(QPushButton):
+    """A strip's name: a click selects the strip (Ctrl, Shift: more of them), a drag moves it."""
+
+    def __init__(self, strip):
+        super().__init__("")
+        self.strip = strip
+        self.at = None
+        self.dragging = False
+        self.setFocusPolicy(Qt.NoFocus)
+
+    def mousePressEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            return
+        self.at, self.dragging = e.globalPosition().toPoint(), False
+        page, target = self.strip.page, self.strip.target
+        self.later = target in page.picked and not e.modifiers() & (Qt.ControlModifier | Qt.ShiftModifier)
+        if not self.later:                  # (one of several selected: they stay until it is clear it is no drag)
+            page.pick(target, e.modifiers())
+
+    def mouseMoveEvent(self, e):
+        if self.at is None or self.strip.kind == "master":
+            return
+        if not self.dragging and abs(e.globalPosition().toPoint().x() - self.at.x()) < QApplication.startDragDistance():
+            return
+        self.dragging = True
+        self.strip.page.drag_strips(self.strip.target, e.globalPosition().toPoint())
+
+    def mouseReleaseEvent(self, e):
+        if e.button() != Qt.LeftButton or self.at is None:
+            return
+        self.at = None
+        if self.dragging:
+            self.dragging = False
+            self.strip.page.drop_strips(self.strip.target, e.globalPosition().toPoint())
+        elif self.later:
+            self.strip.page.pick(self.strip.target, Qt.NoModifier)
+
+
 class Strip(QFrame):
     def __init__(self, page, target):
         super().__init__()
@@ -409,9 +452,7 @@ class Strip(QFrame):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
         lay.setSpacing(2)
-        self.name = QPushButton("")
-        self.name.setFocusPolicy(Qt.NoFocus)
-        self.name.clicked.connect(lambda: page.select(target))
+        self.name = NameButton(self)
         self.name.setContextMenuPolicy(Qt.CustomContextMenu)
         self.name.customContextMenuRequested.connect(self.name_menu)
         lay.addWidget(self.name)
@@ -427,25 +468,13 @@ class Strip(QFrame):
         area.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         area.setFixedHeight(92)
         lay.addWidget(area)
-        self.output = self.pan = None
-        self.send_spins = {}
+        self.pan = None
         if self.kind != "master":
-            sends = QWidget()
-            self.sends = QVBoxLayout(sends)
-            self.sends.setContentsMargins(0, 0, 0, 0)
-            self.sends.setSpacing(1)
-            lay.addWidget(sends)
-            self.output = QPushButton("")
-            self.output.setFocusPolicy(Qt.NoFocus)
-            self.output.setToolTip("輸出到哪裡")
-            self.output.clicked.connect(self.output_menu)
-            lay.addWidget(self.output)
             self.pan = SpinBox()
             self.pan.setDecimals(0)
             self.pan.set_limits(-100, 100, -100, 100)
             self.pan.setPrefix("聲像 ")
-            self.pan.edited.connect(lambda v: page.edit_target(target, "聲像", soundedit.set_pan, v / 100,
-                                                               merge=("pan", self.channel)))
+            self.pan.edited.connect(self.pan_set)
             lay.addWidget(self.pan)
         row = QHBoxLayout()
         row.setSpacing(3)
@@ -472,19 +501,60 @@ class Strip(QFrame):
             for b, flag, label, colour in ((self.mute, "muted", "靜音", "#c0504a"), (self.solo, "solo", "獨奏", "#c9a63a")):
                 b.setStyleSheet("QPushButton { background: #222226; color: #8e8e94; border: none; padding: 3px; }"
                                 f"QPushButton:checked {{ background: {colour}; color: #000000; }}")
-                b.clicked.connect(lambda on, flag=flag, label=label: page.edit_target(
-                    target, label if on else "取消" + label, soundedit.set_flag, flag, on))
+                b.clicked.connect(lambda on, flag=flag, label=label: page.edit_many(
+                    self.group(), label if on else "取消" + label, soundedit.set_flags, flag, on))
                 row.addWidget(b)
             lay.addLayout(row)
+        # -- the line from what is selected to this one
+        foot = QWidget()
+        foot.setFixedHeight(26)
+        row = QHBoxLayout(foot)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(3)
+        row.addStretch()
+        self.wire = QPushButton("▲")
+        self.wire.setFocusPolicy(Qt.NoFocus)
+        self.wire.setFixedSize(34, 22)
+        self.wire.clicked.connect(lambda: page.toggle_wire(target))
+        self.wire.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.wire.customContextMenuRequested.connect(lambda at: self.wire_menu(self.wire.mapToGlobal(at)))
+        row.addWidget(self.wire)
+        self.knob = Knob()
+        self.knob.live.connect(lambda db: page.turn_wire(target, db, False))
+        self.knob.done.connect(lambda db: page.turn_wire(target, db, True))
+        self.knob.menu_asked.connect(self.wire_menu)
+        row.addWidget(self.knob)
+        row.addStretch()
+        lay.addWidget(foot)
+        self.wire.hide()
+        self.knob.hide()
 
-    # -- the fader ------------------------------------------------------------------------------------
+    def group(self):
+        """The strips what is done to this one is done to: all that are selected, if it is."""
+        picked = self.page.picked
+        return list(picked) if self.target in picked else [self.target]
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.page.pick(self.target, e.modifiers())
+
+    # -- the fader and pan: of all that are selected, each from where it is -----------------------------
+    def stored_db(self, target):
+        return soundedit.gain_db(soundedit.holder(self.page.level(), target).get("gain", 1.0))
+
     def fader_moved(self, v):
         db = v / 10
         self.db.setText(db_text(db) + " dB")
         if self.kind == "master":
             self.page.win.on_master(db_lin(db), not self.fader.isSliderDown())
         elif self.fader.isSliderDown():
-            self.page.live_target(self.target, soundedit.set_gain, db_lin(db))
+            delta = db - self.stored_db(self.target)
+            targets = [t for t in self.group() if t[0] != "master"]
+            for t in targets:
+                other = self.page.strips.get(t)
+                if other is not None and other is not self:
+                    other.show_gain(soundedit.db_gain(self.stored_db(t) + delta))
+            self.page.live_many(targets, soundedit.nudge_gain, delta)
         else:
             self.fader_done()
 
@@ -492,60 +562,80 @@ class Strip(QFrame):
         db = self.fader.value() / 10
         if self.kind == "master":
             self.page.win.on_master(db_lin(db), True)
-        else:
-            self.page.edit_target(self.target, "音量", soundedit.set_gain, db_lin(db), merge=("fader", self.channel))
+            return
+        delta = db - self.stored_db(self.target)
+        if abs(delta) > 1e-3:
+            targets = self.group()
+            self.page.edit_many(targets, "音量", soundedit.nudge_gain, delta, merge=("fader", tuple(targets)))
+
+    def pan_set(self, v):
+        delta = v / 100 - soundedit.holder(self.page.level(), self.target).get("pan", 0.0)
+        targets = self.group()
+        self.page.edit_many(targets, "聲像", soundedit.nudge_pan, delta, merge=("pan", tuple(targets)))
+
+    def show_gain(self, gain):
+        db = lin_db(gain)
+        self.fader.blockSignals(True)
+        self.fader.setValue(round(db * 10))
+        self.fader.blockSignals(False)
+        self.db.setText(db_text(db) + " dB")
 
     # -- menus ----------------------------------------------------------------------------------------
     def name_menu(self, at):
+        page = self.page
+        if self.target not in page.picked:
+            page.select(self.target)
+        group = self.group()
+        buses = [t[1] for t in group if t[0] == "bus"]
+        channels = [t for t in group if t[0] != "master"]
         menu = Menu(self)
-        if self.kind == "bus":
+        if self.kind != "master" and len(group) == 1:
             menu.addAction("重新命名…", self.rename)
-            menu.addAction("刪除 bus", lambda: self.page.remove_bus(self.target[1]))
-        if self.kind != "master":
-            menu.addAction("新增傳送…", lambda: self.send_menu())
-        if not menu.isEmpty():
-            menu.exec(self.name.mapToGlobal(at))
+        colours = menu.addMenu("顏色")
+        for label, colour in STRIP_COLORS:
+            pix = QPixmap(14, 14)
+            pix.fill(QColor(colour))
+            colours.addAction(QIcon(pix), label, lambda colour=colour: page.color_strips(group, colour))
+        colours.addSeparator()
+        colours.addAction("自訂…", lambda: page.ask_color(group))
+        colours.addAction("預設顏色", lambda: page.color_strips(group, None))
+        if channels:
+            menu.addAction("改送到新的 bus", lambda: page.to_new_bus(channels))
+        if buses:
+            menu.addAction("刪除 bus" if len(buses) == 1 else f"刪除 {len(buses)} 條 bus", lambda: page.remove_buses(buses))
+        menu.exec(self.name.mapToGlobal(at))
+
+    def wire_menu(self, at):
+        page = self.page
+        dest = self.target[1] or soundfx.MASTER
+        sources = page.sources()
+        level = page.level()
+        found = [(s, soundedit.route_to(level, s, dest)) for s in sources]
+        found = [(s, r) for s, r in found if r is not None]
+        menu = Menu(self)
+        only = menu.addAction("只接到這條", lambda: page.edit_many(sources, "只接到這條", soundedit.route_only, dest))
+        only.setEnabled(any(soundedit.can_route(level, s, dest) for s in sources))
+        if found:
+            first, route = found[0]
+            pre = menu.addAction("推桿前送出", lambda: page.wire_each([s for s, _ in found], "送出位置",
+                                                                  dest, None, not route.get("pre")))
+            pre.setCheckable(True)
+            pre.setChecked(bool(route.get("pre")))
+            menu.addAction("送出量回到 0 dB", lambda: page.wire_each([s for s, _ in found], "送出量", dest, 0.0))
+            keyed = curves.is_animated(route.get("gain"))
+            here = keyed and edit.key_at(route["gain"], page.level_time()) is not None
+            menu.addAction("移除這裡的關鍵幀" if here else "在播放頭加關鍵幀", lambda: page.edit_target(
+                first, "送出量關鍵幀", soundedit.toggle_route_key, dest, page.level_time()))
+        menu.exec(at)
 
     def rename(self):
-        old = self.name.text()
+        old = self.name.toolTip()
         name, ok = inplace.ask_name(self, old, (self.name, self.name.rect()))
         if ok and name.strip() and name != old:
-            self.page.win.apply("重新命名 bus", soundedit.rename_bus, self.target[1], name)
-
-    def output_menu(self):
-        level = self.page.level()
-        now = soundedit.holder(level, self.target).get("output")
-        menu = Menu(self)
-        for ident, label in [(None, "Master")] + [(b["id"], b.get("name") or b["id"])
-                                                 for b in soundedit.destinations(level, self.target)]:
-            a = menu.addAction(label, lambda ident=ident: self.page.edit_target(
-                self.target, "輸出目的地", soundedit.set_output, ident))
-            a.setCheckable(True)
-            a.setChecked(ident == now)
-        menu.addSeparator()
-        menu.addAction("新增 bus 並接過去", lambda: self.page.add_bus(self.target))
-        menu.exec(self.output.mapToGlobal(self.output.rect().bottomLeft()))
-
-    def send_menu(self):
-        level = self.page.level()
-        there = {s["bus"] for s in soundedit.holder(level, self.target).get("sends") or ()}
-        menu = Menu(self)
-        for b in soundedit.destinations(level, self.target):
-            if b["id"] not in there:
-                menu.addAction(b.get("name") or b["id"], lambda ident=b["id"]: self.page.edit_target(
-                    self.target, "新增傳送", soundedit.add_send, ident))
-        if menu.isEmpty():
-            menu.addAction("（沒有可以傳送的 bus）").setEnabled(False)
-        menu.exec(self.name.mapToGlobal(self.name.rect().bottomLeft()))
-
-    def one_send_menu(self, widget, at, send):
-        menu = Menu(self)
-        a = menu.addAction("推桿前傳送", lambda: self.page.edit_target(
-            self.target, "傳送位置", soundedit.set_send, send["bus"], None, not send.get("pre")))
-        a.setCheckable(True)
-        a.setChecked(bool(send.get("pre")))
-        menu.addAction("移除傳送", lambda: self.page.edit_target(self.target, "移除傳送", soundedit.remove_send, send["bus"]))
-        menu.exec(widget.mapToGlobal(at))
+            if self.kind == "bus":
+                self.page.win.apply("重新命名 bus", soundedit.rename_bus, self.target[1], name)
+            else:
+                self.page.win.apply("重新命名軌道", edit.rename_track, self.target[1], name)
 
     def slot_menu(self, widget, at, effect_id):
         menu = Menu(self)
@@ -561,36 +651,58 @@ class Strip(QFrame):
             name = holder.get("name") or self.target[1]
         self.name.setText(self.name.fontMetrics().elidedText(name, Qt.ElideRight, STRIP_W - 18))
         self.name.setToolTip(name)
-        selected = self.page.target == self.target
-        self.name.setStyleSheet(f"QPushButton {{ background: {KIND_COLOR[self.kind]}; color: #ffffff; padding: 3px; "
-                                f"border: 2px solid {'#ffffff' if selected else 'transparent'}; }}")
+        self.show_selected()
         chain = holder.get("sound_effects") or []
-        names = {b["id"]: b.get("name") or b["id"] for b in soundedit.buses(level)}
-        sends = holder.get("sends") or []
-        shape = (tuple((e["id"], e.get("effect"), e.get("enabled", True)) for e in chain),
-                 tuple((s["bus"], names.get(s["bus"]), bool(s.get("pre"))) for s in sends))
+        shape = tuple((e["id"], e.get("effect"), e.get("enabled", True)) for e in chain)
         if shape != self.shape:
             self.shape = shape
             self.build_slots(chain)
-            if self.kind != "master":
-                self.build_sends(sends, names)
         if self.kind != "master":
-            self.output.setText("→ " + names.get(holder.get("output"), "Master"))
             if not self.pan.editing:
                 self.pan.show_value(curves.value(holder.get("pan", 0.0), 0) * 100)
             self.mute.setChecked(bool(holder.get("muted")))
             self.solo.setChecked(bool(holder.get("solo")))
-            for s in sends:
-                spin = self.send_spins.get(s["bus"])
-                if spin is not None and not spin.editing:
-                    spin.show_value(curves.value(s.get("gain", 0.0), self.page.level_time()))
         if not self.fader.isSliderDown():
-            gain = (self.page.win.proj.get("master_gain", 1.0) if self.kind == "master" else holder.get("gain", 1.0))
-            db = lin_db(gain)
-            self.fader.blockSignals(True)
-            self.fader.setValue(round(db * 10))
-            self.fader.blockSignals(False)
-            self.db.setText(db_text(db) + " dB")
+            self.show_gain(self.page.win.proj.get("master_gain", 1.0) if self.kind == "master" else holder.get("gain", 1.0))
+
+    def colour(self):
+        return soundedit.holder(self.page.level(), self.target).get("mix_color") or KIND_COLOR[self.kind]
+
+    def show_selected(self):
+        page = self.page
+        edge = "#ffffff" if page.target == self.target else "#8fb8ff" if self.target in page.picked else "transparent"
+        colour = self.colour()
+        ink = "#000000" if QColor(colour).lightnessF() > 0.62 else "#ffffff"
+        self.name.setStyleSheet(f"QPushButton {{ background: {colour}; color: {ink}; padding: 3px; "
+                                f"border: 2px solid {edge}; }}")
+        picked = self.target in page.picked
+        self.setStyleSheet(f"QFrame#strip {{ background: {'#222228' if picked else '#161618'}; }}")
+
+    def show_wire(self, level):
+        """The button (and knob) for the line from the selected strips to this one."""
+        dest = self.target[1] or soundfx.MASTER
+        sources = self.page.sources()
+        shown = bool(sources) and self.target not in sources
+        found = [r for r in (soundedit.route_to(level, s, dest) for s in sources) if r is not None] if shown else []
+        able = shown and (bool(found) or any(soundedit.can_route(level, s, dest) for s in sources))
+        self.wire.setVisible(shown)
+        self.knob.setVisible(bool(found))
+        if not shown:
+            return
+        self.wire.setEnabled(able)
+        colour = QColor(self.page.strip_colour(sources[0])).lighter(150).name()
+        if found and len(found) == len(sources):
+            look = f"background: {colour}; color: #000000; border: 1px solid {colour};"
+        elif found:                                       # (only some of the selected are connected)
+            look = f"background: #222226; color: {colour}; border: 1px dashed {colour};"
+        else:
+            look = "background: #222226; color: %s; border: 1px solid #3a3a40;" % ("#c8c8ce" if able else "#4a4a50")
+        self.wire.setStyleSheet(f"QPushButton {{ {look} padding: 0; }}")
+        self.wire.setToolTip(("拔掉接到這條的線" if found and len(found) == len(sources) else "接到這條")
+                             if able else "會接成迴圈")
+        if found:
+            gain = found[0].get("gain", 0.0)
+            self.knob.show_value(curves.value(gain, self.page.level_time()), curves.is_animated(gain))
 
     def build_slots(self, chain):
         clear_layout(self.slots)
@@ -608,27 +720,6 @@ class Strip(QFrame):
             plus.mapToGlobal(plus.rect().bottomLeft())))
         self.slots.addWidget(plus)
 
-    def build_sends(self, sends, names):
-        clear_layout(self.sends)
-        self.send_spins = {}
-        for s in sends:
-            spin = SpinBox()
-            spin.setDecimals(1)
-            spin.set_limits(soundfx.SEND_OFF_DB, 12.0, soundfx.SEND_OFF_DB, 12.0)
-            spin.setPrefix(f"{(names.get(s['bus']) or '?')[:6]}{'（前）' if s.get('pre') else ''} ")
-            spin.setToolTip(f"傳送到 {names.get(s['bus'])}（dB；-60 是不送）。右鍵：推桿前傳送、移除")
-            spin.edited.connect(lambda v, bus=s["bus"]: self.page.edit_target(
-                self.target, "傳送量", soundedit.set_send, bus, v, None, self.page.level_time(),
-                merge=("send", self.channel, bus)))
-            spin.lineEdit().setContextMenuPolicy(Qt.CustomContextMenu)
-            spin.lineEdit().customContextMenuRequested.connect(
-                lambda at, w=spin.lineEdit(), s=dict(s): self.one_send_menu(w, at, s))
-            self.send_spins[s["bus"]] = spin
-            self.sends.addWidget(spin)
-        add = small_button("＋傳送", "把聲音另外送一份到某個 bus", width=0)
-        add.clicked.connect(self.send_menu)
-        self.sends.addWidget(add)
-
 
 class SmallPreview(QLabel):
     def __init__(self):
@@ -644,7 +735,6 @@ class SmallPreview(QLabel):
 
     def _fit(self):
         if self.image is not None and not self.image.isNull() and self.width() > 4 and self.height() > 4:
-            from PySide6.QtGui import QPixmap
             self.setPixmap(QPixmap.fromImage(self.image.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)))
 
     def resizeEvent(self, e):
@@ -661,6 +751,7 @@ class AudioPage(QWidget):
         super().__init__(win)
         self.win = win
         self.target = None                      # (kind, id) whose chain the panel shows
+        self.picked = []                        # the mixer strips selected (target among them, when it is a strip)
         self.folded = set()                     # effect ids folded shut in the panel
         self.bands = {}                         # EQ effect id -> the band whose parameters show
         self.strips = {}                        # target -> Strip
@@ -725,13 +816,13 @@ class AudioPage(QWidget):
         self.hsplit.setSizes([900, 420])
         self.vsplit.addWidget(self.hsplit)
 
-        mixer = QWidget()
+        self.mixer_box = mixer = QWidget()
         row = QHBoxLayout(mixer)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
         strips = QWidget()
         self.strip_row = QHBoxLayout(strips)
-        self.strip_row.setContentsMargins(4, 4, 4, 4)
+        self.strip_row.setContentsMargins(4, 4, 4, BAND)
         self.strip_row.setSpacing(3)
         self.strip_row.setAlignment(Qt.AlignLeft)
         self.strip_area = QScrollArea()
@@ -739,16 +830,20 @@ class AudioPage(QWidget):
         self.strip_area.setWidgetResizable(True)
         row.addWidget(self.strip_area, 1)
         self.master_slot = QHBoxLayout()
-        self.master_slot.setContentsMargins(3, 4, 3, 4)
+        self.master_slot.setContentsMargins(3, 4, 3, BAND)
         row.addLayout(self.master_slot)
         self.spectrum = Spectrum()
         row.addWidget(self.spectrum)
-        mixer.setMinimumHeight(330)
+        self.wires = Cables(self, mixer)
+        bar_ = self.strip_area.horizontalScrollBar()
+        bar_.valueChanged.connect(lambda _v: self.wires.update())
+        bar_.rangeChanged.connect(lambda *_a: QTimer.singleShot(0, self._level_master))
+        mixer.setMinimumHeight(370)
         self.vsplit.addWidget(mixer)
         self.vsplit.setStretchFactor(0, 1)
         self.vsplit.setSizes([460, 400])
         lay.addWidget(self.vsplit, 1)
-        self.setStyleSheet("QWidget#audiopage { background: #0d0d0d; } QFrame#strip { background: #161618; }")
+        self.setStyleSheet("QWidget#audiopage { background: #0d0d0d; }")
         for key, split in (("audio/vsplit", self.vsplit), ("audio/hsplit", self.hsplit), ("audio/right", self.right)):
             state = win.settings().value(key)
             if state is not None:
@@ -783,7 +878,7 @@ class AudioPage(QWidget):
         self.tick.start()
         clip = self.win.timeline.selected
         if clip is not None and soundedit.sounding(clip):
-            self.target = ("clip", clip["id"])
+            self.target, self.picked = ("clip", clip["id"]), []
         self.refresh()
 
     def close_page(self):
@@ -799,7 +894,9 @@ class AudioPage(QWidget):
         """The level's tracks that can sound, in the timeline's order top to bottom for pictures
         and then the sound tracks."""
         ts = self.level()["tracks"]
-        sounding = lambda t: t["kind"] == "audio" or any(soundedit.sounding(c) for c in t["clips"]) or soundfx.routed(t)
+        fed = soundedit.fed_channels(self.level())
+        sounding = lambda t: t["kind"] == "audio" or t["id"] in fed or soundfx.routed(t) or \
+            any(soundedit.sounding(c) for c in t["clips"])
         return [t for t in ts if t["kind"] == "audio" and sounding(t)] + \
             [t for t in ts if t["kind"] != "audio" and sounding(t)]
 
@@ -814,6 +911,146 @@ class AudioPage(QWidget):
             return int(self.win.clip_time(self.target[1]))
         return self.level_time()
 
+    # -- the strips selected -------------------------------------------------------------------------
+    def strip_order(self):
+        """The strips' targets, left to right (the master last)."""
+        return list(self.strips)
+
+    def sources(self):
+        """The selected strips that send sound on."""
+        return [t for t in self.picked if t[0] != "master"]
+
+    def pick(self, target, modifiers):
+        """A click on a strip: Ctrl adds or takes away, Shift selects up to it."""
+        picked = list(self.picked)
+        if modifiers & Qt.ShiftModifier and picked and self.target in self.strips:
+            order = self.strip_order()
+            a, b = sorted((order.index(self.target), order.index(target)))
+            picked += [t for t in order[a:b + 1] if t not in picked]
+        elif modifiers & Qt.ControlModifier:
+            if target in picked and len(picked) > 1:
+                picked.remove(target)
+                if self.target == target:
+                    self.target = picked[-1]
+                self.picked = picked
+                self.refresh()
+                return
+            if target not in picked:
+                picked.append(target)
+        else:
+            picked = [target]
+        self.target, self.picked = target, picked
+        self.refresh()
+
+    def acting_on(self, target):
+        """What adding an effect to target adds it to."""
+        return list(self.picked) if target in self.picked and len(self.picked) > 1 else [target]
+
+    # -- the lines -------------------------------------------------------------------------------------
+    def strip_colour(self, target):
+        strip = self.strips.get(target)
+        try:
+            return strip.colour() if strip is not None else KIND_COLOR[target[0]]
+        except edit.EditError:
+            return KIND_COLOR[target[0]]
+
+    def cables(self):
+        """(sources, [(source, destination)], {source: colour}) of the lines to be shown."""
+        sources = [t for t in self.sources() if t in self.strips]
+        if not sources or not self.win.proj:
+            return [], [], {}
+        level = self.level()
+        kinds = {t[1]: t for t in self.strips if t[0] != "master"}
+        kinds[soundfx.MASTER] = ("master", "")
+        try:
+            found = [(s, kinds[r["to"]]) for s in sources for r in soundedit.routes(level, s) if r["to"] in kinds]
+        except edit.EditError:
+            return [], [], {}
+        return sources, found, {s: self.strip_colour(s) for s in sources}
+
+    def toggle_wire(self, target):
+        dest = target[1] or soundfx.MASTER
+        sources = self.sources()
+        level = self.level()
+        on = not all(soundedit.route_to(level, s, dest) for s in sources)
+        self.edit_many(sources, "接線" if on else "拔掉接線", soundedit.set_routes, dest, on)
+
+    def turn_wire(self, target, db, final):
+        """The knob of the lines to target: they move together, each from where it is."""
+        dest = target[1] or soundfx.MASTER
+        level, t = self.level(), self.level_time()
+        wired = [s for s in self.sources() if soundedit.route_to(level, s, dest)]
+        if not wired:
+            return
+        delta = db - float(curves.value(soundedit.route_to(level, wired[0], dest).get("gain", 0.0), t))
+        if final:
+            if len(wired) == 1:
+                self.edit_target(wired[0], "送出量", soundedit.set_route_level, dest, db, None, t)
+            else:
+                self.edit_many(wired, "送出量", soundedit.nudge_route_level, dest, delta, t)
+        else:
+            self.live_many(wired, soundedit.nudge_route_level, dest, delta, t)
+
+    def wire_each(self, sources, label, dest, gain=None, pre=None):
+        def fn(level):
+            for s in sources:
+                soundedit.set_route_level(level, s, dest, gain, pre, self.level_time())
+        self.win.apply(label, fn)
+
+    def _level_master(self):
+        """The master's strip ends where the others do (a scroll bar takes room under them)."""
+        bar = self.strip_area.horizontalScrollBar()
+        self.master_slot.setContentsMargins(3, 4, 3, BAND + (bar.sizeHint().height() if bar.maximum() > 0 else 0))
+        QTimer.singleShot(0, self.wires.update)
+
+    # -- order, colours, buses -----------------------------------------------------------------------
+    def _drop_before(self, at):
+        """(the strip id dragged ones would go before at global position at, the x of that place)."""
+        strips = [(t, s) for t, s in self.strips.items() if t[0] != "master"]
+        x = at.x()
+        for t, s in strips:
+            left = s.mapToGlobal(s.rect().topLeft()).x()
+            if x < left + s.width() / 2:
+                return t[1], self.wires.mapFromGlobal(s.mapToGlobal(s.rect().topLeft())).x() - 2
+        last = strips[-1][1]
+        return None, self.wires.mapFromGlobal(last.mapToGlobal(last.rect().topRight())).x() + 2
+
+    def drag_strips(self, target, at):
+        _, x = self._drop_before(at)
+        self.wires.drop = x
+        self.wires.update()
+
+    def drop_strips(self, target, at):
+        before, _ = self._drop_before(at)
+        self.wires.drop = None
+        self.wires.update()
+        moving = [t[1] for t in (self.picked if target in self.picked else [target]) if t[0] != "master"]
+        ids = [t[1] for t in self.strips if t[0] != "master"]
+        trial = {"buses": [], "tracks": []}
+        soundedit.move_strips(trial, ids, moving, before)
+        if trial["mixer_order"] != ids:
+            self.win.apply("調整混音台順序", soundedit.move_strips, ids, moving, before)
+
+    def color_strips(self, targets, color):
+        self.edit_many(targets, "混音台顏色", soundedit.set_color, color)
+
+    def ask_color(self, targets):
+        color = QColorDialog.getColor(QColor(self.strip_colour(targets[0])), self.win, "顏色")
+        if color.isValid():
+            self.color_strips(targets, color.name())
+
+    def to_new_bus(self, targets):
+        made = self.win.apply("改送到新的 bus", soundedit.to_new_bus, targets)
+        if made:
+            self.select(("bus", made))
+
+    def remove_buses(self, ids):
+        gone = {("bus", i) for i in ids}
+        self.picked = [t for t in self.picked if t not in gone]
+        if self.target in gone:
+            self.target = self.picked[-1] if self.picked else None
+        self.win.apply("刪除 bus", soundedit.remove_buses, ids)
+
     def target_name(self, target):
         if not target:
             return "選一個片段或混音台的一條"
@@ -821,7 +1058,8 @@ class AudioPage(QWidget):
             return "Master 的效果"
         h = soundedit.holder(self.level(), target)
         kind = {"clip": "片段", "track": "軌道", "bus": "Bus"}[target[0]]
-        return f"{kind}：{h.get('name') or target[1]}"
+        more = len(self.picked) - 1 if target in self.picked else 0
+        return f"{kind}：{h.get('name') or target[1]}" + (f"　（共選 {more + 1} 條）" if more else "")
 
     def _valid(self, target):
         if not target:
@@ -833,7 +1071,9 @@ class AudioPage(QWidget):
         return True
 
     def select(self, target, effect_id=None):
+        """Show target's chain; a strip: selected alone."""
         self.target = target
+        self.picked = [target] if target and target[0] != "clip" else []
         if effect_id:
             self.folded.discard(effect_id)
         self.refresh()
@@ -925,6 +1165,13 @@ class AudioPage(QWidget):
         """fn(level, target, *args) as one undo step."""
         return self.win.apply(label, fn, target, *args, merge=merge)
 
+    def edit_many(self, targets, label, fn, *args, merge=None):
+        """fn(level, targets, *args) as one undo step."""
+        return self.win.apply(label, fn, list(targets), *args, merge=merge)
+
+    def live_many(self, targets, fn, *args):
+        self.live_target(list(targets), fn, *args)
+
     def edit(self, label, fn, *args, merge=None):
         """The same on the selected target."""
         if self.target:
@@ -944,14 +1191,19 @@ class AudioPage(QWidget):
             self.live_target(self.target, fn, *args)
 
     def add_effect(self, kind, target=None):
+        """Add an effect to target (the one shown) - and, one each, to the others selected with it."""
         target = target or self.target
         if not target:
             return
-        self.target = target
-        made = self.edit_target(target, "新增聲音效果", soundedit.add_effect, kind)
+        targets = self.acting_on(target)
+        if target not in self.picked:
+            self.target, self.picked = target, [] if target[0] == "clip" else [target]
+        else:
+            self.target = target
+        made = self.edit_many(targets, "新增聲音效果", soundedit.add_effects, kind)
         if made and kind == soundfx.GRAPH:
             self.refresh()
-            self.open_graph(made)
+            self.open_graph(made[target])
 
     # -- presets of a whole chain (in the Library) -------------------------------------------------------
     def preset_menu(self, at):
@@ -976,7 +1228,8 @@ class AudioPage(QWidget):
         except (OSError, ValueError) as exc:
             self.win.statusBar().showMessage(f"讀不了這個預設：{exc}", 6000)
             return
-        self.edit("套用聲音效果預設", soundedit.add_preset, saved)
+        if self.target:
+            self.edit_many(self.acting_on(self.target), "套用聲音效果預設", soundedit.add_presets, saved)
 
     def save_preset(self, root, name=None):
         if name is None:
@@ -999,18 +1252,8 @@ class AudioPage(QWidget):
             except OSError as exc:
                 self.win.statusBar().showMessage(f"刪不掉：{exc}", 6000)
 
-    def add_bus(self, route_from=None):
-        def fn(level):
-            ident = soundedit.add_bus(level)
-            if route_from:
-                soundedit.set_output(level, route_from, ident)
-            return ident
-        self.win.apply("新增 bus", fn)
-
-    def remove_bus(self, bus_id):
-        if self.target == ("bus", bus_id):
-            self.target = None
-        self.win.apply("刪除 bus", soundedit.remove_bus, bus_id)
+    def add_bus(self):
+        self.win.apply("新增 bus", soundedit.add_bus)
 
     # -- showing ------------------------------------------------------------------------------------------
     def refresh(self):
@@ -1018,7 +1261,7 @@ class AudioPage(QWidget):
         if not self.isVisible():
             return
         if not self.win.proj:
-            self.target = None
+            self.target, self.picked = None, []
             self.close_graph()
             self._build_strips([])
             self.chain.shape = None
@@ -1026,12 +1269,19 @@ class AudioPage(QWidget):
             self.chain.add.setEnabled(False)
             return
         level = self.level()
+        self.picked = [t for t in self.picked if self._valid(t)]
         if not self._valid(self.target):
-            self.target = None
-        targets = [("track", t["id"]) for t in self.tracks()] + [("bus", b["id"]) for b in soundedit.buses(level)]
+            self.target = self.picked[-1] if self.picked else None
+        found = {t["id"]: ("track", t["id"]) for t in self.tracks()}
+        found.update({b["id"]: ("bus", b["id"]) for b in soundedit.buses(level)})
+        targets = [found[i] for i in soundedit.ordered(level, list(found))]
         self._build_strips(targets)
         for strip in self.strips.values():
             strip.show_channel(level)
+        for strip in self.strips.values():                    # (after every strip knows its colour)
+            strip.show_wire(level)
+        self.wires.raise_()
+        QTimer.singleShot(0, self.wires.update)               # (once the strips are where they will be)
         self.chain.refresh()
         if not self.nodes.isHidden() and (self.nodes.target != self.target or not self.nodes.refresh()):
             self.close_graph()

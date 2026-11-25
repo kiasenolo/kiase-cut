@@ -199,13 +199,10 @@ class Compiler:
         for bid, b in buses.items():
             chans[bid] = Channel(bid, "bus", b, b.get("name") or "Bus")
         master = chans[soundfx.MASTER] = Channel(soundfx.MASTER, "master", mix.get(soundfx.MASTER) or {}, "Master")
-        self._faders(chans, tracks, level_ids)
         for ch in chans.values():
-            if ch.kind == "master":
-                continue
-            out = ch.holder.get("output")
-            ch.routes = [(out if out in buses and out != ch.id else soundfx.MASTER, None)]
-            ch.routes += [(s["bus"], s) for s in ch.holder.get("sends") or () if s.get("bus") in buses and s["bus"] != ch.id]
+            if ch.kind != "master":
+                ch.routes = [(r["to"], r) for r in soundfx.live_routes(ch.holder, chans, ch.id)]
+        self._faders(chans, level_ids)
         for ch in chans.values():
             ch.chain = self.chain(key + ("ch", ch.id), ch.holder.get("sound_effects"))
         for t in tracks:
@@ -238,31 +235,31 @@ class Compiler:
     def _all_fx(ch):
         return ch.chain + [f for n in ch.clips for f in n.chain]
 
-    def _faders(self, chans, tracks, level_ids):
-        """Mute and solo. With anything soloed, only it sounds - and the buses it goes
-        through, and, for a soloed bus, what feeds it."""
+    def _faders(self, chans, level_ids):
+        """Mute and solo. With anything soloed, only it sounds - with what it goes through,
+        and what feeds it (heard by way of it alone: their other routes are shut)."""
         solo = {i for i, ch in chans.items() if ch.holder.get("solo") and
                 (ch.kind != "track" or project.present(ch.holder, level_ids))}
         heard = None
         if solo:
             def targets(i):
-                h = chans[i].holder
-                out = [h.get("output") or soundfx.MASTER] + [s.get("bus") for s in h.get("sends") or ()]
-                return [d for d in out if d in chans]
+                return [d for d, _ in chans[i].routes]
             down, stack = set(), list(solo)
             while stack:                    # what the soloed ones go through
                 i = stack.pop()
-                for d in targets(i) if i != soundfx.MASTER else ():
+                for d in targets(i):
                     if d not in down:
                         down.add(d)
                         stack.append(d)
-            up, more = {i for i in solo if chans[i].kind == "bus"}, True
-            while more:                     # what feeds a soloed bus
+            up, more = set(solo), True
+            while more:                     # what feeds them
                 more = False
                 for i in chans:
-                    if i != soundfx.MASTER and i not in up and any(d in up for d in targets(i)):
+                    if i not in up and any(d in up and d != soundfx.MASTER for d in targets(i)):
                         up.add(i)
                         more = True
+            for i in up - solo - down:
+                chans[i].routes = [r for r in chans[i].routes if r[0] in up and r[0] != soundfx.MASTER]
             heard = solo | down | up | {soundfx.MASTER}
         for i, ch in chans.items():
             if ch.kind == "master":
@@ -535,14 +532,13 @@ class Engine:
             if top:
                 peak = np.abs(x).max(axis=0)
                 self._remember(self.tap, cid, pos - lat, (float(peak[0]), float(peak[1])))
-            for i, (dst, send) in enumerate(ch.routes):
+            for dst, route in ch.routes:
+                db = float(curves.value(route.get("gain", 0.0), t_of((pos - lat) * US / RATE)))
+                g = 0.0 if db <= soundfx.SEND_OFF_DB else 10 ** (db / 20)
                 part = x
-                if send is not None:
-                    db = float(curves.value(send.get("gain", 0.0), t_of((pos - lat) * US / RATE)))
-                    g = 0.0 if db <= soundfx.SEND_OFF_DB else 10 ** (db / 20)
-                    if send.get("pre"):                  # before the fader; a muted channel sends nothing
-                        g *= 0.0 if ch.off else 1.0
-                        part = before
-                    part = self._ramp(lv.key + ("send", cid, i), part, g, g)
-                sums.setdefault(dst, []).append((cid, part, lat, i))
+                if route.get("pre"):                     # before the fader; a muted channel sends nothing
+                    g *= 0.0 if ch.off else 1.0
+                    part = before
+                part = self._ramp(lv.key + ("send", cid, dst), part, g, g)
+                sums.setdefault(dst, []).append((cid, part, lat, dst))
         return posts[only if only is not None and only in posts else soundfx.MASTER]

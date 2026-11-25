@@ -90,6 +90,7 @@ def level(proj, name=None):
         if comp.get("static"):
             raise CliError(f"「{name}」是靜態片段（一張圖片），不能當影片渲染")
         view["tracks"] = comp["tracks"]
+        view["buses"], view["master"] = comp.get("buses") or [], comp.get("master") or {}
         view["width"] = comp.get("width") or view["width"]
         view["height"] = comp.get("height") or view["height"]
         view["duration_us"] = project.end_us(comp["tracks"])

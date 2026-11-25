@@ -54,6 +54,9 @@ clip     {id, type: image | video | audio | text | compound, name,
                  stroke_align: inside | center | outside, defaults inside;
                 box_w / box_h: the 文字框 (textlayout.py; absent or 0: as big as the words)
           volume, fade_in_us, fade_out_us                   clips with sound
+          sound_effects                                     optional: the clip's 聲音效果 (soundfx.py,
+                     which also says what pan, output, sends and sound_effects a track
+                     has, and the buses and master a compound keeps for its level)
           backdrop: {on, hide}                              visual clips with effects, optional:
                      套用至背景 - the effects work on what is under the clip, inside its
                      shape (its alpha, mask and opacity; a built-in asset's: where it is
@@ -120,7 +123,7 @@ from kiasecut import curves
 
 FORMAT = "kiasecut"
 OLD_FORMATS = ("tesetoa",)        # the program's earlier name: those projects still open
-VERSION = 6                     # 2: shared compounds; 3: several timelines; 4: project folder; 5: Glare 光源位置 y up; 6: timelines are compounds
+VERSION = 7                     # 2: shared compounds; 3: several timelines; 4: project folder; 5: Glare 光源位置 y up; 6: timelines are compounds; 7: sound effects and buses
 DEFAULT_FONT = next((f for f in (r"C:\Windows\Fonts\msjh.ttc",
                                  "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
                                  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -400,6 +403,14 @@ def all_tracks(tracks, inline=True):
         for c in t["clips"]:
             if inline and is_group(c) and "tracks" in c:
                 yield from all_tracks(c["tracks"])
+
+
+def mix_of(view):
+    """What holds the buses and master of the level a view (or the project) shows (soundfx.py):
+    the view itself when it carries them (an open compound's), else the root compound."""
+    if "buses" in view or "master" in view:
+        return view
+    return (view.get("compounds") or {}).get(view.get("active_timeline")) or {}
 
 
 def level_tracks(view):

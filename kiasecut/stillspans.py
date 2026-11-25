@@ -175,7 +175,7 @@ def _own_still(c):
     t = c.get("type")
     if t in ("video", "audio") or c.get("viz") or c.get("expr") or c.get("links") or (c.get("asset") or {}).get("family") == "particles":
         return False                                 # (a particle object moves by itself)
-    if _moves({k: v for k, v in c.items() if k not in LINKED + ("effects", "mask")}):
+    if _moves({k: v for k, v in c.items() if k not in LINKED + ("effects", "mask", "sound_effects")}):
         return False
     if not all(_effect_still(e) for e in c.get("effects") or ()):
         return False

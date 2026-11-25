@@ -1659,6 +1659,7 @@ class MainWindow(QMainWindow):
                 "master_gain": self.proj.get("master_gain", 1.0),
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"], "compounds": self.proj.get("compounds", {}),
+                "buses": node.get("buses") or [], "master": node.get("master") or {},
                 "markers": node.get("markers") or [], "guides": node.get("guides"), "rack": self.proj.get("rack") or [],
                 "open_component": node if components.is_component(node) else None,
                 "camera": (walk_path(self.proj, self.path_ids)[-1][0] or {}).get("camera")}
@@ -5974,6 +5975,8 @@ class MainWindow(QMainWindow):
         snapshot = json.loads(json.dumps(self.proj))
         if kid:                                          # a compound of its own: its tracks at its size are the picture
             snapshot["tracks"] = snapshot["compounds"][kid]["tracks"]
+            snapshot["buses"] = snapshot["compounds"][kid].get("buses") or []
+            snapshot["master"] = snapshot["compounds"][kid].get("master") or {}
             snapshot["width"], snapshot["height"] = width, height
             snapshot["duration_us"] = project.end_us(snapshot["tracks"])
         follows = pathfollow.has_followers(snapshot)

@@ -7,3 +7,4 @@ __pycache__/
 .venv/
 /app-build-exec/
 .debug-tablet/
+/kiasecut/dsp/_build/

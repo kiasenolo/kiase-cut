@@ -1,0 +1,84 @@
+"""The sound effects' C library: it builds, loads and the basic effects do what they say."""
+import unittest
+
+import numpy as np
+
+from kiasecut import dsp
+
+SR = dsp.RATE
+
+
+def sine(f, seconds=0.5, amp=0.5):
+    x = (amp * np.sin(2 * np.pi * f * np.arange(int(SR * seconds)) / SR)).astype(np.float32)
+    return np.stack([x, x], axis=1)
+
+
+def level_db(a, skip=0.25):
+    """Level of a's later part (past the effect settling): the peak of a sine with its RMS, in dB."""
+    part = a[int(len(a) * skip):].astype(np.float64)
+    return 10 * np.log10(max(1e-18, 2 * np.mean(part ** 2)))
+
+
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class BasicTests(unittest.TestCase):
+    def test_kinds_and_defaults(self):
+        self.assertIn("gain", dsp.kinds())
+        self.assertEqual(dsp.defaults("highpass")["f"], 80.0)
+        with self.assertRaises(dsp.DspError):
+            dsp.Processor("nothing")
+
+    def test_gain(self):
+        fx = dsp.Processor("gain")
+        x = sine(440)
+        np.testing.assert_allclose(fx.process(x), x, atol=1e-6)
+        fx.reset()
+        fx.set("gain", -6.0206)
+        np.testing.assert_allclose(fx.process(x), x * 0.5, atol=1e-5)
+        fx.reset()
+        fx.set("gain", -60.0)
+        self.assertEqual(np.abs(fx.process(x)).max(), 0.0)
+
+    def test_gain_changes_without_a_step(self):
+        fx = dsp.Processor("gain")
+        x = np.ones((512, 2), np.float32)
+        fx.process(x)
+        fx.set("gain", -20.0)
+        y = fx.process(x)
+        self.assertLess(np.abs(np.diff(y[:, 0])).max(), 0.01)
+        self.assertAlmostEqual(float(y[-1, 0]), 0.1, places=5)
+
+    def test_filters(self):
+        for kind, f, keeps, cuts in (("highpass", 1000.0, 8000, 100), ("lowpass", 1000.0, 100, 8000)):
+            fx = dsp.Processor(kind)
+            fx.set("f", f)
+            self.assertAlmostEqual(level_db(fx.process(sine(keeps))), -6.0, delta=0.5, msg=kind)
+            fx.reset()
+            self.assertLess(level_db(fx.process(sine(cuts))), -40.0, msg=kind)
+            self.assertGreater(fx.tail, 0.0)
+
+    def test_blocks_do_not_matter(self):
+        x = sine(300) + sine(5000)
+        whole = dsp.Processor("lowpass").process(x)
+        fx = dsp.Processor("lowpass")
+        parts = np.concatenate([fx.process(x[i:i + 100], pos=i) for i in range(0, len(x), 100)])
+        np.testing.assert_allclose(parts, whole, atol=1e-6)
+
+    def test_in_place_input_is_left_alone(self):
+        x = sine(440)
+        before = x.copy()
+        fx = dsp.Processor("gain")
+        fx.set("gain", -12.0)
+        fx.process(x)
+        np.testing.assert_array_equal(x, before)
+
+    def test_rejects_wrong_shapes(self):
+        fx = dsp.Processor("gain")
+        with self.assertRaises(ValueError):
+            fx.process(np.zeros(100, np.float32))
+        with self.assertRaises(ValueError):
+            fx.process(np.zeros((100, 2), np.float32), side=np.zeros((50, 2), np.float32))
+        self.assertEqual(len(fx.process(np.zeros((0, 2), np.float32))), 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -66,7 +66,7 @@ from .browsers import CATEGORY_BROWSER as BROWSER_OF, MinePage, SourceBrowser
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import dropped_vfx
 from .vfxnodes import VfxNodePanel
-from . import androidbar, androidfiles, appevents, beat_dialog, dialogframe, exprdialog, escapekey, fontkeep, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
+from . import androidbar, androidfiles, appevents, beat_dialog, dialogframe, exprdialog, escapekey, fontkeep, sounddialog, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
 from .steadylabel import SteadyLabel
 from .meter import MeterPanel
@@ -2601,6 +2601,7 @@ class MainWindow(QMainWindow):
         """The global parameters that follow a sound read new numbers (or cannot be measured): draw with them."""
         if not self.proj:
             return
+        self.rack_panel.problems = dict(self.sound_meter.problems)
         self.rebuild()
         self.refresh_inspector()
         self.show_rack()
@@ -3766,6 +3767,16 @@ class MainWindow(QMainWindow):
                 self.apply_root("全局參數 LFO", edit.set_rack_lfo, rid, out)
         elif action == "lfo_off":
             self.apply_root("取消全局參數 LFO", edit.set_rack_lfo, rid, None)
+        elif action == "sound":
+            steps = walk_path(self.proj, self.path_ids)
+            level = steps[-1][2] if steps else self.proj["active_timeline"]
+            self.player.worker.set_playing(False)
+            out = sounddialog.ask_sound(self, f"聲音來源：{p['name']}", self.proj, p.get("sound"), level,
+                                        self.cache_dir(), t)
+            if out is not None:
+                self.apply_root("全局參數聲音來源", edit.set_rack_sound, rid, out)
+        elif action == "sound_off":
+            self.apply_root("取消全局參數聲音來源", edit.set_rack_sound, rid, None)
         elif action == "delete":
             n = rack.users(self.proj, p["name"])
             if n and not questions.question(self, "delete_rack", "刪除全局參數", f"有 {n} 個片段用到「{p['name']}」，"

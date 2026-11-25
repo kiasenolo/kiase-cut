@@ -42,6 +42,7 @@ MIN_DB, MAX_DB = -90.0, 6.0
 MIN_SPAN_DB = 1.0
 MAX_ATTACK, MAX_RELEASE = 5.0, 10.0
 SILENT_DB = -200.0
+TAPS_KEPT = 16                          # taps a cache folder holds (a new one each time what feeds a channel changes)
 DEFAULTS = {"lo_hz": 40.0, "hi_hz": 120.0, "floor_db": -36.0, "top_db": -6.0, "attack": 0.0, "release": 0.15}
 RANGES = {"lo_hz": (LO_HZ, HI_HZ), "hi_hz": (LO_HZ, HI_HZ), "floor_db": (MIN_DB, MAX_DB - MIN_SPAN_DB),
           "top_db": (MIN_DB + MIN_SPAN_DB, MAX_DB), "attack": (0.0, MAX_ATTACK), "release": (0.0, MAX_RELEASE)}
@@ -329,7 +330,9 @@ def tap(snap, cache_dir, key, cancelled=lambda: False, on_progress=None):
     path = os.path.join(folder, key + ".npy")
     if os.path.exists(path):
         try:
-            return np.load(path)
+            out = np.load(path)
+            os.utime(path)                  # (the ones used longest ago are the ones dropped)
+            return out
         except (OSError, ValueError):
             pass                        # (half written: measured again)
     out = _run(snap, cache_dir, cancelled, on_progress)
@@ -338,7 +341,23 @@ def tap(snap, cache_dir, key, cancelled=lambda: False, on_progress=None):
     with open(tmp, "wb") as fh:
         np.save(fh, out)
     os.replace(tmp, path)
+    _prune(folder)
     return out
+
+
+def _prune(folder):
+    files = []
+    for name in os.listdir(folder):
+        if name.endswith(".npy"):
+            try:
+                files.append((os.stat(os.path.join(folder, name)).st_mtime_ns, name))
+            except OSError:
+                pass
+    for _when, name in sorted(files)[:-TAPS_KEPT]:
+        try:
+            os.remove(os.path.join(folder, name))
+        except OSError:
+            pass
 
 
 def _run(snap, cache_dir, cancelled, on_progress):
@@ -463,6 +482,18 @@ class Plan:
         return _made != self.keys()
 
 
+def definitions(root, names, measured):
+    """What the parameters called names are, for a signature. measured: {id: Job.key} of those
+    already planned that take their value from a meter."""
+    from . import rack
+    out = []
+    for n in names:
+        q = rack.by_name(root, n)
+        out.append({k: q.get(k) for k in ("name", "kind", "value", "expr", "lfo", "items", "sound")}
+                   | {"measured": measured.get(q["id"])})
+    return out
+
+
 def plan(root):
     by, found, problems = _looked_at(root)
     if dsp.error():
@@ -483,13 +514,8 @@ def plan(root):
         snap, names, waits = found[i]
         for j in waits:
             add(j)
-        read = []
-        for n in names:
-            q = next(q for q in root["rack"] if q["name"] == n)
-            read.append({k: q.get(k) for k in ("name", "kind", "value", "expr", "lfo", "items", "sound")}
-                        | {"measured": done.get(q["id"])})
         spec = clean(by[i]["sound"])
-        job = Job(i, spec, snap, signature(snap, read))
+        job = Job(i, spec, snap, signature(snap, definitions(root, names, done)))
         done[i] = job.key
         jobs.append(job)
 

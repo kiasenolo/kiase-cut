@@ -237,6 +237,18 @@ class RackTests(Sounds):
         with self.assertRaisesRegex(RuntimeError, "找不到"):
             soundmeter.require(root, self.cache)
 
+    def test_old_taps_are_dropped(self):
+        folder = os.path.join(self.tmp.name, "pruned", "soundmeter")
+        os.makedirs(folder)
+        for i in range(soundmeter.TAPS_KEPT + 3):
+            path = os.path.join(folder, f"{i}.npy")
+            open(path, "wb").close()
+            os.utime(path, (i, i))
+        soundmeter.tap(soundmeter.snapshot(self.root(), "tl1", "t1"), os.path.dirname(folder), "new")
+        self.assertEqual(len(os.listdir(folder)), soundmeter.TAPS_KEPT)
+        self.assertIn("new.npy", os.listdir(folder))
+        self.assertNotIn("0.npy", os.listdir(folder))
+
     def test_export_and_import(self):
         root = self.root()
         other = make_root([{"clips": []}])

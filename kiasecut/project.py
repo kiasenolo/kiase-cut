@@ -1053,6 +1053,24 @@ def compound_uses(p):
     return uses
 
 
+def static_groups(p):
+    """The ids of the groups' compounds (Ctrl+G, canvas "parent") made inside static compounds (靜態片段), at any depth
+    of groups there: part of that still picture, not compounds of their own (the compound list leaves them out)."""
+    comps, out = p.get("compounds", {}), set()
+
+    def visit(tracks, depth=0):
+        for t in all_tracks(tracks, inline=False):
+            for c in t["clips"]:
+                kid = c.get("compound_id")
+                if is_group(c) and kid in comps and kid not in out and depth < 16:
+                    out.add(kid)
+                    visit(comps[kid]["tracks"], depth + 1)
+    for comp in comps.values():
+        if comp.get("static"):
+            visit(comp["tracks"])
+    return out
+
+
 def holders_of(p, inner_id):
     """The ids of every compound and timeline that contains() inner_id (itself too), found in one pass over the project
     (contains() of each compound walks what it shows again for every one asked about)."""

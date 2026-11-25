@@ -137,6 +137,32 @@ class GroupTests(unittest.TestCase):
         self.assertNotIn(twin["compound_id"], p["compounds"])
 
 
+class StaticGroupListTests(unittest.TestCase):
+    def test_a_static_compounds_groups_are_not_in_the_compound_list(self):
+        """Ctrl+G inside a 靜態片段: the group is part of its picture, not a compound of its own in the list (groups on a
+        timeline still are), nor are groups inside that group."""
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QApplication
+        from kiasecut.ui.compounds import CompoundPanel
+        QApplication.instance() or QApplication([])
+        p = project.new(640, 360, 30.0)
+        kid = edit.add_compound(p, static=True)
+        still = p["compounds"][kid]
+        still["tracks"][0]["clips"] = [pic("s1", 0, S), pic("s2", 0, S)]
+        inner = edit.make_group(p, still, ["s1", "s2"])
+        deeper = edit.make_group(p, p["compounds"][inner["compound_id"]], ["s1"])
+        p["tracks"].append({"id": "v1", "kind": "video", "name": "V1", "clips": [pic("m1", 0, S), pic("m2", S, S)]})
+        outer = edit.make_group(p, p, ["m1", "m2"])
+        self.assertEqual(project.static_groups(p), {inner["compound_id"], deeper["compound_id"]})
+        panel = CompoundPanel()
+        panel.set_project(p)
+        listed = {it.data(0, Qt.UserRole)[1] for it in panel._items() if it.data(0, Qt.UserRole)[0] == "def"}
+        self.assertIn(kid, listed)
+        self.assertIn(outer["compound_id"], listed)
+        self.assertFalse(listed & project.static_groups(p))
+
+
 class CanvasTests(unittest.TestCase):
     def test_canvas_switch_turns_every_use(self):
         p = project.new()

@@ -162,7 +162,8 @@ class CompoundPanel(QWidget):
         the edit."""
         if not proj:
             return None
-        holders = list(proj.get("compounds", {}).items())
+        hidden = project.static_groups(proj)
+        holders = [(k, h) for k, h in proj.get("compounds", {}).items() if k not in hidden]
         return (tuple(open_path), proj.get("active_timeline"),
                 tuple((f["id"], f.get("name"), f.get("parent")) for f in proj.get("compound_folders") or []),
                 tuple((kid, h.get("name"), h.get("folder"), bool(h.get("static")), components.is_component(h), h.get("duration_us"), bool(h.get("fit")),
@@ -191,7 +192,8 @@ class CompoundPanel(QWidget):
             for tl, path, c in (u for us in self.uses.values() for u in us):
                 if tl == proj.get("active_timeline") and path + [c["id"]] == self.open_path:
                     open_ids.add(project.ref_of(c))
-        rows = sorted(comps.items(), key=lambda kv: (not kv[1].get("fit"), kv[1].get("name") or ""))
+        hidden = project.static_groups(proj) if proj else set()      # (a 靜態片段's groups: part of its picture)
+        rows = sorted(((k, v) for k, v in comps.items() if k not in hidden), key=lambda kv: (not kv[1].get("fit"), kv[1].get("name") or ""))
         folders = self._folder_items(proj, expanded)
         top = []                                            # (the folders, then the compounds outside them)
         for kid, comp in rows:

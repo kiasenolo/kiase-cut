@@ -7,7 +7,7 @@ import copy
 import math
 import uuid
 
-from . import curves, edit, expr, mapping, project, soundfx, soundnodes
+from . import curves, edit, expr, mapping, project, soundfx, soundmeter, soundnodes
 
 PAN_RANGE = (-1.0, 1.0)
 
@@ -153,6 +153,17 @@ def set_expr(level, target, effect_id, name, text):
         (e.get("expr") or {}).pop(name, None)
         if not e.get("expr"):
             e.pop("expr", None)
+
+
+def bind(root, level, target, effect_id, name, text):
+    """set_expr, refused when a global parameter's meter would come to hear its own number. level:
+    the compound of root being edited. (A history step: what it raises is undone.)"""
+    heard = soundmeter.loops(root)
+    set_expr(level, target, effect_id, name, text)
+    try:
+        soundmeter.refuse_new_loops(root, heard)
+    except soundmeter.MeterError as exc:
+        raise edit.EditError(str(exc)) from None
 
 
 def _set_number(h, key, value, t):

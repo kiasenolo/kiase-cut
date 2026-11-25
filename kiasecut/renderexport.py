@@ -19,7 +19,7 @@ import wave
 
 from PySide6.QtGui import QImage
 
-from . import assets, audiomix, components, curves, dsp, formats, glrender, gpu, project, render, soundfx, sysmem, videoreader
+from . import assets, audiomix, components, curves, dsp, formats, glrender, gpu, project, render, soundfx, soundmeter, sysmem, videoreader
 from .build import find_ffmpeg
 
 US = 1_000_000
@@ -143,6 +143,7 @@ def stems(proj, out, fps, first, last, ext, cache_dir=None, cancelled=lambda: Fa
     view = dict(proj, fps=float(fps))
     cache = cache_dir or os.path.dirname(out)
     os.makedirs(cache, exist_ok=True)
+    soundmeter.require(view, cache, cancelled)
     wavs = []
     try:
         wavs = _stem_wavs(audiomix.Mixer(cache), view, cache, fps, first, last, cancelled)
@@ -174,6 +175,9 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
     t0 = time.time()
     progress = on_progress or (lambda p: None)
     stage = on_stage or (lambda s: None)
+    if soundmeter.sounding(view):
+        stage("分析聲音")
+        soundmeter.require(view, cache, cancelled, allow_errors=bool(spec.get("allow_errors")))
 
     mix = audiomix.Mixer(cache)
     wav, stem_wavs, temps = None, [], []
@@ -233,6 +237,8 @@ def still(view, t_us, size, out, alpha=True, background=None, quality=92, cache_
         px, rw, rh = engine.media_frame(path, us, view["fps"], max(1, int(w)), max(1, int(h)))
         return QImage(px, rw, rh, rw * 4, QImage.Format_RGBA8888).copy()
 
+    if soundmeter.sounding(view):
+        soundmeter.require(view, cache_dir or os.path.dirname(os.path.abspath(out)))
     renderer = glrender.make(video) if gpu.enabled else render.Renderer(video)
     renderer.cache_dir = cache_dir
     try:

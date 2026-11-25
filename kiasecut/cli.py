@@ -140,7 +140,7 @@ def _place(made, out, sequence):
 
 
 def render(args, proj, say=lambda text: print(text, file=sys.stderr, flush=True)):
-    from . import pathfollow, renderexport
+    from . import pathfollow, renderexport, soundmeter
     from .build import find_ffmpeg
 
     view, marks = level(proj, args.compound)
@@ -152,7 +152,6 @@ def render(args, proj, say=lambda text: print(text, file=sys.stderr, flush=True)
         if not args.allow_errors:
             raise CliError(text + "\n（要照樣輸出就加 --allow-errors）")
         say(text)
-    pathfollow.resolve(view)
 
     fmt = formats.get(args.format)
     if not find_ffmpeg():
@@ -186,11 +185,19 @@ def render(args, proj, say=lambda text: print(text, file=sys.stderr, flush=True)
 
     try:
         cache = os.path.join(stage_dir, "cache")
+        if soundmeter.sounding(view):                      # (before the paths: a bound parent moves by these numbers)
+            say("分析聲音")
+            try:
+                soundmeter.require(view, cache, allow_errors=args.allow_errors, say=say)
+            except RuntimeError as exc:
+                raise CliError(f"{exc}\n（要照樣輸出就加 --allow-errors）") from None
+        pathfollow.resolve(view)
         # (a sequence is asked for as <folder>.png: renderexport writes into <folder>/)
         target = os.path.join(stage_dir, os.path.basename(out) + (".png" if sequence else ""))
         result = renderexport.export(view, target, size, fps, first, last, {"crf": args.crf, "preset": "medium"},
                                      progress, cache, spec={"format": fmt.key, "alpha": alpha,
-                                                            "audio": not args.no_audio},
+                                                            "audio": not args.no_audio,
+                                                            "allow_errors": args.allow_errors},
                                      on_stage=say)
         if result["errors"]:
             text = "有片段畫不出來：\n  " + "\n  ".join(result["errors"])

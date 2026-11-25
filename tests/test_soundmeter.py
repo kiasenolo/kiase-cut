@@ -5,7 +5,7 @@ import unittest
 
 import numpy as np
 
-from kiasecut import dsp, project, soundfx, soundmeter
+from kiasecut import dsp, edit, lfo, mapping, project, rack, soundedit, soundfx, soundmeter
 from tests.test_soundgraph import SR, US, Base, fx, write_wav
 
 BOX = {"lo_hz": 40.0, "hi_hz": 200.0, "floor_db": -36.0, "top_db": -12.5, "attack": 0.0, "release": 0.0}   # (the window reads 100 Hz 0.4 dB low)
@@ -18,8 +18,7 @@ def make_root(tracks, buses=(), master=None, **extra):
     return dict({"fps": 30.0, "compounds": {"tl1": comp}, "tracks": tracks, "rack": []}, **extra)
 
 
-@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
-class MeterTests(Base):
+class Sounds(Base):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -43,6 +42,9 @@ class MeterTests(Base):
     def read(self, curve, *seconds):
         return [soundmeter.at(curve, s * US) for s in seconds]
 
+
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class MeterTests(Sounds):
     def test_the_box_follows_the_sound(self):
         c = self.curve(make_root([{"clips": [self.kick_clip()]}]))
         quiet, hit, between, again, after = self.read(c, 0.2, 0.6, 1.0, 1.6, 5.0)
@@ -126,3 +128,118 @@ class MeterTests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class RackTests(Sounds):
+    """A global parameter that follows a meter."""
+
+    def setUp(self):
+        soundmeter.forget()
+        self.cache = os.path.join(self.tmp.name, "cache")
+
+    def root(self):
+        root = make_root([{"clips": [self.kick_clip()], "muted": True},
+                          {"clips": [self.clip("a", self.low)]}], buses=[{"id": "b1"}])
+        edit.add_rack_param(root, "kick", 0.0)
+        edit.set_rack_sound(root, "r1", soundmeter.make("tl1", "t1", **BOX))
+        return root
+
+    def at(self, root, seconds, name="kick"):
+        return rack.values(root, seconds * US)[name]
+
+    def test_read_after_measuring(self):
+        root = self.root()
+        self.assertEqual(self.at(root, 0.6), 0.0)
+        was = soundmeter.generation()
+        self.assertEqual(soundmeter.prepare(root, self.cache), {})
+        self.assertGreater(soundmeter.generation(), was)
+        self.assertAlmostEqual(self.at(root, 0.6), 1.0, delta=0.01)
+        self.assertEqual(self.at(root, 1.0), 0.0)
+        self.assertAlmostEqual(self.at(root, 1.6), 1.0, delta=0.01)       # (asked out of order: a table)
+        self.assertFalse(soundmeter.plan(root).stale())
+
+    def test_expression_goes_on_top(self):
+        root = self.root()
+        edit.set_rack_expr(root, "r1", "input * 100 + 1")
+        soundmeter.prepare(root, self.cache)
+        self.assertAlmostEqual(self.at(root, 0.6), 101.0, delta=1)
+
+    def test_lfo_and_sound_take_each_others_place(self):
+        root = self.root()
+        p = root["rack"][0]
+        edit.set_rack_lfo(root, "r1", lfo.make())
+        self.assertNotIn("sound", p)
+        edit.set_rack_sound(root, "r1", soundmeter.make("tl1", "t1"))
+        self.assertNotIn("lfo", p)
+        edit.set_rack_sound(root, "r1", None)
+        self.assertNotIn("sound", p)
+        soundmeter.prepare(root, self.cache)
+        self.assertIsNone(soundmeter.curve("r1"))
+
+    def test_a_sound_may_follow_another_channels_meter(self):
+        root = self.root()
+        duck = soundfx.new_effect("gain", "g")
+        root["tracks"][1]["sound_effects"] = [duck]
+        soundedit.bind(root, root["compounds"]["tl1"] | {"tracks": root["tracks"]}, ("track", "t2"), "g", "gain",
+                       mapping.make("linear", "kick", (0, 1), (0, -60)))
+        edit.add_rack_param(root, "ducked", 0.0)
+        edit.set_rack_sound(root, "r2", soundmeter.make("tl1", "t2", **dict(BOX, floor_db=-40.0, top_db=-10.0)))
+        todo = soundmeter.plan(root)
+        self.assertEqual([j.rid for j in todo.jobs], ["r1", "r2"])
+        self.assertEqual(soundmeter.run(todo, self.cache), {})
+        self.assertGreater(self.at(root, 0.3, "ducked"), 0.7)             # no kick: as it is
+        self.assertEqual(self.at(root, 0.6, "ducked"), 0.0)               # the kick turns it down
+        was = todo.keys()["r2"]                                           # what r1 hears changes: r2 is measured again
+        edit.set_rack_sound(root, "r1", soundmeter.make("tl1", "t1", **dict(BOX, release=0.4)))
+        self.assertNotEqual(soundmeter.plan(root).keys()["r2"], was)
+
+    def test_circles_are_refused_and_cut(self):
+        root = self.root()
+        level = {"tracks": root["tracks"]}
+        root["tracks"][0]["sound_effects"] = [soundfx.new_effect("gain", "g")]
+        with self.assertRaisesRegex(edit.EditError, "kick → kick"):
+            soundedit.bind(root, level, ("track", "t1"), "g", "gain", "kick * 10")
+        del root["tracks"][0]["sound_effects"][0]["expr"]
+        # through another parameter's expression, found when the expression is written
+        edit.add_rack_param(root, "other", 0.0)
+        soundedit.bind(root, level, ("track", "t1"), "g", "gain", "other")
+        with self.assertRaisesRegex(edit.EditError, "循環"):
+            edit.set_rack_expr(root, "r2", "kick")
+        self.assertNotIn("expr", root["rack"][1])
+        # made by other means: reads 0 and an export says so
+        root["rack"][1]["expr"] = "kick"
+        problems = soundmeter.prepare(root, self.cache)
+        self.assertIn("循環", problems["r1"])
+        self.assertEqual(self.at(root, 0.6), 0.0)
+        with self.assertRaisesRegex(RuntimeError, "kick"):
+            soundmeter.require(root, self.cache)
+        said = []
+        soundmeter.require(root, self.cache, allow_errors=True, say=said.append)
+        self.assertTrue(said)
+
+    def test_two_channels_in_a_ring(self):
+        root = self.root()
+        for t in root["tracks"]:
+            t["sound_effects"] = [soundfx.new_effect("gain", "g-" + t["id"])]
+        edit.add_rack_param(root, "other", 0.0)
+        edit.set_rack_sound(root, "r2", soundmeter.make("tl1", "t2"))
+        level = {"tracks": root["tracks"]}
+        soundedit.bind(root, level, ("track", "t2"), "g-t2", "gain", "kick")
+        with self.assertRaisesRegex(edit.EditError, "循環"):
+            soundedit.bind(root, level, ("track", "t1"), "g-t1", "gain", "other")
+
+    def test_missing_source_matters_only_when_read(self):
+        root = self.root()
+        root["rack"][0]["sound"]["channel"] = "gone"
+        soundmeter.require(root, self.cache)                              # nothing reads it
+        root["tracks"][1]["clips"][0]["expr"] = {"transform.scale": "kick"}
+        with self.assertRaisesRegex(RuntimeError, "找不到"):
+            soundmeter.require(root, self.cache)
+
+    def test_export_and_import(self):
+        root = self.root()
+        other = make_root([{"clips": []}])
+        edit.import_rack(other, rack.parse_import(rack.export_text(root)))
+        self.assertEqual(other["rack"][0]["sound"], root["rack"][0]["sound"])
+

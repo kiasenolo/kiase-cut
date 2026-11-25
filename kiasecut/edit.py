@@ -14,7 +14,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, racklinks, soundfx, textlayout, textvars, viz
+from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, racklinks, soundfx, soundmeter, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -4860,14 +4860,24 @@ def set_rack_expr(root, rid, text):
     if not text or text == "input":
         p.pop("expr", None)
         return p
+    heard = soundmeter.loops(root)
     p["expr"] = text
-    loop = rack.cycle(root)
-    if loop:
+
+    def undo():
         if before:
             p["expr"] = before
         else:
             p.pop("expr", None)
+
+    loop = rack.cycle(root)
+    if loop:
+        undo()
         raise EditError("循環依賴：" + " → ".join(loop + [loop[0]]))
+    try:
+        soundmeter.refuse_new_loops(root, heard)
+    except soundmeter.MeterError as exc:
+        undo()
+        raise EditError(str(exc)) from None
     return p
 
 
@@ -4883,6 +4893,38 @@ def set_rack_lfo(root, rid, spec):
     if why:
         raise EditError(f"LFO 有問題：{why}")
     p["lfo"] = copy.deepcopy(spec)
+    p.pop("sound", None)
+    return p
+
+
+def set_rack_sound(root, rid, spec):
+    """The meter (soundmeter.py) a number parameter takes its value from; None takes it away (the
+    parameter is its value again). Refused when the parameter would hear itself."""
+    p = _rack_param(root, rid)
+    if spec is None:
+        p.pop("sound", None)
+        return p
+    if rack.kind_of(p) != "number":
+        raise EditError("只有數字參數可以用聲音來源")
+    try:
+        spec = soundmeter.clean(spec)
+        soundmeter.upstream(soundmeter.holder(root, spec["level"]), spec["channel"])
+    except (ValueError, soundmeter.MeterError) as exc:
+        raise EditError(f"聲音來源有問題：{exc}") from None
+    before, lfo_before = p.get("sound"), p.get("lfo")
+    heard = soundmeter.loops(root)
+    heard.pop(rid, None)                    # (a circle this one is in already is not a reason to keep it)
+    p["sound"] = spec
+    p.pop("lfo", None)
+    try:
+        soundmeter.refuse_new_loops(root, heard)
+    except soundmeter.MeterError as exc:
+        for key, was in (("sound", before), ("lfo", lfo_before)):
+            if was is None:
+                p.pop(key, None)
+            else:
+                p[key] = was
+        raise EditError(str(exc)) from None
     return p
 
 
@@ -4956,6 +4998,8 @@ def import_rack(root, items):
             p["expr"] = d["expr"]
         if d.get("lfo"):
             p["lfo"] = d["lfo"]
+        if d.get("sound"):                      # (a channel of another project's reads 0 until it is picked again)
+            p["sound"] = d["sound"]
     loop = rack.cycle(root)
     if loop:                                                  # (names that were taken may have joined a circle)
         for p in rack.params(root)[-len(items):]:

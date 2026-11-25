@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, models, parenting, project, recovery,
+from .. import (androidfs, assets, build, soundmeter, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, models, parenting, project, recovery,
                mapping, nodegraph, rack, racklinks, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -70,6 +70,7 @@ from . import androidbar, androidfiles, appevents, beat_dialog, dialogframe, exp
 from .rack_panel import RackPanel
 from .steadylabel import SteadyLabel
 from .meter import MeterPanel
+from .meter_worker import MeterWorker
 from .pentool import PenBar
 from .preview import GL_DEFAULT as PREVIEW_GL_DEFAULT, FullscreenPreview, Preview
 from .preview import base_size as preview_base_size
@@ -1043,6 +1044,9 @@ class MainWindow(QMainWindow):
         self.layout_key = None          # the layout the panels are in (layouts.py key)
 
         self.player = Player(self)
+        self.sound_meter = MeterWorker(lambda: self.proj, self.cache_dir, self)     # (聲音轉數值, measured behind the editing)
+        self.sound_meter.changed.connect(self.on_sound_measured)
+        self.sound_meter.busy.connect(lambda on: on and self.statusBar().showMessage("分析聲音中…", 4000))
         self.player.worker.set_render_width(max(self.render_w.values()))     # (what the preview reported while the window was built)
         self.player.worker.set_rate(self.rate_box.currentData())     # (the 播放速度 used last time)
         self.player.worker.set_keep_pitch(self.pitch_btn.isChecked())
@@ -2212,6 +2216,7 @@ class MainWindow(QMainWindow):
         self.proj = proj
         fonts.use_map(self.font_map_here())          # before anything draws its texts
         self.history = edit.History(proj)
+        self.sound_meter.forget()
         self.meter.set_gain(proj.get("master_gain", 1.0))
         self.dirty = False
         self._session(autosave=None)
@@ -2240,6 +2245,7 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.refresh_inspector()
         self.rebuild()
+        self.sound_meter.request(now=True)
         saved = proj.get("view") if isinstance(proj.get("view"), dict) else {}
         if saved.get("vzoom"):
             self.timeline.set_vzoom(float(saved["vzoom"]))
@@ -2589,6 +2595,17 @@ class MainWindow(QMainWindow):
             self.beat_editor.close()                               # (its clip is gone)
         self.statusBar().showMessage(label, 2000)
         self.rebuild()
+        self.sound_meter.request()
+
+    def on_sound_measured(self):
+        """The global parameters that follow a sound read new numbers (or cannot be measured): draw with them."""
+        if not self.proj:
+            return
+        self.rebuild()
+        self.refresh_inspector()
+        self.show_rack()
+        if self.audio_page_open():
+            self.audio_page.refresh()
 
     def do_undo(self):
         if self.history and (label := self.history.undo()):
@@ -5338,6 +5355,7 @@ class MainWindow(QMainWindow):
         Its 參考 tracks show and sound (editing): an export's copy leaves them out."""
         v = pickle.loads(pickle.dumps(self.view(), pickle.HIGHEST_PROTOCOL))
         v["play_fps"], v["fps"], v["editing"] = self.proj["fps"], self.fps, True
+        v["meter_generation"] = soundmeter.generation()       # (new numbers: the RAM preview's frames are old)
         if self.audio_page_open():
             v["meter_channels"] = True
         if resolve:                                     # (a live edit changes the numbers first, then places the followers)
@@ -6037,7 +6055,9 @@ class MainWindow(QMainWindow):
             snapshot["width"], snapshot["height"] = width, height
             snapshot["duration_us"] = project.end_us(snapshot["tracks"])
         follows = pathfollow.has_followers(snapshot)
-        pathfollow.resolve(snapshot)
+        heard = bool(soundmeter.sounding(snapshot))
+        if not heard:
+            pathfollow.resolve(snapshot)
         cache = self.cache_dir()
         f = dlg.format()
         own = follows or renderexport.needs_renderer(snapshot) or not renderexport.uses_mlt(spec)
@@ -6080,6 +6100,10 @@ class MainWindow(QMainWindow):
         def work(progress):
             os.makedirs(cache, exist_ok=True)
             os.makedirs(os.path.dirname(out), exist_ok=True)
+            if heard:
+                stage("分析聲音")
+                soundmeter.require(snapshot, cache, cancelled)
+                pathfollow.resolve(snapshot)
             if own:
                 # filters, blend modes, the other formats, transparency: our own renderer
                 return renderexport.export(snapshot, out, (fmt["width"], fmt["height"]), fps, first, last, opts,
@@ -6162,7 +6186,6 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         view = json.loads(json.dumps(self.view()))
-        pathfollow.resolve(view)
         view["fps"] = self.proj["fps"]
         name = workspace.project_name(self.path) if self.path else "KiaseCut"
         stamp = timecode(self.playhead_us(), self.fps).replace(":", "-")
@@ -6183,6 +6206,8 @@ class MainWindow(QMainWindow):
 
         def work(_progress):
             os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+            soundmeter.require(view, cache)
+            pathfollow.resolve(view)
             return renderexport.still(view, t, size, out, alpha, bg, quality, cache)
 
         def done(errors):
@@ -7793,6 +7818,7 @@ class MainWindow(QMainWindow):
             self.fullscreen.close()
         for t in (self.sync_timer, self.ul_timer, self.clock):   # no new background work once closed
             t.stop()
+        self.sound_meter.cancel()
         self.player.shutdown()
         if getattr(self, "_thumb_engine", None) is not None:
             self._thumb_engine.close()

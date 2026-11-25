@@ -29,7 +29,7 @@ def add_items(menu, page, target, address, spec, time, done=lambda: None):
     have = followed_by(page, target, address, name)
 
     def put(text, label=TITLE):
-        win.apply(label, soundedit.set_expr, target, address, name, text)
+        win.apply_root(label, lambda root: soundedit.bind(root, win.container(root), target, address, name, text))
         done()
 
     def current():
@@ -59,7 +59,7 @@ def add_items(menu, page, target, address, spec, time, done=lambda: None):
 
         def fn(root):
             edit.add_rack_param(root, made, value)
-            soundedit.set_expr(win.container(root), target, address, name, out)
+            soundedit.bind(root, win.container(root), target, address, name, out)
         win.apply_root("新增全局參數並綁定", fn)
         done()
 

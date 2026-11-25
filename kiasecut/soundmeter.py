@@ -13,12 +13,21 @@ a part of an export or a command-line render read the same numbers.
     tap       the channel's sound, mono, kept in the cache by signature(): what feeds it
     box_db    the strongest frequency of the box every HOP samples (kept in memory per box)
     shape     that as 0 - 1, with attack and release: cheap, so the box's edges can be dragged
+
+A global parameter takes its value from a meter with p["sound"] = spec (rack.py; a number only):
+
+    plan      what there is to measure, in order - a channel whose effects follow another such
+              parameter after that one - and what cannot be (a circle: a parameter that hears a
+              channel its own number has a say in). Copies the project: call it where it is edited
+    run       measures a plan (any thread) and publishes the curves value() reads
+    require   both, and raises for a parameter in use that cannot be measured (exports)
 """
 import copy
 import hashlib
 import json
 import math
 import os
+import threading
 
 import numpy as np
 
@@ -362,3 +371,236 @@ def _run(snap, cache_dir, cancelled, on_progress):
         if on_progress:
             on_progress(min(1.0, a / until))
     return (out * gain).astype(np.float16)
+
+
+# -- the global parameters that follow a meter -------------------------------------------------------
+def sounding(root):
+    """The rack parameters that take their value from a meter."""
+    return [p for p in (root or {}).get("rack") or () if (p.get("kind") or "number") == "number" and is_spec(p.get("sound"))]
+
+
+def needs(root, spec):
+    """(snapshot, [the names of the parameters its sound reads, through their expressions too], [the ids
+    of those among them that take their value from a meter])"""
+    from . import rack
+    snap = snapshot(root, spec["level"], spec["channel"])
+    queue, followed, waits = sorted(snap.reads()), {}, []
+    while queue:
+        n = queue.pop(0)
+        q = rack.by_name(root, n)
+        if n in followed or q is None:
+            continue
+        followed[n] = q
+        if q in sounding(root):
+            waits.append(q["id"])
+        queue += sorted(rack.refs(root, q))
+    return snap, list(followed), waits
+
+
+def _circles(waits):
+    """{id: [id, ..., id]} of the parameters that wait for themselves: the way round."""
+    out = {}
+    for start in waits:
+        stack, seen = [(start, [start])], set()
+        while stack:
+            i, path = stack.pop()
+            for j in waits.get(i, ()):
+                if j == start:
+                    out[start] = path + [start]
+                    stack = []
+                    break
+                if j not in seen:
+                    seen.add(j)
+                    stack.append((j, path + [j]))
+    return out
+
+
+def _looked_at(root):
+    """({id: parameter}, {id: (snapshot, names read, ids waited for)}, {id: why it cannot be measured})"""
+    by, found, problems = {}, {}, {}
+    for p in sounding(root):
+        by[p["id"]] = p
+        why = check(p["sound"])
+        if why:
+            problems[p["id"]] = why
+            continue
+        try:
+            found[p["id"]] = needs(root, clean(p["sound"]))
+        except MeterError as exc:
+            problems[p["id"]] = str(exc)
+    return by, found, problems
+
+
+def loops(root):
+    """{id: what to say} of the parameters whose meter hears something their own number has a say in."""
+    by, found, _problems = _looked_at(root)
+    circles = _circles({i: x[2] for i, x in found.items()})
+    return {i: "循環依賴：" + " → ".join(by[j]["name"] for j in path) for i, path in circles.items()}
+
+
+def refuse_new_loops(root, before):
+    """Raise MeterError when root has a circle that was not among `before` (loops() before an edit)."""
+    new = [why for i, why in loops(root).items() if i not in before]
+    if new:
+        raise MeterError(new[0] + "（聲音來源聽到的聲音會用到它自己的值）")
+
+
+class Job:
+    def __init__(self, rid, spec, snap, tap_key):
+        self.rid, self.spec, self.snap, self.tap_key = rid, spec, snap, tap_key
+        self.key = (tap_key, json.dumps(spec, sort_keys=True))     # what the curve is of
+
+
+class Plan:
+    def __init__(self, jobs, problems):
+        self.jobs, self.problems = jobs, problems
+
+    def keys(self):
+        return {j.rid: j.key for j in self.jobs}
+
+    def stale(self):
+        """Whether running it would change what value() reads."""
+        return _made != self.keys()
+
+
+def plan(root):
+    by, found, problems = _looked_at(root)
+    if dsp.error():
+        for i, (snap, _names, _waits) in found.items():
+            if snap.entries:
+                problems[i] = "聲音效果函式庫無法使用"
+    circles = _circles({i: x[2] for i, x in found.items()})
+    for i, path in circles.items():
+        problems[i] = "循環依賴：" + " → ".join(by[j]["name"] for j in path)
+    jobs, done = [], {}
+
+    def add(i):
+        if i in done:
+            return
+        done[i] = None
+        if i in problems:
+            return
+        snap, names, waits = found[i]
+        for j in waits:
+            add(j)
+        read = []
+        for n in names:
+            q = next(q for q in root["rack"] if q["name"] == n)
+            read.append({k: q.get(k) for k in ("name", "kind", "value", "expr", "lfo", "items", "sound")}
+                        | {"measured": done.get(q["id"])})
+        spec = clean(by[i]["sound"])
+        job = Job(i, spec, snap, signature(snap, read))
+        done[i] = job.key
+        jobs.append(job)
+
+    for i in by:
+        add(i)
+    return Plan(jobs, problems)
+
+
+_curves = {}                            # rack parameter id -> curve (shape()), replaced whole when it changes
+_made = {}                              # ... -> the Job.key it was made from
+_levels = {}                            # (tap key, lo, hi) -> box_db, the last few
+_lock = threading.Lock()                # (one run at a time)
+_generation = 0
+LEVELS_KEPT = 12
+
+
+def generation():
+    """A number that changes whenever what value() reads does (for caches of drawn frames)."""
+    return _generation
+
+
+def forget():
+    """Another project: nothing measured so far is its."""
+    global _generation
+    _curves.clear()
+    _made.clear()
+    _levels.clear()
+    _generation += 1
+
+
+def stale_without(root):
+    """Whether curves are published for parameters root no longer has."""
+    return bool(_made) and not sounding(root)
+
+
+def curve(rid):
+    return _curves.get(rid)
+
+
+def value(p, t_us):
+    """What parameter p's meter reads at timeline time t_us (0 while it has not been measured)."""
+    c = _curves.get(p["id"])
+    return 0.0 if c is None else at(c, t_us)
+
+
+def _publish(rid, key, made):
+    global _generation
+    if made is None:
+        if rid not in _curves and rid not in _made:
+            return
+        _curves.pop(rid, None)
+        _made.pop(rid, None)
+    else:
+        _curves[rid] = made
+        _made[rid] = key
+    _generation += 1
+
+
+def run(todo, cache_dir, cancelled=lambda: False, on_progress=None):
+    """Measure what of a Plan has changed and publish it. Returns {id: why not} (the plan's own
+    problems among them). Raises Cancelled."""
+    problems = dict(todo.problems)
+    with _lock:
+        for rid in list(_made):
+            if rid not in todo.keys():
+                _publish(rid, None, None)
+        for n, job in enumerate(todo.jobs):
+            if _made.get(job.rid) == job.key:
+                continue
+            box = (job.tap_key, job.spec["lo_hz"], job.spec["hi_hz"])
+            try:
+                db = _levels.get(box)
+                if db is None:
+                    pcm = tap(job.snap, cache_dir, job.tap_key, cancelled,
+                              on_progress and (lambda f: on_progress((n + f) / len(todo.jobs))))
+                    db = box_db(pcm.astype(np.float32), job.spec["lo_hz"], job.spec["hi_hz"])
+                    _levels[box] = db
+                    while len(_levels) > LEVELS_KEPT:
+                        _levels.pop(next(iter(_levels)))
+                _publish(job.rid, job.key, shape(db, job.spec))
+            except Cancelled:
+                raise
+            except Exception as exc:                    # (the others are still measured)
+                problems[job.rid] = f"{type(exc).__name__}: {exc}"
+                _publish(job.rid, None, None)
+    return problems
+
+
+def prepare(root, cache_dir, cancelled=lambda: False, on_progress=None):
+    return run(plan(root), cache_dir, cancelled, on_progress)
+
+
+def in_use(root, p):
+    """Whether anything reads parameter p."""
+    from . import rack
+    return rack.users(root, p["name"]) > 0 or any(p["name"] in rack.refs(root, q) for q in rack.params(root))
+
+
+def require(root, cache_dir, cancelled=lambda: False, on_progress=None, allow_errors=False, say=None):
+    """Everything measured, for an export. A parameter in use that cannot be: RuntimeError, or with
+    allow_errors said and left reading 0."""
+    if not sounding(root):
+        return
+    try:
+        problems = prepare(root, cache_dir, cancelled, on_progress)
+    except Cancelled:
+        raise RuntimeError("已取消") from None
+    bad = [f"  {p['name']}：{problems[p['id']]}" for p in sounding(root) if p["id"] in problems and in_use(root, p)]
+    if bad:
+        text = "有全局參數的聲音來源算不出來：\n" + "\n".join(bad)
+        if not allow_errors:
+            raise RuntimeError(text)
+        if say:
+            say(text)

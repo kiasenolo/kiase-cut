@@ -255,6 +255,7 @@ python -m kiasecut marks 專案.kiasecut.json      # 列出標記
 python -m kiasecut render 專案.kiasecut.json -f png_seq --from 循環 --to 結尾 -o 輸出/loop
 ```
 
+`--set 名稱=值` 讓這次渲染用別的全局參數值（可以重複給 顏色寫 `#rrggbb` 向量寫 `1,2` 開關寫 開 / 關）  
 `--from` / `--to` 填標記名稱 範圍不含 `--to` 那一格 所以共用同一個標記的兩段不會重疊也不會漏格  
 圖片序列的 `-o` 是資料夾 檔名是 `loop_00000.png` 起跳 重新渲染會換掉同名的舊畫格 其他檔案不動  
 渲染失敗、素材找不到或有片段畫不出來時 原本的輸出會保留（`--allow-errors` 可以照樣輸出）  

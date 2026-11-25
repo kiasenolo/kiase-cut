@@ -7,6 +7,9 @@ Drawn by the same renderer as the editor's export (renderexport.export). The pro
 only read. --from / --to take a marker's name: the frames from the first mark up to, not
 including, the second one's, so ranges that share a mark neither overlap nor leave a gap.
 
+--set NAME=VALUE gives a global parameter (全局參數) a value for this render: a plain one that
+holds for the whole of it, in place of the parameter's keyframes, expression or LFO.
+
 The output is made in a folder beside it and put in place only when the whole render went
 well: a failed one leaves what was there before. A picture sequence replaces the frames of
 the same name (a shorter render leaves none of a longer one's behind) and nothing else.
@@ -19,7 +22,7 @@ import shutil
 import sys
 import tempfile
 
-from . import assets, formats, project, workspace
+from . import assets, formats, project, rack, textvars, workspace
 
 US = 1_000_000
 COMMANDS = ("render", "marks")
@@ -43,6 +46,59 @@ def _positive(text):
     return v
 
 
+def _assignment(text):
+    name, eq, value = text.partition("=")
+    if not eq or not name.strip():
+        raise argparse.ArgumentTypeError("要寫成 名稱=值")
+    return name.strip(), value
+
+
+def _parse(p, text):
+    """text as a value of global parameter p's kind; ValueError when it is none."""
+    kind = rack.kind_of(p)
+    if kind in ("text", "font"):
+        return rack.clean(kind, text)
+    t = text.strip()
+    if kind == "menu":
+        if t not in (p.get("items") or ()):
+            raise ValueError("可以選：" + "、".join(p.get("items") or ()))
+        return t
+    if kind == "bool":
+        word = {"1": True, "true": True, "on": True, "開": True, "0": False, "false": False, "off": False, "關": False}
+        if t.lower() not in word:
+            raise ValueError("要寫成 開 / 關（或 true / false、1 / 0）")
+        return word[t.lower()]
+    if kind == "color":
+        h = t.lstrip("#")
+        try:
+            if len(h) == 8:
+                return rack.clean(kind, textvars.parse_hex(h[:6]) + [int(h[6:], 16) / 255])
+            return rack.clean(kind, textvars.parse_hex(t))
+        except ValueError:
+            raise ValueError("顏色要寫成 #rrggbb 或 #rrggbbaa") from None
+    try:
+        if kind in rack.SIZES:
+            return rack.clean(kind, [float(x) for x in t.split(",")])
+        return rack.clean(kind, float(t))
+    except ValueError:
+        raise ValueError(f"要寫成 {rack.SIZES[kind]} 個用逗號分開的數字" if kind in rack.SIZES else "要寫成數字") from None
+
+
+def set_params(view, assignments):
+    """Give the global parameters of view (a private copy of the project) the values [(name, text)]."""
+    for name, text in assignments:
+        p = rack.by_name(view, name)
+        if p is None:
+            names = "、".join(q["name"] for q in rack.params(view)) or "（這個專案沒有全局參數）"
+            raise CliError(f"沒有全局參數叫「{name}」。這個專案的：{names}")
+        try:
+            p["value"] = _parse(p, text)
+        except ValueError as exc:
+            raise CliError(f"--set {name}：{exc}") from None
+        p.pop("expr", None)
+        p.pop("lfo", None)
+
+
 def parser():
     ap = argparse.ArgumentParser(prog="kiasecut", description="不開視窗的渲染")
     sub = ap.add_subparsers(dest="command", required=True)
@@ -55,6 +111,8 @@ def parser():
     p.add_argument("--format", "-f", default=formats.DEFAULT, choices=list(formats.BY_KEY), help="預設 %(default)s")
     p.add_argument("--from", dest="start", metavar="MARK", help="從這個標記開始（不給：開頭）")
     p.add_argument("--to", dest="end", metavar="MARK", help="到這個標記之前（不給：結尾）")
+    p.add_argument("--set", dest="params", action="append", default=[], type=_assignment, metavar="名稱=值",
+                   help="這次渲染改用的全局參數值（可以重複給）")
     p.add_argument("--size", type=_size, help="寬x高（不給：跟專案一樣）")
     p.add_argument("--fps", type=_positive, help="幀率（不給：跟專案一樣）")
     p.add_argument("--alpha", action=argparse.BooleanOptionalAction, help="透明背景（不給：看格式的預設）")
@@ -143,6 +201,7 @@ def render(args, proj, say=lambda text: print(text, file=sys.stderr, flush=True)
     from .build import find_ffmpeg
 
     view, marks = level(proj, args.compound)
+    set_params(view, args.params)
     fps = args.fps or float(view["fps"])
     first, last = frame_range(view, marks, fps, args.start, args.end)
     missing = missing_media(view)

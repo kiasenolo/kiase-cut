@@ -69,6 +69,27 @@ class CliTests(unittest.TestCase):
             self.assertIn(says, text)
         self.assertEqual(os.listdir(self.dir), ["boot.kiasecut.json"])
 
+    def test_set_global_parameters(self):
+        view = {"rack": [{"id": "r1", "name": "label", "kind": "text", "value": "a"},
+                         {"id": "r2", "name": "n", "value": 1.0, "expr": "input * 2"},
+                         {"id": "r3", "name": "on", "kind": "bool", "value": False},
+                         {"id": "r4", "name": "c", "kind": "color", "value": [0, 0, 0, 1]},
+                         {"id": "r5", "name": "v", "kind": "vec2", "value": [0, 0]}]}
+        cli.set_params(view, [("label", " x=y "), ("n", "3.5"), ("on", "開"), ("c", "#ff000080"), ("v", "1, 2")])
+        got = [p["value"] for p in view["rack"]]
+        self.assertEqual(got[:3] + got[4:], [" x=y ", 3.5, True, [1.0, 2.0]])
+        self.assertEqual(got[3][:3], [1.0, 0.0, 0.0])
+        self.assertNotIn("expr", view["rack"][1])
+        for bad in (("none", "1"), ("n", "abc"), ("on", "maybe"), ("c", "red"), ("v", "1")):
+            with self.assertRaises(cli.CliError, msg=bad):
+                cli.set_params(view, [bad])
+
+    def test_set_needs_a_parameter_that_exists(self):
+        code, text = self.render("out.mp4", "--set", "label=x")
+        self.assertEqual(code, 1, text)
+        self.assertIn("沒有全局參數叫", text)
+        self.assertEqual(os.listdir(self.dir), ["boot.kiasecut.json"])
+
     def test_out_must_fit_the_format(self):
         code, text = self.render("out.mov")
         self.assertEqual(code, 1)

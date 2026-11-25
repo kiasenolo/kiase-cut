@@ -207,7 +207,7 @@ typedef struct {
 } lim_state;
 
 static const char *const lim_params[] = {"gain", "ceil", "lk", "at", "rt", "alr", "alr_at", "alr_rt"};
-static const double lim_defaults[] = {0, -1, 5, 5, 5, 0, 5, 200};
+static const double lim_defaults[] = {0, -1, 5, 5, 50, 0, 5, 200};
 
 static int lim_len(const kc_fx *f) {
     return (int)kc_clamp(floor(f->p[2] * 0.001 * f->sr + 0.5), 1, LIM_MAX);

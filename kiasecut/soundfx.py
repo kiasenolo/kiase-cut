@@ -103,13 +103,28 @@ EFFECTS = {
         _ms("at", "啟動", 0.1, 2000.0, 20.0), _ms("rt", "釋放", 1.0, 5000.0, 100.0), P("knee", "膝部", 0.0, 24.0, 6.0, "dB")]},
     "clip": {"title": "硬限幅 (Clip)", "visual": "dynamics",
              "params": [P("ceil", "上限", -30.0, 0.0, -1.0, "dB")]},
+    "reverb": {"title": "混響", "params": [
+        P("decay", "衰減時間", 0.4, 15.0, 1.5, "s", log=True), P("room", "房間大小", 0.0, 5.0, 2.0),
+        P("wet", "濕（混響）", 0.0, 100.0, 25.0, "%"), P("dry", "乾（原音）", 0.0, 100.0, 100.0, "%"),
+        P("pre", "預延遲", 0.0, 500.0, 0.0, "ms"), P("damp", "高頻衰減", 1000.0, 20000.0, 6500.0, "Hz", log=True)]},
+    "delay": {"title": "延遲", "params": [
+        P("ms", "延遲", 1.0, 2000.0, 250.0, "ms"), P("fb", "回授", 0.0, 95.0, 30.0, "%"),
+        P("mix", "混合（濕）", 0.0, 100.0, 35.0, "%")]},
+    "width": {"title": "立體寬度", "params": [P("width", "寬度", 0.0, 200.0, 100.0, "%")]},
+    "balance": {"title": "左右平衡", "params": [P("bal", "平衡", -100.0, 100.0, 0.0, "%")]},
+    "swap": {"title": "左右交換", "params": []},
+    "invert": {"title": "反相", "params": [switch("l", "左聲道反相"), switch("r", "右聲道反相")]},
+    "mono": {"title": "單聲道", "params": []},
 }
 CATEGORIES = [("增益、EQ 與濾波", ["gain", "eq", "highpass", "lowpass", "filter", "analyzer"]),
-              ("動態", ["compressor", "limiter", "gate", "expander", "clip"])]
+              ("動態", ["compressor", "limiter", "gate", "expander", "clip"]),
+              ("空間與聲道", ["reverb", "delay", "width", "balance", "swap", "invert", "mono"])]
 KEYWORDS = {"gain": "volume 音量", "highpass": "高通 low cut", "lowpass": "低通 high cut", "eq": "equalizer 等化 均衡",
             "filter": "濾波 lowpass highpass bandpass 帶通 帶阻", "analyzer": "spectrum 頻譜 meter",
             "compressor": "壓縮 dynamics 側鏈 sidechain ducking", "limiter": "限幅 loudness", "gate": "噪音閘 noise",
-            "expander": "擴展 downward", "clip": "clipper 削波"}
+            "expander": "擴展 downward", "clip": "clipper 削波", "reverb": "混響 殘響 room hall", "delay": "延遲 回音 echo",
+            "width": "stereo 寬度 mid side 中側", "balance": "pan 平衡 左右", "swap": "左右 交換 flip",
+            "invert": "phase 反相 polarity", "mono": "單聲道 downmix"}
 
 
 def curve_value(v, t_us):

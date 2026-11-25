@@ -208,5 +208,72 @@ class DynamicsTests(unittest.TestCase):
         np.testing.assert_allclose(fx.process(sine(100, 0.5, 1.0)), np.clip(sine(100, 0.5, 1.0), -0.5, 0.5), atol=1e-5)
 
 
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class SpaceTests(unittest.TestCase):
+    def impulse(self, seconds=1.0, left=1.0, right=1.0):
+        x = np.zeros((int(SR * seconds), 2), np.float32)
+        x[0] = (left, right)
+        return x
+
+    def made(self, kind, **params):
+        fx = dsp.Processor(kind)
+        for k, v in params.items():
+            fx.set(k, v)
+        return fx
+
+    def test_stereo_tools(self):
+        x = np.stack([sine(300)[:, 0], sine(700)[:, 0]], axis=1)
+        l, r = x[:, 0], x[:, 1]
+        for kind, params, want in (("swap", {}, (r, l)), ("mono", {}, ((l + r) / 2, (l + r) / 2)),
+                                   ("invert", {"r": 1}, (l, -r)), ("width", {"width": 0}, ((l + r) / 2, (l + r) / 2)),
+                                   ("width", {}, (l, r)), ("width", {"width": 200}, (1.5 * l - 0.5 * r, 1.5 * r - 0.5 * l)),
+                                   ("balance", {"bal": 100}, (0 * l, r)), ("balance", {"bal": -50}, (l, r / 2))):
+            np.testing.assert_allclose(self.made(kind, **params).process(x), np.stack(want, axis=1), atol=1e-6,
+                                       err_msg=f"{kind} {params}")
+
+    def test_delay_echoes(self):
+        fx = self.made("delay", ms=100.0, fb=50.0, mix=50.0)
+        y = fx.process(self.impulse())[:, 0]
+        for n, level in ((0, 0.5), (4800, 0.5), (9600, 0.25), (14400, 0.125)):
+            self.assertAlmostEqual(float(y[n]), level, places=5, msg=n)
+        self.assertAlmostEqual(float(np.abs(y[100:4700]).max()), 0.0)
+        self.assertGreater(fx.tail, 1.0)
+
+    def test_reverb_dies_away_in_its_time(self):
+        for decay in (0.5, 2.0):
+            fx = self.made("reverb", decay=decay, wet=100.0, dry=0.0, damp=20000.0)
+            y = fx.process(self.impulse(decay * 1.6))
+            energy = lambda t: 10 * np.log10(np.mean(y[int(SR * t):int(SR * (t + 0.1))] ** 2) + 1e-20)
+            fall = (energy(0.15) - energy(0.15 + decay / 2)) / 30.0       # 30 dB in half the time
+            self.assertAlmostEqual(fall, 1.0, delta=0.3, msg=decay)
+            self.assertLess(energy(fx.tail - 0.1), energy(0.15) - 55)
+
+    def test_reverb_is_stereo_and_stays_bounded(self):
+        fx = self.made("reverb", decay=15.0, room=5.0, wet=100.0, dry=0.0)
+        rng = np.random.default_rng(3)
+        y = fx.process((rng.standard_normal((SR * 6, 2)) * 0.1).astype(np.float32))
+        self.assertTrue(np.isfinite(y).all())
+        self.assertLess(float(np.abs(y).max()), 4.0)
+        self.assertLess(abs(float(np.corrcoef(y[SR:, 0], y[SR:, 1])[0, 1])), 0.6)
+
+    def test_every_effect_stays_finite_at_its_limits(self):
+        from kiasecut import soundfx
+        rng = np.random.default_rng(4)
+        x = (rng.standard_normal((SR // 2, 2)) * 0.5).astype(np.float32)
+        self.assertEqual(sorted(soundfx.EFFECTS), sorted(dsp.kinds()))
+        for kind, spec in soundfx.EFFECTS.items():
+            self.assertLessEqual({p["name"] for p in spec["params"]}, set(dsp.defaults(kind)), msg=kind)
+            for p in spec["params"]:
+                self.assertAlmostEqual(dsp.defaults(kind)[p["name"]], p["default"], places=3, msg=(kind, p["name"]))
+            for pick in ("min", "max", "random"):
+                fx = dsp.Processor(kind)
+                for i in range(0, len(x), 512):
+                    for p in spec["params"]:
+                        fx.set(p["name"], rng.uniform(p["min"], p["max"]) if pick == "random" else p[pick])
+                    y = fx.process(x[i:i + 512], pos=i)
+                    self.assertTrue(np.isfinite(y).all(), msg=(kind, pick))
+                    self.assertLess(float(np.abs(y).max()), 5000.0, msg=(kind, pick))
+
+
 if __name__ == "__main__":
     unittest.main()

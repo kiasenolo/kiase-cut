@@ -79,5 +79,7 @@ static inline double kc_butter_q(int k, int n) { return 1.0 / (2.0 * cos(KC_PI *
 
 extern const kc_type kc_gain_type, kc_highpass_type, kc_lowpass_type, kc_eq_type, kc_filter_type, kc_analyzer_type;
 extern const kc_type kc_compressor_type, kc_expander_type, kc_gate_type, kc_limiter_type, kc_clip_type;
+extern const kc_type kc_reverb_type, kc_delay_type, kc_width_type, kc_balance_type, kc_swap_type, kc_invert_type,
+    kc_mono_type;
 
 #endif

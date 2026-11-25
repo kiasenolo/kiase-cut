@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, camera, components, curves, fx, gpusync, lights, mesh, mesh3d, models, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
+from . import assets, camera, components, curves, fx, gpusync, lights, mesh, mesh3d, models, nodegraph, project, propexpr, rack, render, shadows, sharedgl, sysmem, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -243,6 +243,7 @@ class GL:
                     for p in (self.composite, self.mixer, self.coverer)}
         self.fx = fx.Engine(mgl, ctx)
         self.solids = None              # mesh3d.Drawer, made when a 立體 object is first drawn
+        self.shadows = None             # shadows.Maps, made when a light first casts shadows
         self.textures = {}              # QImage cacheKey -> texture (pictures, texts)
         self.tex_bytes = 0
         self.tex_frame = {}             # the same keys -> (self.frame_no when last drawn, its bytes)
@@ -711,6 +712,10 @@ class GLRenderer(render.Renderer):
                 continue
             if part is not None:
                 solids.append((-it[0], part, part.corners(cam, W, H, t_us)))
+        rig = self.level_lights(tracks, W, H, fps, t_us)
+        maps, held = None, {}                                # 投射陰影: the maps, and the layers of the planes drawn already for them
+        if rig and rig["shadows"]:
+            maps = self.shadow_maps(rig, cam, items, solids, base, tgt, W, H, fps, t_us, ppu, held)
         planes = {-it[0] for it in items if it[2]["type"] != "filter" and not project.has_particles(it[2])}
         for d, _part, corners in solids:                     # (a solid's own stretch of depth cuts a system's into more)
             planes |= {float(corners[:, 2].min()) / (H / 2.0), d, float(corners[:, 2].max()) / (H / 2.0)}
@@ -740,8 +745,7 @@ class GLRenderer(render.Renderer):
             for group in solid_groups:
                 parts = [sd[1] for sd in group if mesh3d.needed(sd[2], all_, len(surfaces))]
                 if parts:
-                    self.gl_solids(tgt, base, cam, parts, W, H, t_us, all_, len(surfaces), rig)
-        rig = self.level_lights(tracks, W, H, fps, t_us) if solids else None
+                    self.gl_solids(tgt, base, cam, parts, W, H, t_us, all_, len(surfaces), rig, maps)
         finished = False
         for _d, _n, c, i, t, zr in sorted(items, key=lambda it: it[:2]):
             try:
@@ -761,9 +765,11 @@ class GLRenderer(render.Renderer):
                         here = mesh3d.surface(camera.scene_matrix(cam, c.get("transform") or {}, t, W, H, t_us)[0])
                     solid_pass(here)
                     surfaces.append(here)
-                lay = gl.layer(tgt.w, tgt.h)
+                drawn = held.pop(_n, None)
+                lay = drawn or gl.layer(tgt.w, tgt.h)
                 try:
-                    lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
+                    if drawn is None:
+                        lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
                     blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
                     if project.has_particles(c):          # (its particles are drawn through the camera one by one, not the picture as a plane)
                         gl.fx.scene = camera.scene_matrix(cam, c.get("transform") or {}, t, W, H, t_us) + (zr or (-1e30, 1e30))
@@ -773,8 +779,16 @@ class GLRenderer(render.Renderer):
                             gl.fx.scene = None
                         gl.draw_layer(tgt, lay, blend=blend)
                     else:
-                        self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
-                        gl.draw_plane(tgt, lay, inv_base * q * base, blend)
+                        if drawn is None:
+                            self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
+                        shown = lay
+                        if maps is not None and lights.shaded(c, "receive"):
+                            shown = self.shadowed_plane(maps, lay, inv_base, c, t, W, H, _n + 1)
+                        try:
+                            gl.draw_plane(tgt, shown, inv_base * q * base, blend)
+                        finally:
+                            if shown is not lay:
+                                gl.release(shown)
                 finally:
                     gl.release(lay)
             except fx.FilterError as exc:
@@ -786,6 +800,51 @@ class GLRenderer(render.Renderer):
                 solid_pass(None)
             except Exception as exc:
                 self.errors.append(f"立體: {exc}")
+        for lay in held.values():                            # (planes behind the camera: drawn for their shadows only)
+            gl.release(lay)
+
+    def shadow_maps(self, rig, cam, items, solids, base, tgt, W, H, fps, t_us, ppu, held):
+        """The shadows.Maps of a scene built for this frame, or None when nothing casts. The planes that cast are drawn for it, each on a
+        layer of its own, which is left in held {item's number: layer} to be put in the picture later."""
+        gl = self.gl
+        inv_base, _ = base.inverted()
+        casting = []
+        for _d, n, c, _i, t, _zr in items:
+            if c["type"] == "filter" or project.has_particles(c) or not lights.shaded(c, "cast"):
+                continue
+            lay = gl.layer(tgt.w, tgt.h)
+            try:
+                lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
+                self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
+            except Exception:
+                gl.release(lay)                      # (drawn again in its turn, where what is wrong with it is told)
+                continue
+            held[n] = lay
+            corners = [(0.0, 0.0), (lay.w, 0.0), (lay.w, lay.h), (0.0, lay.h)]
+            flat = [inv_base.map(QPointF(x, y)) for x, y in corners]
+            world = np.array(camera.world_of(c.get("transform") or {}, t, W, H, [(p.x() - W / 2.0, p.y() - H / 2.0) for p in flat]))
+            casting.append((n + 1, world, [(x / lay.w, y / lay.h) for x, y in corners], lay.tex))
+        try:
+            if gl.shadows is None:
+                gl.shadows = shadows.Maps(gl.mgl, gl.ctx)
+            built = gl.shadows.build(rig["shadows"], [sd[1] for sd in solids if sd[1].cast and sd[1].opacity >= 0.5], casting)
+        except Exception as exc:
+            self.errors.append(f"陰影：{exc}")
+            return None
+        return gl.shadows if built else None
+
+    def shadowed_plane(self, maps, lay, inv_base, c, t, W, H, number):
+        """A new layer: the plane's layer lay (clip c drawn flat) with the shadows that fall on it."""
+        out = self.gl.layer(lay.w, lay.h)
+        tf = c.get("transform") or {}
+        origin, right, down = camera.world_of(tf, t, W, H, [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)])
+        to_canvas = inv_base * QTransform.fromTranslate(-W / 2.0, -H / 2.0)
+        try:
+            maps.receive(out.fbo, lay.tex, lay.w, lay.h, mat3(to_canvas), origin, right - origin, down - origin, number)
+        except Exception:
+            self.gl.release(out)
+            raise
+        return out
 
     def level_lights(self, tracks, W, H, fps, t_us):
         """What the 燈光 objects playing in the level light it with (lights.rig), or None for none."""
@@ -845,9 +904,11 @@ class GLRenderer(render.Renderer):
             skins = [mesh3d.Skin(0, len(data), texture, wrap, over=True, shape=shape)] if skins is None else \
                 [mesh3d.Skin(s.first, s.count, texture, mesh3d.WRAPS["cube"] if s.first in unmapped else wrap, over=True, shape=shape,
                              metallic=s.metallic, roughness=s.roughness) for s in skins]
-        return mesh3d.Part(data, tf, t, W, H, grown, bool((c.get("solid") or {}).get("advanced")),
+        part = mesh3d.Part(data, tf, t, W, H, grown, bool((c.get("solid") or {}).get("advanced")),
                            min(1.0, max(0.0, mesh3d.setting(c, "metallic", t))), min(1.0, max(0.0, mesh3d.setting(c, "roughness", t))),
                            opacity, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0), skins)
+        part.cast, part.receive = lights.shaded(c, "cast"), lights.shaded(c, "receive")
+        return part
 
     def still_texture(self, img):
         """What gives a mesh3d.Skin the texture of QImage img (None: no picture)."""
@@ -879,14 +940,14 @@ class GLRenderer(render.Renderer):
             return None
         return self.still_texture(pic), pic.width() / max(pic.height(), 1)
 
-    def gl_solids(self, tgt, base, cam, parts, W, H, t_us, surfaces, current, rig=None):
+    def gl_solids(self, tgt, base, cam, parts, W, H, t_us, surfaces, current, rig=None, maps=None):
         """One pass of mesh3d.Drawer.draw over parts, put on tgt (parts sharing a pass are put on it as the first is)."""
         gl = self.gl
         if gl.solids is None:
             gl.solids = mesh3d.Drawer(gl.mgl, gl.ctx)
         lay = gl.layer(tgt.w, tgt.h)
         try:
-            gl.solids.draw(lay.fbo, lay.w, lay.h, parts, cam, W, H, base, t_us, surfaces, current, rig)
+            gl.solids.draw(lay.fbo, lay.w, lay.h, parts, cam, W, H, base, t_us, surfaces, current, rig, maps)
             gl.draw_layer(tgt, lay, opacity=parts[0].opacity, blend=parts[0].blend)
         finally:
             gl.release(lay)

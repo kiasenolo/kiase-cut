@@ -350,6 +350,58 @@ class GpuMatchesCpu(unittest.TestCase):
             self.assertLess(rx, W / 2 - 5)
             self.assertLess(gy, by - 10)
 
+    def test_lights_cast_shadows_from_planes_and_solids_onto_both(self):
+        from kiasecut import assets, camera
+        def rect(cid, color, w, h, shade=None, **t):
+            p = assets.make(assets.get("shape.rect"), color, "#000000", 640, 360)
+            p.update(w=w, h=h)
+            c = {"id": cid, "type": "image", "name": cid, "start_us": 0, "duration_us": 2 * S, "source_start_us": 0, "transform": tf(**t),
+                 "media": {"path": cid + ".png", "width": 100, "height": 100}, "asset": assets.normalize(p)}
+            if shade is not None:
+                c["shade"] = shade
+            return c
+        def ball(shade=None):
+            c = rect("ball", "#ff0000", 70, 70, shade, x=0.0, y=0.0, z=-0.2)
+            c["asset"] = assets.normalize({"family": "empty", "w": 90, "h": 90, "color": "#ff0000"})
+            c["solid"] = {"on": True, "prim": "sphere", "depth": 270.0, "bevel": 0.0, "advanced": False}
+            return c
+        def sun(shadow=True, soft=0.0):                                   # (from the left: what it shades is to the right)
+            lamp = self.lamp("l", "sun", 100.0, **camera.looking(np.zeros(3), np.array([0.6, 0.0, 0.8])))
+            lamp["light"].update(shadow=shadow, darkness=80.0, softness=soft)
+            return lamp
+        wall = lambda shade=None: rect("wall", "#c0c0c0", 600, 340, shade, z=0.8)
+        dark = lambda img: (img[..., :3].max(axis=2) > 20) & (img[..., :3].max(axis=2) < 90) & (np.ptp(img[..., :3], axis=2) < 20)
+        lit = self.scene_shot(wall(), ball(), sun(False))
+        self.assertLess(int(dark(lit).sum()), 20)
+        got = self.scene_shot(wall(), ball(), sun())
+        ys, xs = np.nonzero(dark(got))
+        self.assertGreater(len(xs), 150)                                        # (the ball's shadow on the wall ...)
+        self.assertGreater(float(xs.mean()), W / 2 + 10)                        # (... away from the light)
+        corner = np.abs(got[40:60, 60:90].astype(int) - lit[40:60, 60:90])
+        self.assertEqual(int(corner.max()), 0)                                  # (a plane does not shade itself)
+        for off in ((wall({"receive": False}), ball()), (wall(), ball({"cast": False}))):
+            self.assertLess(int(dark(self.scene_shot(*off, sun())).sum()), 20)
+        # a plane's shadow, where its picture is (not its whole layer), on another plane
+        card = rect("card", "#00ff00", 90, 90, z=-0.1)
+        got = self.scene_shot(wall(), card, sun())
+        ys, xs = np.nonzero(dark(got))
+        self.assertGreater(len(xs), 150)
+        self.assertLess(len(xs), 0.2 * W * H)
+        self.assertGreater(float(xs.mean()), W / 2 + 10)
+        # on a solid: a card between the light and the ball
+        screen = rect("screen", "#0000ff", 200, 340, x=-0.55, z=-0.8)
+        red = lambda img: float(img[..., 0][(img[..., 0] > 20) & (img[..., 1] < 40) & (img[..., 2] < 40)].mean())
+        self.assertLess(red(self.scene_shot(ball(), screen, sun())), red(self.scene_shot(ball(), screen, sun(False))) - 20)
+        # a soft edge has shades between
+        between = lambda img: int(((img[..., 0] > 70) & (img[..., 0] < 150) & (np.ptp(img[..., :3], axis=2) < 40)).sum())
+        self.assertGreater(between(self.scene_shot(wall(), card, sun(soft=60.0))), between(got) + 200)
+        # a point light casts from its place
+        lamp = self.lamp("p", "point", 100.0, x=-0.7, y=0.0, z=-1.2)
+        lamp["light"].update(shadow=True, darkness=80.0, softness=0.0)
+        ys, xs = np.nonzero(dark(self.scene_shot(wall(), card, lamp)))
+        self.assertGreater(len(xs), 150)
+        self.assertGreater(float(xs.mean()), W / 2 + 10)
+
     def lamp(self, cid, kind, power=100.0, color=(1.0, 1.0, 1.0), **t):
         from kiasecut import lights
         return {"id": cid, "type": "image", "name": cid, "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,

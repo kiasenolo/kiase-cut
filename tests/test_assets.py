@@ -416,6 +416,34 @@ class AssetTests(unittest.TestCase):
             inspector.show_clip(dict(c, solid=dict(c["solid"], surface="/a/b.png")), 250_000, 30)
             self.assertEqual(inspector.widgets["solid_surface"].text(), "b.png")
 
+    def test_shadow_settings_of_lights_and_clips(self):
+        from kiasecut import edit, lights
+        from kiasecut.ui.inspector import Inspector
+        level = proj()
+        empty = assets.make(assets.get("empty.small"), "#ffffff", "#000000", 1920, 1080)
+        sun = edit.new_light(level, "sun", empty, "e.png", 0)
+        around = edit.new_light(level, "ambient", empty, "e.png", 0)
+        self.assertEqual((sun["light"]["shadow"], "shadow" in around["light"]), (True, False))
+        edit.set_param(level, sun["id"], "light", "shadow", False, 0)
+        edit.set_param(level, sun["id"], "light", "darkness", 40.0, 0)
+        self.assertEqual((sun["light"]["shadow"], sun["light"]["darkness"]), (False, 40.0))
+        card = edit.new_primitive(level, "cube", empty, "e.png", 0)
+        self.assertTrue(lights.shaded(card, "cast") and lights.shaded(card, "receive"))
+        edit.set_param(level, card["id"], "shade", "cast", False, 0)
+        self.assertEqual((lights.shaded(card, "cast"), lights.shaded(card, "receive")), (False, True))
+        with self.assertRaises(edit.EditError):
+            edit.set_param(level, sun["id"], "shade", "cast", False, 0)
+        inspector = Inspector()
+        inspector.scene_check = lambda c: True
+        inspector.show_clip(card, 0, 30)
+        self.assertEqual((inspector.widgets["shade_cast"].isChecked(), inspector.widgets["shade_receive"].isChecked()), (False, True))
+        inspector.show_clip(sun, 0, 30)
+        self.assertFalse(inspector.widgets["light_shadow"].isChecked())
+        self.assertFalse(inspector.widgets[("light", "darkness")].isEnabled())
+        self.assertNotIn("shade_cast", inspector.widgets)
+        inspector.show_clip(around, 0, 30)
+        self.assertNotIn("light_shadow", inspector.widgets)
+
     def test_text_presets_are_a_category_of_the_panel(self):
         from kiasecut import textpresets
         from kiasecut.ui.assets_panel import AssetsPanel

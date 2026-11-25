@@ -980,7 +980,7 @@ GROUP_FIELDS = {
     "mask": ("cx", "cy", "w", "h", "rotation", "feather", "kind", "invert", "paths"),     # (paths: a 路徑 mask's)
     "clip": ("volume", "blend"),
     "camera": ("fov", "x", "y", "z", "tx", "ty", "tz", "aperture", "focus"),                   # 攝影機 of a group or compound (camera.py)
-    "light": ("power",),                                                                       # 燈光 objects (lights.py)
+    "light": ("power", "darkness", "softness"),                                                # 燈光 objects (lights.py)
     "solid": ("depth", "bevel", "metallic", "roughness"),                                      # 立體: a text, shape or basic solid of a scene (mesh3d.py)
 }
 # how a picture mixes with what is under it (render.BLEND_OPS draws them); a group's can also be
@@ -1083,6 +1083,10 @@ def _holder(c, group):
         if c["type"] not in ("group", "compound") and not (c["type"] == "image" and c.get("camera")):
             raise EditError("只有群組、複合片段和相機物件有攝影機")
         return c.setdefault("camera", {})
+    if group == "shade":                                        # 投射陰影 / 接收陰影 of a clip in a scene (lights.shaded)
+        if c["type"] not in VISUAL or c["type"] == "filter" or c.get("camera") or c.get("light"):
+            raise EditError("這個片段沒有陰影設定")
+        return c.setdefault("shade", {})
     if group == "light":
         if not c.get("light"):
             raise EditError("只有燈光物件有燈光設定")
@@ -1224,6 +1228,9 @@ def set_param(proj, clip_id, group, key, value, t=None):
             h["scale_y"] = copy.deepcopy(h.get("scale", 1.0))     # Y gets a curve of its own
         for k, v in with_linked_scale(h, {key: value}, t).items():
             _set_one(c, h, group, k, v, t)
+        return c
+    if group == "shade" and key in ("cast", "receive") or group == "light" and key == "shadow":
+        h[key] = bool(value)
         return c
     if group == "light" and key == "color":
         h[key] = [min(1.0, max(0.0, float(v))) for v in value[:3]]

@@ -10,7 +10,7 @@ The lamps and the studio are fixed in the world (x right, y down, z away): the m
 """
 import numpy as np
 
-from . import camera, curves, mesh
+from . import camera, curves, mesh, shadows
 
 SAMPLES = 4
 KEPT = 2                       # sizes the multisampled buffers are kept for
@@ -180,6 +180,10 @@ vec4 coloured() {
     return vec4(c.rgb * t.rgb, c.a);
 }
 
+"""  + shadows.SAMPLE + """
+uniform int receive;           // shadows fall on it
+uniform int lamp_shadow[8];    // the shadow map of lamp i (-1: it casts none)
+
 bool behind(int i) { return dot(surfaces[i].xyz, v_cam) - surfaces[i].w > 0.50; }
 
 void main() {
@@ -194,6 +198,9 @@ void main() {
     if (advanced == 0) {                                   // simple: the faces as picked, the rest darker, a little by where they look
         float side = 0.58 - 0.16 * N.y - 0.08 * N.x;
         float k = mix(side, 1.0, smoothstep(0.35, 0.98, abs(v_cap)));
+        if (receive == 1) {
+            for (int i = 0; i < smap_n; i++) k *= 1.0 - smap_p[i].w * blocked(i, v_pos, N, 0);
+        }
         fragColor = vec4(own.rgb * k * own.a, own.a);
         return;
     }
@@ -211,7 +218,10 @@ void main() {
             vec3 L = lamp_at[i].xyz - v_pos * lamp_at[i].w;
             float far = max(length(L), 1.0);
             float fall = lamp_at[i].w > 0.5 ? min(reach * reach / (far * far), 4.0) : 1.0;
-            c += lamp(N, V, L / far, lamp_colour[i] * fall, diffuse, f0, rough * rough);
+            float seen = 1.0;
+            int map_ = lamp_shadow[i];
+            if (receive == 1 && map_ >= 0 && map_ < smap_n) seen = 1.0 - smap_p[map_].w * blocked(map_, v_pos, N, 0);
+            c += lamp(N, V, L / far, lamp_colour[i] * fall * seen, diffuse, f0, rough * rough);
         }
         lit = around;
         mirrored = max(around, vec3(0.25));                // (a metal with nothing to mirror is just black)
@@ -330,7 +340,7 @@ class Drawer:
         if "lamp_colour" in self.program:
             self.program["lamp_colour"].write(np.array([c for _p, _w, c in lamps + empty], "f4").tobytes())
 
-    def draw(self, tgt_fbo, w, h, parts, cam, W, H, base, tc, surfaces=(), current=0, lights=None):
+    def draw(self, tgt_fbo, w, h, parts, cam, W, H, base, tc, surfaces=(), current=0, lights=None, maps=None):
         """Draw parts (Part) seen by camera cam (at its time tc) into the w x h framebuffer tgt_fbo (which is cleared to nothing). base:
         the QTransform from the W x H canvas to its px. surfaces: [(nx, ny, nz, distance)] planes in the camera's axes; only what is
         behind surfaces[current] and behind none before it is drawn (current == len(surfaces): what is behind none)."""
@@ -351,6 +361,18 @@ class Drawer:
         self._uniform("n_surfaces", len(held))
         self._uniform("current", min(current, len(held)))
         self._lights(lights)
+        mapped = maps is not None and maps.uniforms is not None
+        if mapped:
+            maps.use(self.program, 1)
+        else:
+            self._uniform("smap_n", 0)
+            self._uniform("smap_grid", 1)
+            self._uniform("smap", 1)
+        if "lamp_shadow" in self.program:
+            which = [-1] * 8
+            for i, held_ in enumerate((lights or {}).get("shadows", [])[:shadows.MOST] if mapped else []):
+                which[held_["lamp"]] = i
+            self.program["lamp_shadow"].write(np.array(which, "i4").tobytes())
         ready = [(part, self._vao(part.data)) for part in parts]
         msaa = self._target(w, h)
         msaa.use()
@@ -363,6 +385,7 @@ class Drawer:
                 self._uniform("normal_turn", mat(part.normals))
                 self._uniform("place", tuple(float(x) for x in part.place))
                 self._uniform("advanced", 1 if part.advanced else 0)
+                self._uniform("receive", 1 if mapped and part.receive else 0)
                 lo, hi = bounds(part.data)
                 self._uniform("box_lo", tuple(float(x) for x in lo))
                 self._uniform("box_size", tuple(float(x) for x in hi - lo))
@@ -392,6 +415,7 @@ class Part:
         v = lambda key, default: float(curves.value(tf.get(key, default), t))
         s = H / 2.0
         self.data, self.skins = data, skins          # (skins: [Skin] covering the mesh, or None: no pictures)
+        self.cast = self.receive = True              # 投射陰影, 接收陰影
         self.place = np.array([v("x", 0.0) * W / 2.0, -v("y", 0.0) * s, v("z", 0.0) * s])
         sx = v("scale", 1.0)
         sy = float(curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t))

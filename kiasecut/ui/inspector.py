@@ -102,7 +102,9 @@ PARAMS = {
              ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
              ("feather", "羽化", 0.0, 1.0, 0.01, 2, 1, 0.0)),
     "clip": (("volume", "音量 %", 0.0, 1000.0, 1.0, 0, 100, 1.0),),
-    "light": (("power", "強度 %", 0.0, 1000.0, 5.0, 0, 1, 100.0),),                # 燈光 objects (lights.py)
+    "light": (("power", "強度 %", 0.0, 1000.0, 5.0, 0, 1, 100.0),                 # 燈光 objects (lights.py)
+              ("darkness", "陰影濃度 %", 0.0, 100.0, 1.0, 0, 1, 70.0),
+              ("softness", "陰影柔和 px", 0.0, 200.0, 0.5, 1, 1, 6.0)),
     "solid": (("depth", "厚度 px", 0.0, 1000.0, 1.0, 1, 1, 40.0),                # 立體 (mesh3d.DEFAULTS)
               ("bevel", "倒角 px", 0.0, 200.0, 0.5, 1, 1, 3.0),
               ("metallic", "金屬度 %", 0.0, 100.0, 1.0, 0, 100, 0.0),
@@ -628,6 +630,8 @@ class Inspector(QWidget):
                 self._build_flip(form)
                 if scene and mesh3d.can(c):
                     self._build_solid(form, c)
+                if scene and c["type"] in edit.VISUAL and not c.get("camera") and not c.get("light"):
+                    self._build_shade(form)
                 self._build_path_follow(form, c)
                 if c["type"] in ("image", "video", "compound") and not c.get("asset"):
                     self._build_corners(form)
@@ -1418,11 +1422,36 @@ class Inspector(QWidget):
     def _build_light(self, form, c):
         """燈光: how strong and what colour; where it is (點光源) or the way it shines (平行光) are its 位置 / 旋轉."""
         form.addRow(section(lights.KINDS.get((c.get("light") or {}).get("kind"), "燈光")))
-        self._rows(form, "light", list(PARAMS["light"]), ())
+        kind = (c.get("light") or {}).get("kind")
+        self._rows(form, "light", [r for r in PARAMS["light"] if r[0] == "power"], ())
         colour = QPushButton()
         colour.clicked.connect(self._pick_light_color)
         self.widgets["light_color"] = colour
         form.addRow("顏色", colour)
+        if kind != "ambient":                             # (light from all round casts none)
+            shadow = QCheckBox("投射陰影")
+            shadow.setToolTip("這盞燈照到的東西會投下陰影：立體物件和圖片、影片、文字平面都能投射和接收（每個片段可以在自己的屬性關掉）。\n"
+                              "最多四盞燈同時投射陰影")
+            shadow.clicked.connect(lambda v: self._emit_now(self.paramEdited, "light", "shadow", bool(v)))
+            self.widgets["light_shadow"] = shadow
+            form.addRow("", shadow)
+            self._rows(form, "light", [r for r in PARAMS["light"] if r[0] != "power"], ())
+
+    def _build_shade(self, form):
+        """3D 場景裡的陰影: whether the clip casts them and they fall on it (lights with 投射陰影 make them)."""
+        form.addRow(section("3D 陰影"))
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        for key, name in (("cast", "投射"), ("receive", "接收")):
+            box = QCheckBox(name)
+            box.setToolTip(("這個片段在別的東西上投下陰影" if key == "cast" else "別的東西的陰影會落在這個片段上")
+                           + "（要有開了「投射陰影」的燈光才看得到）")
+            box.clicked.connect(lambda v, key=key: self._emit_now(self.paramEdited, "shade", key, bool(v)))
+            self.widgets["shade_" + key] = box
+            lay.addWidget(box)
+        lay.addStretch(1)
+        form.addRow("", row)
 
     def _pick_light_color(self):
         button = self.widgets["light_color"]
@@ -2169,6 +2198,7 @@ class Inspector(QWidget):
                                          tuple((v["name"], v["kind"], v.get("decimals"), v.get("format"))
                                                for v in textvars.variables(c.get("text") or {})),
                                          (c.get("asset") or {}).get("family"), (c.get("viz") or {}).get("kind"), mesh3d.primitive(c),
+                                         (c.get("light") or {}).get("kind"),
                                          (c.get("mask") or {}).get("compound_id"),
                                          bool((c.get("mask") or {}).get("video")),
                                          tuple((p["id"], p["kind"], p["name"]) for p in
@@ -2272,6 +2302,20 @@ class Inspector(QWidget):
             box.blockSignals(True)
             box.setChecked(all(camera.on(k.get("camera")) for k in clips))
             box.blockSignals(False)
+        for key in ("cast", "receive"):
+            box = w.get("shade_" + key)
+            if box is not None:
+                box.blockSignals(True)
+                box.setChecked(all(lights.shaded(k, key) for k in clips))
+                box.blockSignals(False)
+        if "light_shadow" in w:
+            box = w["light_shadow"]
+            box.blockSignals(True)
+            box.setChecked(all((k.get("light") or {}).get("shadow", False) for k in clips))
+            box.blockSignals(False)
+            for key in ("darkness", "softness"):
+                if ("light", key) in w:
+                    w[("light", key)].setEnabled(box.isChecked())
         if "light_color" in w:
             held = {QColor.fromRgbF(*(list((k.get("light") or {}).get("color") or [1.0, 1.0, 1.0])[:3])).name() for k in clips}
             button = w["light_color"]

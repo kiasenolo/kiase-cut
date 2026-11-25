@@ -493,19 +493,35 @@ def sounding(root):
 
 
 # -- the node effects that listen -----------------------------------------------------------------------
+def _node_hears(flat, sources, nid, params):
+    """(level, channel) analysis node nid of a flat graph hears, None while it hears nothing."""
+    from . import nodegraph
+    node = flat["nodes"].get(nid)
+    src = nodegraph.sound_source(flat, nid) if node is not None else None
+    if src is None or node.get("mute") or flat["nodes"][src].get("mute"):
+        return None
+    level, channel = nodegraph.sound_choice(flat, sources, params, src)
+    return (level, channel) if level and channel else None
+
+
+def picture_spec(graph, sources, nid, params=None):
+    """What 波形 / 頻譜 node nid draws: {"level", "channel"} (the whole sound is kept, not a number of it), or None."""
+    from . import nodegraph
+    got = _node_hears(nodegraph.flatten(graph), sources, nid, params)
+    return None if got is None else {"level": got[0], "channel": got[1]}
+
+
 def node_spec(graph, sources, nid, params=None):
     """What 電平 → 數值 node nid of a node effect measures, None while it hears nothing (no 聲音來源 wired to it, none
     chosen in that one, or either node is off: it reads 0). params: the effect's own (a source may be a parameter
     each clip chooses, nodegraph.sound_choice)."""
     from . import nodegraph
     flat = nodegraph.flatten(graph)
-    node = flat["nodes"].get(nid)
-    src = nodegraph.sound_source(flat, nid) if node is not None else None
-    if src is None or node.get("mute") or flat["nodes"][src].get("mute"):
+    got = _node_hears(flat, sources, nid, params)
+    if got is None:
         return None
-    level, channel = nodegraph.sound_choice(flat, sources, params, src)
-    if not level or not channel:
-        return None
+    level, channel = got
+    node = flat["nodes"][nid]
     own = {k: v for k, v in (node.get("meter") or {}).items() if k in RANGES}
     try:
         return clean({**DEFAULTS, **own, "level": level, "channel": channel})
@@ -526,19 +542,20 @@ def listeners(root):
     for c in project.all_clips(root or {}):
         for e in c.get("effects") or ():
             g = e.get("graph") if e.get("filter") == fx.GRAPH and not e.get("disabled") else None
-            if not g or not any(n.get("type") == nodegraph.SOUND_LEVEL for n in g.get("nodes", {}).values()):
+            if not g or not any(nodegraph.hears(n) for n in g.get("nodes", {}).values()):
                 continue
             flat = nodegraph.flatten(g)
             used = {l["from"] for l in flat["links"]}
             for nid, node in flat["nodes"].items():
-                if node.get("type") != nodegraph.SOUND_LEVEL:
+                if not nodegraph.hears(node):
                     continue
-                spec = node_spec(flat, e.get("sources"), nid, e.get("params"))
+                level = node.get("type") == nodegraph.SOUND_LEVEL
+                spec = (node_spec if level else picture_spec)(flat, e.get("sources"), nid, e.get("params"))
                 if spec is None:
                     continue
                 names = out.setdefault(node_key(spec), (spec, []))[1]
                 if nid in used:
-                    names.append(f"片段「{c.get('name') or c.get('type')}」節點效果的「電平 → 數值」")
+                    names.append(f"片段「{c.get('name') or c.get('type')}」節點效果的「{nodegraph.title(node)}」")
     return out
 
 
@@ -690,7 +707,7 @@ _made = {}                              # ... -> the Job.key it was made from
 _levels = {}                            # (tap key, lo, hi) -> box_db, the last few
 _taps = {}                              # node key -> the file of the tap its curve was made from
 _open = {}                              # ... file -> its sound, mapped (what the node editor's spectra read)
-_held = {}                              # (effect id, node id) -> the curve the node read last: read on while its new one is made
+_held = {}                              # (effect id, node id) -> what the node read last (a curve, or a tap's file): read on while its new one is made
 _failed = set()                         # the node keys that cannot be measured: their nodes read 0
 _lock = threading.Lock()                # (one run at a time)
 _generation = 0
@@ -755,8 +772,27 @@ def node_curve(spec):
 
 
 def node_sound(spec):
-    """The sound spec's number is measured from (mono float16, from the start of its level), None until it is measured."""
-    path = _taps.get(node_key(spec))
+    """The sound spec hears (mono float16, from the start of its level), None until it is measured."""
+    return _load(_taps.get(node_key(spec)))
+
+
+def picture_sound(owner, spec):
+    """(sound, what says which sound it is) of what a 波形 / 頻譜 node (owner: (effect id, node id)) draws, spec being its
+    picture_spec: (None, None) for silence. While a changed one is being measured it draws what it drew before."""
+    if spec is None:
+        _held.pop(owner, None)
+        return None, None
+    key = node_key(spec)
+    path = _taps.get(key) if key in _curves else None
+    if path is None:
+        path = None if key in _failed else _held.get(owner)
+    else:
+        _held[owner] = path
+    got = _load(path)
+    return (None, None) if got is None else (got, path)
+
+
+def _load(path):
     if path is None:
         return None
     got = _open.get(path)
@@ -805,8 +841,13 @@ def run(todo, cache_dir, cancelled=lambda: False, on_progress=None):
         for n, job in enumerate(todo.jobs):
             if _made.get(job.rid) == job.key:
                 continue
-            box = (job.tap_key, job.spec["lo_hz"], job.spec["hi_hz"])
             try:
+                if "lo_hz" not in job.spec:                 # (a picture of the sound: the tap is all it needs)
+                    tap(job.snap, cache_dir, job.tap_key, cancelled, on_progress and (lambda f: on_progress((n + f) / len(todo.jobs))))
+                    _taps[job.rid] = os.path.join(cache_dir, "soundmeter", job.tap_key + ".npy")
+                    _publish(job.rid, job.key, np.zeros(0, np.float32))
+                    continue
+                box = (job.tap_key, job.spec["lo_hz"], job.spec["hi_hz"])
                 db = _levels.get(box)
                 if db is None:
                     pcm = tap(job.snap, cache_dir, job.tap_key, cancelled,

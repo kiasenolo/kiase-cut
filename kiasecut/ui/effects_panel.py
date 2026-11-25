@@ -477,7 +477,7 @@ class EffectsPanel(QWidget):
             for nid in nodegraph.ordered(e["graph"]):
                 node = e["graph"]["nodes"][nid]
                 if node["type"] == nodegraph.SOURCE and node.get("kind") not in (None, "text", "vector") and nid in (e.get("sources") or {}):    # (a text: its fields are in the node editor)
-                    asset = nodegraph.is_asset(node)         # (a built-in shape: its fields are in a panel of their own)
+                    asset = nodegraph.is_asset(node) or nodegraph.is_soundpic(node)      # (a built-in shape, 波形, 頻譜: its fields are in a panel of their own)
                     sec, sl = self._panel(e["id"], f"{nodegraph.title(node)}的位置（{nid}）" if asset else f"{nodegraph.title(node)}（{nid}）", False)
                     sl.addLayout(self._source_row(e["id"], nid, node["kind"], asset))
                     lay.addWidget(sec)
@@ -822,10 +822,10 @@ class EffectsPanel(QWidget):
         """A colour's or a number's (使用遮罩) source: which picture / video / compound, 編輯位置
         (one clip) and for a video or a compound 編輯區域."""
         row = QHBoxLayout()
-        lab = QLabel("　" + dict((k, n) for n, k in SOURCE_NAMES + (("形狀", "shape"),))[kind])
+        lab = QLabel("　" + dict([(k, n) for n, k in SOURCE_NAMES + (("形狀", "shape"),)] + list(nodegraph.SOUND_PICTURE_NAMES.items()))[kind])
         lab.setMinimumWidth(70)
         row.addWidget(lab)
-        if kind == "shape" and asset:               # (a built-in shape: only where it sits; the rest is its fields)
+        if asset:                                   # (a node that draws itself: only where it sits; the rest is its fields)
             row.addStretch(1)
             self._edit_buttons(row, eid, name, kind)
             return row

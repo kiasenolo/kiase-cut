@@ -451,7 +451,7 @@ class MaskGeo:
 
     def is_picture(self):
         """A picture or shape placed like a clip (not a mask that cuts one)."""
-        return self.kind in ("shape", "text", "image", "video", "track", "compound")
+        return self.kind in ("shape", "text", "image", "video", "track", "compound", "waveform", "spectrum")
 
     def centre(self):
         return self.xf.map(QPointF(0, 0))
@@ -510,7 +510,7 @@ class MaskGeo:
     def handles(self, k):
         """[(name, canvas point)]; k = canvas px per screen px."""
         out = []
-        if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place", "shape", "text", masks.PATH):
+        if self.kind in ("rectangle", "circle", "compound", "image", "video", "track", "place", "shape", "text", "waveform", "spectrum", masks.PATH):
             out += [("w", self.xf.map(QPointF(self.hw, 0))), ("h", self.xf.map(QPointF(0, -self.hh))),
                     ("wh", self.xf.map(QPointF(self.hw, -self.hh)))]
             if self.is_picture():                   # (the clip box's eight: the sizing is about the centre either way)
@@ -524,7 +524,7 @@ class MaskGeo:
         u, hh = self.down()
         c = self.centre()
         out.append(("rot", c - u * (hh + ROT_PX * k)))
-        if self.kind not in ("compound", "image", "video", "track", "shape", "text"):      # (a picture mask has no feather)
+        if self.kind not in ("compound", "image", "video", "track", "shape", "text", "waveform", "spectrum"):      # (a picture mask has no feather)
             out.append(("feather", c + u * (hh + (14 + self.feather * 80) * k)))
         return out
 

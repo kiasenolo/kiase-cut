@@ -2691,7 +2691,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.FILTER, "ref": node["ref"]}
     elif node["type"] == nodegraph.SOURCE:
         if node.get("kind") not in nodegraph.SOURCE_KINDS:
-            raise EditError("來源節點要是圖片、影片、複合片段、軌道、形狀或文字")
+            raise EditError("來源節點要是圖片、影片、複合片段、軌道、形狀、文字、波形或頻譜")
         shape = node.get("shape")
         preset = node.get("preset")                      # (a text node: looks to start with)
         asset = node.get("asset")                        # {"key": a shape preset of assets.py, "colors": (c1, c2)}
@@ -2740,6 +2740,9 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
             set_effect_shape(proj, clip_id, effect_id, nid, shape)
         if node["kind"] == nodegraph.VECTOR:             # (its operation: a parameter of the effect)
             for q in nodegraph.vecop_def(node).params:
+                e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
+        if node["kind"] in nodegraph.SOUND_PICTURES:
+            for q in nodegraph.soundpic_def(g["nodes"][nid]).params:
                 e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
         if node["kind"] == "text":                       # (its fields: parameters of the effect; a preset of the 內建素材 tab sets some)
             for q in nodegraph.text_def(node).params:
@@ -3459,6 +3462,11 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
         return e
     if kind == nodegraph.VECTOR and e["filter"] == fx.GRAPH:      # a vector node: its outlines drawn over the whole clip (nothing to place)
         sources[param] = {"kind": nodegraph.VECTOR, "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
+        return e
+    if kind in nodegraph.SOUND_PICTURES and e["filter"] == fx.GRAPH:      # 波形 / 頻譜: drawn of a sound, placed as a shape is
+        old = sources.get(param) or {}
+        sources[param] = {"kind": kind, **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 1.0), ("h", 0.35), ("rotation", 0.0))},
+                          **_kept_anchor(old)}
         return e
     if kind == "text" and e["filter"] == fx.GRAPH:       # a text node: the words drawn by textlayout.py
         old = sources.get(param) or {}

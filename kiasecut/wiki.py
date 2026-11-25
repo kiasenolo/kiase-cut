@@ -44,6 +44,12 @@ SPECIAL = {
     (ng.SOURCE, "video", ""): "一段影片當來源。位置像遮罩一樣擺放。",
     (ng.SOURCE, "compound", ""): "一個複合片段當來源。",
     (ng.SOURCE, "track", ""): "時間線上的一條軌道當來源。",
+    (ng.SOURCE, "waveform", ""): "把接進來的聲音畫成波形：現在這一刻前後一小段（「時間長度」）的樣子。樣式「線」是聲音本身的線；「填滿」是它擺動多寬，上下對稱。"
+                                  "滿版高度是滿刻度（0 dB），小聲的聲音畫出來就矮。聲音是左右混合的單聲道。沒有接聲音、還沒選來源或來源已經不在時，畫的是靜音（一條平線）。"
+                                  "位置和大小像形狀節點一樣擺放，輸出是透明底的圖片。",
+    (ng.SOURCE, "spectrum", ""): "把接進來的聲音畫成頻譜：左邊低頻、右邊高頻，高度是音量在「最低 dB」到「最高 dB」之間的位置。樣式有「長條」和「曲線」；"
+                                  "「啟動」和「釋放」讓它升得快、落得慢。長條的數量由框的寬度、長條寬和間隔決定。聲音是左右混合的單聲道，沒有聲音時什麼都不畫（曲線是一條底線）。"
+                                  "位置和大小像形狀節點一樣擺放，輸出是透明底的圖片。",
     (ng.SOURCE, "text", ""): "文字產生器：字號、顏色、字距、對齊、外框等。內容可以接字串節點，字體可以接字體節點；也能當矢量輪廓接進矢量節點。",
     (ng.SOURCE, "image", "svg"): "讀進一個 SVG 圖片，給出它的矢量輪廓，可以接到矢量節點。",
     (ng.SOURCE, "vector", "add"): "矢量：把多個矢量（形狀、文字、SVG、其他矢量節點）的輪廓疊在一起。",
@@ -335,7 +341,7 @@ def special_page(key):
         ins = "<p>輸入：矢量輪廓（%s）</p>" % dot("outline")
     elif t == ng.SOUND_SOURCE:
         ins = "<p>輸入：來源（%s，只接「聲音來源」種類的效果參數）</p>" % dot("sound")
-    elif t == ng.SOUND_LEVEL:
+    elif t == ng.SOUND_LEVEL or (t == ng.SOURCE and kind in ng.SOUND_PICTURES):
         ins = "<p>輸入：聲音（%s）</p>" % dot("sound")
     return (f"<h1>{esc(label)}</h1><p>{esc(SPECIAL.get((t, kind, op), ''))}</p>{ins}"
             f"<p>輸出：{dot(out)} {esc(dict((k, n) for k, n, _ in TYPES).get(out, out))}"

@@ -8,6 +8,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import numpy as np  # noqa: E402
 import shiboken6  # noqa: E402
 from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
@@ -319,6 +320,169 @@ class MeasureTests(Sounds):
         if not isinstance(r, glrender.GLRenderer):
             self.skipTest("no OpenGL")
         self.draws(r)
+
+class PictureTests(Graphs):
+    """波形 and 頻譜: source nodes drawn of the sound wired into them."""
+
+    def pictures(self):
+        return [self.add({"type": ng.SOURCE, "kind": k}) for k in ng.SOUND_PICTURES]
+
+    def test_a_new_one_has_a_place_and_its_fields(self):
+        wave, spec = self.pictures()
+        for nid in (wave, spec):
+            self.assertEqual(self.e["sources"][nid]["kind"], self.g["nodes"][nid]["kind"])
+            self.assertIn(ng.SOUND_SOCKET, [s for s, _label in ng.sockets(self.g["nodes"][nid])])
+            self.assertEqual(ng.socket_kind(self.g, nid, ng.SOUND_SOCKET), "sound")
+            self.assertFalse(ng.takes_picture(self.g, nid, ng.SOUND_SOCKET))
+        self.assertEqual(self.e["params"][ng.param_key(wave, "style")], "線")
+        self.assertEqual(self.e["params"][ng.param_key(spec, "style")], "長條")
+        self.assertEqual([ng.title(self.g["nodes"][n]) for n in (wave, spec)], ["波形", "頻譜"])
+
+    def test_it_takes_a_sound_and_gives_a_picture(self):
+        wave, spec = self.pictures()
+        ng.connect(self.g, self.src, wave, ng.SOUND_SOCKET)
+        dot = self.add({"type": ng.REROUTE})
+        ng.connect(self.g, self.src, dot, "src")
+        ng.connect(self.g, dot, spec, ng.SOUND_SOCKET)
+        with self.assertRaisesRegex(Exception, "聲音線"):
+            ng.connect(self.g, "input", wave, ng.SOUND_SOCKET)
+        ex = self.blur()
+        ng.connect(self.g, wave, ex, "src")
+        with self.assertRaisesRegex(Exception, "聲音線"):
+            ng.connect(self.g, self.src, ex, "src")
+        self.assertFalse(ng.sounds_crossed(self.g))
+
+    def test_what_it_hears(self):
+        wave, _spec = self.pictures()
+        self.assertIsNone(soundmeter.picture_spec(self.g, self.e["sources"], wave))
+        ng.connect(self.g, self.src, wave, ng.SOUND_SOCKET)
+        self.assertIsNone(soundmeter.picture_spec(self.g, self.e["sources"], wave))      # (nothing chosen)
+        edit.set_graph_sound(self.p, "pic", self.e["id"], self.src, "tl1", "t1")
+        self.assertEqual(soundmeter.picture_spec(self.g, self.e["sources"], wave), {"level": "tl1", "channel": "t1"})
+
+    def test_a_picture_of_a_sound_is_not_a_still(self):
+        wave, _spec = self.pictures()
+        ng.connect(self.g, wave, "output", "src")
+        self.assertFalse(stillspans._effect_still(self.e))
+
+
+class OutlineTests(unittest.TestCase):
+    """The waveform line, drawn as the outline of what a round pen would cover."""
+
+    def test_a_flat_line_is_as_thick_as_the_pen(self):
+        from kiasecut import soundpictures
+        for samples in (10, 1000):                               # (fewer samples than columns, and more)
+            xs, top, bottom = soundpictures.outline(np.full(samples, 20.0), 100, 3.0)
+            self.assertEqual((len(xs), float(top.min()), float(top.max()), float(bottom.min()), float(bottom.max())),
+                             (100, 17.0, 17.0, 23.0, 23.0))
+
+    def test_a_jump_leaves_no_gap(self):
+        from kiasecut import soundpictures
+        for y in (np.array([0.0] * 5 + [50.0] * 5), np.where(np.arange(5000) % 7 < 3, 0.0, 50.0)):
+            _xs, top, bottom = soundpictures.outline(y, 100, 1.0)
+            self.assertTrue(np.all(top[1:] <= bottom[:-1]) and np.all(bottom[1:] >= top[:-1]))      # (neighbours overlap)
+            self.assertEqual((float(top.min()), float(bottom.max())), (-1.0, 51.0))
+
+
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class PictureDrawTests(Sounds):
+    """Kicks on a muted track at 0.5 and 1.5 s, drawn by a 波形 or 頻譜 node."""
+
+    def setUp(self):
+        soundmeter.forget()
+        self.cache = os.path.join(self.tmp.name, "cache")
+
+    def root(self, kind, channel="t1", start=0.0, **values):
+        root = make_root([{"clips": [self.kick_clip()], "muted": True}], rack=[])
+        clip = {"id": "pic", "type": "image", "name": "圖", "start_us": int(start * US), "duration_us": 2 * US,
+                "source_start_us": 0, "media": {"path": ":shape:rect", "width": W, "height": H},
+                "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
+        root["tracks"].insert(0, {"id": "vid", "kind": "video", "name": "V", "clips": [clip]})
+        root.update(width=160, height=90, duration_us=4 * US)
+        e = edit.add_effect(root, "pic", fx.GRAPH)
+        g, eid = e["graph"], e["id"]
+        add = lambda node: edit.add_graph_node(root, "pic", eid, node)
+        src = add({"type": ng.SOUND_SOURCE})
+        edit.set_graph_sound(root, "pic", eid, src, "tl1", channel)
+        pic = add({"type": ng.SOURCE, "kind": kind})
+        ng.connect(g, src, pic, ng.SOUND_SOCKET)
+        ng.connect(g, pic, "output", "src")
+        e["sources"][pic]["h"] = 1.0
+        for name, v in values.items():
+            e["params"][ng.param_key(pic, name)] = v
+        return root, e, pic
+
+    def lit(self, renderer, root, seconds):
+        """How many pixels of the frame are bright, and the rows the highest and lowest of them are in."""
+        img = renderer.render(root, round(seconds * root["fps"]), 160, 90)
+        self.assertEqual(renderer.errors, [])
+        rows = [y for y in range(90) for x in range(160) if img.pixelColor(x, y).red() > 96]
+        return len(rows), (min(rows), max(rows)) if rows else None
+
+    def check_wave(self, renderer, **values):
+        root, _e, _pic = self.root("waveform", start=1.0, length_ms=100.0, line_w=2.0, **values)
+        soundmeter.require(root, self.cache)
+        _n, quiet = self.lit(renderer, root, 1.2)
+        n, hit = self.lit(renderer, root, 1.6)               # (the clip starts at 1 s: the kick at 1.5 s)
+        self.assertLessEqual(quiet[1] - quiet[0], 3)         # a flat line
+        self.assertGreater(hit[1] - hit[0], 15)              # +-0.25 of 90 rows
+        self.assertAlmostEqual(sum(hit) / 2, 45, delta=3)
+        return n
+
+    def check_spectrum(self, renderer, **values):
+        root, _e, _pic = self.root("spectrum", start=1.0, decay=0.0, **values)
+        soundmeter.require(root, self.cache)
+        self.assertEqual(self.lit(renderer, root, 1.2)[0] if values.get("style") != "曲線" else 0, 0)
+        n, rows = self.lit(renderer, root, 1.6)
+        self.assertGreater(n, 20)
+        self.assertLess(rows[0], 70)                         # a tall low bar
+
+    def draws(self, renderer):
+        line = self.check_wave(renderer)
+        self.assertGreater(self.check_wave(renderer, style="填滿"), line)
+        self.check_spectrum(renderer)
+        self.check_spectrum(renderer, style="曲線")
+
+    def test_the_cpu_renderer_draws_them(self):
+        r = render.Renderer(lambda *a: None)
+        if r.engine() is None:
+            self.skipTest("no OpenGL")
+        self.draws(r)
+
+    def test_the_gpu_renderer_draws_them(self):
+        r = glrender.make(lambda *a: None)
+        if not isinstance(r, glrender.GLRenderer):
+            self.skipTest("no OpenGL")
+        self.draws(r)
+
+    def test_a_missing_source_draws_silence_and_stops_an_export(self):
+        root, _e, _pic = self.root("waveform", channel="gone")
+        with self.assertRaisesRegex(RuntimeError, "找不到"):
+            soundmeter.require(root, self.cache)
+        soundmeter.require(root, self.cache, allow_errors=True)
+        r = render.Renderer(lambda *a: None)
+        if r.engine() is None:
+            self.skipTest("no OpenGL")
+        _n, rows = self.lit(r, root, 0.6)
+        self.assertLessEqual(rows[1] - rows[0], 5)
+
+    def test_one_that_is_not_drawn_does_not_stop_an_export(self):
+        root, e, pic = self.root("waveform", channel="gone")
+        ng.disconnect(e["graph"], "output", "src")
+        ng.connect(e["graph"], "input", "output", "src")
+        soundmeter.require(root, self.cache)
+
+    def test_a_changed_source_draws_the_old_sound_until_measured(self):
+        root, e, pic = self.root("waveform")
+        soundmeter.prepare(root, self.cache)
+        spec = soundmeter.picture_spec(e["graph"], e["sources"], pic)
+        sound, name = soundmeter.picture_sound((e["id"], pic), spec)
+        self.assertIsNotNone(sound)
+        root["tracks"].append({"id": "t2", "kind": "audio", "name": "A2", "clips": [self.kick_clip("k2")], "muted": True})
+        other = {"level": "tl1", "channel": "t2"}
+        soundmeter.plan(root)
+        self.assertEqual(soundmeter.picture_sound((e["id"], pic), other)[1], name)
+        self.assertEqual(soundmeter.picture_sound((e["id"], pic), None), (None, None))
 
 
 if __name__ == "__main__":

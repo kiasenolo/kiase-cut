@@ -254,7 +254,7 @@ class NodeItem(QGraphicsItem):
             if opened:
                 for p in meter_params("lo_hz", "hi_hz", "floor_db", "top_db"):
                     add("param", p.label, p=p)
-        elif node["type"] == ng.FILTER or ng.is_asset(node) or ng.is_text(node) or ng.is_vecop(node):         # (a built-in shape, a text or a vector node: its fields, no sockets)
+        elif node["type"] == ng.FILTER or ng.is_drawn(node):         # (a built-in shape, a text, a vector or a sound picture node: its fields)
             d = ng.node_def(node)
             socket = lambda p: ng.PARAM + p.name if ng.has_socket(p) else None
             named = self.editor.node_values(self.nid).named
@@ -279,7 +279,9 @@ class NodeItem(QGraphicsItem):
                 if ng.is_dynamic(node):
                     add("image", "（拉一條線進來新增輸入）", GHOST_ITEM)
             else:                                                      # (pictures to paint its fill and its outline with, then where it sits)
-                if ng.is_text(node):                                   # (a text: its words - or a string node's - and font first)
+                if ng.is_soundpic(node):                               # (波形 / 頻譜: the sound it draws first)
+                    add("image", "聲音", ng.SOUND_SOCKET)
+                elif ng.is_text(node):                                   # (a text: its words - or a string node's - and font first)
                     add("text", "文字", ng.TEXT_SOCKET, h=ROW * self.lines() if ng.TEXT_SOCKET not in self.linked else ROW)
                     add("font", "字體", ng.FONT_SOCKET)
                 else:
@@ -288,7 +290,7 @@ class NodeItem(QGraphicsItem):
                 opened = self.editor.panel_opened(self.nid, "位置", True)
                 add("panel", "位置", panel=opened)
                 if opened:
-                    for p in (ng.text_place_params() if ng.is_text(node) else ng.place_params()):
+                    for p in ng.node_place_params(node):
                         add("param", p.label, socket(p), p)
             paired = set(d.input_param.values())
             for p in (q for q in d.params if q.panel is None and shown(q.name) and q.name not in paired):
@@ -436,7 +438,7 @@ class NodeItem(QGraphicsItem):
 
     def in_colour(self, sock):
         """The colour of input `sock`."""
-        if self.node["type"] in SOUND_NODES:
+        if self.node["type"] in SOUND_NODES or (sock == ng.SOUND_SOCKET and ng.is_soundpic(self.node)):
             return SOCKET_COLORS["sound"]
         if ng.is_vecop(self.node) and (sock == GHOST_ITEM or sock in ng.vecop_sockets(self.node)):
             return SOCKET_COLORS["outline"]
@@ -2798,7 +2800,7 @@ class NodeEditor(QWidget):
             self._showers_of = (e["id"], gsig)
             self._showers = []
             for nid, node in e["graph"]["nodes"].items():
-                if node.get("type") == ng.FILTER:
+                if node.get("type") == ng.FILTER or ng.is_soundpic(node):
                     d = ng.node_def(node)
                     if d.input_show or any(p.show for p in d.params):
                         self._showers.append((nid, d))
@@ -2882,12 +2884,12 @@ class NodeEditor(QWidget):
         src = self.sources.get(nid) or {}
         if node.get("type") == ng.SOUND_LEVEL:
             return self.Values(self.meter_values(nid), None, "", [1.0, 1.0, 1.0, 1.0])
-        if node.get("type") != ng.FILTER and not ng.is_asset(node) and not ng.is_text(node) and not ng.is_vecop(node):
+        if node.get("type") != ng.FILTER and not ng.is_drawn(node):
             return self.Values({}, None, src.get("shape", "rectangle"), src.get("color") or [1.0, 1.0, 1.0, 1.0])
         d = ng.node_def(node)
         vals = {p.name: curves.value(self.params.get(ng.param_key(nid, p.name), p.default), self.t) for p in d.params}
-        if ng.is_asset(node) or ng.is_text(node):               # (where it sits: the source's own fields)
-            vals.update({p.name: curves.value(src.get(p.name, p.default), self.t) for p in (ng.text_place_params() if ng.is_text(node) else ng.place_params())})
+        if not ng.is_vecop(node) and ng.is_drawn(node):         # (where it sits: the source's own fields)
+            vals.update({p.name: curves.value(src.get(p.name, p.default), self.t) for p in ng.node_place_params(node)})
         return self.Values(vals, d, "", [1.0, 1.0, 1.0, 1.0])
 
     def field_number(self, nid, row, cell):
@@ -3336,10 +3338,11 @@ class NodeEditor(QWidget):
     def sound_link_menu(self, scene_pos, global_pos, link=None, feed=None):
         """What takes a sound (link: let go in the empty) or gives one (feed: dragged out of a sound input)."""
         menu = QMenu(self)
-        first = ("聲音來源", ng.SOUND_SOURCE) if feed else ("電平 → 數值", ng.SOUND_LEVEL)
-        for name, kind in (first, ("繞線點", ng.REROUTE)):
-            def ask(_=False, kind=kind):
-                node = {"type": kind, **({"group": self.level} if self.level else {})}
+        takers = [("聲音來源", {"type": ng.SOUND_SOURCE})] if feed else [("電平 → 數值", {"type": ng.SOUND_LEVEL})] + [
+            (ng.SOUND_PICTURE_NAMES[k], {"type": ng.SOURCE, "kind": k}) for k in ng.SOUND_PICTURES]
+        for name, what in takers + [("繞線點", {"type": ng.REROUTE})]:
+            def ask(_=False, what=what):
+                node = {**what, **({"group": self.level} if self.level else {})}
                 if feed:
                     self.addFeedingRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y(), feed[0], feed[1])
                 else:
@@ -3619,7 +3622,7 @@ class NodeEditor(QWidget):
                 elif it[0] == "node":
                     if feed and it[2].get("type") in (ng.VIEWER, ng.PARAMS, ng.STRING, ng.FONT, ng.SOUND_SOURCE):
                         continue                              # (these feed nothing a picture input takes)
-                    if link and it[2].get("type") in SOUND_NODES:
+                    if link and (it[2].get("type") in SOUND_NODES or ng.is_soundpic(it[2])):
                         continue                              # (a picture's link goes into neither)
                     target.addAction(it[1], lambda _=False, n=it[2]: ask(dict(n)))
                     entries.add(path, it[1], it[2])
@@ -3628,6 +3631,8 @@ class NodeEditor(QWidget):
                     if top:
                         groups.append(sub.menuAction())
                     fill(sub, it[2], (path + " ▸ " if path else "") + it[1])
+                    if sub.isEmpty():                           # (nothing in it takes the link dropped)
+                        sub.menuAction().setVisible(False)
         fill(menu, nodemenu.ROOT, "", True)
         placed = nodemenu.placed()
         effects = menu.addMenu("KiaseCut 效果")           # what Blender has no place for: the other effects of the 效果 list, as nodes

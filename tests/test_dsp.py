@@ -275,5 +275,74 @@ class SpaceTests(unittest.TestCase):
                     self.assertLess(float(np.abs(y).max()), 5000.0, msg=(kind, pick))
 
 
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class ColourTests(unittest.TestCase):
+    def made(self, kind, **params):
+        fx = dsp.Processor(kind)
+        for k, v in params.items():
+            fx.set(k, v)
+        return fx
+
+    def tone(self, f, amp=0.5, seconds=1.0):
+        return sine(f, seconds, amp)
+
+    def level_at(self, y, f):
+        """The level of frequency f in the settled part of y, in dB below full scale."""
+        part = y[SR // 2:, 0].astype(float)
+        part = part * np.hanning(len(part))
+        k = np.exp(-2j * np.pi * f * np.arange(len(part)) / SR)
+        return 20 * np.log10(abs(np.dot(part, k)) * 4 / len(part) + 1e-12)
+
+    def run_blocks(self, fx, x, size=512, start=0):
+        return np.concatenate([fx.process(x[i:i + size], pos=start + i) for i in range(0, len(x), size)])
+
+    def test_dry_is_the_sound_itself(self):
+        x = self.tone(440)
+        for kind in ("chorus", "flanger", "phaser", "saturator"):
+            np.testing.assert_allclose(self.made(kind, mix=0.0).process(x), x, atol=1e-6, err_msg=kind)
+        tape = self.made("tape", mix=0.0)
+        np.testing.assert_allclose(tape.process(x)[tape.latency:], x[:-tape.latency], atol=1e-6)
+        np.testing.assert_allclose(self.made("pulsator", amount=0.0).process(x), x, atol=1e-6)
+
+    def test_what_moves_does_not_depend_on_where_it_began(self):
+        """After a moment, playing from the middle sounds as playing from the start."""
+        x = (self.tone(330, seconds=2.0) + self.tone(2200, 0.2, 2.0)).astype(np.float32)
+        for kind, params in (("chorus", {}), ("flanger", {"fb": 0.0}), ("phaser", {}), ("pulsator", {}),
+                             ("tape", {"noise": 50.0, "mech": 100.0}), ("crusher", {"samples": 7.0})):
+            whole = self.run_blocks(self.made(kind, **params), x)
+            from_middle = self.run_blocks(self.made(kind, **params), x[SR:], start=SR)
+            np.testing.assert_allclose(from_middle[SR // 2:], whole[SR + SR // 2:], atol=2e-3, err_msg=kind)
+
+    def test_saturator_harmonics(self):
+        x = self.tone(500, 0.8)
+        odd = self.made("saturator", blend=10.0).process(x)
+        even = self.made("saturator", blend=-10.0).process(x)
+        self.assertGreater(self.level_at(odd, 1500), -30)
+        self.assertLess(self.level_at(odd, 1000), -70)
+        self.assertGreater(self.level_at(even, 1000), -30)
+        self.assertAlmostEqual(float(even[SR // 2:, 0].mean()), 0.0, delta=0.01)
+
+    def test_enhancers_add_harmonics_at_their_end(self):
+        y = self.made("bass", freq=120.0).process(self.tone(60, 0.4))
+        self.assertGreater(self.level_at(y, 180), -45)
+        y = self.made("exciter", freq=4000.0).process(self.tone(6000, 0.4))
+        self.assertGreater(self.level_at(y, 12000), -45)
+        y = self.made("exciter", freq=7500.0).process(self.tone(300, 0.4))
+        self.assertLess(self.level_at(y, 900), -60)                      # the low end is let be
+
+    def test_crusher(self):
+        y = self.made("crusher", bits=2.0, morph=0.0).process(self.tone(100, 1.0))
+        self.assertEqual(sorted(set(np.round(y[:, 0], 4).tolist())), [-1.0, -0.5, 0.0, 0.5, 1.0])
+        y = self.made("crusher", bits=16.0, samples=10.0).process(self.tone(1000))[:, 0]
+        self.assertTrue((np.diff(y.reshape(-1, 10), axis=1) == 0).all())
+
+    def test_tape_hiss_is_the_same_every_time(self):
+        silence = np.zeros((4096, 2), np.float32)
+        a = self.made("tape", noise=100.0).process(silence, pos=1000)
+        b = self.made("tape", noise=100.0).process(silence, pos=1000)
+        np.testing.assert_array_equal(a, b)
+        self.assertGreater(float(np.abs(a).max()), 0.001)
+
+
 if __name__ == "__main__":
     unittest.main()

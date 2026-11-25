@@ -115,16 +115,49 @@ EFFECTS = {
     "swap": {"title": "左右交換", "params": []},
     "invert": {"title": "反相", "params": [switch("l", "左聲道反相"), switch("r", "右聲道反相")]},
     "mono": {"title": "單聲道", "params": []},
+    "chorus": {"title": "合唱", "params": [
+        P("rate", "速度", 0.01, 20.0, 0.8, "Hz", log=True), P("depth", "深度", 0.1, 20.0, 5.0, "ms"),
+        P("delay", "延遲", 0.1, 20.0, 8.0, "ms"), P("mix", "混合（濕）", 0.0, 100.0, 50.0, "%")]},
+    "flanger": {"title": "鑲邊", "params": [
+        P("rate", "速度", 0.01, 20.0, 0.25, "Hz", log=True), P("depth", "深度", 0.1, 20.0, 2.0, "ms"),
+        P("fb", "回授", 0.0, 89.0, 50.0, "%"), P("mix", "混合（濕）", 0.0, 100.0, 50.0, "%")]},
+    "phaser": {"title": "相位器", "params": [
+        P("rate", "速度", 0.01, 20.0, 0.25, "Hz", log=True), P("depth", "深度", 0.0, 100.0, 100.0, "%"),
+        P("q", "共振 Q", 0.1, 10.0, 1.0), P("lo", "掃頻低端", 50.0, 20000.0, 200.0, "Hz", log=True),
+        P("hi", "掃頻高端", 50.0, 20000.0, 5000.0, "Hz", log=True), P("mix", "混合（濕）", 0.0, 100.0, 50.0, "%")]},
+    "pulsator": {"title": "顫音 / 自動左右", "params": [
+        P("hz", "速度", 0.01, 40.0, 4.0, "Hz", log=True), P("amount", "深度", 0.0, 100.0, 100.0, "%"),
+        P("off", "左右相位差", 0.0, 100.0, 50.0, "%")]},
+    "saturator": {"title": "飽和", "params": [
+        P("in", "輸入增益", -24.0, 24.0, 0.0, "dB"), P("drive", "飽和量", 0.1, 10.0, 5.0),
+        P("blend", "偶 / 奇次諧波", -10.0, 10.0, 10.0), P("mix", "混合（濕）", 0.0, 100.0, 100.0, "%")]},
+    "bass": {"title": "低音增強", "params": [
+        P("in", "輸入增益", -24.0, 24.0, 0.0, "dB"), P("freq", "範圍", 10.0, 250.0, 100.0, "Hz", log=True),
+        P("drive", "諧波量", 0.1, 10.0, 6.0), P("out", "輸出增益", -24.0, 24.0, 0.0, "dB")]},
+    "exciter": {"title": "激勵器", "params": [
+        P("in", "輸入增益", -24.0, 24.0, 0.0, "dB"), P("freq", "範圍", 2000.0, 12000.0, 7500.0, "Hz", log=True),
+        P("drive", "諧波量", 0.1, 10.0, 6.0), P("out", "輸出增益", -24.0, 24.0, 0.0, "dB")]},
+    "tape": {"title": "磁帶", "params": [
+        P("in", "輸入增益", -24.0, 24.0, -6.0, "dB"), P("lp", "高頻衰減", 1000.0, 20000.0, 12500.0, "Hz", log=True),
+        P("noise", "底噪", 0.0, 100.0, 10.0, "%"), P("mech", "機械抖動", 0.0, 100.0, 20.0, "%"),
+        P("mix", "混合（濕）", 0.0, 100.0, 100.0, "%")]},
+    "crusher": {"title": "位元壓碎", "params": [
+        P("in", "輸入增益", -24.0, 24.0, 0.0, "dB"), P("bits", "位元數", 1.0, 16.0, 8.0, "bit"),
+        P("samples", "取樣降低", 1.0, 250.0, 1.0, "×", log=True), P("morph", "Morph", 0.0, 1.0, 0.5)]},
 }
 CATEGORIES = [("增益、EQ 與濾波", ["gain", "eq", "highpass", "lowpass", "filter", "analyzer"]),
               ("動態", ["compressor", "limiter", "gate", "expander", "clip"]),
-              ("空間與聲道", ["reverb", "delay", "width", "balance", "swap", "invert", "mono"])]
+              ("空間與聲道", ["reverb", "delay", "width", "balance", "swap", "invert", "mono"]),
+              ("調變", ["chorus", "flanger", "phaser", "pulsator"]),
+              ("失真與色彩", ["saturator", "bass", "exciter", "tape", "crusher"])]
 KEYWORDS = {"gain": "volume 音量", "highpass": "高通 low cut", "lowpass": "低通 high cut", "eq": "equalizer 等化 均衡",
             "filter": "濾波 lowpass highpass bandpass 帶通 帶阻", "analyzer": "spectrum 頻譜 meter",
             "compressor": "壓縮 dynamics 側鏈 sidechain ducking", "limiter": "限幅 loudness", "gate": "噪音閘 noise",
             "expander": "擴展 downward", "clip": "clipper 削波", "reverb": "混響 殘響 room hall", "delay": "延遲 回音 echo",
             "width": "stereo 寬度 mid side 中側", "balance": "pan 平衡 左右", "swap": "左右 交換 flip",
-            "invert": "phase 反相 polarity", "mono": "單聲道 downmix"}
+            "invert": "phase 反相 polarity", "mono": "單聲道 downmix", "chorus": "合唱", "flanger": "鑲邊", "phaser": "相位",
+            "pulsator": "tremolo autopan 顫音", "saturator": "distortion 失真 overdrive 飽和", "bass": "低音 enhancer",
+            "exciter": "高頻 激勵 harmonics", "tape": "磁帶 analog 類比", "crusher": "bitcrusher lofi 壓碎"}
 
 
 def curve_value(v, t_us):

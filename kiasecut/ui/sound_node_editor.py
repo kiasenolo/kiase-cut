@@ -30,7 +30,7 @@ VISUAL_H = {"eq": 150, "response": 100, "dynamics": 140, "spectrum": 100}
 SOCKET = {"stereo": "#7438ff", "l": "#e6c84a", "r": "#4ab5e6"}
 HEADS = {"in": "#3f8a5a", "out": "#a8473f", "ext": "#7a55a8", "split": "#b3702f", "merge": "#b3702f", "mix": "#b3702f",
          "reroute": "#262626"}
-CATEGORY_HEADS = ["#3f6fa8", "#8a5a3f", "#3f7f8a", "#8a3f6f"]       # one per soundfx.CATEGORIES, in order
+CATEGORY_HEADS = ["#3f6fa8", "#8a5a3f", "#3f7f8a", "#6a5a9a", "#8a3f6f"]     # one per soundfx.CATEGORIES, in order
 BASICS = ["ext", "split", "merge", "mix", "reroute", "frame"]
 US = 1_000_000
 

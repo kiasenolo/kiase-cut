@@ -4,7 +4,10 @@
 static const kc_type *const types[] = {&kc_gain_type, &kc_highpass_type, &kc_lowpass_type, &kc_eq_type, &kc_filter_type,
                                       &kc_analyzer_type, &kc_compressor_type, &kc_expander_type, &kc_gate_type,
                                       &kc_limiter_type, &kc_clip_type, &kc_reverb_type, &kc_delay_type, &kc_width_type,
-                                      &kc_balance_type, &kc_swap_type, &kc_invert_type, &kc_mono_type};
+                                      &kc_balance_type, &kc_swap_type, &kc_invert_type, &kc_mono_type,
+                                      &kc_chorus_type, &kc_flanger_type, &kc_phaser_type, &kc_pulsator_type,
+                                      &kc_saturator_type, &kc_bass_type, &kc_exciter_type, &kc_tape_type,
+                                      &kc_crusher_type};
 #define NTYPES ((int)(sizeof types / sizeof types[0]))
 
 KC_API int kc_abi(void) { return KC_ABI; }

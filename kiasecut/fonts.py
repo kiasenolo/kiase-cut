@@ -125,15 +125,32 @@ def resolve(path):
 
 
 def node_fonts(proj):
-    """Where node graphs name a font file, as (dict, key): a text node's own font (its source's font_path) and
-    a font node's value - of every clip's effects and of the shared VFX Nodes."""
+    """Where node graphs name a font file, as (dict or list, key): a text node's own font (its source's font_path), a
+    font node's value and what the effects' own font parameters hold and start at - of every clip's effects and of the
+    shared VFX Nodes."""
     from . import project
     seen = set()
-    holders = [(e.get("graph"), e.get("sources")) for c in project.all_clips(proj) for e in c.get("effects") or ()]
-    holders += [(m.get("graph"), m.get("sources")) for m in (proj.get("vfx_nodes") or {}).values()]
-    for graph, sources in holders:
-        if id(graph) in seen or not graph:
+    holders = [(e.get("graph"), e.get("sources"), e.get("params")) for c in project.all_clips(proj) for e in c.get("effects") or ()]
+    holders += [(m.get("graph"), m.get("sources"), m.get("params")) for m in (proj.get("vfx_nodes") or {}).values()]
+    for graph, sources, params in holders:
+        if not graph:
             continue
+        for x in graph.get("exposed") or ():                  # (each use of a shared node has values of its own)
+            if x.get("type") != "font":
+                continue
+            key = "expose." + x["name"]
+            v = (params or {}).get(key)
+            if isinstance(v, str) and v:
+                yield params, key
+            elif isinstance(v, dict):
+                for k in v.get("keys") or ():
+                    if isinstance(k[1], str) and k[1]:
+                        yield k, 1
+        if id(graph) in seen:
+            continue
+        for x in graph.get("exposed") or ():
+            if x.get("type") == "font" and isinstance(x.get("default"), str) and x["default"]:
+                yield x, "default"
         seen.add(id(graph))
         for src in (sources or {}).values():
             if isinstance(src.get("font_path"), str) and src["font_path"]:

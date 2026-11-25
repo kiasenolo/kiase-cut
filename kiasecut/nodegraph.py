@@ -439,8 +439,24 @@ def text_place_params():
     return [q for q in place_params() if q.name in ("cx", "cy", "rotation")]
 
 
+def word_param(socket):
+    """The Param that stands for a text node's 文字 or 字體 socket when it is made an effect parameter (their values are the
+    node's source's, not node parameters)."""
+    if socket == TEXT_SOCKET:
+        return fx.Param(TEXT_SOCKET, "string", TEXT_CONTENT, label="文字")
+    from .project import DEFAULT_FONT
+    return fx.Param(FONT_SOCKET, "font", DEFAULT_FONT, label="字體")
+
+
+def words_given(graph, nid, socket):
+    """Whether the words (TEXT_SOCKET) or the font (FONT_SOCKET) of text node nid come from a link - a string / font node or
+    an effect parameter - and not from the node itself."""
+    return constant_into(graph, nid, socket) is not None or (bool(graph) and (nid, socket) in binds(graph))
+
+
 def constant_into(graph, nid, socket):
     """The value of the string / font node linked into `socket` of text node nid (None: there is no such link)."""
+    graph = flatten(graph) if graph else graph
     for l in (graph or {}).get("links") or []:
         if l["to"] == nid and l["socket"] == socket and WORDS.get((graph["nodes"].get(l["from"]) or {}).get("type")) == socket:
             return str(graph["nodes"][l["from"]].get("value", ""))
@@ -448,12 +464,18 @@ def constant_into(graph, nid, socket):
 
 
 def text_of(node, nid, params, t, bound=None, src=None, graph=None):
-    """The text spec (textlayout.render) of text node nid at clip time t: the words (a linked string node's, else the
-    source's) and the source's font, the fields from the effect's params (bound: binds(graph), the parameters fed by the
+    """The text spec (textlayout.render) of text node nid at clip time t: the words (a bound effect parameter's, a linked
+    string node's, else the source's) and the font (likewise), the fields from the effect's params (bound: binds(graph), the parameters fed by the
     effect's own)."""
     words, font = constant_into(graph, nid, TEXT_SOCKET), constant_into(graph, nid, FONT_SOCKET)
     out = {"content": (src or {}).get("content", TEXT_CONTENT) if words is None else words,
            "font_path": (src or {}).get("font_path") if font is None else font}
+    for socket, key in ((TEXT_SOCKET, "content"), (FONT_SOCKET, "font_path")):
+        if bound and (nid, socket) in bound:                     # (an effect parameter's)
+            v = curves.value(params.get(expose_key(bound[(nid, socket)]), out[key]), t)
+            out[key] = str(v) if v is not None else out[key]
+    if not out["font_path"]:
+        out["font_path"] = None
     for k in ("vars", "styles"):
         if (src or {}).get(k):
             out[k] = (src or {})[k]
@@ -546,8 +568,9 @@ EXPOSE = "expose."
 
 
 def has_socket(p):
-    """Whether parameter p can be fed by a link: a picture (a number or colour) or a bound effect parameter."""
-    return p.type not in ("curve", "gradient")
+    """Whether parameter p can be fed by a link: a picture (a number or colour) or a bound effect parameter (all that a
+    curve or a gradient takes)."""
+    return True
 
 
 def expose_key(name):
@@ -1110,7 +1133,14 @@ def connect(graph, src, dst, socket, out=None):
         raise GraphError("找不到這個節點")
     if socket not in [s for s, _ in sockets(nodes[dst])]:
         raise GraphError("這個節點沒有這個輸入")
-    if nodes[src]["type"] in WORDS or socket in WORDS.values():     # (words go from a string node to a text node's 文字, a font from a font node to its 字體, and nowhere else)
+    if nodes[src]["type"] in WORDS or socket in WORDS.values():     # (words go from a string node or a string parameter to a text node's 文字, a font likewise to its 字體, and nowhere else)
+        if gives_params(nodes[src], out):
+            x = next((x for x in exposed(graph) if x["name"] == out), None)
+            if x is None or socket not in WORDS.values() or not is_text(nodes[dst]) or x["type"] != word_param(socket).type:
+                raise GraphError("字串只能接到文字節點的「文字」，字體只能接到「字體」")
+            graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
+            graph["links"].append({"from": src, "to": dst, "socket": socket, "out": out})
+            return
         if WORDS.get(nodes[src]["type"]) != socket or not is_text(nodes[dst]):
             raise GraphError("字串只能接到文字節點的「文字」，字體只能接到「字體」")
         graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
@@ -1146,21 +1176,33 @@ def expose(graph, params, src, dst, socket, sources=None):
     """Make a new effect parameter out of parameter socket of node dst and bind it (a link from node src, a
     參數輸入 node): it starts at the value the parameter had and takes its name, range and choices. Returns its
     name. (params: the effect's e["params"].)"""
-    p = param_of(graph, dst, socket)
+    words = socket in WORDS.values() and is_text(graph["nodes"].get(dst) or {})
+    p = word_param(socket) if words else param_of(graph, dst, socket)
     if p is None or graph["nodes"].get(src, {}).get("type") not in (PARAMS, INPUT):
         raise GraphError("參數只能接到節點的參數插槽")
     names = {x["name"] for x in exposed(graph)}
-    name, n = p.name, 1
+    base = {TEXT_SOCKET: "text", FONT_SOCKET: "font"}[socket] if words else p.name
+    name, n = base, 1
     while name in names:
         n += 1
-        name = f"{p.name}{n}"
+        name = f"{base}{n}"
     key = param_key(dst, p.name)
-    if getattr(p, "place", False):                      # (where a shape sits is the source's own, not a node parameter)
+    label = p.label
+    if words:                                           # (it starts as what the node shows now: its own, a string / font node's or another parameter's)
+        was = binds(graph).get((dst, socket))
+        value = copy.deepcopy(params.get(expose_key(was))) if was else constant_into(graph, dst, socket)
+        if value is None:
+            value = copy.deepcopy(((sources or {}).get(dst) or {}).get("content" if socket == TEXT_SOCKET else "font_path"))
+        if value is None:
+            value = p.default
+        label = p.label if n == 1 else f"{p.label} {n}"
+        p.default = copy.deepcopy(curves.value(value, 0))
+    elif getattr(p, "place", False):                      # (where a shape sits is the source's own, not a node parameter)
         v = ((sources or {}).get(dst) or {}).get(p.name, p.default)
         value = copy.deepcopy(curves.value(v, 0) if curves.is_animated(v) else v)
     else:
         value = copy.deepcopy(params.pop(key, p.default))
-    graph.setdefault("exposed", []).append({"name": name, "label": p.label, "type": p.type, "default": copy.deepcopy(p.default),
+    graph.setdefault("exposed", []).append({"name": name, "label": label, "type": p.type, "default": copy.deepcopy(p.default),
                                             "lo": p.lo, "hi": p.hi, "items": list(p.items)})
     params[expose_key(name)] = value
     connect(graph, src, dst, socket, name)
@@ -1170,7 +1212,15 @@ def expose(graph, params, src, dst, socket, sources=None):
 # the parameter types made by hand in the 參數 panel: type -> (label, default, lo, hi); a link needs the very type of the socket
 MANUAL_TYPES = {"float": ("浮點", 0.0, 0.0, 1.0), "int": ("整數", 0, 0, 10), "bool": ("開關", False, 0, 1),
                 "color": ("顏色", [1.0, 1.0, 1.0, 1.0], 0.0, 1.0), "vec2": ("二維向量", [0.0, 0.0], -1000.0, 1000.0),
-                "vec3": ("三維向量", [0.0, 0.0, 0.0], -1000.0, 1000.0)}
+                "vec3": ("三維向量", [0.0, 0.0, 0.0], -1000.0, 1000.0),
+                "string": ("字串", "文字", 0, 0), "font": ("字體", "", 0, 0)}           # (a font's start: the default font, add_exposed)
+
+
+def manual_default(kind):
+    if kind == "font":
+        from .project import DEFAULT_FONT
+        return DEFAULT_FONT
+    return copy.deepcopy(MANUAL_TYPES[kind][1])
 
 
 def add_exposed(graph, params, kind, label=None):
@@ -1178,7 +1228,8 @@ def add_exposed(graph, params, kind, label=None):
     until a link from the 參數輸入 node's row of it goes into a socket of that type. Returns its name."""
     if kind not in MANUAL_TYPES:
         raise GraphError("不能新增這種參數")
-    text, default, lo, hi = MANUAL_TYPES[kind]
+    text, _default, lo, hi = MANUAL_TYPES[kind]
+    default = manual_default(kind)
     names = {x["name"] for x in exposed(graph)}
     n = 1
     while f"param{n}" in names:
@@ -1212,7 +1263,8 @@ def edit_exposed(graph, params, name, fields):
         elif x["type"] in MANUAL_TYPES and fields["type"] in MANUAL_TYPES:
             if any(l.get("out") == name for l in graph["links"]):
                 raise GraphError("這個參數已經接在節點上，先斷開連線才能改種類")
-            _t, default, lo, hi = MANUAL_TYPES[fields["type"]]
+            _t, _d, lo, hi = MANUAL_TYPES[fields["type"]]
+            default = manual_default(fields["type"])
             x.update({"type": fields.pop("type"), "default": copy.deepcopy(default), "lo": lo, "hi": hi})
             params[expose_key(name)] = copy.deepcopy(default)
             number = x["type"] in ("float", "int")

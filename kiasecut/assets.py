@@ -54,8 +54,8 @@ GRADIENT_TYPES = (("線性", "linear"), ("放射", "radial"))
 
 # field: label, kind, min, max, step, decimals (min / max: the soft limits a drag keeps to)
 FIELD_INFO = {
-    "w": ("寬", "number", 1, 16384, 1, 0),
-    "h": ("高", "number", 1, 16384, 1, 0),
+    "w": ("寬", "number", 0, 16384, 1, 0),
+    "h": ("高", "number", 0, 16384, 1, 0),
     "color": ("顏色", "color"),
     "color2": ("顏色 2", "color"),
     "gtype": ("漸變類型", "choice", GRADIENT_TYPES),
@@ -106,7 +106,7 @@ FIELD_INFO = {
 }
 # the hard limits of numbers (typing or Alt-dragging reaches them; None: unlimited), when not
 # the soft ones; clean() keeps values inside them
-HARD = {"w": (1, 65536), "h": (1, 65536), "angle": (None, None), "radius": (0, None),
+HARD = {"w": (0, 65536), "h": (0, 65536), "angle": (None, None), "radius": (0, None),
         "sides": (3, 100), "points": (3, 100), "inner": (1, 99), "stroke": (0, None),
         "arc_start": (None, None), "skew": (-89, 89), "gcols": (1, 500), "grows": (1, 500),
         "gratio": (0, 100), "gline": (0.1, None), "fill_scale": (0.01, 1000), "stroke_scale": (0.01, 1000),

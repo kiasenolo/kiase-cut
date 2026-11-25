@@ -40,7 +40,7 @@ def needs_renderer(proj):
     filter clip or a static clip, has a blend mode, a keyframed mask shape / invert or a
     compound mask, a speed or a frozen frame, is a group, is a text with a mask (build.py fits a
     text's picture in its own way), or is a built-in asset with keyframes or an outline
-    reaching out of its frame, or a component's clip with values of its own (MLT would show
+    reaching out of its frame or 0 wide or high (MLT divides by its size), or a component's clip with values of its own (MLT would show
     the component's), or has rounded corners (圓角), or is 只當遮罩 (MLT would draw it)."""
     return any(c["type"] == "filter" or c.get("effects") or c.get("matte_only") or project.is_static(c) or _blend_or_mask_keys(c)
                or ((c.get("params") or c.get("places") or components.has_exprs(c.get("compound")))
@@ -48,6 +48,7 @@ def needs_renderer(proj):
                or project.speed(c) != 1.0 or c.get("speed_curve") or project.frozen(c) is not None or project.is_group(c)
                or project.has_corners(c) or c.get("expr") or c.get("viz")
                or (c["type"] == "text" and project.active_mask(c))
+               or (c.get("asset") and 0 in assets.size_at(c["asset"], 0))
                or assets.animated(c.get("asset")) or (c.get("asset") and (assets.overflow(assets.at(c["asset"], 0)) or assets.fade_distance(assets.at(c["asset"], 0))))
                for c in project.all_clips(proj))
 

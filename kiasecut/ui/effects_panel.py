@@ -29,8 +29,8 @@ import os
 from shiboken6 import isValid
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QDrag
-from PySide6.QtWidgets import (QApplication, QCheckBox, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
-                               QPushButton, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
+                               QPlainTextEdit, QPushButton, QToolButton, QVBoxLayout, QWidget)
 
 from .. import components, curves, edit, fx, gizmos, menugroups, nodegraph
 from .colorpick import pick_color, qcolor, rgba
@@ -614,6 +614,26 @@ class EffectsPanel(QWidget):
             self.widgets[(group, p.name)] = box
             row.addWidget(box, 1)
             row.addWidget(self._key_button(group, p.name))
+        elif p.type == "string":                                # a node effect's own words
+            words = QPlainTextEdit()
+            words.setFixedHeight(64)
+            words.setPlaceholderText("--")
+            words.setTabChangesFocus(True)
+            words.textChanged.connect(lambda g=group, k=p.name, w=words: self._queue(g, k, w.toPlainText()))
+            self.widgets[(group, p.name)] = words
+            row.addWidget(words, 1)
+            row.addWidget(self._key_button(group, p.name))
+        elif p.type == "font":                                  # (and font)
+            box = ComboBox()
+            box.setPlaceholderText("--")
+            box.setMaxVisibleItems(20)
+            box.setMinimumWidth(60)
+            box.setSizeAdjustPolicy(ComboBox.AdjustToMinimumContentsLengthWithIcon)
+            self._fill_fonts(box)
+            box.activated.connect(lambda i, g=group, k=p.name, cb=box: self._font_chosen(g, k, cb, i))
+            self.widgets[(group, p.name)] = box
+            row.addWidget(box, 1)
+            row.addWidget(self._key_button(group, p.name))
         elif p.type == "color":
             btn = QPushButton()
             btn.clicked.connect(lambda _=False, g=group, k=p.name: self._pick_color(g, k))
@@ -652,6 +672,46 @@ class EffectsPanel(QWidget):
                 row.addWidget(s, 1)
             row.addWidget(self._key_button(group, p.name))
         return row
+
+    BROWSE = "__browse__"
+    fonts = ()                                  # the installed fonts, [{"name", "path"}] (set_fonts)
+
+    def set_fonts(self, fonts):
+        """The installed fonts arrived (or changed): the form is built again with them."""
+        self.fonts = list(fonts)
+        self.shape = None
+
+    def _fill_fonts(self, box):
+        box.blockSignals(True)
+        box.clear()
+        for f in self.fonts:
+            box.addItem(f["name"], f["path"])
+        box.addItem("瀏覽字型檔…", self.BROWSE)
+        box.setCurrentIndex(-1)
+        box.blockSignals(False)
+
+    @staticmethod
+    def _show_font(box, path):
+        """Font file path in box (one not among the installed ones is added to the list)."""
+        box.blockSignals(True)
+        i = box.findData(path) if path else -1
+        if path and i < 0:
+            box.insertItem(0, os.path.splitext(os.path.basename(path))[0], path)
+            i = 0
+        box.setCurrentIndex(i)
+        box.blockSignals(False)
+        box.setProperty("kcFont", path)
+
+    def _font_chosen(self, group, key, box, i):
+        path = box.itemData(i)
+        if path == self.BROWSE:
+            path, _ = QFileDialog.getOpenFileName(self, "選擇字型檔", "", "字型 (*.ttf *.otf *.ttc *.otc)")
+            if not path:
+                self._show_font(box, box.property("kcFont"))
+                return
+            path = path.replace("\\", "/")
+        self._queue(group, key, path)
+        self._flush()
 
     def _retarget(self, c):
         """The form kept for clip c (alike the one it was built for): its widgets keyed by c's
@@ -1117,6 +1177,18 @@ class EffectsPanel(QWidget):
                 box.blockSignals(True)
                 box.setCurrentIndex(-1 if v is MIXED else fx.menu_index(p, v))
                 box.blockSignals(False)
+        elif p.type == "string":
+            words = w.get((group, p.name))
+            if words is not None and not (words.hasFocus() and (group, p.name) in self.pending):
+                text = "" if v is MIXED else str(v)
+                if words.toPlainText() != text:                  # (set only when it differs: the caret stays where it is)
+                    words.blockSignals(True)
+                    words.setPlainText(text)
+                    words.blockSignals(False)
+        elif p.type == "font":
+            box = w.get((group, p.name))
+            if box is not None:
+                self._show_font(box, None if v is MIXED else str(v))
         elif p.type == "curve":
             field = w.get((group, p.name))
             if field is not None and v is not MIXED and field.drag is None and (group, p.name) not in self.pending:

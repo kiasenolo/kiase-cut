@@ -81,7 +81,8 @@ SELECT = "#ffffff"                               # the outline of what is select
 
 def type_color(t):
     """The colour of a socket that holds a value of parameter type t."""
-    return SOCKET_COLORS.get("vector" if t in ("vec2", "vec3") else t if t in ("float", "int", "bool", "color", "menu", "vector", "image") else "other")
+    return SOCKET_COLORS.get("vector" if t in ("vec2", "vec3") else
+                             t if t in ("float", "int", "bool", "color", "menu", "vector", "image", "string", "font") else "other")
 
 
 GHOST = "\0ghost"                              # the empty socket of a 參數輸入 node: drag out of it to make a parameter
@@ -194,7 +195,7 @@ class NodeItem(QGraphicsItem):
             nonlocal y
             rows.append({"y": y, "kind": kind, "socket": socket, "label": label, "p": p, "panel": panel, "h": h})
             y += h
-            if kind == "param" and p is not None and p.type in ("curve", "gradient"):     # (its picture, under the label)
+            if kind == "param" and p is not None and p.type in ("curve", "gradient") and socket not in self.linked:     # (its picture, under the label - gone while an effect parameter gives it)
                 rows.append({"y": y, "kind": "plot", "socket": None, "label": "", "p": p, "panel": None, "h": PLOT_H[p.type]})
                 y += PLOT_H[p.type]
         if node["type"] in (ng.PARAMS, ng.INPUT):
@@ -2098,7 +2099,8 @@ class ParamPanel(QWidget):
     added = Signal(str)                                     # type of a parameter to make by hand (新增參數)
     TYPES = (("float", "浮點"), ("int", "整數"))
     KINDS = {"bool": "開關", "color": "顏色", "menu": "選單", "curve": "曲線", "gradient": "漸層", "vec2": "二維向量",
-             "vec3": "三維向量", "string": "字串"}
+             "vec3": "三維向量", "string": "字串", "font": "字體"}
+    fonts = ()                                              # the installed fonts, [{"name", "path"}] (the node editor's)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2124,7 +2126,7 @@ class ParamPanel(QWidget):
 
     def fill(self, xs):
         """Show parameters xs (graph["exposed"]); nothing is rebuilt while they are the same."""
-        sig = json.dumps(xs, sort_keys=True)
+        sig = json.dumps([xs, len(self.fonts)], sort_keys=True)
         if sig == self.sig:
             return
         self.sig = sig
@@ -2204,6 +2206,36 @@ class ParamPanel(QWidget):
             on.setChecked(bool(x["default"]))
             on.toggled.connect(lambda c: self.edited.emit(name, {"default": bool(c)}))
             v.addWidget(on)
+        elif x["type"] == "string":                             # (Enter keeps them, Shift+Enter a new line, as in a node)
+            v.addWidget(QLabel("預設文字"))
+            words = WordsEdit()
+            words.setPlainText(str(x["default"]))
+            words.setFixedHeight(58)
+
+            sent = [x["default"]]
+
+            def keep(words=words, sent=sent):                   # (Enter and then leaving: asked once)
+                if words.toPlainText() != sent[0]:
+                    sent[0] = words.toPlainText()
+                    self.edited.emit(name, {"default": sent[0]})
+            words.confirmed.connect(keep)
+            words.lost.connect(keep)
+            words.cancelled.connect(lambda words=words: words.setPlainText(str(x["default"])))
+            v.addWidget(words)
+        elif x["type"] == "font":
+            v.addWidget(QLabel("預設字體"))
+            font = QComboBox()
+            for f in self.fonts:
+                font.addItem(f["name"], f["path"])
+            at = font.findData(x["default"])
+            if at < 0:                                      # (a file not in the list)
+                font.insertItem(0, os.path.splitext(os.path.basename(x["default"] or ""))[0] or "（預設字體）", x["default"])
+                at = 0
+            font.setCurrentIndex(at)
+            font.setMinimumWidth(30)
+            font.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            font.activated.connect(lambda i, font=font: self.edited.emit(name, {"default": font.itemData(i)}))
+            v.addWidget(font)
         else:
             v.addWidget(QLabel("種類：" + self.KINDS.get(x["type"], x["type"])))
         return box
@@ -2443,7 +2475,11 @@ class NodeEditor(QWidget):
         except Exception:
             pass
         if on:
-            self.panel.fill(ng.exposed(self.graph) if self.eid else [])
+            self.fill_panel()
+
+    def fill_panel(self):
+        self.panel.fonts = self.fonts
+        self.panel.fill(ng.exposed(self.graph) if self.eid else [])
 
     def set_fullscreen_mode(self, on):
         """Update the full-screen toggle to show the action it will take."""
@@ -2549,7 +2585,7 @@ class NodeEditor(QWidget):
             self.graph = e["graph"]
             self.rebuild(first)
             if self.panel.isVisible():
-                self.panel.fill(ng.exposed(self.graph))
+                self.fill_panel()
         else:
             for it in self.view.items_by_id.values():
                 if getattr(it, "inline", None):
@@ -3285,7 +3321,7 @@ class NodeEditor(QWidget):
             return
         if sock in ng.WORDS.values():
             kind = next(t for t, s_ in ng.WORDS.items() if s_ == sock)
-            options = [("字串" if kind == ng.STRING else "字體", {"type": kind})]
+            options = [("字串" if kind == ng.STRING else "字體", {"type": kind}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS})]
         elif ng.param_of(self.graph, nid, sock) is not None:
             options = [("參數輸入（效果自己的參數）", {"type": ng.PARAMS})]
         else:

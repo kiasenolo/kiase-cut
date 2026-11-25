@@ -7295,6 +7295,8 @@ class MainWindow(QMainWindow):
         if getattr(self, "nodes", None) is not None:
             self.nodes.fonts = found                # (a text node's font list)
         self.inspector.set_fonts(found)
+        if getattr(self, "effects", None) is not None:
+            self.effects.set_fonts(found)
         self.refresh_inspector()
         if self.font_check is not None:             # a project opened before the list was read
             self.check_fonts(self.font_check)

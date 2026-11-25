@@ -1469,7 +1469,7 @@ MASKABLE = ("image", "video", "text", "compound", "filter", "group")    # clips 
 
 def _aspect(c):
     """Width / height of the clip's material, so default circles come out round."""
-    if c.get("media", {}).get("width"):
+    if c.get("media", {}).get("width") and c["media"].get("height"):     # (a shape can be 0 wide or high)
         return c["media"]["width"] / c["media"]["height"]
     if c.get("compound"):
         return c["compound"]["width"] / c["compound"]["height"]

@@ -120,7 +120,7 @@ class AssetTests(unittest.TestCase):
     def test_normalize(self):
         p = changed(assets.make(assets.get("shape.star"), "#fff", "", 1920, 1080),
                     points=999, w=-5, color="nope", radius=3)
-        self.assertEqual((p["points"], p["w"], p["color"]), (100, 1, [1.0, 1.0, 1.0, 1.0]))
+        self.assertEqual((p["points"], p["w"], p["color"]), (100, 0, [1.0, 1.0, 1.0, 1.0]))      # (a shape can be 0 wide or high)
         self.assertEqual(p["radius"], 3)                  # stars' corners are rounded
         heart = changed(assets.make(assets.get("shape.heart"), "#fff", "", 1920, 1080), radius=3)
         self.assertNotIn("radius", heart)                 # hearts have no corners

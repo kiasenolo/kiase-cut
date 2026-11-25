@@ -157,7 +157,7 @@ def base_size(c, W, H, t):
         return text_size(spec, H)
     if c["type"] == "compound":
         w, h = c["compound"]["width"], c["compound"]["height"]
-    elif c.get("media", {}).get("width"):
+    elif c.get("asset") or c.get("media", {}).get("width"):       # (a shape 0 wide is 0, not the canvas)
         return project.picture_size(c, W, H, t=t)
     else:
         w, h = W, H
@@ -2709,8 +2709,14 @@ class Preview(PenMixin, _Surface):
                                                    (ax, ay), (kx, ky), tied)
         if asset or framed:                                    # its own size changes, not the scale
             w0, h0 = box.bw, box.bh
-            nw, nh = max(1.0, w0 * kx), max(1.0, h0 * ky)
-            kx, ky = nw / w0, nh / h0
+            least = 0.0 if asset else 1.0                      # (a shape can be 0 wide or high)
+            nw, nh = max(least, w0 * kx), max(least, h0 * ky)
+            grown = [0.0, 0.0]                                 # (a side of 0 has no ratio to grow by: it is as long as the drag)
+            if not w0 and sx:
+                nw, grown[0] = (abs(px - ax) * (2 if centre else 1) / (abs(box.s) or 1.0)), (px - ax) / 2
+            if not h0 and sy:
+                nh, grown[1] = (abs(py - ay) * (2 if centre else 1) / (abs(box.sy) or 1.0)), (py - ay) / 2
+            kx, ky = (nw / w0 if w0 else 1.0), (nh / h0 if h0 else 1.0)
             if asset:
                 vals = {"asset": {"w": round(nw, 1), "h": round(nh, 1)}, "transform": {}}
             else:                                              # (an edge fixes its own side: 自動高度 -> 固定大小)
@@ -2725,6 +2731,8 @@ class Preview(PenMixin, _Surface):
             kx, ky = ns / box.s if box.s else 1.0, nsy / box.sy if box.sy else 1.0
         if not centre:
             dx, dy = ax - ax * kx, ay - ay * ky                    # the anchor's move, cancelled
+            if asset or framed:
+                dx, dy = dx + grown[0], dy + grown[1]
             c, s = math.cos(box.rot), math.sin(box.rot)
             cx, cy = box.cx + dx * c - dy * s, box.cy + dx * s + dy * c
             pdx, pdy = (box.pdx, box.pdy) if asset or framed else project.pivot_shift(
@@ -3061,9 +3069,9 @@ class Preview(PenMixin, _Surface):
             return
         info = text_node(box.clip, self.mask_group, box.t)
         src = self.mask_of(box.clip)
-        if not info or nodegraph.constant_into(self._graph_of(box.clip), info[1], nodegraph.TEXT_SOCKET) is not None \
+        if not info or nodegraph.words_given(self._graph_of(box.clip), info[1], nodegraph.TEXT_SOCKET) \
                 or curves.is_animated(src.get("content")):
-            return                                       # (words that a string node gives are edited there)
+            return                                       # (words a string node or an effect parameter gives are edited there)
         g = MaskGeo(mbox, src)
         if not g.contains(m):
             return

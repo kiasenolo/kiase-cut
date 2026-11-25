@@ -744,7 +744,7 @@ class Renderer:
                 if on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok) and not camera.is_clip(c):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
-                    items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t))
+                    items.append((1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t))
         for _d, _n, c, i, t in sorted(items, key=lambda it: it[:2]):
             try:
                 if c["type"] == "filter":

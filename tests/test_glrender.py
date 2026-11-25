@@ -222,6 +222,19 @@ class GpuMatchesCpu(unittest.TestCase):
         self.assertGreater(int(turned.sum()), int(thin.sum()) * 1.2)              # (its sides show)
         self.assertEqual(int((shot(True, camera=False) ^ shot(False, camera=False)).sum()), 0)    # (outside a scene it is the flat text)
 
+    def test_a_filter_clip_in_a_scene_works_on_what_is_under_it(self):
+        e = fx.new_effect("builtin:blur", "e1")
+        e["params"].update(radius=30.0)
+        flt = {"id": "f", "type": "filter", "name": "f", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0, "effects": [e]}
+        edge = lambda img: float((np.diff(img.astype(float), n=2, axis=1) ** 2).sum())
+        for r in (self.cpu, self.gpu):
+            v = self.view([self.top(transform=tf(scale=0.5))], [flt])
+            v["camera"] = {"on": True}
+            plain = self.view([self.top(transform=tf(scale=0.5))])
+            plain["camera"] = {"on": True}
+            self.assertLess(edge(pixels(r.render(v, 0, W, H))), 0.9 * edge(pixels(r.render(plain, 0, W, H))))
+            self.assertEqual(r.errors, [])
+
     def test_depth_of_field_blurs_what_is_out_of_focus_the_same_by_both(self):
         near, far = self.bg(transform=tf(scale=0.5, x=-0.4)), self.bg(transform=tf(scale=0.5, x=0.4, z=1.5))
         v = self.view([near, far])

@@ -699,7 +699,7 @@ class GLRenderer(render.Renderer):
                 if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok) and not camera.is_clip(c):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
-                    items.append((-1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t, None))
+                    items.append((1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t, None))
         planes = sorted({-it[0] for it in items if it[2]["type"] != "filter" and not project.has_particles(it[2])})
         if planes and len(planes) <= MAX_SLICES - 1:           # (particles between planes: the system is drawn again for each stretch of depth between them, in its place in the order)
             cuts, out = [-1e30] + planes + [1e30], []

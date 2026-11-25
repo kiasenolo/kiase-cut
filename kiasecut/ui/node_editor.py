@@ -2646,14 +2646,21 @@ class NodeEditor(QWidget):
         self.view.viewport().update()
 
     def meter_done(self, nid, values):
-        self._meter_draft.pop(nid, None)
-        node = self.graph["nodes"].get(nid) or {}
-        have = {**soundmeter.DEFAULTS, **(node.get("meter") or {})}
-        if self.eid and any(abs(have[k] - v) > 1e-9 for k, v in values.items()):
-            self.meterEdited.emit(self.eid, nid, dict(values))
-        item = self.view.items_by_id.get(nid)
-        if item is not None:
-            item.refresh_spectrum()
+        """A box or a time is let go: the edit is asked for once the mouse event is over. It lays the nodes out again,
+        which deletes the spectrum (and the node) the event is still being handled by - a crash."""
+        self._meter_draft.setdefault(nid, {}).update(values)       # (shown until then)
+        eid = self.eid
+
+        def ask(values=dict(values)):
+            self._meter_draft.pop(nid, None)
+            node = (self.graph["nodes"].get(nid) if self.eid == eid else None) or {}
+            have = {**soundmeter.DEFAULTS, **(node.get("meter") or {})}
+            if eid and node and any(abs(have[k] - v) > 1e-9 for k, v in values.items()):
+                self.meterEdited.emit(eid, nid, values)
+            item = self.view.items_by_id.get(nid)
+            if item is not None:
+                item.refresh_spectrum()
+        QTimer.singleShot(0, self, ask)
 
     def _meter_spec(self, nid):
         return soundmeter.node_spec(self.graph, self.sources, nid, self.params)

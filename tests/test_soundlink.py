@@ -8,10 +8,12 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import shiboken6  # noqa: E402
 from PySide6.QtGui import QColor, QImage  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from kiasecut import dsp, edit, fx, glrender, nodegraph as ng, project, render, soundmeter, stillspans  # noqa: E402
+from kiasecut.ui.node_editor import NodeEditor  # noqa: E402
 from tests.test_soundgraph import US, fx as sound_fx  # noqa: E402
 from tests.test_soundmeter import BOX, Sounds, make_root  # noqa: E402
 
@@ -146,6 +148,28 @@ class PickTests(Graphs):
         edit.set_graph_sound(self.p, "pic", self.e["id"], self.src, "tl1", "t1")
         edit.add_graph_node_feeding(self.p, "pic", self.e["id"], {"type": ng.PARAMS}, 0, 0, self.src, ng.SOUND_PICK)
         self.assertEqual([x["default"] for x in ng.exposed(self.g)], ["tl1/t1"])
+
+
+class EditorTests(Graphs):
+    def test_letting_go_of_the_box_does_not_delete_the_spectrum_under_the_mouse(self):
+        """The edit lays the nodes out again, so it waits for the mouse event to end (else: a crash)."""
+        ng.connect(self.g, self.src, self.lvl, ng.SOUND_SOCKET)
+        clip = edit.find(self.p, "pic")[1]
+        ed = NodeEditor()
+        self.addCleanup(ed.deleteLater)
+        ed.show_clip(clip)
+
+        def apply(eid, nid, values):                  # (as the window does: the project changes and is shown again)
+            edit.set_graph_meter(self.p, "pic", eid, nid, values)
+            ed.show_clip(clip)
+        ed.meterEdited.connect(apply)
+        spectrum = ed.view.items_by_id[self.lvl].spectrum.widget()
+        spectrum.done.emit({"lo_hz": 50.0, "hi_hz": 900.0, "floor_db": -30.0, "top_db": -10.0})
+        self.assertTrue(shiboken6.isValid(spectrum))
+        self.assertEqual(ed.meter_values(self.lvl)["hi_hz"], 900.0)
+        APP.processEvents()
+        self.assertEqual(self.g["nodes"][self.lvl]["meter"]["hi_hz"], 900.0)
+        self.assertEqual(ed.view.items_by_id[self.lvl].spectrum.widget().box["hi_hz"], 900.0)
 
 
 @unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")

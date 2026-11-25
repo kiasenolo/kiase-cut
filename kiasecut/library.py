@@ -514,6 +514,10 @@ def retarget(proj, old, new, is_dir=False):
         m = c.get("media")
         if m and m.get("path"):
             m["path"] = fix(m["path"])
+        held = c.get("solid") or {}
+        for k in ("model", "surface"):
+            if held.get(k):
+                held[k] = fix(held[k])
         for e in c.get("effects") or []:                 # a filter file of the user's
             if not e["filter"].startswith("builtin:") and e["filter"] != project.GRAPH_FILTER:
                 e["filter"] = fix(e["filter"])
@@ -539,6 +543,9 @@ def _outside(proj, root):
     todo = [(it["path"], folder_rel(proj, it["folder"]) if it.get("folder") else "") for it in lib(proj)["items"]]
     todo += [(c["media"]["path"], assets.FOLDER if c.get("asset") or c.get("viz") else "匯入的素材")      # (drawn here: back in 內建素材)
              for c in project.all_clips(proj) if c.get("media")]
+    solids = [c.get("solid") or {} for c in project.all_clips(proj)]
+    todo += [(s["model"], assets.FOLDER) for s in solids if s.get("model")]
+    todo += [(s["surface"], "匯入的素材") for s in solids if s.get("surface")]
     out = {}
     for path, rel in todo:
         path = slash(path or "")

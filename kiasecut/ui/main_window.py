@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, project, recovery,
+from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, models, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
                     ("transform", "shadow_opacity"): "陰影", ("transform", "shadow_x"): "陰影", ("transform", "shadow_y"): "陰影", ("transform", "shadow_blur"): "陰影", ("transform", "shadow_spread"): "陰影", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("transform", "z"): "3D 位置", ("transform", "rot_x"): "3D 旋轉", ("transform", "rot_y"): "3D 旋轉", ("camera", "on"): "攝影機",
-                    ("light", "power"): "燈光強度", ("light", "color"): "燈光顏色", ("solid", "on"): "立體", ("solid", "advanced"): "進階光照", ("solid", "depth"): "立體厚度", ("solid", "bevel"): "立體倒角", ("solid", "metallic"): "金屬度", ("solid", "roughness"): "粗糙度",
+                    ("light", "power"): "燈光強度", ("light", "color"): "燈光顏色", ("solid", "on"): "立體", ("solid", "advanced"): "進階光照", ("solid", "depth"): "立體厚度", ("solid", "bevel"): "立體倒角", ("solid", "metallic"): "金屬度", ("solid", "roughness"): "粗糙度", ("solid", "surface"): "表面圖片",
                     ("camera", "fov"): "攝影機視角", ("camera", "x"): "攝影機位置", ("camera", "y"): "攝影機位置", ("camera", "z"): "攝影機位置",
                     ("camera", "aperture"): "景深", ("camera", "focus"): "景深", ("camera", "tx"): "攝影機目標", ("camera", "ty"): "攝影機目標", ("camera", "tz"): "攝影機目標",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
@@ -4539,7 +4539,11 @@ class MainWindow(QMainWindow):
             return
         files, _ = QFileDialog.getOpenFileNames(self, "匯入素材", "",
                                                 "Media (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.svg *.mp4 *.mov *.mkv "
-                                                "*.avi *.webm *.mp3 *.wav *.m4a *.aac *.flac *.ogg);;All files (*)")
+                                                "*.avi *.webm *.mp3 *.wav *.m4a *.aac *.flac *.ogg *.obj *.gltf *.glb);;All files (*)")
+        chosen = [f for f in files if models.is_model(f)]
+        if chosen:
+            self.import_models(chosen, None, self.edge_us())
+        files = [f for f in files if f not in chosen]
         if files:
             self.import_files(files, folder)
 
@@ -4560,7 +4564,12 @@ class MainWindow(QMainWindow):
         saved = [p for p in paths if p.lower().endswith(userlib.COMPOUND_EXT) and os.path.isfile(p)]
         for p in saved if place is not None else ():    # compounds saved in a Library: onto the timeline
             self.place_library_compound(p, place[0], place[1])
+        found = [p for p in paths if models.is_model(p) and os.path.isfile(p)]
+        if found:                                     # 3D models: onto the timeline, where dropped or at the playhead
+            self.import_models(found, *(place[:2] if place is not None else (None, self.edge_us())))
         files = library.media_files(paths)
+        if not files and found:
+            return
         if not files:
             if not saved:
                 self.statusBar().showMessage("沒有可以匯入的圖片、影片或音訊檔案", 4000)
@@ -4895,6 +4904,13 @@ class MainWindow(QMainWindow):
                     if not camera.on(self.view().get("camera")) and not camera.has_clips(self.view()["tracks"]):
                         self.statusBar().showMessage("燈光在 3D 場景裡才有作用：先放一台相機，或進入一個 3D 場景", 5000)
             return
+        if ident == "scene3d:model":                       # 匯入模型: an OBJ or glTF file made an object of a 3D 場景
+            if self.ensure_project():
+                files, _ = QFileDialog.getOpenFileNames(self, "匯入 3D 模型", self.root or "",
+                                                        "3D 模型 (*.obj *.gltf *.glb);;All files (*)")
+                if files:
+                    self.import_models(files, track_id, start_us)
+            return
         if ident[8:] in mesh.PRIMITIVES and ident.startswith("scene3d:"):    # 基礎物件: a basic solid of a 3D 場景
             if self.ensure_project():
                 made = self.new_asset(assets.ident("empty.small", *self.assets.colors))
@@ -4925,6 +4941,49 @@ class MainWindow(QMainWindow):
             c["asset"] = params
             return c
         self.apply("加入內建素材", fn, select=lambda c: c["id"])
+
+    def import_models(self, files, track_id, start_us):
+        """OBJ / glTF files: each is kept in the project as one .kmodel file (models.convert: its textures in it) and put on the
+        timeline at start_us."""
+        if not self.ensure_project():
+            return
+        made = self.new_asset(assets.ident("empty.small", *self.assets.colors))
+        if made is None:
+            return
+        params, path = made
+        root, folder = self.root, os.path.join(self.asset_media_dir(), assets.FOLDER, "models")
+        self.statusBar().showMessage(f"讀取 {len(files)} 個模型…")
+
+        def work(progress):                            # reading a big model takes a while: off the UI thread
+            good, bad = [], []
+            for i, f in enumerate(files):
+                try:
+                    kept, size = models.convert(f, folder)
+                    good.append((os.path.splitext(os.path.basename(f))[0], kept, size))
+                except (models.ModelError, OSError, MemoryError) as exc:
+                    bad.append(f"{os.path.basename(f)}：{exc}")
+                progress((i + 1) / len(files))
+            return good, bad
+
+        def done(result):
+            good, bad = result
+            if self.root != root:
+                return
+
+            def add(lvl):
+                return [edit.new_model(lvl, params, path, kept, size, round(start_us), track_id or None, name)
+                        for name, kept, size in good]
+            if good:
+                self.apply("匯入模型", add, select=lambda cs: cs[-1]["id"])
+                if not camera.on(self.view().get("camera")) and not camera.has_clips(self.view()["tracks"]):
+                    self.statusBar().showMessage("模型在 3D 場景裡才看得到：先放一台相機，或進入一個 3D 場景", 5000)
+                else:
+                    self.statusBar().showMessage(f"已匯入 {len(good)} 個模型", 3000)
+            if bad:
+                QMessageBox.warning(self, "模型無法匯入", "\n".join(bad))
+
+        self.run_task(work, done, lambda m: QMessageBox.critical(self, "匯入失敗", m),
+                      lambda p: self.statusBar().showMessage(f"讀取模型… {int(p * 100)}%"))
 
     def replace_source(self, ident, cid):
         """Media dropped on a clip with Alt held: the clip shows (or plays) it instead, keeping

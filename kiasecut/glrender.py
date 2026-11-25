@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, camera, components, curves, fx, gpusync, lights, mesh, mesh3d, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
+from . import assets, camera, components, curves, fx, gpusync, lights, mesh, mesh3d, models, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -486,6 +486,7 @@ class GpuFrame:
 SHOWN = 4                             # frames kept out of the layer pool: the preview may still be drawing one of the last few
 
 
+SURFACE_PX = 2048          # px: the longest side a picture on a solid's surface is read with
 MAX_SLICES = 16                             # a particle system in a 3D 場景 is drawn in at most this many stretches of depth (one more than the planes it is among)
 
 
@@ -805,6 +806,7 @@ class GLRenderer(render.Renderer):
         if opacity <= 0:
             return None
         k = H / 1080.0
+        skins, unmapped = None, set()
         depth, bevel = mesh3d.setting(c, "depth", t) * k, mesh3d.setting(c, "bevel", t) * k
         grown = 1.0
         if c["type"] == "text":
@@ -823,15 +825,59 @@ class GLRenderer(render.Renderer):
             kind = mesh3d.primitive(c)
             if kind:
                 rgba = assets.to_rgba(q.get("color"))
-                data = mesh.primitive_mesh(kind, q["w"], q["h"], depth, bevel, rgba)
                 opacity *= rgba[3]
+                if kind == mesh3d.MODEL:
+                    data, ranges = models.mesh((c.get("solid") or {}).get("model") or "", q["w"], q["h"], max(depth, 1.0), rgba)
+                    skins = [mesh3d.Skin(first, count, self.still_texture(p["texture"]), mesh3d.OWN_UV if p["texture"] is not None else 0,
+                                         cutoff=p["cutoff"], metallic=p["metallic"], roughness=p["roughness"])
+                             for first, count, p in ranges]
+                    unmapped = {first for first, _count, p in ranges if not p.get("uv")}    # (no UVs: a picture goes on as on a box)
+                else:
+                    data = mesh.primitive_mesh(kind, q["w"], q["h"], depth, bevel, rgba)
             else:
                 data = mesh.shape_mesh(q, depth, bevel)
         if not len(data) or opacity <= 0:
             return None
+        put = self.surface_picture(c, t)
+        if put is not None:                                       # 表面圖片: on the whole solid, in place of a model's textures
+            texture, shape = put
+            wrap = mesh3d.WRAPS.get(mesh3d.primitive(c), mesh3d.FRONT)
+            skins = [mesh3d.Skin(0, len(data), texture, wrap, over=True, shape=shape)] if skins is None else \
+                [mesh3d.Skin(s.first, s.count, texture, mesh3d.WRAPS["cube"] if s.first in unmapped else wrap, over=True, shape=shape,
+                             metallic=s.metallic, roughness=s.roughness) for s in skins]
         return mesh3d.Part(data, tf, t, W, H, grown, bool((c.get("solid") or {}).get("advanced")),
                            min(1.0, max(0.0, mesh3d.setting(c, "metallic", t))), min(1.0, max(0.0, mesh3d.setting(c, "roughness", t))),
-                           opacity, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0))
+                           opacity, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0), skins)
+
+    def still_texture(self, img):
+        """What gives a mesh3d.Skin the texture of QImage img (None: no picture)."""
+        return None if img is None else lambda: self.gl.picture(img, mipmap=True)
+
+    def surface_picture(self, c, t):
+        """(what gives its texture, width / height) of the picture or video on the surface of solid clip c at clip time t (a video
+        starts with the clip and comes round again), or None."""
+        held = c.get("solid") or {}
+        path, info = held.get("surface"), held.get("surface_info") or {}
+        if not path:
+            return None
+        w, h = max(info.get("width") or 1, 1), max(info.get("height") or 1, 1)
+        k = min(1.0, SURFACE_PX / max(w, h))
+        size = (max(2, round(w * k)), max(2, round(h * k)))
+        if info.get("kind") == "video":
+            long_ = info.get("duration_us") or 0
+            pic = self.video_frame(path, int(t % long_) if long_ > 0 else int(t), *size) if self.video_frame else None
+            if pic is None or pic.isNull():
+                return None
+            return (lambda: self.gl.frame_texture(pic)), pic.width() / max(pic.height(), 1)
+        try:
+            pic = self.image(path, *size)
+        except Exception as exc:
+            self.errors.append(f"表面圖片：{exc}")
+            return None
+        if pic is None or pic.isNull():
+            self.errors.append(f"表面圖片讀不到：{os.path.basename(path)}")
+            return None
+        return self.still_texture(pic), pic.width() / max(pic.height(), 1)
 
     def gl_solids(self, tgt, base, cam, parts, W, H, t_us, surfaces, current, rig=None):
         """One pass of mesh3d.Drawer.draw over parts, put on tgt (parts sharing a pass are put on it as the first is)."""

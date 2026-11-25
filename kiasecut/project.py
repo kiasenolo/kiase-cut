@@ -223,6 +223,10 @@ def _map_paths(data, fn):
                 m = c.get("media")
                 if m and m.get("path"):
                     m["path"] = fn(m["path"])
+                held = c.get("solid")
+                for k in ("model", "surface"):                       # an imported model's file, a picture on a solid
+                    if isinstance(held, dict) and held.get(k):
+                        held[k] = fn(held[k])
                 mk = c.get("mask")
                 for k in ("image", "video"):                         # an image / video mask's file
                     if isinstance(mk, dict) and mk.get(k):

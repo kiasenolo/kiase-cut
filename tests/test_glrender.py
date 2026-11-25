@@ -291,6 +291,65 @@ class GpuMatchesCpu(unittest.TestCase):
         self.assertGreater(flat, 100)
         self.assertGreater(edge(True), edge(False) + 100)                       # (seen from the side: flat is a line, solid has sides)
 
+    def test_a_picture_or_video_on_a_solid_and_an_imported_model(self):
+        import tempfile
+        from kiasecut import assets, models
+        def thing(solid, color="#808080"):
+            return {"id": "o", "type": "image", "name": "o", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0, "transform": tf(),
+                    "media": {"path": "o.png", "width": 100, "height": 100},
+                    "asset": assets.normalize({"family": "empty", "w": 700, "h": 700, "color": color}), "solid": solid}
+        of = lambda img, rgb: (np.abs(img[..., :3].astype(int) - rgb).max(axis=2) < 60)
+        def where(mask):
+            ys, xs = np.nonzero(mask)
+            self.assertGreater(len(ys), 100)
+            return xs.mean(), ys.mean()
+        with tempfile.TemporaryDirectory() as d:
+            pic = QImage(64, 64, QImage.Format_ARGB32)                          # (green over blue, red on the left)
+            pic.fill(QColor(0, 255, 0))
+            painter = QPainter(pic)
+            painter.fillRect(0, 32, 64, 32, QColor(0, 0, 255))
+            painter.fillRect(0, 0, 20, 64, QColor(255, 0, 0))
+            painter.end()
+            pic.save(os.path.join(d, "p.png"))
+            info = {"kind": "image", "width": 64, "height": 64}
+            cube = {"on": True, "prim": "cube", "depth": 100.0, "bevel": 0.0, "surface": os.path.join(d, "p.png"), "surface_info": info}
+            img = self.scene_shot(thing(cube))
+            (rx, _), (_, gy), (_, by) = where(of(img, (255, 0, 0))), where(of(img, (0, 255, 0))), where(of(img, (0, 0, 255)))
+            self.assertLess(rx, W / 2 - 5)                                      # (the right way round)
+            self.assertLess(gy, by - 10)                                        # (and the right way up)
+            # a video: the frame at the clip's time, from its start again when it is over
+            asked = []
+            def frame(path, t_us, w, h):
+                asked.append(t_us)
+                one = QImage(w, h, QImage.Format_ARGB32_Premultiplied)
+                one.fill(QColor(255, 255, 0))
+                return one
+            held, self.gpu.video_frame = self.gpu.video_frame, frame
+            try:
+                moving = dict(cube, surface="v.mp4", surface_info={"kind": "video", "width": 64, "height": 64, "duration_us": S // 2})
+                v = self.view([thing(moving)])
+                v["camera"] = {"on": True}
+                got = pixels(self.gpu.render(v, 24, W, H))                 # (frame 24: 0.8 s)
+            finally:
+                self.gpu.video_frame = held
+            self.assertEqual(self.gpu.errors, [])
+            self.assertGreater(int(of(got, (255, 255, 0)).sum()), 500)
+            self.assertAlmostEqual(asked[-1] / S, 0.3, 1)
+            # an OBJ with a textured face, kept as one file: its texture shows after the files it was read from are gone
+            with open(os.path.join(d, "m.mtl"), "w") as f:
+                f.write("newmtl t\nKd 1 1 1\nmap_Kd p.png\n")
+            with open(os.path.join(d, "m.obj"), "w") as f:
+                f.write("mtllib m.mtl\nv -1 -1 0\nv 1 -1 0\nv 1 1 0\nv -1 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n"
+                        "usemtl t\nf 1/1 2/2 3/3 4/4\n")
+            kept, size = models.convert(os.path.join(d, "m.obj"), os.path.join(d, "kept"))
+            self.assertEqual([round(x, 3) for x in size], [1.0, 1.0, 0.0])
+            for name in ("m.obj", "m.mtl", "p.png"):
+                os.remove(os.path.join(d, name))
+            img = self.scene_shot(thing({"on": True, "prim": "model", "model": kept, "depth": 1.0}, "#ffffff"))
+            (rx, _), (_, gy), (_, by) = where(of(img, (255, 0, 0))), where(of(img, (0, 255, 0))), where(of(img, (0, 0, 255)))
+            self.assertLess(rx, W / 2 - 5)
+            self.assertLess(gy, by - 10)
+
     def lamp(self, cid, kind, power=100.0, color=(1.0, 1.0, 1.0), **t):
         from kiasecut import lights
         return {"id": cid, "type": "image", "name": cid, "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,

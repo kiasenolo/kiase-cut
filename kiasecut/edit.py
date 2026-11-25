@@ -9,6 +9,7 @@ import bisect
 import copy
 import json
 import math
+import os
 import random
 import time
 import uuid
@@ -1226,6 +1227,9 @@ def set_param(proj, clip_id, group, key, value, t=None):
         return c
     if group == "light" and key == "color":
         h[key] = [min(1.0, max(0.0, float(v))) for v in value[:3]]
+        return c
+    if group == "solid" and key == "surface":                    # 表面圖片: an image or video file, or None
+        _set_surface(h, value)
         return c
     if group == "solid" and key in ("on", "advanced"):
         h[key] = bool(value)
@@ -4303,6 +4307,40 @@ def new_primitive(level, kind, params, path, at_us, track_id=None, color="#fffff
     c["name"] = name
     c.setdefault("transform", {}).update(rot_x=-20.0, rot_y=30.0 if kind != "sphere" else 0.0)
     c["solid"] = {"on": True, "prim": kind, "depth": float(depth), "bevel": float(bevel)}
+    return c
+
+
+def _set_surface(h, path):
+    from . import library
+    if not path:
+        h.pop("surface", None)
+        h.pop("surface_info", None)
+        return
+    try:
+        info = library.probe(path)
+    except EditError:
+        raise
+    except Exception:
+        raise EditError(f"讀不到：{os.path.basename(path)}") from None
+    if info.get("kind") not in ("image", "video"):
+        raise EditError("表面只能放圖片或影片")
+    h["surface"] = path.replace("\\", "/")
+    h["surface_info"] = {k: info[k] for k in ("kind", "width", "height", "duration_us") if k in info}
+
+
+def new_model(level, params, path, model_path, size, at_us, track_id=None, name="模型"):
+    """匯入模型: a model (models.convert's .kmodel at model_path, size: its (x, y, z) proportions) at at_us in the level, a 3D 場景:
+    an 空物體 whose width and height are the model's, its longest side 600 px of a 1080-high canvas, with how deep it is in c["solid"].
+    params, path: the 空物體 it is made of."""
+    from . import assets, library
+    k = params["w"] / 100                              # (the 小 空物體 it is made of is 100 px of a 1080-high canvas)
+    params = assets.normalize(dict(params, w=max(1, round(600 * size[0] * k)), h=max(1, round(600 * size[1] * k)),
+                                   color=[1.0, 1.0, 1.0, 1.0]))          # (a tint over the model's own colours)
+    c = library.place_item(level, assets.item(params, path), track_id, at_us)
+    c["asset"] = params
+    c["name"] = name
+    c.setdefault("transform", {})
+    c["solid"] = {"on": True, "prim": "model", "model": model_path, "depth": float(max(1.0, round(600 * size[2], 1))), "advanced": True}
     return c
 
 

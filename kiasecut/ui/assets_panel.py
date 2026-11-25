@@ -231,6 +231,31 @@ def solid_thumbnail(kind):
     return img
 
 
+def model_thumbnail():
+    """匯入模型: a box drawn in lines with a plus, on a dark ground."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPen
+    w, h = THUMB
+    img = QImage(QSize(w, h), QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor("#202024"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(QPen(QColor(230, 230, 235), 1.6))
+    x, y, s, d = w / 2 - 18, h / 2 - 8, 22, 9
+    front = [QPointF(x, y), QPointF(x + s, y), QPointF(x + s, y + s), QPointF(x, y + s)]
+    back = [q + QPointF(d, -d) for q in front]
+    for a, b in zip(front, front[1:] + front[:1]):
+        p.drawLine(a, b)
+    for a, b in ((front[0], back[0]), (front[1], back[1]), (front[2], back[2]), (back[0], back[1]), (back[1], back[2])):
+        p.drawLine(a, b)
+    p.setPen(QPen(QColor(255, 214, 90), 2.5))
+    mid = QPointF(w / 2 + 22, h / 2 + 8)
+    p.drawLine(mid - QPointF(6, 0), mid + QPointF(6, 0))
+    p.drawLine(mid - QPointF(0, 6), mid + QPointF(0, 6))
+    p.end()
+    return img
+
+
 def camera_thumbnail():
     """相機: a camera body and its lens on a dark ground."""
     from PySide6.QtCore import QPointF, QRectF
@@ -515,6 +540,11 @@ class AssetsPanel(QWidget):
             it.setToolTip(f"{spec[0]}：基礎物件，在 3D 場景裡用（顏色用上面的第一個顏色，之後在屬性改）")
             it.setIcon(QIcon(QPixmap.fromImage(solid_thumbnail(kind))))
             lst.addItem(it)
+        it = QListWidgetItem("匯入模型…")
+        it.setData(ROLE_KEY, "scene3d.model")
+        it.setToolTip("匯入 3D 模型（.obj、.gltf、.glb）：雙擊或拖到時間線後選檔案，也可以直接把模型檔拖進視窗")
+        it.setIcon(QIcon(QPixmap.fromImage(model_thumbnail())))
+        lst.addItem(it)
         blay.addWidget(head)
         blay.addWidget(lst)
         self.lists[SCENE_CAT[0]] = lst

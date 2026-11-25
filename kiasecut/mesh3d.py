@@ -35,6 +35,10 @@ uniform vec2 planes;         // near, far (px)
 in vec3 in_pos;
 in vec3 in_normal;
 in vec4 in_color;
+in vec2 in_uv;
+out vec2 v_uv;
+out vec3 v_local;            // the object's own place and normal: where a picture lies on it
+out vec3 v_face;
 out vec3 v_pos;
 out vec3 v_normal;
 out vec4 v_color;
@@ -52,6 +56,9 @@ void main() {
     v_color = in_color;
     v_cam = c;
     v_cap = in_normal.z;                                          // (the object's own: +-1 on its two faces)
+    v_uv = in_uv;
+    v_local = in_pos;
+    v_face = in_normal;
 }
 """
 
@@ -69,6 +76,18 @@ uniform float reach;           // px: where a lamp at a place is as strong as on
 uniform vec4 surfaces[32];     // planes in the camera's axes (normal, distance > 0): behind one is where dot(n, p) > distance
 uniform int n_surfaces;
 uniform int current;           // this pass draws what is behind surfaces[current] (n_surfaces: the rest) and behind none before it
+uniform sampler2D picture;
+uniform int wrap;              // how the picture lies on the object: 0 none, 1 on its two faces, 2 on the six sides of a box,
+                               // 3 round a ball, 4 round a cylinder (and flat on its ends), 5 round a ring, 6 by the mesh's UVs
+uniform int over;              // 1: over the object's colour; 0: times it (a model's texture)
+uniform int straight;          // the texture's colours are not multiplied by its alpha
+uniform float cutoff;          // (a model's) less see-through than this is not there
+uniform vec3 box_lo;           // the box round the mesh
+uniform vec3 box_size;
+uniform float shape;           // the picture's width / height
+in vec2 v_uv;
+in vec3 v_local;
+in vec3 v_face;
 in vec3 v_cam;
 in float v_cap;
 in vec3 v_pos;
@@ -105,6 +124,62 @@ vec3 lamp(vec3 N, vec3 V, vec3 L, vec3 colour, vec3 diffuse, vec3 f0, float a) {
     return (diffuse * (1.0 - F) + F * min(D * G / (4.0 * nl * nv), 20.0)) * colour * nl;
 }
 
+// the part of the picture that covers a face `ratio` (width / height) wide, its middle kept
+vec2 covering(vec2 q, float ratio) {
+    vec2 k = ratio > shape ? vec2(1.0, shape / ratio) : vec2(ratio / shape, 1.0);
+    return (q - 0.5) * k + 0.5;
+}
+
+// where on the picture this pixel is (false: it has none of it)
+bool place_on_picture(out vec2 uv) {
+    vec3 q = (v_local - box_lo) / max(box_size, vec3(1e-4));
+    vec3 n = v_face;
+    vec3 round_ = v_local / max(box_size * 0.5, vec3(1e-4));
+    if (wrap == 6) { uv = v_uv; return true; }
+    if (wrap == 1) {
+        if (abs(n.z) < 0.5) return false;
+        uv = covering(vec2(n.z < 0.0 ? q.x : 1.0 - q.x, q.y), box_size.x / max(box_size.y, 1e-4));
+        return true;
+    }
+    if (wrap == 5) {
+        vec2 out_ = normalize(v_local.xy + vec2(1e-5));
+        uv = vec2(atan(round_.x, -round_.y) / (2.0 * PI), atan(dot(n.xy, out_), -n.z) / (2.0 * PI) + 0.5);
+        return true;
+    }
+    if (wrap == 3) {
+        uv = vec2(atan(round_.x, -round_.z) / (2.0 * PI) + 0.5, asin(clamp(round_.y, -1.0, 1.0)) / PI + 0.5);
+        return true;
+    }
+    if (wrap == 4) {
+        if (abs(n.y) > 0.99) uv = vec2(q.x, n.y < 0.0 ? 1.0 - q.z : q.z);
+        else uv = vec2(atan(round_.x, -round_.z) / (2.0 * PI) + 0.5, q.y);
+        return true;
+    }
+    vec3 a = abs(n);                                       // 2: a box, each side seen from outside it
+    if (a.z >= a.x && a.z >= a.y) uv = covering(vec2(n.z < 0.0 ? q.x : 1.0 - q.x, q.y), box_size.x / max(box_size.y, 1e-4));
+    else if (a.x >= a.y) uv = covering(vec2(n.x > 0.0 ? q.z : 1.0 - q.z, q.y), box_size.z / max(box_size.y, 1e-4));
+    else uv = covering(vec2(q.x, n.y < 0.0 ? 1.0 - q.z : q.z), box_size.x / max(box_size.z, 1e-4));
+    return true;
+}
+
+// the object's colour at this pixel, with the picture on it
+vec4 coloured() {
+    vec4 c = v_color;
+    vec2 uv = vec2(0.0);
+    bool there = wrap != 0 && place_on_picture(uv);
+    // (the picture comes round again at 0 and 1: of the two ways to measure how fast uv changes, the one without that jump)
+    vec2 other = fract(uv + 0.5);
+    vec2 dx = dFdx(uv), dy = dFdy(uv), ex = dFdx(other), ey = dFdy(other);
+    if (dot(ex, ex) + dot(ey, ey) < dot(dx, dx) + dot(dy, dy)) { dx = ex; dy = ey; }
+    if (!there) return c;
+    vec2 at = wrap == 6 || wrap == 3 || wrap == 5 || wrap == 4 ? fract(uv) : clamp(uv, 0.0, 1.0);
+    vec4 t = textureGrad(picture, at, dx, dy);
+    if (straight == 0 && t.a > 0.0) t.rgb /= t.a;
+    if (over == 1) return vec4(mix(c.rgb, t.rgb, t.a), c.a);
+    if (t.a < cutoff) discard;
+    return vec4(c.rgb * t.rgb, c.a);
+}
+
 bool behind(int i) { return dot(surfaces[i].xyz, v_cam) - surfaces[i].w > 0.50; }
 
 void main() {
@@ -112,16 +187,17 @@ void main() {
         if (behind(i)) discard;
     }
     if (current < n_surfaces && !behind(current)) discard;
+    vec4 own = coloured();
     vec3 N = normalize(v_normal);
     vec3 V = normalize(eye - v_pos);
     if (dot(N, V) < -0.2) N = -N;                          // (seen from inside: a mirrored object's faces)
     if (advanced == 0) {                                   // simple: the faces as picked, the rest darker, a little by where they look
         float side = 0.58 - 0.16 * N.y - 0.08 * N.x;
         float k = mix(side, 1.0, smoothstep(0.35, 0.98, abs(v_cap)));
-        fragColor = vec4(v_color.rgb * k * v_color.a, v_color.a);
+        fragColor = vec4(own.rgb * k * own.a, own.a);
         return;
     }
-    vec3 base = pow(v_color.rgb, vec3(2.2));
+    vec3 base = pow(own.rgb, vec3(2.2));
     float rough = clamp(roughness, 0.04, 1.0);
     vec3 f0 = mix(vec3(0.04), base, metallic);
     vec3 diffuse = base * (1.0 - metallic);
@@ -150,15 +226,31 @@ void main() {
     // the brightest rolls off
     vec3 over = max(c - 0.8, 0.0);
     c = min(c, vec3(0.8)) + over / (1.0 + over * 5.0);
-    fragColor = vec4(pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2)) * v_color.a, v_color.a);
+    fragColor = vec4(pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2)) * own.a, own.a);
 }
 """
 
 
+MODEL = "model"
+# how a picture put on a solid's surface (c["solid"]["surface"]) lies on it (the shader's wrap): by what the solid is
+WRAPS = {"cube": 2, "sphere": 3, "cylinder": 4, "cone": 4, "torus": 5, MODEL: 6}
+FRONT, OWN_UV = 1, 6                  # (a text or a shape: on its faces)
+
+
+class Skin:
+    """A picture on rows first .. first + count of a solid's mesh: texture() gives (a GL texture, whether its colours are straight)
+    or None; wrap: the shader's; over: over the colours (a picture put on a surface), else times them (a model's texture)."""
+
+    def __init__(self, first, count, texture=None, wrap=0, over=False, cutoff=0.0, shape=1.0, metallic=None, roughness=None):
+        self.first, self.count, self.texture, self.wrap, self.over = first, count, texture, wrap, over
+        self.cutoff, self.shape, self.metallic, self.roughness = cutoff, shape, metallic, roughness
+
+
 def primitive(clip):
-    """The kind (mesh.PRIMITIVES) of a basic solid's clip - an 空物體 with c["solid"]["prim"] - or None."""
+    """The kind (mesh.PRIMITIVES, or MODEL: an imported model, c["solid"]["model"] its .kmodel) of the clip of a solid that is
+    nothing else - an 空物體 with c["solid"]["prim"] - or None."""
     kind = (clip.get("solid") or {}).get("prim")
-    return kind if clip.get("type") == "image" and clip.get("asset") and kind in mesh.PRIMITIVES else None
+    return kind if clip.get("type") == "image" and clip.get("asset") and (kind in mesh.PRIMITIVES or kind == MODEL) else None
 
 
 def can(clip):
@@ -210,8 +302,12 @@ class Drawer:
                 _m, buf, vao = self.buffers.pop(next(iter(self.buffers)))
                 vao.release()
                 buf.release()
-            buf = self.ctx.buffer(data.astype("f4").tobytes())
-            vao = self.ctx.vertex_array(self.program, [(buf, "3f 3f 4f", "in_pos", "in_normal", "in_color")])
+            rows = data if data.shape[1] == 12 else np.concatenate([data, np.zeros((len(data), 2), "f4")], axis=1)
+            buf = self.ctx.buffer(rows.astype("f4").tobytes())
+            layout = (buf, "3f 3f 4f 2f", "in_pos", "in_normal", "in_color", "in_uv")
+            if "in_uv" not in self.program:
+                layout = (buf, "3f 3f 4f 2x4", "in_pos", "in_normal", "in_color")
+            vao = self.ctx.vertex_array(self.program, [layout])
             got = (data, buf, vao)
         self.buffers[id(data)] = got
         return got[2]
@@ -267,9 +363,22 @@ class Drawer:
                 self._uniform("normal_turn", mat(part.normals))
                 self._uniform("place", tuple(float(x) for x in part.place))
                 self._uniform("advanced", 1 if part.advanced else 0)
-                self._uniform("metallic", part.metallic)
-                self._uniform("roughness", part.roughness)
-                vao.render(self.mgl.TRIANGLES)
+                lo, hi = bounds(part.data)
+                self._uniform("box_lo", tuple(float(x) for x in lo))
+                self._uniform("box_size", tuple(float(x) for x in hi - lo))
+                for skin in part.skins or [Skin(0, len(part.data))]:
+                    held = skin.texture() if skin.texture is not None else None
+                    if held is not None:
+                        held[0].use(0)
+                    self._uniform("picture", 0)
+                    self._uniform("wrap", skin.wrap if held is not None else 0)
+                    self._uniform("over", 1 if skin.over else 0)
+                    self._uniform("straight", 1 if held is not None and held[1] else 0)
+                    self._uniform("cutoff", float(skin.cutoff))
+                    self._uniform("shape", float(skin.shape))
+                    self._uniform("metallic", part.metallic if skin.metallic is None else float(skin.metallic))
+                    self._uniform("roughness", part.roughness if skin.roughness is None else float(skin.roughness))
+                    vao.render(self.mgl.TRIANGLES, vertices=skin.count, first=skin.first)
         finally:
             self.ctx.disable(self.mgl.DEPTH_TEST)
         self.ctx.copy_framebuffer(tgt_fbo, msaa)
@@ -279,10 +388,10 @@ class Part:
     """One solid as it stands now: mesh data (the object's own px; size: how much bigger than that it is - a text's keyframed 字號)
     with the clip's transform tf at clip time t, its material, and how it is put on what is under it (opacity, blend)."""
 
-    def __init__(self, data, tf, t, W, H, size=1.0, advanced=False, metallic=0.0, roughness=0.4, opacity=1.0, blend=0):
+    def __init__(self, data, tf, t, W, H, size=1.0, advanced=False, metallic=0.0, roughness=0.4, opacity=1.0, blend=0, skins=None):
         v = lambda key, default: float(curves.value(tf.get(key, default), t))
         s = H / 2.0
-        self.data = data
+        self.data, self.skins = data, skins          # (skins: [Skin] covering the mesh, or None: no pictures)
         self.place = np.array([v("x", 0.0) * W / 2.0, -v("y", 0.0) * s, v("z", 0.0) * s])
         sx = v("scale", 1.0)
         sy = float(curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t))

@@ -1451,11 +1451,37 @@ class Inspector(QWidget):
         advanced.clicked.connect(lambda v: self._emit_now(self.paramEdited, "solid", "advanced", bool(v)))
         self.widgets["solid_advanced"] = advanced
         form.addRow("", advanced)
+        row = QWidget()                                   # 表面圖片: a picture or a video on the solid
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(3)
+        choose = QPushButton()
+        choose.setToolTip("貼在物件表面的圖片或影片（影片跟著片段播，播完從頭再播）。\n立方體每一面各一張；球、圓柱、圓錐、圓環包一圈；"
+                          "文字和形狀貼在正面和背面；模型照它的 UV，蓋掉原本的貼圖")
+        choose.clicked.connect(self._pick_surface)
+        lay.addWidget(choose, 1)
+        lay.addWidget(pick_button(("image", "video"), lambda path: self._emit_now(self.paramEdited, "solid", "surface", path)))
+        clear = QPushButton("✕")
+        clear.setFixedWidth(28)
+        clear.setToolTip("拿掉表面圖片")
+        clear.clicked.connect(lambda _on: self._emit_now(self.paramEdited, "solid", "surface", None))
+        lay.addWidget(clear)
+        self.widgets["solid_surface"] = choose
+        self.widgets["solid_surface_clear"] = clear
+        form.addRow("表面圖片", row)
         rows = PARAMS["solid"]
         if kind:                                          # (a basic solid's depth is a size of its own; only some have edges to round)
             rows = [(r[0], "管徑 px" if kind == "torus" else "深度 px", r[2], 4000.0) + r[4:] if r[0] == "depth" else r
-                    for r in rows if r[0] != "bevel" or kind in mesh.BEVELLED]
+                    for r in rows if (r[0] != "bevel" or kind in mesh.BEVELLED)
+                    and (r[0] not in ("metallic", "roughness") or kind != mesh3d.MODEL)]     # (a model has materials of its own)
         self._rows(form, "solid", list(rows), ())
+
+    def _pick_surface(self):
+        path, _ = QFileDialog.getOpenFileName(self, "表面圖片或影片", "",
+                                              "圖片和影片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.svg *.tif *.tiff *.mp4 *.mov "
+                                              "*.mkv *.webm *.avi *.m4v);;All files (*)")
+        if path:
+            self._emit_now(self.paramEdited, "solid", "surface", path.replace("\\", "/"))
 
     def _build_camera(self, form, obj=None):
         """攝影機: with it on the clips inside are planes in space the camera looks at (camera.py): each gets 3D 位置 Z and 3D 旋轉."""
@@ -2256,6 +2282,12 @@ class Inspector(QWidget):
             box.blockSignals(True)
             box.setChecked(all((k.get("solid") or {}).get("on", False) for k in clips))
             box.blockSignals(False)
+        if "solid_surface" in w:
+            held = {(k.get("solid") or {}).get("surface") or "" for k in clips}
+            button = w["solid_surface"]
+            only = held.pop() if len(held) == 1 else None
+            button.setText("--" if only is None else os.path.basename(only) if only else "選擇圖片或影片…")
+            w["solid_surface_clear"].setEnabled(only != "")
         if "solid_advanced" in w:
             box = w["solid_advanced"]
             box.blockSignals(True)

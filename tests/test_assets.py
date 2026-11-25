@@ -383,6 +383,39 @@ class AssetTests(unittest.TestCase):
         MainWindow.place_asset(h, "scene3d:cube", "", 500_000)
         self.assertEqual((placed[0]["name"], placed[0]["solid"]["prim"]), ("立方體", "cube"))
 
+    def test_a_model_file_dropped_in_is_imported_onto_the_timeline(self):
+        import types
+        from kiasecut import mesh3d
+        from kiasecut.ui.assets_panel import AssetsPanel
+        from kiasecut.ui.inspector import Inspector
+        from kiasecut.ui.main_window import MainWindow
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "slab.obj")
+            with open(path, "w") as f:
+                f.write("v 0 0 0\nv 4 0 0\nv 4 2 0\nv 0 2 1\nf 1 2 3 4\n")
+            empty = assets.make(assets.get("empty.small"), "#ffffff", "#000000", 1920, 1080)
+            level, said = proj(), []
+            h = types.SimpleNamespace(
+                ensure_project=lambda: True, root="r", assets=AssetsPanel(), new_asset=lambda ident: (empty, "e.png"),
+                asset_media_dir=lambda: d, view=lambda: {"tracks": [], "camera": {"on": True}},
+                statusBar=lambda: types.SimpleNamespace(showMessage=lambda text, *a: said.append(text)),
+                run_task=lambda work, done, failed, progress=None: done(work(lambda p: None)),
+                apply=lambda _n, fn, select=None: said.append(fn(level)), edge_us=lambda: 250_000)
+            h.import_models = lambda *a: MainWindow.import_models(h, *a)
+            MainWindow.drop_files(h, [path], None)                                 # (nothing but a model: no media import)
+            (c,), = [x for x in said if isinstance(x, list)]
+            self.assertEqual((c["name"], c["start_us"], mesh3d.primitive(c)), ("slab", 250_000, "model"))
+            self.assertEqual((c["asset"]["w"], c["asset"]["h"], c["solid"]["depth"]), (600, 300, 150.0))
+            self.assertTrue(os.path.isfile(c["solid"]["model"]) and c["solid"]["model"].endswith(".kmodel"))
+            inspector = Inspector()
+            inspector.scene_check = lambda k: True
+            inspector.show_clip(c, 250_000, 30)
+            self.assertIn(("solid", "depth"), inspector.widgets)
+            self.assertNotIn(("solid", "metallic"), inspector.widgets)                  # (a model has its own materials)
+            self.assertEqual(inspector.widgets["solid_surface"].text(), "選擇圖片或影片…")
+            inspector.show_clip(dict(c, solid=dict(c["solid"], surface="/a/b.png")), 250_000, 30)
+            self.assertEqual(inspector.widgets["solid_surface"].text(), "b.png")
+
     def test_text_presets_are_a_category_of_the_panel(self):
         from kiasecut import textpresets
         from kiasecut.ui.assets_panel import AssetsPanel

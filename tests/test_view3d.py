@@ -361,9 +361,6 @@ class CameraThing(Editing3D):
         self.assertIsNone(v.key_action(QKeyEvent(QEvent.KeyPress, Qt.Key_R, Qt.NoModifier)))      # (the camera is only moved)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ParticleEditing(unittest.TestCase):
     """The emitter of a particle system in the 3D view: its outline and handles."""
@@ -618,3 +615,7 @@ class LightObjects(unittest.TestCase):
         (cid, group, vals), = self.done
         self.assertEqual((cid, group, set(vals)), ("lamp", "transform", {"x"}))
         pv.grab()
+
+
+if __name__ == "__main__":
+    unittest.main()

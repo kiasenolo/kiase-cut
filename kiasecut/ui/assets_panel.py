@@ -14,7 +14,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
-from .. import assets, fx, textlayout, textpresets, viz
+from .. import assets, camera, fx, mesh, textlayout, textpresets, viz
 from .colorpick import hex_of, pick_color, qcolor
 from .timeline import MEDIA_MIME
 from .menukeys import Menu
@@ -197,6 +197,36 @@ def light_thumbnail(kind):
             a = i * math.pi / 4
             far = 18 if kind == "sun" or i % 2 == 0 else 13
             p.drawLine(mid + QPointF(math.cos(a) * 11, math.sin(a) * 11), mid + QPointF(math.cos(a) * far, math.sin(a) * far))
+    p.end()
+    return img
+
+
+def solid_thumbnail(kind):
+    """基礎物件: its mesh seen a little from above and the side, the faces darker the more they turn away, on a dark ground."""
+    import numpy as np
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QPolygonF
+    w, h = THUMB
+    img = QImage(QSize(w, h), QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor("#202024"))
+    _name, bw, bh, depth, bevel = mesh.PRIMITIVES[kind]
+    data = mesh.primitive_mesh(kind, bw, bh, depth, bevel * 3, (1.0, 1.0, 1.0))
+    turn = camera._rot(-24.0, 32.0, 0.0)
+    points = (data[:, :3] @ turn.T).reshape(-1, 3, 3)
+    normals = (data[:, 3:6] @ turn.T).reshape(-1, 3, 3).mean(axis=1)
+    k = (h - 8) / max(np.ptp(points[..., 1]), np.ptp(points[..., 0]) * (h - 8) / (w - 8))
+    middle = (points.reshape(-1, 3).max(axis=0) + points.reshape(-1, 3).min(axis=0)) / 2.0
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    toward = np.array([-0.4, -0.6, -0.7]) / np.linalg.norm([-0.4, -0.6, -0.7])
+    for i in np.argsort(-points[..., 2].mean(axis=1)):                  # (far first)
+        if normals[i][2] > 0.2:                                         # (turned away)
+            continue
+        light = 0.3 + 0.7 * max(float(normals[i] @ toward), 0.0)
+        colour = QColor.fromRgbF(light * 0.92, light * 0.92, light * 0.96)
+        p.setPen(colour)
+        p.setBrush(colour)
+        p.drawPolygon(QPolygonF([QPointF(w / 2 + (x - middle[0]) * k, h / 2 + (y - middle[1]) * k) for x, y, _z in points[i]]))
     p.end()
     return img
 
@@ -478,6 +508,12 @@ class AssetsPanel(QWidget):
             it.setData(ROLE_KEY, "scene3d." + kind)
             it.setToolTip(f"{name}：{tip}。放進 3D 場景，照亮開了「進階光照」的立體物件；有燈在播時，場景改用這些燈")
             it.setIcon(QIcon(QPixmap.fromImage(light_thumbnail(kind))))
+            lst.addItem(it)
+        for kind, spec in mesh.PRIMITIVES.items():
+            it = QListWidgetItem(spec[0])
+            it.setData(ROLE_KEY, "scene3d." + kind)
+            it.setToolTip(f"{spec[0]}：基礎物件，在 3D 場景裡用（顏色用上面的第一個顏色，之後在屬性改）")
+            it.setIcon(QIcon(QPixmap.fromImage(solid_thumbnail(kind))))
             lst.addItem(it)
         blay.addWidget(head)
         blay.addWidget(lst)

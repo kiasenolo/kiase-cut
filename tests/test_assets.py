@@ -345,6 +345,44 @@ class AssetTests(unittest.TestCase):
         lst.itemDoubleClicked.emit(lst.item(0))
         self.assertEqual(got, ["asset:shape.rect:#ff0000:#00ff00"])
 
+    def test_basic_solids_and_shapes_can_be_solids_and_the_inspector_shows_it(self):
+        import types
+        from kiasecut import edit, mesh, mesh3d
+        from kiasecut.ui.assets_panel import ROLE_KEY, AssetsPanel
+        from kiasecut.ui.inspector import Inspector
+        from kiasecut.ui.main_window import MainWindow
+        panel = AssetsPanel()
+        idents = [panel.ident(panel.lists["scene3d"].item(i).data(ROLE_KEY)) for i in range(panel.lists["scene3d"].count())]
+        self.assertTrue(all(f"scene3d:{k}" in idents for k in mesh.PRIMITIVES), idents)
+        level = proj()
+        empty = assets.make(assets.get("empty.small"), "#ffffff", "#000000", 3840, 2160)
+        torus = edit.new_primitive(level, "torus", empty, "e.png", 0, color="#ff0000")
+        self.assertEqual((torus["asset"]["w"], torus["asset"]["h"], torus["solid"]["depth"]), (800, 800, 100.0))   # (sizes: of its canvas)
+        self.assertEqual((torus["name"], mesh3d.primitive(torus), mesh3d.on(torus)), ("圓環", "torus", True))
+        edit.set_param(level, torus["id"], "solid", "depth", 60.0, 0)
+        self.assertEqual(torus["solid"]["depth"], 60.0)
+        star = {"id": "s", "type": "image", "name": "s", "start_us": 0, "duration_us": 1_000_000, "source_start_us": 0, "transform": {},
+                "media": {"path": "s.png", "width": 100, "height": 100},
+                "asset": assets.make(assets.get("shape.star"), "#ffffff", "#000000", 1920, 1080)}
+        self.assertTrue(mesh3d.can(star) and not mesh3d.on(star))
+        gradient = dict(star, asset={"family": "gradient"})
+        self.assertFalse(mesh3d.can(gradient))
+        inspector = Inspector()
+        inspector.scene_check = lambda c: True
+        for clip, switch in ((torus, False), (star, True), (gradient | {"asset": assets.make(assets.get("empty.small"), "#fff", "#000", 1920, 1080)}, None)):
+            inspector.show_clip(clip, 0, 30)
+            if switch is not None:
+                self.assertIn("solid_advanced", inspector.widgets)
+                self.assertEqual("solid_on" in inspector.widgets, switch)
+                self.assertEqual(("solid", "bevel") in inspector.widgets, switch)          # (a torus has no edges to round)
+            else:
+                self.assertNotIn("solid_advanced", inspector.widgets)                       # (a plain 空物體 is no solid)
+        placed = []
+        h = types.SimpleNamespace(ensure_project=lambda: True, apply=lambda _n, fn, select=None: placed.append(fn(proj())),
+                                  assets=panel, new_asset=lambda ident: (empty, "e.png"), view=lambda: {"tracks": [], "camera": {"on": True}})
+        MainWindow.place_asset(h, "scene3d:cube", "", 500_000)
+        self.assertEqual((placed[0]["name"], placed[0]["solid"]["prim"]), ("立方體", "cube"))
+
     def test_text_presets_are_a_category_of_the_panel(self):
         from kiasecut import textpresets
         from kiasecut.ui.assets_panel import AssetsPanel

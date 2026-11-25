@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, camera, lights, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
+from .. import assets, camera, lights, mesh, mesh3d, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons, look, motion
 from .colorpick import pick_color, qcolor, rgba
@@ -626,8 +626,8 @@ class Inspector(QWidget):
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
                 self._build_flip(form)
-                if scene and c["type"] == "text":
-                    self._build_solid(form)
+                if scene and mesh3d.can(c):
+                    self._build_solid(form, c)
                 self._build_path_follow(form, c)
                 if c["type"] in ("image", "video", "compound") and not c.get("asset"):
                     self._build_corners(form)
@@ -1434,20 +1434,28 @@ class Inspector(QWidget):
             self._queue("light", "color", [col.redF(), col.greenF(), col.blueF()])
             self._flush()
 
-    def _build_solid(self, form):
-        """立體: in a scene a text's letters can be pushed out into solids, lit and mirroring the studio round the scene (mesh3d.py)."""
+    def _build_solid(self, form, c):
+        """立體: in a scene a text's letters or a shape can be pushed out into solids, and 基礎物件 are solids; lit and mirroring the
+        studio round the scene (mesh3d.py)."""
         form.addRow(section("立體"))
-        on = QCheckBox("啟用")
-        on.setToolTip("文字拉出厚度，變成有光影和反射的立體字（遮罩、效果、外框、陰影、背景在立體字上不畫）")
-        on.clicked.connect(lambda v: self._emit_now(self.paramEdited, "solid", "on", bool(v)))
-        self.widgets["solid_on"] = on
-        form.addRow("", on)
+        kind = mesh3d.primitive(c)
+        if kind is None:                                  # (a basic solid is nothing else: it has no switch)
+            on = QCheckBox("啟用")
+            on.setToolTip("拉出厚度，變成有光影和反射的立體物件（遮罩、效果、外框、陰影、背景在立體物件上不畫；"
+                          "形狀的漸變和圖片填充只用第一個顏色）")
+            on.clicked.connect(lambda v: self._emit_now(self.paramEdited, "solid", "on", bool(v)))
+            self.widgets["solid_on"] = on
+            form.addRow("", on)
         advanced = QCheckBox("進階光照")
-        advanced.setToolTip("燈光、金屬和反射（金屬度、粗糙度要開這個才有作用）。不開：正面是文字的顏色，側面較暗，比較省效能")
+        advanced.setToolTip("燈光、金屬和反射（金屬度、粗糙度要開這個才有作用）。不開：正面是物件的顏色，側面較暗，比較省效能")
         advanced.clicked.connect(lambda v: self._emit_now(self.paramEdited, "solid", "advanced", bool(v)))
         self.widgets["solid_advanced"] = advanced
         form.addRow("", advanced)
-        self._rows(form, "solid", list(PARAMS["solid"]), ())
+        rows = PARAMS["solid"]
+        if kind:                                          # (a basic solid's depth is a size of its own; only some have edges to round)
+            rows = [(r[0], "管徑 px" if kind == "torus" else "深度 px", r[2], 4000.0) + r[4:] if r[0] == "depth" else r
+                    for r in rows if r[0] != "bevel" or kind in mesh.BEVELLED]
+        self._rows(form, "solid", list(rows), ())
 
     def _build_camera(self, form, obj=None):
         """攝影機: with it on the clips inside are planes in space the camera looks at (camera.py): each gets 3D 位置 Z and 3D 旋轉."""
@@ -2134,7 +2142,7 @@ class Inspector(QWidget):
                                          all(k.get("speed_curve") for k in clips),
                                          tuple((v["name"], v["kind"], v.get("decimals"), v.get("format"))
                                                for v in textvars.variables(c.get("text") or {})),
-                                         (c.get("asset") or {}).get("family"), (c.get("viz") or {}).get("kind"),
+                                         (c.get("asset") or {}).get("family"), (c.get("viz") or {}).get("kind"), mesh3d.primitive(c),
                                          (c.get("mask") or {}).get("compound_id"),
                                          bool((c.get("mask") or {}).get("video")),
                                          tuple((p["id"], p["kind"], p["name"]) for p in

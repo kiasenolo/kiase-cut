@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np  # noqa: E402
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 
-from kiasecut import mesh  # noqa: E402
+from kiasecut import assets, mesh  # noqa: E402
 
 APP = QGuiApplication.instance() or QGuiApplication([])
 
@@ -58,6 +58,37 @@ class Meshes(unittest.TestCase):
         self.assertLess(abs(lo[0] + hi[0]), 20.0)                                          # (centred)
         self.assertAlmostEqual(float(hi[2] - lo[2]), 40.0, 3)
         self.assertIs(mesh.text_mesh(spec, 1080, 40.0, 2.0), m)                            # (kept)
+
+    def test_the_basic_solids_are_their_size_and_their_normals_look_out(self):
+        for kind in mesh.PRIMITIVES:
+            m = mesh.primitive_mesh(kind, 200.0, 300.0, 100.0, 4.0, (1, 1, 1))
+            self.assertTrue(np.allclose(m[:, :3].max(0) - m[:, :3].min(0), (200, 300, 100), atol=0.5), kind)
+            self.assertTrue(np.allclose(np.linalg.norm(m[:, 3:6], axis=1), 1.0, atol=1e-4), kind)
+            pos, n = m[:, :3], m[:, 3:6]
+            if kind == "torus":                             # (away from the middle of the tube: its tube is 50 px thick here)
+                tri = len(pos) // 3
+                out = np.sum(n * (pos * (1, 1, 1)), axis=1)
+                self.assertGreater(int((out > 0).sum()), tri)
+                self.assertGreater(int((out < 0).sum()), tri // 2)       # (round the hole they look inwards)
+            else:
+                self.assertGreater(float(np.sum(pos * n, axis=1).min()), -1e-3, kind)
+
+    def test_a_shape_is_pushed_out_and_a_ring_keeps_its_hole(self):
+        base = {"family": "ellipse", "color": "#ff0000", "w": 200, "h": 200, "fill": True, "arc_start": 0, "arc_sweep": 100, "ratio": 50}
+        m = mesh.shape_mesh(assets.at(assets.normalize(base), 0), 40.0, 0.0)
+        faces = m[np.abs(m[:, 5]) > 0.5]
+        self.assertAlmostEqual(area(faces[:, :2].reshape(-1, 3, 2)), 2 * np.pi * (100 ** 2 - 50 ** 2), delta=500)
+        self.assertEqual(tuple(m[0][6:9]), (1.0, 0.0, 0.0))
+
+    def test_an_open_path_is_pushed_out_as_a_ribbon_of_its_stroke(self):
+        p, _centre = assets.path_params([{"nodes": [[0, 0, 0, 0, 0, 0], [300, 0, 0, 0, 0, 0], [300, 200, 0, 0, 0, 0]], "closed": False}], "#00ff00")
+        q = assets.at(p, 0)
+        contours, _odd, colour = mesh.shape_contours(q)
+        self.assertEqual(colour, "stroke_color")
+        covered = area(mesh.triangulate(contours, True))
+        self.assertAlmostEqual(covered, 500 * q["stroke"], delta=0.1 * 500 * q["stroke"])      # (not the corner it spans filled)
+        q["stroke_on"] = False
+        self.assertEqual(len(mesh.shape_mesh(q, 40.0, 0.0)), 0)
 
 
 if __name__ == "__main__":

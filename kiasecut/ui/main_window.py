@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, project, recovery,
+from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -4894,6 +4894,18 @@ class MainWindow(QMainWindow):
                                select=lambda c: c["id"])
                     if not camera.on(self.view().get("camera")) and not camera.has_clips(self.view()["tracks"]):
                         self.statusBar().showMessage("燈光在 3D 場景裡才有作用：先放一台相機，或進入一個 3D 場景", 5000)
+            return
+        if ident[8:] in mesh.PRIMITIVES and ident.startswith("scene3d:"):    # 基礎物件: a basic solid of a 3D 場景
+            if self.ensure_project():
+                made = self.new_asset(assets.ident("empty.small", *self.assets.colors))
+                if made is not None:
+                    params, path = made
+                    kind, color = ident[8:], self.assets.colors[0]
+                    self.apply("加入" + mesh.PRIMITIVES[kind][0],
+                               lambda lvl: edit.new_primitive(lvl, kind, params, path, round(start_us), track_id or None, color),
+                               select=lambda c: c["id"])
+                    if not camera.on(self.view().get("camera")) and not camera.has_clips(self.view()["tracks"]):
+                        self.statusBar().showMessage("基礎物件在 3D 場景裡才看得到：先放一台相機，或進入一個 3D 場景", 5000)
             return
         if ident.startswith("scene3d:"):                   # 3D 場景: a compound with a camera, entered to put clips in it
             if self.ensure_project():

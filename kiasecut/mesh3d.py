@@ -10,7 +10,7 @@ The lamps and the studio are fixed in the world (x right, y down, z away): the m
 """
 import numpy as np
 
-from . import camera, curves
+from . import camera, curves, mesh
 
 SAMPLES = 4
 KEPT = 2                       # sizes the multisampled buffers are kept for
@@ -155,9 +155,24 @@ void main() {
 """
 
 
+def primitive(clip):
+    """The kind (mesh.PRIMITIVES) of a basic solid's clip - an 空物體 with c["solid"]["prim"] - or None."""
+    kind = (clip.get("solid") or {}).get("prim")
+    return kind if clip.get("type") == "image" and clip.get("asset") and kind in mesh.PRIMITIVES else None
+
+
+def can(clip):
+    """Whether clip is something that can be a solid in a scene: a text, a shape or pen path, or a basic solid."""
+    if clip.get("type") == "text":
+        return True
+    if clip.get("type") != "image" or not clip.get("asset") or clip.get("camera") or clip.get("light"):
+        return False
+    return clip["asset"].get("family") in mesh.SHAPES or primitive(clip) is not None
+
+
 def on(clip):
-    """Whether clip (a text) is drawn as a solid in a scene."""
-    return clip.get("type") == "text" and bool((clip.get("solid") or {}).get("on"))
+    """Whether clip is drawn as a solid in a scene."""
+    return bool((clip.get("solid") or {}).get("on")) and can(clip)
 
 
 def setting(clip, key, t):

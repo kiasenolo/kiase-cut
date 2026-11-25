@@ -797,24 +797,37 @@ class GLRenderer(render.Renderer):
         return lights.rig(found, H)
 
     def solid_part(self, c, t, W, H, fps):
-        """The mesh3d.Part of a 立體 text of a scene at clip time t - its letters pushed out into a solid (mesh.py) - or None when there
-        is nothing of it to see. Its mask and effects, and the flat text's outline, shadow and background, are not drawn."""
+        """The mesh3d.Part of a solid of a scene at clip time t (mesh.py): the letters of a 立體 text or a shape pushed out, or a basic
+        solid - or None when there is nothing of it to see. Its mask and effects, and the flat picture's outline, shadow and background,
+        are not drawn."""
         tf = c.get("transform") or {}
         opacity = min(1.0, max(0.0, curves.value(tf.get("opacity", 1.0), t)))
         if opacity <= 0:
             return None
-        tx = c["text"]
-        size = tx.get("size", 5.0)
-        if curves.is_animated(size) and not any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size"):
-            ref = curves.max_abs(size) or 1.0                      # (a growing text is one mesh made bigger, not a mesh a frame)
-            spec = textvars.spec_at(tx, t, TEXT_FIELDS, fps)
-            spec["size"] = ref
-            grown = curves.value(size, t) / ref
-        else:
-            spec, grown = textvars.spec_at(tx, t, TEXT_FIELDS, fps), 1.0
         k = H / 1080.0
-        data = mesh.text_mesh(spec, H, mesh3d.setting(c, "depth", t) * k, mesh3d.setting(c, "bevel", t) * k)
-        if not len(data):
+        depth, bevel = mesh3d.setting(c, "depth", t) * k, mesh3d.setting(c, "bevel", t) * k
+        grown = 1.0
+        if c["type"] == "text":
+            tx = c["text"]
+            size = tx.get("size", 5.0)
+            if curves.is_animated(size) and not any(curves.is_animated(tx.get(f)) for f in TEXT_FIELDS if f != "size"):
+                ref = curves.max_abs(size) or 1.0                  # (a growing text is one mesh made bigger, not a mesh a frame)
+                spec = textvars.spec_at(tx, t, TEXT_FIELDS, fps)
+                spec["size"] = ref
+                grown = curves.value(size, t) / ref
+            else:
+                spec = textvars.spec_at(tx, t, TEXT_FIELDS, fps)
+            data = mesh.text_mesh(spec, H, depth, bevel)
+        else:                                                       # (an asset's sizes are canvas px, as its picture's)
+            q = assets.at(c["asset"], t)
+            kind = mesh3d.primitive(c)
+            if kind:
+                rgba = assets.to_rgba(q.get("color"))
+                data = mesh.primitive_mesh(kind, q["w"], q["h"], depth, bevel, rgba)
+                opacity *= rgba[3]
+            else:
+                data = mesh.shape_mesh(q, depth, bevel)
+        if not len(data) or opacity <= 0:
             return None
         return mesh3d.Part(data, tf, t, W, H, grown, bool((c.get("solid") or {}).get("advanced")),
                            min(1.0, max(0.0, mesh3d.setting(c, "metallic", t))), min(1.0, max(0.0, mesh3d.setting(c, "roughness", t))),

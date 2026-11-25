@@ -980,7 +980,7 @@ GROUP_FIELDS = {
     "clip": ("volume", "blend"),
     "camera": ("fov", "x", "y", "z", "tx", "ty", "tz", "aperture", "focus"),                   # 攝影機 of a group or compound (camera.py)
     "light": ("power",),                                                                       # 燈光 objects (lights.py)
-    "solid": ("depth", "bevel", "metallic", "roughness"),                                      # 立體: a text of a scene made solid (mesh3d.py)
+    "solid": ("depth", "bevel", "metallic", "roughness"),                                      # 立體: a text, shape or basic solid of a scene (mesh3d.py)
 }
 # how a picture mixes with what is under it (render.BLEND_OPS draws them); a group's can also be
 # pass_through (穿透, as in Photoshop: its clips mix with what is under the group themselves)
@@ -1087,8 +1087,9 @@ def _holder(c, group):
             raise EditError("只有燈光物件有燈光設定")
         return c["light"]
     if group == "solid":
-        if c["type"] != "text":
-            raise EditError("只有文字可以做成立體")
+        from . import mesh3d
+        if not mesh3d.can(c):
+            raise EditError("只有文字、形狀和基礎物件可以做成立體")
         return c.setdefault("solid", {})
     if group == "text":
         if not c.get("text"):
@@ -4287,6 +4288,21 @@ def new_light(level, kind, params, path, at_us, track_id=None):
     c["name"] = lights.KINDS[kind]
     c.setdefault("transform", {}).update(lights.new_transform(kind))
     c["light"] = lights.new_settings(kind)
+    return c
+
+
+def new_primitive(level, kind, params, path, at_us, track_id=None, color="#ffffff"):
+    """基礎物件: a basic solid (mesh.PRIMITIVES) at at_us in the level, a 3D 場景: an 空物體 as wide and high as it, with how deep it is
+    in c["solid"], turned a little so that it is seen to be solid. params, path: the 空物體 it is made of."""
+    from . import assets, library, mesh
+    name, w, h, depth, bevel = mesh.PRIMITIVES[kind]
+    k = params["w"] / 100                              # (the 小 空物體 it is made of is 100 px of a 1080-high canvas)
+    params = assets.normalize(dict(params, w=round(w * k), h=round(h * k), color=assets.to_rgba(color)))
+    c = library.place_item(level, assets.item(params, path), track_id, at_us)
+    c["asset"] = params
+    c["name"] = name
+    c.setdefault("transform", {}).update(rot_x=-20.0, rot_y=30.0 if kind != "sphere" else 0.0)
+    c["solid"] = {"on": True, "prim": kind, "depth": float(depth), "bevel": float(bevel)}
     return c
 
 

@@ -275,6 +275,22 @@ class GpuMatchesCpu(unittest.TestCase):
         self.assertGreater(int(hit.sum()), 300)                                    # (the faces: exactly the picked colour)
         self.assertGreater(float(np.abs(simple - lit)[hit].mean()), 3.0)
 
+    def test_basic_solids_and_shapes_are_solids_in_a_scene(self):
+        from kiasecut import assets, mesh
+        def thing(params, solid, **t):
+            return {"id": "o", "type": "image", "name": "o", "start_us": 0, "duration_us": 2 * S, "source_start_us": 0, "transform": tf(**t),
+                    "media": {"path": "o.png", "width": 100, "height": 100}, "asset": assets.normalize(params), "solid": solid}
+        green = lambda img: int(((img[..., 1] > 90) & (img[..., 0] < 60) & (img[..., 2] < 60)).sum())
+        box = {"family": "empty", "w": 400, "h": 400, "color": "#00ff00"}
+        for kind in mesh.PRIMITIVES:
+            got = self.scene_shot(thing(box, {"on": True, "prim": kind, "depth": 100.0, "bevel": 0.0}))
+            self.assertGreater(green(got), 200, kind)
+        star = {"family": "star", "w": 500, "h": 500, "color": "#00ff00", "points": 5, "inner": 40, "fill": True}
+        flat = green(self.scene_shot(thing(star, {"on": False})))
+        edge = lambda on: green(self.scene_shot(thing(star, {"on": on, "depth": 300.0, "bevel": 0.0}, rot_y=90)))
+        self.assertGreater(flat, 100)
+        self.assertGreater(edge(True), edge(False) + 100)                       # (seen from the side: flat is a line, solid has sides)
+
     def lamp(self, cid, kind, power=100.0, color=(1.0, 1.0, 1.0), **t):
         from kiasecut import lights
         return {"id": cid, "type": "image", "name": cid, "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,

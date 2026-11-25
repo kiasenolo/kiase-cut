@@ -49,6 +49,10 @@ def diagram_image(name, scale=2):
     font.setPixelSize(12)
     p.setFont(font)
     rows_at, sockets = {}, {}
+
+    def colour(row):                                         # (a row may name its socket's colour: wikidata.DIAGRAMS)
+        at = 2 if row[0] == "out" else 3
+        return ne.SOCKET_COLORS[row[at] if len(row) > at else "image"]
     for nid, (kind, ref, title, x, y, rows) in nodes.items():
         for i, r in enumerate(rows):
             sockets[nid, i] = QPointF(x + (NW if r[0] == "out" else 0), y + ne.HEAD + ne.PAD + ne.ROW * (i + .5))
@@ -59,8 +63,8 @@ def diagram_image(name, scale=2):
         path.cubicTo(s + QPointF(dx, 0), e - QPointF(dx, 0), e)
         ne.draw_border(p, path, ne.LINK_W)
         grad = QLinearGradient(s, e)
-        grad.setColorAt(0, QColor(ne.SOCKET_COLORS["image"]))
-        grad.setColorAt(1, QColor(ne.SOCKET_COLORS["image"]))
+        grad.setColorAt(0, QColor(colour(nodes[a][5][o])))
+        grad.setColorAt(1, QColor(colour(nodes[b][5][i])))
         p.setPen(QPen(QBrush(grad), ne.LINK_W))
         p.drawPath(path)
     for nid, (kind, ref, title, x, y, rows) in nodes.items():
@@ -95,7 +99,8 @@ def diagram_image(name, scale=2):
     for nid, (kind, ref, title, x, y, rows) in nodes.items():
         for i, r in enumerate(rows):
             if r[0] != "field":
-                ne.NodeItem._socket(p, sockets[nid, i], ne.SOCKET_COLORS["image"], r[2] if r[0] == "in" else "field")
+                ne.NodeItem._socket(p, sockets[nid, i], colour(r),
+                                   r[2] if r[0] == "in" else "single" if len(r) > 2 else "field")   # (a sound or a number: one value)
     p.end()
     return img
 

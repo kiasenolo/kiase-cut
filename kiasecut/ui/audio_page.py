@@ -109,6 +109,11 @@ def clear_layout(layout):
             clear_layout(item.layout())
 
 
+def _moves(e):
+    """Whether an effect's (or node's) numbers change with the playhead: keyframed, or following global parameters."""
+    return bool(e.get("expr")) or any(curves.is_animated(v) for v in (e.get("params") or {}).values())
+
+
 def effect_menu(parent, chosen):
     """新增效果's menu, by category; chosen(kind)."""
     menu = Menu(parent)
@@ -1339,19 +1344,18 @@ class AudioPage(QWidget):
         self.show_time()
         if img is not None and self.wants_picture():
             self.picture.show_image(img)
-        if not self.nodes.isHidden() and any(curves.is_animated(v) for n in self._graph_params() for v in n.values()):
+        if not self.nodes.isHidden() and self._graph_moves():
             self.nodes.refresh()
         if self.target:
             level = self.level()
-            if self._valid(self.target) and any(curves.is_animated(v) for e in soundedit.chain(level, self.target)
-                                                for v in (e.get("params") or {}).values()):
-                self.chain.refresh()                # (keyframed values follow the playhead)
+            if self._valid(self.target) and any(_moves(e) for e in soundedit.chain(level, self.target)):
+                self.chain.refresh()                # (keyframed and bound values follow the playhead)
 
-    def _graph_params(self):
+    def _graph_moves(self):
         try:
-            return soundnodes.param_dicts(self.nodes.graph())
+            return any(_moves(n) for n in self.nodes.graph()["nodes"].values())
         except (edit.EditError, KeyError):
-            return []
+            return False
 
     def update_meters(self):
         player = getattr(self.win, "player", None)

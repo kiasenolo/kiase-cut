@@ -18,7 +18,7 @@ from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPainterPath, QPain
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPathItem, QGraphicsProxyWidget, QGraphicsScene, QGraphicsView,
                                QHBoxLayout, QInputDialog, QLabel, QPushButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, soundedit, soundfx, soundnodes
+from .. import curves, edit, rack, soundedit, soundfx, soundnodes
 from . import sound_follow
 from . import inplace
 from .menukeys import Menu
@@ -74,6 +74,7 @@ class Row:
     def __init__(self, name, spec, rect):
         self.name, self.spec, self.rect = name, spec, rect
         self.value, self.text, self.mark = 0.0, "", ""
+        self.own = 0.0                      # the node's own number, where value is what it follows (dragged and typed)
 
 
 class NodeItem(QGraphicsItem):
@@ -154,6 +155,7 @@ class NodeItem(QGraphicsItem):
     def show_values(self):
         """Bring the rows and the picture up to the node's values now."""
         node, t = self.node, self.editor.time()
+        names = self.editor.names() if node.get("expr") else None
         for row in self.rows:
             if row.name == "channel":
                 row.text = self.editor.channel_name(node.get("channel"))
@@ -161,13 +163,15 @@ class NodeItem(QGraphicsItem):
                 row.text = str(self.editor.bands.get(self.nid, 1))
             else:
                 held = (node.get("params") or {}).get(row.name, row.spec["default"])
-                row.value = curves.value(held, t)
+                row.value = row.own = curves.value(held, t)
+                if (node.get("expr") or {}).get(row.name):            # (it follows a global parameter: what it sounds as)
+                    row.value = soundfx.followed(node, row.name, float(row.own), t, names)
                 row.text = value_text(row.spec, row.value)
                 row.mark = ("◆ " if edit.key_at(held, t) is not None else "◈ ") if curves.is_animated(held) else ""
                 if (node.get("expr") or {}).get(row.name):            # (it follows a global parameter)
                     row.mark = "= " + row.mark
         if self.visual is not None and not isinstance(self.visual, Spectrum):
-            self.visual.set_values(soundfx.values(node, t))
+            self.visual.set_values(soundfx.values(node, t, names))
         self.update()
 
     def paint(self, p, _option, _widget=None):
@@ -444,17 +448,17 @@ class GraphView(QGraphicsView):
             menu.exec(e.globalPosition().toPoint())
         elif row.spec.get("choices"):
             if row.spec["choices"] == ["關", "開"]:
-                self.editor.write_params(item.nid, {row.name: 0 if row.value > 0.5 else 1})
+                self.editor.write_params(item.nid, {row.name: 0 if row.own > 0.5 else 1})
                 return
             menu = Menu(self)
             for i, label in enumerate(row.spec["choices"]):
                 a = menu.addAction(label, lambda i=i, nid=item.nid, n=row.name: self.editor.write_params(nid, {n: i}))
                 a.setCheckable(True)
-                a.setChecked(i == int(round(row.value)))
+                a.setChecked(i == int(round(row.own)))
             menu.exec(e.globalPosition().toPoint())
         else:
             self.set_selected({item.nid})
-            self.drag = {"mode": "value", "item": item, "row": row, "x": e.position().x(), "value": row.value,
+            self.drag = {"mode": "value", "item": item, "row": row, "x": e.position().x(), "value": row.own,
                          "now": None}
 
     def start_link(self, socket, pos):
@@ -588,7 +592,8 @@ class GraphView(QGraphicsView):
             fine = 0.1 if e.modifiers() & Qt.ShiftModifier else 1.0
             value = at_fraction(row.spec, fraction(row.spec, d["value"]) + dx / 300.0 * fine)
             d["now"] = value
-            row.value, row.text = value, value_text(row.spec, value)
+            row.value = row.own = value
+            row.text = value_text(row.spec, value)
             d["item"].update()
             self.editor.live_params(d["item"].nid, {row.name: value})
         elif mode in ("cut", "bend"):
@@ -891,6 +896,10 @@ class SoundNodeEditor(QWidget):
         return {f"{self.eid}/{nid}": item.visual for nid, item in self.view.nodes.items()
                 if getattr(item, "visual", None) is not None}
 
+    def names(self):
+        """What the global parameters read at the playhead."""
+        return rack.values(self.page.win.view(), self.page.level_time())
+
     # -- edits ---------------------------------------------------------------------------------------------
     def edit(self, label, fn, *args, merge=None):
         self.view.drag = None
@@ -918,7 +927,7 @@ class SoundNodeEditor(QWidget):
     def type_value(self, nid, row):
         spec = row.spec
         value, ok = QInputDialog.getDouble(self, spec["label"], f"{spec['label']}（{spec['unit']}）" if spec["unit"]
-                                           else spec["label"], row.value, spec["min"], spec["max"], 2)
+                                           else spec["label"], row.own, spec["min"], spec["max"], 2)
         if ok:
             self.write_params(nid, {row.name: value})
 

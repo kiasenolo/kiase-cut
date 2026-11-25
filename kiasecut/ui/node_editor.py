@@ -287,10 +287,12 @@ class NodeItem(QGraphicsItem):
                 else:
                     for _part, sock, label in ng.ASSET_PAINTS:
                         add("image", label, sock)
-                opened = self.editor.panel_opened(self.nid, "位置", True)
-                add("panel", "位置", panel=opened)
+                places = ng.node_place_params(node)                    # (頻譜資料: none)
+                opened = bool(places) and self.editor.panel_opened(self.nid, "位置", True)
+                if places:
+                    add("panel", "位置", panel=opened)
                 if opened:
-                    for p in ng.node_place_params(node):
+                    for p in places:
                         add("param", p.label, socket(p), p)
             paired = set(d.input_param.values())
             for p in (q for q in d.params if q.panel is None and shown(q.name) and q.name not in paired):

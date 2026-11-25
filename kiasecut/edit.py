@@ -2691,7 +2691,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.FILTER, "ref": node["ref"]}
     elif node["type"] == nodegraph.SOURCE:
         if node.get("kind") not in nodegraph.SOURCE_KINDS:
-            raise EditError("來源節點要是圖片、影片、複合片段、軌道、形狀、文字、波形或頻譜")
+            raise EditError("來源節點要是圖片、影片、複合片段、軌道、形狀、文字、波形、頻譜或頻譜資料")
         shape = node.get("shape")
         preset = node.get("preset")                      # (a text node: looks to start with)
         asset = node.get("asset")                        # {"key": a shape preset of assets.py, "colors": (c1, c2)}
@@ -3462,6 +3462,9 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
         return e
     if kind == nodegraph.VECTOR and e["filter"] == fx.GRAPH:      # a vector node: its outlines drawn over the whole clip (nothing to place)
         sources[param] = {"kind": nodegraph.VECTOR, "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
+        return e
+    if kind == nodegraph.SPECTRUM_DATA and e["filter"] == fx.GRAPH:       # 頻譜資料: over the whole clip (nothing to place)
+        sources[param] = {"kind": kind, "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
         return e
     if kind in nodegraph.SOUND_PICTURES and e["filter"] == fx.GRAPH:      # 波形 / 頻譜: drawn of a sound, placed as a shape is
         old = sources.get(param) or {}

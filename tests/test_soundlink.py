@@ -325,7 +325,7 @@ class PictureTests(Graphs):
     """波形 and 頻譜: source nodes drawn of the sound wired into them."""
 
     def pictures(self):
-        return [self.add({"type": ng.SOURCE, "kind": k}) for k in ng.SOUND_PICTURES]
+        return [self.add({"type": ng.SOURCE, "kind": k}) for k in ("waveform", "spectrum")]
 
     def test_a_new_one_has_a_place_and_its_fields(self):
         wave, spec = self.pictures()
@@ -359,6 +359,15 @@ class PictureTests(Graphs):
         self.assertIsNone(soundmeter.picture_spec(self.g, self.e["sources"], wave))      # (nothing chosen)
         edit.set_graph_sound(self.p, "pic", self.e["id"], self.src, "tl1", "t1")
         self.assertEqual(soundmeter.picture_spec(self.g, self.e["sources"], wave), {"level": "tl1", "channel": "t1"})
+
+    def test_the_spectrum_data_has_no_place_and_only_what_says_the_levels(self):
+        nid = self.add({"type": ng.SOURCE, "kind": ng.SPECTRUM_DATA})
+        names = [s for s, _label in ng.sockets(self.g["nodes"][nid])]
+        self.assertEqual(names, [ng.SOUND_SOCKET] + [ng.PARAM + n for n in
+                                                     ("f_lo", "f_hi", "log", "floor_db", "top_db", "attack", "decay")])
+        self.assertEqual(ng.node_place_params(self.g["nodes"][nid]), [])
+        self.assertEqual((self.e["sources"][nid]["w"], self.e["sources"][nid]["h"]), (1.0, 1.0))
+        self.assertEqual(ng.title(self.g["nodes"][nid]), "頻譜資料")
 
     def test_a_picture_of_a_sound_is_not_a_still(self):
         wave, _spec = self.pictures()
@@ -454,6 +463,65 @@ class PictureDrawTests(Sounds):
         if not isinstance(r, glrender.GLRenderer):
             self.skipTest("no OpenGL")
         self.draws(r)
+
+    def row(self, e, pic, level_s):
+        """The grey 0 - 1 of each column of what 頻譜資料 node pic gives at that time of the level."""
+        from kiasecut import soundpictures
+        values = ng.soundpic_of(e["graph"]["nodes"][pic], pic, e["params"], 0)
+        sound, name = soundmeter.picture_sound((e["id"], pic), soundmeter.picture_spec(e["graph"], e["sources"], pic))
+        img = soundpictures.paint("spectrumdata", values, sound, level_s * US, 0, 0, 1.0, name)
+        self.assertEqual((img.width(), img.height()), (soundpictures.COLUMNS, 1))
+        return np.array([img.pixelColor(x, 0).red() / 255 for x in range(img.width())])
+
+    def check_data(self, renderer):
+        """Shown as it is: every row of the frame is the spectrum's levels, low to high."""
+        root, e, pic = self.root("spectrumdata", start=1.0, decay=0.0)
+        soundmeter.require(root, self.cache)
+        for s, loud in ((0.2, False), (0.6, True)):
+            img = renderer.render(root, round((1.0 + s) * root["fps"]), 160, 90)
+            self.assertEqual(renderer.errors, [])
+            want = self.row(e, pic, 1.0 + s)
+            at = np.interp((np.arange(160) + 0.5) / 160 * len(want) - 0.5, np.arange(len(want)), want) * 255
+            for y in (0, 45, 89):
+                got = np.array([img.pixelColor(x, y).red() for x in range(160)])
+                self.assertLess(float(np.abs(got - at).max()), 4.0, (s, y))
+            self.assertEqual(want.max() > 0.5, loud)
+        self.assertGreater(want[:300].max(), want[700:].max() + 0.3)      # (the 100 Hz kick is on the left)
+
+    def check_data_read(self, renderer):
+        """Read by another node as a number: the brightness is the number (曝光: x2 for 1)."""
+        root, e, pic = self.root("spectrumdata", decay=0.0)
+        grey = os.path.join(self.tmp.name, "grey60.png")
+        img = QImage(160, 90, QImage.Format_RGB32)
+        img.fill(QColor(60, 60, 60))
+        img.save(grey)
+        root["tracks"][0]["clips"][0]["media"] = {"path": grey, "width": 160, "height": 90}
+        g = e["graph"]
+        ex = edit.add_graph_node(root, "pic", e["id"], {"type": ng.FILTER, "ref": "builtin:nodes/exposure"})
+        ng.connect(g, "input", ex, "src")
+        ng.connect(g, ex, "output", "src")
+        ng.connect(g, pic, ex, ng.PARAM + "exposure")
+        soundmeter.require(root, self.cache)
+        out = renderer.render(root, round(0.6 * root["fps"]), 160, 90)
+        self.assertEqual(renderer.errors, [])
+        want = self.row(e, pic, 0.6)
+        for x in (5, 20, 30, 80, 155):
+            level = float(np.interp((x + 0.5) / 160 * len(want) - 0.5, np.arange(len(want)), want))
+            self.assertAlmostEqual(out.pixelColor(x, 45).red(), min(255, 60 * 2 ** level), delta=3, msg=(x, level))
+
+    def test_the_cpu_renderer_gives_the_spectrum_data(self):
+        r = render.Renderer(lambda *a: None)
+        if r.engine() is None:
+            self.skipTest("no OpenGL")
+        self.check_data(r)
+        self.check_data_read(r)
+
+    def test_the_gpu_renderer_gives_the_spectrum_data(self):
+        r = glrender.make(lambda *a: None)
+        if not isinstance(r, glrender.GLRenderer):
+            self.skipTest("no OpenGL")
+        self.check_data(r)
+        self.check_data_read(r)
 
     def test_a_missing_source_draws_silence_and_stops_an_export(self):
         root, _e, _pic = self.root("waveform", channel="gone")

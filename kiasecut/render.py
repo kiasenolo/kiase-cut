@@ -204,7 +204,7 @@ class Renderer:
         return pic, placed
 
     def sound_source(self, e, nid, src, t, disp, unit, level_us):
-        """(picture, the source to place it by) of a node effect's 波形 / 頻譜 node: its sound round time level_us of the
+        """(picture, the source to place it by) of a node effect's 波形 / 頻譜 / 頻譜資料 node: its sound round time level_us of the
         clip's level, drawn at `unit` render px per canvas px in its frame."""
         node = e["graph"]["nodes"][nid]
         bound = nodegraph.binds(e["graph"])

@@ -7,7 +7,7 @@ A filter node's parameters are in the effect's own e["params"] as "<node id>.<pa
 keyframed, edited and copied as an ordinary effect's are).
 
 A third kind of link carries a sound: from a 聲音來源 node ("soundsrc") to the "sound" socket of an analysis node
-("soundlevel", or a source node of kind "waveform" / "spectrum", whose picture soundpictures.py draws of it),
+("soundlevel", or a source node of kind "waveform" / "spectrum" / "spectrumdata", whose picture soundpictures.py draws of it),
 through reroutes if need be. A 聲音來源 node's "pick" socket takes an effect parameter of type
 "sound" ("<level id>/<channel id>", sound_value) instead of its own choice. Nothing is drawn along it: the sound is measured beforehand
 (soundmeter.py), and while a frame is worked out a 電平 → 數值 node is a 數值 node holding that moment's number.
@@ -40,7 +40,7 @@ SOUND_SOURCE = "soundsrc"                                   # 聲音來源: a tr
 SOUND_LEVEL = "soundlevel"                                  # 電平 → 數值: how loud a box of a sound's spectrum is (node["meter"], soundmeter.py), a number
 SOUND_SOCKET = "sound"                                      # the input an analysis node hears at: only a sound goes in (straight or through reroutes)
 SOUND_PICK = "pick"                                         # the input of a 聲音來源 node: an effect parameter of type "sound", so that every clip chooses its own
-SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text", "vector", "waveform", "spectrum")
+SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text", "vector", "waveform", "spectrum", "spectrumdata")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
 PICTURE = "builtin:nodes/picture"
@@ -365,8 +365,9 @@ def gives_vector(node, source=None):
     return False
 
 
-# -- sound pictures: 波形 and 頻譜, source nodes drawn of the sound wired into them (soundpictures.py) -------------------------------
-SOUND_PICTURES = ("waveform", "spectrum")
+# -- sound pictures: 波形, 頻譜 and 頻譜資料, source nodes drawn of the sound wired into them (soundpictures.py) ---------------------
+SPECTRUM_DATA = "spectrumdata"           # the spectrum as numbers: over the whole clip, no place of its own
+SOUND_PICTURES = ("waveform", "spectrum", SPECTRUM_DATA)
 # (name, type, label, default, lo, hi, (the style that uses it, None: both))
 SOUND_PICTURE_FIELDS = {
     "waveform": (("style", "menu", "樣式", ("線", "填滿"), None, None, None),
@@ -388,7 +389,10 @@ SOUND_PICTURE_FIELDS = {
                  ("decay", "float", "釋放 秒", 0.3, 0.0, 3.0, None),
                  ("smooth", "float", "平滑", 0.4, 0.0, 1.0, None)),
 }
-SOUND_PICTURE_NAMES = {"waveform": "波形", "spectrum": "頻譜"}
+# (頻譜資料: what of 頻譜 says which level a frequency has, with the same defaults)
+SOUND_PICTURE_FIELDS[SPECTRUM_DATA] = tuple(row for row in SOUND_PICTURE_FIELDS["spectrum"]
+                                            if row[0] in ("f_lo", "f_hi", "log", "floor_db", "top_db", "attack", "decay"))
+SOUND_PICTURE_NAMES = {"waveform": "波形", "spectrum": "頻譜", SPECTRUM_DATA: "頻譜資料"}
 _soundpic_defs = {}
 
 
@@ -426,14 +430,14 @@ def soundpic_def(node):
     return _soundpic_defs[kind]
 
 
-def soundpic_place_params():
-    """Where a sound picture sits: its frame, as a shape's (no 寬高比: it is drawn to fill the frame)."""
-    return [q for q in place_params() if q.name != "fit"]
+def soundpic_place_params(node):
+    """Where a sound picture sits: its frame, as a shape's (no 寬高比: it is drawn to fill the frame). 頻譜資料 has none."""
+    return [] if node["kind"] == SPECTRUM_DATA else [q for q in place_params() if q.name != "fit"]
 
 
 def node_place_params(node):
     """The Params of where a drawn source node (a built-in shape, a text, 波形, 頻譜) sits."""
-    return text_place_params() if is_text(node) else soundpic_place_params() if is_soundpic(node) else place_params()
+    return text_place_params() if is_text(node) else soundpic_place_params(node) if is_soundpic(node) else place_params()
 
 
 def soundpic_of(node, nid, params, t, bound=None):
@@ -731,7 +735,7 @@ def sockets(node):
         return ([(sock, f"矢量 {i + 1}") for i, sock in enumerate(vecop_sockets(node))] +
                 [(PARAM + q.name, q.label) for q in vecop_def(node).params if has_socket(q)])
     if is_soundpic(node):                                # (the sound it draws, then every value)
-        return [(SOUND_SOCKET, "聲音")] + [(PARAM + q.name, q.label) for q in soundpic_def(node).params + soundpic_place_params() if has_socket(q)]
+        return [(SOUND_SOCKET, "聲音")] + [(PARAM + q.name, q.label) for q in soundpic_def(node).params + soundpic_place_params(node) if has_socket(q)]
     if is_text(node):                                    # (a text: its words from a string node, then every value)
         return [(TEXT_SOCKET, "文字"), (FONT_SOCKET, "字體")] + [(PARAM + q.name, q.label) for q in text_def(node).params + text_place_params() if has_socket(q)]
     if node["type"] != FILTER:
@@ -1122,7 +1126,7 @@ def param_of(graph, nid, socket):
     if is_text(node):
         return next((p for p in text_def(node).params + text_place_params() if p.name == socket[len(PARAM):]), None)
     if is_soundpic(node):
-        return next((p for p in soundpic_def(node).params + soundpic_place_params() if p.name == socket[len(PARAM):]), None)
+        return next((p for p in soundpic_def(node).params + soundpic_place_params(node) if p.name == socket[len(PARAM):]), None)
     if is_vecop(node):
         return next((p for p in vecop_def(node).params if p.name == socket[len(PARAM):]), None)
     if node["type"] != FILTER:

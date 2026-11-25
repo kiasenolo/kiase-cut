@@ -1,4 +1,4 @@
-"""The pictures a node effect's 波形 and 頻譜 nodes draw of a sound: what soundmeter.py measured (a channel's tap: mono,
+"""The pictures a node effect's 波形, 頻譜 and 頻譜資料 nodes draw of a sound: what soundmeter.py measured (a channel's tap: mono,
 from the start of its level), round the moment drawn. The levels and the shapes are the Audio Visualizer's (viz.py), so
 the two look alike; as there, nothing is kept between frames but caches - the same moment always looks the same,
 wherever the playhead jumped from.
@@ -12,6 +12,7 @@ from . import viz
 
 US = viz.US
 MAX_BARS, MAX_POINTS = 512, 240
+COLUMNS = 1024               # of 頻譜資料: the same whatever size it is rendered at, so a preview reads what the export does
 
 
 def window(sound, level_us, n):
@@ -102,7 +103,7 @@ def levels(values, count, sound, level_us, memo):
                                        values["log"], floor, top)
         return memo((tt, key), make)
     v = viz.follow(raw_at, level_us, values["attack"], values["decay"])
-    return np.clip(viz.smooth_across(v, values["smooth"]), 0.0, 1.0)
+    return np.clip(viz.smooth_across(v, values.get("smooth", 0.0)), 0.0, 1.0)
 
 
 def _spectrum(p, values, sound, level_us, w, h, unit, memo):
@@ -136,15 +137,20 @@ _raw = {}                                # (what the sound is, moment, settings)
 KEPT = 4000
 
 
+def data(values, sound, level_us, memo):
+    """頻譜資料: one row, COLUMNS wide, opaque grey: left f_lo, right f_hi, each column as bright (0 - 255) as a 頻譜 bar
+    there would be tall."""
+    row = np.rint(levels(values, COLUMNS, sound, level_us, memo) * 255).astype(np.uint8)
+    argb = np.empty((1, COLUMNS), np.uint32)
+    argb[0] = 0xFF000000 | row.astype(np.uint32) * 0x010101
+    return QImage(argb.data, COLUMNS, 1, COLUMNS * 4, QImage.Format_ARGB32_Premultiplied).copy()
+
+
 def paint(kind, values, sound, level_us, w, h, unit, name=None):
     """The picture (w x h, premultiplied) a "waveform" or "spectrum" node with `values` (nodegraph.soundpic_of) gives
     at time level_us of the level its clip is on. sound: the tap it hears (None: silence); name: something that says
-    which sound that is, to keep what is worked out of it (None: nothing is kept)."""
-    img = QImage(max(1, int(w)), max(1, int(h)), QImage.Format_ARGB32_Premultiplied)
-    img.fill(QColor(0, 0, 0, 0))
-    p = QPainter(img)
-    p.setRenderHints(QPainter.Antialiasing)
-
+    which sound that is, to keep what is worked out of it (None: nothing is kept). "spectrumdata" has a size of its own
+    (data()): w, h and unit are not read."""
     def memo(key, make):
         if name is None:
             return make()
@@ -154,6 +160,13 @@ def paint(kind, values, sound, level_us, w, h, unit, name=None):
                 _raw.clear()
             got = _raw[name, key] = make()
         return got
+
+    if kind == "spectrumdata":
+        return data(values, sound, level_us, memo)
+    img = QImage(max(1, int(w)), max(1, int(h)), QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor(0, 0, 0, 0))
+    p = QPainter(img)
+    p.setRenderHints(QPainter.Antialiasing)
 
     if kind == "waveform":
         _waveform(p, values, sound, level_us, img.width(), img.height(), unit)

@@ -88,7 +88,8 @@ UTILITIES = [
 ]
 
 SOUND = [node("聲音來源", type=ng.SOUND_SOURCE), node("電平 → 數值", type=ng.SOUND_LEVEL),
-         node("波形", type=ng.SOURCE, kind="waveform"), node("頻譜", type=ng.SOURCE, kind="spectrum")]       # (KiaseCut's own: nodegraph.py's sound links)
+         node("波形", type=ng.SOURCE, kind="waveform"), node("頻譜", type=ng.SOURCE, kind="spectrum"),
+         node("頻譜資料", type=ng.SOURCE, kind=ng.SPECTRUM_DATA)]       # (KiaseCut's own: nodegraph.py's sound links)
 
 LAYOUT = [node("繞線點", type=ng.REROUTE), node("框架／註解", type=ng.FRAME)]
 

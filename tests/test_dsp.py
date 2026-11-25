@@ -1,4 +1,5 @@
 """The sound effects' C library: it builds, loads and the basic effects do what they say."""
+import os
 import unittest
 
 import numpy as np
@@ -342,6 +343,14 @@ class ColourTests(unittest.TestCase):
         b = self.made("tape", noise=100.0).process(silence, pos=1000)
         np.testing.assert_array_equal(a, b)
         self.assertGreater(float(np.abs(a).max()), 0.001)
+
+
+class ReadyMadeTests(unittest.TestCase):
+    def test_the_windows_library_is_from_these_sources(self):
+        """(After changing dsp/src: python tools/build_dsp.py windows.)"""
+        path = os.path.join(dsp.HERE, "bin", "windows-x86_64", "kcdsp.dll")
+        self.assertTrue(os.path.exists(path))
+        self.assertEqual(dsp._read(path + ".stamp"), dsp._stamp())
 
 
 if __name__ == "__main__":

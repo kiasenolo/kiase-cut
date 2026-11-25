@@ -17,6 +17,18 @@ def no_mlt(binaries):
     return [b for b in binaries if not os.path.basename(b[0]).lower().startswith(("libmlt", "mlt"))]
 
 
+# the sound effects' C library: built here when there is a compiler, else the ready-made one
+# (Windows has one committed: tools/build_dsp.py). Its sources are left out, so it is used as it is.
+sys.path.insert(0, ROOT)
+from kiasecut import dsp  # noqa: E402
+
+dsp_name = "kcdsp" + dsp.SUFFIX
+dsp_lib = os.path.join(ROOT, "kiasecut", "dsp", "bin", dsp.platform_tag(), dsp_name)
+if dsp.compiler():
+    dsp_lib = dsp.compile_to(os.path.join(ROOT, ".cache", "dsp", dsp_name))
+elif dsp._read(dsp_lib + ".stamp") != dsp._stamp():
+    raise SystemExit("No C compiler, and no up-to-date sound library for " + dsp.platform_tag())
+
 app = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[ROOT],
                hiddenimports=["kiasecut.fxthumbs", "kiasecut.wikibuild"],
                datas=[(os.path.join(ROOT, "kiasecut", "filters"), "kiasecut/filters"),
@@ -25,7 +37,8 @@ app = Analysis([os.path.join(SPECPATH, "entry.py")], pathex=[ROOT],
                       (os.path.join(ROOT, "LICENSE"), "."),
                       (os.path.join(ROOT, "THIRD-PARTY-NOTICES.md"), "."),
                       (os.path.join(ROOT, "LICENSES"), "LICENSES")],
-               excludes=["tkinter", "kiasecut.engine"])
+               binaries=[(dsp_lib, "kiasecut/dsp/bin/" + dsp.platform_tag())],
+              excludes=["tkinter", "kiasecut.engine"])
 app.binaries = no_mlt(app.binaries)
 app_exe = EXE(PYZ(app.pure), app.scripts, [], exclude_binaries=True, name="kiasecut",
               console=not WIN)

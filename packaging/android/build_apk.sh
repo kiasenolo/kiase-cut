@@ -14,6 +14,11 @@ export ANDROID_SDK_ROOT=/mnt/kstore/android-sdk ANDROID_HOME=/mnt/kstore/android
 # what the spec points at inside the build folder: Qt's Java side (jars out of the PySide6 wheel) and the ffmpeg programs
 [ -f "$BUILD/deployment/jar/PySide6/jar/Qt6AndroidBindings.jar" ] || unzip -o -q /mnt/kstore/wheels/pyside6-*.whl 'PySide6/jar/*' -d "$BUILD/deployment/jar"
 mkdir -p "$BUILD/libs/arm64-v8a" && cp /mnt/kstore/ffmpeg-build/out/arm64-v8a/*.so "$BUILD/libs/arm64-v8a/"
+# the sound effects' C library, with the NDK's compiler (loaded as "libkcdsp.so": kiasecut/dsp)
+NDK=$(sed -n 's/^android.ndk_path = //p' "$HERE/buildozer.spec")
+CLANG=$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android28-clang)
+"$CLANG" -std=c11 -O3 -fno-math-errno -shared -fPIC -fvisibility=hidden -Wl,-z,max-page-size=16384 \
+    -o "$BUILD/libs/arm64-v8a/libkcdsp.so" "$HERE"/../../kiasecut/dsp/src/*.c -lm
 rm -rf "$BUILD/javasrc" && cp -r "$HERE/java" "$BUILD/javasrc"          # (android.add_src: the Java side, SystemBars)
 cd "$BUILD"
 buildozer -v android debug < /dev/null

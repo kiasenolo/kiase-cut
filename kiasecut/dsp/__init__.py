@@ -67,20 +67,21 @@ def compiler():
     return None
 
 
-def compile_to(out, cc=None):
-    """Compile src/ into the shared library out."""
+def compile_to(out, cc=None, windows=None, extra=()):
+    """Compile src/ into the shared library out. windows: whether it is for Windows (default:
+    whether this is), for a cross compiler; extra: more arguments for the compiler."""
+    windows = sys.platform == "win32" if windows is None else windows
     cc = cc or compiler()
     if not cc:
         raise DspError("找不到 C 編譯器（gcc 或 clang）")
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(suffix=SUFFIX, dir=os.path.dirname(os.path.abspath(out)))
+    fd, tmp = tempfile.mkstemp(suffix=".dll" if windows else SUFFIX, dir=os.path.dirname(os.path.abspath(out)))
     os.close(fd)
     # (no -ffast-math: linking with it makes the whole process, numpy too, flush denormals)
     cmd = [cc, "-std=c11", "-O3", "-fno-math-errno", "-shared", "-fvisibility=hidden", "-Wall"]
-    if sys.platform != "win32":
-        cmd.append("-fPIC")
-    cmd += ["-o", tmp, *sources()]
-    if sys.platform != "win32":
+    cmd += ["-static", "-s"] if windows else ["-fPIC"]      # (a DLL that needs none of the compiler's own)
+    cmd += [*extra, "-o", tmp, *sources()]
+    if not windows:
         cmd.append("-lm")
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -102,6 +103,8 @@ def find_library():
     given = os.environ.get("KIASECUT_DSP")
     if given:
         return given
+    if hasattr(sys, "getandroidapilevel") and not sources():
+        return "libkcdsp.so"                        # (in the APK's own libraries: packaging/android)
     ready = os.path.join(HERE, "bin", platform_tag(), "kcdsp" + SUFFIX)
     from_source = bool(sources())
     if os.path.exists(ready) and (not from_source or _read(ready + ".stamp") == _stamp()):

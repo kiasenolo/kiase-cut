@@ -61,6 +61,22 @@ class Models(unittest.TestCase):
         self.assertEqual(tuple(a["data"][0, 6:9]), (1.0, 0.0, 0.0))
         self.assertEqual((tuple(b["data"][0, 6:9]), b["metallic"], b["roughness"]), ((0.0, 0.0, 1.0), 1.0, 0.2))
 
+    def test_the_colours_of_an_mtl_blender_wrote_are_linear(self):
+        faces = "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl a\nf 1 2 3\n"
+        for head, want in (("# Blender 5.2.1 MTL File: 'x.blend'\n", 0.2 ** (1 / 2.2)), ("", 0.2)):
+            self.write("m.mtl", head + "newmtl a\nKd 0.2 0.2 0.2\n")
+            (piece,) = models.read(self.write("a.obj", faces))
+            self.assertAlmostEqual(float(piece["data"][0, 6]), want, 5)
+
+    def test_a_textured_material_without_a_colour_shows_its_texture_as_it_is(self):
+        from PySide6.QtGui import QImage
+        pic = QImage(4, 4, QImage.Format_RGB32)
+        pic.fill(0xff808080)
+        pic.save(os.path.join(self.d, "p.png"))
+        self.write("m.mtl", "newmtl a\nmap_Kd p.png\nnewmtl b\nNs 10\n")
+        a, b = models.read(self.write("a.obj", "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nusemtl a\nf 1 2 3\nusemtl b\nf 1 2 3\n"))
+        self.assertEqual((float(a["data"][0, 6]), round(float(b["data"][0, 6]), 3)), (1.0, 0.8))
+
     def test_gltf_nodes_move_their_meshes_and_those_of_their_children(self):
         nodes = [{"translation": [10, 0, 0], "scale": [2, 2, 2], "children": [1]},
                  {"mesh": 0, "rotation": [0, 0, 0.70710678, 0.70710678]}]                      # (a quarter turn about z)

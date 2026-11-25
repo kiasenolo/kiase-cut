@@ -66,7 +66,7 @@ def _made_normals(positions, ids):
 
 # -- OBJ -------------------------------------------------------------------------------------------------------------------------
 def _read_mtl(path):
-    out, cur = {}, None
+    out, cur, linear = {}, None, False
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.read().splitlines()
@@ -74,15 +74,19 @@ def _read_mtl(path):
         return out
     for line in lines:
         parts = line.split()
+        if parts and parts[0].startswith("#"):
+            linear = linear or "Blender" in parts            # (Blender writes its colours as they are inside it: linear)
         if not parts or parts[0].startswith("#"):
             continue
         key, rest = parts[0].lower(), parts[1:]
         if key == "newmtl":
-            cur = out[" ".join(rest)] = {"color": [0.8, 0.8, 0.8], "alpha": 1.0, "texture": None, "metallic": 0.0, "roughness": 0.5}
+            cur = out[" ".join(rest)] = {"color": None, "alpha": 1.0, "texture": None, "metallic": 0.0, "roughness": 0.5}
         elif cur is None or not rest:
             continue
         elif key == "kd" and len(rest) >= 3:
             cur["color"] = [float(x) for x in rest[:3]]
+            if linear:
+                cur["color"] = [float(x) for x in _srgb(np.array(cur["color"]))]
         elif key == "d":
             cur["alpha"] = float(rest[-1])
         elif key == "ns":
@@ -147,7 +151,7 @@ def read_obj(path):
         vi, ti, ni = index[..., 0], index[..., 1], index[..., 2]
         if vi.min() < 0 or vi.max() >= len(points):
             raise ModelError("面用到了不存在的頂點")
-        m = materials.get(name) or {"color": [0.8, 0.8, 0.8], "alpha": 1.0, "texture": None, "metallic": 0.0, "roughness": 0.5}
+        m = materials.get(name) or {"color": None, "alpha": 1.0, "texture": None, "metallic": 0.0, "roughness": 0.5}
         pos = points[vi]
         if normals and ni.min() >= 0 and ni.max() < len(normals):
             n = _unit(np.array(normals, float)[ni])
@@ -158,7 +162,9 @@ def read_obj(path):
             uv = np.array(uvs, float)[ti]
             uv = np.stack([uv[..., 0], 1.0 - uv[..., 1]], axis=-1)     # (OBJ counts v from the bottom)
         textured = m["texture"] is not None
-        base = np.ones(3) if textured and max(m["color"]) <= 0.0 else np.array(m["color"], float)
+        base = np.array(m["color"] if m["color"] is not None else [0.8, 0.8, 0.8], float)
+        if textured and (m["color"] is None or base.max() <= 0.0):     # (no colour of its own: the texture as it is)
+            base = np.ones(3)
         rgb = np.clip(base * colours[vi], 0.0, 1.0)
         rgba = np.concatenate([rgb, np.full(rgb.shape[:2] + (1,), 1.0)], axis=-1)
         data = np.concatenate([pos, n, rgba, uv], axis=-1).reshape(-1, 12)

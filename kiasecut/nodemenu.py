@@ -87,6 +87,10 @@ UTILITIES = [
     "nodes/split", "nodes/switch", "nodes/index_switch", "nodes/menu_switch",
 ]
 
+SOUND = [node("聲音來源", type=ng.SOUND_SOURCE), node("電平 → 數值", type=ng.SOUND_LEVEL),
+         node("波形", type=ng.SOURCE, kind="waveform"), node("頻譜", type=ng.SOURCE, kind="spectrum"),
+         node("頻譜資料", type=ng.SOURCE, kind=ng.SPECTRUM_DATA)]       # (KiaseCut's own: nodegraph.py's sound links)
+
 LAYOUT = [node("繞線點", type=ng.REROUTE), node("框架／註解", type=ng.FRAME)]
 
 # The root, as Blender's NODE_MT_compositor_node_all_base (Tracking has no node here, the empty menus are left out)
@@ -99,7 +103,7 @@ ROOT = [
     SEP,
     menu("紋理", TEXTURE), menu("變換", TRANSFORM), menu("工具", UTILITIES),
 ]
-AFTER = [menu("佈局", LAYOUT)]            # (after KiaseCut's own: Blender's Group and Layout come last)
+AFTER = [menu("聲音", SOUND), menu("佈局", LAYOUT)]            # (after KiaseCut's own: Blender's Group and Layout come last)
 
 
 # What the add menu's search finds a node by besides its name and its menu: the names Blender and other programs call it by, and what

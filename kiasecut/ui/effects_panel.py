@@ -58,6 +58,22 @@ def step_for(p):
 MIXED = object()                                # the clips' values are not the same
 
 
+def show_sound(box, sounds, value):
+    """Menu box showing the sound `value` (nodegraph.sound_value; MIXED) among `sounds`, [(level id, name,
+    [(channel id, label)])] - filled again only when what it lists changes."""
+    items = [("（還沒選）", "")] + [(f"{name} · {label}", nodegraph.sound_value(kid, cid))
+                                  for kid, name, channels in sounds for cid, label in channels]
+    if value is not MIXED and all(v != value for _t, v in items):
+        items.append(("（已經不在）", value))                 # (a track that was deleted, or another project's)
+    box.blockSignals(True)
+    if [(box.itemText(i), box.itemData(i)) for i in range(box.count())] != items:
+        box.clear()
+        for text, v in items:
+            box.addItem(text, v)
+    box.setCurrentIndex(-1 if value is MIXED else next(i for i, (_t, v) in enumerate(items) if v == value))
+    box.blockSignals(False)
+
+
 def alike(values):
     """The value every clip has (numbers within a hair), else MIXED."""
     def same(a, b):
@@ -160,6 +176,7 @@ class EffectsPanel(QWidget):
         self.source_edit = None                     # (effect id, colour param) whose source the preview places (編輯位置)
         self.source_region = None                   # (effect id, colour param) whose 編輯區域 shows on the timeline
         self.media = {"image": [], "video": [], "compound": [], "track": []}    # [(path / id, name)] sources can show
+        self.sounds = []                            # [(level id, name, [(channel id, label)])] a "sound" parameter can be
         self.shape = None
         self.built = []                             # the effect ids the form was built with
         self.alias = {}                             # those -> the shown clip's effect ids
@@ -459,8 +476,8 @@ class EffectsPanel(QWidget):
         if e["filter"] == fx.GRAPH:                             # a node graph: its picture / video / compound nodes
             for nid in nodegraph.ordered(e["graph"]):
                 node = e["graph"]["nodes"][nid]
-                if node["type"] == nodegraph.SOURCE and node.get("kind") not in (None, "text", "vector") and nid in (e.get("sources") or {}):    # (a text: its fields are in the node editor)
-                    asset = nodegraph.is_asset(node)         # (a built-in shape: its fields are in a panel of their own)
+                if node["type"] == nodegraph.SOURCE and node.get("kind") not in (None, "text", "vector", nodegraph.SPECTRUM_DATA) and nid in (e.get("sources") or {}):    # (a text: its fields are in the node editor)
+                    asset = nodegraph.is_asset(node) or nodegraph.is_soundpic(node)      # (a built-in shape, 波形, 頻譜: its fields are in a panel of their own)
                     sec, sl = self._panel(e["id"], f"{nodegraph.title(node)}的位置（{nid}）" if asset else f"{nodegraph.title(node)}（{nid}）", False)
                     sl.addLayout(self._source_row(e["id"], nid, node["kind"], asset))
                     lay.addWidget(sec)
@@ -645,6 +662,15 @@ class EffectsPanel(QWidget):
             self._link_menu(box, group, p.name)
             row.addWidget(box, 1)
             row.addWidget(self._key_button(group, p.name))
+        elif p.type == "sound":                                 # which sound a node effect's 聲音來源 hears (no keyframes: it is measured beforehand)
+            box = ComboBox()
+            box.setMaxVisibleItems(20)
+            box.setMinimumWidth(60)
+            box.setSizeAdjustPolicy(ComboBox.AdjustToMinimumContentsLengthWithIcon)
+            show_sound(box, self.sounds, "")
+            box.activated.connect(lambda i, g=group, k=p.name, cb=box: (self._queue(g, k, cb.itemData(i)), self._flush()))
+            self.widgets[(group, p.name)] = box
+            row.addWidget(box, 1)
         elif p.type == "string":                                # a node effect's own words
             words = QPlainTextEdit()
             words.setFixedHeight(64)
@@ -780,6 +806,10 @@ class EffectsPanel(QWidget):
         head, sep, eid = x.rpartition(":")
         return head + sep + self.alias.get(eid, eid)
 
+    def set_sounds(self, sounds):
+        """What a node effect's "sound" parameter can be chosen from (shown by the next show_clips)."""
+        self.sounds = list(sounds)
+
     def set_media(self, images, videos, compounds, tracks=()):
         """What a colour source can show: the media library's pictures and videos, the compounds,
         the open level's tracks ([(path, compound id or track id, name)])."""
@@ -792,10 +822,10 @@ class EffectsPanel(QWidget):
         """A colour's or a number's (使用遮罩) source: which picture / video / compound, 編輯位置
         (one clip) and for a video or a compound 編輯區域."""
         row = QHBoxLayout()
-        lab = QLabel("　" + dict((k, n) for n, k in SOURCE_NAMES + (("形狀", "shape"),))[kind])
+        lab = QLabel("　" + dict([(k, n) for n, k in SOURCE_NAMES + (("形狀", "shape"),)] + list(nodegraph.SOUND_PICTURE_NAMES.items()))[kind])
         lab.setMinimumWidth(70)
         row.addWidget(lab)
-        if kind == "shape" and asset:               # (a built-in shape: only where it sits; the rest is its fields)
+        if asset:                                   # (a node that draws itself: only where it sits; the rest is its fields)
             row.addStretch(1)
             self._edit_buttons(row, eid, name, kind)
             return row
@@ -1216,6 +1246,10 @@ class EffectsPanel(QWidget):
                 box.blockSignals(True)
                 box.setCurrentIndex(-1 if v is MIXED else fx.menu_index(p, v))
                 box.blockSignals(False)
+        elif p.type == "sound":
+            box = w.get((group, p.name))
+            if box is not None and not box.view().isVisible():
+                show_sound(box, self.sounds, v if v is MIXED else str(v or ""))
         elif p.type == "string":
             words = w.get((group, p.name))
             if words is not None and not (words.hasFocus() and (group, p.name) in self.pending):

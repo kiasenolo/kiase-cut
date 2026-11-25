@@ -1,4 +1,4 @@
-"""Measures the global parameters that follow a sound (soundmeter.py) behind the editor's back:
+"""Measures what follows a sound (soundmeter.py: global parameters and node effects) behind the editor's back:
 after edits have rested a moment, on a thread of its own. Until a new curve is there the old one
 is read (0 before the first)."""
 import threading
@@ -47,7 +47,8 @@ class MeterWorker(QObject):
         root = self.project_of()
         if root is None:
             return
-        if not soundmeter.sounding(root) and not soundmeter.stale_without(root):
+        if not soundmeter.wanted(root) and not soundmeter.stale_without(root):
+            soundmeter.note({})
             self.problems = {}
             return
         todo = soundmeter.plan(root)
@@ -57,6 +58,7 @@ class MeterWorker(QObject):
                 self.waiting = True
             return
         if not todo.stale():
+            soundmeter.note(todo.problems)
             if todo.problems != self.problems:
                 self.problems = dict(todo.problems)
                 self.changed.emit()

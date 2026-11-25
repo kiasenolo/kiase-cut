@@ -6,6 +6,12 @@ nodes, as in Blender's compositor. The graph is e["graph"]:
 A filter node's parameters are in the effect's own e["params"] as "<node id>.<parameter>" (so they are
 keyframed, edited and copied as an ordinary effect's are).
 
+A third kind of link carries a sound: from a 聲音來源 node ("soundsrc") to the "sound" socket of an analysis node
+("soundlevel", or a source node of kind "waveform" / "spectrum" / "spectrumdata", whose picture soundpictures.py draws of it),
+through reroutes if need be. A 聲音來源 node's "pick" socket takes an effect parameter of type
+"sound" ("<level id>/<channel id>", sound_value) instead of its own choice. Nothing is drawn along it: the sound is measured beforehand
+(soundmeter.py), and while a frame is worked out a 電平 → 數值 node is a 數值 node holding that moment's number.
+
 Node types: "params" (參數輸入, Blender's group input: the effect's own parameters, graph["exposed"], one output
 socket each - a link from one into a parameter socket of a node (any kind of parameter) binds that parameter
 to it; the value is e["params"]["expose.<name>"], shown in the 效果 panel as the effect's own), "input" (the picture the effect was given), "output" (the graph's result; one), "source"
@@ -30,7 +36,11 @@ INPUT, OUTPUT, SOURCE, FILTER, PARAMS, REROUTE, FRAME, GROUP = "input", "output"
 FONT = "font"                                               # 字體: Blender's Font constant - a font file that feeds a text node (never a picture)
 STRING = "string"                                           # 字串: Blender's String constant - words that feed a text node (never a picture)
 VIEWER = "viewer"                                           # 預覽: what the editor's preview shows (never exported)
-SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text", "vector")
+SOUND_SOURCE = "soundsrc"                                   # 聲音來源: a track, bus or Master (e["sources"][id]: {"kind": "sound", "level", "channel"}) - never a picture
+SOUND_LEVEL = "soundlevel"                                  # 電平 → 數值: how loud a box of a sound's spectrum is (node["meter"], soundmeter.py), a number
+SOUND_SOCKET = "sound"                                      # the input an analysis node hears at: only a sound goes in (straight or through reroutes)
+SOUND_PICK = "pick"                                         # the input of a 聲音來源 node: an effect parameter of type "sound", so that every clip chooses its own
+SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text", "vector", "waveform", "spectrum", "spectrumdata")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
 PICTURE = "builtin:nodes/picture"
@@ -219,7 +229,7 @@ def default_params(graph):
     for nid, n in graph["nodes"].items():
         if n["type"] == FILTER:
             out.update({param_key(nid, k): v for k, v in fx.default_params(fx.for_node(n)).items()})
-        elif is_asset(n) or is_text(n) or is_vecop(n):
+        elif is_drawn(n):
             out.update({param_key(nid, k): v for k, v in fx.default_params(node_def(n)).items()})
     return out
 
@@ -353,6 +363,86 @@ def gives_vector(node, source=None):
     if node.get("type") == SOURCE and node.get("kind") == "image":
         return source is None or str(source.get("image", "")).lower().endswith(".svg") or not source.get("image")
     return False
+
+
+# -- sound pictures: 波形, 頻譜 and 頻譜資料, source nodes drawn of the sound wired into them (soundpictures.py) ---------------------
+SPECTRUM_DATA = "spectrumdata"           # the spectrum as numbers: over the whole clip, no place of its own
+SOUND_PICTURES = ("waveform", "spectrum", SPECTRUM_DATA)
+# (name, type, label, default, lo, hi, (the style that uses it, None: both))
+SOUND_PICTURE_FIELDS = {
+    "waveform": (("style", "menu", "樣式", ("線", "填滿"), None, None, None),
+                 ("color", "color", "顏色", [1.0, 1.0, 1.0, 1.0], None, None, None),
+                 ("length_ms", "float", "時間長度 ms", 60.0, 1.0, 2000.0, None),
+                 ("line_w", "float", "線寬 px", 4.0, 0.5, 100.0, "線"),
+                 ("smooth", "float", "平滑", 0.4, 0.0, 1.0, "填滿")),
+    "spectrum": (("style", "menu", "樣式", ("長條", "曲線"), None, None, None),
+                 ("color", "color", "顏色", [1.0, 1.0, 1.0, 1.0], None, None, None),
+                 ("bar_w", "float", "長條寬 px", 12.0, 1.0, 400.0, "長條"),
+                 ("gap", "float", "長條間隔 px", 6.0, 0.0, 400.0, "長條"),
+                 ("line_w", "float", "線寬 px", 4.0, 0.5, 100.0, "曲線"),
+                 ("f_lo", "float", "最低 Hz", 30.0, 20.0, 20000.0, None),
+                 ("f_hi", "float", "最高 Hz", 16000.0, 40.0, 24000.0, None),
+                 ("log", "float", "對數比例", 1.0, 0.0, 1.0, None),
+                 ("floor_db", "float", "最低 dB", -72.0, -120.0, -12.0, None),
+                 ("top_db", "float", "最高 dB", -6.0, -60.0, 6.0, None),
+                 ("attack", "float", "啟動 秒", 0.02, 0.0, 2.0, None),
+                 ("decay", "float", "釋放 秒", 0.3, 0.0, 3.0, None),
+                 ("smooth", "float", "平滑", 0.4, 0.0, 1.0, None)),
+}
+# (頻譜資料: what of 頻譜 says which level a frequency has, with the same defaults)
+SOUND_PICTURE_FIELDS[SPECTRUM_DATA] = tuple(row for row in SOUND_PICTURE_FIELDS["spectrum"]
+                                            if row[0] in ("f_lo", "f_hi", "log", "floor_db", "top_db", "attack", "decay"))
+SOUND_PICTURE_NAMES = {"waveform": "波形", "spectrum": "頻譜", SPECTRUM_DATA: "頻譜資料"}
+_soundpic_defs = {}
+
+
+def is_soundpic(node):
+    return node.get("type") == SOURCE and node.get("kind") in SOUND_PICTURES
+
+
+def is_drawn(node):
+    """Whether node is a source drawn from its own parameters: a built-in shape, a text, a vector or a sound picture node."""
+    return is_asset(node) or is_text(node) or is_vecop(node) or is_soundpic(node)
+
+
+def hears(node):
+    """Whether node takes a sound at its SOUND_SOCKET."""
+    return node.get("type") == SOUND_LEVEL or is_soundpic(node)
+
+
+def soundpic_def(node):
+    """FilterDef standing for 波形 or 頻譜 node `node`."""
+    kind = node["kind"]
+    if kind not in _soundpic_defs:
+        params = []
+        for name, typ, label, default, lo, hi, style in SOUND_PICTURE_FIELDS[kind]:
+            if typ == "menu":
+                q = fx.Param(name, "menu", default[0], label=label, items=list(default))
+            elif typ == "color":
+                q = fx.Param(name, "color", list(default), label=label)
+            else:
+                q = fx.Param(name, "float", float(default), lo, hi, label)
+            if style:
+                q.enable = [("style", False, [style])]
+                q.show = list(q.enable)                  # (a node hides the row, the effect's own panel greys it out)
+            params.append(q)
+        _soundpic_defs[kind] = fx.FilterDef(kind, SOUND_PICTURE_NAMES[kind], "", params, "聲音", "")
+    return _soundpic_defs[kind]
+
+
+def soundpic_place_params(node):
+    """Where a sound picture sits: its frame, as a shape's (no 寬高比: it is drawn to fill the frame). 頻譜資料 has none."""
+    return [] if node["kind"] == SPECTRUM_DATA else [q for q in place_params() if q.name != "fit"]
+
+
+def node_place_params(node):
+    """The Params of where a drawn source node (a built-in shape, a text, 波形, 頻譜) sits."""
+    return text_place_params() if is_text(node) else soundpic_place_params(node) if is_soundpic(node) else place_params()
+
+
+def soundpic_of(node, nid, params, t, bound=None):
+    """{name: value} of 波形 / 頻譜 node nid at clip time t (a menu's by its word)."""
+    return {q.name: curves.value(bound_value(params, bound, nid, q.name, q.default), t) for q in soundpic_def(node).params}
 
 
 # -- text nodes: KiaseCut's text tool as a node (node["kind"] == "text"; its words and font are its source's "content" and
@@ -632,6 +722,10 @@ def sockets(node):
         return [("src", "圖像")]
     if node["type"] == REROUTE:
         return [("src", "")]
+    if node["type"] == SOUND_LEVEL:
+        return [(SOUND_SOCKET, "聲音")]
+    if node["type"] == SOUND_SOURCE:
+        return [(SOUND_PICK, "來源")]
     if node["type"] == GROUP:
         return [(i["name"], i["label"]) for i in node.get("inputs") or []]
     if is_asset(node):                                   # (a built-in shape: pictures to paint its fill and outline with, then every value)
@@ -640,6 +734,8 @@ def sockets(node):
     if is_vecop(node):                                   # (its outlines, then the operation)
         return ([(sock, f"矢量 {i + 1}") for i, sock in enumerate(vecop_sockets(node))] +
                 [(PARAM + q.name, q.label) for q in vecop_def(node).params if has_socket(q)])
+    if is_soundpic(node):                                # (the sound it draws, then every value)
+        return [(SOUND_SOCKET, "聲音")] + [(PARAM + q.name, q.label) for q in soundpic_def(node).params + soundpic_place_params(node) if has_socket(q)]
     if is_text(node):                                    # (a text: its words from a string node, then every value)
         return [(TEXT_SOCKET, "文字"), (FONT_SOCKET, "字體")] + [(PARAM + q.name, q.label) for q in text_def(node).params + text_place_params() if has_socket(q)]
     if node["type"] != FILTER:
@@ -660,6 +756,8 @@ def outputs(node):
         return [(o["name"], o["label"]) for o in node.get("outputs") or []]
     if node["type"] in WORDS:
         return [("", "字串" if node["type"] == STRING else "字體")]
+    if node["type"] in (SOUND_SOURCE, SOUND_LEVEL):
+        return [("", "聲音" if node["type"] == SOUND_SOURCE else "數值")]
     return [("", "圖像")]
 
 
@@ -676,7 +774,7 @@ def title(node):
         return node.get("label") or "群組"
     if is_asset(node) or is_vecop(node):
         return node_def(node).name
-    return {"groupin": "群組輸入", "groupout": "群組輸出", STRING: "字串", FONT: "字體", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀", "text": "文字", "vector": "矢量",
+    return {SOUND_SOURCE: "聲音來源", SOUND_LEVEL: "電平 → 數值", "groupin": "群組輸入", "groupout": "群組輸出", STRING: "字串", FONT: "字體", FRAME: "框架", REROUTE: "繞線", PARAMS: "參數輸入", INPUT: "輸入", OUTPUT: "輸出", VIEWER: "預覽", SOURCE: {"image": "圖片", "video": "影片", "compound": "複合片段", "shape": "形狀", "text": "文字", "vector": "矢量", **SOUND_PICTURE_NAMES,
                                                   "track": "時間線（軌道）"}.get(node.get("kind"), "來源")}[node["type"]]
 
 
@@ -894,7 +992,8 @@ def node_def(node):
     """FilterDef whose parameters node has: a filter's, or a shape made from a built-in one; else None."""
     if node["type"] == FILTER:
         return fx.for_node(node)
-    return asset_def(node) if is_asset(node) else text_def(node) if is_text(node) else vecop_def(node) if is_vecop(node) else None
+    return asset_def(node) if is_asset(node) else text_def(node) if is_text(node) else vecop_def(node) if is_vecop(node) else \
+        soundpic_def(node) if is_soundpic(node) else None
 
 
 def programs_needed(proj):
@@ -909,6 +1008,8 @@ def programs_needed(proj):
                 continue
             params = e.get("params") or {}
             for nid, node in flatten(g)["nodes"].items():
+                if node["type"] == SOUND_LEVEL:                # (drawn as a 數值 node)
+                    node = {"type": FILTER, "ref": CONSTANTS["float"]}
                 d = node_def(node) if node["type"] == FILTER else None
                 if d is None or d.error:
                     continue
@@ -1024,6 +1125,8 @@ def param_of(graph, nid, socket):
         return next((p for p in asset_def(node).params + place_params() if p.name == socket[len(PARAM):]), None)
     if is_text(node):
         return next((p for p in text_def(node).params + text_place_params() if p.name == socket[len(PARAM):]), None)
+    if is_soundpic(node):
+        return next((p for p in soundpic_def(node).params + soundpic_place_params(node) if p.name == socket[len(PARAM):]), None)
     if is_vecop(node):
         return next((p for p in vecop_def(node).params if p.name == socket[len(PARAM):]), None)
     if node["type"] != FILTER:
@@ -1039,10 +1142,12 @@ def takes_picture(graph, nid, socket):
         return False
     if socket in WORDS.values():
         return is_text(node)
+    if node["type"] == SOUND_SOURCE or (socket == SOUND_SOCKET and hears(node)):
+        return False
     p = param_of(graph, nid, socket)
     if p is None:
         return True
-    if is_asset(node) or is_text(node) or is_vecop(node):    # (a shape's or a text's values, and where it sits, are read once)
+    if is_drawn(node):                                       # (a shape's or a text's values, and where it sits, are read once)
         return p.type in fx.SOURCE_TYPES + CONTROL_TYPES + (VECTOR_TYPES if is_vecop(node) else ())
     return p.type in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES
 
@@ -1052,9 +1157,14 @@ CONSTANTS = {"float": "builtin:nodes/value", "int": "builtin:nodes/integer", "bo
 
 
 def socket_kind(graph, nid, socket):
-    """What input `socket` of node nid takes: "float", "int", "bool", "color", "vector" or "menu" (a picture: "color")."""
+    """What input `socket` of node nid takes: "float", "int", "bool", "color", "vector" or "menu" (a picture: "color"),
+    or "sound"."""
     node = graph["nodes"].get(nid)
-    if node is not None and (is_asset(node) or is_text(node) or is_vecop(node)):          # (a shape's or a text's field: its own type)
+    if node is not None and socket == SOUND_SOCKET and hears(node):
+        return "sound"
+    if node is not None and node["type"] == SOUND_SOURCE:
+        return "soundpick"
+    if node is not None and is_drawn(node):                  # (a shape's or a text's field: its own type)
         p = param_of(graph, nid, socket)
         return "color" if p is None else "vector" if p.type in ("vec2", "vec3") else p.type if p.type in ("float", "int", "bool", "menu") else "color"
     if node is None or node["type"] != FILTER:
@@ -1081,7 +1191,7 @@ def output_shape(graph, nid, out=""):
     if node is None:
         return "field"
     t = node["type"]
-    if t in WORDS or t == PARAMS:
+    if t in WORDS or t in (PARAMS, SOUND_SOURCE, SOUND_LEVEL):
         return "single"
     if t == FILTER and node.get("ref", "").rpartition("/")[2] in SINGLE_NODES and node.get("ref", "").startswith("builtin:nodes/"):
         return "single"
@@ -1093,7 +1203,7 @@ def input_shape(graph, nid, socket):
     picture read at every pixel) or "single" (a whole number, switch, choice or vector: a picture linked in is read once, at its
     middle)."""
     node = (graph or {}).get("nodes", {}).get(nid)
-    if node is None or socket in WORDS.values():
+    if node is None or socket in WORDS.values() or node["type"] in (SOUND_SOURCE, SOUND_LEVEL) or (socket == SOUND_SOCKET and is_soundpic(node)):
         return "single" if node is not None else "field"
     if not socket.startswith(PARAM):
         if node["type"] == FILTER:
@@ -1109,7 +1219,7 @@ def input_shape(graph, nid, socket):
     p = param_of(graph, nid, socket)
     if p is None:
         return "field"
-    if is_asset(node) or is_text(node) or is_vecop(node):    # (a shape's or a text's values are read once)
+    if is_drawn(node):                                       # (a shape's or a text's values are read once)
         return "single"
     return "either" if p.type in fx.SOURCE_TYPES else "single"
 
@@ -1117,7 +1227,7 @@ def input_shape(graph, nid, socket):
 def socket_value(graph, params, nid, socket):
     """The value of the number / colour / switch `socket` of filter node nid stands for - its field's (None: it has none)."""
     node = graph["nodes"].get(nid)
-    if node is not None and (is_asset(node) or is_text(node) or is_vecop(node)) and socket.startswith(PARAM):
+    if node is not None and is_drawn(node) and socket.startswith(PARAM):
         p = param_of(graph, nid, socket)
         if p is None:
             return None
@@ -1163,6 +1273,13 @@ def connect(graph, src, dst, socket, out=None):
         raise GraphError("找不到這個節點")
     if socket not in [s for s, _ in sockets(nodes[dst])]:
         raise GraphError("這個節點沒有這個輸入")
+    given = next((x for x in exposed(graph) if x["name"] == out), None) if gives_params(nodes[src], out) else None
+    if nodes[dst]["type"] == SOUND_SOURCE or given is not None and given["type"] == "sound":     # (which sound a source hears: a parameter of its own type)
+        if not (nodes[dst]["type"] == SOUND_SOURCE and given is not None and given["type"] == "sound"):
+            raise GraphError("「聲音來源」節點的插槽只能接「聲音來源」種類的效果參數（參數輸入節點）")
+        graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
+        graph["links"].append({"from": src, "to": dst, "socket": socket, "out": out})
+        return
     if nodes[src]["type"] in WORDS or socket in WORDS.values():     # (words go from a string node or a string parameter to a text node's 文字, a font likewise to its 字體, and nowhere else)
         if gives_params(nodes[src], out):
             x = next((x for x in exposed(graph) if x["name"] == out), None)
@@ -1188,18 +1305,104 @@ def connect(graph, src, dst, socket, out=None):
             out = outputs(nodes[src])[0][0]
         if is_vecop(nodes[dst]) and socket in vecop_sockets(nodes[dst]) and not gives_vector(nodes[src]):
             raise GraphError("矢量節點只能接形狀、文字、SVG 圖片或別的矢量節點")
-        if p is not None and (is_asset(nodes[dst]) or is_text(nodes[dst]) or is_vecop(nodes[dst])) and \
+        if p is not None and is_drawn(nodes[dst]) and \
                 p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + (VECTOR_TYPES if is_vecop(nodes[dst]) else ()):
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
         if p is not None and p.type not in fx.SOURCE_TYPES + CONTROL_TYPES + VECTOR_TYPES:
             raise GraphError("這個參數只能接效果自己的參數（參數輸入節點）")
     if src == dst or reaches(graph, dst, src):
         raise GraphError("節點不能連成迴圈")
-    graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
     link = {"from": src, "to": dst, "socket": socket}
     if out:
         link["out"] = out
-    graph["links"].append(link)
+    links = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)] + [link]
+    if sounds_crossed({**graph, "links": links}):
+        raise GraphError("聲音線只能從「聲音來源」接到分析節點的「聲音」（可以經過繞線點）")
+    graph["links"] = links
+
+
+# -- sound links --------------------------------------------------------------------------------------
+def _gives_sound(nodes, feed, nid, seen=()):
+    """Whether node nid of a flat graph gives a sound (None: a reroute nothing feeds, which may carry either)."""
+    t = nodes[nid]["type"]
+    if t != REROUTE:
+        return t == SOUND_SOURCE
+    up = feed.get((nid, "src"))
+    return None if up is None or up not in nodes or up in seen else _gives_sound(nodes, feed, up, seen + (nid,))
+
+
+def sounds_crossed(graph):
+    """Whether a link of graph takes a sound where a picture or a number goes, or the other way round."""
+    graph = flatten(graph)
+    nodes = graph["nodes"]
+    if not any(n["type"] == SOUND_SOURCE or hears(n) for n in nodes.values()):
+        return False
+    feed = {(l["to"], l["socket"]): l["from"] for l in graph["links"]}
+    for l in graph["links"]:
+        a, b = l["from"], l["to"]
+        if a not in nodes or b not in nodes or nodes[b]["type"] == REROUTE:
+            continue
+        gives = False if l.get("out") and gives_params(nodes[a], l["out"]) else _gives_sound(nodes, feed, a)
+        if gives is not None and gives != (hears(nodes[b]) and l["socket"] == SOUND_SOCKET):
+            return True
+    return False
+
+
+def sound_value(level, channel):
+    """What an effect parameter of type "sound" holds ("": nothing chosen)."""
+    return f"{level}/{channel}" if level and channel else ""
+
+
+def sound_parts(value):
+    """(level id, channel id) of a "sound" parameter's value ("", "" when it holds none)."""
+    level, _, channel = str(value or "").partition("/")
+    return (level, channel) if level and channel else ("", "")
+
+
+def sound_choice(graph, sources, params, nid):
+    """(level id, channel id) 聲音來源 node nid hears: the effect parameter linked into it (params: the effect's), else
+    its own choice (sources); "", "" when none is chosen."""
+    graph = flatten(graph)
+    name = binds(graph).get((nid, SOUND_PICK))
+    if name is None:
+        got = (sources or {}).get(nid) or {}
+        return got.get("level") or "", got.get("channel") or ""
+    key = expose_key(name)
+    if params is not None and key in params:
+        return sound_parts(curves.value(params[key], 0))
+    return sound_parts(next((x["default"] for x in exposed(graph) if x["name"] == name), ""))
+
+
+def sound_source(graph, nid):
+    """The id of the 聲音來源 node analysis node nid of a flat graph hears (None: nothing is wired to it)."""
+    nodes = graph["nodes"]
+    feed = {(l["to"], l["socket"]): l["from"] for l in graph["links"]}
+    at, seen = feed.get((nid, SOUND_SOCKET)), set()
+    while at in nodes and at not in seen:
+        if nodes[at]["type"] == SOUND_SOURCE:
+            return at
+        if nodes[at]["type"] != REROUTE:
+            return None
+        seen.add(at)
+        at = feed.get((at, "src"))
+    return None
+
+
+def _measured(graph, params, heard, given):
+    """graph with every 電平 → 數值 node made a 數值 node holding heard(its id) - the number at the moment being drawn,
+    put into params while the evaluation runs (given: what _evaluate_given puts back) - and every sound link gone (a 波形 or
+    頻譜 node's picture is a source's: the renderer draws it)."""
+    levels = {i for i, n in graph["nodes"].items() if n["type"] == SOUND_LEVEL}
+    deaf = {i for i, n in graph["nodes"].items() if hears(n)}
+    if not deaf:
+        return graph
+    for nid in levels:
+        key = param_key(nid, "value")
+        if given is not None:
+            given.setdefault(key, params.get(key, _MISSING))
+        params[key] = float(heard(nid)) if heard else 0.0
+    return {**graph, "nodes": {i: {"type": FILTER, "ref": CONSTANTS["float"]} if i in levels else n for i, n in graph["nodes"].items()},
+            "links": [l for l in graph["links"] if not (l["to"] in deaf and l["socket"] == SOUND_SOCKET)]}
 
 
 def expose(graph, params, src, dst, socket, sources=None):
@@ -1207,11 +1410,12 @@ def expose(graph, params, src, dst, socket, sources=None):
     參數輸入 node): it starts at the value the parameter had and takes its name, range and choices. Returns its
     name. (params: the effect's e["params"].)"""
     words = socket in WORDS.values() and is_text(graph["nodes"].get(dst) or {})
-    p = word_param(socket) if words else param_of(graph, dst, socket)
+    pick = socket == SOUND_PICK and (graph["nodes"].get(dst) or {}).get("type") == SOUND_SOURCE
+    p = word_param(socket) if words else fx.Param(SOUND_PICK, "sound", "", label="聲音來源") if pick else param_of(graph, dst, socket)
     if p is None or graph["nodes"].get(src, {}).get("type") not in (PARAMS, INPUT):
         raise GraphError("參數只能接到節點的參數插槽")
     names = {x["name"] for x in exposed(graph)}
-    base = {TEXT_SOCKET: "text", FONT_SOCKET: "font"}[socket] if words else p.name
+    base = {TEXT_SOCKET: "text", FONT_SOCKET: "font"}[socket] if words else "sound" if pick else p.name
     name, n = base, 1
     while name in names:
         n += 1
@@ -1227,6 +1431,10 @@ def expose(graph, params, src, dst, socket, sources=None):
             value = p.default
         label = p.label if n == 1 else f"{p.label} {n}"
         p.default = copy.deepcopy(curves.value(value, 0))
+    elif pick:                                          # (it starts as what the node hears now)
+        value = sound_value(*sound_choice(graph, sources, params, dst))
+        label = p.label if n == 1 else f"{p.label} {n}"
+        p.default = value
     elif getattr(p, "place", False):                      # (where a shape sits is the source's own, not a node parameter)
         v = ((sources or {}).get(dst) or {}).get(p.name, p.default)
         value = copy.deepcopy(curves.value(v, 0) if curves.is_animated(v) else v)
@@ -1243,7 +1451,7 @@ def expose(graph, params, src, dst, socket, sources=None):
 MANUAL_TYPES = {"float": ("浮點", 0.0, 0.0, 1.0), "int": ("整數", 0, 0, 10), "bool": ("開關", False, 0, 1),
                 "color": ("顏色", [1.0, 1.0, 1.0, 1.0], 0.0, 1.0), "vec2": ("二維向量", [0.0, 0.0], -1000.0, 1000.0),
                 "vec3": ("三維向量", [0.0, 0.0, 0.0], -1000.0, 1000.0),
-                "string": ("字串", "文字", 0, 0), "font": ("字體", "", 0, 0)}           # (a font's start: the default font, add_exposed)
+                "string": ("字串", "文字", 0, 0), "font": ("字體", "", 0, 0), "sound": ("聲音來源", "", 0, 0)}           # (a font's start: the default font, add_exposed)
 
 
 def manual_default(kind):
@@ -1774,7 +1982,7 @@ _MISSING = object()
 
 
 def _evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, fps=30.0, unit=1.0, picture=None, errors=None, viewer=False, tap=None,
-              stamp=None, cache=None, scope=None, input_stamp=None, _given=None):
+              stamp=None, cache=None, scope=None, input_stamp=None, heard=None, _given=None):
     """Work out graph's output (params: the effect's e["params"]) for the w x h texture src_tex (the effect's input)
     at clip time t.
     alloc(w, h) -> an object with .tex and .fbo, free(it): where nodes are drawn. picture(node id) ->
@@ -1787,16 +1995,18 @@ def _evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, f
     the costly nodes from one evaluation to the next: a node whose picture is kept, or that only nodes with kept pictures need, is
     not drawn. The nodes that read the picture the effect was given (the clip) are kept only with input_stamp, which says what
     that picture is in the same way (None: it may be a different one every time).
+    heard(node id) -> the number a 電平 → 數值 node reads now (soundmeter.heard; None: they read 0).
     Returns (texture, owner): owner is the object to give back to free when done with it (None: the
     texture is src_tex itself, or the cache's); (None, None) when the graph has no output. Node errors go to errors."""
     errors = errors if errors is not None else []
-    graph = flatten(graph)
+    graph = _measured(flatten(graph), params, heard, _given)
     nodes, links = graph["nodes"], graph["links"]
     out = next((i for i, n in nodes.items() if n["type"] == OUTPUT), None)
     if out is None:
         return None, None
     feed = {(l["to"], l["socket"]): (l["from"], l.get("out") or "") for l in links if l["from"] in nodes and l["to"] in nodes
-            and not gives_params(nodes[l["from"]], l.get("out")) and nodes[l["from"]]["type"] not in WORDS}        # (the node and the output it gives; words are no picture)
+            and not gives_params(nodes[l["from"]], l.get("out")) and nodes[l["from"]]["type"] not in WORDS
+            and nodes[l["from"]]["type"] != SOUND_SOURCE}        # (the node and the output it gives; words and sounds are no picture)
     view = viewed(graph) if viewer else None
     if view and (view[0] not in nodes or nodes[view[0]]["type"] in (PARAMS, FRAME, OUTPUT, VIEWER)):
         view = None
@@ -1813,7 +2023,7 @@ def _evaluate(eng, graph, params, src_tex, w, h, alloc, free, t=0, duration=1, f
             todo += [f[0] for f in feeds_of.get(n, ())]
     for (to, sock), f in list(feed.items()):
         p = param_of(graph, to, sock) if sock.startswith(PARAM) else None
-        drawn = nodes[to]["type"] == SOURCE and (is_asset(nodes[to]) or is_text(nodes[to]) or is_vecop(nodes[to]))      # (a shape / text node: its fields are read once)
+        drawn = nodes[to]["type"] == SOURCE and is_drawn(nodes[to])      # (a shape / text node: its fields are read once)
         if p is not None and (p.type in CONTROL_TYPES + VECTOR_TYPES or (drawn and p.type in fx.SOURCE_TYPES)):
             del feed[(to, sock)]                              # (read once, a number: the picture itself is not drawn for it)
             if to not in reach:

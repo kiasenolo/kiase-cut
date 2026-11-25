@@ -2691,7 +2691,7 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.FILTER, "ref": node["ref"]}
     elif node["type"] == nodegraph.SOURCE:
         if node.get("kind") not in nodegraph.SOURCE_KINDS:
-            raise EditError("來源節點要是圖片、影片、複合片段、軌道、形狀或文字")
+            raise EditError("來源節點要是圖片、影片、複合片段、軌道、形狀、文字、波形、頻譜或頻譜資料")
         shape = node.get("shape")
         preset = node.get("preset")                      # (a text node: looks to start with)
         asset = node.get("asset")                        # {"key": a shape preset of assets.py, "colors": (c1, c2)}
@@ -2712,6 +2712,10 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.FONT, "value": str(node.get("value") or project.DEFAULT_FONT)}
     elif node["type"] == nodegraph.FRAME:
         node = nodegraph.frame_defaults(node)
+    elif node["type"] == nodegraph.SOUND_SOURCE:
+        node = {"type": nodegraph.SOUND_SOURCE}
+    elif node["type"] == nodegraph.SOUND_LEVEL:
+        node = {"type": nodegraph.SOUND_LEVEL, "meter": {k: soundmeter.DEFAULTS[k] for k in soundmeter.DEFAULTS}}
     else:
         raise EditError("不能新增這種節點")
     if inside and (g["nodes"].get(inside) or {}).get("type") == nodegraph.GROUP:
@@ -2728,12 +2732,17 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
             if q is not None and (v in q.items if q.type == "menu" else q.type not in ("color", "image", "curve")
                                   or isinstance(v, (list, tuple))):
                 e["params"][nodegraph.param_key(nid, k)] = copy.deepcopy(v)
+    elif node["type"] == nodegraph.SOUND_SOURCE:            # (which channel: chosen in the node, set_graph_sound)
+        e.setdefault("sources", {})[nid] = {"kind": "sound", "level": "", "channel": ""}
     elif node["type"] == nodegraph.SOURCE:
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
         if node["kind"] == "shape" and shape:
             set_effect_shape(proj, clip_id, effect_id, nid, shape)
         if node["kind"] == nodegraph.VECTOR:             # (its operation: a parameter of the effect)
             for q in nodegraph.vecop_def(node).params:
+                e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
+        if node["kind"] in nodegraph.SOUND_PICTURES:
+            for q in nodegraph.soundpic_def(g["nodes"][nid]).params:
                 e["params"][nodegraph.param_key(nid, q.name)] = copy.deepcopy(q.default)
         if node["kind"] == "text":                       # (its fields: parameters of the effect; a preset of the 內建素材 tab sets some)
             for q in nodegraph.text_def(node).params:
@@ -3171,7 +3180,8 @@ def set_graph_viewer(proj, clip_id, effect_id, nid, out=""):
         g["links"] = [l for l in g["links"] if l["to"] not in viewers]
         return
     node = g["nodes"].get(nid)
-    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT, nodegraph.GROUP, nodegraph.VIEWER):
+    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT, nodegraph.GROUP, nodegraph.VIEWER,
+                                        nodegraph.SOUND_SOURCE):
         raise EditError("這個節點沒有圖可以預覽")
     if out not in [o for o, _ in nodegraph.outputs(node)]:
         raise EditError("這個節點沒有這個輸出")
@@ -3453,6 +3463,14 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
     if kind == nodegraph.VECTOR and e["filter"] == fx.GRAPH:      # a vector node: its outlines drawn over the whole clip (nothing to place)
         sources[param] = {"kind": nodegraph.VECTOR, "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
         return e
+    if kind == nodegraph.SPECTRUM_DATA and e["filter"] == fx.GRAPH:       # 頻譜資料: over the whole clip (nothing to place)
+        sources[param] = {"kind": kind, "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
+        return e
+    if kind in nodegraph.SOUND_PICTURES and e["filter"] == fx.GRAPH:      # 波形 / 頻譜: drawn of a sound, placed as a shape is
+        old = sources.get(param) or {}
+        sources[param] = {"kind": kind, **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 1.0), ("h", 0.35), ("rotation", 0.0))},
+                          **_kept_anchor(old)}
+        return e
     if kind == "text" and e["filter"] == fx.GRAPH:       # a text node: the words drawn by textlayout.py
         old = sources.get(param) or {}
         sources[param] = {"kind": "text", "content": old.get("content", nodegraph.TEXT_CONTENT),
@@ -3504,6 +3522,32 @@ def set_graph_font(proj, clip_id, effect_id, nid, path):
     if (g["nodes"].get(nid) or {}).get("type") != nodegraph.FONT:
         raise EditError("這不是字體節點")
     g["nodes"][nid]["value"] = str(path)
+
+
+def set_graph_sound(proj, clip_id, effect_id, nid, level, channel):
+    """What a 聲音來源 node hears: channel (a track's or bus's id, or "master") of the timeline or compound `level`."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    if (g["nodes"].get(nid) or {}).get("type") != nodegraph.SOUND_SOURCE:
+        raise EditError("這不是聲音來源節點")
+    e.setdefault("sources", {})[nid] = {"kind": "sound", "level": str(level), "channel": str(channel)}
+
+
+def set_graph_meter(proj, clip_id, effect_id, nid, values):
+    """The box and the times of a 電平 → 數值 node (values: some of soundmeter.DEFAULTS' keys), kept inside their
+    ranges."""
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    node = g["nodes"].get(nid) or {}
+    if node.get("type") != nodegraph.SOUND_LEVEL:
+        raise EditError("這不是「電平 → 數值」節點")
+    merged = {**soundmeter.DEFAULTS, **(node.get("meter") or {}),
+              **{k: v for k, v in values.items() if k in soundmeter.DEFAULTS}}
+    try:
+        spec = soundmeter.clean(dict(merged, level="", channel=""))
+    except ValueError as exc:
+        raise EditError(str(exc)) from exc
+    node["meter"] = {k: spec[k] for k in soundmeter.DEFAULTS}
 
 
 def set_effect_text(proj, clip_id, effect_id, nid, content=None, font_path=None):

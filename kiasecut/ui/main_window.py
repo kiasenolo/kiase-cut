@@ -582,6 +582,8 @@ class MainWindow(QMainWindow):
         nd.paramLive.connect(lambda eid, group, key, v: self.node_clip() and self.on_fx_live_edit([self.node_clip()], group, key, v))
         nd.placeEdited.connect(lambda eid, nid, key, v: self.node_clip() and self.on_fx_param_edited(
             [self.node_clip()], f"fxsrc:{eid}:{nid}", key, v))
+        nd.soundChosen.connect(self.on_node_sound)
+        nd.meterEdited.connect(self.on_node_meter)
         nd.mediaChosen.connect(lambda eid, nid, value: self.node_clip() and self.on_fx_source_media([self.node_clip()], eid, nid, value))
         nd.liveToggled.connect(lambda eid, nid, on: self.node_clip() and self.fx_each(
             "讀取時間", [self.node_clip()], eid, lambda lvl, cid, e: edit.set_effect_source_live(lvl, cid, e, nid, on)))
@@ -2629,6 +2631,7 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         self.rack_panel.problems = dict(self.sound_meter.problems)
+        self.nodes.sound_problems = dict(self.sound_meter.problems)
         self.rebuild()
         self.refresh_inspector()
         self.show_rack()
@@ -3217,6 +3220,10 @@ class MainWindow(QMainWindow):
         if self.proj is not None:
             self.effects.set_media(images, videos, comps, tracks)
             self.nodes.set_media(images, videos, comps, tracks)
+        if self.proj is not None:
+            sounds = self.node_sounds()
+            self.effects.set_sounds(sounds)
+            self.nodes.set_sounds(sounds)
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
             self.mask_panel.set_compounds(comps)
@@ -3227,7 +3234,9 @@ class MainWindow(QMainWindow):
         self.mask_panel.show_clips(clips, t, self.fps)
         kept = self._nodes_kept(clips)
         shown = self._nodes_shared(clips)
-        self.nodes.show_clip(clips[0] if shown else kept, t=times[clips[0]["id"]] if shown else 0)
+        at = clips[0] if shown else kept
+        self.nodes.sound_start = edit.find(self.view(), at["id"])[1]["start_us"] if at else 0     # (on its own level's timeline)
+        self.nodes.show_clip(at, t=times[clips[0]["id"]] if shown else 0)
         self.beats.show_clips(clips)
         self.subtitles.show_selection(self.timeline.rows, self.timeline.selected_ids)
         self._update_side_tabs(clips)
@@ -6092,7 +6101,7 @@ class MainWindow(QMainWindow):
             snapshot["width"], snapshot["height"] = width, height
             snapshot["duration_us"] = project.end_us(snapshot["tracks"])
         follows = pathfollow.has_followers(snapshot)
-        heard = bool(soundmeter.sounding(snapshot))
+        heard = soundmeter.wanted(snapshot)
         if not heard:
             pathfollow.resolve(snapshot)
         cache = self.cache_dir()
@@ -7177,6 +7186,24 @@ class MainWindow(QMainWindow):
                 edit.move_graph_nodes(lvl, cid, eid, {nid: (x, y)})
                 edit.insert_graph_node(lvl, cid, eid, nid, src, dst, socket, out)
             self.apply("把節點放進連線", do)
+
+    def node_sounds(self):
+        """[(level id, name, [(channel id, label)])] a 聲音來源 node can hear: every timeline and compound."""
+        kinds = {"track": "軌道　", "bus": "Bus　", "master": ""}
+        return [(kid, comp.get("name") or kid, [(i, kinds[kind] + name) for i, kind, name in soundmeter.channels(comp)])
+                for kid, comp in (self.proj.get("compounds") or {}).items() if not comp.get("static")]
+
+    def on_node_sound(self, eid, nid, level, channel):
+        cid = self.node_clip()
+        if cid:
+            self.fx_each("聲音來源", [cid], eid, lambda lvl, c, e: edit.set_graph_sound(lvl, c, e, nid, level, channel))
+            self.sound_meter.request(now=True)
+
+    def on_node_meter(self, eid, nid, values):
+        cid = self.node_clip()
+        if cid:
+            self.fx_each("框選聲音", [cid], eid, lambda lvl, c, e: edit.set_graph_meter(lvl, c, e, nid, values))
+            self.sound_meter.request(now=True)
 
     def on_node_add_linked(self, eid, node, x, y, src, out):
         """A node added where a link was let go: that link goes into its first picture input."""

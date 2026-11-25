@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, camera, components, curves, fonts, fx, lights, masks, nodegraph, project, propexpr, rack, svgimage, sysmem, textlayout, textvars, vector, viz
+from . import assets, camera, components, curves, fonts, fx, lights, masks, nodegraph, project, propexpr, rack, soundmeter, soundpictures, svgimage, sysmem, textlayout, textvars, vector, viz
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -202,6 +202,25 @@ class Renderer:
         src = nodegraph.centred(src, aw, ah, disp, t)
         placed = dict(src, w=pic.width() / rs / max(disp[0], 1e-6), h=pic.height() / rs / max(disp[1], 1e-6))
         return pic, placed
+
+    def sound_source(self, e, nid, src, t, disp, unit, level_us):
+        """(picture, the source to place it by) of a node effect's 波形 / 頻譜 / 頻譜資料 node: its sound round time level_us of the
+        clip's level, drawn at `unit` render px per canvas px in its frame."""
+        node = e["graph"]["nodes"][nid]
+        bound = nodegraph.binds(e["graph"])
+        values = nodegraph.soundpic_of(node, nid, e["params"], t, bound)
+        src = nodegraph.placed_by(src, e["params"], bound, nid, t)
+        fw, fh = (max(abs(curves.value(src.get(k, 1.0), t)) * disp[i], 1.0) for i, k in enumerate(("w", "h")))
+        k = min(max(unit, 1e-3), MAX_VECTOR_PX / max(fw, fh))
+        spec = soundmeter.picture_spec(e["graph"], e.get("sources"), nid, e["params"])
+        sound, name = soundmeter.picture_sound((e.get("id"), nid), spec)
+        pw, ph = max(1, round(fw * k)), max(1, round(fh * k))
+        key = ("sound", node["kind"], name, round(level_us), pw, ph, round(k, 6), repr(sorted(values.items())))
+        im = self.images.get(key)
+        if im is None:
+            im = soundpictures.paint(node["kind"], values, sound, level_us, pw, ph, k, name)
+            self.keep_image(key, im)
+        return im, self.centred_source(src, disp, t)
 
     def shape_source(self, e, nid, src, t, disp, paint=None, linked=(), unit=1.0, fps=30.0):
         """(picture, the source to place it by) of a node effect's shape node made from a built-in shape (assets.py), or
@@ -1010,7 +1029,7 @@ class Renderer:
         cp.end()
         base = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)
         out = self.run_effects(c["effects"], self.seen(p, base), t, c["duration_us"], fps,
-                               clip_world(c, t, W, H) * p.worldTransform(), disp, unit)
+                               clip_world(c, t, W, H) * p.worldTransform(), disp, unit, c["start_us"])
         a = image_to_array(cov)[..., 3:4].astype(np.float32) / 255
         b0, b1 = image_to_array(base).astype(np.float32), image_to_array(out).astype(np.float32)
         res = np.ascontiguousarray((b0 + (b1 - b0) * a).round().astype(np.uint8))
@@ -1060,7 +1079,7 @@ class Renderer:
         return (nodegraph.thumb_tap(self.thumbs.setdefault(e["id"], {}), memo=self.thumb_memo.setdefault(e["id"], {}))
                 if e["id"] in self.want_thumbs else None)
 
-    def graph_effect(self, eng, e, arr, t, duration, fps, disp, wt, unit):
+    def graph_effect(self, eng, e, arr, t, duration, fps, disp, wt, unit, start=0):
         """Node graph effect e over arr (H x W x 4, premultiplied) on the CPU renderer's engine: the
         result as such an array, or None when it cannot run."""
         h, w = arr.shape[:2]
@@ -1080,6 +1099,9 @@ class Renderer:
                 if src and src.get("kind") == nodegraph.VECTOR:
                     pic, placed = self.vector_source(e, nid, src, t, disp, unit, fps)
                     return upload(image_to_array(pic)), source_map(placed, t, disp, wt, w, h), None
+                if src and src.get("kind") in nodegraph.SOUND_PICTURES:
+                    pic, placed = self.sound_source(e, nid, src, t, disp, unit, start + t)
+                    return upload(image_to_array(pic)), source_map(placed, t, disp, wt, w, h), None
                 if src and src.get("kind") in ("shape", "text"):
                     got = self.shape_source(e, nid, src, t, disp, paint, linked, unit, fps)
                     if got is None and paint:
@@ -1095,7 +1117,8 @@ class Renderer:
             try:
                 tex, owner = nodegraph.evaluate(eng, e["graph"], e["params"], upload(arr), w, h, pool.alloc, pool.free,
                                                 t=t, duration=duration, fps=fps, unit=unit, picture=picture, errors=errors,
-                                                viewer=self.editing, tap=self.thumb_tap(e), overscan=e.get("overscan", "auto"))
+                                                viewer=self.editing, tap=self.thumb_tap(e), overscan=e.get("overscan", "auto"),
+                                                heard=soundmeter.hearing(e, start + t))
                 out = nodegraph.read_rgba8(tex).copy() if tex is not None else None
             except nodegraph.GraphError as exc:
                 self.errors.append(f"節點效果：{exc}")
@@ -1107,7 +1130,7 @@ class Renderer:
         self.errors += errors
         return out
 
-    def run_effects(self, effects, img, t, duration, fps, wt, disp, unit):
+    def run_effects(self, effects, img, t, duration, fps, wt, disp, unit, start=0):
         """Apply a chain of effects to img (QImage ARGB32 premultiplied, unit of its px per canvas
         px) at clip time t; each effect's own mask (clip-local, through world transform wt)
         limits where it shows, its 混合程度 how much."""
@@ -1122,7 +1145,7 @@ class Renderer:
                 continue
             d = fx.get(e["filter"])
             if e["filter"] == fx.GRAPH:                                  # a node graph (nodegraph.py)
-                out = self.graph_effect(eng, e, arr, t, duration, fps, disp, wt, unit)
+                out = self.graph_effect(eng, e, arr, t, duration, fps, disp, wt, unit, start)
                 if out is None:
                     continue
                 mk = e.get("mask")
@@ -1171,7 +1194,8 @@ class Renderer:
         lp.setTransform(wt)
         plain(lp)
         lp.end()
-        layer = self.run_effects(project.visual_effects(c, True), layer, t, c["duration_us"], fps, wt, disp, unit)
+        layer = self.run_effects(project.visual_effects(c, True), layer, t, c["duration_us"], fps, wt, disp, unit,
+                                 c["start_us"])
         q.save()
         q.resetTransform()
         q.drawImage(0, 0, layer)
@@ -1213,7 +1237,8 @@ class Renderer:
             self.draw_tracks(hp, below, W, H, fps, c["start_us"] + held, px_per_unit)
             hp.end()
             t = held
-        out = self.run_effects(c["effects"], self.seen(p, under), t, c["duration_us"], fps, wt, (W, H), px_per_unit)
+        out = self.run_effects(c["effects"], self.seen(p, under), t, c["duration_us"], fps, wt, (W, H), px_per_unit,
+                               c["start_us"])
         cov = np.full((h, w), strength, np.float32)
         mk = self.clip_mask(c, t)
         if mk:

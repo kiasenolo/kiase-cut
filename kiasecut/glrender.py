@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, camera, components, curves, fx, gpusync, lights, mesh, mesh3d, models, nodegraph, project, propexpr, rack, render, shadows, sharedgl, sysmem, textlayout, textvars
+from . import assets, camera, components, curves, fx, gpusync, lights, mesh, mesh3d, models, nodegraph, project, propexpr, rack, render, shadows, sharedgl, soundmeter, sysmem, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -1136,7 +1136,7 @@ class GLRenderer(render.Renderer):
                             corners=corners)
                     gl.ctx.copy_framebuffer(snap.tex, tgt.fbo)
                     seen = self.gl_seen(tgt, snap)
-                    out = self.gl_effects(effects, seen, t, c["duration_us"], fps, world, disp, ppu)
+                    out = self.gl_effects(effects, seen, t, c["duration_us"], fps, world, disp, ppu, start=c["start_us"])
                     gl.mix_cover(tgt, snap.tex, out.tex, cover.tex)
                     if out is not seen:
                         gl.release(out)
@@ -1152,7 +1152,7 @@ class GLRenderer(render.Renderer):
                 try:
                     gl.draw(lay, tex, straight, rect, world, corners=corners)
                     out = self.gl_effects(effects, lay, t, c["duration_us"], fps, world, disp, ppu,
-                                          looks_of(kind, made_of, rect, world, corners))
+                                          looks_of(kind, made_of, rect, world, corners), c["start_us"])
                     gl.matte = matte and matte[0].tex
                     gl.draw_layer(tgt, out, opacity, mask, t, disp, inv, blend)
                     if out is not lay:
@@ -1248,10 +1248,11 @@ class GLRenderer(render.Renderer):
         self.gl_stills[key] = lay
         return lay
 
-    def gl_effects(self, effects, lay, t, duration, fps, world, disp, ppu, look=None):
+    def gl_effects(self, effects, lay, t, duration, fps, world, disp, ppu, look=None, start=0):
         """Run a chain of effects over layer lay (ppu of its px per canvas px); returns the layer
         with the result (lay itself when nothing ran, else a new one the caller gives back).
-        look: what lay's picture is (looks_of), when it can be told."""
+        look: what lay's picture is (looks_of), when it can be told. start: where the clip begins on
+        its level's timeline (what a node effect that follows a sound reads at start + t)."""
         gl = self.gl
         inv, _ = world.inverted()
         cur = lay
@@ -1261,7 +1262,7 @@ class GLRenderer(render.Renderer):
                 continue
             d = fx.get(e["filter"])
             if e["filter"] == fx.GRAPH:                                  # a node graph (nodegraph.py)
-                res = self.gl_graph(e, cur, t, duration, fps, world, disp, ppu, look if cur is lay else None)    # (after another effect it is not lay's picture any more)
+                res = self.gl_graph(e, cur, t, duration, fps, world, disp, ppu, look if cur is lay else None, start)    # (after another effect it is not lay's picture any more)
                 if res is None:
                     continue
                 nxt = gl.layer(cur.w, cur.h)
@@ -1300,7 +1301,7 @@ class GLRenderer(render.Renderer):
             cur = nxt
         return cur
 
-    def gl_graph(self, e, cur, t, duration, fps, world, disp, ppu, look=None):
+    def gl_graph(self, e, cur, t, duration, fps, world, disp, ppu, look=None, start=0):
         """Effect e (a node graph) over layer cur: (the result's texture, a function that gives it back), or
         None when it cannot run. look: what cur's picture is (looks_of), when it can be told: the nodes that read
         it are kept between frames while it is the same."""
@@ -1311,6 +1312,10 @@ class GLRenderer(render.Renderer):
             src = sources.get(nid)
             if src and src.get("kind") == nodegraph.VECTOR:
                 pic, placed = self.vector_source(e, nid, src, t, disp, ppu, fps)
+                tex, _straight = gl.picture(pic)
+                return tex, render.source_map(placed, t, disp, world, cur.w, cur.h), None
+            if src and src.get("kind") in nodegraph.SOUND_PICTURES:
+                pic, placed = self.sound_source(e, nid, src, t, disp, ppu, start + t)
                 tex, _straight = gl.picture(pic)
                 return tex, render.source_map(placed, t, disp, world, cur.w, cur.h), None
             if src and src.get("kind") in ("shape", "text"):
@@ -1331,6 +1336,9 @@ class GLRenderer(render.Renderer):
             if src and src.get("kind") == nodegraph.VECTOR:
                 pic, placed = self.vector_source(e, nid, src, t, disp, ppu, fps)
                 return pic.cacheKey(), render.source_map(placed, t, disp, world, cur.w, cur.h)
+            if src and src.get("kind") in nodegraph.SOUND_PICTURES:
+                pic, placed = self.sound_source(e, nid, src, t, disp, ppu, start + t)
+                return pic.cacheKey(), render.source_map(placed, t, disp, world, cur.w, cur.h)
             if not (src and src.get("kind") in ("shape", "text")):
                 return None
             got = self.shape_source(e, nid, src, t, disp, paint, linked, ppu, fps)
@@ -1343,7 +1351,8 @@ class GLRenderer(render.Renderer):
             tex, owner = nodegraph.evaluate(gl.fx, e["graph"], e["params"], cur.tex, cur.w, cur.h, lambda w, h: gl.layer(w, h, dtype="f2"), gl.release,
                                             t=t, duration=duration, fps=fps, unit=ppu, picture=picture, errors=errors,
                                             viewer=self.editing, tap=self.thumb_tap(e), stamp=stamp, cache=self.graph_cache, scope=e["id"],
-                                            input_stamp=look, overscan=e.get("overscan", "auto"))
+                                            input_stamp=look, overscan=e.get("overscan", "auto"),
+                                            heard=soundmeter.hearing(e, start + t))
         except nodegraph.GraphError as exc:
             self.errors.append(f"節點效果：{exc}")
             return None
@@ -1386,7 +1395,8 @@ class GLRenderer(render.Renderer):
                 seen = under
             else:
                 seen = self.gl_seen(tgt, snap)
-            out = self.gl_effects(effects, seen, held, c["duration_us"], fps, wt, (W, H), ppu) if effects else seen
+            out = self.gl_effects(effects, seen, held, c["duration_us"], fps, wt, (W, H), ppu,
+                                  start=c["start_us"]) if effects else seen
             matte = self.gl_matte(mask, t, (W, H), wt, fps)
             gl.matte = matte and matte[0].tex
             gl.mix(tgt, snap.tex, out.tex, strength, mask, t, (W, H), inv)

@@ -43,6 +43,7 @@ class BoxSpectrum(QWidget):
         self.now = self.most = None
         self.drag = None
         self.moved = False
+        self.words = ""                     # written in the middle: why there is no sound to show
         self.setMinimumSize(560, 260)
         self.setMouseTracking(True)
 
@@ -123,6 +124,16 @@ class BoxSpectrum(QWidget):
             self.box.update(box)
             self.update()
 
+    def say(self, words):
+        if words != self.words:
+            self.words = words
+            self.update()
+
+    def clear_sound(self):
+        if self.now is not None or self.most is not None:
+            self.now = self.most = None
+            self.update()
+
     def feed(self, mono):
         """The sound at the playhead: its middle N samples are drawn, with the most of each
         frequency falling away slowly."""
@@ -174,6 +185,9 @@ class BoxSpectrum(QWidget):
             p.setPen(QPen(QColor("#ffffff"), 1.5))
             p.setBrush(Qt.NoBrush)
             p.drawEllipse(at, 3.5, 3.5)
+        if self.words:
+            p.setPen(QColor("#d0d0d0"))
+            p.drawText(self.rect().adjusted(6, 4, -6, -4), Qt.AlignCenter | Qt.TextWordWrap, self.words)
 
 
 class NumberCurve(QWidget):

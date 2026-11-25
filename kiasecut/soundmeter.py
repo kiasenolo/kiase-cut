@@ -14,8 +14,13 @@ a part of an export or a command-line render read the same numbers.
     box_db    the strongest frequency of the box every HOP samples (kept in memory per box)
     shape     that as 0 - 1, with attack and release: cheap, so the box's edges can be dragged
 
-A global parameter takes its value from a meter with p["sound"] = spec (rack.py; a number only):
+A global parameter takes its value from a meter with p["sound"] = spec (rack.py; a number only), and so does a
+node effect's 電平 → 數值 node: what it hears is the 聲音來源 node wired to it (e["sources"], level and channel - or
+an effect parameter linked into that node, which each clip chooses for itself),
+its box is node["meter"] (node_spec). A node's curve is kept under its spec (node_key), so nodes that measure the
+same thing share it; nothing can wait for a node, as pictures never go back into sound.
 
+    heard     what a node reads at a moment (nodegraph.evaluate's `heard`)
     plan      what there is to measure, in order - a channel whose effects follow another such
               parameter after that one - and what cannot be (a circle: a parameter that hears a
               channel its own number has a say in). Copies the project: call it where it is edited
@@ -487,6 +492,78 @@ def sounding(root):
     return [p for p in (root or {}).get("rack") or () if (p.get("kind") or "number") == "number" and is_spec(p.get("sound"))]
 
 
+# -- the node effects that listen -----------------------------------------------------------------------
+def _node_hears(flat, sources, nid, params):
+    """(level, channel) analysis node nid of a flat graph hears, None while it hears nothing."""
+    from . import nodegraph
+    node = flat["nodes"].get(nid)
+    src = nodegraph.sound_source(flat, nid) if node is not None else None
+    if src is None or node.get("mute") or flat["nodes"][src].get("mute"):
+        return None
+    level, channel = nodegraph.sound_choice(flat, sources, params, src)
+    return (level, channel) if level and channel else None
+
+
+def picture_spec(graph, sources, nid, params=None):
+    """What 波形 / 頻譜 node nid draws: {"level", "channel"} (the whole sound is kept, not a number of it), or None."""
+    from . import nodegraph
+    got = _node_hears(nodegraph.flatten(graph), sources, nid, params)
+    return None if got is None else {"level": got[0], "channel": got[1]}
+
+
+def node_spec(graph, sources, nid, params=None):
+    """What 電平 → 數值 node nid of a node effect measures, None while it hears nothing (no 聲音來源 wired to it, none
+    chosen in that one, or either node is off: it reads 0). params: the effect's own (a source may be a parameter
+    each clip chooses, nodegraph.sound_choice)."""
+    from . import nodegraph
+    flat = nodegraph.flatten(graph)
+    got = _node_hears(flat, sources, nid, params)
+    if got is None:
+        return None
+    level, channel = got
+    node = flat["nodes"][nid]
+    own = {k: v for k, v in (node.get("meter") or {}).items() if k in RANGES}
+    try:
+        return clean({**DEFAULTS, **own, "level": level, "channel": channel})
+    except ValueError:
+        return None
+
+
+def node_key(spec):
+    """What a node's curve is published under."""
+    return "node:" + json.dumps(spec, sort_keys=True)
+
+
+def listeners(root):
+    """{node_key: (spec, [what to call each node that measures it and whose number goes somewhere])} of every node
+    effect of the project that is on."""
+    from . import fx, nodegraph
+    out = {}
+    for c in project.all_clips(root or {}):
+        for e in c.get("effects") or ():
+            g = e.get("graph") if e.get("filter") == fx.GRAPH and not e.get("disabled") else None
+            if not g or not any(nodegraph.hears(n) for n in g.get("nodes", {}).values()):
+                continue
+            flat = nodegraph.flatten(g)
+            used = {l["from"] for l in flat["links"]}
+            for nid, node in flat["nodes"].items():
+                if not nodegraph.hears(node):
+                    continue
+                level = node.get("type") == nodegraph.SOUND_LEVEL
+                spec = (node_spec if level else picture_spec)(flat, e.get("sources"), nid, e.get("params"))
+                if spec is None:
+                    continue
+                names = out.setdefault(node_key(spec), (spec, []))[1]
+                if nid in used:
+                    names.append(f"片段「{c.get('name') or c.get('type')}」節點效果的「{nodegraph.title(node)}」")
+    return out
+
+
+def wanted(root):
+    """Whether anything of the project follows a sound."""
+    return bool(sounding(root) or listeners(root))
+
+
 def needs(root, spec):
     """(snapshot, [the names of the parameters its sound reads, through their expressions too], [the ids
     of those among them that take their value from a meter])"""
@@ -610,12 +687,28 @@ def plan(root):
 
     for i in by:
         add(i)
+    for key, (spec, _names) in listeners(root).items():       # (the node effects' after the parameters their sound follows)
+        try:
+            snap, names, waits = needs(root, spec)
+        except MeterError as exc:
+            problems[key] = str(exc)
+            continue
+        if dsp.error() and snap.entries:
+            problems[key] = "聲音效果函式庫無法使用"
+            continue
+        for j in waits:
+            add(j)
+        jobs.append(Job(key, spec, snap, signature(snap, definitions(root, names, done))))
     return Plan(jobs, problems)
 
 
 _curves = {}                            # rack parameter id -> curve (shape()), replaced whole when it changes
 _made = {}                              # ... -> the Job.key it was made from
 _levels = {}                            # (tap key, lo, hi) -> box_db, the last few
+_taps = {}                              # node key -> the file of the tap its curve was made from
+_open = {}                              # ... file -> its sound, mapped (what the node editor's spectra read)
+_held = {}                              # (effect id, node id) -> what the node read last (a curve, or a tap's file): read on while its new one is made
+_failed = set()                         # the node keys that cannot be measured: their nodes read 0
 _lock = threading.Lock()                # (one run at a time)
 _generation = 0
 LEVELS_KEPT = 12
@@ -632,12 +725,16 @@ def forget():
     _curves.clear()
     _made.clear()
     _levels.clear()
+    _taps.clear()
+    _open.clear()
+    _held.clear()
+    _failed.clear()
     _generation += 1
 
 
 def stale_without(root):
     """Whether curves are published for parameters root no longer has."""
-    return bool(_made) and not sounding(root)
+    return bool(_made) and not wanted(root)
 
 
 def curve(rid):
@@ -648,6 +745,76 @@ def value(p, t_us):
     """What parameter p's meter reads at timeline time t_us (0 while it has not been measured)."""
     c = _curves.get(p["id"])
     return 0.0 if c is None else at(c, t_us)
+
+
+def heard(owner, spec, t_us):
+    """What a 電平 → 數值 node (owner: (effect id, node id)) measuring spec (node_spec; None: nothing) reads at time
+    t_us of its level. While a changed one is being measured it reads what it read before (0 before the first)."""
+    if spec is None:
+        _held.pop(owner, None)
+        return 0.0
+    key = node_key(spec)
+    c = _curves.get(key)
+    if c is None:
+        c = None if key in _failed else _held.get(owner)
+    else:
+        _held[owner] = c
+    return 0.0 if c is None else at(c, t_us)
+
+
+def hearing(e, t_us):
+    """nodegraph.evaluate's `heard` for node effect e at time t_us of its clip's level."""
+    return lambda nid: heard((e.get("id"), nid), node_spec(e["graph"], e.get("sources"), nid, e.get("params")), t_us)
+
+
+def node_curve(spec):
+    return _curves.get(node_key(spec))
+
+
+def node_sound(spec):
+    """The sound spec hears (mono float16, from the start of its level), None until it is measured."""
+    return _load(_taps.get(node_key(spec)))
+
+
+def picture_sound(owner, spec):
+    """(sound, what says which sound it is) of what a 波形 / 頻譜 node (owner: (effect id, node id)) draws, spec being its
+    picture_spec: (None, None) for silence. While a changed one is being measured it draws what it drew before."""
+    if spec is None:
+        _held.pop(owner, None)
+        return None, None
+    key = node_key(spec)
+    path = _taps.get(key) if key in _curves else None
+    if path is None:
+        path = None if key in _failed else _held.get(owner)
+    else:
+        _held[owner] = path
+    got = _load(path)
+    return (None, None) if got is None else (got, path)
+
+
+def _load(path):
+    if path is None:
+        return None
+    got = _open.get(path)
+    if got is None:
+        try:
+            got = np.load(path)
+        except (OSError, ValueError):
+            return None
+        _open[path] = got
+        while len(_open) > 4:
+            _open.pop(next(iter(_open)))
+    return got
+
+
+def note(problems):
+    """Which node listeners cannot be measured (a plan's or a run's problems): their nodes read 0."""
+    global _generation
+    bad = {k for k in problems if k.startswith("node:")}
+    if bad != _failed:
+        _failed.clear()
+        _failed.update(bad)
+        _generation += 1
 
 
 def _publish(rid, key, made):
@@ -674,8 +841,13 @@ def run(todo, cache_dir, cancelled=lambda: False, on_progress=None):
         for n, job in enumerate(todo.jobs):
             if _made.get(job.rid) == job.key:
                 continue
-            box = (job.tap_key, job.spec["lo_hz"], job.spec["hi_hz"])
             try:
+                if "lo_hz" not in job.spec:                 # (a picture of the sound: the tap is all it needs)
+                    tap(job.snap, cache_dir, job.tap_key, cancelled, on_progress and (lambda f: on_progress((n + f) / len(todo.jobs))))
+                    _taps[job.rid] = os.path.join(cache_dir, "soundmeter", job.tap_key + ".npy")
+                    _publish(job.rid, job.key, np.zeros(0, np.float32))
+                    continue
+                box = (job.tap_key, job.spec["lo_hz"], job.spec["hi_hz"])
                 db = _levels.get(box)
                 if db is None:
                     pcm = tap(job.snap, cache_dir, job.tap_key, cancelled,
@@ -684,12 +856,15 @@ def run(todo, cache_dir, cancelled=lambda: False, on_progress=None):
                     _levels[box] = db
                     while len(_levels) > LEVELS_KEPT:
                         _levels.pop(next(iter(_levels)))
+                if job.rid.startswith("node:"):
+                    _taps[job.rid] = os.path.join(cache_dir, "soundmeter", job.tap_key + ".npy")
                 _publish(job.rid, job.key, shape(db, job.spec))
             except Cancelled:
                 raise
             except Exception as exc:                    # (the others are still measured)
                 problems[job.rid] = f"{type(exc).__name__}: {exc}"
                 _publish(job.rid, None, None)
+        note(problems)
     return problems
 
 
@@ -706,15 +881,17 @@ def in_use(root, p):
 def require(root, cache_dir, cancelled=lambda: False, on_progress=None, allow_errors=False, say=None):
     """Everything measured, for an export. A parameter in use that cannot be: RuntimeError, or with
     allow_errors said and left reading 0."""
-    if not sounding(root):
+    nodes = listeners(root)
+    if not (sounding(root) or nodes):
         return
     try:
         problems = prepare(root, cache_dir, cancelled, on_progress)
     except Cancelled:
         raise RuntimeError("已取消") from None
-    bad = [f"  {p['name']}：{problems[p['id']]}" for p in sounding(root) if p["id"] in problems and in_use(root, p)]
+    bad = [f"  全局參數 {p['name']}：{problems[p['id']]}" for p in sounding(root) if p["id"] in problems and in_use(root, p)]
+    bad += [f"  {names[0]}：{problems[key]}" for key, (_spec, names) in nodes.items() if key in problems and names]
     if bad:
-        text = "有全局參數的聲音來源算不出來：\n" + "\n".join(bad)
+        text = "有聲音來源算不出來：\n" + "\n".join(bad)
         if not allow_errors:
             raise RuntimeError(text)
         if say:

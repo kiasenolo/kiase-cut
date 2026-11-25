@@ -26,11 +26,13 @@ TYPES = (
     ("string", "字串", "文字內容。不是圖片：只能接到文字節點的內容"),
     ("font", "字體", "字體檔。不是圖片：只能接到文字節點的字體"),
     ("outline", "矢量輪廓", "形狀、文字、SVG 圖片、矢量節點給出的路徑。不是圖片：接到矢量節點（相加、布林運算…）"),
+    ("sound", "聲音", "一條軌道、bus 或 Master 的聲音。不是圖片：只能從「聲音來源」接到分析節點的「聲音」，中間可以經過繞線點"),
 )
 FALLBACK_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "string": "#70b870", "font": "#b070b0", "int": "#598c5c",
-                   "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a", "outline": "#3fc7a8"}
+                   "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a", "outline": "#3fc7a8", "sound": "#e8607e"}
 PARAM_TYPES = {"float": ("數值", "float"), "int": ("整數", "int"), "bool": ("開關", "bool"), "color": ("顏色", "color"),
                "vec2": ("二維向量", "vector"), "vec3": ("向量", "vector"), "menu": ("選單", "menu"), "curve": ("曲線", None),
+               "sound": ("聲音來源", "sound"),
                "gradient": ("漸層", None)}
 
 # The nodes that are not filters, by (type, kind, op): what they are
@@ -42,6 +44,15 @@ SPECIAL = {
     (ng.SOURCE, "video", ""): "一段影片當來源。位置像遮罩一樣擺放。",
     (ng.SOURCE, "compound", ""): "一個複合片段當來源。",
     (ng.SOURCE, "track", ""): "時間線上的一條軌道當來源。",
+    (ng.SOURCE, "waveform", ""): "把接進來的聲音畫成波形：現在這一刻前後一小段（「時間長度」）的樣子。樣式「線」是聲音本身的線；「填滿」是它擺動多寬，上下對稱。"
+                                  "滿版高度是滿刻度（0 dB），小聲的聲音畫出來就矮。聲音是左右混合的單聲道。沒有接聲音、還沒選來源或來源已經不在時，畫的是靜音（一條平線）。"
+                                  "位置和大小像形狀節點一樣擺放，輸出是透明底的圖片。",
+    (ng.SOURCE, "spectrum", ""): "把接進來的聲音畫成頻譜：左邊低頻、右邊高頻，高度是音量在「最低 dB」到「最高 dB」之間的位置。樣式有「長條」和「曲線」；"
+                                  "「啟動」和「釋放」讓它升得快、落得慢。長條的數量由框的寬度、長條寬和間隔決定。聲音是左右混合的單聲道，沒有聲音時什麼都不畫（曲線是一條底線）。"
+                                  "位置和大小像形狀節點一樣擺放，輸出是透明底的圖片。",
+    (ng.SOURCE, "spectrumdata", ""): "把頻譜當資料用：一張蓋滿整個片段的黑白圖，左邊是「最低 Hz」、右邊是「最高 Hz」，每一直欄的亮度是那個頻率現在的音量（黑 0、白 1），上下每一列都一樣。"
+                                  "給置換、遮罩、紋理座標這類節點讀，自己做圖形。音量的算法和「頻譜」節點相同：同樣的設定下，亮度就是那裡長條的高度（包括為了好看而把高頻抬高一點）；"
+                                  "它不做左右平滑。沒有聲音時整張是黑的。內部固定 1024 欄，所以預覽和匯出讀到的一樣。",
     (ng.SOURCE, "text", ""): "文字產生器：字號、顏色、字距、對齊、外框等。內容可以接字串節點，字體可以接字體節點；也能當矢量輪廓接進矢量節點。",
     (ng.SOURCE, "image", "svg"): "讀進一個 SVG 圖片，給出它的矢量輪廓，可以接到矢量節點。",
     (ng.SOURCE, "vector", "add"): "矢量：把多個矢量（形狀、文字、SVG、其他矢量節點）的輪廓疊在一起。",
@@ -51,6 +62,15 @@ SPECIAL = {
     (ng.SOURCE, "vector", "scale"): "矢量：縮放一個矢量。",
     (ng.FONT, "", ""): "字體常數：一個字體檔。不是圖片，只能接到文字節點的字體。",
     (ng.STRING, "", ""): "字串常數：一段文字。不是圖片，只能接到文字節點的內容。",
+    (ng.SOUND_SOURCE, "", ""): "聲音來源：在節點上選一個時間線或複合片段，再選它的一條軌道、bus 或 Master，給出效果和推桿之後的聲音。"
+                               "來源自己的靜音和獨奏不算；送進 bus 的軌道靜音仍然算。聲音是左右混合的單聲道。"
+                               "共用的 VFX Node 裡，每個用它的片段預設聽同一個來源。要讓每個片段各選自己的：把「參數輸入」接到這個節點的「來源」插槽"
+                               "（或從插槽拉線出來新增「參數輸入」），它就變成效果參數，「效果」面板會出現「聲音來源」選單，每個片段各存各的（不能打關鍵幀）。"
+                               "來源是用專案裡的軌道記的，效果搬到別的專案或軌道被刪掉時顯示「（已經不在）」，要重選。",
+    (ng.SOUND_LEVEL, "", ""): "電平 → 數值：在節點的頻譜上拉一個框，框裡最大聲的頻率有多大聲變成 0～1 的數值（框的下緣是 0、上緣是 1），"
+                              "啟動和釋放是數值升上去、落下來要幾秒。出來的是一般的數值，數學、映射範圍、切換、模糊大小都能接。"
+                              "它讀的是「片段在它那一層的位置 + 片段內時間」的聲音：來源在複合片段裡、讀它的片段在外層時，不會跟著那個複合片段在外層的位置或速度移動。"
+                              "預覽在背景分析，算完前是 0（改框時先沿用舊的數值）；匯出會等分析完成，來源找不到時匯出報錯。",
     (ng.VIEWER, "", ""): "編輯器的預覽看這個節點的結果。不會被匯出。",
     (ng.REROUTE, "", ""): "繞線點：連線的一個彎，圖片原樣通過。用來整理線路。",
     (ng.FRAME, "", ""): "框架／註解：圈起一群節點並寫上說明，不影響結果。",
@@ -318,10 +338,14 @@ def filter_page(ref):
 def special_page(key):
     t, kind, op = key[len("special:"):].split("|")
     label = next((e[2] for _, entries in categories() for e in entries if e[0] == "node" and e[1] == key), kind or t)
-    out = {ng.FONT: "font", ng.STRING: "string"}.get(t, "outline" if t == ng.SOURCE and (kind in ("vector", "text") or op == "svg") else "image")
+    out = {ng.FONT: "font", ng.STRING: "string", ng.SOUND_SOURCE: "sound", ng.SOUND_LEVEL: "float"}.get(t, "outline" if t == ng.SOURCE and (kind in ("vector", "text") or op == "svg") else "image")
     ins = ""
     if t == ng.SOURCE and kind == "vector":
         ins = "<p>輸入：矢量輪廓（%s）</p>" % dot("outline")
+    elif t == ng.SOUND_SOURCE:
+        ins = "<p>輸入：來源（%s，只接「聲音來源」種類的效果參數）</p>" % dot("sound")
+    elif t == ng.SOUND_LEVEL or (t == ng.SOURCE and kind in ng.SOUND_PICTURES):
+        ins = "<p>輸入：聲音（%s）</p>" % dot("sound")
     return (f"<h1>{esc(label)}</h1><p>{esc(SPECIAL.get((t, kind, op), ''))}</p>{ins}"
             f"<p>輸出：{dot(out)} {esc(dict((k, n) for k, n, _ in TYPES).get(out, out))}"
             + ("（也可以當圖片用）" if out == "outline" else "") + f"</p>{recipes(key, label)}")
@@ -368,7 +392,7 @@ def shapes_row():
 def types_page():
     rows = "".join(f"<tr><td>{dot(k)}</td><td>{esc(name)}</td><td>{esc(text)}</td></tr>" for k, name, text in TYPES)
     return ("<h1>資料類型</h1><p>節點插槽上的點，顏色是資料類型。每條連線帶的其實都是一張圖片，數字、顏色、遮罩都是圖片的不同解讀；"
-            "字串、字體和矢量輪廓不是圖片，只接特定的節點。</p>"
+            "字串、字體、矢量輪廓和聲音不是圖片，只接特定的節點。</p>"
             + legend_row() + "<h3>點的形狀</h3>" + shapes_row() + "<h3>類型</h3>" +
             '<table border="1" cellspacing="0" cellpadding="4"><tr><th></th><th>類型</th><th>是什麼</th></tr>' + rows + "</table>")
 

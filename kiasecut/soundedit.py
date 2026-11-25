@@ -209,6 +209,45 @@ def toggle_key(level, target, effect_id, name, t):
     _toggle_number(e.setdefault("params", {}), name, _spec(e, name)["default"], t)
 
 
+def preset_entries(chain):
+    """A chain as a preset keeps it, for any project: keyframed numbers held at their first
+    value; no ids, bindings to global parameters or channels listened to."""
+    out = copy.deepcopy(list(chain))
+    for e in out:
+        e.pop("side", None)
+        for node in (e.get("graph") or {}).get("nodes", {}).values():
+            if node.get("type") == "ext":
+                node["channel"] = ""
+    for _path, one in soundfx.entries(out):
+        one.pop("expr", None)
+        for name, v in (one.get("params") or {}).items():
+            if curves.is_animated(v):
+                one["params"][name] = v["keys"][0][1]
+    for e in out:
+        e.pop("id", None)
+    return out
+
+
+def add_preset(level, target, saved):
+    """Put a preset's effects at the end of target's chain; returns their new ids. What this
+    version does not know is left out."""
+    if target[0] == "clip" and not sounding(holder(level, target)):
+        raise edit.EditError("這個片段沒有聲音")
+    good = [e for e in saved if isinstance(e, dict) and
+            (e.get("effect") in soundfx.EFFECTS or e.get("effect") == soundfx.GRAPH and
+             isinstance(e.get("graph"), dict) and isinstance(e["graph"].get("nodes"), dict) and
+             isinstance(e["graph"].get("links"), list))]
+    if not good:
+        raise edit.EditError("這個預設裡沒有認得的效果")
+    es = holder(level, target, make=True).setdefault("sound_effects", [])
+    made = []
+    for e in good:
+        e = dict(copy.deepcopy(e), id=new_id())
+        es.append(e)
+        made.append(e["id"])
+    return made
+
+
 def channel_of(level, target):
     """The track or bus a target's sound is on (a clip's: its track), or None (the master)."""
     if target[0] == "clip":

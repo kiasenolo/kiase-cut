@@ -338,6 +338,10 @@ class ChainPanel(QWidget):
         self.add.setFocusPolicy(Qt.NoFocus)
         self.add.clicked.connect(lambda: effect_menu(self, page.add_effect).exec(
             self.add.mapToGlobal(self.add.rect().bottomLeft())))
+        self.presets = QPushButton("預設")
+        self.presets.setFocusPolicy(Qt.NoFocus)
+        self.presets.clicked.connect(lambda: page.preset_menu(self.presets.mapToGlobal(self.presets.rect().bottomLeft())))
+        head.addWidget(self.presets)
         head.addWidget(self.add)
         lay.addLayout(head)
         self.warning = QLabel("")
@@ -361,6 +365,7 @@ class ChainPanel(QWidget):
         level = page.level()
         entries = soundedit.chain(level, target) if target else []
         self.add.setEnabled(target is not None)
+        self.presets.setEnabled(target is not None)
         self.title.setText(page.target_name(target))
         why = dsp.error()
         self.warning.setVisible(bool(why))
@@ -947,6 +952,52 @@ class AudioPage(QWidget):
         if made and kind == soundfx.GRAPH:
             self.refresh()
             self.open_graph(made)
+
+    # -- presets of a whole chain (in the Library) -------------------------------------------------------
+    def preset_menu(self, at):
+        menu = Menu(self)
+        root = self.win.ulib.root if self.win.ulib else self.win.library_root()
+        saved = userlib.sound_presets(root)
+        for name, path in saved:
+            menu.addAction(name, lambda path=path: self.apply_preset(path))
+        if saved:
+            menu.addSeparator()
+        save = menu.addAction("把這條效果鏈存成預設…", lambda: self.save_preset(root))
+        save.setEnabled(bool(self.target and soundedit.chain(self.level(), self.target)))
+        if saved:
+            gone = menu.addMenu("刪除預設")
+            for name, path in saved:
+                gone.addAction(name, lambda name=name, path=path: self.delete_preset(name, path))
+        menu.exec(at)
+
+    def apply_preset(self, path):
+        try:
+            saved = userlib.load_sound_preset(path)
+        except (OSError, ValueError) as exc:
+            self.win.statusBar().showMessage(f"讀不了這個預設：{exc}", 6000)
+            return
+        self.edit("套用聲音效果預設", soundedit.add_preset, saved)
+
+    def save_preset(self, root, name=None):
+        if name is None:
+            name, ok = QInputDialog.getText(self.win, "存成預設", "名稱：")
+            if not ok or not name.strip():
+                return
+        name = name.strip()
+        try:
+            if os.path.exists(userlib.sound_preset_path(root, name)) and QMessageBox.question(
+                    self.win, "存成預設", f"已經有「{name}」，要取代它嗎？") != QMessageBox.Yes:
+                return
+            userlib.save_sound_preset(root, name, soundedit.preset_entries(soundedit.chain(self.level(), self.target)))
+        except (OSError, ValueError) as exc:
+            self.win.statusBar().showMessage(f"存不了預設：{exc}", 6000)
+
+    def delete_preset(self, name, path):
+        if QMessageBox.question(self.win, "刪除預設", f"刪除「{name}」？") == QMessageBox.Yes:
+            try:
+                os.remove(path)
+            except OSError as exc:
+                self.win.statusBar().showMessage(f"刪不掉：{exc}", 6000)
 
     def add_bus(self, route_from=None):
         def fn(level):

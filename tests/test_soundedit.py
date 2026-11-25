@@ -106,5 +106,78 @@ class BusTests(unittest.TestCase):
         self.assertEqual(soundedit.buses(p), [])
 
 
+class CurveAndFollowTests(unittest.TestCase):
+    def test_curve_editor_rows_and_keys(self):
+        p = make()
+        t = ("clip", "c1")
+        gain = soundedit.add_effect(p, t, "gain")
+        graph = soundedit.add_effect(p, t, "graph")
+        soundedit.add_effect(p, t, "reverb")
+        c = edit.find(p, "c1")[1]
+        g = soundedit.graph(p, t, graph)
+        mix = soundnodes.new_node("mix")
+        g["nodes"]["n9"] = mix
+        rows = soundfx.clip_rows(c["sound_effects"])
+        groups = {r[0] for r in rows}
+        self.assertIn("sfx:" + gain, groups)
+        self.assertIn(f"sfx:{graph}/n9", groups)
+        self.assertEqual(len({r[:2] for r in rows}), len(rows))
+        for group, key, *_ in rows:
+            self.assertTrue(edit.has_param(c, group, key), (group, key))
+        edit.set_keys(p, "c1", "sfx:" + gain, "gain", [[0, -6.0, 0, 0, 0, 0], [S, 0.0, 0, 0, 0, 0]])
+        self.assertEqual(edit.key_times(c), [0, S])
+        edit.toggle_key(p, "c1", f"sfx:{graph}/n9", "g2", 2 * S)
+        self.assertEqual(edit.key_times(c), [0, S, 2 * S])
+        edit.clear_keys(p, "c1", "sfx:" + gain, "gain", -3.0)
+        self.assertEqual(c["sound_effects"][0]["params"]["gain"], -3.0)
+
+    def test_following_a_global_parameter(self):
+        p = make()
+        edit.add_rack_param(p, "loud", 6.0)
+        t = ("track", "t0")
+        e = soundedit.add_effect(p, t, "gain")
+        soundedit.set_expr(p, t, e, "gain", "loud * 2")
+        entry = soundedit.effect(p, t, e)
+        names = rack.values(p, 0)
+        self.assertEqual(soundfx.values(entry, 0, names)["gain"], 12.0)
+        self.assertEqual(rack.users(p, "loud"), 1)
+        edit.rename_rack_param(p, rack.params(p)[0]["id"], "level")
+        self.assertEqual(entry["expr"]["gain"], "level * 2")
+        soundedit.set_expr(p, t, e, "gain", "level * 100")                   # held to the parameter's range
+        self.assertEqual(soundfx.values(entry, 0, rack.values(p, 0))["gain"], 24.0)
+        soundedit.set_expr(p, t, e, "gain", "")
+        self.assertNotIn("expr", entry)
+        with self.assertRaises(edit.EditError):
+            soundedit.set_expr(p, t, e, "gain", "((")
+
+
+class PresetTests(unittest.TestCase):
+    def test_a_chain_kept_and_put_on_another(self):
+        p = make()
+        t = ("clip", "c1")
+        gain = soundedit.add_effect(p, t, "gain")
+        graph = soundedit.add_effect(p, t, "graph")
+        g = soundedit.graph(p, t, graph)
+        g["nodes"]["n9"] = soundnodes.new_node("ext", channel="t1")
+        soundedit.toggle_key(p, t, gain, "gain", S)
+        soundedit.set_expr(p, t, gain, "gain", "value * 2")
+        saved = soundedit.preset_entries(soundedit.chain(p, t))
+        self.assertNotIn("id", saved[0])
+        self.assertNotIn("expr", saved[0])
+        self.assertEqual(saved[0]["params"]["gain"], 0.0)
+        self.assertEqual(saved[1]["graph"]["nodes"]["n9"]["channel"], "")
+        self.assertIn("expr", soundedit.effect(p, t, gain))                  # the chain itself is left alone
+        with tempfile.TemporaryDirectory() as root:
+            userlib.save_sound_preset(root, "voice / 1", saved)
+            (name, path), = userlib.sound_presets(root)
+            self.assertEqual(name, "voice _ 1")
+            made = soundedit.add_preset(p, ("track", "t0"), userlib.load_sound_preset(path) + [{"effect": "unknown"}])
+        self.assertEqual(len(made), 2)
+        self.assertNotIn(gain, made)
+        self.assertEqual([e["id"] for e in soundedit.chain(p, ("track", "t0"))], made)
+        with self.assertRaises(edit.EditError):
+            soundedit.add_preset(p, ("clip", "p1"), saved)
+
+
 if __name__ == "__main__":
     unittest.main()

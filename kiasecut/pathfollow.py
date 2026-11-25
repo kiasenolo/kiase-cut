@@ -1,4 +1,4 @@
-"""路徑跟隨: a clip moves along the outline of a shape or pen path clip of its own level.
+"""路徑跟隨 and 父子綁定 (parenting.py, worked out here too): a clip moves along the outline of a shape or pen path clip of its own level.
 
 clip["transform"]["path_id"] = the shape / path clip's id, ["path_progress"] = how far along (0 - 1, a number or a curve: keyframes,
 easing, LFOs like any other); the clip's own x / y then are an offset from the point of the path it is at. The outline is the
@@ -15,7 +15,7 @@ import math
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QTransform
 
-from . import assets, curves, project, vector
+from . import assets, curves, parenting, project, rack, vector
 
 FIELDS = ("path_id", "path_progress", "path_rotate")
 NOT_PATHS = ("solid", "gradient", "empty", "grid")
@@ -54,7 +54,7 @@ def _clips(tracks):
 
 
 def has_followers(root):
-    return any(is_follower(c) for tracks, _w, _h in _levels(root) for c in _clips(tracks))
+    return any(is_follower(c) for tracks, _w, _h in _levels(root) for c in _clips(tracks)) or parenting.has_parents(root)
 
 
 def candidates(level_tracks):
@@ -221,6 +221,9 @@ def resolve(root):
                 tf.pop("path_id", None)
                 tf.pop("path_progress", None)
                 tf.pop("path_rotate", None)
+    # 父子綁定 (after the paths: a parent that follows one takes its clips along)
+    if parenting.has_parents(root):
+        found = parenting.bake(root, lambda T: rack.values(root, T)) or found
     return found
 
 

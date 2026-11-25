@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, camera, lights, mesh, mesh3d, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
+from .. import assets, camera, lights, mesh, mesh3d, parenting, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons, look, motion
 from .colorpick import pick_color, qcolor, rgba
@@ -356,6 +356,8 @@ def section(title):
 class Inspector(QWidget):
     pivot_units = None                              # (clip, clip time) -> (x, y): half-canvas units per object width / height
     scene_check = None                              # clip -> whether it is in a 攝影機 scene (its 3D fields show)
+    parentChosen = Signal(list, object)             # clip ids, the clip to bind them to (None: unbind)
+    parent_choices = []                             # [(clip id, name)] they can be bound to
     pk = {}
     # every edit names the clips it applies to (the whole selection)
     textEdited = Signal(list, dict)                 # clip ids, {field: value}
@@ -628,6 +630,8 @@ class Inspector(QWidget):
                             ("pivot_x", "pivot_y", "中心點")))
                 self._build_anchor_grid(form)
                 self._build_flip(form)
+                if parenting.can_bind(c):
+                    self._build_parent(form, c)
                 if scene and mesh3d.can(c):
                     self._build_solid(form, c)
                 if scene and c["type"] in edit.VISUAL and not c.get("camera") and not c.get("light"):
@@ -1357,6 +1361,38 @@ class Inspector(QWidget):
     def set_path_choices(self, choices):
         """[(id, name)] of the shapes / pen paths the clips of the open level can follow."""
         self.path_choices = list(choices)
+
+    def set_parent_choices(self, choices):
+        self.parent_choices = list(choices)
+
+    def _fill_parents(self, box, clips):
+        """The parents to pick from, the clips' own one chosen."""
+        box.blockSignals(True)
+        box.clear()
+        box.addItem("（無）", None)
+        held = {k.get("parent") for k in clips}
+        for cid, name in self.parent_choices:
+            box.addItem(name, cid)
+        if len(held) > 1:
+            box.setCurrentIndex(-1)
+        else:
+            now = held.pop()
+            at = box.findData(now) if now else 0
+            if at < 0:                                    # (bound to one that is not on this level any more)
+                box.addItem("（找不到）", now)
+                at = box.count() - 1
+            box.setCurrentIndex(at)
+        box.blockSignals(False)
+
+    def _build_parent(self, form, c):
+        """父子綁定: the clip goes where its parent goes (parenting.py)."""
+        box = ComboBox()
+        box.setToolTip("父物件：這個片段跟著它移動、旋轉、縮放（不透明度不跟）。綁定時畫面位置不變，之後上面的位置、旋轉、縮放是相對父物件的值。\n"
+                       "想用一個看不見的東西帶著一組片段走，加一個「空物體」當父物件；相機和燈光也能綁")
+        self._fill_parents(box, [c])
+        box.activated.connect(lambda i: self.parentChosen.emit(list(self.clip_ids), box.itemData(i)))
+        self.widgets["parent"] = box
+        form.addRow("父物件", box)
 
     def _build_path_follow(self, form, c):
         """路徑跟隨: pick a shape or pen path clip to move along, and how far along it is (keyframes like any number). A text
@@ -2308,6 +2344,8 @@ class Inspector(QWidget):
                 box.blockSignals(True)
                 box.setChecked(all(lights.shaded(k, key) for k in clips))
                 box.blockSignals(False)
+        if "parent" in w and not w["parent"].view().isVisible():
+            self._fill_parents(w["parent"], clips)
         if "light_shadow" in w:
             box = w["light_shadow"]
             box.blockSignals(True)

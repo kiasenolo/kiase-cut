@@ -404,12 +404,43 @@ def _reid(c):
                 _reid(k)
 
 
+def _canvas(level):
+    return level.get("width") or 1920, level.get("height") or 1080
+
+
+def set_parent(level, clip_id, parent_id, at_us=0, names=None):
+    """父子綁定 (parenting.py): bind the clip to another of its level (None: to nothing) so that at its clip time at_us it stays
+    where it is."""
+    from . import parenting
+    _t, c = find(level, clip_id)
+    T = c["start_us"] + int(min(max(at_us, 0), c["duration_us"]))
+    try:
+        parenting.bind(level["tracks"], clip_id, parent_id, T, *_canvas(level), names)
+    except ValueError as exc:
+        raise EditError(str(exc)) from None
+    return c
+
+
+def _release(level, clip_ids):
+    """The clips bound to any of clip_ids, about to be deleted, stay where they are."""
+    from . import parenting
+    parenting.release(level["tracks"], clip_ids, *_canvas(level))
+
+
+def _sever(level, clip_ids):
+    """Bindings between clip_ids, about to go to another level, and the clips staying are undone."""
+    from . import parenting
+    parenting.sever(level["tracks"], clip_ids, *_canvas(level))
+
+
 def delete(proj, clip_id):
     t, c = find(proj, clip_id)
+    _release(proj, [clip_id])
     t["clips"].remove(c)
 
 
 def delete_many(proj, clip_ids):
+    _release(proj, clip_ids)
     for cid in clip_ids:
         delete(proj, cid)
 
@@ -418,6 +449,7 @@ def ripple_delete(proj, clip_ids):
     """波紋刪除: delete the clips and close the gaps they leave - each later clip of their
     tracks moves left by the time the deleted clips before it covered."""
     cut = {}                                             # id(track) -> (track, [(start, end)])
+    _release(proj, clip_ids)
     for cid in clip_ids:
         t, c = find(proj, cid)
         cut.setdefault(id(t), (t, []))[1].append((c["start_us"], end(c)))
@@ -620,6 +652,14 @@ def paste_clips(root, level, payload, at_us):
         track["clips"].append(c)
         _sort(track)
         new.append(c)
+    made = {item["clip"]["id"]: c["id"] for item, c in zip(payload["items"], new)}
+    here = {k["id"] for t in level["tracks"] for k in t["clips"]}
+    for c in new:                                        # (父子綁定: copies of both stay bound to each other)
+        up = c.get("parent")
+        if up in made:
+            c["parent"] = made[up]
+        elif up is not None and up not in here:
+            c.pop("parent")
     project.link(root)
     return new
 
@@ -672,10 +712,17 @@ def duplicate_moved(root, level, clip_ids, d_us=0, d_rows=0, moves=None, t_of=No
         copies = paste_clips(root, holder, {"anchor_us": anchor, "items": items}, at)
         made.update((id(item), c) for item, c in zip(items, copies))
     new = [made[id(item)] for item in payload["items"]]
-    for item, c in zip(payload["items"], new):
+    from . import parenting
+    by = {c["id"]: c for c in new}
+    pairs = sorted(zip(payload["items"], new), key=lambda p: len(parenting.chain(p[1], by)))     # (parents first)
+    for item, c in pairs:
         old = item["clip"]["id"]
-        for key, v in ((moves or {}).get(old) or {}).items():
-            set_param(level, c["id"], "transform", key, v, t_of(old) if t_of else None)
+        vals = (moves or {}).get(old) or {}
+        t = t_of(old) if t_of else None
+        if vals and c.get("parent"):                     # (moved to where it was dragged: its own numbers are its parent's space)
+            vals = parenting.to_local(level["tracks"], c["id"], t or 0, vals, *_canvas(level))
+        for key, v in vals.items():
+            set_param(level, c["id"], "transform", key, v, t)
     return new
 
 
@@ -2137,6 +2184,7 @@ def make_group(root, level, clip_ids):
     outer = group_of(level, picked[0][0])
     holder = outer["tracks"] if outer is not None else level["tracks"]
     ids = {c["id"] for _, c in picked}
+    _sever(level, ids)
     s0 = min(c["start_us"] for _, c in picked)
     span = max(end(c) for _, c in picked) - s0
     used = [t for t in holder if any(t is tt for tt, _ in picked)]           # bottom first
@@ -2176,6 +2224,10 @@ def ungroup(root, level, group_id):
     t, g = find(level, group_id)
     if not project.is_group(g):
         raise EditError("這不是群組")
+    from . import parenting
+    for inside in [k for ct in g["tracks"] for k in ct["clips"] if k.get("parent")]:     # (the group's place is folded into each: unbound first)
+        parenting.bind(g["tracks"], inside["id"], None, inside["start_us"], *_canvas(level))
+    _sever(level, [group_id])
     kid = g.get("compound_id")
     if kid:
         ss, shown = g.get("source_start_us", 0), g["duration_us"]
@@ -2251,6 +2303,7 @@ def move_out_of_group(root, level, clip_ids):
     picked = [(t, c) for t, c in picked if group_of(level, t) is not None]
     if not picked:
         raise EditError("片段已經在最上層")
+    _sever(level, [c["id"] for _, c in picked])
     every = abs_starts(level)
     spaces = {id(c): _space(level, t, every[c["id"]]) for t, c in picked}    # (refused before anything changes)
     out = []
@@ -2388,6 +2441,7 @@ def move_into_group(root, level, clip_ids, group_id, track_id=None, start_us=Non
     into = [g] + _groups_around(level, gt)
     for x in into:
         _flat_group(x)                                             # (refused before anything changes)
+    _sever(level, [c["id"] for _, c in picked])
     every = abs_starts(level)
     starts = {c["id"]: every[c["id"]] for _, c in picked}
     shift = 0 if start_us is None else int(start_us) - min(starts.values())
@@ -4162,6 +4216,7 @@ def make_compound(root, container, clip_ids, at_us=None, static=False, component
     if static and any(c["type"] == "audio" for _, c in picked):
         raise EditError("靜態片段只放畫面：選取裡有聲音片段")
     ids = {c["id"] for _, c in picked}
+    _sever(container, ids)
     s0 = min(c["start_us"] for _, c in picked)
     span = max(end(c) for _, c in picked) - s0
     used = [t for t in container["tracks"] if any(t is tt for tt, _ in picked)]       # bottom first

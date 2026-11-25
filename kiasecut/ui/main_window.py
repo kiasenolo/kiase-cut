@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, models, project, recovery,
+from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, models, parenting, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -428,6 +428,7 @@ class MainWindow(QMainWindow):
         ins.scene_check = self.in_scene
         ins.textEdited.connect(self.on_text_edited)
         ins.paramEdited.connect(self.on_param_edited)
+        ins.parentChosen.connect(self.bind_clips)
         ins.picture_of = self.dropped_picture
         ins.component_of = self.open_component
         ins.paramBindRequested.connect(self.layer_param_bind)
@@ -3121,9 +3122,28 @@ class MainWindow(QMainWindow):
                     linked.add(o["id"])
         return len(others), len(linked), links
 
+    def parent_choices(self, ids, primary):
+        """[(id, name)] of what every selected clip can be bound to (父子綁定)."""
+        ids = set(ids) | ({primary} if primary else set())
+        if not ids:
+            return []
+        tracks = self.container()["tracks"]
+        common = None
+        for cid in ids:
+            got = {k: c for k, c in parenting.candidates(tracks, cid) if k not in ids}
+            common = got if common is None else {k: c for k, c in common.items() if k in got}
+        return [(k, clip_name(c)) for k, c in (common or {}).items()]
+
+    def bind_clips(self, ids, parent_id):
+        times = self.clip_times(ids)
+        names = rack.values(self.view(), self.playhead_us())
+        self.apply_each("綁定父物件" if parent_id else "解除父物件",
+                        lambda lvl, cid: edit.set_parent(lvl, cid, parent_id, times[cid], names), ids)
+
     def show_selection_props(self):
         if self.proj:
             self.inspector.set_path_choices(pathfollow.candidates(self.container()["tracks"]))
+            self.inspector.set_parent_choices(self.parent_choices(self.timeline.selected_ids, self.timeline.selected_id))
         starts = edit.abs_starts(self.container()) if self.proj else {}
         clips, t = [self.placed(c, starts) for c in self.timeline.selected_clips_primary_first()], self.playhead_us()
         times = self.key_times([c["id"] for c in clips])
@@ -3292,10 +3312,26 @@ class MainWindow(QMainWindow):
 
         def set_all(level):
             for g, vals in (values.items() if group == "multi" else [(group, values)]):
+                if g == "transform":
+                    vals = self.own_numbers(level, cid, t, vals)
                 for key, v in vals.items():
                     edit.set_param(level, cid, g, key, v, t)
 
         self.apply(label, set_all)
+
+    def level_names(self, level, cid):
+        """T -> the names expressions read at time T of the level (the parameter rack), for 父子綁定."""
+        c = edit.find(level, cid)[1]
+        return rack.values(self.view(), c["start_us"] + self.clip_time(cid))
+
+    def own_numbers(self, level, cid, t, vals):
+        """What to set on clip cid for it to be seen with `vals` (what was dragged on the canvas): the same, unless it is bound to a
+        parent, whose space its own numbers are in."""
+        c = edit.find(level, cid)[1]
+        if not c.get("parent"):
+            return vals
+        W, H = level.get("width") or self.proj["width"], level.get("height") or self.proj["height"]
+        return parenting.to_local(level["tracks"], cid, t, vals, W, H, self.level_names(level, cid))
 
     def toggle_pen(self):
         """The 鋼筆 button: start drawing a path, or end the tool (an open path is kept as it is)."""
@@ -3361,7 +3397,9 @@ class MainWindow(QMainWindow):
         times = self.clip_times(moves)
 
         def set_all(level):
-            for cid, vals in moves.items():
+            by = {c["id"]: c for tr in project.all_tracks(level["tracks"]) for c in tr["clips"]}
+            for cid, vals in sorted(moves.items(), key=lambda kv: len(parenting.chain(by[kv[0]], by)) if kv[0] in by else 0):    # (parents first)
+                vals = self.own_numbers(level, cid, times[cid], vals)
                 for key, v in vals.items():
                     edit.set_param(level, cid, "transform", key, v, times[cid])
 
@@ -5346,6 +5384,7 @@ class MainWindow(QMainWindow):
                 for i, (g, vals) in enumerate(parts):
                     holder = group_holder(c, g, create=True)
                     if g == "transform":
+                        vals = self.own_numbers(self.container(), cid, self.clip_time(cid), vals)
                         vals = edit.with_linked_scale(holder, vals, self.clip_time(cid))
                         parts[i] = (g, vals)
                     holder.update(vals)

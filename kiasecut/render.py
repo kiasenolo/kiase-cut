@@ -198,6 +198,8 @@ class Renderer:
         em_unit = (spec.get("size") or 1.0) * textlayout.PX_PER_FONT_UNIT * H / 1080
         rs = quantize(max(unit, 1.0 / max(em_unit, 1e-6)))
         pic = self.text(spec, rs, H)
+        aw, ah = textlayout.frame_size(spec, H)                        # (錨點: of the text's box, without the drawing's margin)
+        src = nodegraph.centred(src, aw, ah, disp, t)
         placed = dict(src, w=pic.width() / rs / max(disp[0], 1e-6), h=pic.height() / rs / max(disp[1], 1e-6))
         return pic, placed
 
@@ -219,7 +221,7 @@ class Renderer:
         sw, sh = max(round(v("w") * disp[0], 2), 1), max(round(v("h") * disp[1], 2), 1)
         ratio = v("fit") if "fit" in src else 0.0
         if ratio > 0:                                    # (比例: the shape keeps its proportions inside the frame; 0 stretches it to the frame)
-            sw, sh = (round(sh * ratio, 2), sh) if sw / sh > ratio else (sw, round(sw / ratio, 2))
+            sw, sh = (round(x, 2) for x in nodegraph.fitted(sw, sh, ratio))
         q["w"], q["h"] = sw, sh
         clear = "#00000000"                              # (hidden paint keeps the outline's reach: the same size for every variant)
         if paint == "fill":
@@ -234,11 +236,18 @@ class Renderer:
         if paint == "stroke" and not assets.stroked(q):
             return None
         reach = 2 * assets.overflow(q)
+        src = nodegraph.centred(src, sw, sh, disp, t)
         placed = dict(src, w=(sw + reach) / max(disp[0], 1e-6), h=(sh + reach) / max(disp[1], 1e-6))
         return self.asset(q, sw, sh), placed
 
     # -- vector nodes (vector.py) -------------------------------------------------------------------
     OUTLINE_FAMILIES = ("rect", "line", "ellipse", "star", "polygon", "arrow", "parallelogram", "heart", "path")
+
+    @staticmethod
+    def centred_source(src, disp, t):
+        """A source node's picture that fills its w x h frame, placed by its centre (nodegraph.centred)."""
+        v = lambda k: curves.value(src.get(k, 1.0), t)
+        return nodegraph.centred(src, v("w") * disp[0], v("h") * disp[1], disp, t)
 
     def vector_layers(self, e, graph, nid, t, disp, fps, seen=()):
         """The outlines (vector.Layer, canvas px centred on the clip's frame) node nid of effect e's graph gives at clip time t:
@@ -267,15 +276,18 @@ class Renderer:
             return vector.add(groups) if op == "add" else vector.combine(op, groups)
         src = nodegraph.placed_by(src, e["params"], bound, nid, t)
         v = lambda k, d=0.0: curves.value(src.get(k, d), t)
-        local = QTransform().translate(v("cx") * disp[0] / 2, -v("cy") * disp[1] / 2).rotate(v("rotation"))
+        def placing(w, h):                                  # (the frame of a w x h px object: its anchor at cx / cy)
+            at = nodegraph.centred(src, w, h, disp, t)
+            return QTransform().translate(curves.value(at.get("cx", 0.0), t) * disp[0] / 2,
+                                          -curves.value(at.get("cy", 0.0), t) * disp[1] / 2).rotate(v("rotation"))
         if nodegraph.is_asset(node):
             q = nodegraph.asset_of(node, nid, e["params"], t, bound)
             if q.get("family") not in self.OUTLINE_FAMILIES:
                 return []
             sw, sh = max(v("w", 1.0) * disp[0], 1.0), max(v("h", 1.0) * disp[1], 1.0)
             ratio = v("fit") if "fit" in src else 0.0
-            if ratio > 0:
-                sw, sh = (sh * ratio, sh) if sw / sh > ratio else (sw, sw / ratio)
+            sw, sh = nodegraph.fitted(sw, sh, ratio)
+            local = placing(sw, sh)
             path = vector.parse_d(assets.outline_d(q, sw, sh))
             path.translate(-sw / 2, -sh / 2)
             fill = vector.paint_of(q, "fill", sw, sh) if q.get("fill", True) else None
@@ -286,6 +298,7 @@ class Renderer:
         if nodegraph.is_text(node):
             spec = textvars.spec_at(nodegraph.text_of(node, nid, e["params"], t, bound, src, e["graph"]), t, TEXT_FIELDS, fps)
             layers = vector.text_layers(spec, self.canvas_h)
+            local = placing(*textlayout.frame_size(spec, self.canvas_h))
             return [l.mapped(local) for l in layers]
         if node.get("type") == nodegraph.SOURCE and node.get("kind") == "image" and svgimage.is_svg(src.get("image")):
             layers, box = vector.load_svg(src["image"])
@@ -293,6 +306,7 @@ class Renderer:
                 return []
             sw, sh = max(v("w", 1.0) * disp[0], 1.0), max(v("h", 1.0) * disp[1], 1.0)
             k = min(sw / box.width(), sh / box.height())
+            local = placing(sw, sh)
             fit = QTransform().scale(k, k).translate(-box.center().x(), -box.center().y())      # (the picture keeps its proportions in its frame)
             return [l.mapped(QTransform(fit.m11(), fit.m12(), fit.m21(), fit.m22(), fit.dx(), fit.dy()) * local) for l in layers]
         return []
@@ -1070,13 +1084,13 @@ class Renderer:
                     got = self.shape_source(e, nid, src, t, disp, paint, linked, unit, fps)
                     if got is None and paint:
                         return None
-                    pic, placed = got or (nodegraph.shape_image(src), src)
+                    pic, placed = got or (nodegraph.shape_image(src), self.centred_source(src, disp, t))
                     return upload(image_to_array(pic)), source_map(placed, t, disp, wt, w, h), None
                 comp = self.matte_compound(src, t) if src else None
                 if comp is None:
                     return None
                 pic = self.matte_image(src, comp, t, self.matte_k(src, t, disp, comp, wt), fps)
-                return upload(image_to_array(pic)), source_map(src, t, disp, wt, w, h), None
+                return upload(image_to_array(pic)), source_map(self.centred_source(src, disp, t), t, disp, wt, w, h), None
             errors = []
             try:
                 tex, owner = nodegraph.evaluate(eng, e["graph"], e["params"], upload(arr), w, h, pool.alloc, pool.free,

@@ -242,9 +242,9 @@ class TextNodeOnPreviewTests(unittest.TestCase):
         return got
 
     def test_frame_is_what_the_words_take_up_with_the_clip_boxs_handles(self):
-        from kiasecut.ui.preview import text_node, text_size
+        from kiasecut.ui.preview import text_frame, text_node
         g = self.geo()
-        w, h = text_size(text_node(self.pv.selected_box().clip, self.group, 0)[3], 1080)
+        w, h = text_frame(text_node(self.pv.selected_box().clip, self.group, 0)[3], 1080)
         self.assertAlmostEqual(2 * g.hw, w, delta=1)
         self.assertAlmostEqual(2 * g.hh, h, delta=1)
         self.assertTrue(g.is_picture())

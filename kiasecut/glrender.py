@@ -1317,14 +1317,14 @@ class GLRenderer(render.Renderer):
                 got = self.shape_source(e, nid, src, t, disp, paint, linked, ppu, fps)
                 if got is None and paint:
                     return None
-                pic, placed = got or (nodegraph.shape_image(src), src)
+                pic, placed = got or (nodegraph.shape_image(src), self.centred_source(src, disp, t))
                 tex, _straight = gl.picture(pic)
                 return tex, render.source_map(placed, t, disp, world, cur.w, cur.h), None
             pic = self.gl_matte(src, t, disp, world, fps) if src else None
             if pic is None:
                 return None
             give = (lambda: gl.release(pic[0])) if pic[1] else None
-            return pic[0].tex, render.source_map(src, t, disp, world, cur.w, cur.h), give
+            return pic[0].tex, render.source_map(self.centred_source(src, disp, t), t, disp, world, cur.w, cur.h), give
         def stamp(nid, paint=None, linked=()):
             """What picture(nid, ...) gives, as something that is the same while the picture is (None: not known)."""
             src = sources.get(nid)
@@ -1336,7 +1336,7 @@ class GLRenderer(render.Renderer):
             got = self.shape_source(e, nid, src, t, disp, paint, linked, ppu, fps)
             if got is None and paint:
                 return ("none",)
-            pic, placed = got or (nodegraph.shape_image(src), src)
+            pic, placed = got or (nodegraph.shape_image(src), self.centred_source(src, disp, t))
             return pic.cacheKey(), render.source_map(placed, t, disp, world, cur.w, cur.h)
         errors = []
         try:

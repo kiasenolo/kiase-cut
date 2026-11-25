@@ -79,6 +79,10 @@ zooms into the box dragged (Esc or the right button: not).
 
 Double-clicking a text clip opens a box over it to type its words in (textEdited while
 typing, one undo step); Ctrl+Enter or a click elsewhere closes it, Esc puts the words back.
+A node's source (shape, text, picture...) also has an anchor (錨點, the orange diamond at its centre until moved): 位置 places it,
+and the source turns and is sized about it. Alt+drag takes it off the centre (Ctrl: no settling on edges and corners); the
+object stays where it is.
+
 A text node of a node effect (編輯位置 of its fxsrc group) is edited the same way: its frame is what its
 words take up (a clip box's eight handles, the ring at its centre, the round handle to turn it); an edge sets its
 own side's 文字框 (box_w / box_h of the node, group "multi": {"fx:<effect id>": {...}}), a corner both - or, with no
@@ -102,6 +106,7 @@ G, R and S with the mouse over the preview (Blender's grab, rotate, scale): the 
 follows the pointer - R turns about the pivot, S scales by how far the pointer is from it - till a click or Enter keeps
 it; Esc or the right button puts it back. X / Y keep a G to one way; a typed number (px, degrees, times) says how much.
 """
+import copy
 import json
 import math
 import os
@@ -147,6 +152,15 @@ def text_size(spec, canvas_h):
         else:
             im = textlayout.render(spec, 1.0, canvas_h)
             _text_sizes[key] = (im.width, im.height)
+    return _text_sizes[key]
+
+
+def text_frame(spec, canvas_h):
+    """The frame of a text node (w, h) in canvas px: its 文字框, else what the words take up without the drawing's margin
+    (textlayout.frame_size) - the box its 錨點 is measured in, so ±0.5 is the frame's edge."""
+    key = json.dumps(["frame", spec, canvas_h, fonts.map_key()], sort_keys=True, default=str)
+    if key not in _text_sizes:
+        _text_sizes[key] = textlayout.frame_size(spec, canvas_h)
     return _text_sizes[key]
 
 
@@ -428,7 +442,11 @@ class MaskGeo:
         self.mw, self.mh, self.feather = v("w", 1.0), v("h", 1.0), v("feather", 0.0)
         self.hw = 0.0 if self.kind in ("line", "mirror") else self.mw * self.dw / 2   # half size, clip px
         self.hh = 0.0 if self.kind == "line" else self.mh * self.dh / 2
-        self.local = QTransform().translate(self.cx * self.dw / 2, -self.cy * self.dh / 2).rotate(self.rot)
+        # (錨點 of a node's source: cx / cy place it, a point of the object aw x ah px - the frame unless mask_of says otherwise)
+        self.ax, self.ay = v("anchor_x", 0.0), v("anchor_y", 0.0)
+        self.aw, self.ah = m.get("anchor_size") or (self.mw * self.dw, self.mh * self.dh)
+        self.off = nodegraph.anchor_offset(m, self.aw, self.ah, t)       # the anchor's place -> the centre, clip px
+        self.local = QTransform().translate(self.cx * self.dw / 2 + self.off[0], -self.cy * self.dh / 2 + self.off[1]).rotate(self.rot)
         self.xf = self.local * box.xf()                         # mask frame -> canvas
 
     def is_picture(self):
@@ -437,6 +455,28 @@ class MaskGeo:
 
     def centre(self):
         return self.xf.map(QPointF(0, 0))
+
+    def anchor_local(self):
+        """The anchor (錨點) in the mask's own frame (from its centre, y down, clip px)."""
+        return QPointF(self.ax * self.aw, -self.ay * self.ah)
+
+    def anchor_pt(self):
+        return self.xf.map(self.anchor_local())
+
+    def anchored(self):
+        return bool(self.ax or self.ay)
+
+    def about_anchor(self, kind, q0, q):
+        """q of a size drag (pressed at q0, now at q, the mask's frame) as it would be with the anchor in the middle: the
+        sizing is about the anchor, and the handle taken stays under the pointer. kind: "w", "h" or "wh"."""
+        a = self.anchor_local()
+        half = (self.mw * self.dw / 2, self.mh * self.dh / 2)
+        hx, hy = math.copysign(half[0], q0.x()) - a.x(), math.copysign(half[1], q0.y()) - a.y()    # anchor -> handle
+        dx, dy = q.x() - a.x(), q.y() - a.y()
+
+        def grown(num, den):                         # (a handle on the anchor's own line has nothing to size with)
+            return max(0.0, num / den) if abs(den) > 1e-6 else 1.0
+        return QPointF(half[0] * grown(dx, hx), half[1] * grown(dy, hy)), grown(dx * hx + dy * hy, hx * hx + hy * hy)
 
     def outline(self):
         """Canvas path of the mask edge (lines reach across the clip)."""
@@ -937,9 +977,41 @@ class Preview(PenMixin, _Surface):
             box = self.selected_box()
             info = box is not None and box.clip["id"] == clip["id"] and text_node(clip, self.mask_group, box.t)
             if info:
-                w, h = text_size(info[3], self.H)
+                w, h = text_frame(info[3], self.H)
                 return dict(m, w=w / max(box.bw, 1e-6), h=h / max(box.bh, 1e-6))
+        elif self.mask_group.startswith("fxsrc:") and curves.value(m.get("fit", 0.0), 0) > 0:
+            box, node = self.selected_box(), self._source_node(clip)
+            if box is not None and box.clip["id"] == clip["id"] and node is not None and nodegraph.is_asset(node):
+                size = nodegraph.fitted(curves.value(m.get("w", 1.0), box.t) * box.bw, curves.value(m.get("h", 1.0), box.t) * box.bh,
+                                        curves.value(m["fit"], box.t))
+                return dict(m, anchor_size=size)
         return m
+
+    def _source_node(self, clip):
+        """The source node (shape, text, picture, video...) whose place mask mode edits, or None: it has an anchor (錨點)."""
+        if not self.mask_group.startswith("fxsrc:"):
+            return None
+        node = ((self._graph_of(clip) or {}).get("nodes") or {}).get(self.mask_group[6:].partition(":")[2])
+        return node if node is not None and node.get("type") == nodegraph.SOURCE and node.get("kind") != nodegraph.VECTOR else None
+
+    def _grabs_source_anchor(self, clip, g, m, k, mods):
+        """As _grabs_anchor, for a node's source."""
+        return self._source_node(clip) is not None and self._near(g.anchor_pt(), m, k * PIVOT_PICK) and (
+            g.anchored() or bool(mods & Qt.AltModifier))
+
+    def _source_anchor_values(self, g, q, free):
+        """{anchor_x, anchor_y, cx, cy} for the anchor of a node's source dragged to q (its frame): the object stays where
+        it is. The anchor settles on its middle, edges and corners (free: not)."""
+        at = [q.x() / g.aw if g.aw > 1e-6 else 0.0, -q.y() / g.ah if g.ah > 1e-6 else 0.0]
+        if not free:
+            reach = SNAP_PX * self._k()
+            for i, (size, s) in enumerate(((g.aw, g.box.s), (g.ah, g.box.sy))):
+                hit = self._best([at[i]], [-0.5, 0.0, 0.5], reach / max(size * abs(s), 1e-6))
+                if hit:
+                    at[i] = hit[1]
+        spot = g.local.map(QPointF(at[0] * g.aw, -at[1] * g.ah))
+        return {"anchor_x": round(at[0], 5), "anchor_y": round(at[1], 5),
+                "cx": round(spot.x() / (g.dw / 2), 5), "cy": round(-spot.y() / (g.dh / 2), 5)}
 
     def mask_frame(self, box):
         """(transform from the clip's 路徑 mask frame - centre origin, y down, clip px - to the canvas, its width, height)."""
@@ -1064,7 +1136,7 @@ class Preview(PenMixin, _Surface):
         mbox = self.mask_box(box)
         if mbox is not None and self.masking(mbox):
             g = MaskGeo(mbox, self.mask_of(box.clip))
-            return any(self._near(pt, m, k) for _n, pt in g.handles(k))
+            return self._grabs_source_anchor(box.clip, g, m, k, Qt.NoModifier) or any(self._near(pt, m, k) for _n, pt in g.handles(k))
         if box is not None and not self.mask_mode and not self.multi() and not getattr(box, "group", False):
             return (self._near(box.rot_handle(k), m, k) or self._grabs_anchor(box, m, k, Qt.NoModifier)
                     or self._grabs_pivot(box, m, k, Qt.NoModifier)
@@ -2311,7 +2383,14 @@ class Preview(PenMixin, _Surface):
                 p.drawPolygon(QPolygonF([pt + u * s * 0.8, pt - u * s * 0.4 + n * s * 0.7, pt - u * s * 0.4 - n * s * 0.7]))
             else:
                 self._handle(p, pt, k, color=hcol)
-        if pic:                                # 中心點: a ring with a cross, as on a clip
+        if self._source_node(box.clip) is not None:          # 錨點 of a node's object: a diamond, what it turns and is sized about
+            an, d = g.anchor_pt(), 5 * k
+            diamond = QPolygonF([an + QPointF(0, -d), an + QPointF(d, 0), an + QPointF(0, d), an + QPointF(-d, 0)])
+            for w, col in ((3 * k, "#111114"), (1.25 * k, "#fcfe67")):
+                p.setPen(QPen(QColor(col), w))
+                p.setBrush(Qt.NoBrush)
+                p.drawPolygon(diamond)
+        elif pic:                              # 中心點: a ring with a cross, as on a clip
             r = 5 * k
             for w, col in ((3 * k, "#111114"), (1.25 * k, "#ffffff")):
                 p.setPen(QPen(QColor(col), w))
@@ -2376,6 +2455,9 @@ class Preview(PenMixin, _Surface):
             return
         if mbox is not None and self.masking(mbox):
             g = MaskGeo(mbox, self.mask_of(box.clip))
+            if self._grabs_source_anchor(box.clip, g, m, k, e.modifiers()):
+                self.drag = {"kind": "source_anchor", "box": mbox, "geo": g, "m0": m, "moved": False}
+                return
             hit = next((n for n, pt in g.handles(k) if self._near(pt, m, k)), None)
             if hit is None and (g.contains(m) or self._near(g.centre(), m, k)):
                 hit = "move"
@@ -2632,11 +2714,18 @@ class Preview(PenMixin, _Surface):
         inv, _ = box.xf().inverted()
         p0, p1 = inv.map(d["m0"]), inv.map(m)
         if kind == "move":
-            return "mask", self._snap_mask("move", {"cx": round(g.cx + (p1.x() - p0.x()) / (g.dw / 2), 5),
-                                                    "cy": round(g.cy - (p1.y() - p0.y()) / (g.dh / 2), 5)},
-                                           g, box, bool(e.modifiers() & Qt.AltModifier))
+            ox, oy = g.off[0] / (g.dw / 2), -g.off[1] / (g.dh / 2)    # (the centre is what snaps; cx / cy place the anchor)
+            centre = copy.copy(g)
+            centre.cx, centre.cy = g.cx + ox, g.cy + oy
+            vals = self._snap_mask("move", {"cx": round(centre.cx + (p1.x() - p0.x()) / (g.dw / 2), 5),
+                                            "cy": round(centre.cy - (p1.y() - p0.y()) / (g.dh / 2), 5)},
+                                   centre, box, bool(e.modifiers() & Qt.AltModifier))
+            return "mask", {"cx": round(vals["cx"] - ox, 5), "cy": round(vals["cy"] - oy, 5)}
+        if kind == "source_anchor":
+            linv, _ = g.local.inverted()
+            return "mask", self._source_anchor_values(g, linv.map(p1), bool(e.modifiers() & Qt.ControlModifier))
         if kind == "rot":
-            o = g.local.map(QPointF(0, 0))
+            o = g.local.map(g.anchor_local())                  # (it turns about its anchor)
             a0 = math.degrees(math.atan2(p0.y() - o.y(), p0.x() - o.x()))
             a1 = math.degrees(math.atan2(p1.y() - o.y(), p1.x() - o.x()))
             return "mask", {"rotation": round(snap_angle(g.rot + a1 - a0, free), 2)}
@@ -2648,6 +2737,9 @@ class Preview(PenMixin, _Surface):
                 min(1.0, max(0.0, ((dist - hh) / self._k() - 14) / 80)), 3)}, g, box, bool(e.modifiers() & Qt.AltModifier))
         linv, _ = g.local.inverted()
         q = linv.map(p1)                                       # in the mask's own frame
+        along = None
+        if g.anchored():
+            q, along = g.about_anchor(kind, linv.map(p0), q)
         if g.kind == "text":
             return self._text_node_values(box, g, kind, q, free)
         out = {}
@@ -2657,10 +2749,13 @@ class Preview(PenMixin, _Surface):
             out["h"] = round(max(0.01, 2 * abs(q.y()) / g.dh), 4)
         if kind == "wh" and g.kind in ("compound", "image", "video", "track", "place") and not free:   # a picture keeps its proportions (Shift: free)
             vx, vy = g.mw * g.dw, g.mh * g.dh                       # the corner, from the centre
-            f = max(0.01 / max(g.mw, g.mh, 1e-6), (abs(q.x()) * vx + abs(q.y()) * vy) * 2 / max(vx * vx + vy * vy, 1e-9))
+            f = max(0.01 / max(g.mw, g.mh, 1e-6), along if along is not None else
+                    (abs(q.x()) * vx + abs(q.y()) * vy) * 2 / max(vx * vx + vy * vy, 1e-9))
             out = {"w": round(g.mw * f, 4), "h": round(g.mh * f, 4)}
+            if g.anchored():                                       # (the snapping is of sizes about the middle)
+                return "mask", out
             return "mask", self._snap_mask("w", out, g, box, bool(e.modifiers() & Qt.AltModifier), keep=g.mh / max(g.mw, 1e-9))
-        return "mask", self._snap_mask(kind, out, g, box, bool(e.modifiers() & Qt.AltModifier))
+        return "mask", self._snap_mask(kind, out, g, box, g.anchored() or bool(e.modifiers() & Qt.AltModifier))
 
     def _text_node_values(self, box, g, kind, q, free):
         """("multi", values) of a drag of a size handle of a text node's frame: its 文字框 (an edge fixes its own side, a
@@ -2916,7 +3011,7 @@ class Preview(PenMixin, _Surface):
             cur = Qt.PointingHandCursor
         elif mbox is not None and self.masking(mbox):
             g = MaskGeo(mbox, self.mask_of(box.clip))
-            if any(self._near(pt, m, k) for _, pt in g.handles(k)):
+            if self._grabs_source_anchor(box.clip, g, m, k, Qt.NoModifier) or any(self._near(pt, m, k) for _, pt in g.handles(k)):
                 cur = Qt.PointingHandCursor
             elif g.contains(m):
                 cur = Qt.SizeAllCursor

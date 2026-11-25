@@ -226,7 +226,8 @@ def default_params(graph):
 
 # -- shape nodes made from the built-in shapes (assets.py): node["asset"] = {"key": preset, "family": ...} ----------
 ASSET_SKIP = ("w", "h", "paths", "fill_image", "stroke_image", "stops", "fill_stops", "stroke_stops")   # (size: the node's frame; pictures: its inputs; gradients: made with nodes)
-PLACE = (("cx", "位置 X", -2.0, 2.0, 0.0), ("cy", "位置 Y", -2.0, 2.0, 0.0), ("w", "寬", 0.01, 4.0, 1.0),
+PLACE = (("cx", "位置 X", -2.0, 2.0, 0.0), ("cy", "位置 Y", -2.0, 2.0, 0.0),
+         ("anchor_x", "錨點 X", -1.0, 1.0, 0.0), ("anchor_y", "錨點 Y", -1.0, 1.0, 0.0), ("w", "寬", 0.01, 4.0, 1.0),
          ("h", "高", 0.01, 4.0, 1.0), ("rotation", "旋轉 °", -360.0, 360.0, 0.0),
          ("fit", "寬高比 寬/高（0＝拉伸）", 0.0, 10.0, 0.0))   # where a source sits on the clip (the source's own fields)
 
@@ -436,7 +437,7 @@ def text_value(name, v):
 
 def text_place_params():
     """Where a text node sits: its centre and turn (its size comes from the words and the font)."""
-    return [q for q in place_params() if q.name in ("cx", "cy", "rotation")]
+    return [q for q in place_params() if q.name in ("cx", "cy", "anchor_x", "anchor_y", "rotation")]
 
 
 def word_param(socket):
@@ -505,6 +506,35 @@ def placed_by(src, params, bound, nid, t):
         elif param_key(nid, name) in params:                 # (read from a node linked into it: evaluate puts the value there while it runs)
             out[name] = curves.value(params[param_key(nid, name)], t)
     return out
+
+
+def fitted(w, h, ratio):
+    """(w, h) px a shape takes of its w x h frame: the largest of proportions `ratio` (寬高比) inside it; 0 is the frame."""
+    if ratio <= 0:
+        return w, h
+    return (h * ratio, h) if w > h * ratio else (w, w / ratio)
+
+
+def anchor_offset(src, w, h, t):
+    """(x, y) px (y down) from the place of a source node's anchor (錨點) to its centre, for an object w x h px: the anchor is
+    a point of the object (anchor_x / anchor_y in its own widths / heights from the middle, y up: ±0.5 is an edge) which
+    cx / cy place and which it turns and is sized about."""
+    ax, ay = curves.value(src.get("anchor_x", 0.0), t), curves.value(src.get("anchor_y", 0.0), t)
+    if not ax and not ay:
+        return 0.0, 0.0
+    a = math.radians(curves.value(src.get("rotation", 0.0), t))
+    x, y = -ax * w, ay * h
+    return x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a)
+
+
+def centred(src, w, h, disp, t):
+    """Source dict src as the renderers place a picture - cx / cy its centre - for an object w x h px on a clip of size disp:
+    src itself while its anchor is in the middle."""
+    dx, dy = anchor_offset(src, w, h, t)
+    if not dx and not dy:
+        return src
+    return dict(src, cx=curves.value(src.get("cx", 0.0), t) + dx / max(disp[0] / 2, 1e-6),
+                cy=curves.value(src.get("cy", 0.0), t) - dy / max(disp[1] / 2, 1e-6), anchor_x=0.0, anchor_y=0.0)
 
 
 def asset_of(node, nid, params, t, bound=None):

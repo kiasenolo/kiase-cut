@@ -79,6 +79,8 @@ def param_rows(c):
             label = next((p.label for p in d.params if p.name == n), n)
             out += [(f"fxsrc:{e['id']}:{n}", r[0], f"{name}·{label}來源{r[1]}", r[6], r[7]) for r in PARAMS["mask"]
                     if r[0] in edit.SOURCE_FIELDS]
+            if e.get("filter") == fx.GRAPH:            # (a node's anchor, 錨點)
+                out += [(f"fxsrc:{e['id']}:{n}", k, f"{name}·{label}來源錨點 {k[-1].upper()}", 1, 0.0) for k in ("anchor_x", "anchor_y")]
     for p in components.params(components.of_clip(c)):  # where a component's pictures sit (元件參數)
         if p["kind"] == "number":
             out.append(("params", p["id"], p["name"], 1, components.default(c["compound"], p)))

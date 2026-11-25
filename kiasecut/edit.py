@@ -3389,7 +3389,7 @@ def set_effect_mask(proj, clip_id, effect_id, kind, t=None):
     return e
 
 
-SOURCE_FIELDS = ("cx", "cy", "w", "h", "rotation", "fit")     # where an effect's colour source sits (as a mask)
+SOURCE_FIELDS = ("cx", "cy", "w", "h", "rotation", "fit", "anchor_x", "anchor_y")     # where an effect's colour source sits (as a mask)
 
 
 def _source(c, group):
@@ -3399,6 +3399,11 @@ def _source(c, group):
     if src is None:
         raise EditError("這個顏色沒有來源")
     return src
+
+
+def _kept_anchor(old):
+    """The anchor (錨點) a source node keeps when what it shows is chosen again."""
+    return {k: old[k] for k in ("anchor_x", "anchor_y") if k in old}
 
 
 def set_effect_source(proj, clip_id, effect_id, param, kind):
@@ -3422,7 +3427,8 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
     if kind == "shape" and e["filter"] == fx.GRAPH:      # a shape node: drawn, not a file (nodegraph.shape_image)
         old = sources.get(param) or {}
         sources[param] = {"kind": "shape", "shape": old.get("shape", "rectangle"), "color": old.get("color", [1.0, 1.0, 1.0, 1.0]),
-                          **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 0.5), ("h", 0.5), ("rotation", 0.0))}}
+                          **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 0.5), ("h", 0.5), ("rotation", 0.0))},
+                          **_kept_anchor(old)}
         return e
     if kind == nodegraph.VECTOR and e["filter"] == fx.GRAPH:      # a vector node: its outlines drawn over the whole clip (nothing to place)
         sources[param] = {"kind": nodegraph.VECTOR, "cx": 0.0, "cy": 0.0, "w": 1.0, "h": 1.0, "rotation": 0.0}
@@ -3431,13 +3437,15 @@ def set_effect_source(proj, clip_id, effect_id, param, kind):
         old = sources.get(param) or {}
         sources[param] = {"kind": "text", "content": old.get("content", nodegraph.TEXT_CONTENT),
                           "font_path": old.get("font_path", project.DEFAULT_FONT),
-                          **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 1.0), ("h", 1.0), ("rotation", 0.0))}}
+                          **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 1.0), ("h", 1.0), ("rotation", 0.0))},
+                          **_kept_anchor(old)}
         return e
     if kind not in PICTURE_MASKS:
         raise EditError(f"unknown source {kind}")
     old = sources.get(param) or {}
     src = {"kind": kind, **{k: old.get(k, d) for k, d in (("cx", 0.0), ("cy", 0.0), ("w", 1.0), ("h", 1.0),
                                                           ("rotation", 0.0))}}
+    src.update(_kept_anchor(old))
     for k in PICTURE_FIELDS[kind]:
         if old.get("kind") == kind and old.get(k) is not None:
             src[k] = old[k]

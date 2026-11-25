@@ -19,7 +19,7 @@ from PySide6.QtGui import QColor, QDropEvent, QImage  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 
-from kiasecut import fx, nodegraph as ng  # noqa: E402
+from kiasecut import assets, fx, nodegraph as ng  # noqa: E402
 from kiasecut.ui.node_editor import NodeEditor  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -57,7 +57,7 @@ class ShownClipTests(unittest.TestCase):
              "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}]})
         eid = edit.add_effect(p, "pic", fx.GRAPH)["id"]
         add = lambda node: edit.add_graph_node(p, "pic", eid, node)
-        ids = {"exposure": add({"type": ng.FILTER, "ref": "builtin:nodes/exposure"}), "shape": add({"type": ng.SOURCE, "kind": "waveform"}),
+        ids = {"exposure": add({"type": ng.FILTER, "ref": "builtin:nodes/exposure"}), "shape": add({"type": ng.SOURCE, "kind": "shape", "asset": {"key": next(a.key for a in assets.ASSETS if a.cat == "shape")}}),
                "curve": add({"type": ng.FILTER, "ref": "builtin:nodes/float_curve"}), "words": add({"type": ng.STRING})}
         history = edit.History(p)
         clip = lambda: edit.find(history.proj, "pic")[1]

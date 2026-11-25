@@ -184,13 +184,83 @@ def active(chain):
                                                                   e.get("effect") == GRAPH and e.get("graph"))]
 
 
-def values(e, t_us):
-    """{name: number} of entry e's parameters at time t_us (a missing one: its default)."""
+def spec(e, name):
+    """The description of parameter name of an entry (a graph's effect or mix node too), or None."""
+    if e.get("type") == "mix" and name[:1] == "g" and name[1:].isdigit():
+        return P(name, f"第 {name[1:]} 路音量", -60.0, 12.0, 0.0, "dB")
+    kind = EFFECTS.get(e.get("effect"))
+    return next((p for p in kind["params"] if p["name"] == name), None) if kind else None
+
+
+def followed(e, name, v, t_us, names):
+    """v, the number parameter name of entry e holds at t_us, as e's expression for it (or a
+    global parameter it is bound to) makes it, kept within the parameter's limits."""
+    text = (e.get("expr") or {}).get(name)
+    p = spec(e, name)
+    if not text or p is None:
+        return v
+    from . import propexpr
+    env = {"time": t_us / 1_000_000}
+    env.update(names or {})
+    out = float(propexpr.follow(text, v, env, names, t_us / 1_000_000, 1.0))
+    return min(p["max"], max(p["min"], out)) if out == out else v
+
+
+def values(e, t_us, names=None):
+    """{name: number} of entry e's parameters at time t_us (a missing one: its default).
+    names: what the global parameters read now (rack.values), for those that follow them."""
     given = e.get("params") or {}
     out = {}
     for p in EFFECTS[e["effect"]]["params"]:
-        v = given.get(p["name"], p["default"])
-        out[p["name"]] = float(curves.value(v, t_us))
+        v = float(curves.value(given.get(p["name"], p["default"]), t_us))
+        v = min(p["max"], max(p["min"], v))               # (a curve's ease may overshoot)
+        out[p["name"]] = followed(e, p["name"], v, t_us, names)
+    return out
+
+
+def entries(chain):
+    """(path, entry) of everything in a chain that has parameters: "<effect id>", and for a
+    graph's effect and mix nodes "<effect id>/<node id>"."""
+    for e in chain or ():
+        if e.get("graph"):
+            for nid, node in e["graph"]["nodes"].items():
+                if node.get("params"):
+                    yield e["id"] + "/" + nid, node
+        else:
+            yield e["id"], e
+
+
+def every_chain(root):
+    """Every chain of the project: clips', tracks', buses' and masters', of all compounds."""
+    for h in list((root.get("compounds") or {}).values()) or [root]:
+        for one in [*(h.get("buses") or ()), h.get(MASTER) or {}]:
+            if one.get("sound_effects"):
+                yield one["sound_effects"]
+        for t in project.all_tracks(h.get("tracks") or [], inline=False):
+            if t.get("sound_effects"):
+                yield t["sound_effects"]
+            for c in t["clips"]:
+                if c.get("sound_effects"):
+                    yield c["sound_effects"]
+
+
+def clip_rows(chain):
+    """((group, name, label, factor, default) of every number of a clip's chain that can be
+    keyframed in the curve editor); group "sfx:<path>"."""
+    out = []
+    entries_of = list(chain or ())
+    for i, e in enumerate(entries_of):
+        head = title(e) if len(entries_of) == 1 else f"{title(e)} #{i + 1}"
+        for path, one in entries([e]):
+            if one is e:
+                label, specs = head, EFFECTS.get(e.get("effect"), {}).get("params", [])
+            elif one.get("type") == "mix":
+                label = f"{head}·混合"
+                specs = [spec(one, n) for n in sorted(one["params"])]
+            else:
+                label, specs = f"{head}·{title(one)}", EFFECTS.get(one.get("effect"), {}).get("params", [])
+            out += [("sfx:" + path, p["name"], f"聲音 {label}·{p['label']}", 1, p["default"])
+                    for p in specs if p and not p.get("choices")]
     return out
 
 

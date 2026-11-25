@@ -1072,6 +1072,9 @@ def _valid_key(c, group, key):
     """Whether `key` is a parameter of `group` (groups "fx:<effect id>",
     "fxmask:<effect id>" and "fxmix:<effect id>" are an effect's own parameters, its mask and
     its 混合程度)."""
+    if group.startswith("sfx:"):                 # (the clip's 聲音效果: "sfx:<effect id>[/<node id>]")
+        p = soundfx.spec(_sound(c, group), key)
+        return p is not None and not p.get("choices")
     if group.startswith("fx:"):
         return key in _effect(c, group[3:])["params"]
     if group.startswith("fxmix:"):
@@ -1110,7 +1113,16 @@ def holder(c, group):
     return _holder(c, group)
 
 
+def _sound(c, group):
+    found = next((e for path, e in soundfx.entries(c.get("sound_effects")) if path == group[4:]), None)
+    if found is None:
+        raise EditError("找不到這個聲音效果")
+    return found
+
+
 def _holder(c, group):
+    if group.startswith("sfx:"):
+        return _sound(c, group).setdefault("params", {})
     if group.startswith("fx:"):
         return _effect(c, group[3:])["params"]
     if group.startswith("fxmask:"):
@@ -1365,6 +1377,8 @@ def _toggle_one(c, h, group, key, t):
         default = components.default(c["compound"], components.param(c["compound"], key))
     elif group.startswith("tvar:"):
         default = textvars.default_value(h.get("kind", "text"))
+    elif group.startswith("sfx:"):
+        default = soundfx.spec(_sound(c, group), key)["default"]
     elif key in DISCRETE_DEFAULTS and not group.startswith("fx:"):
         _check_choice(c, group, key, DISCRETE_DEFAULTS[key])
         default = DISCRETE_DEFAULTS[key]
@@ -4804,6 +4818,10 @@ def rename_rack_param(root, rid, name):
     for q in rack.params(root):
         if q.get("expr"):
             q["expr"] = rack.rename_in(q["expr"], old, name)
+    for chain in soundfx.every_chain(root):
+        for _path, e in soundfx.entries(chain):
+            if e.get("expr"):
+                e["expr"] = {k: rack.rename_expr(x, old, name) for k, x in e["expr"].items()}
     for c in rack.clips_with_exprs(root):
         if c.get("expr"):
             c["expr"] = {k: rack.rename_expr(x, old, name) for k, x in c["expr"].items()}

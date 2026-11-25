@@ -1,9 +1,10 @@
 """Edits of the sound processing: chains, keyframes, buses, routes - and that they undo and
 survive saving."""
 import json
+import tempfile
 import unittest
 
-from kiasecut import edit, project, soundedit, soundfx
+from kiasecut import edit, project, rack, soundedit, soundfx, soundnodes, userlib
 
 S = 1_000_000
 

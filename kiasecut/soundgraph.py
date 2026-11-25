@@ -19,7 +19,7 @@ import math
 
 import numpy as np
 
-from . import curves, dsp, normalize, project, soundfx, soundnodes, stretch
+from . import curves, dsp, normalize, project, rack, soundfx, soundnodes, stretch
 
 BLOCK = 512
 RATE = dsp.RATE
@@ -58,9 +58,9 @@ class Fx:
         self.key, self.entry, self.proc, self.name = key, entry, proc, name
         self.side = None                    # the channel id of its side-chain, if one counts
 
-    def apply(self, t_us):
+    def apply(self, t_us, names=None):
         if self.proc is not None:
-            for name, v in soundfx.values(self.entry, t_us).items():
+            for name, v in soundfx.values(self.entry, t_us, names).items():
                 self.proc.set(name, v)
 
     @property
@@ -83,7 +83,8 @@ class Fx:
         graph's socket). Returns (sound, how late it is now)."""
         if self.proc is None:
             return x, latency
-        self.apply(t_of((pos - latency) * US / RATE))
+        mixed = (pos - latency) * US / RATE
+        self.apply(t_of(mixed), engine.names(mixed) if self.entry.get("expr") else None)
         if side is None and self.side is not None and self.side in posts:
             side = engine._delayed(self.key + ("side",), posts[self.side], latency - post_latency[self.side])
         x = self.proc.process(x, side, pos - latency)
@@ -325,7 +326,9 @@ class Engine:
         decoded sound is filled in by the Mixer)."""
         self.source_of = source_of
         self.root = None
+        self.view = {}
         self.only = None
+        self._names = (None, None)          # (time, what the global parameters read then)
         self.procs = {}                     # key -> Processor
         self.state = {}                     # key -> Delay, or the fader gains last block ended at
         self.next_in = None                 # the input sample the next block starts at
@@ -345,6 +348,7 @@ class Engine:
         root = compiler.level((), view["tracks"], project.mix_of(view), ids)
         latency_was = self.latency
         self.root, self.only = root, only
+        self.view, self._names = view, (None, None)
         self.procs = compiler.used
         if latency_was != self.latency:
             self.next_in = None             # (the output moved against the input: start over)
@@ -371,6 +375,12 @@ class Engine:
         if self.root is not None:
             walk(self.root)
         return out
+
+    def names(self, t_us):
+        """What the global parameters read at timeline time t_us."""
+        if self._names[0] != t_us:
+            self._names = (t_us, rack.values(self.view, max(0.0, t_us)))
+        return self._names[1]
 
     def reset(self):
         for p in self.procs.values():

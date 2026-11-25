@@ -257,8 +257,12 @@ def clips_with_exprs(root):
 
 
 def users(root, name):
-    """How many clips (compounds' layers too) have an expression or a link that reads the parameter `name`."""
-    return sum(1 for c in clips_with_exprs(root)
+    """How many clips (compounds' layers too) and sound effects have an expression or a link that
+    reads the parameter `name`."""
+    from . import soundfx
+    sound = sum(1 for chain in soundfx.every_chain(root) for _path, e in soundfx.entries(chain)
+                if any(name in _names(x) for x in (e.get("expr") or {}).values()))
+    return sound + sum(1 for c in clips_with_exprs(root)
                if any(name in _names(x) for x in (c.get("expr") or {}).values()) or name in (c.get("links") or {}).values())
 
 

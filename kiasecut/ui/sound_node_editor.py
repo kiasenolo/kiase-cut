@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPathItem, QGraphicsProxyW
                                QHBoxLayout, QInputDialog, QLabel, QPushButton, QVBoxLayout, QWidget)
 
 from .. import curves, edit, soundedit, soundfx, soundnodes
+from . import sound_follow
 from . import inplace
 from .menukeys import Menu
 from .node_editor import GRID, HEAD, HIT_R, LINK_W, ROW, SNAP_R, SOCKET_R, ZOOM_MAX, ZOOM_MIN, Link
@@ -163,6 +164,8 @@ class NodeItem(QGraphicsItem):
                 row.value = curves.value(held, t)
                 row.text = value_text(row.spec, row.value)
                 row.mark = ("◆ " if edit.key_at(held, t) is not None else "◈ ") if curves.is_animated(held) else ""
+                if (node.get("expr") or {}).get(row.name):            # (it follows a global parameter)
+                    row.mark = "= " + row.mark
         if self.visual is not None and not isinstance(self.visual, Spectrum):
             self.visual.set_values(soundfx.values(node, t))
         self.update()
@@ -928,6 +931,7 @@ class SoundNodeEditor(QWidget):
             menu.addAction("移除這裡的關鍵幀" if has else "在播放頭加關鍵幀", lambda: (self.page.win.apply(
                 "聲音參數關鍵幀", soundedit.toggle_key, self.target, address, row.name, self.time()), self.refresh()))
             menu.addAction("輸入數值…", lambda: self.type_value(nid, row))
+            sound_follow.add_items(menu, self.page, self.target, address, row.spec, self.time(), self.refresh)
         menu.addAction("重設為預設值", lambda: (self.page.win.apply(
             "重設參數", soundedit.reset_param, self.target, address, row.name), self.refresh()))
         menu.exec(at)

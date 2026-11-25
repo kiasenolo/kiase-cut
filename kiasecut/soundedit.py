@@ -3,9 +3,10 @@
 A target says whose chain or channel is meant: ("clip", id), ("track", id), ("bus", id) or
 ("master", ""). level: the open level - the project (its root) or a compound.
 """
+import copy
 import uuid
 
-from . import curves, edit, project, soundfx, soundnodes
+from . import curves, edit, expr, mapping, project, soundfx, soundnodes
 
 PAN_RANGE = (-1.0, 1.0)
 
@@ -127,12 +128,30 @@ def set_side(level, target, effect_id, side_id):
 
 
 def _spec(e, name):
-    if e.get("type") == "mix" and name.startswith("g"):
-        return soundfx.P(name, "音量", -60.0, 12.0, 0.0, "dB")
-    p = next((p for p in soundfx.EFFECTS[e["effect"]]["params"] if p["name"] == name), None)
+    p = soundfx.spec(e, name)
     if p is None:
         raise edit.EditError("這個效果沒有這個參數")
     return p
+
+
+def set_expr(level, target, effect_id, name, text):
+    """What a parameter follows: an expression, a 映射 of a global parameter, or "" (nothing)."""
+    e = effect(level, target, effect_id)
+    _spec(e, name)
+    if mapping.is_mapping(text):
+        why = mapping.check(text)
+        text = copy.deepcopy(text)
+    else:
+        text = str(text).strip()
+        why = expr.check(text) if text else None
+    if why:
+        raise edit.EditError(f"表達式有問題：{why}")
+    if text:
+        e.setdefault("expr", {})[name] = text
+    else:
+        (e.get("expr") or {}).pop(name, None)
+        if not e.get("expr"):
+            e.pop("expr", None)
 
 
 def _set_number(h, key, value, t):

@@ -243,5 +243,20 @@ class GraphTests(Base):
         np.testing.assert_allclose(self.sound(v, mixer=m), plain, atol=2e-3)
 
 
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class FollowTests(Base):
+    def test_a_parameter_follows_the_global_one_through_time(self):
+        gain = fx("gain", "e1")
+        gain["expr"] = {"gain": "level"}
+        mute = fx("gain", "e2")
+        v = self.view([{"clips": [self.clip("a", self.low)], "sound_effects": [gain]}], master={"sound_effects": [mute]})
+        v["rack"] = [{"id": "r1", "name": "level", "kind": "number",
+                      "value": {"keys": [[0, 0.0, 0, 0, 0, 0], [US // 2 - 1000, 0.0, 0, 0, 0, 0],
+                                         [US // 2, -24.0, 0, 0, 0, 0]]}}]
+        out = self.sound(v)
+        self.assertAlmostEqual(rms(out, 0.1, 0.4), REF, delta=0.005)
+        self.assertAlmostEqual(rms(out, 0.6, 0.9), REF * 10 ** (-24 / 20), delta=0.003)
+
+
 if __name__ == "__main__":
     unittest.main()

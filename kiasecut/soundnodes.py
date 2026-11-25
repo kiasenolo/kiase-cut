@@ -290,9 +290,12 @@ class GraphFx:
                     total = first
                 else:
                     now = t_of((pos - latency - self.before[nid]) * 1_000_000 / engine.rate)
+                    names = engine.names((pos - latency - self.before[nid]) * 1_000_000 / engine.rate) \
+                        if node.get("expr") else None
                     for i, s in enumerate(ins):
                         if s is not None:
                             db = soundfx.curve_value((node.get("params") or {}).get(f"g{i + 1}", 0.0), now)
+                            db = soundfx.followed(node, f"g{i + 1}", db, now, names)
                             g = 0.0 if db <= -60.0 else 10 ** (db / 20)
                             total = total + engine._ramp(self.key + (nid, "g", i), s, g, g)
                 result = [total]

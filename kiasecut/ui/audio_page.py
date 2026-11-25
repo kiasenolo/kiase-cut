@@ -11,14 +11,15 @@ timeline while it is open. What it edits goes through the editor's undo history
 (soundedit.py); a value being dragged is heard at once and written when it is let go.
 """
 import math
+import os
 
 import numpy as np
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
-                               QScrollArea, QSlider, QSplitter, QVBoxLayout, QWidget)
+                               QInputDialog, QMessageBox, QScrollArea, QSlider, QSplitter, QVBoxLayout, QWidget)
 
-from .. import curves, dsp, edit, project, soundedit, soundfx, soundnodes
-from . import icons, inplace
+from .. import curves, dsp, edit, project, rack, soundedit, soundfx, soundnodes, userlib
+from . import icons, inplace, linkmark, sound_follow
 from .sound_node_editor import SoundNodeEditor
 from .sound_visuals import BAND_COLORS, Dynamics, Response, Spectrum
 from .inspector import SpinBox
@@ -206,7 +207,8 @@ class EffectBox(QFrame):
         grid.setVerticalSpacing(2)
         for r, p in enumerate(page.visible_params(effect)):
             name = p["name"]
-            grid.addWidget(QLabel(p["label"]), r, 0)
+            label = QLabel(p["label"])
+            grid.addWidget(label, r, 0)
             if p.get("choices"):
                 if p["choices"] == ["關", "開"]:
                     box = QCheckBox()
@@ -237,8 +239,20 @@ class EffectBox(QFrame):
             key.clicked.connect(lambda _c=False, name=name: self.toggle_key(name))
             grid.addWidget(key, r, 3)
             self.rows[name] = (spin, slider, key)
+            for w in (label, slider, spin, spin.lineEdit()):
+                w.setContextMenuPolicy(Qt.CustomContextMenu)
+                w.customContextMenuRequested.connect(lambda at, w=w, p=p: self.param_menu(p, w.mapToGlobal(at)))
         grid.setColumnStretch(1, 1)
         lay.addLayout(grid)
+
+    def param_menu(self, p, at):
+        menu = Menu(self)
+        page = self.page
+        menu.addAction("重設為預設值", lambda: page.edit("重設參數", soundedit.reset_param, self.eid, p["name"]))
+        if page.time() is not None:
+            menu.addAction("加上 / 移除關鍵幀", lambda: self.toggle_key(p["name"]))
+        sound_follow.add_items(menu, page, page.target, self.eid, p, page.time())
+        menu.exec(at)
 
     def choose(self, name, value):
         self.page.edit("調整聲音效果", soundedit.set_param, self.eid, name, value, self.page.time())
@@ -266,7 +280,8 @@ class EffectBox(QFrame):
         if self.spec is None or any(slider.isSliderDown() for _, slider, _ in self.rows.values()):
             return
         t = self.page.time()
-        values = soundfx.values(effect, t or 0) if self.spec["params"] else {}
+        names = rack.values(self.page.win.view(), self.page.level_time()) if effect.get("expr") else None
+        values = soundfx.values(effect, t or 0, names) if self.spec["params"] else {}
         if isinstance(self.visual, (Response, Dynamics)):
             self.visual.set_values(values)
         if getattr(self, "side", None) is not None:
@@ -299,6 +314,8 @@ class EffectBox(QFrame):
             slider.setValue(slider_pos(p, v))
             slider.blockSignals(False)
             animated = curves.is_animated(held)
+            bound = (effect.get("expr") or {}).get(name)
+            linkmark.mark(spin, sound_follow.said(bound) if bound else "")
             key.setText("◆" if animated and edit.key_at(held, t or 0) is not None else "◈" if animated else "◇")
 
 

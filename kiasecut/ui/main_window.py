@@ -229,7 +229,7 @@ def group_holder(c, group, create=False):
     "place:<param id>" for where a component's picture sits)."""
     if group.startswith("place:") and not create:
         return (c.get("places") or {}).get(group[6:]) or {}
-    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "place:", "tvar:")):
+    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "place:", "tvar:", "sfx:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:

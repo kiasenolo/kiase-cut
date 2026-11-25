@@ -245,6 +245,30 @@ def static_label(comp):
     return "轉為靜態元件" if components.is_component(comp) else "轉為靜態複合片段"
 
 
+class _Transport:
+    """The preview's playback, for a dialog that lets it go on (sounddialog.py)."""
+
+    def __init__(self, win):
+        self.win = win
+
+    def playing(self):
+        return self.win.player.worker.playing
+
+    def time_us(self):
+        return self.win.playhead_us()
+
+    def toggle(self):
+        w = self.win.player.worker
+        if w.playing:                   # (where it is, whatever 播放模式 says: it is being looked at)
+            w.set_playing(False)
+        else:
+            self.win.toggle_play()
+
+    def seek(self, us):
+        w = self.win.player.worker
+        w.request_seek(round(us / US * self.win.fps))      # (not MainWindow.seek, which stops playing)
+
+
 class MainWindow(QMainWindow):
     taskCall = Signal(object, object)          # (function, argument): run on the UI thread
     shaderCompile = Signal(str, bool)          # (filter name, finished): a node's shader is being compiled (by the player's thread)
@@ -3770,9 +3794,8 @@ class MainWindow(QMainWindow):
         elif action == "sound":
             steps = walk_path(self.proj, self.path_ids)
             level = steps[-1][2] if steps else self.proj["active_timeline"]
-            self.player.worker.set_playing(False)
             out = sounddialog.ask_sound(self, f"聲音來源：{p['name']}", self.proj, p.get("sound"), level,
-                                        self.cache_dir(), t)
+                                        self.cache_dir(), t, _Transport(self))
             if out is not None:
                 self.apply_root("全局參數聲音來源", edit.set_rack_sound, rid, out)
         elif action == "sound_off":

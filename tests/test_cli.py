@@ -14,7 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QGuiApplication  # noqa: E402
 
-from kiasecut import cli, edit, gpu, project  # noqa: E402
+from kiasecut import cli, edit, gpu, project, rack, soundmeter  # noqa: E402
 from kiasecut.build import find_ffmpeg  # noqa: E402
 
 APP = QGuiApplication.instance() or QGuiApplication([])
@@ -80,6 +80,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(got[:3] + got[4:], [" x=y ", 3.5, True, [1.0, 2.0]])
         self.assertEqual(got[3][:3], [1.0, 0.0, 0.0])
         self.assertNotIn("expr", view["rack"][1])
+        view["rack"][1]["sound"] = soundmeter.make("tl1", "master")          # (nor does the sound it follows stay)
+        cli.set_params(view, [("n", "0.8")])
+        self.assertEqual(rack.values(view, 0)["n"], 0.8)
         for bad in (("none", "1"), ("n", "abc"), ("on", "maybe"), ("c", "red"), ("v", "1")):
             with self.assertRaises(cli.CliError, msg=bad):
                 cli.set_params(view, [bad])

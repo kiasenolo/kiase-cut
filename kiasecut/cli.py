@@ -8,7 +8,8 @@ only read. --from / --to take a marker's name: the frames from the first mark up
 including, the second one's, so ranges that share a mark neither overlap nor leave a gap.
 
 --set NAME=VALUE gives a global parameter (全局參數) a value for this render: a plain one that
-holds for the whole of it, in place of the parameter's keyframes, expression or LFO.
+holds for the whole of it, in place of the parameter's keyframes, expression, LFO or the sound
+it follows.
 
 The output is made in a folder beside it and put in place only when the whole render went
 well: a failed one leaves what was there before. A picture sequence replaces the frames of
@@ -97,6 +98,7 @@ def set_params(view, assignments):
             raise CliError(f"--set {name}：{exc}") from None
         p.pop("expr", None)
         p.pop("lfo", None)
+        p.pop("sound", None)                    # (soundmeter.py: it would be read over the value)
 
 
 def parser():

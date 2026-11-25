@@ -1,0 +1,236 @@
+"""Sound in node effects (design/sound-in-compositor.md): the sound links of a node graph, what a 電平 → 數值 node
+measures, the analysis it asks for and the picture both renderers draw with its number."""
+import copy
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtGui import QColor, QImage  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from kiasecut import dsp, edit, fx, glrender, nodegraph as ng, project, render, soundmeter, stillspans  # noqa: E402
+from tests.test_soundgraph import US, fx as sound_fx  # noqa: E402
+from tests.test_soundmeter import BOX, Sounds, make_root  # noqa: E402
+
+APP = QApplication.instance() or QApplication([])
+W, H = 32, 18
+
+
+def ids(e, kind):
+    return [i for i, n in e["graph"]["nodes"].items() if n["type"] == kind]
+
+
+class Graphs(unittest.TestCase):
+    """A node effect with 聲音來源 → 電平 → 數值."""
+
+    def setUp(self):
+        self.p = project.new(W, H, 10)
+        self.p["tracks"].append({"id": "vid", "kind": "video", "name": "V", "clips": [
+            {"id": "pic", "type": "image", "name": "g", "start_us": 0, "duration_us": 4 * US, "source_start_us": 0,
+             "media": {"path": ":shape:rect", "width": W, "height": H},
+             "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}]})
+        self.e = edit.add_effect(self.p, "pic", fx.GRAPH)
+        self.g = self.e["graph"]
+        self.src = self.add({"type": ng.SOUND_SOURCE})
+        self.lvl = self.add({"type": ng.SOUND_LEVEL})
+
+    def add(self, node):
+        return edit.add_graph_node(self.p, "pic", self.e["id"], node)
+
+    def blur(self):
+        return self.add({"type": ng.FILTER, "ref": "builtin:nodes/exposure"})
+
+
+class LinkTests(Graphs):
+    def test_a_sound_goes_into_an_analysis_node_only(self):
+        ex = self.blur()
+        ng.connect(self.g, self.src, self.lvl, ng.SOUND_SOCKET)
+        ng.connect(self.g, self.lvl, ex, ng.PARAM + "exposure")          # (its number goes wherever a number does)
+        for a, b, socket in ((self.src, ex, "src"), (self.src, "output", "src"), ("input", self.lvl, ng.SOUND_SOCKET)):
+            before = copy.deepcopy(self.g["links"])
+            with self.assertRaises(ng.GraphError):
+                ng.connect(self.g, a, b, socket)
+            self.assertEqual(self.g["links"], before)
+
+    def test_through_reroutes_in_either_order(self):
+        ex, dot = self.blur(), self.add({"type": ng.REROUTE})
+        ng.connect(self.g, dot, ex, "src")                                # (nothing feeds it yet: it may carry either)
+        with self.assertRaises(ng.GraphError):
+            ng.connect(self.g, self.src, dot, "src")
+        ng.disconnect(self.g, ex, "src")
+        ng.connect(self.g, dot, self.lvl, ng.SOUND_SOCKET)
+        with self.assertRaises(ng.GraphError):
+            ng.connect(self.g, "input", dot, "src")
+        ng.connect(self.g, self.src, dot, "src")
+        self.assertEqual(ng.sound_source(self.g, self.lvl), self.src)
+        with self.assertRaises(ng.GraphError):
+            ng.connect(self.g, dot, ex, "src")
+
+    def test_node_spec(self):
+        spec = lambda: soundmeter.node_spec(self.g, self.e.get("sources"), self.lvl)
+        self.assertIsNone(spec())                                         # not wired
+        ng.connect(self.g, self.src, self.lvl, ng.SOUND_SOCKET)
+        self.assertIsNone(spec())                                         # nothing chosen
+        edit.set_graph_sound(self.p, "pic", self.e["id"], self.src, "tl1", "t1")
+        self.assertEqual(spec(), soundmeter.make("tl1", "t1"))
+        edit.set_graph_meter(self.p, "pic", self.e["id"], self.lvl, {"lo_hz": 5000.0, "hi_hz": 1.0, "release": 99.0})
+        self.assertEqual((spec()["lo_hz"], spec()["hi_hz"], spec()["release"]), (5000.0, 5000.0, soundmeter.MAX_RELEASE))
+        for nid in (self.src, self.lvl):
+            self.g["nodes"][nid]["mute"] = True
+            self.assertIsNone(spec())
+            del self.g["nodes"][nid]["mute"]
+        edit.group_graph_nodes(self.p, "pic", self.e["id"], [self.lvl])   # (through a group's socket)
+        self.assertIsNotNone(spec())
+        self.assertFalse(ng.sounds_crossed(self.g))
+
+    def test_removing_the_source_takes_its_setting(self):
+        edit.remove_graph_node(self.p, "pic", self.e["id"], self.src)
+        self.assertNotIn(self.src, self.e.get("sources") or {})
+
+    def test_not_a_still_picture_and_nothing_to_preview_on_a_source(self):
+        ex = self.blur()
+        ng.connect(self.g, self.lvl, ex, ng.PARAM + "exposure")
+        ng.connect(self.g, "input", ex, "src")
+        ng.connect(self.g, ex, "output", "src")
+        self.assertFalse(stillspans._effect_still(self.e))
+        with self.assertRaises(edit.EditError):
+            edit.set_graph_viewer(self.p, "pic", self.e["id"], self.src)
+
+
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class MeasureTests(Sounds):
+    def setUp(self):
+        soundmeter.forget()
+        self.cache = os.path.join(self.tmp.name, "cache")
+
+    def root(self, nodes=1, channel="t1", start=0.0):
+        """Kicks on a muted track at 0.5 and 1.5 s; a white-ish picture from `start` whose exposure follows them."""
+        root = make_root([{"clips": [self.kick_clip()], "muted": True}], rack=[])
+        pic = os.path.join(self.tmp.name, "grey.png")
+        img = QImage(W, H, QImage.Format_RGB32)
+        img.fill(QColor(60, 60, 60))
+        img.save(pic)
+        clip = {"id": "pic", "type": "image", "name": "灰", "start_us": int(start * US), "duration_us": 2 * US,
+                "source_start_us": 0, "media": {"path": pic, "width": W, "height": H},
+                "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}
+        root["tracks"].insert(0, {"id": "vid", "kind": "video", "name": "V", "clips": [clip]})
+        root.update(width=W, height=H, duration_us=4 * US)
+        e = edit.add_effect(root, "pic", fx.GRAPH)
+        g, eid = e["graph"], e["id"]
+        add = lambda node: edit.add_graph_node(root, "pic", eid, node)
+        src = add({"type": ng.SOUND_SOURCE})
+        edit.set_graph_sound(root, "pic", eid, src, "tl1", channel)
+        levels = [add({"type": ng.SOUND_LEVEL}) for _ in range(nodes)]
+        for lvl in levels:
+            edit.set_graph_meter(root, "pic", eid, lvl, BOX)
+            ng.connect(g, src, lvl, ng.SOUND_SOCKET)
+        ex = add({"type": ng.FILTER, "ref": "builtin:nodes/exposure"})
+        ng.connect(g, "input", ex, "src")
+        ng.connect(g, ex, "output", "src")
+        ng.connect(g, levels[0], ex, ng.PARAM + "exposure")
+        return root, e, src, levels
+
+    def read(self, e, lvl, seconds):
+        return soundmeter.hearing(e, seconds * US)(lvl)
+
+    def test_nodes_that_measure_the_same_share_one_job(self):
+        root, e, _src, levels = self.root(nodes=3)
+        self.assertTrue(soundmeter.wanted(root))
+        todo = soundmeter.plan(root)
+        self.assertEqual(len(todo.jobs), 1)
+        self.assertEqual(self.read(e, levels[0], 0.6), 0.0)             # not measured yet
+        self.assertEqual(soundmeter.run(todo, self.cache), {})
+        for lvl in levels:
+            self.assertAlmostEqual(self.read(e, lvl, 0.6), 1.0, delta=0.01)
+            self.assertEqual(self.read(e, lvl, 1.0), 0.0)
+        self.assertIsNotNone(soundmeter.node_sound(soundmeter.node_spec(e["graph"], e["sources"], levels[0])))
+        self.assertFalse(soundmeter.plan(root).stale())
+
+    def test_a_changed_box_reads_the_old_number_until_measured(self):
+        root, e, _src, (lvl,) = self.root()
+        soundmeter.prepare(root, self.cache)
+        self.assertGreater(self.read(e, lvl, 0.6), 0.9)
+        edit.set_graph_meter(root, "pic", e["id"], lvl, {"lo_hz": 2000.0, "hi_hz": 8000.0})
+        self.assertGreater(self.read(e, lvl, 0.6), 0.9)
+        self.assertTrue(soundmeter.plan(root).stale())
+        soundmeter.prepare(root, self.cache)
+        self.assertEqual(self.read(e, lvl, 0.6), 0.0)
+
+    def test_a_missing_source_reads_0_and_stops_an_export(self):
+        root, e, src, (lvl,) = self.root()
+        soundmeter.prepare(root, self.cache)
+        self.assertGreater(self.read(e, lvl, 0.6), 0.9)
+        edit.set_graph_sound(root, "pic", e["id"], src, "tl1", "gone")
+        said = []
+        with self.assertRaisesRegex(RuntimeError, "找不到"):
+            soundmeter.require(root, self.cache)
+        soundmeter.require(root, self.cache, allow_errors=True, say=said.append)
+        self.assertIn("找不到", said[0])
+        self.assertEqual(self.read(e, lvl, 0.6), 0.0)                    # (not what it read before)
+
+    def test_a_node_nothing_reads_does_not_stop_an_export(self):
+        root, e, _src, (lvl,) = self.root(channel="gone")
+        ex = next(i for i, n in e["graph"]["nodes"].items() if n.get("ref") == "builtin:nodes/exposure")
+        ng.disconnect(e["graph"], ex, ng.PARAM + "exposure")
+        soundmeter.require(root, self.cache)
+
+    def test_a_switched_off_effect_asks_for_nothing(self):
+        root, e, _src, _levels = self.root()
+        e["disabled"] = True
+        self.assertFalse(soundmeter.wanted(root))
+
+    def test_after_the_parameters_its_sound_follows(self):
+        root, e, _src, (lvl,) = self.root()
+        root["tracks"].append({"id": "t2", "kind": "audio", "name": "A2", "clips": [self.kick_clip("k2")], "muted": True})
+        edit.add_rack_param(root, "amount", 0.0)
+        edit.set_rack_sound(root, root["rack"][0]["id"], soundmeter.make("tl1", "t2", **BOX))
+        gain = sound_fx("gain", "g1", gain=0.0)
+        gain["expr"] = {"gain": "amount * 60 - 60"}                      # (heard only while the other track hits)
+        root["tracks"][1]["sound_effects"] = [gain]
+        todo = soundmeter.plan(root)
+        self.assertEqual([j.rid.partition(":")[0] for j in todo.jobs], [root["rack"][0]["id"], "node"])
+        self.assertEqual(soundmeter.run(todo, self.cache), {})
+        self.assertGreater(self.read(e, lvl, 0.65), 0.9)
+
+    def test_forgotten_with_the_nodes(self):
+        root, e, _src, _levels = self.root()
+        soundmeter.prepare(root, self.cache)
+        e["disabled"] = True
+        self.assertTrue(soundmeter.stale_without(root))
+        soundmeter.prepare(root, self.cache)
+        self.assertFalse(soundmeter.stale_without(root))
+
+    def brightness(self, renderer, root, *seconds):
+        out = []
+        for s in seconds:
+            img = renderer.render(root, round(s * root["fps"]), W, H)
+            self.assertEqual(renderer.errors, [])
+            out.append(img.pixelColor(W // 2, H // 2).red())
+        return out
+
+    def draws(self, renderer):
+        # the clip starts at 1.0 s: it reads the sound at 1.0 s + its own time, so the kick at 1.5 s shows at 1.6
+        root, _e, _src, _levels = self.root(start=1.0)
+        soundmeter.require(root, self.cache)
+        quiet, hit, after = self.brightness(renderer, root, 1.2, 1.6, 2.2)
+        self.assertEqual((quiet, after), (60, 60))
+        self.assertAlmostEqual(hit, 120, delta=3)                        # exposure +1: twice as bright
+
+    def test_the_cpu_renderer_draws_with_the_number(self):
+        r = render.Renderer(lambda *a: None)
+        if r.engine() is None:
+            self.skipTest("no OpenGL")
+        self.draws(r)
+
+    def test_the_gpu_renderer_draws_with_the_number(self):
+        r = glrender.make(lambda *a: None)
+        if not isinstance(r, glrender.GLRenderer):
+            self.skipTest("no OpenGL")
+        self.draws(r)
+
+
+if __name__ == "__main__":
+    unittest.main()

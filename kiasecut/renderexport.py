@@ -175,7 +175,7 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
     t0 = time.time()
     progress = on_progress or (lambda p: None)
     stage = on_stage or (lambda s: None)
-    if soundmeter.sounding(view):
+    if soundmeter.wanted(view):
         stage("分析聲音")
         soundmeter.require(view, cache, cancelled, allow_errors=bool(spec.get("allow_errors")))
 
@@ -237,7 +237,7 @@ def still(view, t_us, size, out, alpha=True, background=None, quality=92, cache_
         px, rw, rh = engine.media_frame(path, us, view["fps"], max(1, int(w)), max(1, int(h)))
         return QImage(px, rw, rh, rw * 4, QImage.Format_RGBA8888).copy()
 
-    if soundmeter.sounding(view):
+    if soundmeter.wanted(view):
         soundmeter.require(view, cache_dir or os.path.dirname(os.path.abspath(out)))
     renderer = glrender.make(video) if gpu.enabled else render.Renderer(video)
     renderer.cache_dir = cache_dir

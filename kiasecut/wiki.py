@@ -26,9 +26,10 @@ TYPES = (
     ("string", "字串", "文字內容。不是圖片：只能接到文字節點的內容"),
     ("font", "字體", "字體檔。不是圖片：只能接到文字節點的字體"),
     ("outline", "矢量輪廓", "形狀、文字、SVG 圖片、矢量節點給出的路徑。不是圖片：接到矢量節點（相加、布林運算…）"),
+    ("sound", "聲音", "一條軌道、bus 或 Master 的聲音。不是圖片：只能從「聲音來源」接到分析節點的「聲音」，中間可以經過繞線點"),
 )
 FALLBACK_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "string": "#70b870", "font": "#b070b0", "int": "#598c5c",
-                   "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a", "outline": "#3fc7a8"}
+                   "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a", "outline": "#3fc7a8", "sound": "#e8607e"}
 PARAM_TYPES = {"float": ("數值", "float"), "int": ("整數", "int"), "bool": ("開關", "bool"), "color": ("顏色", "color"),
                "vec2": ("二維向量", "vector"), "vec3": ("向量", "vector"), "menu": ("選單", "menu"), "curve": ("曲線", None),
                "gradient": ("漸層", None)}
@@ -51,6 +52,13 @@ SPECIAL = {
     (ng.SOURCE, "vector", "scale"): "矢量：縮放一個矢量。",
     (ng.FONT, "", ""): "字體常數：一個字體檔。不是圖片，只能接到文字節點的字體。",
     (ng.STRING, "", ""): "字串常數：一段文字。不是圖片，只能接到文字節點的內容。",
+    (ng.SOUND_SOURCE, "", ""): "聲音來源：在節點上選一個時間線或複合片段，再選它的一條軌道、bus 或 Master，給出效果和推桿之後的聲音。"
+                               "來源自己的靜音和獨奏不算；送進 bus 的軌道靜音仍然算。聲音是左右混合的單聲道。"
+                               "共用的 VFX Node 裡，每個用它的片段聽同一個來源。",
+    (ng.SOUND_LEVEL, "", ""): "電平 → 數值：在節點的頻譜上拉一個框，框裡最大聲的頻率有多大聲變成 0～1 的數值（框的下緣是 0、上緣是 1），"
+                              "啟動和釋放是數值升上去、落下來要幾秒。出來的是一般的數值，數學、映射範圍、切換、模糊大小都能接。"
+                              "它讀的是「片段在它那一層的位置 + 片段內時間」的聲音：來源在複合片段裡、讀它的片段在外層時，不會跟著那個複合片段在外層的位置或速度移動。"
+                              "預覽在背景分析，算完前是 0（改框時先沿用舊的數值）；匯出會等分析完成，來源找不到時匯出報錯。",
     (ng.VIEWER, "", ""): "編輯器的預覽看這個節點的結果。不會被匯出。",
     (ng.REROUTE, "", ""): "繞線點：連線的一個彎，圖片原樣通過。用來整理線路。",
     (ng.FRAME, "", ""): "框架／註解：圈起一群節點並寫上說明，不影響結果。",
@@ -318,10 +326,12 @@ def filter_page(ref):
 def special_page(key):
     t, kind, op = key[len("special:"):].split("|")
     label = next((e[2] for _, entries in categories() for e in entries if e[0] == "node" and e[1] == key), kind or t)
-    out = {ng.FONT: "font", ng.STRING: "string"}.get(t, "outline" if t == ng.SOURCE and (kind in ("vector", "text") or op == "svg") else "image")
+    out = {ng.FONT: "font", ng.STRING: "string", ng.SOUND_SOURCE: "sound", ng.SOUND_LEVEL: "float"}.get(t, "outline" if t == ng.SOURCE and (kind in ("vector", "text") or op == "svg") else "image")
     ins = ""
     if t == ng.SOURCE and kind == "vector":
         ins = "<p>輸入：矢量輪廓（%s）</p>" % dot("outline")
+    elif t == ng.SOUND_LEVEL:
+        ins = "<p>輸入：聲音（%s）</p>" % dot("sound")
     return (f"<h1>{esc(label)}</h1><p>{esc(SPECIAL.get((t, kind, op), ''))}</p>{ins}"
             f"<p>輸出：{dot(out)} {esc(dict((k, n) for k, n, _ in TYPES).get(out, out))}"
             + ("（也可以當圖片用）" if out == "outline" else "") + f"</p>{recipes(key, label)}")

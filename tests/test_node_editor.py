@@ -994,8 +994,8 @@ class NodeEditorTests(unittest.TestCase):
         def tree(menu):
             return {a.text(): (tree(a.menu()) if a.menu() else None) for a in menu.actions() if a.text()}
         top = tree(menus[0])
-        self.assertEqual([k for k in top if k != "搜尋節點…"][:13],
-                         ["輸入", "輸出", "矢量", "色彩", "創意", "濾鏡", "去背", "遮罩", "紋理", "變換", "工具", "KiaseCut 效果", "佈局"][:13])   # (矢量: KiaseCut's own)
+        self.assertEqual([k for k in top if k != "搜尋節點…"],
+                         ["輸入", "輸出", "矢量", "色彩", "創意", "濾鏡", "去背", "遮罩", "紋理", "變換", "工具", "KiaseCut 效果", "聲音", "佈局"])   # (矢量, 聲音: KiaseCut's own)
         self.assertEqual(list(top["矢量"]), ["形狀", "文字", "SVG 圖片", "相加（把多個矢量疊在一起）", "布林運算（聯集、差集、交集、排除）", "旋轉（矢量）", "移動（矢量）", "縮放（矢量）"])
         self.assertEqual(list(top["輸入"])[:2], ["常數", "輸入（片段的畫面）"])
         self.assertEqual(list(top["輸入"]["常數"]), ["布林", "顏色", "字體", "整數", "整數向量", "選單", "字串", "數值", "向量"])

@@ -246,7 +246,7 @@ def render(args, proj, say=lambda text: print(text, file=sys.stderr, flush=True)
 
     try:
         cache = os.path.join(stage_dir, "cache")
-        if soundmeter.sounding(view):                      # (before the paths: a bound parent moves by these numbers)
+        if soundmeter.wanted(view):                      # (before the paths: a bound parent moves by these numbers)
             say("分析聲音")
             try:
                 soundmeter.require(view, cache, allow_errors=args.allow_errors, say=say)

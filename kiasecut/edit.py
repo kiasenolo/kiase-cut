@@ -2712,6 +2712,10 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
         node = {"type": nodegraph.FONT, "value": str(node.get("value") or project.DEFAULT_FONT)}
     elif node["type"] == nodegraph.FRAME:
         node = nodegraph.frame_defaults(node)
+    elif node["type"] == nodegraph.SOUND_SOURCE:
+        node = {"type": nodegraph.SOUND_SOURCE}
+    elif node["type"] == nodegraph.SOUND_LEVEL:
+        node = {"type": nodegraph.SOUND_LEVEL, "meter": {k: soundmeter.DEFAULTS[k] for k in soundmeter.DEFAULTS}}
     else:
         raise EditError("不能新增這種節點")
     if inside and (g["nodes"].get(inside) or {}).get("type") == nodegraph.GROUP:
@@ -2728,6 +2732,8 @@ def add_graph_node(proj, clip_id, effect_id, node, x=0.0, y=0.0):
             if q is not None and (v in q.items if q.type == "menu" else q.type not in ("color", "image", "curve")
                                   or isinstance(v, (list, tuple))):
                 e["params"][nodegraph.param_key(nid, k)] = copy.deepcopy(v)
+    elif node["type"] == nodegraph.SOUND_SOURCE:            # (which channel: chosen in the node, set_graph_sound)
+        e.setdefault("sources", {})[nid] = {"kind": "sound", "level": "", "channel": ""}
     elif node["type"] == nodegraph.SOURCE:
         set_effect_source(proj, clip_id, effect_id, nid, node["kind"])
         if node["kind"] == "shape" and shape:
@@ -3171,7 +3177,8 @@ def set_graph_viewer(proj, clip_id, effect_id, nid, out=""):
         g["links"] = [l for l in g["links"] if l["to"] not in viewers]
         return
     node = g["nodes"].get(nid)
-    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT, nodegraph.GROUP, nodegraph.VIEWER):
+    if node is None or node["type"] in (nodegraph.PARAMS, nodegraph.FRAME, nodegraph.OUTPUT, nodegraph.GROUP, nodegraph.VIEWER,
+                                        nodegraph.SOUND_SOURCE):
         raise EditError("這個節點沒有圖可以預覽")
     if out not in [o for o, _ in nodegraph.outputs(node)]:
         raise EditError("這個節點沒有這個輸出")
@@ -3504,6 +3511,32 @@ def set_graph_font(proj, clip_id, effect_id, nid, path):
     if (g["nodes"].get(nid) or {}).get("type") != nodegraph.FONT:
         raise EditError("這不是字體節點")
     g["nodes"][nid]["value"] = str(path)
+
+
+def set_graph_sound(proj, clip_id, effect_id, nid, level, channel):
+    """What a 聲音來源 node hears: channel (a track's or bus's id, or "master") of the timeline or compound `level`."""
+    _, c = find(proj, clip_id)
+    e, g = _graph(c, effect_id)
+    if (g["nodes"].get(nid) or {}).get("type") != nodegraph.SOUND_SOURCE:
+        raise EditError("這不是聲音來源節點")
+    e.setdefault("sources", {})[nid] = {"kind": "sound", "level": str(level), "channel": str(channel)}
+
+
+def set_graph_meter(proj, clip_id, effect_id, nid, values):
+    """The box and the times of a 電平 → 數值 node (values: some of soundmeter.DEFAULTS' keys), kept inside their
+    ranges."""
+    _, c = find(proj, clip_id)
+    _, g = _graph(c, effect_id)
+    node = g["nodes"].get(nid) or {}
+    if node.get("type") != nodegraph.SOUND_LEVEL:
+        raise EditError("這不是「電平 → 數值」節點")
+    merged = {**soundmeter.DEFAULTS, **(node.get("meter") or {}),
+              **{k: v for k, v in values.items() if k in soundmeter.DEFAULTS}}
+    try:
+        spec = soundmeter.clean(dict(merged, level="", channel=""))
+    except ValueError as exc:
+        raise EditError(str(exc)) from exc
+    node["meter"] = {k: spec[k] for k in soundmeter.DEFAULTS}
 
 
 def set_effect_text(proj, clip_id, effect_id, nid, content=None, font_path=None):

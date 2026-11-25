@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, camera, components, curves, fonts, fx, lights, masks, nodegraph, project, propexpr, rack, svgimage, sysmem, textlayout, textvars, vector, viz
+from . import assets, camera, components, curves, fonts, fx, lights, masks, nodegraph, project, propexpr, rack, soundmeter, svgimage, sysmem, textlayout, textvars, vector, viz
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -1010,7 +1010,7 @@ class Renderer:
         cp.end()
         base = dev.copy().convertToFormat(QImage.Format_ARGB32_Premultiplied)
         out = self.run_effects(c["effects"], self.seen(p, base), t, c["duration_us"], fps,
-                               clip_world(c, t, W, H) * p.worldTransform(), disp, unit)
+                               clip_world(c, t, W, H) * p.worldTransform(), disp, unit, c["start_us"])
         a = image_to_array(cov)[..., 3:4].astype(np.float32) / 255
         b0, b1 = image_to_array(base).astype(np.float32), image_to_array(out).astype(np.float32)
         res = np.ascontiguousarray((b0 + (b1 - b0) * a).round().astype(np.uint8))
@@ -1060,7 +1060,7 @@ class Renderer:
         return (nodegraph.thumb_tap(self.thumbs.setdefault(e["id"], {}), memo=self.thumb_memo.setdefault(e["id"], {}))
                 if e["id"] in self.want_thumbs else None)
 
-    def graph_effect(self, eng, e, arr, t, duration, fps, disp, wt, unit):
+    def graph_effect(self, eng, e, arr, t, duration, fps, disp, wt, unit, start=0):
         """Node graph effect e over arr (H x W x 4, premultiplied) on the CPU renderer's engine: the
         result as such an array, or None when it cannot run."""
         h, w = arr.shape[:2]
@@ -1095,7 +1095,8 @@ class Renderer:
             try:
                 tex, owner = nodegraph.evaluate(eng, e["graph"], e["params"], upload(arr), w, h, pool.alloc, pool.free,
                                                 t=t, duration=duration, fps=fps, unit=unit, picture=picture, errors=errors,
-                                                viewer=self.editing, tap=self.thumb_tap(e), overscan=e.get("overscan", "auto"))
+                                                viewer=self.editing, tap=self.thumb_tap(e), overscan=e.get("overscan", "auto"),
+                                                heard=soundmeter.hearing(e, start + t))
                 out = nodegraph.read_rgba8(tex).copy() if tex is not None else None
             except nodegraph.GraphError as exc:
                 self.errors.append(f"節點效果：{exc}")
@@ -1107,7 +1108,7 @@ class Renderer:
         self.errors += errors
         return out
 
-    def run_effects(self, effects, img, t, duration, fps, wt, disp, unit):
+    def run_effects(self, effects, img, t, duration, fps, wt, disp, unit, start=0):
         """Apply a chain of effects to img (QImage ARGB32 premultiplied, unit of its px per canvas
         px) at clip time t; each effect's own mask (clip-local, through world transform wt)
         limits where it shows, its 混合程度 how much."""
@@ -1122,7 +1123,7 @@ class Renderer:
                 continue
             d = fx.get(e["filter"])
             if e["filter"] == fx.GRAPH:                                  # a node graph (nodegraph.py)
-                out = self.graph_effect(eng, e, arr, t, duration, fps, disp, wt, unit)
+                out = self.graph_effect(eng, e, arr, t, duration, fps, disp, wt, unit, start)
                 if out is None:
                     continue
                 mk = e.get("mask")
@@ -1171,7 +1172,8 @@ class Renderer:
         lp.setTransform(wt)
         plain(lp)
         lp.end()
-        layer = self.run_effects(project.visual_effects(c, True), layer, t, c["duration_us"], fps, wt, disp, unit)
+        layer = self.run_effects(project.visual_effects(c, True), layer, t, c["duration_us"], fps, wt, disp, unit,
+                                 c["start_us"])
         q.save()
         q.resetTransform()
         q.drawImage(0, 0, layer)
@@ -1213,7 +1215,8 @@ class Renderer:
             self.draw_tracks(hp, below, W, H, fps, c["start_us"] + held, px_per_unit)
             hp.end()
             t = held
-        out = self.run_effects(c["effects"], self.seen(p, under), t, c["duration_us"], fps, wt, (W, H), px_per_unit)
+        out = self.run_effects(c["effects"], self.seen(p, under), t, c["duration_us"], fps, wt, (W, H), px_per_unit,
+                               c["start_us"])
         cov = np.full((h, w), strength, np.float32)
         mk = self.clip_mask(c, t)
         if mk:

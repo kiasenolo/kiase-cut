@@ -18,6 +18,8 @@ import json
 import math
 import os
 
+import numpy as np
+
 import shiboken6
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSettings, QSizeF, Qt, QTimer, Signal
@@ -25,7 +27,7 @@ from PySide6.QtGui import QAction, QBrush, QColor, QCursor, QFont, QKeySequence,
 from PySide6.QtWidgets import (QStyle, QStyleOptionButton, QApplication, QComboBox, QFrame, QPlainTextEdit, QScrollBar, QGraphicsItem, QGraphicsProxyWidget, QLineEdit, QGraphicsPathItem, QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel,
                                QCheckBox, QColorDialog, QDoubleSpinBox, QMenu, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget, QWidgetAction)
 
-from .. import assets, curves, dynamic, fx, gizmos, menugroups, nodegraph as ng, nodemenu
+from .. import assets, curves, dynamic, fx, gizmos, menugroups, nodegraph as ng, nodemenu, soundmeter
 from . import appevents, motion, touch, viewglide
 from .groupmenu import GroupMenu
 from .searchbox import SearchBox
@@ -53,7 +55,7 @@ LINK_BORDER = 1.5                                          # (the dark edge roun
 THUMB_H = 54.0                                 # the height of a node's thumbnail (縮圖)
 PLOT_H = {"curve": 190.0, "gradient": 96.0}          # the height of a curve / gradient parameter in a node (a curve is edited right there: its plot and buttons)
 LABEL_W = 0.42                                  # the part of a row the label takes; the field gets the rest
-HEADS = {ng.STRING: "#a8473f", ng.FONT: "#a8473f", ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
+HEADS = {ng.SOUND_SOURCE: "#8f3f5a", ng.SOUND_LEVEL: "#8f3f5a", ng.STRING: "#a8473f", ng.FONT: "#a8473f", ng.INPUT: "#a8473f", ng.OUTPUT: "#a8473f", ng.VIEWER: "#a8473f", ng.SOURCE: "#3f8a5a", ng.PARAMS: "#8a6f3f", ng.GROUP: "#3f7f78",
          "groupin": "#7a5f3f", "groupout": "#7a5f3f"}
 MAX_LINES = 12                                  # (as many lines of a string as its box can be dragged to show; the rest are in the edit box)
 GRIP = 12.0                                     # (the corner of a words box that drags it taller)
@@ -63,7 +65,7 @@ PORT_IN, PORT_OUT = "\0gin", "\0gout"            # the ids of the 群組輸入 /
 CATEGORY_COLORS = ("#3f6fa8", "#7a55a8", "#a8843f", "#3f8f9a", "#a8553f", "#5f8f3f", "#8f3f78")
 SOCKET_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "other": "#6a9fd0", "string": "#70b870", "font": "#b070b0",
                  "int": "#598c5c", "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a",
-                 "outline": "#3fc7a8"}     # (an outline - a shape, a text, an SVG, a vector node: what 相加 and 布林 take)     # (Blender's socket colours for the numbers, switches and vectors)
+                 "outline": "#3fc7a8", "sound": "#e8607e"}     # (an outline - a shape, a text, an SVG, a vector node: what 相加 and 布林 take)     # (Blender's socket colours for the numbers, switches and vectors)
 LINK_COLOR = "#b3b3b3"                           # (a link with no types to colour it)
 # the interface's greys (Color(n) is white times n): the canvas under everything, a node's body, its head, a field and its outline
 CANVAS = "#080808"
@@ -127,6 +129,18 @@ class _ScreenMove:
         return QPointF(self.e.screenPos())
 
 
+SOUND_NODES = (ng.SOUND_SOURCE, ng.SOUND_LEVEL)
+SOUND_FIELDS = {"sndlevel": "level", "sndchannel": "channel"}     # (the rows of a 聲音來源 node)
+LEVEL_WIDTH, SPECTRUM_H = 300.0, 130.0                             # (電平 → 數值: wide enough to drag its box in)
+
+
+def meter_params(*names):
+    """The number boxes of a 電平 → 數值 node (soundmeter.py's keys), as parameters its fields can drag."""
+    labels = {"attack": "啟動（秒）", "release": "釋放（秒）", "lo_hz": "低頻（Hz）", "hi_hz": "高頻（Hz）",
+              "floor_db": "0 的音量（dB）", "top_db": "1 的音量（dB）"}
+    return [fx.Param(k, "float", soundmeter.DEFAULTS[k], *soundmeter.RANGES[k], labels[k]) for k in names]
+
+
 MEDIA_LABELS = {"image": "圖片", "video": "影片", "compound": "複合片段", "track": "軌道"}
 
 
@@ -147,13 +161,15 @@ class NodeItem(QGraphicsItem):
         self.drag = None                                    # a field being dragged: {...}
         self._hover = None                                  # where the mouse is over the node (a field under it has the lighter outline)
         self.hops = {}                                      # (row y, cell) -> motion.Hop: a number that hops as it is dragged
-        self.w = max(MIN_WIDTH, float(node.get("width", WIDTH)))
+        self.w = max(MIN_WIDTH, float(node.get("width", LEVEL_WIDTH if node["type"] == ng.SOUND_LEVEL else WIDTH)))
         self.sizing = None                                  # while widened: (scene x at the press, width then)
         self.grip = None                                    # while a words box is dragged taller: {scene y at the press, its lines then}
         self.setAcceptHoverEvents(True)
         self._layout()
         self.inline = []                                    # [(parameter, CurveField)] the curves edited inside the node
         self._inline_curves()
+        self.spectrum = None                                # (電平 → 數值: the spectrum its box is dragged on)
+        self._inline_spectrum()
         if node["type"] in ("groupin", "groupout"):          # (drawn from the group, not nodes of the graph)
             self.setFlags(QGraphicsItem.ItemSendsGeometryChanges)
         else:
@@ -224,6 +240,19 @@ class NodeItem(QGraphicsItem):
             add("image", "結果", "src")
         elif node["type"] == ng.VIEWER:
             add("image", "圖像", "src")
+        elif node["type"] == ng.SOUND_SOURCE:                            # (its output above, what it hears here)
+            add("sndlevel", "時間線")
+            add("sndchannel", "來源")
+        elif node["type"] == ng.SOUND_LEVEL:
+            add("image", "聲音", ng.SOUND_SOCKET)
+            add("spectrum", "", h=SPECTRUM_H)
+            for p in meter_params("attack", "release"):
+                add("param", p.label, p=p)
+            opened = self.editor.panel_opened(self.nid, "框的數值", False)
+            add("panel", "框的數值", panel=opened)
+            if opened:
+                for p in meter_params("lo_hz", "hi_hz", "floor_db", "top_db"):
+                    add("param", p.label, p=p)
         elif node["type"] == ng.FILTER or ng.is_asset(node) or ng.is_text(node) or ng.is_vecop(node):         # (a built-in shape, a text or a vector node: its fields, no sockets)
             d = ng.node_def(node)
             socket = lambda p: ng.PARAM + p.name if ng.has_socket(p) else None
@@ -280,7 +309,7 @@ class NodeItem(QGraphicsItem):
             add("media", MEDIA_LABELS[node["kind"]])
             if node["kind"] == "compound":                                     # (a static one drawn afresh at the time it is read: the effects inside that read the time move)
                 add("live", "讀取時間")
-        if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.VIEWER, ng.PARAMS, ng.GROUP, "groupin", "groupout"):
+        if self.editor.show_thumbs and node["type"] not in (ng.OUTPUT, ng.VIEWER, ng.PARAMS, ng.GROUP, "groupin", "groupout") + SOUND_NODES:
             for name, _label in self.shown_outputs():
                 add("thumb", "", p=name, h=THUMB_H)
         self.h = y + PAD
@@ -318,8 +347,31 @@ class NodeItem(QGraphicsItem):
         w.bar.committed.connect(lambda stops, q=q: self.editor.curve_done(self.nid, q, stops))
         self.inline.append((q, w))
 
+    def _inline_spectrum(self):
+        r = next((r for r in self.rows if r["kind"] == "spectrum"), None)
+        if r is None:
+            return
+        from .sounddialog import BoxSpectrum
+        w = BoxSpectrum()
+        w.setMinimumSize(0, 0)
+        proxy = QGraphicsProxyWidget(self)
+        proxy.setWidget(w)
+        proxy.setGeometry(QRectF(10, r["y"] + 2, self.w - 20, r["h"] - 4))
+        w.changed.connect(lambda box: self.editor.meter_live(self.nid, box))
+        w.done.connect(lambda box: self.editor.meter_done(self.nid, box))
+        self.spectrum = proxy
+        self.refresh_spectrum()
+
+    def refresh_spectrum(self):
+        """The node's box, and the sound it measures at the playhead."""
+        if self.spectrum is not None:
+            self.editor.fill_spectrum(self.nid, self.spectrum.widget())
+
     def refresh_inline(self):
         """The curves again from the parameters (an undo, a keyframe, another view of the same node changed them)."""
+        self.refresh_spectrum()
+        if not self.inline:
+            return
         vals = self.editor.node_values(self.nid)
         for q, w in self.inline:
             if q.type == "gradient":
@@ -369,6 +421,8 @@ class NodeItem(QGraphicsItem):
         t = self.node["type"]
         if t in ng.WORDS:
             return SOCKET_COLORS["string" if t == ng.STRING else "font"]
+        if t in SOUND_NODES:
+            return SOCKET_COLORS["sound" if t == ng.SOUND_SOURCE else "float"]
         if t in (ng.PARAMS, ng.INPUT):
             r = next((r for r in self.rows if r["kind"] == "expose" and r["p"] and r["p"]["name"] == out), None)
             if r is not None:
@@ -381,6 +435,8 @@ class NodeItem(QGraphicsItem):
 
     def in_colour(self, sock):
         """The colour of input `sock`."""
+        if self.node["type"] == ng.SOUND_LEVEL:
+            return SOCKET_COLORS["sound"]
         if ng.is_vecop(self.node) and (sock == GHOST_ITEM or sock in ng.vecop_sockets(self.node)):
             return SOCKET_COLORS["outline"]
         r = self.row_of(sock)
@@ -426,7 +482,7 @@ class NodeItem(QGraphicsItem):
             return not (r["socket"] and r["socket"] in self.linked) and r["p"].type not in ("curve", "gradient")
         if r["kind"] in ("text", "font"):
             return r["socket"] not in self.linked                 # (a string / font node's value replaces the box)
-        return r["kind"] in ("shape", "shapecolor", "plot", "string", "fontvalue", "media", "live")
+        return r["kind"] in ("shape", "shapecolor", "plot", "string", "fontvalue", "media", "live", "sndlevel", "sndchannel")
 
     def field_at(self, pos):
         """(row, cell) of the field under pos (item coordinates), or the panel header row, else None."""
@@ -485,8 +541,13 @@ class NodeItem(QGraphicsItem):
             y, kind = r["y"], r["kind"]
             row = QRectF(10, y, self.w - 20, ROW)
             p.setPen(text)
+            if kind == "spectrum":                              # (its own widget)
+                continue
             if kind == "out":
-                p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, r["label"])
+                label = r["label"]
+                if self.node["type"] == ng.SOUND_LEVEL:           # (the number at the playhead)
+                    label += f"　{self.editor.meter_number(self.nid):.2f}"
+                p.drawText(row, Qt.AlignVCenter | Qt.AlignRight, label)
                 self._socket(p, QPointF(self.w, y + ROW / 2), self.out_colour(r["p"] or ""), self.out_shape(r["p"] or ""))
                 continue
             if kind in ("expose", "ghost"):
@@ -543,6 +604,16 @@ class NodeItem(QGraphicsItem):
             on = bool((self.editor.sources.get(self.nid) or {}).get("static_live"))
             opt.state = QStyle.State_Enabled | (QStyle.State_On if on else QStyle.State_Off) | (QStyle.State_MouseOver if hot else QStyle.State_None)
             motion.paint_indicator(p, opt, None, False)
+            return
+        if kind in SOUND_FIELDS:
+            box = self.field_rect(r)
+            self._box(p, box, bg)
+            name = self.editor.sound_name(self.nid, SOUND_FIELDS[kind])
+            p.setPen(text if name else QColor(text.red(), text.green(), text.blue(), 130))
+            p.drawText(box.adjusted(6, 0, -14, 0), Qt.AlignVCenter | Qt.AlignLeft,
+                       p.fontMetrics().elidedText(name or "選擇…", Qt.ElideRight, int(box.width() - 20)))
+            p.setPen(text)
+            p.drawText(box.adjusted(0, 0, -4, 0), Qt.AlignVCenter | Qt.AlignRight, "▾")
             return
         if kind == "media":
             box = self.field_rect(r)
@@ -2297,6 +2368,8 @@ class NodeEditor(QWidget):
     paramEdited = Signal(str, str, object)                  # effect id, "<node>.<parameter>", value
     paramLive = Signal(str, str, str, object)               # effect id, group ("fx:<id>" / "fxsrc:<id>:<node>"), key, value: still being changed
     placeEdited = Signal(str, str, str, object)             # effect id, node id, where it sits (cx / cy / w / h / rotation), value
+    soundChosen = Signal(str, str, str, str)                # effect id, 聲音來源 node, level (timeline / compound) id, channel id
+    meterEdited = Signal(str, str, dict)                    # effect id, 電平 → 數值 node, {some of soundmeter.DEFAULTS' keys: value}
     mediaChosen = Signal(str, str, str)                     # effect id, picture / video / compound / track node, file or id ("": browse)
     liveToggled = Signal(str, str, bool)                    # effect id, compound node, 讀取時間 on or off
     shapeEdited = Signal(str, str, object, object)          # effect id, shape node, shape id or None, colour or None
@@ -2381,6 +2454,10 @@ class NodeEditor(QWidget):
         self.clip = None
         self.media = {"image": [], "video": [], "compound": [], "track": []}     # [(path / id, name)] a source node can show
         self.level = ""                                     # the group being looked into ("": the effect's own level)
+        self.sounds = []                                    # [(level id, name, [(channel id, label)])] a 聲音來源 node can hear
+        self.sound_problems = {}                            # soundmeter.node_key -> why it cannot be measured
+        self.sound_start = 0                                # where the clip begins on its own level's timeline
+        self._meter_draft = {}                              # node id -> a box or a time being dragged
         self.pseudo = {}                                    # the 群組輸入 / 群組輸出 boxes shown inside a group
         self.here = QLabel("")
         bar.addWidget(self.here)
@@ -2504,6 +2581,94 @@ class NodeEditor(QWidget):
             return ""
         return next((label for v, label in self.media.get(kind, []) if v == value), os.path.basename(str(value)) if kind in ("image", "video") else str(value))
 
+    # -- the sound nodes ---------------------------------------------------------------------------------
+    def set_sounds(self, sounds):
+        sounds = [(k, n, list(ch)) for k, n, ch in sounds]
+        if sounds != self.sounds:
+            self.sounds = sounds
+            self.view.viewport().update()
+
+    def sound_name(self, nid, field):
+        """What a 聲音來源 node shows in its 時間線 / 來源 row, "" when nothing is chosen."""
+        src = self.sources.get(nid) or {}
+        if not src.get(field):
+            return ""
+        level = next((x for x in self.sounds if x[0] == src.get("level")), None)
+        if level is None:
+            return "（已經不在）"
+        if field == "level":
+            return level[1]
+        return next((label for k, label in level[2] if k == src.get("channel")), "（已經不在）")
+
+    def sound_menu(self, nid, field, global_pos):
+        src = self.sources.get(nid) or {}
+        menu = QMenu(self)
+        choose = lambda level, channel: self.soundChosen.emit(self.eid, nid, level, channel)
+
+        def channels(target, kid, items):
+            for cid, label in items:
+                target.addAction(label, lambda _=False, kid=kid, cid=cid: choose(kid, cid))
+        mine = next((x for x in self.sounds if x[0] == src.get("level")), None)
+        if field == "level":
+            for kid, name, items in self.sounds:                   # (the channel stays when the new one has it)
+                kept = src.get("channel") if any(c == src.get("channel") for c, _ in items) else "master"
+                menu.addAction(name, lambda _=False, kid=kid, kept=kept: choose(kid, kept))
+        elif mine is not None:
+            channels(menu, mine[0], mine[2])
+        else:
+            for kid, name, items in self.sounds:
+                channels(menu.addMenu(name), kid, items)
+        if menu.isEmpty():
+            menu.addAction("（沒有可選的）").setEnabled(False)
+        self.popup(menu, global_pos)
+
+    def meter_values(self, nid):
+        node = self.graph["nodes"].get(nid) or {}
+        return {**soundmeter.DEFAULTS, **(node.get("meter") or {}), **self._meter_draft.get(nid, {})}
+
+    def meter_live(self, nid, values):
+        """A box or a time of a 電平 → 數值 node is being dragged: the node shows it (the number follows once it is let go)."""
+        self._meter_draft.setdefault(nid, {}).update(values)
+        self.view.viewport().update()
+
+    def meter_done(self, nid, values):
+        self._meter_draft.pop(nid, None)
+        node = self.graph["nodes"].get(nid) or {}
+        have = {**soundmeter.DEFAULTS, **(node.get("meter") or {})}
+        if self.eid and any(abs(have[k] - v) > 1e-9 for k, v in values.items()):
+            self.meterEdited.emit(self.eid, nid, dict(values))
+        item = self.view.items_by_id.get(nid)
+        if item is not None:
+            item.refresh_spectrum()
+
+    def _meter_spec(self, nid):
+        return soundmeter.node_spec(self.graph, self.sources, nid)
+
+    def meter_number(self, nid):
+        return soundmeter.heard((self.eid, nid), self._meter_spec(nid), self.sound_start + self.t)
+
+    def fill_spectrum(self, nid, widget):
+        widget.set_values(self.meter_values(nid))
+        spec = self._meter_spec(nid)
+        sound = None if spec is None else soundmeter.node_sound(spec)
+        if sound is not None:
+            at = int((self.sound_start + self.t) * soundmeter.RATE / ng.US) - soundmeter.N // 2
+            piece = np.zeros(soundmeter.N, np.float32)
+            lo, hi = max(at, 0), min(at + soundmeter.N, len(sound))
+            if hi > lo:
+                piece[lo - at:hi - at] = sound[lo:hi]
+            widget.say("" if len(sound) else "這裡沒有聲音")
+            widget.feed(piece)
+            return
+        if spec is None:
+            src = ng.sound_source(ng.flatten(self.graph), nid)
+            why = "接一個「聲音來源」" if src is None else \
+                "在「聲音來源」節點選來源" if not (self.sources.get(src) or {}).get("channel") else ""
+        else:
+            why = self.sound_problems.get(soundmeter.node_key(spec)) or "分析聲音中…"
+        widget.say(why)
+        widget.clear_sound()
+
     def view_state(self):
         """How the editor is looked at, to save with the project: the effect, the group looked into, the zoom and
         the centre of the graph, and the 參數 panel."""
@@ -2588,7 +2753,7 @@ class NodeEditor(QWidget):
                 self.fill_panel()
         else:
             for it in self.view.items_by_id.values():
-                if getattr(it, "inline", None):
+                if getattr(it, "inline", None) or getattr(it, "spectrum", None) is not None:
                     it.refresh_inline()
             self.view.viewport().update()                   # (the values only)
 
@@ -2693,6 +2858,8 @@ class NodeEditor(QWidget):
     def node_values(self, nid):
         node = self.graph["nodes"].get(nid) or {}
         src = self.sources.get(nid) or {}
+        if node.get("type") == ng.SOUND_LEVEL:
+            return self.Values(self.meter_values(nid), None, "", [1.0, 1.0, 1.0, 1.0])
         if node.get("type") != ng.FILTER and not ng.is_asset(node) and not ng.is_text(node) and not ng.is_vecop(node):
             return self.Values({}, None, src.get("shape", "rectangle"), src.get("color") or [1.0, 1.0, 1.0, 1.0])
         d = ng.node_def(node)
@@ -2730,6 +2897,19 @@ class NodeEditor(QWidget):
         lo, hi = self.limits(nid, q, soft=not final)
         value = min(max(value, lo if lo is not None else -UNBOUNDED), hi if hi is not None else UNBOUNDED)
         key = ng.param_key(nid, q.name)
+        if (self.graph["nodes"].get(nid) or {}).get("type") == ng.SOUND_LEVEL:     # (kept in the node, not the effect's params)
+            lo, hi = soundmeter.RANGES[q.name]
+            value = round(min(max(value, lo), hi), 4)
+            self.meter_live(nid, {q.name: value})
+            item = self.view.items_by_id.get(nid)
+            if item is not None:
+                item.refresh_spectrum()
+            if final:
+                self._scrub = None
+                self.meter_done(nid, {q.name: value})
+            else:
+                self._scrub = (nid, row, cell, value)
+            return
         if q.type == "int":
             new = int(round(value))
         elif q.type == "float":
@@ -2813,6 +2993,9 @@ class NodeEditor(QWidget):
             return
         if kind == "live":
             self.liveToggled.emit(self.eid, nid, not bool((self.sources.get(nid) or {}).get("static_live")))
+            return
+        if kind in SOUND_FIELDS:
+            self.sound_menu(nid, SOUND_FIELDS[kind], gp)
             return
         if kind == "media":
             node_kind = self.graph["nodes"][nid]["kind"]
@@ -3123,7 +3306,24 @@ class NodeEditor(QWidget):
         elif hit is None and old:
             self.disconnectRequested.emit(self.eid, old[0], old[1])
         elif hit is None and not ng.gives_params(self.node_of(src), out) and self.node_of(src)["type"] not in (ng.PARAMS, "groupin") + tuple(ng.WORDS):   # a link let go in the empty: add a node there to take it
-            self.add_menu(pos, gpos, (src, out))
+            if self.view.colour_up(src, out) == SOCKET_COLORS["sound"]:
+                self.sound_link_menu(pos, gpos, (src, out))
+            else:
+                self.add_menu(pos, gpos, (src, out))
+
+    def sound_link_menu(self, scene_pos, global_pos, link=None, feed=None):
+        """What takes a sound (link: let go in the empty) or gives one (feed: dragged out of a sound input)."""
+        menu = QMenu(self)
+        first = ("聲音來源", ng.SOUND_SOURCE) if feed else ("電平 → 數值", ng.SOUND_LEVEL)
+        for name, kind in (first, ("繞線點", ng.REROUTE)):
+            def ask(_=False, kind=kind):
+                node = {"type": kind, **({"group": self.level} if self.level else {})}
+                if feed:
+                    self.addFeedingRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y(), feed[0], feed[1])
+                else:
+                    self.addLinkedRequested.emit(self.eid, node, scene_pos.x(), scene_pos.y(), link[0], link[1])
+            menu.addAction(name, ask)
+        self.popup(menu, global_pos)
 
     def unplug(self, member, socket, output):
         if self.level and self.eid:
@@ -3184,7 +3384,7 @@ class NodeEditor(QWidget):
     def view_node(self, nid):
         """Ctrl + Shift + click on node nid: step the preview along nid's outputs (then off)."""
         node = self.graph["nodes"][nid]
-        if node["type"] in (ng.PARAMS, ng.OUTPUT, ng.VIEWER) or not self.eid:
+        if node["type"] in (ng.PARAMS, ng.OUTPUT, ng.VIEWER, ng.SOUND_SOURCE) or not self.eid:
             return
         names = [o for o, _ in ng.outputs(node)]
         now = ng.viewed(self.graph)
@@ -3316,6 +3516,9 @@ class NodeEditor(QWidget):
         node = self.graph["nodes"].get(nid)
         if not self.eid or node is None or nid in (PORT_IN, PORT_OUT) or sock in (GHOST, GHOST_ITEM, GHOST_IN):
             return
+        if ng.socket_kind(self.graph, nid, sock) == "sound":
+            self.sound_link_menu(scene_pos, global_pos, feed=(nid, sock))
+            return
         if ng.takes_picture(self.graph, nid, sock) and sock not in ng.WORDS.values():
             self.add_menu(scene_pos, global_pos, feed=(nid, sock))
             return
@@ -3392,8 +3595,10 @@ class NodeEditor(QWidget):
                         for choice, eng in zip(q.items, english.split("|")):
                             entries.add(path, f"{name} ▸ {choice}", {**n, "set": {param: choice}}, f"{choice} {eng}")
                 elif it[0] == "node":
-                    if feed and it[2].get("type") in (ng.VIEWER, ng.PARAMS, ng.STRING, ng.FONT):
+                    if feed and it[2].get("type") in (ng.VIEWER, ng.PARAMS, ng.STRING, ng.FONT, ng.SOUND_SOURCE):
                         continue                              # (these feed nothing a picture input takes)
+                    if link and it[2].get("type") in SOUND_NODES:
+                        continue                              # (a picture's link goes into neither)
                     target.addAction(it[1], lambda _=False, n=it[2]: ask(dict(n)))
                     entries.add(path, it[1], it[2])
                 else:

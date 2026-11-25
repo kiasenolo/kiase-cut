@@ -32,7 +32,7 @@ from PySide6.QtGui import QColor, QDrag
 from PySide6.QtWidgets import (QApplication, QCheckBox, QFileDialog, QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel, QMenu,
                                QPlainTextEdit, QPushButton, QToolButton, QVBoxLayout, QWidget)
 
-from .. import components, curves, edit, fx, gizmos, menugroups, nodegraph
+from .. import components, curves, edit, fx, gizmos, menugroups, nodegraph, racklinks
 from .colorpick import pick_color, qcolor, rgba
 from .inspector import (MASK_NAMES, PARAMS, ComboBox, Inspector, SpinBox, hard_limits, key_button, kind_tag,
                         section)
@@ -40,7 +40,7 @@ from .mediapick import pick_button
 from .curvefield import CurveField
 from .gradientbar import GradientEditor
 from .vfx_panel import FX_MIME, effect_mime
-from . import look, searchbox, softdrag
+from . import linkmark, look, searchbox, softdrag
 
 DEBOUNCE_MS = 350
 SOURCE_NAMES = (("顏色", None), ("圖片", "image"), ("影片", "video"), ("複合片段", "compound"), ("軌道", "track"))
@@ -367,6 +367,7 @@ class EffectsPanel(QWidget):
         on.setToolTip(d.description or "開／關這個效果")
         on.clicked.connect(lambda _=False, eid=e["id"]: self._now(self.enabledChosen, eid, on.checkState() == Qt.Checked))
         self._check_menu(on, components.FX_ON + e["id"])
+        self.widgets[("on", e["id"])] = on
         head.addWidget(on, 1)
         for text, tip, fn in (("↑", "往前（先套用）", lambda _=False, eid=e["id"]: self._now(self.moveRequested, eid, -1)),
                               ("↓", "往後", lambda _=False, eid=e["id"]: self._now(self.moveRequested, eid, 1)),
@@ -554,10 +555,17 @@ class EffectsPanel(QWidget):
         row.addWidget(self._key_button(group, key))
         return row
 
+    def _real_prop(self, prop):
+        """A prop of a filter ("fx:<id>.<name>", "fxon:<id>", "fxp:<id>.<name>", ...) with the shown clip's effect id:
+        the form may have been built for another clip alike it."""
+        head, sep, rest = prop.partition(":")
+        eid, dot, name = rest.partition(".")
+        return head + sep + self.alias.get(eid, eid) + dot + name
+
     def _number_menu(self, spin, prop, pos):
         menu = spin.lineEdit().createStandardContextMenu()
         if self.ids and self.menu_extender is not None:
-            self.menu_extender(menu, list(self.ids), prop)
+            self.menu_extender(menu, list(self.ids), self._real_prop(prop))
         menu.exec(spin.lineEdit().mapToGlobal(pos))
         menu.deleteLater()
 
@@ -569,11 +577,33 @@ class EffectsPanel(QWidget):
     def _check_menu_at(self, box, prop, pos):
         if not self.ids or self.menu_extender is None:
             return
-        menu = QMenu(self)
-        self.menu_extender(menu, list(self.ids), prop)
+        menu = box.createStandardContextMenu() if isinstance(box, QPlainTextEdit) else QMenu(self)
+        self.menu_extender(menu, list(self.ids), self._real_prop(prop))
         if not menu.isEmpty():
             menu.exec(box.mapToGlobal(pos))
         menu.deleteLater()
+
+    def _link_menu(self, field, group, name):
+        """綁定全局參數 on the right-click of a filter's colour, menu, words or font."""
+        if group.startswith("fx:"):
+            self._check_menu(field, f"{racklinks.FXP}{group[3:]}.{name}")
+
+    def _mark_links(self, c, count):
+        """The fields of c's filters bound to a global parameter are outlined (one clip selected)."""
+        links = (c.get("links") or {}) if count == 1 else {}
+        for e in c.get("effects") or []:
+            group = "fx:" + e["id"]
+            switch = self.widgets.get(("on", e["id"]))
+            if switch is not None:
+                linkmark.mark(switch, links.get(components.FX_ON + e["id"]))
+            for p in fx.def_of(e).params:
+                name = links.get(f"{racklinks.FXP}{e['id']}.{p.name}") or links.get(f"{components.FX_BOOL}{e['id']}.{p.name}")
+                fields = [self.widgets.get((group, p.name))] if p.type not in ("vec2", "vec3") else \
+                    [self.widgets.get((group, p.name, i)) for i in range(3)]
+                if p.type not in ("float", "int"):
+                    for field in fields:
+                        if field is not None:
+                            linkmark.mark(field, name)
 
     def _key_button(self, group, key):
         b = key_button(lambda: self._now(self.keyToggled, group, key))
@@ -612,6 +642,7 @@ class EffectsPanel(QWidget):
             box.setProperty("kcGroups", menugroups.of(p.items))      # (a long menu with groups opens them side by side: bigcombo)
             box.activated.connect(lambda i, g=group, k=p.name, items=p.items: (self._queue(g, k, items[i]), self._flush()))
             self.widgets[(group, p.name)] = box
+            self._link_menu(box, group, p.name)
             row.addWidget(box, 1)
             row.addWidget(self._key_button(group, p.name))
         elif p.type == "string":                                # a node effect's own words
@@ -621,6 +652,7 @@ class EffectsPanel(QWidget):
             words.setTabChangesFocus(True)
             words.textChanged.connect(lambda g=group, k=p.name, w=words: self._queue(g, k, w.toPlainText()))
             self.widgets[(group, p.name)] = words
+            self._link_menu(words, group, p.name)
             row.addWidget(words, 1)
             row.addWidget(self._key_button(group, p.name))
         elif p.type == "font":                                  # (and font)
@@ -632,12 +664,14 @@ class EffectsPanel(QWidget):
             self._fill_fonts(box)
             box.activated.connect(lambda i, g=group, k=p.name, cb=box: self._font_chosen(g, k, cb, i))
             self.widgets[(group, p.name)] = box
+            self._link_menu(box, group, p.name)
             row.addWidget(box, 1)
             row.addWidget(self._key_button(group, p.name))
         elif p.type == "color":
             btn = QPushButton()
             btn.clicked.connect(lambda _=False, g=group, k=p.name: self._pick_color(g, k))
             self.widgets[(group, p.name)] = btn
+            self._link_menu(btn, group, p.name)
             row.addWidget(btn, 1)
             row.addWidget(self._key_button(group, p.name))
             if group.startswith("fx:"):                 # the colour from a picture, a video or a compound
@@ -669,6 +703,10 @@ class EffectsPanel(QWidget):
                 s.setKeyboardTracking(False)
                 s.edited.connect(lambda v, g=group, k=p.name, i=i, n=n: self._queue_vec(g, k, i, v, n))
                 self.widgets[(group, p.name, i)] = s
+                if group.startswith("fx:"):                     # (綁定全局參數: the whole vector)
+                    s.lineEdit().setContextMenuPolicy(Qt.CustomContextMenu)
+                    s.lineEdit().customContextMenuRequested.connect(
+                        lambda pos, s=s, prop=f"{racklinks.FXP}{group[3:]}.{p.name}": self._number_menu(s, prop, pos))
                 row.addWidget(s, 1)
             row.addWidget(self._key_button(group, p.name))
         return row
@@ -1128,6 +1166,7 @@ class EffectsPanel(QWidget):
                 else:
                     s.show_value(round(v * r[6], r[5]))
                 Inspector._key_state(w[("key", mgroup, r[0])], stored, pics, ts)
+        self._mark_links(c, len(clips))
 
     def _show_source(self, group, name, srcs):
         """The source pickers of parameter (or source node) name as the sources srcs (one per clip) have them."""

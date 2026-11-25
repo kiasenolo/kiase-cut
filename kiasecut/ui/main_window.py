@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QWidget)
 
 from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, models, parenting, project, recovery,
-               mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
+               mapping, nodegraph, rack, racklinks, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
 from .assets_panel import AssetsPanel
@@ -983,6 +983,7 @@ class MainWindow(QMainWindow):
         rp = self.rack_panel
         rp.action.connect(self.on_rack_action)
         rp.addRequested.connect(self.add_rack_param)
+        rp.set_fonts(getattr(self, "fonts", None) or [])
         rp.importRequested.connect(self.import_rack)
         rp.exportRequested.connect(self.export_rack)
         # every panel is a dock: moved, put in tabs, split, floated freely (docks.py); a layout
@@ -3451,6 +3452,8 @@ class MainWindow(QMainWindow):
             c = edit.find(self.container(), ids[0])[1]
         except edit.EditError:
             return
+        if racklinks.kinds(c, prop):                   # (words, a colour, a font, a switch, a menu, a vector: linked)
+            self.link_menu(menu, ids, prop, c)
         if components.is_check_prop(prop) or components.is_inst_prop(prop):       # (a filter's on / off or a check box of it, a nested component's text / colour...: only a component's parameter)
             comp = self.open_component()
             if comp is not None and prop in components.props_of(c):
@@ -3473,11 +3476,18 @@ class MainWindow(QMainWindow):
         have = (c.get("expr") or {}).get(prop)
         sub = menu.addMenu("綁定全局參數")
         sub.addAction("新增全局參數並綁定…", lambda: self.new_rack_and_bind(ids, prop))
-        names = [p["name"] for p in rack.params(self.proj)]
-        if names:
+        names = [p["name"] for p in rack.params(self.proj) if rack.kind_of(p) in rack.NUMERIC]
+        vectors = [p for p in rack.params(self.proj) if rack.kind_of(p) in rack.SIZES]
+        if names or vectors:
             sub.addSeparator()
         for n in names:
             sub.addAction(n, lambda n=n: self.bind_rack(ids, prop, n))
+        for p in vectors:                              # (one of a vector's numbers, as it is)
+            parts = sub.addMenu(p["name"])
+            for i, axis in enumerate("XYZ"[:rack.SIZES[rack.kind_of(p)]]):
+                text = f"{p['name']}[{i}]"
+                parts.addAction(f"{axis}　{text}", lambda text=text: self.apply_each("綁定全局參數", edit.set_prop_expr,
+                                                                                  ids, prop, text))
         if mapping.is_mapping(have) and have.get("src"):
             menu.addAction(f"映射…（{mapping.label(have)}）", lambda: self.bind_rack(ids, prop, have["src"]))
         menu.addAction("自訂表達式…", lambda: self.ask_prop_expr(ids, prop))
@@ -3498,6 +3508,58 @@ class MainWindow(QMainWindow):
             if mine:
                 menu.addAction("解除元件參數「" + "、".join(dict.fromkeys(p["name"] for _c, p in mine)) + "」",
                                lambda: self.unbind_params(pairs))
+
+    def link_pairs(self, ids, prop):
+        """[(clip id, its prop)] of prop of clip ids[0] on each of clips ids (a filter's: the one at the same place in each chain)."""
+        level = self.container()
+        c0 = edit.find(level, ids[0])[1]
+        out = []
+        for cid in ids:
+            mine = racklinks.prop_in(c0, prop, edit.find(level, cid)[1])
+            if mine is not None:
+                out.append((cid, mine))
+        return out
+
+    def set_links(self, pairs, name):
+        self.apply("綁定全局參數" if name else "解除全局參數",
+                   lambda level: [edit.set_prop_link(level, cid, pr, name) for cid, pr in pairs])
+
+    def link_menu(self, menu, ids, prop, c):
+        """綁定全局參數 of a value that is no number (racklinks.py): the parameters of a fitting kind."""
+        menu.addSeparator()
+        have = (c.get("links") or {}).get(prop)
+        sub = menu.addMenu(f"綁定全局參數（{have}）" if have else "綁定全局參數")
+        sub.addAction("新增全局參數並綁定…", lambda: self.new_rack_and_link(ids, prop))
+        kinds = racklinks.kinds(c, prop)
+        fit = [p for p in rack.params(self.proj) if rack.kind_of(p) in kinds]
+        if fit:
+            sub.addSeparator()
+        for p in fit:
+            a = sub.addAction(f"{p['name']}（{rack.KINDS[rack.kind_of(p)]}）",
+                              lambda n=p["name"]: self.set_links(self.link_pairs(ids, prop), n))
+            a.setCheckable(True)
+            a.setChecked(p["name"] == have)
+        if have:
+            menu.addAction(f"解除全局參數「{have}」", lambda: self.set_links(self.link_pairs(ids, prop), ""))
+
+    def new_rack_and_link(self, ids, prop):
+        """新增全局參數並綁定: a parameter of the field's kind with what it holds now, and the field follows it."""
+        c = edit.find(self.container(), ids[0])[1]
+        got = racklinks.current(c, prop, self.key_times(ids)[ids[0]])
+        if got is None:
+            return
+        kind, value, items = got
+        name = self.ask_rack_name(kind)
+        if not name:
+            return
+        pairs = self.link_pairs(ids, prop)
+
+        def fn(root):
+            edit.add_rack_param(root, name, value, kind, items or None)
+            level = self.container(root)
+            for cid, pr in pairs:
+                edit.set_prop_link(level, cid, pr, name)
+        self.apply_root("新增全局參數並綁定", fn)
 
     def field_range(self, c, prop):
         """(lo, hi) a number usually runs between: what its field drags across (a mapping's output at first)."""
@@ -3524,8 +3586,9 @@ class MainWindow(QMainWindow):
         have = (c.get("expr") or {}).get(prop)
         m = have if mapping.is_mapping(have) and have.get("src") == name else mapping.make(src=name)
         vals = rack.values(self.proj, self.playhead_us())
+        x = vals.get(name)
         out = mapdialog.ask_mapping(self, f"綁定：{components.prop_label(c, prop)}", m, f"全局參數「{name}」",
-                                    vals.get(name), vals, self.field_range(c, prop))
+                                    None if x is None else float(x), vals, self.field_range(c, prop))
         if out is not None:
             self.apply_each("綁定全局參數", edit.set_prop_expr, ids, prop, out)
 
@@ -3601,10 +3664,38 @@ class MainWindow(QMainWindow):
         if self.proj and self.panels["rack"].isVisible():
             self.rack_panel.fill(self.proj, self.playhead_us())
 
-    def add_rack_param(self):
-        name, ok = QInputDialog.getText(self, "新增全局參數", "名稱（在表達式裡直接寫它；英文字母、數字、_）：")
-        if ok and name.strip():
-            self.apply_root("新增全局參數", edit.add_rack_param, name, 0.0)
+    def ask_rack_name(self, kind="number"):
+        """The name of a new global parameter of kind, asked for now ("" : given up, or not usable)."""
+        taken = {p["name"] for p in rack.params(self.proj)}
+        k = 1
+        while f"param{k}" in taken:
+            k += 1
+        name, ok = QInputDialog.getText(self, f"新增全局參數（{rack.KINDS[kind]}）",
+                                        "名稱（在表達式裡直接寫它；英文字母、數字、_）：", text=f"param{k}")
+        name = name.strip()
+        why = rack.name_problem(self.proj, name) if ok and name else None
+        if why:
+            self.statusBar().showMessage(why, 5000)
+        return name if ok and not why else ""
+
+    def ask_rack_items(self, title, items):
+        """A menu parameter's choices, one a line (None: given up, or none left)."""
+        text, ok = QInputDialog.getMultiLineText(self, title, "選項（一行一個）：", "\n".join(items))
+        got = rack.clean_items(text.split("\n")) if ok else []
+        if ok and not got:
+            self.statusBar().showMessage("選單至少要有一個選項", 5000)
+        return got or None
+
+    def add_rack_param(self, kind="number"):
+        name = self.ask_rack_name(kind)
+        if not name:
+            return
+        items = None
+        if kind == "menu":
+            items = self.ask_rack_items(f"{name} 的選項", rack.DEFAULT_ITEMS)
+            if items is None:
+                return
+        self.apply_root("新增全局參數", edit.add_rack_param, name, None, kind, items)
 
     def on_rack_action(self, rid, action, arg):
         p = rack.find(self.proj, rid)
@@ -3619,6 +3710,10 @@ class MainWindow(QMainWindow):
             self.apply_root("全局參數曲線", edit.set_rack_easing, rid, t, arg)
         elif action in ("up", "down"):
             self.apply_root("全局參數順序", edit.move_rack_param, rid, -1 if action == "up" else 1)
+        elif action == "items":
+            items = self.ask_rack_items(f"{p['name']} 的選項", p.get("items") or [])
+            if items is not None:
+                self.apply_root("全局參數選項", edit.set_rack_items, rid, items)
         elif action == "rename":
             name, ok = QInputDialog.getText(self, "重新命名全局參數", "名稱：", text=p["name"])
             if ok and name.strip() != p["name"]:
@@ -3642,8 +3737,8 @@ class MainWindow(QMainWindow):
             self.apply_root("取消全局參數 LFO", edit.set_rack_lfo, rid, None)
         elif action == "delete":
             n = rack.users(self.proj, p["name"])
-            if n and not questions.question(self, "delete_rack", "刪除全局參數", f"有 {n} 個片段的表達式用到「{p['name']}」，"
-                                            "刪除後它們會讀不到這個名字（數字維持原樣）。要繼續嗎？"):
+            if n and not questions.question(self, "delete_rack", "刪除全局參數", f"有 {n} 個片段用到「{p['name']}」，"
+                                            "刪除後它們會讀不到這個名字（欄位維持原樣）。要繼續嗎？"):
                 return
             self.apply_root("刪除全局參數", edit.delete_rack_param, rid)
 
@@ -7295,6 +7390,8 @@ class MainWindow(QMainWindow):
         if getattr(self, "nodes", None) is not None:
             self.nodes.fonts = found                # (a text node's font list)
         self.inspector.set_fonts(found)
+        if getattr(self, "rack_panel", None) is not None:
+            self.rack_panel.set_fonts(found)
         if getattr(self, "effects", None) is not None:
             self.effects.set_fonts(found)
         self.refresh_inspector()

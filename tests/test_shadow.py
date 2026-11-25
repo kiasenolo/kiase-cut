@@ -35,15 +35,29 @@ class Shadow(unittest.TestCase):
         got = []
         ins.paramEdited.connect(lambda ids, g, k, v: got.append((g, k, v)))
         ins.show_clips([c], 0, 30)
-        self.assertFalse(ins.widgets["shadow_on"].isChecked())
+        self.assertFalse(ins.widgets["clip_shadow_on"].isChecked())
         self.assertEqual(ins.widgets[("transform", "shadow_blur")].value(), 8.0)
-        ins.widgets["shadow_on"].click()
+        ins.widgets["clip_shadow_on"].click()
         self.assertEqual(got[-1], ("transform", "shadow_on", True))
         edit.set_param(p, "c1", "transform", "shadow_on", True)
         edit.set_param(p, "c1", "transform", "shadow_color", [1.0, 0.0, 0.0])
         ins.show_clips([c], 0, 30)
-        self.assertTrue(ins.widgets["shadow_on"].isChecked())
-        self.assertEqual(ins.widgets["shadow_color"].text(), "#ff0000")
+        self.assertTrue(ins.widgets["clip_shadow_on"].isChecked())
+        self.assertEqual(ins.widgets["clip_shadow_color"].text(), "#ff0000")
+
+    def test_a_texts_shadow_and_the_clips_shadow_have_fields_of_their_own(self):
+        from kiasecut.ui.inspector import Inspector
+        p = proj()
+        edit.add_text(p, 0, "字", 1_000_000)
+        c = next(c for t in p["tracks"] for c in t["clips"] if c["type"] == "text")
+        edit.set_param(p, c["id"], "text", "shadow_color", [0.0, 1.0, 0.0, 1.0])
+        edit.set_param(p, c["id"], "text", "shadow_on", True)
+        edit.set_param(p, c["id"], "transform", "shadow_color", [1.0, 0.0, 0.0])
+        ins = Inspector()
+        ins.show_clips([edit.find(p, c["id"])[1]], 0, 30)
+        w = ins.widgets
+        self.assertEqual((w["shadow_color"].text(), w["clip_shadow_color"].text()), ("#00ff00", "#ff0000"))
+        self.assertEqual((w["shadow_on"].isChecked(), w["clip_shadow_on"].isChecked()), (True, False))
 
 
 if __name__ == "__main__":

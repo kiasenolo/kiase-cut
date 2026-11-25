@@ -160,6 +160,26 @@ def node_fonts(proj):
                 yield n, "value"
 
 
+def rack_fonts(proj):
+    """Where the global parameters (rack.py) name a font file, as (dict or list, key)."""
+    for p in proj.get("rack") or ():
+        if p.get("kind") != "font":
+            continue
+        v = p.get("value")
+        if isinstance(v, str) and v:
+            yield p, "value"
+        elif isinstance(v, dict):
+            for k in v.get("keys") or ():
+                if isinstance(k[1], str) and k[1]:
+                    yield k, 1
+
+
+def named_fonts(proj):
+    """node_fonts and rack_fonts: the fonts named outside text clips."""
+    yield from node_fonts(proj)
+    yield from rack_fonts(proj)
+
+
 def of_clip(c):
     """The font files a text clip names (keyframes and styled ranges too), as written with
     forward slashes."""
@@ -176,7 +196,7 @@ def of_clip(c):
 def used(proj):
     """Every font file the project's texts name."""
     from . import project
-    return set().union(*map(of_clip, project.all_clips(proj))) | {norm(d[k]) for d, k in node_fonts(proj)}
+    return set().union(*map(of_clip, project.all_clips(proj))) | {norm(d[k]) for d, k in named_fonts(proj)}
 
 
 def usage(proj):
@@ -186,7 +206,7 @@ def usage(proj):
     for c in project.all_clips(proj):
         for f in of_clip(c):
             out[f] = out.get(f, 0) + 1
-    for d, k in node_fonts(proj):
+    for d, k in named_fonts(proj):
         out[norm(d[k])] = out.get(norm(d[k]), 0) + 1
     return out
 

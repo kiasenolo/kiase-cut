@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
 
 from .. import assets, camera, lights, mesh, mesh3d, parenting, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
-from . import icons, look, motion
+from . import icons, linkmark, look, motion
 from .colorpick import pick_color, qcolor, rgba
 from .library import PictureDrop
 from . import ask
@@ -425,6 +425,7 @@ class Inspector(QWidget):
         self.component_of = lambda: None   # the component being edited (its content), or None
         self.expr_texts = {}              # {number prop: its expression} of the primary clip (表達式)
         self.rack_names = lambda: []      # the names of the global parameters (全局參數架)
+        self.link_marked = set()          # the props whose fields are outlined as bound to one
         self.menu_extender = None         # f(menu, clip ids, number prop): adds the binding entries to a number's menu
         self.matte_region = False         # 編輯區域 (kept while clips change)
         self.matte_preview = False        # 預覽複合片段 (kept while clips change)
@@ -458,6 +459,7 @@ class Inspector(QWidget):
         form = QFormLayout(self.body)
         form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)   # every input fills its row
         self.widgets = {}
+        self.link_marked = set()
         if c is None:
             form.addRow(QLabel("在時間軸上選一個片段"))
             return
@@ -476,6 +478,7 @@ class Inspector(QWidget):
             edit_.setPlaceholderText("--")
             edit_.textChanged.connect(lambda: self._queue("text", "content", edit_.toPlainText()))
             self.widgets["content"] = edit_
+            self._inst_menu(edit_, "content")           # (綁定全局參數)
             form.addRow("內容", edit_)
             if len(self.clip_ids) == 1:                  # 文字變數 (one text at a time)
                 self._build_vars(form, c["text"])
@@ -484,6 +487,7 @@ class Inspector(QWidget):
             font.setMaxVisibleItems(20)
             font.activated.connect(self._font_chosen)
             self.widgets["font"] = font
+            self._inst_menu(font, "font")
             self._fill_fonts()
             form.addRow("字體", self._with_key(font, "text", "font_path"))
             row = QWidget()
@@ -549,6 +553,7 @@ class Inspector(QWidget):
             color = QPushButton()
             color.clicked.connect(lambda: self._pick_color("color"))
             self.widgets["color"] = color
+            self._inst_menu(color, "text_color")
             lay.addWidget(color, 1)
             lay.addWidget(self._key_button("text", "color"))
             form.addRow("填充", row)
@@ -563,6 +568,7 @@ class Inspector(QWidget):
             stroke_color = QPushButton()
             stroke_color.clicked.connect(lambda: self._pick_color("stroke_color"))
             self.widgets["stroke_color"] = stroke_color
+            self._inst_menu(stroke_color, "tc:stroke_color")
             lay.addWidget(stroke_color, 1)
             lay.addWidget(self._key_button("text", "stroke_color"))
             form.addRow("外框", row)
@@ -589,6 +595,7 @@ class Inspector(QWidget):
                 col = QPushButton()
                 col.clicked.connect(lambda _=False, k=part + "_color": self._pick_color(k))
                 self.widgets[part + "_color"] = col
+                self._inst_menu(col, f"tc:{part}_color")
                 lay.addWidget(col, 1)
                 lay.addWidget(self._key_button("text", part + "_color"))
                 form.addRow(label, row)
@@ -1205,6 +1212,35 @@ class Inspector(QWidget):
             menu.deleteLater()
         w.customContextMenuRequested.connect(show)
 
+    def _link_field(self, prop):
+        """The field that shows prop (racklinks.py), or None."""
+        if prop == "content":
+            return self.widgets.get("content")
+        if prop == "text_color":
+            return self.widgets.get("color")
+        if prop == "font":
+            return self.widgets.get("font")
+        if prop.startswith("tc:"):
+            return self.widgets.get(prop[3:])
+        if prop.startswith("ac:"):
+            return self.widgets.get(("asset", prop[3:]))
+        if components.is_inst_prop(prop):
+            return self.widgets.get(("params", prop.split(":", 2)[2]))
+        return None
+
+    def _mark_links(self, clips):
+        """Fields bound to a global parameter are outlined, and say which one (one clip selected)."""
+        links = (clips[0].get("links") or {}) if len(clips) == 1 else {}
+        for prop in self.link_marked - set(links):
+            w = self._link_field(prop)
+            if w is not None:
+                linkmark.mark(w, None)
+        for prop, name in links.items():
+            w = self._link_field(prop)
+            if w is not None:
+                linkmark.mark(w, name)
+        self.link_marked = set(links)
+
     def _mark_bound(self, clips):
         """Number fields a component's parameter sets are outlined, and say which one."""
         comp = self.component_of()
@@ -1590,12 +1626,12 @@ class Inspector(QWidget):
         on = QCheckBox("啟用")
         on.setToolTip("片段後面的陰影：片段自己的樣子（包含透明的地方）模糊、位移、上色")
         on.clicked.connect(lambda v: self._emit_now(self.paramEdited, "transform", "shadow_on", bool(v)))
-        self.widgets["shadow_on"] = on
+        self.widgets["clip_shadow_on"] = on             # (not "shadow_on": that is a text's own shadow)
         lay.addWidget(on)
         lay.addWidget(self._key_button("transform", "shadow_on"))
         col = QPushButton()
         col.clicked.connect(lambda _=False: self._pick_shadow_color())
-        self.widgets["shadow_color"] = col
+        self.widgets["clip_shadow_color"] = col
         lay.addWidget(col, 1)
         lay.addWidget(self._key_button("transform", "shadow_color"))
         form.addRow("陰影", row)
@@ -1604,12 +1640,12 @@ class Inspector(QWidget):
                 form.addRow(r[1], self._param_row("transform", *r))
 
     def _pick_shadow_color(self):
-        text = self.widgets["shadow_color"].text()
+        text = self.widgets["clip_shadow_color"].text()
         cur = QColor("black") if text == "--" else QColor("#" + text[7:9] + text[1:7]) if len(text) == 9 else QColor(text)
         ids = list(self.clip_ids)
         col = pick_color(self, cur, "陰影顏色", alpha=False,
                          live=lambda c: self.liveEdited.emit(ids, "transform", "shadow_color", rgba(c)[:3]),
-                         cancel=self.liveCancelled.emit, anchor=self.widgets["shadow_color"])
+                         cancel=self.liveCancelled.emit, anchor=self.widgets["clip_shadow_color"])
         if col is not None:
             self._queue("transform", "shadow_color", [col.redF(), col.greenF(), col.blueF()])
             self._flush()
@@ -1921,6 +1957,7 @@ class Inspector(QWidget):
                 b = QPushButton()
                 b.clicked.connect(lambda _=False, f=f: self._pick_asset_color(f))
                 self.widgets[("asset", f)] = b
+                self._inst_menu(b, "ac:" + f)
                 row = self._with_key(b, "asset", f)
                 form.addRow(label, row)
                 self._asset_rows[f] = row
@@ -2418,9 +2455,9 @@ class Inspector(QWidget):
             w["radius_link"].blockSignals(True)
             w["radius_link"].setChecked(all(edit.radius_linked(k["transform"]) for k in clips))
             w["radius_link"].blockSignals(False)
-        if "shadow_on" in w:
+        if "clip_shadow_on" in w:
             values = [curves.value(k["transform"].get("shadow_on", False), t) for k, t in zip(clips, ts)]
-            box = w["shadow_on"]
+            box = w["clip_shadow_on"]
             box.blockSignals(True)
             mixed = any(v != values[0] for v in values[1:])
             box.setTristate(mixed)
@@ -2429,7 +2466,7 @@ class Inspector(QWidget):
             self._key_state(w[("key", "transform", "shadow_on")], [k["transform"].get("shadow_on", False) for k in clips], clips, ts)
             cols = [tuple(int(round(min(1, max(0, v)) * 255)) for v in curves.value(k["transform"].get("shadow_color", [0, 0, 0]), t)[:3])
                     for k, t in zip(clips, ts)]
-            button = w["shadow_color"]
+            button = w["clip_shadow_color"]
             if all(c == cols[0] for c in cols[1:]):
                 r, g, b = cols[0]
                 button.setText(f"#{r:02x}{g:02x}{b:02x}")
@@ -2461,6 +2498,7 @@ class Inspector(QWidget):
         if ("asset", "w") in w:
             self._show_asset(clips, ts, easings)
         self._mark_bound(clips)
+        self._mark_links(clips)
         if ("viz", "kind") in w and clips[0].get("viz"):
             self._show_viz(clips[0])
         if any(isinstance(k, tuple) and k[0] == "reset" for k in w):

@@ -10,7 +10,7 @@ so `value + wiggle(2, 30)` shakes a keyframed position, `100 * Math.abs(Math.sin
 opacity. A broken expression, or one that gives no number, leaves the number as it is. Both
 renderers draw the clip given by at(); the editor's boxes and handles keep to the clip's own numbers.
 """
-from . import components, curves, expr, lfo, mapping
+from . import components, curves, expr, lfo, mapping, racklinks
 
 
 def exprs_of(c):
@@ -21,7 +21,9 @@ def exprs_of(c):
 
 def at(c, t_us, names=None):
     """Clip c as it is drawn t_us into it: the very clip when it has no expressions, else a copy
-    with each expression's number put in."""
+    with each expression's number put in, and what its links (racklinks.py) take from the rack."""
+    if c.get("links"):
+        c = racklinks.apply(c, names)
     e = exprs_of(c)
     if not e:
         return c
@@ -38,6 +40,8 @@ def at(c, t_us, names=None):
             v = lfo.safe(text, t_us / curves.US, cur, dur / curves.US)
         elif mapping.is_mapping(text):                   # bound to a parameter of the rack, through a 映射
             x = (names or {}).get(text.get("src", ""))
+            if not isinstance(x, (int, float)):               # (a vector, a colour or words are no number to map)
+                x = None
             v = cur if x is None and text["mode"] != "js" and text.get("src") else \
                 mapping.apply(text, cur if x is None else x, dict(base, value=cur))
         else:

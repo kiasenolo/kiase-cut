@@ -60,7 +60,7 @@ BIG = 1 << 50
 def _whole_still(comp, live):
     """Whether a compound used as a picture (a source of an effect, a mask) is the same picture at every moment: a static
     one, not swung by an LFO, and when it is read at its own time (讀取時間) its layers all there from 0 and still."""
-    if not comp or not comp.get("static") or components.swings(comp):
+    if not comp or not _compound_still(comp):
         return False
     if not live:
         return True
@@ -159,15 +159,21 @@ def _mask_still(m):
     return True                                      # (a shape, a path, a picture; 軌道: its clips are on the level and count there)
 
 
+def _linked(tracks):
+    """Whether a clip of tracks (groups' and compounds' too) is linked to a global parameter, which keyframes can change."""
+    return any(c.get("links") or _linked((c.get("compound") or {}).get("tracks") or c.get("tracks") or ())
+               for t in tracks for c in t["clips"])
+
+
 def _compound_still(comp):
-    """A static compound is one picture: still unless an LFO swings it."""
-    return bool(comp.get("static")) and not components.swings(comp)
+    """A static compound is one picture: still unless an LFO swings it or a layer follows a global parameter."""
+    return bool(comp.get("static")) and not components.swings(comp) and not _linked(comp.get("tracks") or ())
 
 
 def _own_still(c):
     """Whether clip c itself (not what a compound shows) is the same at every moment."""
     t = c.get("type")
-    if t in ("video", "audio") or c.get("viz") or c.get("expr") or (c.get("asset") or {}).get("family") == "particles":
+    if t in ("video", "audio") or c.get("viz") or c.get("expr") or c.get("links") or (c.get("asset") or {}).get("family") == "particles":
         return False                                 # (a particle object moves by itself)
     if _moves({k: v for k, v in c.items() if k not in LINKED + ("effects", "mask")}):
         return False

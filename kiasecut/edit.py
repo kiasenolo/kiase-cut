@@ -14,7 +14,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, textlayout, textvars, viz
+from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, racklinks, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -834,7 +834,7 @@ def replace_fonts(proj, mapping):
             if "font_path" in st:
                 st["font_path"] = swap(st["font_path"])
         n += json.dumps(tx, sort_keys=True) != before
-    for d, k in fonts.node_fonts(proj):                     # the fonts of text nodes and font nodes
+    for d, k in fonts.named_fonts(proj):                    # the fonts of text nodes, font nodes and global parameters
         new = swap(d[k])
         n += new != d[k]
         d[k] = new
@@ -4703,6 +4703,21 @@ def set_prop_expr(proj, clip_id, prop, text):
     return c
 
 
+def set_prop_link(level, clip_id, prop, name):
+    """Bind prop of a clip (racklinks.py: a colour, words, a font, a switch, ...) to the global parameter
+    `name` ("": unbind)."""
+    c = find(level, clip_id)[1]
+    if not name:
+        (c.get("links") or {}).pop(prop, None)
+        if "links" in c and not c["links"]:
+            del c["links"]
+        return c
+    if not racklinks.kinds(c, prop):
+        raise EditError("這個欄位不能綁定全局參數")
+    c.setdefault("links", {})[prop] = str(name)
+    return c
+
+
 # -- the parameter rack (全局參數架, rack.py) --------------------------------------------------------
 def _rack_param(root, rid):
     p = rack.find(root, rid)
@@ -4711,16 +4726,62 @@ def _rack_param(root, rid):
     return p
 
 
-def add_rack_param(root, name, value=0.0):
-    """A new global parameter; returns it."""
+def _rack_value(kind, value, items=()):
+    try:
+        return rack.clean(kind, value, items)
+    except (ValueError, TypeError) as exc:
+        raise EditError(f"參數的值不對：{exc}") from None
+
+
+def add_rack_param(root, name, value=None, kind="number", items=None):
+    """A new global parameter of kind (rack.KINDS; items: a menu's choices); returns it."""
     name = str(name).strip()
     why = rack.name_problem(root, name)
     if why:
         raise EditError(why)
+    if kind not in rack.KINDS:
+        raise EditError("不認得的參數類型")
+    if kind == "menu":
+        items = rack.clean_items(items if items is not None else rack.DEFAULT_ITEMS)
+        if not items:
+            raise EditError("選單至少要有一個選項")
+    else:
+        items = []
+    value = rack.default_value(kind, items) if value is None else _rack_value(kind, value, items)
     ids = {p["id"] for p in rack.params(root)}
     rid = next(f"r{i}" for i in range(1, len(ids) + 2) if f"r{i}" not in ids)
-    p = {"id": rid, "name": name, "value": float(value)}
+    p = {"id": rid, "name": name, "value": value}
+    if kind != "number":                                     # (a number is stored as it always was)
+        p["kind"] = kind
+    if kind == "menu":
+        p["items"] = items
     root.setdefault("rack", []).append(p)
+    return p
+
+
+def set_rack_items(root, rid, items):
+    """A menu parameter's choices. A value (keyframes too) whose choice is gone takes the one now at its place -
+    so renaming a choice keeps it - and clips' filter menus follow by name (racklinks.py)."""
+    p = _rack_param(root, rid)
+    if rack.kind_of(p) != "menu":
+        raise EditError("這個參數不是選單")
+    items = rack.clean_items(items)
+    if not items:
+        raise EditError("選單至少要有一個選項")
+    old = p.get("items") or []
+
+    def follow(v):
+        if v in items:
+            return v
+        i = old.index(v) if v in old else 0
+        return items[min(i, len(items) - 1)]
+
+    if curves.is_animated(p.get("value")):
+        for k in p["value"]["keys"]:
+            k[1] = follow(k[1])
+    else:
+        p["value"] = follow(p.get("value"))
+    p["items"] = items
     return p
 
 
@@ -4738,7 +4799,10 @@ def rename_rack_param(root, rid, name):
         if q.get("expr"):
             q["expr"] = rack.rename_in(q["expr"], old, name)
     for c in rack.clips_with_exprs(root):
-        c["expr"] = {k: rack.rename_expr(x, old, name) for k, x in c["expr"].items()}
+        if c.get("expr"):
+            c["expr"] = {k: rack.rename_expr(x, old, name) for k, x in c["expr"].items()}
+        if c.get("links"):
+            c["links"] = {k: name if x == old else x for k, x in c["links"].items()}
     return p
 
 
@@ -4762,6 +4826,8 @@ def move_rack_param(root, rid, d):
 def set_rack_expr(root, rid, text):
     """The expression of a parameter ("" or "input": none). Refused when it makes a circle."""
     p = _rack_param(root, rid)
+    if rack.kind_of(p) not in rack.DRIVEN:
+        raise EditError("只有數字和整數參數可以用表達式")
     text = str(text).strip()
     why = expr.check(text) if text else None
     if why:
@@ -4787,6 +4853,8 @@ def set_rack_lfo(root, rid, spec):
     if spec is None:
         p.pop("lfo", None)
         return p
+    if rack.kind_of(p) not in rack.DRIVEN:
+        raise EditError("只有數字和整數參數可以用 LFO")
     why = lfo.check(spec)
     if why:
         raise EditError(f"LFO 有問題：{why}")
@@ -4797,7 +4865,7 @@ def set_rack_lfo(root, rid, spec):
 def set_rack_value(root, rid, value, t_us=None):
     """A parameter's value; with keyframes, the key at t_us (new when none is there)."""
     p = _rack_param(root, rid)
-    value = float(value)
+    value = _rack_value(rack.kind_of(p), value, p.get("items") or ())
     cur = p.get("value", 0.0)
     if not curves.is_animated(cur):
         p["value"] = value
@@ -4823,7 +4891,7 @@ def toggle_rack_key(root, rid, t_us):
         if not cur["keys"]:
             p["value"] = k[1]
         return p
-    v = curves.value(cur, t_us)
+    v = rack.value_at(p, t_us)
     if curves.is_animated(cur):
         cur["keys"].append([int(t_us), v, 0.0, 0.0, 0.0, 0.0])
         cur["keys"].sort(key=lambda k: k[0])
@@ -4835,6 +4903,8 @@ def toggle_rack_key(root, rid, t_us):
 def set_rack_easing(root, rid, t_us, easing):
     """Shape the curve from the key at t_us to the next one with a preset (EASINGS)."""
     p = _rack_param(root, rid)
+    if rack.kind_of(p) not in rack.BLENDING:
+        raise EditError("這種參數的值不會漸變（到下一個關鍵幀才換）")
     cur = p.get("value", 0.0)
     i = key_at(cur, t_us)
     if i is None or i + 1 >= len(cur["keys"]):
@@ -4856,7 +4926,7 @@ def import_rack(root, items):
         name, k = d["name"], 2
         while rack.name_problem(root, name):
             name, k = f"{d['name']}{k}", k + 1
-        p = add_rack_param(root, name, 0.0)
+        p = add_rack_param(root, name, kind=d.get("kind", "number"), items=d.get("items"))
         p["value"] = copy.deepcopy(d["value"])
         if d.get("expr"):
             p["expr"] = d["expr"]

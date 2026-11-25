@@ -180,6 +180,8 @@ class NodeItem(QGraphicsItem):
 
     def lines(self):
         """How many lines tall a words box of the node (a string's, a text's) is drawn (dragged by its corner, as Blender's resizable boxes)."""
+        if self.grip:                                      # (being dragged: the node itself changes when it is let go)
+            return self.grip["now"]
         try:
             return max(1, min(MAX_LINES, int(self.node.get("lines") or 1)))
         except (TypeError, ValueError):
@@ -776,7 +778,7 @@ class NodeItem(QGraphicsItem):
             if not self.isSelected():
                 self.scene().clearSelection()
                 self.setSelected(True)
-            self.grip = {"y0": e.scenePos().y(), "lines": self.lines()}
+            self.grip = {"y0": e.scenePos().y(), "lines": self.lines(), "now": self.lines()}
             e.accept()
             return
         if e.button() == Qt.LeftButton and self.edge_at(e.pos()):
@@ -810,7 +812,7 @@ class NodeItem(QGraphicsItem):
         if self.grip:
             n = max(1, min(MAX_LINES, round(self.grip["lines"] + (e.scenePos().y() - self.grip["y0"]) / ROW)))
             if n != self.lines():
-                self.node["lines"] = n
+                self.grip["now"] = n
                 self.relayout()
             return
         if self.sizing:
@@ -879,8 +881,8 @@ class NodeItem(QGraphicsItem):
     def mouseReleaseEvent(self, e):
         grip, self.grip = self.grip, None
         if grip:
-            if self.lines() != grip["lines"]:
-                self.editor.linesEdited.emit(self.editor.eid, self.nid, self.lines())
+            if grip["now"] != grip["lines"]:
+                self.editor.linesEdited.emit(self.editor.eid, self.nid, grip["now"])
             return
         size, self.sizing = self.sizing, None
         if size:
@@ -2553,7 +2555,7 @@ class NodeEditor(QWidget):
         return bool(((self.graph["nodes"].get(nid) or {}).get("open") or {}).get(name, default))
 
     def set_panel_opened(self, nid, name, on):
-        node = self.graph["nodes"].get(nid)
+        node = self.graph["nodes"].get(nid)            # (written into the project's node itself: saved with it, not an undo step)
         if node is not None:
             node.setdefault("open", {})[name] = bool(on)
 
@@ -2737,6 +2739,7 @@ class NodeEditor(QWidget):
     def show_clip(self, clip, want=None, t=0):
         """Show a node effect of clip (None: nothing): want, else the one shown before, else the first; its
         fields at clip time t."""
+        was = (self.clip or {}).get("id"), self.eid
         self.clip = clip
         es = [e for e in (clip or {}).get("effects") or [] if e.get("filter") == fx.GRAPH]
         names = [(e["id"], f"VFX：{self.vfx_names.get(e['vfx'], '')}" if e.get("vfx") else f"節點效果 {i + 1}") for i, e in enumerate(es)]
@@ -2768,7 +2771,13 @@ class NodeEditor(QWidget):
         if first:
             self.level = ""
         self.eid = e["id"]
-        self.params, self.sources, self.t = e["params"], e.get("sources") or {}, t
+        self.t = t
+        # The editor's own copies: a field dragged or typed in is written here so it shows at once, and reaches the project
+        # through the signals - written into the project's own, the undo history's "before" would already hold the new value.
+        # (While a field is held, the same effect shown again keeps what the drag has put there.)
+        if self._scrub is None or was != (clip.get("id"), e["id"]):
+            self.params = dict(e["params"])
+            self.sources = {k: dict(v) for k, v in (e.get("sources") or {}).items()}
         gsig = json.dumps(e["graph"])
         sig = gsig + self.shown_sig(e, gsig)
         if sig != self._sig:

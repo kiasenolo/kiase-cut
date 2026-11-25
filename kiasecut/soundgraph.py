@@ -92,10 +92,7 @@ class Fx:
         latency += self.proc.latency
         engine._remember(engine.meters, self.name, pos - latency, self.proc.meters())
         if self.name in engine.watched:
-            kept = engine.watch.setdefault(self.name, [])
-            kept.append((pos - latency, x.mean(axis=1)))
-            if len(kept) > LEVELS_KEPT // 8:
-                del kept[:len(kept) - LEVELS_KEPT // 8]
+            engine.keep(self.name, pos - latency, x.mean(axis=1))
         return x, latency
 
 
@@ -324,6 +321,7 @@ class Engine:
         decoded sound is filled in by the Mixer)."""
         self.source_of = source_of
         self.root = None
+        self.settle = 0.0
         self.view = {}
         self.only = None
         self._names = (None, None)          # (time, what the global parameters read then)
@@ -348,10 +346,22 @@ class Engine:
         root = compiler.level((), view["tracks"], project.mix_of(view), ids)
         latency_was = self.latency
         self.root, self.only = root, only
+        self.settle = self._settle(root)
         self.view, self._names = view, (None, None)
         self.procs = compiler.used
         if latency_was != self.latency:
             self.next_in = None             # (the output moved against the input: start over)
+
+    @classmethod
+    def _settle(cls, lv):
+        """The longest any chain asks to be run before a start from the middle."""
+        out = 0.0
+        for ch in lv.channels.values():
+            for n in ch.clips:
+                if n.sub is not None:
+                    out = max(out, cls._settle(n.sub))
+            out = max([out] + [getattr(f, "settle", 0.0) for f in Compiler._all_fx(ch)])
+        return out
 
     @property
     def latency(self):
@@ -406,6 +416,13 @@ class Engine:
         got = self._around(self.meters.get(effect_id, ()), sample, back)
         return np.max(got, axis=0) if got else None
 
+    def keep(self, name, sample, mono):
+        """A watched effect's (or node's) sound, to be drawn."""
+        kept = self.watch.setdefault(name, [])
+        kept.append((sample, mono))
+        if len(kept) > LEVELS_KEPT // 8:
+            del kept[:len(kept) - LEVELS_KEPT // 8]
+
     def output_before(self, sample, n, effect_id=None):
         """The n samples of the output (mono) before `sample` - or of a watched effect's;
         zeros where there are none."""
@@ -435,7 +452,7 @@ class Engine:
         """Start over so that output sample a comes next, heard from far enough back."""
         self.reset()
         lat = self.latency
-        back = min(PREROLL_S, max(PREROLL_MIN_S, self.root.tail + PREROLL_MIN_S))
+        back = min(PREROLL_S, max(PREROLL_MIN_S, self.root.tail + PREROLL_MIN_S, self.settle))
         first = (max(0, a - int(back * RATE)) // BLOCK) * BLOCK
         self.next_in = first
         self.ready, self.ready_at = np.zeros((0, 2), np.float32), first - lat

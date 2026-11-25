@@ -11,14 +11,19 @@ instead of a picture; 映射範圍 has one more way, 對數, for frequencies.
     math      數學
     maprange  映射範圍
     clamp     限制
+    level     電平 → 數值: how loud a box of the spectrum of the sound wired into it is, 0 - 1, as it
+              plays (soundmeter.Follower; the one number node that takes sound)
 """
 import math
 
 from . import curves, soundfx
 
-TYPES = ("value", "global", "math", "maprange", "clamp")
-TITLES = {"value": "數值", "global": "全局參數", "math": "數學", "maprange": "映射範圍", "clamp": "限制"}
-KEYWORDS = {"value": "float number constant 浮點 數字 常數", "global": "rack parameter 全局 參數架",
+TYPES = ("level", "value", "global", "math", "maprange", "clamp")
+TITLES = {"level": "電平 → 數值", "value": "數值", "global": "全局參數", "math": "數學", "maprange": "映射範圍",
+          "clamp": "限制"}
+LEVEL_BOX = ("lo_hz", "hi_hz", "floor_db", "top_db")
+KEYWORDS = {"level": "peak to value envelope follower 峰值 音量 頻譜 跟隨 側鏈",
+            "value": "float number constant 浮點 數字 常數", "global": "rack parameter 全局 參數架",
             "math": "add subtract multiply divide math 加 減 乘 除 運算 計算 數學",
             "maprange": "map range remap rescale 重新映射 範圍 對應", "clamp": "limit min max 限制 夾住 範圍"}
 HUGE = 1e9
@@ -43,6 +48,13 @@ def _op(v):
 
 
 SPECS = {
+    # (soundmeter.py's box and times, the times in ms here as every effect's are)
+    "level": [soundfx.P("lo_hz", "低頻", 20.0, 20000.0, 40.0, "Hz", log=True),
+              soundfx.P("hi_hz", "高頻", 20.0, 20000.0, 120.0, "Hz", log=True),
+              soundfx.P("floor_db", "0 的音量", -90.0, 5.0, -36.0, "dB"),
+              soundfx.P("top_db", "1 的音量", -89.0, 6.0, -6.0, "dB"),
+              soundfx.P("attack", "啟動", 0.0, 5000.0, 0.0, "ms", squared=True),
+              soundfx.P("release", "釋放", 0.0, 10000.0, 150.0, "ms", squared=True)],
     "value": [free("value", "數值", 0.5)],
     "global": [free("value", "讀到的值", 0.0, nowire=True)],
     "math": [soundfx.C("op", "運算", MATH_OPS, 0), free("a", "A", 0.5),
@@ -190,10 +202,11 @@ class Numbers:
     nodes   graph["nodes"]
     wires   {(node id, parameter name): the number node wired into it} (soundnodes.wires)
     t_us    the time the chain's keyframes are counted in
-    names   what the global parameters read now (rack.values), or a function that gives it"""
+    names   what the global parameters read now (rack.values), or a function that gives it
+    heard   heard(node id): what a 電平 → 數值 node reads now, or None (it is not playing)"""
 
-    def __init__(self, nodes, wires, t_us, names=None):
-        self.nodes, self.wires, self.t_us = nodes, wires, t_us
+    def __init__(self, nodes, wires, t_us, names=None, heard=None):
+        self.nodes, self.wires, self.t_us, self.heard = nodes, wires, t_us, heard
         self._names, self.made = names, {}
 
     def names(self):
@@ -206,7 +219,10 @@ class Numbers:
         if nid not in self.made:
             node = self.nodes.get(nid)
             out = None
-            if node is not None and node["type"] in TYPES and not (node.get("mute") and node["type"] not in THROUGH):
+            if node is not None and node["type"] == "level":
+                if not node.get("mute") and self.heard is not None:
+                    out = self.heard(nid)
+            elif node is not None and node["type"] in TYPES and not (node.get("mute") and node["type"] not in THROUGH):
                 v = own_values(node, self.t_us, self.names() if node.get("expr") else None)
                 v.update(self.into(nid, SPECS[node["type"]]))
                 out = v[THROUGH[node["type"]]] if node.get("mute") else calc(node, v)

@@ -128,8 +128,7 @@ def shape(db, spec):
     past the end of db for the last fall to die away."""
     raw = np.clip((db - spec["floor_db"]) / max(MIN_SPAN_DB, spec["top_db"] - spec["floor_db"]), 0.0, 1.0)
     step = HOP / RATE
-    up = 1.0 if spec["attack"] <= 0 else 1.0 - math.exp(-step / spec["attack"])
-    down = 1.0 if spec["release"] <= 0 else 1.0 - math.exp(-step / spec["release"])
+    up, down = _toward(spec["attack"]), _toward(spec["release"])
     raw = np.concatenate([raw, np.zeros(int(spec["release"] * 7 / step) + 2, raw.dtype)])
     if up == 1.0 and down == 1.0:
         return raw.astype(np.float32)
@@ -138,6 +137,43 @@ def shape(db, spec):
         v += (x - v) * (up if x > v else down)
         out.append(v)
     return np.array(out, np.float32)
+
+
+def _toward(seconds):
+    """How much of the way to the new level one step goes, for a rise or fall of about `seconds`."""
+    return 1.0 if seconds <= 0 else 1.0 - math.exp(-HOP / RATE / seconds)
+
+
+class Follower:
+    """The same measuring while the sound plays (a graph's 電平 → 數值 node): fed a block of HOP
+    samples at a time, it hears only what has gone by - its window ends with the block, so its
+    number is about a hundredth of a second behind a rack parameter's."""
+    KEPT = 128                          # numbers kept, for what hears its sound later than this node does
+
+    def __init__(self):
+        self.sound = np.zeros(N, np.float32)
+        self.number = 0.0
+        self.past = []
+
+    def feed(self, mono, lo_hz, hi_hz, floor_db, top_db, attack, release):
+        self.sound = np.concatenate([self.sound[len(mono):], mono.astype(np.float32)])
+        sel = bins(min(lo_hz, hi_hz), max(lo_hz, hi_hz))
+        mag = float(np.abs(np.fft.rfft(self.sound * _window)[sel]).max()) / (N / 4)
+        db = 20 * math.log10(max(mag, 10 ** (SILENT_DB / 20)))
+        raw = min(1.0, max(0.0, (db - floor_db) / max(MIN_SPAN_DB, top_db - floor_db)))
+        self.number += (raw - self.number) * _toward(attack if raw > self.number else release)
+        self.past.append(self.number)
+        del self.past[:-self.KEPT]
+        return self.number
+
+    def at(self, lag):
+        """The number `lag` samples before the newest block's."""
+        if not self.past:
+            return 0.0
+        back = min(len(self.past) - 1.0, max(0.0, lag / HOP))
+        i = int(back)
+        a = self.past[-1 - i]
+        return a if back == i else a + (self.past[-2 - i] - a) * (back - i)
 
 
 def at(curve, t_us):

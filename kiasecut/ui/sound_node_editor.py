@@ -25,9 +25,10 @@ from .menukeys import Menu
 from .node_editor import GRID, HEAD, HIT_R, LINK_W, ROW, SNAP_R, SOCKET_R, ZOOM_MAX, ZOOM_MIN, Link
 from .searchbox import SearchBox
 from .sound_visuals import Dynamics, Response, Spectrum
+from .sounddialog import BoxSpectrum
 
 WIDTH, WIDE, MIN_W = 210.0, 300.0, 150.0
-VISUAL_H = {"eq": 150, "response": 100, "dynamics": 140, "spectrum": 100}
+VISUAL_H = {"eq": 150, "response": 100, "dynamics": 140, "spectrum": 100, "level": 130}
 SOCKET = {"stereo": "#7438ff", "l": "#e6c84a", "r": "#4ab5e6", "num": "#a1a1a1"}
 HEADS = {"in": "#3f8a5a", "out": "#a8473f", "ext": "#7a55a8", "split": "#b3702f", "merge": "#b3702f", "mix": "#b3702f",
          "reroute": "#262626", **{k: "#4a7a3f" for k in soundnumbers.TYPES}}
@@ -59,7 +60,8 @@ def fraction(p, v):
     lo, hi = p["min"], p["max"]
     if p.get("log") and lo > 0:
         return min(1.0, max(0.0, math.log(max(v, lo) / lo) / math.log(hi / lo)))
-    return min(1.0, max(0.0, (v - lo) / (hi - lo)))
+    f = min(1.0, max(0.0, (v - lo) / (hi - lo)))
+    return math.sqrt(f) if p.get("squared") else f      # (a time from 0: fine at the short end)
 
 
 def at_fraction(p, f):
@@ -67,7 +69,7 @@ def at_fraction(p, f):
     f = min(1.0, max(0.0, f))
     if p.get("log") and lo > 0:
         return lo * (hi / lo) ** f
-    return lo + (hi - lo) * f
+    return lo + (hi - lo) * (f * f if p.get("squared") else f)
 
 
 class Row:
@@ -101,7 +103,7 @@ class NodeItem(QGraphicsItem):
             self.w, self.h = 24.0, 24.0
             self.in_at, self.out_at, self.rows = [QPointF(0, 12)], [QPointF(24, 12)], []
             return
-        visual = (self.spec or {}).get("visual")
+        visual = "level" if self.kind == "level" else (self.spec or {}).get("visual")
         self.w = float(node.get("w") or (WIDE if visual else WIDTH))
         y = HEAD + 4
         self.out_at, self.in_at, self.rows = [], [], []
@@ -117,13 +119,21 @@ class NodeItem(QGraphicsItem):
             y += ROW
         if visual:
             h = VISUAL_H[visual]
-            cls = Dynamics if visual == "dynamics" else Spectrum if visual == "spectrum" else Response
-            self.visual = cls(h) if cls is Spectrum else cls(node["effect"], h)
+            cls = BoxSpectrum if visual == "level" else \
+                Dynamics if visual == "dynamics" else Spectrum if visual == "spectrum" else Response
+            if cls is BoxSpectrum:
+                self.visual = BoxSpectrum()
+            else:
+                self.visual = cls(h) if cls is Spectrum else cls(node["effect"], h)
+            self.visual.setMinimumSize(0, 0)
             self.visual.setFixedSize(int(self.w - 8), h)
             if cls is Response:
                 self.visual.band = self.editor.bands.get(self.nid, 1)
                 self.visual.bandPicked.connect(lambda i: self.editor.pick_band(self.nid, i))
-            if cls is not Spectrum:
+            if cls is BoxSpectrum:                  # (the box's sides are the node's numbers)
+                self.visual.changed.connect(lambda values: self.editor.live_params(self.nid, self.unwired(values)))
+                self.visual.done.connect(lambda values: self.editor.write_params(self.nid, self.unwired(values)))
+            elif cls is not Spectrum:
                 self.visual.live.connect(lambda values: self.editor.live_params(self.nid, values))
                 self.visual.done.connect(lambda values: self.editor.write_params(self.nid, values))
             self.proxy = QGraphicsProxyWidget(self)
@@ -151,6 +161,11 @@ class NodeItem(QGraphicsItem):
             self.rows.append(row)
             y += ROW
         self.h = y + 5
+
+    def unwired(self, values):
+        """values without those a wire holds."""
+        wired = self.editor.wired_into(self.nid)
+        return {k: v for k, v in values.items() if k not in wired}
 
     def boundingRect(self):
         return QRectF(-SOCKET_R - 2, -2, self.w + 2 * SOCKET_R + 4, self.h + 4)
@@ -199,7 +214,9 @@ class NodeItem(QGraphicsItem):
         if self.kind in soundnumbers.TYPES:
             got = self.editor.numbers().of(self.nid)
             self.result = "" if got is None or self.kind in ("value", "global") else f"{got:.4g}"
-        if self.visual is not None and not isinstance(self.visual, Spectrum):
+            if self.kind == "level":
+                self.visual.set_values(dict(soundnumbers.own_values(node, t, names), **given))
+        elif self.visual is not None and not isinstance(self.visual, Spectrum):
             self.visual.set_values(dict(soundfx.values(node, t, names), **given))
         self.update()
 
@@ -592,7 +609,7 @@ class GraphView(QGraphicsView):
             if item.kind != "frame" and soundnodes.inputs(item.node) and soundnodes.outputs(item.node) \
                     and not any(nid in (l[0], l[2]) for l in graph["links"]):
                 d["over"] = self.link_hit(item.pos() + QPointF(item.w / 2, min(item.h / 2, 30)), 24.0, skip=(nid,))
-                if d["over"] and soundnodes.is_param(d["over"][3]):     # (nothing goes into a number's wire)
+                if d["over"] and (soundnodes.is_param(d["over"][3]) or item.kind == "level"):  # (nothing goes into a number's wire)
                     d["over"] = None
                 if d["over"]:
                     self.links[d["over"]].light(LINK_W)
@@ -941,7 +958,8 @@ class SoundNodeEditor(QWidget):
     def numbers(self):
         """The graph's numbers at the playhead (worked out once a refresh)."""
         if self._numbers is None:
-            self._numbers = soundnodes.numbers(self.graph(), self.time(), self.names)
+            self._numbers = soundnodes.numbers(self.graph(), self.time(), self.names,
+                                               lambda nid: self.page.heard(f"{self.eid}/{nid}"))
         return self._numbers
 
     def _signature(self, graph):
@@ -1095,7 +1113,7 @@ class SoundNodeEditor(QWidget):
         def pick(kind):
             x, y = scene_pos.x(), scene_pos.y() - HEAD / 2
             if into is not None:                            # (it feeds that input: it goes left of the point)
-                x -= WIDE if (soundfx.EFFECTS.get(kind) or {}).get("visual") else WIDTH
+                x -= WIDE if kind == "level" or (soundfx.EFFECTS.get(kind) or {}).get("visual") else WIDTH
             made = self.edit("新增節點", soundedit.add_node, kind, round(x / GRID) * GRID, round(y / GRID) * GRID,
                              feed, into, on_link)
             if made:

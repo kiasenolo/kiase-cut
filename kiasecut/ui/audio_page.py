@@ -1353,9 +1353,18 @@ class AudioPage(QWidget):
 
     def _graph_moves(self):
         try:
-            return any(_moves(n) for n in self.nodes.graph()["nodes"].values())
+            return any(_moves(n) or n["type"] == "level" for n in self.nodes.graph()["nodes"].values())
         except (edit.EditError, KeyError):
             return False
+
+    def heard(self, name):
+        """What a 電平 → 數值 node ("<effect id>/<node id>") reads at the playhead, or None (not playing)."""
+        player = getattr(self.win, "player", None)
+        mixer = player.worker.mixer if player else None
+        if mixer is None or mixer.engine is None or not getattr(self.win, "playing", False):
+            return None
+        got = mixer.engine.meters_at(name, int(self.win.playhead_us() * RATE / US))
+        return None if got is None else float(got[0])
 
     def update_meters(self):
         player = getattr(self.win, "player", None)

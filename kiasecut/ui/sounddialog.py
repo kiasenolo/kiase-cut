@@ -31,12 +31,14 @@ class BoxSpectrum(QWidget):
     curve shows) with the box: its sides dragged one by one, the whole by its inside; a drag on
     empty space draws a new one."""
     changed = Signal(dict)                  # {lo_hz, hi_hz, floor_db, top_db}
+    done = Signal(dict)                     # ... when a drag of it is let go
 
     def __init__(self):
         super().__init__()
         self.box = {k: soundmeter.DEFAULTS[k] for k in ("lo_hz", "hi_hz", "floor_db", "top_db")}
         self.now = self.most = None
         self.drag = None
+        self.moved = False
         self.setMinimumSize(560, 260)
         self.setMouseTracking(True)
 
@@ -71,6 +73,7 @@ class BoxSpectrum(QWidget):
         floor = min(soundmeter.MAX_DB - 1.0, max(soundmeter.MIN_DB, floor))
         top = min(soundmeter.MAX_DB, max(floor + 1.0, top))
         self.box = {"lo_hz": round(lo, 1), "hi_hz": round(hi, 1), "floor_db": round(floor, 1), "top_db": round(top, 1)}
+        self.moved = True
         self.update()
         self.changed.emit(dict(self.box))
 
@@ -80,6 +83,7 @@ class BoxSpectrum(QWidget):
         pos = e.position()
         edges = self.edges_at(pos)
         self.drag = (edges or {"new"}, pos, dict(self.box))
+        self.moved = False
 
     def mouseMoveEvent(self, e):
         pos, w = e.position(), self.width()
@@ -104,7 +108,26 @@ class BoxSpectrum(QWidget):
                  b["floor_db"] + (ddb if "b" in edges else 0.0), b["top_db"] + (ddb if "t" in edges else 0.0))
 
     def mouseReleaseEvent(self, _e):
-        self.drag = None
+        drag, self.drag = self.drag, None
+        if drag is not None and self.moved:
+            self.done.emit(dict(self.box))
+
+    # -- as a picture in a node (電平 → 數值) -----------------------------------------------------------
+    def set_values(self, values):
+        box = {k: values[k] for k in self.box if k in values}
+        if self.drag is None and box and any(self.box[k] != v for k, v in box.items()):
+            self.box.update(box)
+            self.update()
+
+    def feed(self, mono):
+        """The sound at the playhead: its middle N samples are drawn, with the most of each
+        frequency falling away slowly."""
+        middle = len(mono) // 2 - soundmeter.N // 2
+        now = levels_of(mono[max(0, middle):max(0, middle) + soundmeter.N])
+        most = now if self.most is None else np.maximum(now, self.most - 1.0)
+        if self.now is None or np.abs(now - self.now).max() > 0.05 or np.abs(most - self.most).max() > 0.05:
+            self.now, self.most = now, most
+            self.update()
 
     def _line(self, levels):
         w = self.width()

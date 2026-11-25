@@ -16,6 +16,8 @@ A node is {"type", "x", "y", optional "w", "mute"} and by type:
     value, global,  nodes that give a number (soundnumbers.py): 數值, 全局參數, 數學, 映射範圍, 限制
     math, maprange,
     clamp
+    level           電平 → 數值: a sound comes in, how loud a box of its spectrum is goes out as a
+                    number
 An input takes one link. Sound sockets carry stereo; a side from split is the same in both.
 
 Numbers have wires of their own: from a number node's output into a parameter of a node, the
@@ -56,6 +58,8 @@ def inputs(node):
     if t == "fx":
         spec = soundfx.EFFECTS.get(node.get("effect")) or {}
         return [("輸入", "stereo")] + ([("側鏈", "stereo")] if spec.get("side") else [])
+    if t == "level":
+        return [("輸入", "stereo")]
     if t == "merge":
         return [("L", "l"), ("R", "r")]
     if t == "mix":
@@ -102,9 +106,9 @@ def wires(graph, cut=()):
             if is_param(l[3]) and l[0] in graph["nodes"] and l[2] in graph["nodes"] and (l[0], l[2]) not in cut}
 
 
-def numbers(graph, t_us, names=None):
+def numbers(graph, t_us, names=None, heard=None):
     """soundnumbers.Numbers of a graph at one moment."""
-    return soundnumbers.Numbers(graph["nodes"], wires(graph, _order(graph)[1]), t_us, names)
+    return soundnumbers.Numbers(graph["nodes"], wires(graph, _order(graph)[1]), t_us, names, heard)
 
 
 def new_node(kind, x=0.0, y=0.0, **extra):
@@ -195,7 +199,7 @@ def insert_on_link(graph, nid, link):
     """Put node nid (its first input and output) into a link."""
     node = graph["nodes"][nid]
     if list(link) not in graph["links"] or not inputs(node) or not outputs(node) or nid in (link[0], link[2]) \
-            or is_param(link[3]):
+            or is_param(link[3]) or outputs(node)[0][1] == "num":
         raise ValueError("這個節點不能插進這條線")
     graph["links"] = [l for l in graph["links"] if l[0] != nid and l[2] != nid and l != list(link)]
     connect(graph, link[0], link[1], nid, 0)
@@ -211,6 +215,8 @@ def remove(graph, ids, keep_links=False):
             continue
         feed = link_into(graph, nid, PARAM + soundnumbers.THROUGH[node["type"]]
                          if node["type"] in soundnumbers.THROUGH else 0)
+        if node["type"] == "level":             # (sound in, a number out: nothing to join)
+            feed = None
         onward = [l for l in graph["links"] if l[0] == nid]
         graph["links"] = [l for l in graph["links"] if nid not in (l[0], l[2])]
         del graph["nodes"][nid]
@@ -281,6 +287,7 @@ class GraphFx:
         graph = entry["graph"]
         self.nodes = graph["nodes"]
         self.order, cut = _order(graph)
+        self.id = entry["id"]
         self.feeds = {(l[2], l[3]): (l[0], l[1]) for l in graph["links"]
                       if l[0] in self.nodes and l[2] in self.nodes and (l[0], l[2]) not in cut}
         self.wires = wires(graph, cut)
@@ -288,10 +295,16 @@ class GraphFx:
         self.fx = {}
         self.blocked = set()                # channels it may not listen to (that would be a loop)
         self.before, self.after, ring = {}, {}, {}
+        self.settle = 0.0                   # seconds a start from the middle should run first (a slow follower)
         for nid in self.order:
             node = self.nodes[nid]
             sources = [self.feeds[(nid, i)][0] for i in range(len(inputs(node))) if (nid, i) in self.feeds]
-            lat = max([self.after.get(s, 0) for s in sources], default=0)
+            # (a number measured from late sound makes what it is wired into wait for it, as a sound path would)
+            numbers_from = [src for (dst, _name), src in self.wires.items() if dst == nid]
+            lat = max([self.after.get(s, 0) for s in sources + numbers_from], default=0)
+            if node["type"] == "level":
+                held_ms = soundnumbers.own_values(node, 0.0)
+                self.settle = max(self.settle, 5 * max(held_ms["attack"], held_ms["release"]) / 1000)
             own = 0.0
             self.before[nid] = lat
             if node["type"] == "fx" and node.get("effect") in soundfx.EFFECTS and not node.get("mute"):
@@ -304,6 +317,24 @@ class GraphFx:
         self.out = out
         self.latency = self.before.get(out, 0)
         self.tail = min(soundfx.MAX_TAIL_S, ring.get(out, 0.0))
+
+    def _listen(self, engine, nid, node, x, pos, late, t_of, given):
+        """A block of the sound into level node nid, `late` samples late."""
+        from . import soundmeter
+        key = self.key + (nid, "level")
+        follower = engine.state.get(key)
+        if follower is None:
+            follower = engine.state[key] = soundmeter.Follower()
+        mixed = (pos - late) * 1_000_000 / engine.rate
+        v = soundnumbers.own_values(node, t_of(mixed), engine.names(mixed) if node.get("expr") else None)
+        v.update(given or {})
+        mono = x.mean(axis=1)
+        number = follower.feed(mono, v["lo_hz"], v["hi_hz"], v["floor_db"], v["top_db"], v["attack"] / 1000,
+                               v["release"] / 1000)
+        name = self.id + "/" + nid              # (for the node's number and the spectrum drawn in it)
+        engine._remember(engine.meters, name, pos - late, np.array([number], np.float32))
+        if name in engine.watched:
+            engine.keep(name, pos - late, mono)
 
     def listens(self):
         return [c for c in channels_used(self.entry["graph"]) if c not in self.blocked]
@@ -325,12 +356,18 @@ class GraphFx:
             if at is None:
                 mixed = (pos - late) * 1_000_000 / engine.rate
                 at = moments[late] = soundnumbers.Numbers(self.nodes, self.wires, t_of(mixed),
-                                                          lambda: engine.names(mixed))
+                                                          lambda: engine.names(mixed), lambda n: heard(n, late))
             return at.into(nid, wire_specs(self.nodes[nid]))
+
+        def heard(nid, late):
+            """What level node nid read from the sound that is `late` samples late (or the nearest it has)."""
+            follower = engine.state.get(self.key + (nid, "level"))
+            return None if follower is None else follower.at(late - (latency + self.before[nid]))
+
 
         for nid in self.order:
             node, kind = self.nodes[nid], self.nodes[nid]["type"]
-            if kind in soundnumbers.TYPES:
+            if kind in soundnumbers.TYPES and kind != "level":
                 continue                    # (worked out as they are read)
             ins = []
             for i in range(len(inputs(node))):
@@ -341,6 +378,12 @@ class GraphFx:
                     ins.append(engine._delayed(self.key + (nid, i), made[feed[0]][feed[1]],
                                                self.before[nid] - self.after[feed[0]]))
             first = ins[0] if ins and ins[0] is not None else quiet
+            if kind == "level":
+                if not node.get("mute"):
+                    self._listen(engine, nid, node, first, pos, latency + self.before[nid], t_of,
+                                 wired(nid, latency + self.before[nid]))
+                made[nid] = [quiet]         # (it gives no sound: nothing is wired to this)
+                continue
             if kind == "in":
                 result = [x]
             elif kind == "ext":

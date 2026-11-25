@@ -186,7 +186,7 @@ def active(chain):
 
 def spec(e, name):
     """The description of parameter name of an entry (a graph's effect or mix node too), or None."""
-    if e.get("type") in ("value", "global", "math", "maprange", "clamp"):     # (a graph's number node)
+    if e.get("type") in ("level", "value", "global", "math", "maprange", "clamp"):     # (a graph's number node)
         from . import soundnumbers
         return soundnumbers.spec(e["type"], name)
     if e.get("type") == "mix" and name[:1] == "g" and name[1:].isdigit():

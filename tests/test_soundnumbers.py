@@ -4,6 +4,8 @@ import os
 import re
 import unittest
 
+import numpy as np
+
 from kiasecut import dsp, edit, rack, soundedit, soundfx, soundmeter, soundnodes, soundnumbers
 from tests.test_soundedit import make
 from tests.test_soundgraph import REF, US, Base, rms
@@ -213,3 +215,115 @@ class MeterTests(Sounds):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+LEVEL = dict(lo_hz=40.0, hi_hz=200.0, floor_db=-36.0, top_db=-12.5, attack=0.0, release=0.0)
+
+
+def level_graph(effect="gain", param="gain", to=(0.0, -60.0), **box):
+    """A graph whose `effect` has `param` follow how loud the kicks wired into 電平 are."""
+    g = soundnodes.new_graph()
+    lv = soundnodes.add(g, soundnodes.new_node("level"))
+    g["nodes"][lv]["params"].update(LEVEL, **box)
+    m = soundnodes.add(g, soundnodes.new_node("maprange"))
+    g["nodes"][m]["params"].update(to_min=to[0], to_max=to[1])
+    n = soundnodes.add(g, soundnodes.new_node(effect))
+    soundnodes.connect(g, lv, 0, m, "param:x")
+    soundnodes.connect(g, m, 0, n, "param:" + param)
+    soundnodes.connect(g, n, 0, "out", 0)
+    return g, lv, n
+
+
+class LevelWiringTests(unittest.TestCase):
+    def test_sound_in_a_number_out(self):
+        g, (lv, gain, m) = graph("level", "gain", "math")
+        self.assertTrue(soundnodes.can_link(g, "in", 0, lv, 0))
+        self.assertTrue(soundnodes.can_link(g, lv, 0, gain, "param:gain"))
+        self.assertFalse(soundnodes.can_link(g, lv, 0, "out", 0))
+        soundnodes.connect(g, "in", 0, lv, 0)
+        soundnodes.connect(g, lv, 0, m, "param:a")
+        with self.assertRaises(ValueError):                         # not into a wire of sound
+            soundnodes.insert_on_link(g, soundnodes.add(g, soundnodes.new_node("level")), ["in", 0, "out", 0])
+        self.assertIn(["in", 0, "out", 0], g["links"])              # (nothing was undone by trying)
+        soundnodes.remove(g, [lv], keep_links=True)
+        self.assertEqual([l for l in g["links"] if l[2] == m], [])
+
+    def test_a_loop_through_a_number_is_refused(self):
+        g, (lv, gain) = graph("level", "gain")
+        soundnodes.connect(g, gain, 0, lv, 0)
+        self.assertFalse(soundnodes.can_link(g, lv, 0, gain, "param:gain"))
+
+    def test_nothing_heard_leaves_the_parameter_as_it_is(self):
+        g, lv, n = level_graph()
+        self.assertIsNone(soundnodes.numbers(g, 0).of(lv))
+        self.assertEqual(soundnodes.numbers(g, 0, heard=lambda i: 1.0).into(n, soundnodes.wire_specs(g["nodes"][n])),
+                         {"gain": -60.0})
+
+
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class LevelSoundTests(Sounds):
+    """The kicks (0.5 - 0.7 s and 1.5 - 1.7 s) on track 2 turn down the steady tone on track 1."""
+
+    def view_of(self, g):
+        low = self.clip("a", self.low)
+        v = self.view([{"clips": [low, dict(low, id="a2", start_us=US)], "sound_effects": [
+            {"id": "e", "effect": "graph", "graph": g}]}, {"clips": [self.kick_clip()], "muted": False,
+                                                           "routes": []}])
+        return v
+
+    def ducked(self, **box):
+        g, lv, n = level_graph(**box)
+        ext = soundnodes.add(g, soundnodes.new_node("ext"))
+        g["nodes"][ext]["channel"] = "t2"
+        soundnodes.connect(g, ext, 0, lv, 0)
+        soundnodes.connect(g, "in", 0, n, 0)
+        return g
+
+    def test_a_side_chain_made_of_nodes(self):
+        a = self.sound(self.view_of(self.ducked()), 2.0)
+        self.assertAlmostEqual(rms(a, 0.2, 0.45), REF, delta=0.003)
+        self.assertLess(rms(a, 0.56, 0.68), REF * 0.01)
+        self.assertAlmostEqual(rms(a, 0.85, 1.4), REF, delta=0.003)
+        self.assertLess(rms(a, 1.56, 1.68), REF * 0.01)
+
+    def test_from_the_middle_as_from_the_start(self):
+        v = self.view_of(self.ducked(release=400.0))
+        whole = self.sound(v, 2.0)
+        m = self.mixer(v)
+        for first in (24, 17):                                        # while the release of the first kick is falling
+            part = np.frombuffer(b"".join(m.mix(f, 30.0) for f in range(first, first + 6)), np.int16)
+            np.testing.assert_allclose(part.reshape(-1, 2) / 32768, whole[first * 1600:(first + 6) * 1600], atol=2e-3)
+
+    def test_as_the_rack_measures_only_a_little_later(self):
+        sound = np.concatenate([np.zeros(48000 // 2), 0.25 * np.sin(2 * np.pi * 100 * np.arange(48000) / 48000),
+                                np.zeros(48000 // 2)]).astype(np.float32)
+        follower = soundmeter.Follower()
+        live = [follower.feed(sound[i:i + 512], 40, 200, -36, -12.5, 0.02, 0.2) for i in range(0, 48000 * 2, 512)]
+        spec = dict(BOX, attack=0.02, release=0.2)
+        curve = soundmeter.shape(soundmeter.box_db(sound, 40, 200), spec)
+        # the block that ends at e hears the window centred on e - N / 2
+        shift = soundmeter.N // 2 // soundmeter.HOP - 1
+        np.testing.assert_allclose(live[8:150], curve[8 - shift:150 - shift], atol=0.02)
+
+    def test_a_number_from_late_sound_waits_for_it(self):
+        """The level hears the sound after a look-ahead limiter (20 ms late): the gain it drives
+        must still act at the same place of the sound."""
+        def make_graph(limit):
+            g, lv, n = level_graph(top_db=-20.0, floor_db=-21.0)
+            first = "in"
+            if limit:
+                lim = soundnodes.add(g, soundnodes.new_node("limiter"))
+                g["nodes"][lim]["params"].update(lk=20.0, ceil=0.0)
+                soundnodes.connect(g, "in", 0, lim, 0)
+                first = lim
+            soundnodes.connect(g, first, 0, lv, 0)
+            soundnodes.connect(g, "in", 0, n, 0)
+            return g
+
+        def onset(g):
+            v = self.view([{"clips": [self.kick_clip()], "sound_effects": [{"id": "e", "effect": "graph", "graph": g}]}])
+            a = np.abs(self.sound(v, 1.0)[:, 0])
+            heard = np.nonzero(a[int(0.45 * 48000):] > 0.02)[0]
+            return int(heard[-1]) if len(heard) else 0          # how much of the kick gets through before it is shut
+
+        self.assertAlmostEqual(onset(make_graph(True)), onset(make_graph(False)), delta=600)

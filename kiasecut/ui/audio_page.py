@@ -17,8 +17,9 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QSlider, QSplitter, QVBoxLayout, QWidget)
 
-from .. import curves, dsp, edit, project, soundedit, soundfx
+from .. import curves, dsp, edit, project, soundedit, soundfx, soundnodes
 from . import icons, inplace
+from .sound_node_editor import SoundNodeEditor
 from .sound_visuals import BAND_COLORS, Dynamics, Response, Spectrum
 from .inspector import SpinBox
 from .menukeys import Menu
@@ -105,6 +106,8 @@ def clear_layout(layout):
 def effect_menu(parent, chosen):
     """新增效果's menu, by category; chosen(kind)."""
     menu = Menu(parent)
+    menu.addAction(soundfx.GRAPH_TITLE + "（用節點組合）", lambda: chosen(soundfx.GRAPH))
+    menu.addSeparator()
     for title, kinds in soundfx.CATEGORIES:
         sub = menu.addMenu(title)
         for kind in kinds:
@@ -147,6 +150,13 @@ class EffectBox(QFrame):
         x.clicked.connect(lambda: page.edit("移除聲音效果", soundedit.remove_effect, self.eid))
         head.addWidget(x)
         lay.addLayout(head)
+        if self.kind == soundfx.GRAPH:
+            if self.eid not in page.folded:
+                b = QPushButton("編輯節點圖")
+                b.setFocusPolicy(Qt.NoFocus)
+                b.clicked.connect(lambda: page.open_graph(self.eid))
+                lay.addWidget(b)
+            return
         if self.spec is None:
             lay.addWidget(QLabel("這個版本沒有這個效果"))
             return
@@ -679,6 +689,11 @@ class AudioPage(QWidget):
         self.right.addWidget(self.picture)
         self.chain = ChainPanel(self)
         self.right.addWidget(self.chain)
+        self.nodes = SoundNodeEditor(self)              # a 聲音節點效果 opened (below the chain, or over the page)
+        self.nodes.hide()
+        self.right.addWidget(self.nodes)
+        self.enlarged = False
+        self._narrow = None                             # hsplit's sizes before a graph widened the right side
         self.right.setStretchFactor(0, 0)
         self.right.setStretchFactor(1, 1)
         self.right.setSizes([190, 520])
@@ -735,6 +750,8 @@ class AudioPage(QWidget):
     def eventFilter(self, obj, e):
         if obj is self.win and e.type() == QEvent.Resize and self.isVisible():
             self.place()
+            if self.enlarged:
+                QTimer.singleShot(0, self._cover)
         return False
 
     def open(self):
@@ -798,6 +815,57 @@ class AudioPage(QWidget):
         if effect_id:
             self.folded.discard(effect_id)
         self.refresh()
+        if effect_id and any(e["id"] == effect_id and e.get("effect") == soundfx.GRAPH
+                             for e in soundedit.chain(self.level(), target)):
+            self.open_graph(effect_id)
+
+    # -- a 聲音節點效果 opened -------------------------------------------------------------------------
+    def open_graph(self, effect_id):
+        # (what it shows first: a refresh arriving while it is laid out must find it set)
+        self.nodes.target, self.nodes.eid = self.target, effect_id
+        if self.nodes.isHidden():
+            self._narrow = self.hsplit.sizes()
+            total = sum(self._narrow)
+            self.hsplit.setSizes([total * 2 // 5, total - total * 2 // 5])
+            self.nodes.show()
+            tall = max(1, self.right.height())
+            picture = 150 if self.picture.isVisibleTo(self) else 0
+            self.right.setSizes([picture, (tall - picture) // 4, tall - picture - (tall - picture) // 4])
+        self.nodes.eid = None
+        self.nodes.open(self.target, effect_id)
+        QTimer.singleShot(0, lambda: self.nodes.eid == effect_id and effect_id not in self.nodes.views
+                          and self.nodes.view.show_all())           # (once it is laid out)
+
+    def close_graph(self):
+        if self.nodes.isHidden():
+            return
+        if self.enlarged:
+            self.enlarge_graph()
+        self.nodes.keep_view()
+        self.nodes.eid = self.nodes.target = None
+        self.nodes.hide()
+        if self._narrow:
+            self.hsplit.setSizes(self._narrow)
+
+    def _cover(self):
+        top = self.nodes_top()
+        self.nodes.setGeometry(0, top, self.width(), self.height() - top)
+
+    def nodes_top(self):
+        return self.vsplit.y()
+
+    def enlarge_graph(self):
+        """The node graph over the whole page (below the transport), and back."""
+        self.enlarged = not self.enlarged
+        if self.enlarged:
+            self.nodes.setParent(self)
+            self._cover()
+            self.nodes.show()
+            self.nodes.raise_()
+        else:
+            self.right.addWidget(self.nodes)
+            self.nodes.show()
+        self.nodes.big_btn.setText("縮回" if self.enlarged else "放大")
 
     def clip_selected(self, clip):
         if not self.isVisible():
@@ -858,7 +926,10 @@ class AudioPage(QWidget):
         if not target:
             return
         self.target = target
-        self.edit_target(target, "新增聲音效果", soundedit.add_effect, kind)
+        made = self.edit_target(target, "新增聲音效果", soundedit.add_effect, kind)
+        if made and kind == soundfx.GRAPH:
+            self.refresh()
+            self.open_graph(made)
 
     def add_bus(self, route_from=None):
         def fn(level):
@@ -880,6 +951,7 @@ class AudioPage(QWidget):
             return
         if not self.win.proj:
             self.target = None
+            self.close_graph()
             self._build_strips([])
             self.chain.shape = None
             clear_layout(self.chain.list)
@@ -893,6 +965,8 @@ class AudioPage(QWidget):
         for strip in self.strips.values():
             strip.show_channel(level)
         self.chain.refresh()
+        if not self.nodes.isHidden() and (self.nodes.target != self.target or not self.nodes.refresh()):
+            self.close_graph()
         self.show_time()
 
     def _build_strips(self, targets):
@@ -939,11 +1013,19 @@ class AudioPage(QWidget):
         self.show_time()
         if img is not None and self.wants_picture():
             self.picture.show_image(img)
+        if not self.nodes.isHidden() and any(curves.is_animated(v) for n in self._graph_params() for v in n.values()):
+            self.nodes.refresh()
         if self.target:
             level = self.level()
             if self._valid(self.target) and any(curves.is_animated(v) for e in soundedit.chain(level, self.target)
                                                 for v in (e.get("params") or {}).values()):
                 self.chain.refresh()                # (keyframed values follow the playhead)
+
+    def _graph_params(self):
+        try:
+            return soundnodes.param_dicts(self.nodes.graph())
+        except (edit.EditError, KeyError):
+            return []
 
     def update_meters(self):
         player = getattr(self.win, "player", None)
@@ -962,6 +1044,8 @@ class AudioPage(QWidget):
         self.spectrum.feed(engine.output_before(sample + n // 2, n) * mixer.master
                            if engine is not None and playing else quiet)
         drawn = self.chain.drawn()
+        if not self.nodes.isHidden():
+            drawn.update(self.nodes.drawn())
         if engine is not None:
             engine.watched = frozenset(i for i, w in drawn.items() if not isinstance(w, Dynamics))     # (what the next blocks keep)
         for effect_id, widget in drawn.items():

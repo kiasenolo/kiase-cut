@@ -14,7 +14,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, racklinks, textlayout, textvars, viz
+from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, racklinks, soundfx, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -218,8 +218,8 @@ def _params(c):
         out += [v for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) + [e.get("mix")]
                 + [x for src in (e.get("sources") or {}).values() for x in src.values()]
                 if curves.is_animated(v)]
-    for e in c.get("sound_effects") or []:
-        out += [v for v in e["params"].values() if curves.is_animated(v)]
+    for params in soundfx.param_dicts(c.get("sound_effects")):
+        out += [v for v in params.values() if curves.is_animated(v)]
     return out
 
 
@@ -1436,8 +1436,8 @@ def key_times(c):
                 [x for src in (e.get("sources") or {}).values() for x in src.values()]:
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
-    for e in c.get("sound_effects") or []:
-        for v in e["params"].values():
+    for params in soundfx.param_dicts(c.get("sound_effects")):
+        for v in params.values():
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
     return sorted(times)

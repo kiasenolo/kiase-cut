@@ -19,6 +19,8 @@ The signal's way is soundgraph.py's.
 from . import curves, project
 
 MASTER = "master"
+GRAPH = "graph"                  # 聲音節點效果 (soundnodes.py)
+GRAPH_TITLE = "聲音節點效果"
 SEND_OFF_DB = -60.0              # a send turned this low sends nothing
 MAX_TAIL_S = 30.0
 
@@ -110,18 +112,28 @@ KEYWORDS = {"gain": "volume 音量", "highpass": "高通 low cut", "lowpass": "�
             "expander": "擴展 downward", "clip": "clipper 削波"}
 
 
+def curve_value(v, t_us):
+    return float(curves.value(v, t_us))
+
+
 def new_effect(kind, effect_id):
+    if kind == GRAPH:
+        from . import soundnodes
+        return {"id": effect_id, "effect": GRAPH, "graph": soundnodes.new_graph()}
     return {"id": effect_id, "effect": kind, "params": {p["name"]: p["default"] for p in EFFECTS[kind]["params"]}}
 
 
 def title(e):
+    if e.get("effect") == GRAPH:
+        return e.get("name") or GRAPH_TITLE
     spec = EFFECTS.get(e.get("effect"))
     return spec["title"] if spec else str(e.get("effect"))
 
 
 def active(chain):
     """The entries of a chain that do something: on, and of a kind there is."""
-    return [e for e in chain or () if e.get("enabled", True) and e.get("effect") in EFFECTS]
+    return [e for e in chain or () if e.get("enabled", True) and (e.get("effect") in EFFECTS or
+                                                                  e.get("effect") == GRAPH and e.get("graph"))]
 
 
 def values(e, t_us):
@@ -131,6 +143,18 @@ def values(e, t_us):
     for p in EFFECTS[e["effect"]]["params"]:
         v = given.get(p["name"], p["default"])
         out[p["name"]] = float(curves.value(v, t_us))
+    return out
+
+
+def param_dicts(chain):
+    """Every dict of parameter values in a chain, graphs' nodes' too (to walk keyframes)."""
+    out = []
+    for e in chain or ():
+        if e.get("graph"):
+            from . import soundnodes
+            out += soundnodes.param_dicts(e["graph"])
+        elif e.get("params"):
+            out.append(e["params"])
     return out
 
 

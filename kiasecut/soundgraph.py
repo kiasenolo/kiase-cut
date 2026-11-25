@@ -19,7 +19,7 @@ import math
 
 import numpy as np
 
-from . import curves, dsp, normalize, project, soundfx, stretch
+from . import curves, dsp, normalize, project, soundfx, soundnodes, stretch
 
 BLOCK = 512
 RATE = dsp.RATE
@@ -51,10 +51,11 @@ class Delay:
 
 # -- the graph, as compiled from a view ------------------------------------------------------------
 class Fx:
-    """One entry of a chain: its processor (None without the sound library: passed through)."""
+    """One effect of a chain (or of a graph's node): its entry and its processor (None
+    without the sound library: passed through). name: what its meters are kept under."""
 
-    def __init__(self, key, entry, proc):
-        self.key, self.entry, self.proc = key, entry, proc
+    def __init__(self, key, entry, proc, name):
+        self.key, self.entry, self.proc, self.name = key, entry, proc, name
         self.side = None                    # the channel id of its side-chain, if one counts
 
     def apply(self, t_us):
@@ -69,6 +70,31 @@ class Fx:
     @property
     def tail(self):
         return self.proc.tail if self.proc else 0.0
+
+    def listens(self):
+        return [self.side] if self.side else []
+
+    def unlisten(self, channel_id):
+        if self.side == channel_id:
+            self.side = None
+
+    def run(self, engine, x, pos, latency, t_of, posts, post_latency, top, side=None):
+        """x (latency samples late) through the effect; side: a side-chain given as it is (a
+        graph's socket). Returns (sound, how late it is now)."""
+        if self.proc is None:
+            return x, latency
+        self.apply(t_of((pos - latency) * US / RATE))
+        if side is None and self.side is not None and self.side in posts:
+            side = engine._delayed(self.key + ("side",), posts[self.side], latency - post_latency[self.side])
+        x = self.proc.process(x, side, pos - latency)
+        latency += self.proc.latency
+        engine._remember(engine.meters, self.name, pos - latency, self.proc.meters())
+        if self.name in engine.watched:
+            kept = engine.watch.setdefault(self.name, [])
+            kept.append((pos - latency, x.mean(axis=1)))
+            if len(kept) > LEVELS_KEPT // 8:
+                del kept[:len(kept) - LEVELS_KEPT // 8]
+        return x, latency
 
 
 class ClipNode:
@@ -138,20 +164,27 @@ class Compiler:
         self.used = {}
         self.library = dsp.available()
 
+    def fx(self, key, entry, name):
+        key = key + (entry["effect"],)
+        proc = self.used.get(key) or self.store.get(key)
+        if proc is None and self.library:
+            try:
+                proc = dsp.Processor(entry["effect"])
+            except dsp.DspError:
+                proc = None
+        if proc is not None:
+            self.used[key] = proc
+        made = Fx(key, entry, proc, name)
+        made.apply(0.0)                     # (a look-ahead decides how late it is)
+        return made
+
     def chain(self, owner, entries):
         out = []
         for e in soundfx.active(entries):
-            key = owner + (e["id"], e["effect"])
-            proc = self.used.get(key) or self.store.get(key)
-            if proc is None and self.library:
-                try:
-                    proc = dsp.Processor(e["effect"])
-                except dsp.DspError:
-                    proc = None
-            if proc is not None:
-                self.used[key] = proc
-            out.append(Fx(key, e, proc))
-            out[-1].apply(0.0)              # (a look-ahead decides how late it is)
+            if e["effect"] == soundfx.GRAPH:
+                out.append(soundnodes.GraphFx(owner + (e["id"],), e, self.fx))
+            else:
+                out.append(self.fx(owner + (e["id"],), e, e["id"]))
         return out
 
     def level(self, key, tracks, mix, level_ids, offset_us=0.0, win=(0, float("inf")), rate=1.0, only=None):
@@ -181,20 +214,28 @@ class Compiler:
         for ch in chans.values():
             for dst, _ in ch.routes:
                 needs[dst].add(ch.id)
-            for f in ch.chain + [f for n in ch.clips for f in n.chain]:
-                side = (f.entry.get("side") or {}).get("id")
-                if side in chans and side not in (ch.id, soundfx.MASTER) and soundfx.EFFECTS[f.entry["effect"]].get("side"):
-                    f.side = side
-                    needs[ch.id].add(side)
+            for f in self._all_fx(ch):
+                if isinstance(f, Fx):
+                    side = (f.entry.get("side") or {}).get("id")
+                    if side and soundfx.EFFECTS[f.entry["effect"]].get("side"):
+                        f.side = side
+                for other in f.listens():
+                    if other in chans and other not in (ch.id, soundfx.MASTER):
+                        needs[ch.id].add(other)
+                    else:
+                        f.unlisten(other)
         order, cut = _toposort(list(chans), needs)
         for i, j in cut:                    # (a loop: a route or a side-chain in it is dropped)
             chans[j].routes = [r for r in chans[j].routes if r[0] != i]
-            for f in chans[i].chain + [f for n in chans[i].clips for f in n.chain]:
-                if f.side == j:
-                    f.side = None
+            for f in self._all_fx(chans[i]):
+                f.unlisten(j)
         lv.channels = {i: chans[i] for i in order}
         self._timing(lv)
         return lv
+
+    @staticmethod
+    def _all_fx(ch):
+        return ch.chain + [f for n in ch.clips for f in n.chain]
 
     def _faders(self, chans, tracks, level_ids):
         """Mute and solo. With anything soloed, only it sounds - and the buses it goes
@@ -263,7 +304,7 @@ class Compiler:
             for n in ch.clips:
                 n.pad = lat - n.latency
             lat = max([lat] + arrive.get(i, []))
-            sides = [lv.channels[f.side].latency for f in ch.chain + [f for n in ch.clips for f in n.chain] if f.side]
+            sides = [lv.channels[i].latency for f in self._all_fx(ch) for i in f.listens()]
             ch.in_latency = max([lat] + sides)
             ch.latency = ch.in_latency + sum(f.latency for f in ch.chain)
             inner = max([n.tail / RATE for n in ch.clips] + ring.get(i, []), default=0.0)
@@ -277,6 +318,8 @@ class Compiler:
 
 # -- the engine ------------------------------------------------------------------------------------
 class Engine:
+    rate = RATE
+
     def __init__(self, source_of):
         """source_of(clip, start_us, win, rate) -> the audiomix.Source of a clip (its
         decoded sound is filled in by the Mixer)."""
@@ -426,20 +469,7 @@ class Engine:
         """x (whose samples are latency late) through a chain. t_of(mixed us) -> the time the
         parameters are read at."""
         for f in chain:
-            if f.proc is None:
-                continue
-            f.apply(t_of((pos - latency) * US / RATE))
-            side = None
-            if f.side is not None and f.side in posts:
-                side = self._delayed(f.key + ("side",), posts[f.side], latency - post_latency[f.side])
-            x = f.proc.process(x, side, pos - latency)
-            latency += f.proc.latency
-            self._remember(self.meters, f.key[-2], pos - latency, f.proc.meters())
-            if f.key[-2] in self.watched:
-                kept = self.watch.setdefault(f.key[-2], [])
-                kept.append((pos - latency, x.mean(axis=1)))
-                if len(kept) > LEVELS_KEPT // 8:
-                    del kept[:len(kept) - LEVELS_KEPT // 8]
+            x, latency = f.run(self, x, pos, latency, t_of, posts, post_latency, top)
         return x, latency
 
     def _remember(self, store, key, sample, value):

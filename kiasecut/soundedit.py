@@ -5,7 +5,7 @@ A target says whose chain or channel is meant: ("clip", id), ("track", id), ("bu
 """
 import uuid
 
-from . import curves, edit, project, soundfx
+from . import curves, edit, project, soundfx, soundnodes
 
 PAN_RANGE = (-1.0, 1.0)
 
@@ -49,10 +49,18 @@ def chain(level, target):
 
 
 def effect(level, target, effect_id):
+    """An entry of target's chain; "<effect id>/<node id>": a node of a graph's (an effect
+    node reads as an entry does, so its parameters are edited the same way)."""
+    effect_id, _, nid = effect_id.partition("/")
     e = next((e for e in chain(level, target) if e["id"] == effect_id), None)
     if e is None:
         raise edit.EditError("找不到這個聲音效果")
-    return e
+    if not nid:
+        return e
+    node = (e.get("graph") or {}).get("nodes", {}).get(nid)
+    if node is None:
+        raise edit.EditError("找不到這個節點")
+    return node
 
 
 def sounding(c):
@@ -70,7 +78,7 @@ def new_id():
 def add_effect(level, target, kind, at=None):
     """Put a new effect of this kind on target's chain (at the end, or at place at). Returns
     its id."""
-    if kind not in soundfx.EFFECTS:
+    if kind not in soundfx.EFFECTS and kind != soundfx.GRAPH:
         raise edit.EditError("沒有這個聲音效果")
     if target[0] == "clip" and not sounding(edit.find(level, target[1])[1]):
         raise edit.EditError("這個片段沒有聲音")
@@ -119,6 +127,8 @@ def set_side(level, target, effect_id, side_id):
 
 
 def _spec(e, name):
+    if e.get("type") == "mix" and name.startswith("g"):
+        return soundfx.P(name, "音量", -60.0, 12.0, 0.0, "dB")
     p = next((p for p in soundfx.EFFECTS[e["effect"]]["params"] if p["name"] == name), None)
     if p is None:
         raise edit.EditError("這個效果沒有這個參數")
@@ -202,6 +212,86 @@ def side_sources(level, target):
                 stack.append(d)
     sounds = lambda i, h: not (h.get("kind") == "video" and not any(sounding(c) for c in h.get("clips", ())))
     return [(i, h.get("name") or i) for i, h in channels.items() if i not in downstream and sounds(i, h)]
+
+
+# -- graphs (soundnodes.py) ------------------------------------------------------------------------
+def graph(level, target, effect_id):
+    e = effect(level, target, effect_id)
+    if not e.get("graph"):
+        raise edit.EditError("這不是聲音節點效果")
+    return e["graph"]
+
+
+def _graph_edit(fn):
+    """fn(graph, ...) as an edit of a level; its ValueErrors are the edit's."""
+    def run(level, target, effect_id, *args):
+        try:
+            return fn(graph(level, target, effect_id), *args)
+        except ValueError as exc:
+            raise edit.EditError(str(exc)) from None
+    return run
+
+
+@_graph_edit
+def add_node(g, kind, x, y, feed=None, into=None, on_link=None):
+    """A new node. feed: (from node, output) to wire into it; into: (to node, input) it
+    feeds; on_link: a link to put it into."""
+    nid = soundnodes.add(g, soundnodes.new_node(kind, x, y))
+    node = g["nodes"][nid]
+    if on_link:
+        soundnodes.insert_on_link(g, nid, on_link)
+    if feed and soundnodes.inputs(node):
+        soundnodes.connect(g, feed[0], feed[1], nid, 0)
+    if into and soundnodes.outputs(node):
+        soundnodes.connect(g, nid, 0, into[0], into[1])
+    return nid
+
+
+connect_nodes = _graph_edit(soundnodes.connect)
+disconnect_nodes = _graph_edit(soundnodes.disconnect)
+insert_node = _graph_edit(soundnodes.insert_on_link)
+remove_nodes = _graph_edit(soundnodes.remove)
+paste_nodes = _graph_edit(soundnodes.paste)
+
+
+@_graph_edit
+def move_nodes(g, positions, on_link=None):
+    """positions: {node id: (x, y)}; on_link: (node id, link) it was dropped into."""
+    for nid, (x, y) in positions.items():
+        if nid in g["nodes"]:
+            g["nodes"][nid].update(x=round(x, 1), y=round(y, 1))
+    if on_link:
+        soundnodes.insert_on_link(g, on_link[0], on_link[1])
+
+
+@_graph_edit
+def mute_nodes(g, ids, on):
+    for nid in ids:
+        node = g["nodes"].get(nid)
+        if node and node["type"] not in soundnodes.FIXED + ("frame",):
+            if on:
+                node["mute"] = True
+            else:
+                node.pop("mute", None)
+
+
+@_graph_edit
+def set_node(g, nid, fields):
+    """A node's own fields: width, a frame's name / colour / size, 外部輸入's channel."""
+    node = g["nodes"].get(nid)
+    if node is None:
+        raise ValueError("找不到這個節點")
+    for key, value in fields.items():
+        if key not in ("w", "h", "x", "y", "name", "color", "channel"):
+            raise ValueError("unknown field " + key)
+        node[key] = value
+
+
+@_graph_edit
+def reroute_link(g, link, x, y):
+    nid = soundnodes.add(g, soundnodes.new_node("reroute", x, y))
+    soundnodes.insert_on_link(g, nid, link)
+    return nid
 
 
 # -- channels: tracks, buses, the master ------------------------------------------------------------
@@ -340,3 +430,6 @@ def remove_bus(level, bus_id):
         for e in h.get("sound_effects") or ():
             if (e.get("side") or {}).get("id") == bus_id:
                 e.pop("side")
+            for node in (e.get("graph") or {}).get("nodes", {}).values():
+                if node.get("channel") == bus_id:
+                    node["channel"] = ""

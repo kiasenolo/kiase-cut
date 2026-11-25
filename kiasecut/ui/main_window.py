@@ -3220,6 +3220,10 @@ class MainWindow(QMainWindow):
         if self.proj is not None:
             self.effects.set_media(images, videos, comps, tracks)
             self.nodes.set_media(images, videos, comps, tracks)
+        if self.proj is not None:
+            sounds = self.node_sounds()
+            self.effects.set_sounds(sounds)
+            self.nodes.set_sounds(sounds)
         self.effects.show_clips(clips, t, self.fps)
         if self.proj is not None:
             self.mask_panel.set_compounds(comps)
@@ -3231,8 +3235,6 @@ class MainWindow(QMainWindow):
         kept = self._nodes_kept(clips)
         shown = self._nodes_shared(clips)
         at = clips[0] if shown else kept
-        if self.proj is not None:
-            self.nodes.set_sounds(self.node_sounds())
         self.nodes.sound_start = edit.find(self.view(), at["id"])[1]["start_us"] if at else 0     # (on its own level's timeline)
         self.nodes.show_clip(at, t=times[clips[0]["id"]] if shown else 0)
         self.beats.show_clips(clips)

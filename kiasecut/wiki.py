@@ -32,6 +32,7 @@ FALLBACK_COLORS = {"image": "#c8c85a", "float": "#a0a0a8", "color": "#d6b04a", "
                    "bool": "#cca6d6", "vector": "#6363c7", "menu": "#e08a4a", "outline": "#3fc7a8", "sound": "#e8607e"}
 PARAM_TYPES = {"float": ("數值", "float"), "int": ("整數", "int"), "bool": ("開關", "bool"), "color": ("顏色", "color"),
                "vec2": ("二維向量", "vector"), "vec3": ("向量", "vector"), "menu": ("選單", "menu"), "curve": ("曲線", None),
+               "sound": ("聲音來源", "sound"),
                "gradient": ("漸層", None)}
 
 # The nodes that are not filters, by (type, kind, op): what they are
@@ -54,7 +55,9 @@ SPECIAL = {
     (ng.STRING, "", ""): "字串常數：一段文字。不是圖片，只能接到文字節點的內容。",
     (ng.SOUND_SOURCE, "", ""): "聲音來源：在節點上選一個時間線或複合片段，再選它的一條軌道、bus 或 Master，給出效果和推桿之後的聲音。"
                                "來源自己的靜音和獨奏不算；送進 bus 的軌道靜音仍然算。聲音是左右混合的單聲道。"
-                               "共用的 VFX Node 裡，每個用它的片段聽同一個來源。",
+                               "共用的 VFX Node 裡，每個用它的片段預設聽同一個來源。要讓每個片段各選自己的：把「參數輸入」接到這個節點的「來源」插槽"
+                               "（或從插槽拉線出來新增「參數輸入」），它就變成效果參數，「效果」面板會出現「聲音來源」選單，每個片段各存各的（不能打關鍵幀）。"
+                               "來源是用專案裡的軌道記的，效果搬到別的專案或軌道被刪掉時顯示「（已經不在）」，要重選。",
     (ng.SOUND_LEVEL, "", ""): "電平 → 數值：在節點的頻譜上拉一個框，框裡最大聲的頻率有多大聲變成 0～1 的數值（框的下緣是 0、上緣是 1），"
                               "啟動和釋放是數值升上去、落下來要幾秒。出來的是一般的數值，數學、映射範圍、切換、模糊大小都能接。"
                               "它讀的是「片段在它那一層的位置 + 片段內時間」的聲音：來源在複合片段裡、讀它的片段在外層時，不會跟著那個複合片段在外層的位置或速度移動。"
@@ -330,6 +333,8 @@ def special_page(key):
     ins = ""
     if t == ng.SOURCE and kind == "vector":
         ins = "<p>輸入：矢量輪廓（%s）</p>" % dot("outline")
+    elif t == ng.SOUND_SOURCE:
+        ins = "<p>輸入：來源（%s，只接「聲音來源」種類的效果參數）</p>" % dot("sound")
     elif t == ng.SOUND_LEVEL:
         ins = "<p>輸入：聲音（%s）</p>" % dot("sound")
     return (f"<h1>{esc(label)}</h1><p>{esc(SPECIAL.get((t, kind, op), ''))}</p>{ins}"

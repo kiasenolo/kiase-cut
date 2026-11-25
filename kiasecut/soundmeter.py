@@ -15,7 +15,8 @@ a part of an export or a command-line render read the same numbers.
     shape     that as 0 - 1, with attack and release: cheap, so the box's edges can be dragged
 
 A global parameter takes its value from a meter with p["sound"] = spec (rack.py; a number only), and so does a
-node effect's 電平 → 數值 node: what it hears is the 聲音來源 node wired to it (e["sources"], level and channel),
+node effect's 電平 → 數值 node: what it hears is the 聲音來源 node wired to it (e["sources"], level and channel - or
+an effect parameter linked into that node, which each clip chooses for itself),
 its box is node["meter"] (node_spec). A node's curve is kept under its spec (node_key), so nodes that measure the
 same thing share it; nothing can wait for a node, as pictures never go back into sound.
 
@@ -492,21 +493,22 @@ def sounding(root):
 
 
 # -- the node effects that listen -----------------------------------------------------------------------
-def node_spec(graph, sources, nid):
+def node_spec(graph, sources, nid, params=None):
     """What 電平 → 數值 node nid of a node effect measures, None while it hears nothing (no 聲音來源 wired to it, none
-    chosen in that one, or either node is off: it reads 0)."""
+    chosen in that one, or either node is off: it reads 0). params: the effect's own (a source may be a parameter
+    each clip chooses, nodegraph.sound_choice)."""
     from . import nodegraph
     flat = nodegraph.flatten(graph)
     node = flat["nodes"].get(nid)
     src = nodegraph.sound_source(flat, nid) if node is not None else None
     if src is None or node.get("mute") or flat["nodes"][src].get("mute"):
         return None
-    got = (sources or {}).get(src) or {}
-    if not got.get("level") or not got.get("channel"):
+    level, channel = nodegraph.sound_choice(flat, sources, params, src)
+    if not level or not channel:
         return None
     own = {k: v for k, v in (node.get("meter") or {}).items() if k in RANGES}
     try:
-        return clean({**DEFAULTS, **own, "level": got["level"], "channel": got["channel"]})
+        return clean({**DEFAULTS, **own, "level": level, "channel": channel})
     except ValueError:
         return None
 
@@ -531,7 +533,7 @@ def listeners(root):
             for nid, node in flat["nodes"].items():
                 if node.get("type") != nodegraph.SOUND_LEVEL:
                     continue
-                spec = node_spec(flat, e.get("sources"), nid)
+                spec = node_spec(flat, e.get("sources"), nid, e.get("params"))
                 if spec is None:
                     continue
                 names = out.setdefault(node_key(spec), (spec, []))[1]
@@ -745,7 +747,7 @@ def heard(owner, spec, t_us):
 
 def hearing(e, t_us):
     """nodegraph.evaluate's `heard` for node effect e at time t_us of its clip's level."""
-    return lambda nid: heard((e.get("id"), nid), node_spec(e["graph"], e.get("sources"), nid), t_us)
+    return lambda nid: heard((e.get("id"), nid), node_spec(e["graph"], e.get("sources"), nid, e.get("params")), t_us)
 
 
 def node_curve(spec):

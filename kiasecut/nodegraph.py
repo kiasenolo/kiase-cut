@@ -7,7 +7,8 @@ A filter node's parameters are in the effect's own e["params"] as "<node id>.<pa
 keyframed, edited and copied as an ordinary effect's are).
 
 A third kind of link carries a sound: from a 聲音來源 node ("soundsrc") to the "sound" socket of an analysis node
-("soundlevel"), through reroutes if need be. Nothing is drawn along it: the sound is measured beforehand
+("soundlevel"), through reroutes if need be. A 聲音來源 node's "pick" socket takes an effect parameter of type
+"sound" ("<level id>/<channel id>", sound_value) instead of its own choice. Nothing is drawn along it: the sound is measured beforehand
 (soundmeter.py), and while a frame is worked out a 電平 → 數值 node is a 數值 node holding that moment's number.
 
 Node types: "params" (參數輸入, Blender's group input: the effect's own parameters, graph["exposed"], one output
@@ -37,6 +38,7 @@ VIEWER = "viewer"                                           # 預覽: what the e
 SOUND_SOURCE = "soundsrc"                                   # 聲音來源: a track, bus or Master (e["sources"][id]: {"kind": "sound", "level", "channel"}) - never a picture
 SOUND_LEVEL = "soundlevel"                                  # 電平 → 數值: how loud a box of a sound's spectrum is (node["meter"], soundmeter.py), a number
 SOUND_SOCKET = "sound"                                      # the input an analysis node hears at: only a sound goes in (straight or through reroutes)
+SOUND_PICK = "pick"                                         # the input of a 聲音來源 node: an effect parameter of type "sound", so that every clip chooses its own
 SOURCE_KINDS = ("image", "video", "compound", "track", "shape", "text", "vector")
 SHAPES = (("rectangle", "矩形"), ("ellipse", "圓形"), ("rounded", "圓角矩形"), ("triangle", "三角形"),
           ("hexagon", "六邊形"), ("star", "星形"), ("heart", "愛心"))
@@ -641,6 +643,8 @@ def sockets(node):
         return [("src", "")]
     if node["type"] == SOUND_LEVEL:
         return [(SOUND_SOCKET, "聲音")]
+    if node["type"] == SOUND_SOURCE:
+        return [(SOUND_PICK, "來源")]
     if node["type"] == GROUP:
         return [(i["name"], i["label"]) for i in node.get("inputs") or []]
     if is_asset(node):                                   # (a built-in shape: pictures to paint its fill and outline with, then every value)
@@ -1052,6 +1056,8 @@ def takes_picture(graph, nid, socket):
         return False
     if socket in WORDS.values():
         return is_text(node)
+    if node["type"] == SOUND_SOURCE:
+        return False
     p = param_of(graph, nid, socket)
     if p is None:
         return True
@@ -1070,6 +1076,8 @@ def socket_kind(graph, nid, socket):
     node = graph["nodes"].get(nid)
     if node is not None and node["type"] == SOUND_LEVEL:
         return "sound"
+    if node is not None and node["type"] == SOUND_SOURCE:
+        return "soundpick"
     if node is not None and (is_asset(node) or is_text(node) or is_vecop(node)):          # (a shape's or a text's field: its own type)
         p = param_of(graph, nid, socket)
         return "color" if p is None else "vector" if p.type in ("vec2", "vec3") else p.type if p.type in ("float", "int", "bool", "menu") else "color"
@@ -1109,7 +1117,7 @@ def input_shape(graph, nid, socket):
     picture read at every pixel) or "single" (a whole number, switch, choice or vector: a picture linked in is read once, at its
     middle)."""
     node = (graph or {}).get("nodes", {}).get(nid)
-    if node is None or socket in WORDS.values() or node["type"] == SOUND_LEVEL:
+    if node is None or socket in WORDS.values() or node["type"] in (SOUND_SOURCE, SOUND_LEVEL):
         return "single" if node is not None else "field"
     if not socket.startswith(PARAM):
         if node["type"] == FILTER:
@@ -1179,6 +1187,13 @@ def connect(graph, src, dst, socket, out=None):
         raise GraphError("找不到這個節點")
     if socket not in [s for s, _ in sockets(nodes[dst])]:
         raise GraphError("這個節點沒有這個輸入")
+    given = next((x for x in exposed(graph) if x["name"] == out), None) if gives_params(nodes[src], out) else None
+    if nodes[dst]["type"] == SOUND_SOURCE or given is not None and given["type"] == "sound":     # (which sound a source hears: a parameter of its own type)
+        if not (nodes[dst]["type"] == SOUND_SOURCE and given is not None and given["type"] == "sound"):
+            raise GraphError("「聲音來源」節點的插槽只能接「聲音來源」種類的效果參數（參數輸入節點）")
+        graph["links"] = [l for l in graph["links"] if not (l["to"] == dst and l["socket"] == socket)]
+        graph["links"].append({"from": src, "to": dst, "socket": socket, "out": out})
+        return
     if nodes[src]["type"] in WORDS or socket in WORDS.values():     # (words go from a string node or a string parameter to a text node's 文字, a font likewise to its 字體, and nowhere else)
         if gives_params(nodes[src], out):
             x = next((x for x in exposed(graph) if x["name"] == out), None)
@@ -1247,6 +1262,31 @@ def sounds_crossed(graph):
     return False
 
 
+def sound_value(level, channel):
+    """What an effect parameter of type "sound" holds ("": nothing chosen)."""
+    return f"{level}/{channel}" if level and channel else ""
+
+
+def sound_parts(value):
+    """(level id, channel id) of a "sound" parameter's value ("", "" when it holds none)."""
+    level, _, channel = str(value or "").partition("/")
+    return (level, channel) if level and channel else ("", "")
+
+
+def sound_choice(graph, sources, params, nid):
+    """(level id, channel id) 聲音來源 node nid hears: the effect parameter linked into it (params: the effect's), else
+    its own choice (sources); "", "" when none is chosen."""
+    graph = flatten(graph)
+    name = binds(graph).get((nid, SOUND_PICK))
+    if name is None:
+        got = (sources or {}).get(nid) or {}
+        return got.get("level") or "", got.get("channel") or ""
+    key = expose_key(name)
+    if params is not None and key in params:
+        return sound_parts(curves.value(params[key], 0))
+    return sound_parts(next((x["default"] for x in exposed(graph) if x["name"] == name), ""))
+
+
 def sound_source(graph, nid):
     """The id of the 聲音來源 node analysis node nid of a flat graph hears (None: nothing is wired to it)."""
     nodes = graph["nodes"]
@@ -1282,11 +1322,12 @@ def expose(graph, params, src, dst, socket, sources=None):
     參數輸入 node): it starts at the value the parameter had and takes its name, range and choices. Returns its
     name. (params: the effect's e["params"].)"""
     words = socket in WORDS.values() and is_text(graph["nodes"].get(dst) or {})
-    p = word_param(socket) if words else param_of(graph, dst, socket)
+    pick = socket == SOUND_PICK and (graph["nodes"].get(dst) or {}).get("type") == SOUND_SOURCE
+    p = word_param(socket) if words else fx.Param(SOUND_PICK, "sound", "", label="聲音來源") if pick else param_of(graph, dst, socket)
     if p is None or graph["nodes"].get(src, {}).get("type") not in (PARAMS, INPUT):
         raise GraphError("參數只能接到節點的參數插槽")
     names = {x["name"] for x in exposed(graph)}
-    base = {TEXT_SOCKET: "text", FONT_SOCKET: "font"}[socket] if words else p.name
+    base = {TEXT_SOCKET: "text", FONT_SOCKET: "font"}[socket] if words else "sound" if pick else p.name
     name, n = base, 1
     while name in names:
         n += 1
@@ -1302,6 +1343,10 @@ def expose(graph, params, src, dst, socket, sources=None):
             value = p.default
         label = p.label if n == 1 else f"{p.label} {n}"
         p.default = copy.deepcopy(curves.value(value, 0))
+    elif pick:                                          # (it starts as what the node hears now)
+        value = sound_value(*sound_choice(graph, sources, params, dst))
+        label = p.label if n == 1 else f"{p.label} {n}"
+        p.default = value
     elif getattr(p, "place", False):                      # (where a shape sits is the source's own, not a node parameter)
         v = ((sources or {}).get(dst) or {}).get(p.name, p.default)
         value = copy.deepcopy(curves.value(v, 0) if curves.is_animated(v) else v)
@@ -1318,7 +1363,7 @@ def expose(graph, params, src, dst, socket, sources=None):
 MANUAL_TYPES = {"float": ("浮點", 0.0, 0.0, 1.0), "int": ("整數", 0, 0, 10), "bool": ("開關", False, 0, 1),
                 "color": ("顏色", [1.0, 1.0, 1.0, 1.0], 0.0, 1.0), "vec2": ("二維向量", [0.0, 0.0], -1000.0, 1000.0),
                 "vec3": ("三維向量", [0.0, 0.0, 0.0], -1000.0, 1000.0),
-                "string": ("字串", "文字", 0, 0), "font": ("字體", "", 0, 0)}           # (a font's start: the default font, add_exposed)
+                "string": ("字串", "文字", 0, 0), "font": ("字體", "", 0, 0), "sound": ("聲音來源", "", 0, 0)}           # (a font's start: the default font, add_exposed)
 
 
 def manual_default(kind):

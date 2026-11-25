@@ -100,6 +100,54 @@ class LinkTests(Graphs):
             edit.set_graph_viewer(self.p, "pic", self.e["id"], self.src)
 
 
+class PickTests(Graphs):
+    """聲音來源 fed by an effect parameter: every clip chooses its own."""
+
+    def params_node(self):
+        return self.add({"type": ng.PARAMS})
+
+    def chosen(self):
+        return ng.sound_choice(self.g, self.e.get("sources"), self.e["params"], self.src)
+
+    def test_exposing_starts_at_the_node_s_own_choice_and_gives_it_back(self):
+        ng.connect(self.g, self.src, self.lvl, ng.SOUND_SOCKET)
+        edit.set_graph_sound(self.p, "pic", self.e["id"], self.src, "tl1", "t1")
+        name = edit.expose_graph_param(self.p, "pic", self.e["id"], self.params_node(), self.src, ng.SOUND_PICK)
+        x = ng.exposed(self.g)[0]
+        self.assertEqual((x["type"], x["label"], x["default"]), ("sound", "聲音來源", "tl1/t1"))
+        self.assertEqual(self.e["params"][ng.expose_key(name)], "tl1/t1")
+        self.assertIn(ng.expose_key(name), [q.name for q in fx.def_of(self.e).params])
+        self.assertFalse(ng.sounds_crossed(self.g))
+        edit.set_param(self.p, "pic", "fx:" + self.e["id"], ng.expose_key(name), "tl1/master", 0)
+        self.assertEqual(self.chosen(), ("tl1", "master"))
+        spec = soundmeter.node_spec(self.g, self.e["sources"], self.lvl, self.e["params"])
+        self.assertEqual((spec["level"], spec["channel"]), ("tl1", "master"))
+        edit.set_param(self.p, "pic", "fx:" + self.e["id"], ng.expose_key(name), "", 0)
+        self.assertIsNone(soundmeter.node_spec(self.g, self.e["sources"], self.lvl, self.e["params"]))
+        ng.remove_exposed(self.g, self.e["params"], name)
+        self.assertEqual(self.chosen(), ("tl1", "t1"))
+
+    def test_only_a_sound_parameter_goes_into_the_source(self):
+        pn, ex = self.params_node(), self.blur()
+        sound = ng.add_exposed(self.g, self.e["params"], "sound")
+        number = ng.add_exposed(self.g, self.e["params"], "float")
+        for a, b, socket, out in ((pn, self.src, ng.SOUND_PICK, number), ("input", self.src, ng.SOUND_PICK, None),
+                                  (self.lvl, self.src, ng.SOUND_PICK, None), (pn, ex, ng.PARAM + "exposure", sound),
+                                  (pn, self.lvl, ng.SOUND_SOCKET, sound)):
+            before = copy.deepcopy(self.g["links"])
+            with self.assertRaises(ng.GraphError):
+                ng.connect(self.g, a, b, socket, out)
+            self.assertEqual(self.g["links"], before)
+        self.assertFalse(ng.takes_picture(self.g, self.src, ng.SOUND_PICK))
+        ng.connect(self.g, pn, self.src, ng.SOUND_PICK, sound)
+        self.assertEqual(self.chosen(), ("", ""))
+
+    def test_a_parameter_node_made_by_dragging_out_of_the_socket(self):
+        edit.set_graph_sound(self.p, "pic", self.e["id"], self.src, "tl1", "t1")
+        edit.add_graph_node_feeding(self.p, "pic", self.e["id"], {"type": ng.PARAMS}, 0, 0, self.src, ng.SOUND_PICK)
+        self.assertEqual([x["default"] for x in ng.exposed(self.g)], ["tl1/t1"])
+
+
 @unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
 class MeasureTests(Sounds):
     def setUp(self):
@@ -202,6 +250,23 @@ class MeasureTests(Sounds):
         self.assertTrue(soundmeter.stale_without(root))
         soundmeter.prepare(root, self.cache)
         self.assertFalse(soundmeter.stale_without(root))
+
+    def test_each_effect_hears_what_it_chose(self):
+        root, e, src, (lvl,) = self.root()
+        root["tracks"].append({"id": "t2", "kind": "audio", "name": "A2", "muted": True, "clips": [
+            self.clip("late", self.kicks, 1.0, 2.0)]})                  # (the same kicks a second later)
+        root["tracks"][-1]["clips"][0]["media"]["duration_us"] = 2 * US
+        pn = edit.add_graph_node(root, "pic", e["id"], {"type": ng.PARAMS})
+        name = edit.expose_graph_param(root, "pic", e["id"], pn, src, ng.SOUND_PICK)
+        other = copy.deepcopy(e)
+        other["id"] = "e2"
+        other["graph"], other["sources"] = e["graph"], e["sources"]      # (one graph, as a shared VFX Node's)
+        other["params"][ng.expose_key(name)] = "tl1/t2"
+        root["tracks"][0]["clips"][0]["effects"].append(other)
+        self.assertEqual(len(soundmeter.plan(root).jobs), 2)
+        soundmeter.require(root, self.cache)
+        self.assertEqual((round(self.read(e, lvl, 0.6)), round(self.read(other, lvl, 0.6))), (1, 0))
+        self.assertEqual((round(self.read(e, lvl, 2.6)), round(self.read(other, lvl, 2.6))), (0, 1))
 
     def brightness(self, renderer, root, *seconds):
         out = []

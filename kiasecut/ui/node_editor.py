@@ -84,7 +84,7 @@ SELECT = "#ffffff"                               # the outline of what is select
 def type_color(t):
     """The colour of a socket that holds a value of parameter type t."""
     return SOCKET_COLORS.get("vector" if t in ("vec2", "vec3") else
-                             t if t in ("float", "int", "bool", "color", "menu", "vector", "image", "string", "font") else "other")
+                             t if t in ("float", "int", "bool", "color", "menu", "vector", "image", "string", "font", "sound") else "other")
 
 
 GHOST = "\0ghost"                              # the empty socket of a 參數輸入 node: drag out of it to make a parameter
@@ -241,8 +241,9 @@ class NodeItem(QGraphicsItem):
         elif node["type"] == ng.VIEWER:
             add("image", "圖像", "src")
         elif node["type"] == ng.SOUND_SOURCE:                            # (its output above, what it hears here)
-            add("sndlevel", "時間線")
-            add("sndchannel", "來源")
+            if ng.SOUND_PICK not in self.linked:                         # (an effect parameter's: each clip chooses in the 效果 panel)
+                add("sndlevel", "時間線")
+            add("sndchannel", "來源", ng.SOUND_PICK)
         elif node["type"] == ng.SOUND_LEVEL:
             add("image", "聲音", ng.SOUND_SOCKET)
             add("spectrum", "", h=SPECTRUM_H)
@@ -435,7 +436,7 @@ class NodeItem(QGraphicsItem):
 
     def in_colour(self, sock):
         """The colour of input `sock`."""
-        if self.node["type"] == ng.SOUND_LEVEL:
+        if self.node["type"] in SOUND_NODES:
             return SOCKET_COLORS["sound"]
         if ng.is_vecop(self.node) and (sock == GHOST_ITEM or sock in ng.vecop_sockets(self.node)):
             return SOCKET_COLORS["outline"]
@@ -455,7 +456,8 @@ class NodeItem(QGraphicsItem):
 
     def sockets(self):
         """[(socket name, scene point)] of the sockets a link can end at."""
-        return [(r["socket"], self.input_pos(r["socket"])) for r in self.rows if r["socket"] and r["kind"] in ("image", "param", "text", "font")]
+        return [(r["socket"], self.input_pos(r["socket"])) for r in self.rows
+                if r["socket"] and r["kind"] in ("image", "param", "text", "font", "sndchannel")]
 
     def itemChange(self, change, value):
         if change == QGraphicsItem.ItemPositionHasChanged and self.scene() is not None:
@@ -480,9 +482,9 @@ class NodeItem(QGraphicsItem):
     def has_field(self, r):
         if r["kind"] == "param":
             return not (r["socket"] and r["socket"] in self.linked) and r["p"].type not in ("curve", "gradient")
-        if r["kind"] in ("text", "font"):
+        if r["kind"] in ("text", "font", "sndchannel"):
             return r["socket"] not in self.linked                 # (a string / font node's value replaces the box)
-        return r["kind"] in ("shape", "shapecolor", "plot", "string", "fontvalue", "media", "live", "sndlevel", "sndchannel")
+        return r["kind"] in ("shape", "shapecolor", "plot", "string", "fontvalue", "media", "live", "sndlevel")
 
     def field_at(self, pos):
         """(row, cell) of the field under pos (item coordinates), or the panel header row, else None."""
@@ -2170,8 +2172,9 @@ class ParamPanel(QWidget):
     added = Signal(str)                                     # type of a parameter to make by hand (新增參數)
     TYPES = (("float", "浮點"), ("int", "整數"))
     KINDS = {"bool": "開關", "color": "顏色", "menu": "選單", "curve": "曲線", "gradient": "漸層", "vec2": "二維向量",
-             "vec3": "三維向量", "string": "字串", "font": "字體"}
+             "vec3": "三維向量", "string": "字串", "font": "字體", "sound": "聲音來源"}
     fonts = ()                                              # the installed fonts, [{"name", "path"}] (the node editor's)
+    sounds = ()                                             # what a 聲音來源 can hear (the node editor's)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2197,7 +2200,7 @@ class ParamPanel(QWidget):
 
     def fill(self, xs):
         """Show parameters xs (graph["exposed"]); nothing is rebuilt while they are the same."""
-        sig = json.dumps([xs, len(self.fonts)], sort_keys=True)
+        sig = json.dumps([xs, len(self.fonts), self.sounds if any(x["type"] == "sound" for x in xs) else None], sort_keys=True)
         if sig == self.sig:
             return
         self.sig = sig
@@ -2293,6 +2296,15 @@ class ParamPanel(QWidget):
             words.lost.connect(keep)
             words.cancelled.connect(lambda words=words: words.setPlainText(str(x["default"])))
             v.addWidget(words)
+        elif x["type"] == "sound":
+            from .effects_panel import show_sound
+            v.addWidget(QLabel("預設來源"))
+            sound = QComboBox()
+            sound.setMinimumWidth(30)
+            sound.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            show_sound(sound, self.sounds, str(x["default"]))
+            sound.activated.connect(lambda i, sound=sound: self.edited.emit(name, {"default": sound.itemData(i)}))
+            v.addWidget(sound)
         elif x["type"] == "font":
             v.addWidget(QLabel("預設字體"))
             font = QComboBox()
@@ -2555,7 +2567,7 @@ class NodeEditor(QWidget):
             self.fill_panel()
 
     def fill_panel(self):
-        self.panel.fonts = self.fonts
+        self.panel.fonts, self.panel.sounds = self.fonts, self.sounds
         self.panel.fill(ng.exposed(self.graph) if self.eid else [])
 
     def set_fullscreen_mode(self, on):
@@ -2586,6 +2598,8 @@ class NodeEditor(QWidget):
         sounds = [(k, n, list(ch)) for k, n, ch in sounds]
         if sounds != self.sounds:
             self.sounds = sounds
+            if self.eid and self.panel.isVisible():
+                self.fill_panel()
             self.view.viewport().update()
 
     def sound_name(self, nid, field):
@@ -2642,7 +2656,7 @@ class NodeEditor(QWidget):
             item.refresh_spectrum()
 
     def _meter_spec(self, nid):
-        return soundmeter.node_spec(self.graph, self.sources, nid)
+        return soundmeter.node_spec(self.graph, self.sources, nid, self.params)
 
     def meter_number(self, nid):
         return soundmeter.heard((self.eid, nid), self._meter_spec(nid), self.sound_start + self.t)
@@ -2663,7 +2677,8 @@ class NodeEditor(QWidget):
         if spec is None:
             src = ng.sound_source(ng.flatten(self.graph), nid)
             why = "接一個「聲音來源」" if src is None else \
-                "在「聲音來源」節點選來源" if not (self.sources.get(src) or {}).get("channel") else ""
+                "" if ng.sound_choice(self.graph, self.sources, self.params, src)[1] else \
+                "在「效果」面板選聲音來源" if (src, ng.SOUND_PICK) in ng.binds(self.graph) else "在「聲音來源」節點選來源"
         else:
             why = self.sound_problems.get(soundmeter.node_key(spec)) or "分析聲音中…"
         widget.say(why)
@@ -3525,7 +3540,7 @@ class NodeEditor(QWidget):
         if sock in ng.WORDS.values():
             kind = next(t for t, s_ in ng.WORDS.items() if s_ == sock)
             options = [("字串" if kind == ng.STRING else "字體", {"type": kind}), ("參數輸入（效果自己的參數）", {"type": ng.PARAMS})]
-        elif ng.param_of(self.graph, nid, sock) is not None:
+        elif ng.param_of(self.graph, nid, sock) is not None or node["type"] == ng.SOUND_SOURCE:
             options = [("參數輸入（效果自己的參數）", {"type": ng.PARAMS})]
         else:
             return

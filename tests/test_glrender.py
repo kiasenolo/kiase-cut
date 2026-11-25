@@ -235,6 +235,46 @@ class GpuMatchesCpu(unittest.TestCase):
             self.assertLess(edge(pixels(r.render(v, 0, W, H))), 0.9 * edge(pixels(r.render(plain, 0, W, H))))
             self.assertEqual(r.errors, [])
 
+    def solid_text(self, cid="tx", color=(1.0, 0.0, 1.0), depth=20.0, advanced=False, **t):
+        return {"id": cid, "type": "text", "name": cid, "start_us": 0, "duration_us": 2 * S, "source_start_us": 0, "transform": tf(**t),
+                "text": {"content": "MMMMMM", "size": 22.0, "color": list(color), "align": "center", "stroke_on": False},
+                "solid": {"on": True, "depth": depth, "bevel": 0.0, "advanced": advanced}}
+
+    def scene_shot(self, *layers):
+        v = self.view(*[[c] for c in layers])
+        v["camera"] = {"on": True}
+        img = pixels(self.gpu.render(v, 0, W, H))
+        self.assertEqual(self.gpu.errors, [])
+        return img
+
+    def test_a_plane_cuts_through_a_solid_by_the_pixel_whatever_their_order(self):
+        magenta = lambda img: (img[..., 0] > 180) & (img[..., 2] > 180) & (img[..., 1] < 70)
+        alone = magenta(self.scene_shot(self.solid_text()))
+        self.assertGreater(int(alone[:, :W // 2].sum()), 150)
+        wall = self.bg(transform=dict(tf(scale=1.4), rot_y=50))                   # (its left edge comes nearer, its right goes away)
+        for layers in ((wall, self.solid_text()), (self.solid_text(), wall)):
+            got = magenta(self.scene_shot(*layers))
+            self.assertLess(int(got[:, :W // 2 - 4].sum()), 0.1 * alone[:, :W // 2 - 4].sum())     # (behind the picture: hidden)
+            self.assertGreater(int(got[:, W // 2 + 4:].sum()), 0.9 * alone[:, W // 2 + 4:].sum())   # (in front of it: drawn)
+
+    def test_solids_cut_through_each_other_and_a_see_through_one_shows_what_is_behind(self):
+        a, b = self.solid_text("a", (1.0, 0.0, 0.0), rot_y=40), self.solid_text("b", (0.0, 0.0, 1.0), rot_y=-40)
+        img = self.scene_shot(a, b)
+        red = (img[..., 0] > 150) & (img[..., 2] < 80)
+        blue = (img[..., 2] > 150) & (img[..., 0] < 80)
+        self.assertGreater(int(red[:, :W // 2].sum()), 4 * int(blue[:, :W // 2].sum()))     # (a's left half is the nearer there, b's right)
+        self.assertGreater(int(blue[:, W // 2:].sum()), 4 * int(red[:, W // 2:].sum()))
+        faded = self.scene_shot(self.bg(transform=tf(scale=3.0, z=1.0)), self.solid_text(opacity=0.5))
+        solid = self.scene_shot(self.bg(transform=tf(scale=3.0, z=1.0)), self.solid_text())
+        self.assertGreater(int((np.abs(faded - solid).max(axis=2) > 40).sum()), 200)
+
+    def test_simple_shading_shows_the_picked_colour_and_advanced_lighting_is_a_choice(self):
+        simple = self.scene_shot(self.solid_text(color=(0.8, 0.4, 0.2), z=0.03))
+        lit = self.scene_shot(self.solid_text(color=(0.8, 0.4, 0.2), z=0.03, advanced=True))
+        hit = np.abs(simple - np.array([204, 102, 51])).max(axis=2) <= 2
+        self.assertGreater(int(hit.sum()), 300)                                    # (the faces: exactly the picked colour)
+        self.assertGreater(float(np.abs(simple - lit)[hit].mean()), 3.0)
+
     def test_depth_of_field_blurs_what_is_out_of_focus_the_same_by_both(self):
         near, far = self.bg(transform=tf(scale=0.5, x=-0.4)), self.bg(transform=tf(scale=0.5, x=0.4, z=1.5))
         v = self.view([near, far])

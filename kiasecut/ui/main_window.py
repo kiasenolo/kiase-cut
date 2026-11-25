@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
                     ("transform", "shadow_opacity"): "陰影", ("transform", "shadow_x"): "陰影", ("transform", "shadow_y"): "陰影", ("transform", "shadow_blur"): "陰影", ("transform", "shadow_spread"): "陰影", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("transform", "z"): "3D 位置", ("transform", "rot_x"): "3D 旋轉", ("transform", "rot_y"): "3D 旋轉", ("camera", "on"): "攝影機",
-                    ("solid", "on"): "立體", ("solid", "depth"): "立體厚度", ("solid", "bevel"): "立體倒角", ("solid", "metallic"): "金屬度", ("solid", "roughness"): "粗糙度",
+                    ("solid", "on"): "立體", ("solid", "advanced"): "進階光照", ("solid", "depth"): "立體厚度", ("solid", "bevel"): "立體倒角", ("solid", "metallic"): "金屬度", ("solid", "roughness"): "粗糙度",
                     ("camera", "fov"): "攝影機視角", ("camera", "x"): "攝影機位置", ("camera", "y"): "攝影機位置", ("camera", "z"): "攝影機位置",
                     ("camera", "aperture"): "景深", ("camera", "focus"): "景深", ("camera", "tx"): "攝影機目標", ("camera", "ty"): "攝影機目標", ("camera", "tz"): "攝影機目標",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",

@@ -1,6 +1,10 @@
 """Drawing the solid objects of a scene (mesh.py's meshes) with the GPU: a camera's view of them with a depth buffer, anti-aliased
-(multisampled), shaded as Blender's Principled material in the main: a base colour, 金屬 and 粗糙度 (GGX), two lamps and a studio
-round the scene to be lit by and to mirror.
+(multisampled). They are shaded simply (the faces in their own colour, the sides darker) or, with 進階光照, as Blender's Principled
+material in the main: a base colour, 金屬度 and 粗糙度 (GGX), two lamps and a studio round the scene to be lit by and to mirror.
+
+Solids and the picture planes of a scene cut through each other by the pixel: the solids are drawn in passes, one before each plane
+for what of them is behind it (and was not drawn yet), and one at the end for the rest (Drawer.draw's surfaces and current). Solids
+drawn in one pass share the depth buffer, so they cut through each other too.
 
 The lamps and the studio are fixed in the world (x right, y down, z away): the main lamp high on the left on the viewer's side.
 """
@@ -10,9 +14,11 @@ from . import camera, curves
 
 SAMPLES = 4
 KEPT = 2                       # sizes the multisampled buffers are kept for
+SURFACES = 32                  # the planes a scene's solids can be cut by
+BIAS = 0.5                     # (px: a face lying on a plane is in front of it)
 
 # what 立體 has when it is switched on (c["solid"]); depth and bevel: px of a 1080-high canvas
-DEFAULTS = {"on": False, "depth": 40.0, "bevel": 3.0, "metallic": 0.0, "roughness": 0.4}
+DEFAULTS = {"on": False, "advanced": False, "depth": 40.0, "bevel": 3.0, "metallic": 0.0, "roughness": 0.4}
 
 VERTEX = """
 #version 330
@@ -32,6 +38,8 @@ in vec4 in_color;
 out vec3 v_pos;
 out vec3 v_normal;
 out vec4 v_color;
+out vec3 v_cam;
+out float v_cap;
 void main() {
     vec3 world = place + turn * in_pos;
     vec3 c = view * (world - eye);
@@ -42,6 +50,8 @@ void main() {
     v_pos = world;
     v_normal = normal_turn * in_normal;
     v_color = in_color;
+    v_cam = c;
+    v_cap = in_normal.z;                                          // (the object's own: +-1 on its two faces)
 }
 """
 
@@ -50,6 +60,12 @@ FRAGMENT = """
 uniform vec3 eye;
 uniform float metallic;
 uniform float roughness;
+uniform int advanced;
+uniform vec4 surfaces[32];     // planes in the camera's axes (normal, distance > 0): behind one is where dot(n, p) > distance
+uniform int n_surfaces;
+uniform int current;           // this pass draws what is behind surfaces[current] (n_surfaces: the rest) and behind none before it
+in vec3 v_cam;
+in float v_cap;
 in vec3 v_pos;
 in vec3 v_normal;
 in vec4 v_color;
@@ -84,10 +100,22 @@ vec3 lamp(vec3 N, vec3 V, vec3 L, vec3 colour, vec3 diffuse, vec3 f0, float a) {
     return (diffuse * (1.0 - F) + F * min(D * G / (4.0 * nl * nv), 20.0)) * colour * nl;
 }
 
+bool behind(int i) { return dot(surfaces[i].xyz, v_cam) - surfaces[i].w > 0.50; }
+
 void main() {
+    for (int i = 0; i < current; i++) {
+        if (behind(i)) discard;
+    }
+    if (current < n_surfaces && !behind(current)) discard;
     vec3 N = normalize(v_normal);
     vec3 V = normalize(eye - v_pos);
     if (dot(N, V) < -0.2) N = -N;                          // (seen from inside: a mirrored object's faces)
+    if (advanced == 0) {                                   // simple: the faces as picked, the rest darker, a little by where they look
+        float side = 0.58 - 0.16 * N.y - 0.08 * N.x;
+        float k = mix(side, 1.0, smoothstep(0.35, 0.98, abs(v_cap)));
+        fragColor = vec4(v_color.rgb * k * v_color.a, v_color.a);
+        return;
+    }
     vec3 base = pow(v_color.rgb, vec3(2.2));
     float rough = clamp(roughness, 0.04, 1.0);
     vec3 f0 = mix(vec3(0.04), base, metallic);
@@ -155,42 +183,104 @@ class Drawer:
         self.buffers[id(data)] = got
         return got[2]
 
-    def draw(self, tgt_fbo, w, h, data, cam, tf, t, W, H, base, tc=None, size=1.0):
-        """Draw mesh data (the object's own px; size: how much bigger than that it is - a text's keyframed 字號) with the clip's
-        transform tf at clip time t, seen by camera cam, into the w x h framebuffer tgt_fbo (which is cleared to nothing). base: the
-        QTransform from the W x H canvas to its px."""
-        tc = t if tc is None else tc
-        s = H / 2.0
+    def _uniform(self, name, value):
+        if name in self.program:                          # (one the compiler left out is not there to set)
+            self.program[name].value = value
+
+    def draw(self, tgt_fbo, w, h, parts, cam, W, H, base, tc, surfaces=(), current=0):
+        """Draw parts (Part) seen by camera cam (at its time tc) into the w x h framebuffer tgt_fbo (which is cleared to nothing). base:
+        the QTransform from the W x H canvas to its px. surfaces: [(nx, ny, nz, distance)] planes in the camera's axes; only what is
+        behind surfaces[current] and behind none before it is drawn (current == len(surfaces): what is behind none)."""
         focal, eye, axes = camera._basis(cam, tc, W, H)
-        v = lambda key, default: float(curves.value(tf.get(key, default), t))
-        place = np.array([v("x", 0.0) * W / 2.0, -v("y", 0.0) * s, v("z", 0.0) * s])
-        sx = v("scale", 1.0)
-        sy = float(curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t))
-        scale = np.array([sx * (-1 if tf.get("flip_h") else 1), sy * (-1 if tf.get("flip_v") else 1), sx]) * size
-        scale = np.where(np.abs(scale) < 1e-6, 1e-6, scale)
-        r = camera._rot(v("rot_x", 0.0), v("rot_y", 0.0), v("rotation", 0.0))
-        p = self.program
 
         def mat(m):                                       # (by columns)
             return tuple(float(x) for x in np.asarray(m).T.reshape(9))
-        p["turn"].value = mat(r * scale)
-        p["normal_turn"].value = mat(r / scale)
-        p["place"].value = tuple(float(x) for x in place)
-        p["view"].value = mat(axes)
-        p["eye"].value = tuple(float(x) for x in eye)
-        p["focal"].value = float(focal)
-        p["half_canvas"].value = (W / 2.0, H / 2.0)
-        p["base"].value = mat([[base.m11(), base.m21(), base.dx()], [base.m12(), base.m22(), base.dy()], [0.0, 0.0, 1.0]])
-        p["target"].value = (float(w), float(h))
-        p["planes"].value = (max(1.0, H * 0.01), H * 200.0)
-        vao = self._vao(data)
+        self._uniform("view", mat(axes))
+        self._uniform("eye", tuple(float(x) for x in eye))
+        self._uniform("focal", float(focal))
+        self._uniform("half_canvas", (W / 2.0, H / 2.0))
+        self._uniform("base", mat([[base.m11(), base.m21(), base.dx()], [base.m12(), base.m22(), base.dy()], [0.0, 0.0, 1.0]]))
+        self._uniform("target", (float(w), float(h)))
+        self._uniform("planes", (max(1.0, H * 0.01), H * 200.0))
+        held = list(surfaces)[:SURFACES]
+        if "surfaces" in self.program:
+            self.program["surfaces"].write(np.array(held + [(0.0, 0.0, 0.0, 1.0)] * (SURFACES - len(held)), "f4").tobytes())
+        self._uniform("n_surfaces", len(held))
+        self._uniform("current", min(current, len(held)))
+        ready = [(part, self._vao(part.data)) for part in parts]
         msaa = self._target(w, h)
         msaa.use()
         self.ctx.viewport = (0, 0, w, h)
         msaa.clear(0.0, 0.0, 0.0, 0.0, depth=1.0)
         self.ctx.enable(self.mgl.DEPTH_TEST)
         try:
-            vao.render(self.mgl.TRIANGLES)
+            for part, vao in ready:
+                self._uniform("turn", mat(part.axes))
+                self._uniform("normal_turn", mat(part.normals))
+                self._uniform("place", tuple(float(x) for x in part.place))
+                self._uniform("advanced", 1 if part.advanced else 0)
+                self._uniform("metallic", part.metallic)
+                self._uniform("roughness", part.roughness)
+                vao.render(self.mgl.TRIANGLES)
         finally:
             self.ctx.disable(self.mgl.DEPTH_TEST)
         self.ctx.copy_framebuffer(tgt_fbo, msaa)
+
+
+class Part:
+    """One solid as it stands now: mesh data (the object's own px; size: how much bigger than that it is - a text's keyframed 字號)
+    with the clip's transform tf at clip time t, its material, and how it is put on what is under it (opacity, blend)."""
+
+    def __init__(self, data, tf, t, W, H, size=1.0, advanced=False, metallic=0.0, roughness=0.4, opacity=1.0, blend=0):
+        v = lambda key, default: float(curves.value(tf.get(key, default), t))
+        s = H / 2.0
+        self.data = data
+        self.place = np.array([v("x", 0.0) * W / 2.0, -v("y", 0.0) * s, v("z", 0.0) * s])
+        sx = v("scale", 1.0)
+        sy = float(curves.value(tf.get("scale_y", tf.get("scale", 1.0)), t))
+        scale = np.array([sx * (-1 if tf.get("flip_h") else 1), sy * (-1 if tf.get("flip_v") else 1), sx]) * size
+        scale = np.where(np.abs(scale) < 1e-6, 1e-6, scale)
+        r = camera._rot(v("rot_x", 0.0), v("rot_y", 0.0), v("rotation", 0.0))
+        self.axes, self.normals = r * scale, r / scale
+        self.advanced, self.metallic, self.roughness = bool(advanced), float(metallic), float(roughness)
+        self.opacity, self.blend = float(opacity), int(blend)
+
+    def corners(self, cam, W, H, tc):
+        """(8, 3): the corners of the box round the solid, in the camera's axes (px)."""
+        _f, eye, axes = camera._basis(cam, tc, W, H)
+        lo, hi = bounds(self.data)
+        local = np.array([(x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])])
+        return (self.place + local @ self.axes.T - eye) @ axes.T
+
+
+_bounds = {}
+
+
+def bounds(data):
+    """(lowest, highest) corner of a mesh, kept."""
+    got = _bounds.get(id(data))
+    if got is None or got[0] is not data:
+        if len(_bounds) > 128:
+            _bounds.clear()
+        got = _bounds[id(data)] = (data, data[:, :3].min(axis=0).astype(float), data[:, :3].max(axis=0).astype(float))
+    return got[1], got[2]
+
+
+def surface(matrix):
+    """(nx, ny, nz, distance >= 0) in the camera's axes of the picture plane whose camera.scene_matrix is `matrix` (16 numbers)."""
+    n = np.array(matrix[8:11], float)
+    d = float(n @ np.array(matrix[12:15], float))
+    if d < 0:
+        n, d = -n, -d
+    if d < 1e-6:                              # (seen edge on: nothing is behind it)
+        return (0.0, 0.0, 0.0, 1.0)
+    return (float(n[0]), float(n[1]), float(n[2]), d)
+
+
+def needed(corners, surfaces, current):
+    """Whether the pass `current` can have anything of a solid with these corners in it."""
+    if current < len(surfaces):
+        s = surfaces[current]
+        if np.all(corners @ np.array(s[:3]) - s[3] <= BIAS):          # (all in front of this one)
+            return False
+    return not any(np.all(corners @ np.array(s[:3]) - s[3] > BIAS) for s in surfaces[:current])    # (not all drawn before)

@@ -1420,6 +1420,11 @@ class Inspector(QWidget):
         on.clicked.connect(lambda v: self._emit_now(self.paramEdited, "solid", "on", bool(v)))
         self.widgets["solid_on"] = on
         form.addRow("", on)
+        advanced = QCheckBox("進階光照")
+        advanced.setToolTip("燈光、金屬和反射（金屬度、粗糙度要開這個才有作用）。不開：正面是文字的顏色，側面較暗，比較省效能")
+        advanced.clicked.connect(lambda v: self._emit_now(self.paramEdited, "solid", "advanced", bool(v)))
+        self.widgets["solid_advanced"] = advanced
+        form.addRow("", advanced)
         self._rows(form, "solid", list(PARAMS["solid"]), ())
 
     def _build_camera(self, form, obj=None):
@@ -2216,6 +2221,14 @@ class Inspector(QWidget):
             box.blockSignals(True)
             box.setChecked(all((k.get("solid") or {}).get("on", False) for k in clips))
             box.blockSignals(False)
+        if "solid_advanced" in w:
+            box = w["solid_advanced"]
+            box.blockSignals(True)
+            box.setChecked(all((k.get("solid") or {}).get("advanced", False) for k in clips))
+            box.blockSignals(False)
+            for key in ("metallic", "roughness"):                   # (only the advanced lighting has a material)
+                if ("solid", key) in w:
+                    w[("solid", key)].setEnabled(box.isChecked())
         for group, rows in PARAMS.items():
             if group not in self.groups or (c if group == "clip" else c.get(group)) is None and group not in ("camera", "solid"):
                 continue

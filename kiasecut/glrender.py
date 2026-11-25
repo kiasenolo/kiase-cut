@@ -486,7 +486,7 @@ class GpuFrame:
 SHOWN = 4                             # frames kept out of the layer pool: the preview may still be drawing one of the last few
 
 
-MAX_SLICES = 9                              # a particle system in a 3D 場景 is drawn in at most this many stretches of depth (one more than the planes it is among)
+MAX_SLICES = 16                             # a particle system in a 3D 場景 is drawn in at most this many stretches of depth (one more than the planes it is among)
 
 
 class GLRenderer(render.Renderer):
@@ -700,7 +700,20 @@ class GLRenderer(render.Renderer):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
                     items.append((1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t, None))
-        planes = sorted({-it[0] for it in items if it[2]["type"] != "filter" and not project.has_particles(it[2])})
+        solids = []                                          # [(depth, Part, its corners in the camera's axes)]
+        for it in [it for it in items if mesh3d.on(it[2])]:
+            items.remove(it)
+            try:
+                part = self.solid_part(it[2], it[4], W, H, fps)
+            except Exception as exc:
+                self.errors.append(f"{it[2].get('name') or it[2]['type']}: {exc}")
+                continue
+            if part is not None:
+                solids.append((-it[0], part, part.corners(cam, W, H, t_us)))
+        planes = {-it[0] for it in items if it[2]["type"] != "filter" and not project.has_particles(it[2])}
+        for d, _part, corners in solids:                     # (a solid's own stretch of depth cuts a system's into more)
+            planes |= {float(corners[:, 2].min()) / (H / 2.0), d, float(corners[:, 2].max()) / (H / 2.0)}
+        planes = sorted(planes)
         if planes and len(planes) <= MAX_SLICES - 1:           # (particles between planes: the system is drawn again for each stretch of depth between them, in its place in the order)
             cuts, out = [-1e30] + planes + [1e30], []
             for it in items:
@@ -709,25 +722,48 @@ class GLRenderer(render.Renderer):
                     continue
                 for j in range(len(cuts) - 1):
                     lo, hi = cuts[j], cuts[j + 1]
-                    mid = hi + 1.0 if hi > 1e29 else lo - 1.0 if lo < -1e29 else (lo + hi) / 2.0
+                    mid = lo + 1.0 if hi > 1e29 else hi - 1.0 if lo < -1e29 else (lo + hi) / 2.0     # (the open ends: just past the plane)
                     out.append((-mid, it[1] + j * 1e-3, it[2], it[3], it[4], (lo * H / 2.0, hi * H / 2.0)))
             items = out
         inv_base, _ = base.inverted()
+        # the solids that are simply drawn over what is behind them share one pass (they cut through each other); the others, far first,
+        # each have their own
+        solids.sort(key=lambda sd: -sd[0])
+        solid_groups = [[sd for sd in solids if sd[1].opacity >= 0.999 and sd[1].blend == 0]]
+        solid_groups += [[sd] for sd in solids if not (sd[1].opacity >= 0.999 and sd[1].blend == 0)]
+        surfaces = []                                        # of the planes drawn so far, in the order they were
+
+        def solid_pass(ahead):
+            """What of the solids is behind plane `ahead` (None: what is left) and was not drawn before it."""
+            all_ = surfaces + ([ahead] if ahead is not None else [])
+            for group in solid_groups:
+                parts = [sd[1] for sd in group if mesh3d.needed(sd[2], all_, len(surfaces))]
+                if parts:
+                    self.gl_solids(tgt, base, cam, parts, W, H, t_us, all_, len(surfaces))
+        finished = False
         for _d, _n, c, i, t, zr in sorted(items, key=lambda it: it[:2]):
             try:
                 if c["type"] == "filter":
+                    if solids and not finished:              # (filters work on the finished picture)
+                        finished = True
+                        solid_pass(None)
                     self.gl_filter_clip(tgt, base, c, W, H, fps, t_us, ppu, tracks[:i])
                     continue
                 q, d = camera.plane(cam, c.get("transform") or {}, t, W, H, t_us)
                 if d <= camera.NEAR:
                     continue
+                if solids:
+                    if zr:                                   # (a stretch of a particle system's depth: as a plane facing the camera in its middle)
+                        here = (0.0, 0.0, 1.0, max(0.0, -_d * H / 2.0))
+                    else:
+                        here = mesh3d.surface(camera.scene_matrix(cam, c.get("transform") or {}, t, W, H, t_us)[0])
+                    solid_pass(here)
+                    surfaces.append(here)
                 lay = gl.layer(tgt.w, tgt.h)
                 try:
                     lay.fbo.clear(0.0, 0.0, 0.0, 0.0)
                     blend = BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0)
-                    if mesh3d.on(c):                      # (立體: a solid of its own, not the picture as a plane)
-                        self.gl_solid(tgt, lay, base, cam, c, t, W, H, fps, t_us, blend)
-                    elif project.has_particles(c):          # (its particles are drawn through the camera one by one, not the picture as a plane)
+                    if project.has_particles(c):          # (its particles are drawn through the camera one by one, not the picture as a plane)
                         gl.fx.scene = camera.scene_matrix(cam, c.get("transform") or {}, t, W, H, t_us) + (zr or (-1e30, 1e30))
                         try:
                             self.gl_clip(lay, base, camera.deepfocus(cam, c, t, W, H, t_us), W, H, fps, t_us, ppu)
@@ -743,14 +779,19 @@ class GLRenderer(render.Renderer):
                 self.errors.append(f"{c.get('name') or c['type']}: {exc}")
             except Exception as exc:
                 self.errors.append(f"{c.get('name') or c['type']}: {exc}")
+        if solids and not finished:
+            try:
+                solid_pass(None)
+            except Exception as exc:
+                self.errors.append(f"立體: {exc}")
 
-    def gl_solid(self, tgt, lay, base, cam, c, t, W, H, fps, t_us, blend):
-        """A 立體 text of a scene: its letters pushed out into a solid (mesh.py), lit and seen by the camera (mesh3d.py), drawn on lay and
-        put on tgt. Its mask and effects, and the flat text's outline, shadow and background, are not drawn."""
+    def solid_part(self, c, t, W, H, fps):
+        """The mesh3d.Part of a 立體 text of a scene at clip time t - its letters pushed out into a solid (mesh.py) - or None when there
+        is nothing of it to see. Its mask and effects, and the flat text's outline, shadow and background, are not drawn."""
         tf = c.get("transform") or {}
         opacity = min(1.0, max(0.0, curves.value(tf.get("opacity", 1.0), t)))
         if opacity <= 0:
-            return
+            return None
         tx = c["text"]
         size = tx.get("size", 5.0)
         if curves.is_animated(size) and not any(curves.is_animated(tx.get(k)) for k in TEXT_FIELDS if k != "size"):
@@ -763,15 +804,22 @@ class GLRenderer(render.Renderer):
         k = H / 1080.0
         data = mesh.text_mesh(spec, H, mesh3d.setting(c, "depth", t) * k, mesh3d.setting(c, "bevel", t) * k)
         if not len(data):
-            return
+            return None
+        return mesh3d.Part(data, tf, t, W, H, grown, bool((c.get("solid") or {}).get("advanced")),
+                           min(1.0, max(0.0, mesh3d.setting(c, "metallic", t))), min(1.0, max(0.0, mesh3d.setting(c, "roughness", t))),
+                           opacity, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0))
+
+    def gl_solids(self, tgt, base, cam, parts, W, H, t_us, surfaces, current):
+        """One pass of mesh3d.Drawer.draw over parts, put on tgt (parts sharing a pass are put on it as the first is)."""
         gl = self.gl
         if gl.solids is None:
             gl.solids = mesh3d.Drawer(gl.mgl, gl.ctx)
-        p = gl.solids.program
-        p["metallic"].value = min(1.0, max(0.0, mesh3d.setting(c, "metallic", t)))
-        p["roughness"].value = min(1.0, max(0.0, mesh3d.setting(c, "roughness", t)))
-        gl.solids.draw(lay.fbo, lay.w, lay.h, data, cam, tf, t, W, H, base, t_us, grown)
-        gl.draw_layer(tgt, lay, opacity=opacity, blend=blend)
+        lay = gl.layer(tgt.w, tgt.h)
+        try:
+            gl.solids.draw(lay.fbo, lay.w, lay.h, parts, cam, W, H, base, t_us, surfaces, current)
+            gl.draw_layer(tgt, lay, opacity=parts[0].opacity, blend=parts[0].blend)
+        finally:
+            gl.release(lay)
 
     def gl_blurred(self, tgt, base, c, times, W, H, fps, ppu):
         """動態模糊 (as render.draw_blurred): clip c drawn as it is at each of times on a clear

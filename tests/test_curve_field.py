@@ -126,7 +126,9 @@ class InlineTests(unittest.TestCase):
         QTest.mouseMove(cv, QPointF(mid.x(), mid.y() + 15).toPoint())
         QTest.mouseMove(cv, QPointF(mid.x(), mid.y() + 30).toPoint())
         self.assertTrue(live)
-        self.assertEqual(e["params"][ng.param_key(n, "curve")][1][1], live[-1][1][1][1])
+        self.assertEqual(ed.node_values(n).get("curve")[1][1], live[-1][1][1][1])        # (the node follows at once,
+        key = ng.param_key(n, "curve")                                                   #  the effect's own value only by the edit)
+        self.assertEqual(e["params"][key], ng.default_params(e["graph"])[key])
         QTest.mouseRelease(cv, Qt.LeftButton, Qt.NoModifier, QPointF(mid.x(), mid.y() + 30).toPoint())
         # the node shows what the parameters hold again when they change from elsewhere
         e["params"][ng.param_key(n, "curve")] = [[0.0, 0.0, 0, 0, 0, 0], [0.5, 0.9, 0, 0, 0, 0], [0.8, 0.1, 0, 0, 0, 0], [1.0, 1.0, 0, 0, 0, 0]]

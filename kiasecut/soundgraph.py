@@ -336,6 +336,8 @@ class Engine:
         self.scope = []                     # [(sample, mono block)] of the output, for the spectrum
         self.watched = frozenset()          # effect ids whose output is kept to be drawn
         self.watch = {}                     # effect id -> [(sample, mono block)]
+        self.capture = None                 # (channel id of the root's, fn(sample, stereo block)): its sound as it
+                                            # leaves its fader, every block (soundmeter.py)
 
     def set_view(self, view, only=None, level_ids=None):
         """only: the id of a track of the view, to give that track's sound alone (after its
@@ -529,6 +531,8 @@ class Engine:
                 pan = max(-1.0, min(1.0, float(curves.value(soundfx.pan_of(ch.holder), now))))
                 x = self._ramp(lv.key + ("fader", cid), x, ch.fader * min(1.0, 1.0 - pan), ch.fader * min(1.0, 1.0 + pan))
             posts[cid], post_latency[cid] = x, lat
+            if top and self.capture is not None and self.capture[0] == cid:
+                self.capture[1](pos - lat, x)
             if top:
                 peak = np.abs(x).max(axis=0)
                 self._remember(self.tap, cid, pos - lat, (float(peak[0]), float(peak[1])))

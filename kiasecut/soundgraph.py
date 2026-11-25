@@ -14,6 +14,7 @@ over what came before it (up to PREROLL_S). Effects that make their output late 
 limiter looking ahead) are made up for: paths that are added are delayed to match, and the
 whole mix is taken that much further along.
 """
+import bisect
 import math
 
 import numpy as np
@@ -288,7 +289,7 @@ class Engine:
         self.ready_at = 0                               # from this output sample on
         self.tap = {}                       # channel id (the root's) -> [(sample, peak l, peak r)]
         self.meters = {}                    # effect key -> [(sample, meters)]
-        self.scope = None                   # (first sample, [n, 2]) ring of the output
+        self.scope = []                     # [(sample, mono block)] of the output, for the spectrum
 
     def set_view(self, view, only=None, level_ids=None):
         """only: the id of a track of the view, to give that track's sound alone (after its
@@ -329,7 +330,34 @@ class Engine:
         for p in self.procs.values():
             p.reset()
         self.state = {}
-        self.tap, self.meters, self.scope = {}, {}, None
+        self.tap, self.meters, self.scope = {}, {}, []
+
+    # -- what was heard (for the mixer's meters; read from another thread) ----------------------
+    @staticmethod
+    def _around(kept, sample, back):
+        """The values of the [(sample, value)] list kept that start in (sample - back, sample]."""
+        kept = list(kept)                   # (the sound's thread goes on adding to it)
+        i = bisect.bisect_right(kept, sample, key=lambda k: k[0])
+        return [v for s, v in kept[max(0, i - back // BLOCK - 2):i] if s > sample - back]
+
+    def level_at(self, channel_id, sample, back=RATE // 30):
+        """(left, right) peak of a channel of the open level around output sample `sample`."""
+        got = self._around(self.tap.get(channel_id, ()), sample, back)
+        return (max(v[0] for v in got), max(v[1] for v in got)) if got else (0.0, 0.0)
+
+    def meters_at(self, effect_id, sample, back=RATE // 30):
+        """The meters of an effect on a track, bus or master around `sample`, or None."""
+        got = self._around(self.meters.get(effect_id, ()), sample, back)
+        return got[-1] if got else None
+
+    def output_before(self, sample, n):
+        """The n samples of the output (mono) before `sample`; zeros where there are none."""
+        out = np.zeros(n, np.float32)
+        for s, block in list(self.scope):
+            lo, hi = max(s, sample - n), min(s + len(block), sample)
+            if hi > lo:
+                out[lo - (sample - n):hi - (sample - n)] = block[lo - s:hi - s]
+        return out
 
     # -- asking for sound ---------------------------------------------------------------------------
     def render(self, a, b):
@@ -362,6 +390,10 @@ class Engine:
     def _step(self):
         pos = self.next_in
         out = self._level(self.root, pos, self.only, top=True)
+        top = self.root.channels[soundfx.MASTER]
+        self.scope.append((pos - top.latency, out.mean(axis=1)))
+        if len(self.scope) > LEVELS_KEPT // 8:
+            del self.scope[:len(self.scope) - LEVELS_KEPT // 8]
         self.next_in += BLOCK
         self.ready = np.concatenate([self.ready, out])
 

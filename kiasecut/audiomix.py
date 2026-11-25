@@ -144,7 +144,7 @@ class Mixer:
         self.master = float(view.get("master_gain", 1.0))
         engine = None
         with self.lock:
-            if soundfx.used(view):
+            if soundfx.used(view) or view.get("meter_channels"):     # (the 聲音 page's meters need the engine)
                 engine = self.engine or soundgraph.Engine(Source_of)
                 engine.set_view(view, only["id"] if only is not None else None)
                 srcs = engine.sources()

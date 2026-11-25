@@ -32,6 +32,7 @@ from .. import (androidfs, assets, build, camera, components, curves, edit, font
                mapping, nodegraph, rack, racklinks, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
+from .audio_page import AudioPage
 from .assets_panel import AssetsPanel
 from . import colorpick
 from .toolbarscroll import ToolbarScroll
@@ -1234,6 +1235,16 @@ class MainWindow(QMainWindow):
         self.layout_tabs.currentChanged.connect(self._layout_tab_switched)
         self.layout_tabs.setContextMenuPolicy(Qt.CustomContextMenu)
         self.layout_tabs.customContextMenuRequested.connect(self._layout_tab_menu)
+        self.page_tabs = QTabBar()                     # 剪輯 | 聲音: the whole window's page (audio_page.py)
+        self.page_tabs.setObjectName("layouts")
+        self.page_tabs.setDrawBase(False)
+        self.page_tabs.setExpanding(False)
+        self.page_tabs.setFocusPolicy(Qt.NoFocus)
+        self.page_tabs.addTab("剪輯")
+        self.page_tabs.addTab("聲音")
+        self.page_tabs.currentChanged.connect(lambda i: self.set_audio_page(i == 1))
+        row.addWidget(self.page_tabs)
+        row.addSpacing(18)
         row.addWidget(self.layout_tabs)
         plus = self.tool("plus", "把目前的排法存成新佈局（存在 KiaseCut/preset/layout）", self.save_layout_as)
         plus.setIconSize(QSize(14, 14))
@@ -2572,6 +2583,8 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.refresh_inspector()
         self.show_rack()
+        if self.audio_page_open():
+            self.audio_page.refresh()
         if getattr(self, "beat_editor", None) is not None and not self.beat_editor.show_clip(self.container()):
             self.beat_editor.close()                               # (its clip is gone)
         self.statusBar().showMessage(label, 2000)
@@ -5282,6 +5295,41 @@ class MainWindow(QMainWindow):
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------
+    # -- the 聲音 page ------------------------------------------------------------------------------
+    def audio_page_open(self):
+        page = getattr(self, "audio_page", None)
+        return page is not None and not page.isHidden()
+
+    def set_audio_page(self, on):
+        """Show the 聲音 page over the panels, with the editor's timeline in it; or put it all back."""
+        if on == self.audio_page_open():
+            return
+        if self.page_tabs.currentIndex() != int(on):
+            self.page_tabs.blockSignals(True)
+            self.page_tabs.setCurrentIndex(int(on))
+            self.page_tabs.blockSignals(False)
+        tl = self.timeline
+        if on:
+            if getattr(self, "audio_page", None) is None:
+                self.audio_page = AudioPage(self)
+            self._tl_sizes = self.tl_split.sizes()
+            self.audio_page.timeline_slot.addWidget(tl)
+            tl.audio_mode = True
+            tl.show()
+            self.audio_page.open()
+        else:
+            self.audio_page.close_page()
+            self.tl_split.insertWidget(0, tl)
+            self.tl_split.setStretchFactor(0, 1)
+            self.tl_split.setSizes(self._tl_sizes)
+            tl.audio_mode = False
+            tl.show()
+        tl._layout()
+        tl.update()
+        if self.proj is not None:
+            self.rebuild()                              # (the page's meters need the mix made channel by channel)
+            self.seek(self.pos)
+
     def snapshot(self, resolve=True):
         """A private copy of the open level for the renderer thread, counted in the editor's
         frames (時間線精度) and played at the project's frame rate. Pickled rather than through
@@ -5290,6 +5338,8 @@ class MainWindow(QMainWindow):
         Its 參考 tracks show and sound (editing): an export's copy leaves them out."""
         v = pickle.loads(pickle.dumps(self.view(), pickle.HIGHEST_PROTOCOL))
         v["play_fps"], v["fps"], v["editing"] = self.proj["fps"], self.fps, True
+        if self.audio_page_open():
+            v["meter_channels"] = True
         if resolve:                                     # (a live edit changes the numbers first, then places the followers)
             pathfollow.resolve(v)
         v["selected"] = sorted(self.timeline.selected_ids)              # (空物體 show only while selected)
@@ -5557,6 +5607,8 @@ class MainWindow(QMainWindow):
     # -- playback ---------------------------------------------------------------------------------
     def on_loaded(self, info):
         self.length = info["length"]
+        if self.audio_page_open():
+            self.audio_page.refresh()                   # (it arrives after every change of what is shown)
         if not self.statusBar().currentMessage():        # (it arrives after every edit: never hide what an edit said)
             fine = f"，時間線每秒 {self.fps:g} 格" if self.fps != self.proj["fps"] else ""
             self.statusBar().showMessage(f"{info['width']}×{info['height']} {self.proj['fps']:g}fps{fine}，"
@@ -5570,7 +5622,8 @@ class MainWindow(QMainWindow):
         """A frame that stays in the GPU (sharedgl.py): the preview draws its texture; a picture is read back only for what
         shows one too (the node editor's backdrop, the fullscreen preview)."""
         self.preview.show_texture(frame)
-        seen = bool(self.fullscreen) or (self.nodes.view.backdrop_visible and self.nodes.view.isVisible())
+        seen = bool(self.fullscreen) or (self.nodes.view.backdrop_visible and self.nodes.view.isVisible()) \
+            or (self.audio_page_open() and self.audio_page.wants_picture())
         self.after_frame(self.preview.image() if seen else None, pos)
 
     def on_preview_failed(self, message):
@@ -5595,6 +5648,8 @@ class MainWindow(QMainWindow):
             self.fullscreen.set_position(pos, self.length, self.fps)
         self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True), playing=self.playing)
         self.show_time()
+        if self.audio_page_open():
+            self.audio_page.after_frame(img)
         sel = self.timeline.selected
         if sel is not None:
             if not self.playing:
@@ -5607,6 +5662,8 @@ class MainWindow(QMainWindow):
 
     def on_state(self, playing):
         self.playing = playing
+        if self.audio_page_open():
+            self.audio_page.set_playing(playing)
         self.play_btn.setIcon(icons.icon("pause" if playing else "play"))
         if not playing and self.props_timer.isActive():
             self.props_timer.stop()

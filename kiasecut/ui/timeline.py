@@ -356,6 +356,7 @@ class Timeline(QWidget):
         self.vzoom = 1.0                           # track height factor
         self.follow_play = False                   # 跟隨: the view goes with the playhead while playing
         self.heights = {}                          # track id -> height set by dragging its edge
+        self.audio_mode = False                    # on the 聲音 page: sound tracks tall, the others thin
         self.scroll_y = 0
         self.vbar = QScrollBar(Qt.Vertical, self)
         self.vbar.hide()
@@ -563,6 +564,9 @@ class Timeline(QWidget):
     def base_h(self, i):
         """A row's own height (its clips' bars), without the lanes of open groups."""
         t = self.rows[i]
+        if self.audio_mode:
+            sounds = t["kind"] == "audio" or any(c["type"] in ("audio", "video", "compound", "group") for c in t["clips"])
+            return round(AUDIO_H * 1.5 * self.vzoom) if sounds else MIN_H
         h = self.heights.get(t["id"])
         return h or round((AUDIO_H if t["kind"] == "audio" else TRACK_H) * self.vzoom)
 

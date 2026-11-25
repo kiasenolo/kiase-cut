@@ -28,10 +28,11 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, models, parenting, project, recovery,
+from .. import (androidfs, assets, build, soundmeter, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, mesh, models, parenting, project, recovery,
                mapping, nodegraph, rack, racklinks, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
+from .audio_page import AudioPage
 from .assets_panel import AssetsPanel
 from . import colorpick
 from .toolbarscroll import ToolbarScroll
@@ -65,10 +66,11 @@ from .browsers import CATEGORY_BROWSER as BROWSER_OF, MinePage, SourceBrowser
 from .vfx_panel import VfxPanel, dropped_fx
 from .vfxnodes import dropped_vfx
 from .vfxnodes import VfxNodePanel
-from . import androidbar, androidfiles, appevents, beat_dialog, dialogframe, exprdialog, escapekey, fontkeep, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
+from . import androidbar, androidfiles, appevents, beat_dialog, dialogframe, exprdialog, escapekey, fontkeep, sounddialog, icons, inertia, inplace, lfodialog, look, mapdialog, menuanim, menubartap, menudebug, middledrag, sashtouch, softdrag, touch, wheel
 from .rack_panel import RackPanel
 from .steadylabel import SteadyLabel
 from .meter import MeterPanel
+from .meter_worker import MeterWorker
 from .pentool import PenBar
 from .preview import GL_DEFAULT as PREVIEW_GL_DEFAULT, FullscreenPreview, Preview
 from .preview import base_size as preview_base_size
@@ -228,7 +230,7 @@ def group_holder(c, group, create=False):
     "place:<param id>" for where a component's picture sits)."""
     if group.startswith("place:") and not create:
         return (c.get("places") or {}).get(group[6:]) or {}
-    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "place:", "tvar:")):
+    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "place:", "tvar:", "sfx:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:
@@ -241,6 +243,33 @@ def group_holder(c, group, create=False):
 def static_label(comp):
     """轉為靜態複合片段, or 轉為靜態元件 for a component."""
     return "轉為靜態元件" if components.is_component(comp) else "轉為靜態複合片段"
+
+
+class _Transport:
+    """The preview's playback, for a dialog that lets it go on (sounddialog.py)."""
+
+    def __init__(self, win):
+        self.win = win
+
+    def playing(self):
+        return self.win.player.worker.playing
+
+    def time_us(self):
+        return self.win.playhead_us()
+
+    def toggle(self):
+        w = self.win.player.worker
+        if w.playing:                   # (where it is, whatever 播放模式 says: it is being looked at)
+            w.set_playing(False)
+        else:
+            self.win.toggle_play()
+
+    def seek(self, us):
+        w = self.win.player.worker
+        w.request_seek(round(us / US * self.win.fps))      # (not MainWindow.seek, which stops playing)
+
+    def alone(self, samples):
+        self.win.player.worker.set_alone(samples)
 
 
 class MainWindow(QMainWindow):
@@ -1042,6 +1071,9 @@ class MainWindow(QMainWindow):
         self.layout_key = None          # the layout the panels are in (layouts.py key)
 
         self.player = Player(self)
+        self.sound_meter = MeterWorker(lambda: self.proj, self.cache_dir, self)     # (聲音轉數值, measured behind the editing)
+        self.sound_meter.changed.connect(self.on_sound_measured)
+        self.sound_meter.busy.connect(lambda on: on and self.statusBar().showMessage("分析聲音中…", 4000))
         self.player.worker.set_render_width(max(self.render_w.values()))     # (what the preview reported while the window was built)
         self.player.worker.set_rate(self.rate_box.currentData())     # (the 播放速度 used last time)
         self.player.worker.set_keep_pitch(self.pitch_btn.isChecked())
@@ -1234,6 +1266,16 @@ class MainWindow(QMainWindow):
         self.layout_tabs.currentChanged.connect(self._layout_tab_switched)
         self.layout_tabs.setContextMenuPolicy(Qt.CustomContextMenu)
         self.layout_tabs.customContextMenuRequested.connect(self._layout_tab_menu)
+        self.page_tabs = QTabBar()                     # 剪輯 | 聲音: the whole window's page (audio_page.py)
+        self.page_tabs.setObjectName("layouts")
+        self.page_tabs.setDrawBase(False)
+        self.page_tabs.setExpanding(False)
+        self.page_tabs.setFocusPolicy(Qt.NoFocus)
+        self.page_tabs.addTab("剪輯")
+        self.page_tabs.addTab("聲音")
+        self.page_tabs.currentChanged.connect(lambda i: self.set_audio_page(i == 1))
+        row.addWidget(self.page_tabs)
+        row.addSpacing(18)
         row.addWidget(self.layout_tabs)
         plus = self.tool("plus", "把目前的排法存成新佈局（存在 KiaseCut/preset/layout）", self.save_layout_as)
         plus.setIconSize(QSize(14, 14))
@@ -1659,6 +1701,7 @@ class MainWindow(QMainWindow):
                 "master_gain": self.proj.get("master_gain", 1.0),
                 "duration_us": max(project.end_us(node["tracks"]), node.get("duration_us") or 0, 1),
                 "tracks": node["tracks"], "compounds": self.proj.get("compounds", {}),
+                "buses": node.get("buses") or [], "master": node.get("master") or {},
                 "markers": node.get("markers") or [], "guides": node.get("guides"), "rack": self.proj.get("rack") or [],
                 "open_component": node if components.is_component(node) else None,
                 "camera": (walk_path(self.proj, self.path_ids)[-1][0] or {}).get("camera")}
@@ -2200,6 +2243,7 @@ class MainWindow(QMainWindow):
         self.proj = proj
         fonts.use_map(self.font_map_here())          # before anything draws its texts
         self.history = edit.History(proj)
+        self.sound_meter.forget()
         self.meter.set_gain(proj.get("master_gain", 1.0))
         self.dirty = False
         self._session(autosave=None)
@@ -2228,6 +2272,7 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.refresh_inspector()
         self.rebuild()
+        self.sound_meter.request(now=True)
         saved = proj.get("view") if isinstance(proj.get("view"), dict) else {}
         if saved.get("vzoom"):
             self.timeline.set_vzoom(float(saved["vzoom"]))
@@ -2571,10 +2616,24 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self.refresh_inspector()
         self.show_rack()
+        if self.audio_page_open():
+            self.audio_page.refresh()
         if getattr(self, "beat_editor", None) is not None and not self.beat_editor.show_clip(self.container()):
             self.beat_editor.close()                               # (its clip is gone)
         self.statusBar().showMessage(label, 2000)
         self.rebuild()
+        self.sound_meter.request()
+
+    def on_sound_measured(self):
+        """The global parameters that follow a sound read new numbers (or cannot be measured): draw with them."""
+        if not self.proj:
+            return
+        self.rack_panel.problems = dict(self.sound_meter.problems)
+        self.rebuild()
+        self.refresh_inspector()
+        self.show_rack()
+        if self.audio_page_open():
+            self.audio_page.refresh()
 
     def do_undo(self):
         if self.history and (label := self.history.undo()):
@@ -3735,6 +3794,15 @@ class MainWindow(QMainWindow):
                 self.apply_root("全局參數 LFO", edit.set_rack_lfo, rid, out)
         elif action == "lfo_off":
             self.apply_root("取消全局參數 LFO", edit.set_rack_lfo, rid, None)
+        elif action == "sound":
+            steps = walk_path(self.proj, self.path_ids)
+            level = steps[-1][2] if steps else self.proj["active_timeline"]
+            out = sounddialog.ask_sound(self, f"聲音來源：{p['name']}", self.proj, p.get("sound"), level,
+                                        self.cache_dir(), t, _Transport(self))
+            if out is not None:
+                self.apply_root("全局參數聲音來源", edit.set_rack_sound, rid, out)
+        elif action == "sound_off":
+            self.apply_root("取消全局參數聲音來源", edit.set_rack_sound, rid, None)
         elif action == "delete":
             n = rack.users(self.proj, p["name"])
             if n and not questions.question(self, "delete_rack", "刪除全局參數", f"有 {n} 個片段用到「{p['name']}」，"
@@ -5281,6 +5349,41 @@ class MainWindow(QMainWindow):
         self._update_buttons()
 
     # -- preview ----------------------------------------------------------------------------------
+    # -- the 聲音 page ------------------------------------------------------------------------------
+    def audio_page_open(self):
+        page = getattr(self, "audio_page", None)
+        return page is not None and not page.isHidden()
+
+    def set_audio_page(self, on):
+        """Show the 聲音 page over the panels, with the editor's timeline in it; or put it all back."""
+        if on == self.audio_page_open():
+            return
+        if self.page_tabs.currentIndex() != int(on):
+            self.page_tabs.blockSignals(True)
+            self.page_tabs.setCurrentIndex(int(on))
+            self.page_tabs.blockSignals(False)
+        tl = self.timeline
+        if on:
+            if getattr(self, "audio_page", None) is None:
+                self.audio_page = AudioPage(self)
+            self._tl_sizes = self.tl_split.sizes()
+            self.audio_page.timeline_slot.addWidget(tl)
+            tl.audio_mode = True
+            tl.show()
+            self.audio_page.open()
+        else:
+            self.audio_page.close_page()
+            self.tl_split.insertWidget(0, tl)
+            self.tl_split.setStretchFactor(0, 1)
+            self.tl_split.setSizes(self._tl_sizes)
+            tl.audio_mode = False
+            tl.show()
+        tl._layout()
+        tl.update()
+        if self.proj is not None:
+            self.rebuild()                              # (the page's meters need the mix made channel by channel)
+            self.seek(self.pos)
+
     def snapshot(self, resolve=True):
         """A private copy of the open level for the renderer thread, counted in the editor's
         frames (時間線精度) and played at the project's frame rate. Pickled rather than through
@@ -5289,6 +5392,9 @@ class MainWindow(QMainWindow):
         Its 參考 tracks show and sound (editing): an export's copy leaves them out."""
         v = pickle.loads(pickle.dumps(self.view(), pickle.HIGHEST_PROTOCOL))
         v["play_fps"], v["fps"], v["editing"] = self.proj["fps"], self.fps, True
+        v["meter_generation"] = soundmeter.generation()       # (new numbers: the RAM preview's frames are old)
+        if self.audio_page_open():
+            v["meter_channels"] = True
         if resolve:                                     # (a live edit changes the numbers first, then places the followers)
             pathfollow.resolve(v)
         v["selected"] = sorted(self.timeline.selected_ids)              # (空物體 show only while selected)
@@ -5556,6 +5662,8 @@ class MainWindow(QMainWindow):
     # -- playback ---------------------------------------------------------------------------------
     def on_loaded(self, info):
         self.length = info["length"]
+        if self.audio_page_open():
+            self.audio_page.refresh()                   # (it arrives after every change of what is shown)
         if not self.statusBar().currentMessage():        # (it arrives after every edit: never hide what an edit said)
             fine = f"，時間線每秒 {self.fps:g} 格" if self.fps != self.proj["fps"] else ""
             self.statusBar().showMessage(f"{info['width']}×{info['height']} {self.proj['fps']:g}fps{fine}，"
@@ -5569,7 +5677,8 @@ class MainWindow(QMainWindow):
         """A frame that stays in the GPU (sharedgl.py): the preview draws its texture; a picture is read back only for what
         shows one too (the node editor's backdrop, the fullscreen preview)."""
         self.preview.show_texture(frame)
-        seen = bool(self.fullscreen) or (self.nodes.view.backdrop_visible and self.nodes.view.isVisible())
+        seen = bool(self.fullscreen) or (self.nodes.view.backdrop_visible and self.nodes.view.isVisible()) \
+            or (self.audio_page_open() and self.audio_page.wants_picture())
         self.after_frame(self.preview.image() if seen else None, pos)
 
     def on_preview_failed(self, message):
@@ -5594,6 +5703,8 @@ class MainWindow(QMainWindow):
             self.fullscreen.set_position(pos, self.length, self.fps)
         self.timeline.set_position(pos, follow=self.playing or getattr(self, "follow", True), playing=self.playing)
         self.show_time()
+        if self.audio_page_open():
+            self.audio_page.after_frame(img)
         sel = self.timeline.selected
         if sel is not None:
             if not self.playing:
@@ -5606,6 +5717,8 @@ class MainWindow(QMainWindow):
 
     def on_state(self, playing):
         self.playing = playing
+        if self.audio_page_open():
+            self.audio_page.set_playing(playing)
         self.play_btn.setIcon(icons.icon("pause" if playing else "play"))
         if not playing and self.props_timer.isActive():
             self.props_timer.stop()
@@ -5974,10 +6087,14 @@ class MainWindow(QMainWindow):
         snapshot = json.loads(json.dumps(self.proj))
         if kid:                                          # a compound of its own: its tracks at its size are the picture
             snapshot["tracks"] = snapshot["compounds"][kid]["tracks"]
+            snapshot["buses"] = snapshot["compounds"][kid].get("buses") or []
+            snapshot["master"] = snapshot["compounds"][kid].get("master") or {}
             snapshot["width"], snapshot["height"] = width, height
             snapshot["duration_us"] = project.end_us(snapshot["tracks"])
         follows = pathfollow.has_followers(snapshot)
-        pathfollow.resolve(snapshot)
+        heard = bool(soundmeter.sounding(snapshot))
+        if not heard:
+            pathfollow.resolve(snapshot)
         cache = self.cache_dir()
         f = dlg.format()
         own = follows or renderexport.needs_renderer(snapshot) or not renderexport.uses_mlt(spec)
@@ -6020,6 +6137,10 @@ class MainWindow(QMainWindow):
         def work(progress):
             os.makedirs(cache, exist_ok=True)
             os.makedirs(os.path.dirname(out), exist_ok=True)
+            if heard:
+                stage("分析聲音")
+                soundmeter.require(snapshot, cache, cancelled)
+                pathfollow.resolve(snapshot)
             if own:
                 # filters, blend modes, the other formats, transparency: our own renderer
                 return renderexport.export(snapshot, out, (fmt["width"], fmt["height"]), fps, first, last, opts,
@@ -6102,7 +6223,6 @@ class MainWindow(QMainWindow):
         if not self.proj:
             return
         view = json.loads(json.dumps(self.view()))
-        pathfollow.resolve(view)
         view["fps"] = self.proj["fps"]
         name = workspace.project_name(self.path) if self.path else "KiaseCut"
         stamp = timecode(self.playhead_us(), self.fps).replace(":", "-")
@@ -6123,6 +6243,8 @@ class MainWindow(QMainWindow):
 
         def work(_progress):
             os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+            soundmeter.require(view, cache)
+            pathfollow.resolve(view)
             return renderexport.still(view, t, size, out, alpha, bg, quality, cache)
 
         def done(errors):
@@ -7733,6 +7855,7 @@ class MainWindow(QMainWindow):
             self.fullscreen.close()
         for t in (self.sync_timer, self.ul_timer, self.clock):   # no new background work once closed
             t.stop()
+        self.sound_meter.cancel()
         self.player.shutdown()
         if getattr(self, "_thumb_engine", None) is not None:
             self._thumb_engine.close()

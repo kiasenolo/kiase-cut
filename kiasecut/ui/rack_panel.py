@@ -1,6 +1,6 @@
 """全局參數架 (rack.py), the panel after 屬性 and its tabs: the project's named values, each with its
 kind, its value at the playhead (◆: keyframes along the timeline), for a number or a whole number a ✎
-for an expression and a ∿ for an LFO, and the names to write in any clip's expression. Right-click a
+for an expression and a ∿ for an LFO, for a number a ♪ for a sound to follow (soundmeter.py), and the names to write in any clip's expression. Right-click a
 clip's number > 綁定全局參數 uses one; so does right-clicking its words, font, a colour, a switch, a
 menu or a vector (racklinks.py)."""
 import os
@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QCheckBox, QFileDialog, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
                                QScrollArea, QVBoxLayout, QWidget)
 
-from .. import curves, edit, lfo, rack
+from .. import curves, edit, lfo, rack, soundmeter
 from . import icons, look
 from .colorpick import hex_of, pick_color, qcolor, rgba
 from .inspector import KEY_ANIMATED, KEY_ON, ComboBox, SpinBox, key_button
@@ -18,6 +18,13 @@ from .menukeys import Menu
 
 EASINGS = (("線性", "linear"), ("緩入", "ease_in"), ("緩出", "ease_out"), ("緩入緩出", "ease_in_out"))
 BROWSE = "__browse__"
+
+
+def heard_label(root, spec):
+    """What a meter spec listens to, for a tooltip."""
+    comp = (root.get("compounds") or {}).get(spec.get("level")) or {}
+    channel = next((name for ident, _kind, name in soundmeter.channels(comp) if ident == spec.get("channel")), "？")
+    return f"{comp.get('name') or '？'} ▸ {channel}　{spec['lo_hz']:.0f}–{spec['hi_hz']:.0f} Hz"
 
 
 class RackRow(QWidget):
@@ -87,7 +94,7 @@ class RackRow(QWidget):
         lay.addWidget(editor, 1)
         self.key = key_button(lambda: self.send("key"))
         lay.addWidget(self.key)
-        self.lfo = self.expr = self.result = None
+        self.lfo = self.expr = self.sound = self.result = None
         if kind in rack.DRIVEN:
             self.expr = QPushButton("✎")
             self.expr.setFixedWidth(28)
@@ -97,6 +104,11 @@ class RackRow(QWidget):
             self.lfo.clicked.connect(lambda: self.send("lfo"))
             self.result = QLabel()
             self.result.setStyleSheet("color: #e0a030;")
+            if kind == "number":
+                self.sound = QPushButton("♪")
+                self.sound.setFixedWidth(28)
+                self.sound.clicked.connect(lambda: self.send("sound"))
+                lay.addWidget(self.sound)
             lay.addWidget(self.lfo)
             lay.addWidget(self.expr)
             lay.addWidget(self.result, 1)
@@ -188,16 +200,22 @@ class RackRow(QWidget):
         driven = lfo.is_lfo(p.get("lfo"))
         look.set_sheet(self.lfo, "color: #6fb3ff;" if driven else "")
         self.lfo.setToolTip(lfo.label(p["lfo"]) if driven else "加上 LFO（低頻振盪器）")
-        self.spin.setEnabled(not driven)
+        heard = self.sound is not None and soundmeter.is_spec(p.get("sound"))
+        problem = self.window_.problems.get(p["id"]) if heard else None
+        if self.sound is not None:
+            look.set_sheet(self.sound, "color: #ff6b6b;" if problem else "color: #52ffae;" if heard else "")
+            self.sound.setToolTip(problem or (heard_label(root, p["sound"]) if heard else "跟著聲音（peak to value）"))
+        self.spin.setEnabled(not driven and not heard)
         has = bool(p.get("expr"))
         look.set_sheet(self.expr, "color: #e0a030;" if has else "")
         self.expr.setToolTip(("表達式：" + p["expr"]) if has else "加上表達式")
-        self.result.setText(f"= {now.get(p['name'], 0.0):.4g}　{p['expr']}" if has else "")
-        self.result.setToolTip(p.get("expr", ""))
+        shown = f"= {now.get(p['name'], 0.0):.4g}　{p.get('expr', '')}" if has or heard else ""
+        self.result.setText(problem or shown)
+        self.result.setToolTip(problem or p.get("expr", ""))
 
 
 class RackPanel(QWidget):
-    action = Signal(str, str, object)        # parameter id, "value" (a value of its kind) / "key" / "rename" / "expr" / "lfo" / "lfo_off" /
+    action = Signal(str, str, object)        # parameter id, "value" (a value of its kind) / "key" / "rename" / "expr" / "lfo" / "lfo_off" / "sound" / "sound_off" /
                                              # "items" / "up" / "down" / "delete" / "easing" (a name)
     addRequested = Signal(str)               # kind (rack.KINDS)
     importRequested = Signal()
@@ -234,6 +252,7 @@ class RackPanel(QWidget):
         self.shape = None
         self.root = None
         self.t_us = 0
+        self.problems = {}                    # parameter id -> why its sound cannot be measured
 
     def set_fonts(self, fonts):
         """The installed fonts arrived (or changed): the rows are built again with them."""
@@ -274,5 +293,7 @@ class RackPanel(QWidget):
             menu.addAction("編輯選項…", lambda: self.action.emit(rid, "items", None))
         if kind in rack.DRIVEN:
             menu.addAction("取消 LFO", lambda: self.action.emit(rid, "lfo_off", None))
+        if kind == "number":
+            menu.addAction("取消聲音來源", lambda: self.action.emit(rid, "sound_off", None))
         menu.addAction("刪除參數", lambda: self.action.emit(rid, "delete", None))
         menu.exec(button.mapToGlobal(button.rect().bottomLeft()))

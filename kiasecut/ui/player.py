@@ -80,6 +80,13 @@ def speed_pcm(pcm, rate, carry=0.0):
     return np.round(out).astype(np.int16).tobytes(), want - n
 
 
+def alone_pcm(samples, frame, fps):
+    """One frame's sound (bytes, as Mixer.mix gives it) out of samples(a, b): float32 mono, a and
+    b counted from the start of the timeline at RATE. Both sides the same."""
+    out = samples(round(frame * RATE / fps), round((frame + 1) * RATE / fps))
+    return np.repeat(np.clip(out * 32768.0, -32768, 32767).astype(np.int16)[:, None], CHANNELS, axis=1).tobytes()
+
+
 class Worker(QObject):
     frameReady = Signal(QImage, int)
     textureReady = Signal(object, int)       # a glrender.GpuFrame, position: the frame stays in the GPU (sharedgl.py)
@@ -115,6 +122,7 @@ class Worker(QObject):
         self.rate = 1.0             # 播放速度
         self.new_rate = False       # it changed while playing: the clock and the sound start over
         self.rate_carry = 0.0       # (speed_pcm's leftover fraction of a sample)
+        self.alone = None           # a sound heard in place of the project's (set_alone)
         self.volume = 1.0           # 預覽音量: the volume of the preview alone (the export never hears it)
         self.keep_pitch = True      # 保持音高: the sound keeps its pitch at other speeds
         self.stretcher = None       # (the stretch.Stretch doing it, from where the sound began)
@@ -219,6 +227,11 @@ class Worker(QObject):
             self.rate = max(0.05, float(rate))
             self.new_rate = True
             self.cv.notify()
+
+    def set_alone(self, samples):
+        """Play samples (alone_pcm's; called on this player's thread) instead of what the project
+        sounds like; None: the project again. What is queued already is still heard."""
+        self.alone = samples
 
     def set_volume(self, v):
         """預覽音量: the preview's sound times v (linear), apart from the project's master volume."""
@@ -635,7 +648,9 @@ class Worker(QObject):
                     return
             if self.audio_n > ahead or self.audio_f >= self.length:
                 return
-            pcm = self.mixer.mix(self.audio_f / step, fps / step)      # one picture's sound
+            alone = self.alone
+            pcm = self.mixer.mix(self.audio_f / step, fps / step) if alone is None \
+                else alone_pcm(alone, self.audio_f / step, fps / step)  # one picture's sound
             a = np.frombuffer(pcm, np.int16).reshape(-1, CHANNELS)
             if len(a):
                 peak = np.abs(a.astype(np.int32)).max(axis=0) / 32768.0

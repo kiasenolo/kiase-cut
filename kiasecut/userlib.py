@@ -222,6 +222,49 @@ def load_style(path):
     return d
 
 
+# -- sound presets (聲音效果預設): whole chains, in presets/.sound -----------------------------------
+SOUND_PRESETS = ".sound"                    # (a hidden folder: the Library lists video effects only)
+SOUND_EXT_PRESET = ".kcsfx"
+
+
+def sound_preset_dir(root):
+    return os.path.join(category_dir(root, "presets"), SOUND_PRESETS)
+
+
+def sound_preset_path(root, name):
+    safe = "".join("_" if ch in '\\/:*?"<>|' or ord(ch) < 32 else ch for ch in name).strip().lstrip(".")
+    if not safe:
+        raise ValueError("預設要有名稱")
+    return os.path.join(sound_preset_dir(root), safe + SOUND_EXT_PRESET)
+
+
+def sound_presets(root):
+    """[(name, path)] of the saved chains, by name."""
+    try:
+        names = os.listdir(sound_preset_dir(root))
+    except OSError:
+        return []
+    return sorted((n[:-len(SOUND_EXT_PRESET)], os.path.join(sound_preset_dir(root), n))
+                  for n in names if n.endswith(SOUND_EXT_PRESET))
+
+
+def save_sound_preset(root, name, chain):
+    """Keep a chain under name (one of that name is replaced); entries: soundedit.preset_entries."""
+    dst = sound_preset_path(root, name)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "w", encoding="utf-8") as fh:
+        json.dump({"format": "kiasecut-sound-preset", "effects": chain}, fh, ensure_ascii=False, indent=1)
+    return dst
+
+
+def load_sound_preset(path):
+    with open(path, encoding="utf-8") as fh:
+        d = json.load(fh)
+    if d.get("format") != "kiasecut-sound-preset" or not isinstance(d.get("effects"), list):
+        raise ValueError("不是聲音效果預設")
+    return d["effects"]
+
+
 # -- compounds ---------------------------------------------------------------------------------------
 def compound_deps(proj, kid):
     """kid and every compound it shows, inside it as deep as they go (each once, kid first)."""

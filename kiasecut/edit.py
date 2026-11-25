@@ -14,7 +14,7 @@ import random
 import time
 import uuid
 
-from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, racklinks, textlayout, textvars, viz
+from . import assets, components, curves, expr, fonts, fx, lfo, mapping, masks, nodegraph, project, rack, racklinks, soundfx, soundmeter, textlayout, textvars, viz
 
 MIN_US = 1_000_000 // 60          # a clip never gets shorter than one 60 fps frame
 MERGE_S = 2.0
@@ -218,6 +218,8 @@ def _params(c):
         out += [v for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) + [e.get("mix")]
                 + [x for src in (e.get("sources") or {}).values() for x in src.values()]
                 if curves.is_animated(v)]
+    for params in soundfx.param_dicts(c.get("sound_effects")):
+        out += [v for v in params.values() if curves.is_animated(v)]
     return out
 
 
@@ -1070,6 +1072,9 @@ def _valid_key(c, group, key):
     """Whether `key` is a parameter of `group` (groups "fx:<effect id>",
     "fxmask:<effect id>" and "fxmix:<effect id>" are an effect's own parameters, its mask and
     its 混合程度)."""
+    if group.startswith("sfx:"):                 # (the clip's 聲音效果: "sfx:<effect id>[/<node id>]")
+        p = soundfx.spec(_sound(c, group), key)
+        return p is not None and not p.get("choices")
     if group.startswith("fx:"):
         return key in _effect(c, group[3:])["params"]
     if group.startswith("fxmix:"):
@@ -1108,7 +1113,16 @@ def holder(c, group):
     return _holder(c, group)
 
 
+def _sound(c, group):
+    found = next((e for path, e in soundfx.entries(c.get("sound_effects")) if path == group[4:]), None)
+    if found is None:
+        raise EditError("找不到這個聲音效果")
+    return found
+
+
 def _holder(c, group):
+    if group.startswith("sfx:"):
+        return _sound(c, group).setdefault("params", {})
     if group.startswith("fx:"):
         return _effect(c, group[3:])["params"]
     if group.startswith("fxmask:"):
@@ -1363,6 +1377,8 @@ def _toggle_one(c, h, group, key, t):
         default = components.default(c["compound"], components.param(c["compound"], key))
     elif group.startswith("tvar:"):
         default = textvars.default_value(h.get("kind", "text"))
+    elif group.startswith("sfx:"):
+        default = soundfx.spec(_sound(c, group), key)["default"]
     elif key in DISCRETE_DEFAULTS and not group.startswith("fx:"):
         _check_choice(c, group, key, DISCRETE_DEFAULTS[key])
         default = DISCRETE_DEFAULTS[key]
@@ -1432,6 +1448,10 @@ def key_times(c):
     for e in c.get("effects") or []:
         for v in list(e["params"].values()) + list((e.get("mask") or {}).values()) + [e.get("mix")] + \
                 [x for src in (e.get("sources") or {}).values() for x in src.values()]:
+            if curves.is_animated(v):
+                times |= {k[0] for k in v["keys"]}
+    for params in soundfx.param_dicts(c.get("sound_effects")):
+        for v in params.values():
             if curves.is_animated(v):
                 times |= {k[0] for k in v["keys"]}
     return sorted(times)
@@ -4798,6 +4818,10 @@ def rename_rack_param(root, rid, name):
     for q in rack.params(root):
         if q.get("expr"):
             q["expr"] = rack.rename_in(q["expr"], old, name)
+    for chain in soundfx.every_chain(root):
+        for _path, e in soundfx.entries(chain):
+            if e.get("expr"):
+                e["expr"] = {k: rack.rename_expr(x, old, name) for k, x in e["expr"].items()}
     for c in rack.clips_with_exprs(root):
         if c.get("expr"):
             c["expr"] = {k: rack.rename_expr(x, old, name) for k, x in c["expr"].items()}
@@ -4836,14 +4860,24 @@ def set_rack_expr(root, rid, text):
     if not text or text == "input":
         p.pop("expr", None)
         return p
+    heard = soundmeter.loops(root)
     p["expr"] = text
-    loop = rack.cycle(root)
-    if loop:
+
+    def undo():
         if before:
             p["expr"] = before
         else:
             p.pop("expr", None)
+
+    loop = rack.cycle(root)
+    if loop:
+        undo()
         raise EditError("循環依賴：" + " → ".join(loop + [loop[0]]))
+    try:
+        soundmeter.refuse_new_loops(root, heard)
+    except soundmeter.MeterError as exc:
+        undo()
+        raise EditError(str(exc)) from None
     return p
 
 
@@ -4859,6 +4893,38 @@ def set_rack_lfo(root, rid, spec):
     if why:
         raise EditError(f"LFO 有問題：{why}")
     p["lfo"] = copy.deepcopy(spec)
+    p.pop("sound", None)
+    return p
+
+
+def set_rack_sound(root, rid, spec):
+    """The meter (soundmeter.py) a number parameter takes its value from; None takes it away (the
+    parameter is its value again). Refused when the parameter would hear itself."""
+    p = _rack_param(root, rid)
+    if spec is None:
+        p.pop("sound", None)
+        return p
+    if rack.kind_of(p) != "number":
+        raise EditError("只有數字參數可以用聲音來源")
+    try:
+        spec = soundmeter.clean(spec)
+        soundmeter.upstream(soundmeter.holder(root, spec["level"]), spec["channel"])
+    except (ValueError, soundmeter.MeterError) as exc:
+        raise EditError(f"聲音來源有問題：{exc}") from None
+    before, lfo_before = p.get("sound"), p.get("lfo")
+    heard = soundmeter.loops(root)
+    heard.pop(rid, None)                    # (a circle this one is in already is not a reason to keep it)
+    p["sound"] = spec
+    p.pop("lfo", None)
+    try:
+        soundmeter.refuse_new_loops(root, heard)
+    except soundmeter.MeterError as exc:
+        for key, was in (("sound", before), ("lfo", lfo_before)):
+            if was is None:
+                p.pop(key, None)
+            else:
+                p[key] = was
+        raise EditError(str(exc)) from None
     return p
 
 
@@ -4932,6 +4998,8 @@ def import_rack(root, items):
             p["expr"] = d["expr"]
         if d.get("lfo"):
             p["lfo"] = d["lfo"]
+        if d.get("sound"):                      # (a channel of another project's reads 0 until it is picked again)
+            p["sound"] = d["sound"]
     loop = rack.cycle(root)
     if loop:                                                  # (names that were taken may have joined a circle)
         for p in rack.params(root)[-len(items):]:

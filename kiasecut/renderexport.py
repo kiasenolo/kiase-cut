@@ -19,7 +19,7 @@ import wave
 
 from PySide6.QtGui import QImage
 
-from . import assets, audiomix, components, curves, formats, glrender, gpu, project, render, sysmem, videoreader
+from . import assets, audiomix, components, curves, dsp, formats, glrender, gpu, project, render, soundfx, soundmeter, sysmem, videoreader
 from .build import find_ffmpeg
 
 US = 1_000_000
@@ -42,6 +42,8 @@ def needs_renderer(proj):
     text's picture in its own way), or is a built-in asset with keyframes or an outline
     reaching out of its frame or 0 wide or high (MLT divides by its size), or a component's clip with values of its own (MLT would show
     the component's), or has rounded corners (圓角), or is 只當遮罩 (MLT would draw it)."""
+    if soundfx.used(proj):                      # processed sound: only audiomix makes it
+        return True
     return any(c["type"] == "filter" or c.get("effects") or c.get("matte_only") or project.is_static(c) or _blend_or_mask_keys(c)
                or ((c.get("params") or c.get("places") or components.has_exprs(c.get("compound")))
                    and components.of_clip(c) is not None)
@@ -141,6 +143,7 @@ def stems(proj, out, fps, first, last, ext, cache_dir=None, cancelled=lambda: Fa
     view = dict(proj, fps=float(fps))
     cache = cache_dir or os.path.dirname(out)
     os.makedirs(cache, exist_ok=True)
+    soundmeter.require(view, cache, cancelled)
     wavs = []
     try:
         wavs = _stem_wavs(audiomix.Mixer(cache), view, cache, fps, first, last, cancelled)
@@ -165,11 +168,16 @@ def export(proj, out, size, fps, first, last, opts, on_progress=None, cache_dir=
     spec = dict({"format": formats.DEFAULT, "audio": True}, **(spec or {}))
     fmt = formats.get(spec["format"])
     view = dict(proj, fps=float(fps), width=proj["width"], height=proj["height"])
+    if (fmt.audio and (spec["audio"] or not fmt.has_video) or spec.get("stems")) and soundfx.used(view) and dsp.error():
+        raise RuntimeError(f"這個專案用了聲音效果，但聲音效果函式庫無法使用，匯出的聲音會不對。\n{dsp.error()}")
     cache = cache_dir or os.path.dirname(out)
     os.makedirs(cache, exist_ok=True)
     t0 = time.time()
     progress = on_progress or (lambda p: None)
     stage = on_stage or (lambda s: None)
+    if soundmeter.sounding(view):
+        stage("分析聲音")
+        soundmeter.require(view, cache, cancelled, allow_errors=bool(spec.get("allow_errors")))
 
     mix = audiomix.Mixer(cache)
     wav, stem_wavs, temps = None, [], []
@@ -229,6 +237,8 @@ def still(view, t_us, size, out, alpha=True, background=None, quality=92, cache_
         px, rw, rh = engine.media_frame(path, us, view["fps"], max(1, int(w)), max(1, int(h)))
         return QImage(px, rw, rh, rw * 4, QImage.Format_RGBA8888).copy()
 
+    if soundmeter.sounding(view):
+        soundmeter.require(view, cache_dir or os.path.dirname(os.path.abspath(out)))
     renderer = glrender.make(video) if gpu.enabled else render.Renderer(video)
     renderer.cache_dir = cache_dir
     try:

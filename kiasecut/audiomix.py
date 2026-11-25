@@ -7,6 +7,9 @@ shifts its sound later. A clip with a speed (project.speed) plays its source fas
 time-stretched once at its own pitch instead: stretch.stretch_all) - and so does everything inside a compound
 clip with a speed; a frozen clip (凍結幀) is silent. Decoding runs in a background thread; clips not decoded yet are
 silent until they are.
+
+A project that processes its sound (soundfx.used: effects, buses, sends, pans) is mixed by
+soundgraph.Engine, which takes each clip's sound from mix_window here and sends it through.
 """
 import hashlib
 import os
@@ -16,12 +19,17 @@ import time
 
 import numpy as np
 
-from . import curves, normalize, project, stretch
+from . import curves, normalize, project, soundfx, soundgraph, stretch
 from .build import audio_stream, audio_streams, find_ffmpeg, media_start
 
 RATE, CHANNELS = 48000, 2
 RETRY_S = 30.0                   # a file found to have no sound is tried again this long after (Mixer.failed)
 US = 1_000_000
+
+
+def Source_of(clip, start_us, win, rate):
+    """The Source of a clip in a processed mix (its track's gain is the engine's fader)."""
+    return Source(clip, start_us, win, 1.0, rate)
 
 
 class Source:
@@ -117,6 +125,8 @@ def _stamp(path):
 
 
 class Mixer:
+    engine = None                             # soundgraph.Engine while the view processes its sound
+
     def __init__(self, cache_dir):
         self.cache_dir = cache_dir
         self.dir = os.path.join(cache_dir, "audio")
@@ -132,8 +142,15 @@ class Mixer:
     def set_view(self, view, only=None):
         """only: one of the view's tracks, to mix that track alone."""
         self.master = float(view.get("master_gain", 1.0))
-        srcs = sources(view["tracks"], only=only, level=project.level_tracks(view))
+        engine = None
         with self.lock:
+            if soundfx.used(view) or view.get("meter_channels"):     # (the 聲音 page's meters need the engine)
+                engine = self.engine or soundgraph.Engine(Source_of)
+                engine.set_view(view, only["id"] if only is not None else None)
+                srcs = engine.sources()
+            else:
+                srcs = sources(view["tracks"], only=only, level=project.level_tracks(view))
+            self.engine = engine
             for s in srcs:
                 k = s.dkey()
                 if k in self.decoded:
@@ -192,6 +209,9 @@ class Mixer:
         b = round((frame + 1) * RATE / fps)
         with self.lock:
             srcs = list(self.sources)
+            if self.engine is not None:
+                acc = self.engine.render(a, b) * (32768.0 * self.master)
+                return np.clip(acc, -32768, 32767).astype(np.int16).tobytes()
         acc = mix_window(srcs, b - a, frame / fps * US, self.master)
         return np.clip(acc, -32768, 32767).astype(np.int16).tobytes()
 

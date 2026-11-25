@@ -36,15 +36,19 @@ def at(c, t_us, names=None):
             cur = components.number_at(c, prop, t_us)
         except (KeyError, ValueError, TypeError):
             continue                                         # (a prop the clip has not got any more)
-        if lfo.is_lfo(text):                              # an LFO of its own (lfo.py), seconds into the clip
-            v = lfo.safe(text, t_us / curves.US, cur, dur / curves.US)
-        elif mapping.is_mapping(text):                   # bound to a parameter of the rack, through a 映射
-            x = (names or {}).get(text.get("src", ""))
-            if not isinstance(x, (int, float)):               # (a vector, a colour or words are no number to map)
-                x = None
-            v = cur if x is None and text["mode"] != "js" and text.get("src") else \
-                mapping.apply(text, cur if x is None else x, dict(base, value=cur))
-        else:
-            v = expr.safe(text, dict(base, value=cur), default=cur)
-        out = components._put(out, prop, v)
+        out = components._put(out, prop, follow(text, cur, base, names, t_us / curves.US, dur / curves.US))
     return out
+
+
+def follow(text, cur, env, names, seconds, duration):
+    """What a number that is cur becomes under text (an expression, a 映射 or an LFO); env: the
+    names it reads (the rack's among them: names), seconds into what it is on."""
+    if lfo.is_lfo(text):                              # an LFO of its own (lfo.py)
+        return lfo.safe(text, seconds, cur, duration)
+    if mapping.is_mapping(text):                      # bound to a parameter of the rack, through a 映射
+        x = (names or {}).get(text.get("src", ""))
+        if not isinstance(x, (int, float)):               # (a vector, a colour or words are no number to map)
+            x = None
+        return cur if x is None and text["mode"] != "js" and text.get("src") else \
+            mapping.apply(text, cur if x is None else x, dict(env, value=cur))
+    return expr.safe(text, dict(env, value=cur), default=cur)

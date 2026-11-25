@@ -33,7 +33,7 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import (QCheckBox, QFormLayout, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QSplitter,
                                QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget)
 
-from .. import assets, components, curves, edit, fx, textvars
+from .. import assets, components, curves, edit, fx, soundfx, textvars
 from . import touch, viewglide, wheel
 from .inspector import PARAMS, PLACE_ROWS, SpinBox
 from .toolbarscroll import ToolbarScroll
@@ -87,13 +87,14 @@ def param_rows(c):
         if p["kind"] == "image":
             out += [("place:" + p["id"], r[0], f"{p['name']}·{'位置' if r[0] in ('cx', 'cy') else '大小'} {r[1]}",
                      r[6], r[7]) for r in PLACE_ROWS]
+    out += soundfx.clip_rows(c.get("sound_effects"))
     return out
 
 
 def holder(c, group):
     if group.startswith("place:"):
         return (c.get("places") or {}).get(group[6:]) or {}
-    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "tvar:")):
+    if group.startswith(("fx:", "fxmask:", "fxmix:", "fxsrc:", "tvar:", "sfx:")):
         try:
             return edit.holder(c, group)
         except edit.EditError:

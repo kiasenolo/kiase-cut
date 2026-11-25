@@ -2,7 +2,7 @@
 follow one through an expression (propexpr.py) by writing its name; its colours, words, fonts,
 switches, menus and vectors can follow one of the same kind through a link (racklinks.py).
 
-proj["rack"] = [{id, name, kind, value, expr, items}]
+proj["rack"] = [{id, name, kind, value, expr, items, lfo, sound}]
     name   a name an expression can read (letters, digits, _; not one of expr.py's own)
     kind   one of KINDS; absent: "number" (older projects)
     value  a value of the kind, or keyframes (curves.py) along the project's timeline:
@@ -13,6 +13,8 @@ proj["rack"] = [{id, name, kind, value, expr, items}]
     items  a menu's choices, in order
     lfo    optional (number, int): an LFO (lfo.py) - the parameter is its output along the timeline
            instead of value
+    sound  optional (number): a meter (soundmeter.py) - the parameter is how loud a box of a channel's
+           spectrum is, 0 - 1, instead of value (0 until it has been measured)
     expr   optional (number, int): an expression (expr.py) that turns value into what the parameter
            is - input (value now), time (the timeline's seconds) and other parameters by name;
            absent: `input`
@@ -29,7 +31,7 @@ import json
 import math
 import re
 
-from . import curves, expr, lfo, mapping
+from . import curves, expr, lfo, mapping, soundmeter
 
 RESERVED = ({"input", "value", "time", "progress", "duration", "Math", "undefined", "null"}
             | set(expr.CONSTANTS) | set(expr.FUNCTIONS) | set(expr.NEEDS_ENV))
@@ -219,7 +221,9 @@ def values(root, t_us):
         own = value_at(p, t_us)
         if kind in DRIVEN:
             base = float(own)
-            if lfo.is_lfo(p.get("lfo")):
+            if kind == "number" and soundmeter.is_spec(p.get("sound")):
+                base = soundmeter.value(p, t_us)
+            elif lfo.is_lfo(p.get("lfo")):
                 base = lfo.safe(p["lfo"], t_us / curves.US, base)
             if p.get("expr") and n not in busy:
                 busy.add(n)
@@ -257,8 +261,12 @@ def clips_with_exprs(root):
 
 
 def users(root, name):
-    """How many clips (compounds' layers too) have an expression or a link that reads the parameter `name`."""
-    return sum(1 for c in clips_with_exprs(root)
+    """How many clips (compounds' layers too) and sound effects have an expression or a link that
+    reads the parameter `name`."""
+    from . import soundfx
+    sound = sum(1 for chain in soundfx.every_chain(root) for _path, e in soundfx.entries(chain)
+                if any(name in _names(x) for x in (e.get("expr") or {}).values()))
+    return sound + sum(1 for c in clips_with_exprs(root)
                if any(name in _names(x) for x in (c.get("expr") or {}).values()) or name in (c.get("links") or {}).values())
 
 
@@ -281,7 +289,8 @@ def export_text(root):
         {"name": p["name"], **({"kind": p["kind"]} if kind_of(p) != "number" else {}),
          **({"items": list(p.get("items") or [])} if kind_of(p) == "menu" else {}),
          "value": copy.deepcopy(p.get("value", 0.0)), **({"expr": p["expr"]} if p.get("expr") else {}),
-         **({"lfo": copy.deepcopy(p["lfo"])} if lfo.is_lfo(p.get("lfo")) else {})}
+         **({"lfo": copy.deepcopy(p["lfo"])} if lfo.is_lfo(p.get("lfo")) else {}),
+         **({"sound": copy.deepcopy(p["sound"])} if soundmeter.is_spec(p.get("sound")) else {})}
         for p in params(root)]}, ensure_ascii=False, indent=1)
 
 
@@ -317,12 +326,13 @@ def parse_import(text):
         choices = clean_items(d.get("items")) if kind == "menu" else []
         if kind == "menu" and not choices:
             continue
-        e, l = d.get("expr"), d.get("lfo")
+        e, l, heard = d.get("expr"), d.get("lfo"), d.get("sound")
         out.append({"name": d["name"], **({"kind": kind} if kind != "number" else {}),
                     **({"items": choices} if kind == "menu" else {}),
                     "value": _import_value(kind, d.get("value"), choices),
                     **({"expr": e} if kind in DRIVEN and isinstance(e, str) and expr.check(e) is None else {}),
-                    **({"lfo": l} if kind in DRIVEN and lfo.is_lfo(l) and lfo.check(l) is None else {})})
+                    **({"lfo": l} if kind in DRIVEN and lfo.is_lfo(l) and lfo.check(l) is None else {}),
+                    **({"sound": soundmeter.clean(heard)} if kind == "number" and soundmeter.check(heard) is None else {})})
     if not out:
         raise ValueError("檔案裡沒有參數")
     return out

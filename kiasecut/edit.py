@@ -979,6 +979,7 @@ GROUP_FIELDS = {
     "mask": ("cx", "cy", "w", "h", "rotation", "feather", "kind", "invert", "paths"),     # (paths: a 路徑 mask's)
     "clip": ("volume", "blend"),
     "camera": ("fov", "x", "y", "z", "tx", "ty", "tz", "aperture", "focus"),                   # 攝影機 of a group or compound (camera.py)
+    "light": ("power",),                                                                       # 燈光 objects (lights.py)
     "solid": ("depth", "bevel", "metallic", "roughness"),                                      # 立體: a text of a scene made solid (mesh3d.py)
 }
 # how a picture mixes with what is under it (render.BLEND_OPS draws them); a group's can also be
@@ -1044,7 +1045,7 @@ def _valid_key(c, group, key):
 def has_param(c, group, key):
     """Whether clip c has the parameter group / key to keyframe: a transform, text or mask
     of its own, a sound for the volume, a picture for the blend mode, that filter."""
-    if group in ("transform", "text", "mask", "camera", "solid") and not c.get(group):
+    if group in ("transform", "text", "mask", "camera", "solid", "light") and not c.get(group):
         return False
     if group == "clip" and (key == "volume" and key not in c or key == "blend" and c["type"] not in VISUAL):
         return False
@@ -1081,6 +1082,10 @@ def _holder(c, group):
         if c["type"] not in ("group", "compound") and not (c["type"] == "image" and c.get("camera")):
             raise EditError("只有群組、複合片段和相機物件有攝影機")
         return c.setdefault("camera", {})
+    if group == "light":
+        if not c.get("light"):
+            raise EditError("只有燈光物件有燈光設定")
+        return c["light"]
     if group == "solid":
         if c["type"] != "text":
             raise EditError("只有文字可以做成立體")
@@ -1217,6 +1222,9 @@ def set_param(proj, clip_id, group, key, value, t=None):
             h["scale_y"] = copy.deepcopy(h.get("scale", 1.0))     # Y gets a curve of its own
         for k, v in with_linked_scale(h, {key: value}, t).items():
             _set_one(c, h, group, k, v, t)
+        return c
+    if group == "light" and key == "color":
+        h[key] = [min(1.0, max(0.0, float(v))) for v in value[:3]]
         return c
     if group == "solid" and key in ("on", "advanced"):
         h[key] = bool(value)
@@ -4268,6 +4276,17 @@ def new_camera(level, params, path, at_us, track_id=None):
     c["name"] = "相機"
     c.setdefault("transform", {})["z"] = -1.0 / math.tan(math.radians(40.0) / 2)
     c["camera"] = {"fov": 40.0, "aperture": 0.0}        # (no target: it is turned by the clip's 旋轉 X, Y, Z)
+    return c
+
+
+def new_light(level, kind, params, path, at_us, track_id=None):
+    """燈光: a light object of `kind` (lights.KINDS) at at_us in the level, a scene. params, path: the 空物體 it is made of."""
+    from . import assets, library, lights
+    c = library.place_item(level, assets.item(params, path), track_id, at_us)
+    c["asset"] = params
+    c["name"] = lights.KINDS[kind]
+    c.setdefault("transform", {}).update(lights.new_transform(kind))
+    c["light"] = lights.new_settings(kind)
     return c
 
 

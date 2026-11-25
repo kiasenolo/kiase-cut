@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QAbstractSlider, QAbstractSpin
                                QVBoxLayout,
                                QWidget)
 
-from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, project, recovery,
+from .. import (androidfs, assets, build, camera, components, curves, edit, fonts, fx, gizmos, gpu, keybatch, layouts, lfo, library, lights, project, recovery,
                mapping, nodegraph, rack, render, renderexport, sysmem, textpresets, thumbnail, toolsdata, userlib, viz, waveform, workspace)
 from ..client import EngineClient
 from ..importers import jianying
@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
                     ("transform", "shadow_opacity"): "陰影", ("transform", "shadow_x"): "陰影", ("transform", "shadow_y"): "陰影", ("transform", "shadow_blur"): "陰影", ("transform", "shadow_spread"): "陰影", ("transform", "flip_h"): "水平翻轉", ("transform", "flip_v"): "垂直翻轉",
                     ("transform", "rotation"): "旋轉", ("transform", "opacity"): "不透明度",
                     ("transform", "z"): "3D 位置", ("transform", "rot_x"): "3D 旋轉", ("transform", "rot_y"): "3D 旋轉", ("camera", "on"): "攝影機",
-                    ("solid", "on"): "立體", ("solid", "advanced"): "進階光照", ("solid", "depth"): "立體厚度", ("solid", "bevel"): "立體倒角", ("solid", "metallic"): "金屬度", ("solid", "roughness"): "粗糙度",
+                    ("light", "power"): "燈光強度", ("light", "color"): "燈光顏色", ("solid", "on"): "立體", ("solid", "advanced"): "進階光照", ("solid", "depth"): "立體厚度", ("solid", "bevel"): "立體倒角", ("solid", "metallic"): "金屬度", ("solid", "roughness"): "粗糙度",
                     ("camera", "fov"): "攝影機視角", ("camera", "x"): "攝影機位置", ("camera", "y"): "攝影機位置", ("camera", "z"): "攝影機位置",
                     ("camera", "aperture"): "景深", ("camera", "focus"): "景深", ("camera", "tx"): "攝影機目標", ("camera", "ty"): "攝影機目標", ("camera", "tz"): "攝影機目標",
                     ("transform", "pivot_x"): "中心點", ("transform", "pivot_y"): "中心點",
@@ -4883,6 +4883,17 @@ class MainWindow(QMainWindow):
                     params, path = made
                     self.apply("加入相機", lambda lvl: edit.new_camera(lvl, params, path, round(start_us), track_id or None),
                                select=lambda c: c["id"])
+            return
+        if ident[8:] in lights.KINDS and ident.startswith("scene3d:"):    # 燈光: an object of a 3D 場景 that lights its solids
+            if self.ensure_project():
+                made = self.new_asset(assets.ident("empty.small", *self.assets.colors))
+                if made is not None:
+                    params, path = made
+                    kind = ident[8:]
+                    self.apply("加入" + lights.KINDS[kind], lambda lvl: edit.new_light(lvl, kind, params, path, round(start_us), track_id or None),
+                               select=lambda c: c["id"])
+                    if not camera.on(self.view().get("camera")) and not camera.has_clips(self.view()["tracks"]):
+                        self.statusBar().showMessage("燈光在 3D 場景裡才有作用：先放一台相機，或進入一個 3D 場景", 5000)
             return
         if ident.startswith("scene3d:"):                   # 3D 場景: a compound with a camera, entered to put clips in it
             if self.ensure_project():

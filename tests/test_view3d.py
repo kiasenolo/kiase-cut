@@ -573,3 +573,48 @@ class CameraObjectHandles(unittest.TestCase):
         self.assertIn("rot_y", vals["transform"])
         v3 = pv.view3d
         self.assertFalse(v3.has_target())
+
+
+class LightObjects(unittest.TestCase):
+    """燈光 objects in the 3D view: icons that are picked like clips and moved with their arrows."""
+
+    def setUp(self):
+        self.pv = Preview()
+        self.pv.resize(960, 540)
+        v = scene_view()
+        lamp = clip("lamp", 0, 4 * S, transform={"x": -1.5, "y": 1.1, "scale": 1.0, "rotation": 0.0, "opacity": 1.0, "z": -0.5})
+        lamp["type"], lamp["asset"] = "image", {"family": "empty", "w": 100, "h": 100}
+        lamp["light"] = {"kind": "point", "power": 100.0, "color": [1, 1, 1]}
+        v["tracks"].append({"id": "t2", "kind": "video", "name": "l", "clips": [lamp]})
+        self.view_dict = v
+        self.pv.set_scene(v, S, "c1")
+        self.pv.set_view3d(True)
+        self.picked, self.done = [], []
+        self.pv.clipPicked.connect(self.picked.append)
+        self.pv.paramsCommitted.connect(lambda *a: self.done.append(a))
+
+    def at(self, world):
+        x, y = self.pv.view3d.seen().point(world)
+        r = self.pv._rect()
+        return QPoint(round(r.x() + x / self.pv.W * r.width()), round(r.y() + y / self.pv.H * r.height()))
+
+    def test_it_is_an_icon_not_a_plane_picked_by_a_click_and_moved_by_its_arrows(self):
+        pv, v = self.pv, self.pv.view3d
+        (c, place, _way), = v.light_objects()
+        self.assertEqual(c["id"], "lamp")
+        self.assertNotIn("lamp", v.plane_corners())
+        QTest.mouseClick(pv, Qt.LeftButton, Qt.NoModifier, self.at(place))
+        self.assertEqual(self.picked[-1]["id"], "lamp")
+        pv.set_scene(self.view_dict, S, "lamp")
+        b = v.selected()
+        o = v.origin(v.values(b))
+        self.assertEqual(v.hit_arrow(QPointF(self.at(o)))[0], "plane")
+        self.assertIsNone(v.key_action(QKeyEvent(QEvent.KeyPress, Qt.Key_S, Qt.NoModifier)))
+        start = self.at(v.arrows(v.seen(), o, pv._k())["x"][0])
+        QTest.mousePress(pv, Qt.LeftButton, Qt.NoModifier, start)
+        QTest.mouseMove(pv, start + QPoint(30, 0))
+        QTest.mouseMove(pv, start + QPoint(60, 0))
+        QTest.mouseRelease(pv, Qt.LeftButton, Qt.NoModifier, start + QPoint(60, 0))
+        (cid, group, vals), = self.done
+        self.assertEqual((cid, group, set(vals)), ("lamp", "transform", {"x"}))
+        pv.grab()

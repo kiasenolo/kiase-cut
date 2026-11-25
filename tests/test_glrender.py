@@ -275,6 +275,31 @@ class GpuMatchesCpu(unittest.TestCase):
         self.assertGreater(int(hit.sum()), 300)                                    # (the faces: exactly the picked colour)
         self.assertGreater(float(np.abs(simple - lit)[hit].mean()), 3.0)
 
+    def lamp(self, cid, kind, power=100.0, color=(1.0, 1.0, 1.0), **t):
+        from kiasecut import lights
+        return {"id": cid, "type": "image", "name": cid, "start_us": 0, "duration_us": 2 * S, "source_start_us": 0,
+                "light": {"kind": kind, "power": power, "color": list(color)}, "transform": dict(tf(**dict(lights.new_transform(kind), **t)))}
+
+    def test_light_objects_light_the_advanced_solids_instead_of_the_scenes_own_lamps(self):
+        word = lambda adv=True: self.solid_text(color=(0.8, 0.8, 0.8), z=0.03, advanced=adv)
+        own = self.scene_shot(word())
+        face = own.max(axis=2) > 60
+        self.assertGreater(int(face.sum()), 300)
+        level = lambda img: float(img[face].mean())
+        red = self.scene_shot(word(), self.lamp("l", "sun", 150.0, (1.0, 0.0, 0.0)))
+        self.assertGreater(float(red[face][:, 0].mean()), float(red[face][:, 2].mean()) + 20)           # (lit red)
+        dim = self.scene_shot(word(), self.lamp("l", "sun", 0.0), self.lamp("a", "ambient", 0.0))
+        self.assertLess(level(dim), 0.6 * level(own))
+        bright = self.scene_shot(word(), self.lamp("l", "sun", 0.0), self.lamp("a", "ambient", 300.0))
+        self.assertGreater(level(bright), level(dim) + 40)
+        point = lambda z: level(self.scene_shot(word(), self.lamp("l", "point", 100.0, x=0.0, y=0.0, z=z), self.lamp("a", "ambient", 0.0)))
+        self.assertGreater(point(-1.5), point(-6.0) + 20)                                               # (farther: weaker)
+        later = self.lamp("l", "sun", 150.0, (1.0, 0.0, 0.0))
+        later["start_us"] = S
+        self.assertEqual(int(np.abs(self.scene_shot(word(), later) - own).max()), 0)                   # (not playing: the scene's own lamps)
+        simple = self.scene_shot(word(False))
+        self.assertEqual(int(np.abs(self.scene_shot(word(False), self.lamp("l", "sun", 150.0, (1.0, 0.0, 0.0))) - simple).max()), 0)
+
     def test_depth_of_field_blurs_what_is_out_of_focus_the_same_by_both(self):
         near, far = self.bg(transform=tf(scale=0.5, x=-0.4)), self.bg(transform=tf(scale=0.5, x=0.4, z=1.5))
         v = self.view([near, far])

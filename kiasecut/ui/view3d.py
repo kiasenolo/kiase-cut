@@ -15,7 +15,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QCursor, QPen, QPolygonF
 
-from .. import assets, camera, curves, fx, gizmos, project
+from .. import assets, camera, curves, fx, gizmos, lights, project
 
 ORBIT_PER_PX = 0.4            # degrees a screen px of drag turns the view
 ZOOM_PER_PX = 0.006           # (exponent of the distance)
@@ -32,6 +32,11 @@ PARTICLE_COLOR = QColor(255, 200, 60)
 PARTICLE_HANDLES = ("ewidth", "eheight", "erot", "speed", "spread_a", "spread_b", "aim", "accel")      # (the emitter's place is the plane's: its arrows)
 
 NUMPAD = {Qt.Key_1: ("front", "back"), Qt.Key_3: ("right", "left"), Qt.Key_7: ("top", "bottom")}
+
+
+def marker(clip):
+    """A 相機 or 燈光 object: drawn as what it is, not as a plane, and never scaled."""
+    return camera.is_clip(clip) or lights.is_clip(clip)
 
 
 class CamThing:
@@ -68,6 +73,59 @@ class View3D:
         """Whether the scene's camera looks at a target (a 相機 object that is turned by its angles has none)."""
         obj = self.active_object()
         return obj is None or any(k in obj["camera"] for k in ("tx", "ty", "tz"))
+
+    def light_objects(self):
+        """[(clip, its place in the world, the way it shines)] of the 燈光 objects playing now, with what is being dragged on them."""
+        view = self.p.view or {}
+        t_us = self.time()
+        out = []
+        for tr in view.get("tracks") or []:
+            if tr["kind"] == "audio" or not project.visible(tr):
+                continue
+            for c in tr["clips"]:
+                if lights.is_clip(c) and c["start_us"] <= t_us < c["start_us"] + c["duration_us"]:
+                    moved = dict(c, transform=dict(c.get("transform") or {}, **self.live.get(c["id"], {})))
+                    got = lights.read(moved, project.stepped(c, t_us - c["start_us"]), self.p.W, self.p.H)
+                    out.append((c, np.array(got["place"]), -np.array(got["to"])))
+        return out
+
+    def pick_light(self, pos):
+        """The 燈光 object whose icon the pointer is on, or None."""
+        if self.through:
+            return None
+        seen, k = self.seen(), self.p._k()
+        m = self._canvas(pos)
+        for c, place, _way in self.light_objects():
+            at = seen.point(place)
+            if at is not None and math.hypot(at[0] - m.x(), at[1] - m.y()) <= 12 * k:
+                return c
+        return None
+
+    def _paint_lights(self, p, k, seen):
+        for c, place, way in self.light_objects():
+            at = seen.point(place)
+            if at is None:
+                continue
+            color = SELECTED_COLOR if c["id"] in self.p.selected_ids else PARTICLE_COLOR
+            mid = QPointF(*at)
+            kind = c["light"].get("kind")
+            p.setPen(QPen(color, 1.5 * k))
+            p.setBrush(Qt.NoBrush)
+            if kind == "ambient":
+                p.drawChord(QRectF(mid.x() - 10 * k, mid.y() - 6 * k, 20 * k, 20 * k), 0, 180 * 16)
+                continue
+            p.drawEllipse(mid, 5 * k, 5 * k)
+            for i in range(8):
+                a = i * math.pi / 4
+                p.drawLine(mid + QPointF(math.cos(a) * 8 * k, math.sin(a) * 8 * k), mid + QPointF(math.cos(a) * 12 * k, math.sin(a) * 12 * k))
+            if kind == "sun":                                  # (a line the way it shines)
+                seg = seen.segment(place, place + way * self.p.H * 0.45)
+                if seg is not None:
+                    p.setPen(QPen(color, 1.25 * k, Qt.DashLine))
+                    p.drawLine(QPointF(*seg[0]), QPointF(*seg[1]))
+                    p.setBrush(color)
+                    p.drawEllipse(QPointF(*seg[1]), 3 * k, 3 * k)
+                    p.setBrush(Qt.NoBrush)
 
     def active_object(self):
         """The 相機 object (camera.is_clip) the scene is seen with now - the topmost one that is playing - or None."""
@@ -202,7 +260,7 @@ class View3D:
         W, H = self.p.W, self.p.H
         for b in self.p.visible_boxes():
             c = b.clip
-            if c["type"] == "audio" or c.get("transform") is None or camera.is_clip(c):       # (a camera object is drawn as the camera)
+            if c["type"] == "audio" or c.get("transform") is None or marker(c):                # (a camera or light object is drawn as what it is)
                 continue
             t = project.stepped(c, b.t)
             tf = dict(c["transform"], **self.live.get(c["id"], {}))
@@ -300,8 +358,8 @@ class View3D:
         m = self._canvas(pos)
         near = lambda q, r: q is not None and math.hypot(q[0] - m.x(), q[1] - m.y()) <= r * k
         if near(mid, 8):
-            return ("plane" if isinstance(b, CamThing) or camera.is_clip(b.clip) else "su"), b
-        if not isinstance(b, CamThing) and not camera.is_clip(b.clip):
+            return ("plane" if isinstance(b, CamThing) or marker(b.clip) else "su"), b
+        if not isinstance(b, CamThing) and not marker(b.clip):
             n = self.arrow_length(seen, o, k)
             for a in ("x", "y"):
                 if near(seen.point(o + np.array(self.AXES[a]) * n * self.BOX_AT), 8):
@@ -390,7 +448,7 @@ class View3D:
                 self.start_drag(hit[0], hit[1], e.position())
             elif self.start_phandle(e.position()):
                 pass
-            elif self.on_body(e.position()):
+            elif self.pick_light(e.position()) is None and self.pick_camera(e.position()) is None and self.on_body(e.position()):     # (an icon over the plane is picked, not the plane dragged)
                 self.start_drag("plane", self.selected(), e.position())
             else:
                 self.pick(e.position(), bool(e.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)))
@@ -461,7 +519,7 @@ class View3D:
             return None
         grab = {Qt.Key_G: "move", Qt.Key_R: "rotate", Qt.Key_S: "scale"}.get(k)
         sel = self.selected() if grab and not self.through else None
-        if sel is not None and (grab != "move" if isinstance(sel, CamThing) else camera.is_clip(sel.clip) and grab == "scale"):
+        if sel is not None and (grab != "move" if isinstance(sel, CamThing) else marker(sel.clip) and grab == "scale"):
             return None                                        # (the camera is only moved)
         if grab and sel is not None and self.drag is None:
             return lambda: self.modal_begin(grab)
@@ -476,6 +534,11 @@ class View3D:
     # -- picking and dragging the planes ------------------------------------------------------------------------------------------
     def pick(self, pos, add):
         """A click: the nearest plane the line of sight goes through is selected (none: nothing is)."""
+        lamp = self.pick_light(pos)
+        if lamp is not None:                                  # (a light object is a clip: picked like one)
+            self.sel_cam = None
+            self.p.clipPicked.emit(lamp)
+            return
         thing = self.pick_camera(pos)
         obj = self.active_object()
         if thing == "camera" and obj is not None:             # (a camera object is a clip: picked like one)
@@ -801,6 +864,7 @@ class View3D:
             p.setBrush(QColor(255, 170, 40, 30) if chosen else Qt.NoBrush)
             p.drawPolygon(QPolygonF([QPointF(*q) for q in scr]))
             p.setBrush(Qt.NoBrush)
+        self._paint_lights(p, k, seen)
         self._paint_particles(p, k, seen)
         self._paint_arrows(p, k, seen)
 
@@ -1026,7 +1090,7 @@ class View3D:
             p.drawPolygon(QPolygonF([QPointF(tip.x() + ux * 4 * k, tip.y() + uy * 4 * k),
                                      QPointF(base.x() - uy * w, base.y() + ux * w),
                                      QPointF(base.x() + uy * w, base.y() - ux * w)]))
-        if not isinstance(b, CamThing) and not camera.is_clip(b.clip):                              # (the boxes scale: along X, along Y)
+        if not isinstance(b, CamThing) and not marker(b.clip):                              # (the boxes scale: along X, along Y)
             n = self.arrow_length(seen, o, k)
             for name in ("x", "y"):
                 at = seen.point(o + np.array(self.AXES[name]) * n * self.BOX_AT)

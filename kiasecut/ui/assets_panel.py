@@ -174,6 +174,33 @@ def scene_thumbnail():
     return img
 
 
+def light_thumbnail(kind):
+    """燈光: a sun with rays, a glowing point, or a dome of light, on a dark ground."""
+    import math
+    from PySide6.QtCore import QPointF, QRectF
+    from PySide6.QtGui import QPen
+    w, h = THUMB
+    img = QImage(QSize(w, h), QImage.Format_ARGB32_Premultiplied)
+    img.fill(QColor("#202024"))
+    p = QPainter(img)
+    p.setRenderHint(QPainter.Antialiasing)
+    warm = QColor(255, 214, 90)
+    mid = QPointF(w / 2, h / 2)
+    p.setPen(QPen(warm, 2.5))
+    if kind == "ambient":
+        p.setBrush(QColor(255, 214, 90, 70))
+        p.drawChord(QRectF(w / 2 - 18, h / 2 - 12, 36, 36), 0, 180 * 16)
+    else:
+        p.setBrush(warm)
+        p.drawEllipse(mid, 7, 7)
+        for i in range(8):
+            a = i * math.pi / 4
+            far = 18 if kind == "sun" or i % 2 == 0 else 13
+            p.drawLine(mid + QPointF(math.cos(a) * 11, math.sin(a) * 11), mid + QPointF(math.cos(a) * far, math.sin(a) * far))
+    p.end()
+    return img
+
+
 def camera_thumbnail():
     """相機: a camera body and its lens on a dark ground."""
     from PySide6.QtCore import QPointF, QRectF
@@ -445,6 +472,13 @@ class AssetsPanel(QWidget):
         it.setToolTip("相機（在 3D 場景裡用：拖到時間線，場景用最上面那台正在播的相機看；位置在 3D 位置，看向哪裡和鏡頭在屬性裡）")
         it.setIcon(QIcon(QPixmap.fromImage(camera_thumbnail())))
         lst.addItem(it)
+        for kind, name, tip in (("sun", "平行光", "往同一個方向照（用 旋轉 決定方向）"), ("point", "點光源", "從它的位置往四面照，越遠越暗"),
+                                ("ambient", "環境光", "場景周圍的光有多亮（位置沒有作用）")):
+            it = QListWidgetItem(name)
+            it.setData(ROLE_KEY, "scene3d." + kind)
+            it.setToolTip(f"{name}：{tip}。放進 3D 場景，照亮開了「進階光照」的立體物件；有燈在播時，場景改用這些燈")
+            it.setIcon(QIcon(QPixmap.fromImage(light_thumbnail(kind))))
+            lst.addItem(it)
         blay.addWidget(head)
         blay.addWidget(lst)
         self.lists[SCENE_CAT[0]] = lst

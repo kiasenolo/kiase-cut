@@ -39,7 +39,7 @@ from PIL.ImageQt import ImageQt
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QImage, QImageIOHandler, QImageReader, QPainter, QPainterPath, QTransform
 
-from . import assets, camera, components, curves, fonts, fx, masks, nodegraph, project, propexpr, rack, svgimage, sysmem, textlayout, textvars, vector, viz
+from . import assets, camera, components, curves, fonts, fx, lights, masks, nodegraph, project, propexpr, rack, svgimage, sysmem, textlayout, textvars, vector, viz
 
 US = 1_000_000
 TEXT_FIELDS = ("size", "color", "fill", "stroke_on", "stroke_color", "stroke", "stroke_align",
@@ -741,7 +741,7 @@ class Renderer:
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
-                if on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok) and not camera.is_clip(c):
+                if on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok) and not camera.is_clip(c) and not lights.is_clip(c):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
                     items.append((1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t))

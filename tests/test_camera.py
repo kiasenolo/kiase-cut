@@ -197,6 +197,25 @@ class Scene(unittest.TestCase):
         self.assertEqual(set(around), {"x", "y", "z", "rot_x", "rot_y", "rotation"})
         self.assertNotEqual(around["rot_y"], 0.0)
 
+    def test_a_light_object_is_a_clip_whose_strength_is_keyframed(self):
+        from kiasecut import assets, edit, lights, project
+        p = project.link(project.new())
+        params = assets.make(assets.get("empty.small"), "#ffffff", "#000000", 1920, 1080)
+        c = edit.new_light(p, "sun", params, "/l.svg", 0)
+        self.assertTrue(lights.is_clip(c))
+        self.assertFalse(camera.is_clip(c))
+        self.assertEqual(c["name"], "平行光")
+        edit.set_param(p, c["id"], "light", "power", 40.0, 0)
+        edit.set_param(p, c["id"], "light", "color", [1.0, 0.5, 2.0], 0)
+        self.assertEqual((c["light"]["power"], c["light"]["color"]), (40.0, [1.0, 0.5, 1.0]))
+        got = lights.read(c, 0, 1920, 1080)
+        want = [-v for v in lights.FROM]
+        n = sum(v * v for v in want) ** 0.5
+        for a, b in zip(got["to"], lights.FROM):
+            self.assertAlmostEqual(a, b / n, 3)                    # (it shines from high on the left, the viewer's side)
+        self.assertIsNone(lights.rig([], 1080))
+        self.assertEqual(len(lights.rig([got], 1080)["lamps"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

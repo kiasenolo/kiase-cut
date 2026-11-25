@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDoubleSpinBo
                                QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QVBoxLayout,
                                QWidget)
 
-from .. import assets, camera, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
+from .. import assets, camera, lights, textures, build, components, curves, edit, lfo, mapping, menugroups, normalize, project, textlayout, textvars, viz
 from .. import fonts as fontlib
 from . import icons, look, motion
 from .colorpick import pick_color, qcolor, rgba
@@ -102,6 +102,7 @@ PARAMS = {
              ("rotation", "旋轉 °", -3600.0, 3600.0, 0.5, 1, 1, 0.0),
              ("feather", "羽化", 0.0, 1.0, 0.01, 2, 1, 0.0)),
     "clip": (("volume", "音量 %", 0.0, 1000.0, 1.0, 0, 100, 1.0),),
+    "light": (("power", "強度 %", 0.0, 1000.0, 5.0, 0, 1, 100.0),),                # 燈光 objects (lights.py)
     "solid": (("depth", "厚度 px", 0.0, 1000.0, 1.0, 1, 1, 40.0),                # 立體 (mesh3d.DEFAULTS)
               ("bevel", "倒角 px", 0.0, 200.0, 0.5, 1, 1, 3.0),
               ("metallic", "金屬度 %", 0.0, 100.0, 1.0, 0, 100, 0.0),
@@ -402,7 +403,7 @@ class Inspector(QWidget):
     def __init__(self, parent=None, part="main"):
         super().__init__(parent)
         self.part = part
-        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset", "params", "camera", "solid"]
+        self.groups = ["mask"] if part == "mask" else ["transform", "text", "clip", "asset", "params", "camera", "solid", "light"]
         self.setMinimumWidth(300)
         lay = QVBoxLayout(self)
         lay.addWidget(section("遮罩" if part == "mask" else "屬性"))
@@ -653,6 +654,8 @@ class Inspector(QWidget):
             self._build_camera(form)
         elif camera.is_clip(c):
             self._build_camera(form, obj=c)
+        elif lights.is_clip(c):
+            self._build_light(form, c)
         comp = c.get("compound") or {}
         if c["type"] in ("group", "compound") and comp and not (comp.get("static") or comp.get("fit")
                                                                  or components.is_component(comp)):
@@ -1411,6 +1414,25 @@ class Inspector(QWidget):
                 grid.addWidget(b, gy + 1, gx + 1)
         grid.setColumnStretch(3, 1)
         form.addRow("錨點位置", box)
+
+    def _build_light(self, form, c):
+        """燈光: how strong and what colour; where it is (點光源) or the way it shines (平行光) are its 位置 / 旋轉."""
+        form.addRow(section(lights.KINDS.get((c.get("light") or {}).get("kind"), "燈光")))
+        self._rows(form, "light", list(PARAMS["light"]), ())
+        colour = QPushButton()
+        colour.clicked.connect(self._pick_light_color)
+        self.widgets["light_color"] = colour
+        form.addRow("顏色", colour)
+
+    def _pick_light_color(self):
+        button = self.widgets["light_color"]
+        ids = list(self.clip_ids)
+        col = pick_color(self, QColor(button.text()) if button.text().startswith("#") else QColor("white"), "燈光顏色", alpha=False,
+                         live=lambda c: self.liveEdited.emit(ids, "light", "color", rgba(c)[:3]),
+                         cancel=self.liveCancelled.emit, anchor=button)
+        if col is not None:
+            self._queue("light", "color", [col.redF(), col.greenF(), col.blueF()])
+            self._flush()
 
     def _build_solid(self, form):
         """立體: in a scene a text's letters can be pushed out into solids, lit and mirroring the studio round the scene (mesh3d.py)."""
@@ -2216,6 +2238,11 @@ class Inspector(QWidget):
             box.blockSignals(True)
             box.setChecked(all(camera.on(k.get("camera")) for k in clips))
             box.blockSignals(False)
+        if "light_color" in w:
+            held = {QColor.fromRgbF(*(list((k.get("light") or {}).get("color") or [1.0, 1.0, 1.0])[:3])).name() for k in clips}
+            button = w["light_color"]
+            button.setText(held.pop() if len(held) == 1 else "--")
+            button.setStyleSheet(f"background: {button.text()}; color: #101010;" if button.text() != "--" else "")
         if "solid_on" in w:
             box = w["solid_on"]
             box.blockSignals(True)
@@ -2230,12 +2257,12 @@ class Inspector(QWidget):
                 if ("solid", key) in w:
                     w[("solid", key)].setEnabled(box.isChecked())
         for group, rows in PARAMS.items():
-            if group not in self.groups or (c if group == "clip" else c.get(group)) is None and group not in ("camera", "solid"):
+            if group not in self.groups or (c if group == "clip" else c.get(group)) is None and group not in ("camera", "solid", "light"):
                 continue
             for key, _l, _lo, _hi, _st, dec, factor, default in rows:
                 if (group, key) not in w:
                     continue
-                hs = [k if group == "clip" else k.get(group) or {} if group in ("camera", "solid") else k[group] for k in clips]
+                hs = [k if group == "clip" else k.get(group) or {} if group in ("camera", "solid", "light") else k[group] for k in clips]
                 if (group, key) == ("transform", "scale_y"):            # absent: follows X
                     ps = [h.get("scale_y", h.get("scale", default)) for h in hs]
                 else:

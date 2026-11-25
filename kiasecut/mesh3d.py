@@ -61,6 +61,11 @@ uniform vec3 eye;
 uniform float metallic;
 uniform float roughness;
 uniform int advanced;
+uniform int n_lamps;           // -1: the scene's own two lamps; else the 燈光 objects'
+uniform vec4 lamp_at[8];       // a place (w 1) or the way to a lamp that shines one way (w 0)
+uniform vec3 lamp_colour[8];
+uniform vec3 around;           // how much the studio lights the scene
+uniform float reach;           // px: where a lamp at a place is as strong as one that shines one way
 uniform vec4 surfaces[32];     // planes in the camera's axes (normal, distance > 0): behind one is where dot(n, p) > distance
 uniform int n_surfaces;
 uniform int current;           // this pass draws what is behind surfaces[current] (n_surfaces: the rest) and behind none before it
@@ -120,15 +125,28 @@ void main() {
     float rough = clamp(roughness, 0.04, 1.0);
     vec3 f0 = mix(vec3(0.04), base, metallic);
     vec3 diffuse = base * (1.0 - metallic);
-    vec3 c = lamp(N, V, normalize(vec3(-0.50, -0.65, -0.57)), vec3(0.85, 0.83, 0.80), diffuse, f0, rough * rough);
-    c += lamp(N, V, normalize(vec3(0.75, -0.15, -0.45)), vec3(0.22, 0.26, 0.34), diffuse, f0, rough * rough);
+    vec3 c = vec3(0.0);
+    vec3 lit = vec3(1.0), mirrored = vec3(1.0);
+    if (n_lamps < 0) {
+        c += lamp(N, V, normalize(vec3(-0.50, -0.65, -0.57)), vec3(0.85, 0.83, 0.80), diffuse, f0, rough * rough);
+        c += lamp(N, V, normalize(vec3(0.75, -0.15, -0.45)), vec3(0.22, 0.26, 0.34), diffuse, f0, rough * rough);
+    } else {
+        for (int i = 0; i < n_lamps; i++) {
+            vec3 L = lamp_at[i].xyz - v_pos * lamp_at[i].w;
+            float far = max(length(L), 1.0);
+            float fall = lamp_at[i].w > 0.5 ? min(reach * reach / (far * far), 4.0) : 1.0;
+            c += lamp(N, V, L / far, lamp_colour[i] * fall, diffuse, f0, rough * rough);
+        }
+        lit = around;
+        mirrored = max(around, vec3(0.25));                // (a metal with nothing to mirror is just black)
+    }
     // lit by the studio, and mirroring it (Karis' fit of the split sum)
-    c += diffuse * (studio(N, 1.0) * 0.36 + 0.11);
+    c += diffuse * (studio(N, 1.0) * 0.36 + 0.11) * lit;
     float nv = max(dot(N, V), 1e-4);
     vec4 r = rough * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);
     float a004 = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
     vec2 ab = vec2(-1.04, 1.04) * a004 + r.zw;
-    c += studio(reflect(-V, N), rough) * (f0 * ab.x + ab.y) * mix(0.8, 1.2, metallic);
+    c += studio(reflect(-V, N), rough) * (f0 * ab.x + ab.y) * mix(0.8, 1.2, metallic) * mirrored;
     // the brightest rolls off
     vec3 over = max(c - 0.8, 0.0);
     c = min(c, vec3(0.8)) + over / (1.0 + over * 5.0);
@@ -187,7 +205,21 @@ class Drawer:
         if name in self.program:                          # (one the compiler left out is not there to set)
             self.program[name].value = value
 
-    def draw(self, tgt_fbo, w, h, parts, cam, W, H, base, tc, surfaces=(), current=0):
+    def _lights(self, rig):
+        """rig: lights.rig's, or None for the scene's own lamps."""
+        lamps = rig["lamps"] if rig else []
+        self._uniform("n_lamps", len(lamps) if rig else -1)
+        if not rig:
+            return
+        self._uniform("around", tuple(float(x) for x in rig["ambient"]))
+        self._uniform("reach", float(rig["reach"]))
+        empty = [((0.0, 0.0, -1.0), 0.0, (0.0, 0.0, 0.0))] * (8 - len(lamps))
+        if "lamp_at" in self.program:
+            self.program["lamp_at"].write(np.array([(*p, w) for p, w, _c in lamps + empty], "f4").tobytes())
+        if "lamp_colour" in self.program:
+            self.program["lamp_colour"].write(np.array([c for _p, _w, c in lamps + empty], "f4").tobytes())
+
+    def draw(self, tgt_fbo, w, h, parts, cam, W, H, base, tc, surfaces=(), current=0, lights=None):
         """Draw parts (Part) seen by camera cam (at its time tc) into the w x h framebuffer tgt_fbo (which is cleared to nothing). base:
         the QTransform from the W x H canvas to its px. surfaces: [(nx, ny, nz, distance)] planes in the camera's axes; only what is
         behind surfaces[current] and behind none before it is drawn (current == len(surfaces): what is behind none)."""
@@ -207,6 +239,7 @@ class Drawer:
             self.program["surfaces"].write(np.array(held + [(0.0, 0.0, 0.0, 1.0)] * (SURFACES - len(held)), "f4").tobytes())
         self._uniform("n_surfaces", len(held))
         self._uniform("current", min(current, len(held)))
+        self._lights(lights)
         ready = [(part, self._vao(part.data)) for part in parts]
         msaa = self._target(w, h)
         msaa.use()

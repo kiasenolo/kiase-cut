@@ -21,7 +21,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QImage, QTransform
 
-from . import assets, camera, components, curves, fx, gpusync, mesh, mesh3d, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
+from . import assets, camera, components, curves, fx, gpusync, lights, mesh, mesh3d, nodegraph, project, propexpr, rack, render, sharedgl, sysmem, textlayout, textvars
 from .render import TEXT_FIELDS, US, quantize
 
 BLEND_INDEX = {"normal": 0, "multiply": 1, "screen": 2, "overlay": 3, "darken": 4, "lighten": 5,
@@ -696,7 +696,7 @@ class GLRenderer(render.Renderer):
             if tr["kind"] == "audio" or not project.visible(tr, self.level):
                 continue
             for c in tr["clips"]:
-                if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok) and not camera.is_clip(c):
+                if render.on_frame(c, t_us, fps) and (not c.get("matte_only") or c["id"] in self._matte_ok) and not camera.is_clip(c) and not lights.is_clip(c):
                     c = propexpr.at(c, t_us - c["start_us"], self.names)
                     t = project.stepped(c, t_us - c["start_us"])
                     items.append((1e9 if c["type"] == "filter" else -camera.depth(cam, c.get("transform") or {}, t, W, H, t_us), len(items), c, i, t, None))
@@ -739,7 +739,8 @@ class GLRenderer(render.Renderer):
             for group in solid_groups:
                 parts = [sd[1] for sd in group if mesh3d.needed(sd[2], all_, len(surfaces))]
                 if parts:
-                    self.gl_solids(tgt, base, cam, parts, W, H, t_us, all_, len(surfaces))
+                    self.gl_solids(tgt, base, cam, parts, W, H, t_us, all_, len(surfaces), rig)
+        rig = self.level_lights(tracks, W, H, fps, t_us) if solids else None
         finished = False
         for _d, _n, c, i, t, zr in sorted(items, key=lambda it: it[:2]):
             try:
@@ -785,6 +786,16 @@ class GLRenderer(render.Renderer):
             except Exception as exc:
                 self.errors.append(f"立體: {exc}")
 
+    def level_lights(self, tracks, W, H, fps, t_us):
+        """What the 燈光 objects playing in the level light it with (lights.rig), or None for none."""
+        found = []
+        for tr in reversed(tracks):
+            if tr["kind"] == "audio" or not project.visible(tr, self.level):
+                continue
+            found += [lights.read(c, project.stepped(c, t_us - c["start_us"]), W, H) for c in tr["clips"]
+                      if lights.is_clip(c) and render.on_frame(c, t_us, fps)]
+        return lights.rig(found, H)
+
     def solid_part(self, c, t, W, H, fps):
         """The mesh3d.Part of a 立體 text of a scene at clip time t - its letters pushed out into a solid (mesh.py) - or None when there
         is nothing of it to see. Its mask and effects, and the flat text's outline, shadow and background, are not drawn."""
@@ -809,14 +820,14 @@ class GLRenderer(render.Renderer):
                            min(1.0, max(0.0, mesh3d.setting(c, "metallic", t))), min(1.0, max(0.0, mesh3d.setting(c, "roughness", t))),
                            opacity, BLEND_INDEX.get(curves.value(c.get("blend", "normal"), t), 0))
 
-    def gl_solids(self, tgt, base, cam, parts, W, H, t_us, surfaces, current):
+    def gl_solids(self, tgt, base, cam, parts, W, H, t_us, surfaces, current, rig=None):
         """One pass of mesh3d.Drawer.draw over parts, put on tgt (parts sharing a pass are put on it as the first is)."""
         gl = self.gl
         if gl.solids is None:
             gl.solids = mesh3d.Drawer(gl.mgl, gl.ctx)
         lay = gl.layer(tgt.w, tgt.h)
         try:
-            gl.solids.draw(lay.fbo, lay.w, lay.h, parts, cam, W, H, base, t_us, surfaces, current)
+            gl.solids.draw(lay.fbo, lay.w, lay.h, parts, cam, W, H, base, t_us, surfaces, current, rig)
             gl.draw_layer(tgt, lay, opacity=parts[0].opacity, blend=parts[0].blend)
         finally:
             gl.release(lay)

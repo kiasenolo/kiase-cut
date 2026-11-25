@@ -80,5 +80,70 @@ class BasicTests(unittest.TestCase):
         self.assertEqual(len(fx.process(np.zeros((0, 2), np.float32))), 0)
 
 
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class EqualiserTests(unittest.TestCase):
+    def check_response(self, fx, tones, delta=0.6):
+        """What a sine comes out as matches what the effect says it does."""
+        said = fx.response(np.array(tones, float))
+        for f, want in zip(tones, said):
+            fx.reset()
+            got = level_db(fx.process(sine(f, 1.0, 0.1)), 0.5) - level_db(sine(f, 1.0, 0.1), 0.5)
+            self.assertAlmostEqual(max(got, -70.0), max(want, -70.0), delta=delta if want > -40 else 6.0, msg=f"{fx.kind} {f} Hz")
+
+    def test_flat_at_the_start(self):
+        fx = dsp.Processor("eq")
+        np.testing.assert_allclose(fx.response([30, 300, 3000, 15000]), 0.0, atol=1e-9)
+        x = sine(300) + sine(3000)
+        np.testing.assert_allclose(fx.process(x), x, atol=1e-5)
+
+    def test_bands(self):
+        fx = dsp.Processor("eq")
+        fx.set("g3", 12.0)                                          # a bell at 1 kHz
+        self.assertAlmostEqual(fx.response([1000])[0], 12.0, delta=0.05)
+        self.assertAlmostEqual(fx.response([1000], part=2)[0], 12.0, delta=0.05)
+        self.assertAlmostEqual(fx.response([1000], part=1)[0], 0.0, delta=1e-6)
+        self.check_response(fx, [100, 1000, 5000])
+        fx.set("out", -6.0)
+        self.assertAlmostEqual(fx.response([1000])[0], 6.0, delta=0.05)
+
+    def test_cut_slopes(self):
+        for slope in range(4):
+            fx = dsp.Processor("eq")
+            for i in range(2, 9):
+                fx.set(f"o{i}", 0)
+            fx.set("t1", 3)
+            fx.set("s1", slope)
+            fx.set("f1", 1000)
+            at, below = fx.response([1000, 125])
+            self.assertAlmostEqual(at, -3.01, delta=0.05)           # Butterworth: 3 dB down at the cutoff
+            self.assertAlmostEqual(below, -36.1 * (slope + 1), delta=1.5)
+            self.check_response(fx, [500, 1000, 4000])
+
+    def test_switching_a_band_does_not_click(self):
+        fx = dsp.Processor("eq")
+        x = sine(100, 0.5, 0.5)
+        a = fx.process(x[:512])
+        fx.set("t1", 3)
+        fx.set("f1", 2000)
+        b = fx.process(x[512:1024], pos=512)
+        self.assertLess(np.abs(np.diff(np.concatenate([a, b])[:, 0])).max(), 0.05)
+
+    def test_filter_modes(self):
+        for mode in range(13):
+            fx = dsp.Processor("filter")
+            fx.set("mode", mode)
+            self.check_response(fx, [200, 1900, 9000])
+        fx = dsp.Processor("filter")
+        fx.set("mode", 1)
+        fx.set("res", 8.0)
+        self.assertGreater(fx.response([2000])[0], 12.0)
+
+    def test_the_analyser_changes_nothing(self):
+        fx = dsp.Processor("analyzer")
+        x = sine(440)
+        np.testing.assert_array_equal(fx.process(x), x)
+        self.assertAlmostEqual(float(fx.meters()[0]), 0.5, delta=0.001)
+
+
 if __name__ == "__main__":
     unittest.main()

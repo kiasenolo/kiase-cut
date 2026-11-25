@@ -69,3 +69,10 @@ void kc_biquad_run(kc_bqstate *s, const kc_coef *from, const kc_coef *to, const 
         s->z2[ch] = kc_flush(s->z2[ch]);
     }
 }
+
+double kc_biquad_gain(const kc_coef *c, double sr, double hz) {
+    double w = 2.0 * KC_PI * hz / sr, c1 = cos(w), s1 = sin(w), c2 = cos(2 * w), s2 = sin(2 * w);
+    double nr = c->b0 + c->b1 * c1 + c->b2 * c2, ni = -(c->b1 * s1 + c->b2 * s2);
+    double dr = 1.0 + c->a1 * c1 + c->a2 * c2, di = -(c->a1 * s1 + c->a2 * s2);
+    return sqrt((nr * nr + ni * ni) / (dr * dr + di * di + 1e-30));
+}

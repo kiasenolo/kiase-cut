@@ -13,13 +13,13 @@ timeline while it is open. What it edits goes through the editor's undo history
 import math
 
 import numpy as np
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton,
                                QScrollArea, QSlider, QSplitter, QVBoxLayout, QWidget)
 
 from .. import curves, dsp, edit, project, soundedit, soundfx
 from . import icons, inplace
+from .sound_visuals import BAND_COLORS, Response, Spectrum
 from .inspector import SpinBox
 from .menukeys import Menu
 from .meter import FADER_HI, FADER_LO, Bars, Fader, to_db
@@ -119,6 +119,8 @@ class EffectBox(QFrame):
         self.page, self.eid, self.kind = page, effect["id"], effect["effect"]
         self.spec = soundfx.EFFECTS.get(self.kind)
         self.rows = {}                          # param name -> (spin, slider, key button)
+        self.choices = {}                       # param name -> its check box or combo
+        self.visual = None                      # what is drawn above the parameters
         self.setFrameShape(QFrame.StyledPanel)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 4, 6, 4)
@@ -150,12 +152,46 @@ class EffectBox(QFrame):
             return
         if self.eid in page.folded:
             return
+        visual = self.spec.get("visual")
+        if visual in ("eq", "response"):
+            self.visual = Response(self.kind, 210 if visual == "eq" else 130)
+            self.visual.band = page.bands.get(self.eid, 1)
+            self.visual.live.connect(lambda values: page.live(soundedit.set_params, self.eid, values, page.time()))
+            self.visual.done.connect(lambda values: page.edit("調整聲音效果", soundedit.set_params, self.eid, values,
+                                                              page.time()))
+            self.visual.bandPicked.connect(lambda i: page.pick_band(self.eid, i))
+            lay.addWidget(self.visual)
+        elif visual == "spectrum":
+            self.visual = Spectrum(150)
+            lay.addWidget(self.visual)
+        if visual == "eq":
+            bands = QHBoxLayout()
+            bands.setSpacing(2)
+            self.band_buttons = []
+            for i in range(1, soundfx.EQ_BANDS + 1):
+                b = small_button(str(i), f"頻段 {i}", width=0)
+                b.clicked.connect(lambda _c=False, i=i: page.pick_band(self.eid, i))
+                bands.addWidget(b)
+                self.band_buttons.append(b)
+            lay.addLayout(bands)
         grid = QGridLayout()
         grid.setHorizontalSpacing(5)
         grid.setVerticalSpacing(2)
-        for r, p in enumerate(self.spec["params"]):
+        for r, p in enumerate(page.visible_params(effect)):
             name = p["name"]
             grid.addWidget(QLabel(p["label"]), r, 0)
+            if p.get("choices"):
+                if p["choices"] == ["關", "開"]:
+                    box = QCheckBox()
+                    box.clicked.connect(lambda on, name=name: self.choose(name, int(on)))
+                else:
+                    box = QComboBox()
+                    box.addItems(p["choices"])
+                    box.activated.connect(lambda i, name=name: self.choose(name, i))
+                box.setFocusPolicy(Qt.NoFocus)
+                grid.addWidget(box, r, 1, 1, 2)
+                self.choices[name] = box
+                continue
             slider = ParamSlider(lambda name=name: page.edit("重設參數", soundedit.reset_param, self.eid, name))
             slider.setRange(0, SLIDER_STEPS)
             slider.sliderMoved.connect(lambda v, p=p: self.dragged(p, slider_value(p, v)))
@@ -177,6 +213,12 @@ class EffectBox(QFrame):
         grid.setColumnStretch(1, 1)
         lay.addLayout(grid)
 
+    def choose(self, name, value):
+        self.page.edit("調整聲音效果", soundedit.set_param, self.eid, name, value, self.page.time())
+
+    def spec_of(self, name):
+        return next(p for p in self.spec["params"] if p["name"] == name)
+
     def toggle_key(self, name):
         t = self.page.time()
         if t is None:
@@ -194,19 +236,32 @@ class EffectBox(QFrame):
 
     def show_effect(self, effect):
         self.on.setChecked(effect.get("enabled", True))
-        if not self.rows or any(s.isSliderDown() for _, s, _ in self.rows.values()):
+        if self.spec is None or any(slider.isSliderDown() for _, slider, _ in self.rows.values()):
             return
         t = self.page.time()
-        for p in self.spec["params"]:
-            spin, slider, key = self.rows[p["name"]]
-            held = (effect.get("params") or {}).get(p["name"], p["default"])
+        values = soundfx.values(effect, t or 0) if self.spec["params"] else {}
+        if isinstance(self.visual, Response):
+            self.visual.set_values(values)
+        if self.spec.get("visual") == "eq" and self.eid not in self.page.folded:
+            band = self.page.bands.get(self.eid, 1)
+            for i, b in enumerate(self.band_buttons, 1):
+                b.setStyleSheet(f"QPushButton {{ padding: 1px; border: 2px solid {'#ffffff' if i == band else 'transparent'}; "
+                                f"background: {BAND_COLORS[i - 1] if values[f'o{i}'] > 0.5 else '#222226'}; "
+                                f"color: {'#000000' if values[f'o{i}'] > 0.5 else '#8e8e94'}; }}")
+        for name, box in self.choices.items():
+            if isinstance(box, QCheckBox):
+                box.setChecked(values[name] > 0.5)
+            else:
+                box.setCurrentIndex(int(round(values[name])))
+        for name, (spin, slider, key) in self.rows.items():
+            p = self.spec_of(name)
+            held = (effect.get("params") or {}).get(name, p["default"])
             v = curves.value(held, t or 0)
             if not spin.editing:
                 spin.show_value(v)
-            if not slider.isSliderDown():
-                slider.blockSignals(True)
-                slider.setValue(slider_pos(p, v))
-                slider.blockSignals(False)
+            slider.blockSignals(True)
+            slider.setValue(slider_pos(p, v))
+            slider.blockSignals(False)
             animated = curves.is_animated(held)
             key.setText("◆" if animated and edit.key_at(held, t or 0) is not None else "◈" if animated else "◇")
 
@@ -258,8 +313,10 @@ class ChainPanel(QWidget):
         self.warning.setVisible(bool(why))
         if why:
             self.warning.setText("聲音效果函式庫無法使用，效果不會作用：" + why.splitlines()[0])
-        shape = (target, tuple((e["id"], e.get("effect"), e["id"] in page.folded) for e in entries))
-        if shape != self.shape:             # (rebuilt only when it changes shape: a value being dragged keeps its widget)
+        shape = (target, tuple((e["id"], e.get("effect"), e["id"] in page.folded,
+                                tuple(p["name"] for p in page.visible_params(e))) for e in entries))
+        dragging = any(isinstance(b.visual, Response) and b.visual.drag is not None for b in self.boxes.values())
+        if shape != self.shape and not dragging:   # (rebuilt only when it changes shape: a value being dragged keeps its widget)
             self.shape = shape
             clear_layout(self.list)
             self.boxes = {}
@@ -273,7 +330,12 @@ class ChainPanel(QWidget):
                 self.list.addWidget(note)
             self.list.addStretch()
         for e in entries:
-            self.boxes[e["id"]].show_effect(e)
+            if e["id"] in self.boxes:
+                self.boxes[e["id"]].show_effect(e)
+
+    def drawn(self):
+        """The boxes that draw their effect's sound: {effect id: widget}."""
+        return {i: b.visual for i, b in self.boxes.items() if b.visual is not None}
 
 
 # -- one channel of the mixer ------------------------------------------------------------------------
@@ -510,58 +572,6 @@ class Strip(QFrame):
         self.sends.addWidget(add)
 
 
-# -- the spectrum of the output ----------------------------------------------------------------------
-class Spectrum(QWidget):
-    N = 4096
-    LO, HI = 20.0, 20000.0
-    FLOOR = -90.0
-
-    def __init__(self):
-        super().__init__()
-        self.setMinimumWidth(220)
-        self.setAttribute(Qt.WA_OpaquePaintEvent)
-        self.levels = np.full(120, self.FLOOR)
-        self.window_ = np.hanning(self.N).astype(np.float32)
-        edges = np.geomspace(self.LO, self.HI, len(self.levels) + 1) * self.N / RATE
-        self.bins = [(int(a), max(int(a) + 1, int(math.ceil(b)))) for a, b in zip(edges, edges[1:])]
-
-    def feed(self, mono):
-        mag = np.abs(np.fft.rfft(mono * self.window_)) / (self.N / 4)
-        now = np.array([20 * math.log10(max(float(mag[a:b].max()), 1e-6)) for a, b in self.bins])
-        shown = np.maximum(now, self.levels - 2.5)                  # (up at once, down slowly)
-        if np.abs(shown - self.levels).max() > 0.05:
-            self.levels = np.clip(shown, self.FLOOR, 6.0)
-            self.update()
-
-    def paintEvent(self, _e):
-        p = QPainter(self)
-        w, h = self.width(), self.height()
-        p.fillRect(self.rect(), QColor("#0b0b0b"))
-        f = p.font()
-        f.setPixelSize(9)
-        p.setFont(f)
-        x_of = lambda hz: w * math.log(hz / self.LO) / math.log(self.HI / self.LO)
-        y_of = lambda db: h * (6.0 - db) / (6.0 - self.FLOOR)
-        for hz, label in ((100, "100"), (1000, "1k"), (10000, "10k")):
-            p.setPen(QColor(255, 255, 255, 28))
-            p.drawLine(QPointF(x_of(hz), 0), QPointF(x_of(hz), h))
-            p.setPen(QColor("#6a6a72"))
-            p.drawText(QPointF(x_of(hz) + 2, h - 3), label)
-        for db in (0, -24, -48, -72):
-            p.setPen(QColor(255, 255, 255, 28))
-            p.drawLine(QPointF(0, y_of(db)), QPointF(w, y_of(db)))
-            p.setPen(QColor("#6a6a72"))
-            p.drawText(QPointF(2, y_of(db) - 2), str(db))
-        path = QPainterPath(QPointF(0, h))
-        for i, db in enumerate(self.levels):
-            path.lineTo(QPointF(w * (i + 0.5) / len(self.levels), y_of(db)))
-        path.lineTo(QPointF(w, h))
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setPen(QPen(QColor("#7ad0ff"), 1.2))
-        p.setBrush(QColor(122, 208, 255, 60))
-        p.drawPath(path)
-
-
 class SmallPreview(QLabel):
     def __init__(self):
         super().__init__()
@@ -594,6 +604,7 @@ class AudioPage(QWidget):
         self.win = win
         self.target = None                      # (kind, id) whose chain the panel shows
         self.folded = set()                     # effect ids folded shut in the panel
+        self.bands = {}                         # EQ effect id -> the band whose parameters show
         self.strips = {}                        # target -> Strip
         self.setObjectName("audiopage")
         self.setAutoFillBackground(True)
@@ -644,6 +655,7 @@ class AudioPage(QWidget):
         self.right.addWidget(self.chain)
         self.right.setStretchFactor(0, 0)
         self.right.setStretchFactor(1, 1)
+        self.right.setSizes([190, 520])
         self.right.setMinimumWidth(300)
         self.hsplit.addWidget(self.right)
         self.hsplit.setStretchFactor(0, 1)
@@ -768,6 +780,25 @@ class AudioPage(QWidget):
             self.select(("clip", clip["id"]))
         elif self.target and self.target[0] == "clip":
             self.select(None)
+
+    def visible_params(self, effect):
+        """The parameters of an effect that have a row now: of an equaliser those of the band
+        picked (and the ones of no band), and only those that count with its settings."""
+        spec = soundfx.EFFECTS.get(effect.get("effect"))
+        if spec is None:
+            return []
+        values = soundfx.values(effect, self.time() or 0)
+        band = self.bands.get(effect["id"], 1)
+        return [p for p in spec["params"]
+                if p.get("band") in (None, band) and ("when" not in p or p["when"](values))]
+
+    def pick_band(self, effect_id, band):
+        self.bands[effect_id] = band
+        box = self.chain.boxes.get(effect_id)
+        if box is not None and isinstance(box.visual, Response):
+            box.visual.band = band
+            box.visual.update()
+        QTimer.singleShot(0, self.chain.refresh)        # (not while the curve that asked is being pressed)
 
     def fold(self, effect_id):
         self.folded ^= {effect_id}
@@ -901,5 +932,11 @@ class AudioPage(QWidget):
                     left, right = left * mixer.master, right * mixer.master
                 strip.bars.feed(left, right)
         n = Spectrum.N
+        quiet = np.zeros(n, np.float32)
         self.spectrum.feed(engine.output_before(sample + n // 2, n) * mixer.master
-                           if engine is not None and playing else np.zeros(n, np.float32))
+                           if engine is not None and playing else quiet)
+        drawn = self.chain.drawn()
+        if engine is not None:
+            engine.watched = frozenset(drawn)           # (what the next blocks keep)
+        for effect_id, widget in drawn.items():
+            widget.feed(engine.output_before(sample + n // 2, n, effect_id) if engine is not None and playing else quiet)

@@ -1,7 +1,8 @@
 /* The effects there are, and their instances. */
 #include "kcdsp.h"
 
-static const kc_type *const types[] = {&kc_gain_type, &kc_highpass_type, &kc_lowpass_type};
+static const kc_type *const types[] = {&kc_gain_type, &kc_highpass_type, &kc_lowpass_type, &kc_eq_type, &kc_filter_type,
+                                      &kc_analyzer_type};
 #define NTYPES ((int)(sizeof types / sizeof types[0]))
 
 KC_API int kc_abi(void) { return KC_ABI; }
@@ -67,6 +68,11 @@ KC_API void kc_process(kc_fx *f, const float *in, const float *side, float *out,
 
 KC_API int kc_latency(const kc_fx *f) { return f->type->latency ? f->type->latency(f) : 0; }
 KC_API double kc_tail(const kc_fx *f) { return f->type->tail ? f->type->tail(f) : 0.0; }
+
+KC_API void kc_response(const kc_fx *f, int part, const double *hz, double *db, int n) {
+    for (int i = 0; i < n; i++)
+        db[i] = f->type->response ? f->type->response(f, part, hz[i]) : 0.0;
+}
 
 KC_API void kc_meters(const kc_fx *f, float *out, int n) {
     for (int i = 0; i < n; i++)

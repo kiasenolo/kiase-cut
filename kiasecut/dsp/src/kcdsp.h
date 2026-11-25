@@ -42,6 +42,9 @@ typedef struct {
     int (*latency)(const kc_fx *);  /* optional: samples the output is late by */
     double (*tail)(const kc_fx *);  /* optional: seconds it keeps sounding after its input stops */
     void (*destroy)(kc_fx *);       /* optional: free what init allocated */
+    /* optional: the gain in dB a sine of hz gets from the parameters as they are (to draw
+     * them); part: one band of an equaliser, or -1 for all of it */
+    double (*response)(const kc_fx *, int part, double hz);
 } kc_type;
 
 struct kc_fx {
@@ -69,7 +72,11 @@ enum { KC_BQ_BELL, KC_BQ_LOWSHELF, KC_BQ_HIGHSHELF, KC_BQ_LOWCUT, KC_BQ_HIGHCUT,
 kc_coef kc_biquad(int kind, double sr, double freq, double q, double gain_db);
 /* n frames through the filter, its coefficients going from *from to *to across them */
 void kc_biquad_run(kc_bqstate *s, const kc_coef *from, const kc_coef *to, const float *in, float *out, int n);
+/* the filter's gain (not in dB) for a sine of hz */
+double kc_biquad_gain(const kc_coef *c, double sr, double hz);
+/* the Q of stage k of the n second order ones that make a Butterworth filter */
+static inline double kc_butter_q(int k, int n) { return 1.0 / (2.0 * cos(KC_PI * (2 * k + 1) / (4.0 * n))); }
 
-extern const kc_type kc_gain_type, kc_highpass_type, kc_lowpass_type;
+extern const kc_type kc_gain_type, kc_highpass_type, kc_lowpass_type, kc_eq_type, kc_filter_type, kc_analyzer_type;
 
 #endif

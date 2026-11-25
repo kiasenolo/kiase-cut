@@ -164,6 +164,12 @@ def set_param(level, target, effect_id, name, value, t=None):
     _set_number(e.setdefault("params", {}), name, value, t)
 
 
+def set_params(level, target, effect_id, values, t=None):
+    """Several parameters at once ({name: value}), as one step: a band dragged on the EQ."""
+    for name, value in values.items():
+        set_param(level, target, effect_id, name, value, t)
+
+
 def reset_param(level, target, effect_id, name):
     e = effect(level, target, effect_id)
     e.setdefault("params", {})[name] = _spec(e, name)["default"]

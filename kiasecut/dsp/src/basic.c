@@ -57,7 +57,22 @@ static double filt_tail(const kc_fx *f) {
     return kc_clamp(3.3 * f->p[1] / kc_clamp(f->p[0], 10.0, 20000.0), 0.01, 2.0);
 }
 
+static double filt_response(const kc_fx *f, int kind, double hz) {
+    kc_coef c = kc_biquad(kind, f->sr, f->p[0], f->p[1], 0.0);
+    return kc_lin_db(kc_biquad_gain(&c, f->sr, hz));
+}
+
+static double highpass_response(const kc_fx *f, int part, double hz) {
+    (void)part;
+    return filt_response(f, KC_BQ_LOWCUT, hz);
+}
+
+static double lowpass_response(const kc_fx *f, int part, double hz) {
+    (void)part;
+    return filt_response(f, KC_BQ_HIGHCUT, hz);
+}
+
 const kc_type kc_highpass_type = {"highpass", 2, filt_params, highpass_defaults, sizeof(filt_state), 0, filt_reset,
-                                  highpass_process, 0, filt_tail, 0};
+                                  highpass_process, 0, filt_tail, 0, highpass_response};
 const kc_type kc_lowpass_type = {"lowpass", 2, filt_params, lowpass_defaults, sizeof(filt_state), 0, filt_reset,
-                                 lowpass_process, 0, filt_tail, 0};
+                                 lowpass_process, 0, filt_tail, 0, lowpass_response};

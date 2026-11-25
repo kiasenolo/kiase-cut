@@ -145,7 +145,8 @@ def _bind(lib):
                             ("kc_set", None, [fp, c.c_int, c.c_double]),
                             ("kc_process", None, [fp, c.c_void_p, c.c_void_p, c.c_void_p, c.c_int, c.c_int64]),
                             ("kc_latency", c.c_int, [fp]), ("kc_tail", c.c_double, [fp]),
-                            ("kc_meters", None, [fp, c.c_void_p, c.c_int])):
+                            ("kc_meters", None, [fp, c.c_void_p, c.c_int]),
+                            ("kc_response", None, [fp, c.c_int, c.c_void_p, c.c_void_p, c.c_int])):
         f = getattr(lib, name)
         f.restype, f.argtypes = res, args
 
@@ -251,6 +252,14 @@ class Processor:
     def tail(self):
         """Seconds it keeps sounding once its input is silent."""
         return self.lib.kc_tail(self.fx)
+
+    def response(self, hz, part=-1):
+        """The gain in dB at each frequency of hz, from the parameters as they are; part:
+        one band of an equaliser."""
+        hz = np.ascontiguousarray(hz, np.float64)
+        out = np.zeros(len(hz), np.float64)
+        self.lib.kc_response(self.fx, int(part), _ptr(hz), _ptr(out), len(hz))
+        return out
 
     def meters(self, n=8):
         out = np.zeros(n, np.float32)

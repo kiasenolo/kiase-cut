@@ -290,6 +290,8 @@ class Engine:
         self.tap = {}                       # channel id (the root's) -> [(sample, peak l, peak r)]
         self.meters = {}                    # effect key -> [(sample, meters)]
         self.scope = []                     # [(sample, mono block)] of the output, for the spectrum
+        self.watched = frozenset()          # effect ids whose output is kept to be drawn
+        self.watch = {}                     # effect id -> [(sample, mono block)]
 
     def set_view(self, view, only=None, level_ids=None):
         """only: the id of a track of the view, to give that track's sound alone (after its
@@ -330,7 +332,7 @@ class Engine:
         for p in self.procs.values():
             p.reset()
         self.state = {}
-        self.tap, self.meters, self.scope = {}, {}, []
+        self.tap, self.meters, self.scope, self.watch = {}, {}, [], {}
 
     # -- what was heard (for the mixer's meters; read from another thread) ----------------------
     @staticmethod
@@ -350,10 +352,11 @@ class Engine:
         got = self._around(self.meters.get(effect_id, ()), sample, back)
         return got[-1] if got else None
 
-    def output_before(self, sample, n):
-        """The n samples of the output (mono) before `sample`; zeros where there are none."""
+    def output_before(self, sample, n, effect_id=None):
+        """The n samples of the output (mono) before `sample` - or of a watched effect's;
+        zeros where there are none."""
         out = np.zeros(n, np.float32)
-        for s, block in list(self.scope):
+        for s, block in list(self.scope if effect_id is None else self.watch.get(effect_id, ())):
             lo, hi = max(s, sample - n), min(s + len(block), sample)
             if hi > lo:
                 out[lo - (sample - n):hi - (sample - n)] = block[lo - s:hi - s]
@@ -432,6 +435,11 @@ class Engine:
             latency += f.proc.latency
             if top:
                 self._remember(self.meters, f.key[-2], pos - latency, f.proc.meters())
+            if f.key[-2] in self.watched:
+                kept = self.watch.setdefault(f.key[-2], [])
+                kept.append((pos - latency, x.mean(axis=1)))
+                if len(kept) > LEVELS_KEPT // 8:
+                    del kept[:len(kept) - LEVELS_KEPT // 8]
         return x, latency
 
     def _remember(self, store, key, sample, value):

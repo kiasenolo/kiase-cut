@@ -80,13 +80,10 @@ def speed_pcm(pcm, rate, carry=0.0):
     return np.round(out).astype(np.int16).tobytes(), want - n
 
 
-def alone_pcm(mono, frame, fps):
-    """One frame's sound (bytes, as Mixer.mix gives it) out of `mono`, float32 from the start of
-    the timeline at RATE: both sides the same, silent past its end."""
-    a, b = round(frame * RATE / fps), round((frame + 1) * RATE / fps)
-    out = np.zeros(b - a, np.float32)
-    part = mono[max(0, a):max(0, b)]
-    out[:len(part)] = part
+def alone_pcm(samples, frame, fps):
+    """One frame's sound (bytes, as Mixer.mix gives it) out of samples(a, b): float32 mono, a and
+    b counted from the start of the timeline at RATE. Both sides the same."""
+    out = samples(round(frame * RATE / fps), round((frame + 1) * RATE / fps))
     return np.repeat(np.clip(out * 32768.0, -32768, 32767).astype(np.int16)[:, None], CHANNELS, axis=1).tobytes()
 
 
@@ -231,10 +228,10 @@ class Worker(QObject):
             self.new_rate = True
             self.cv.notify()
 
-    def set_alone(self, mono):
-        """Play `mono` (alone_pcm's) instead of what the project sounds like; None: the project
-        again. What is queued already is still heard."""
-        self.alone = mono
+    def set_alone(self, samples):
+        """Play samples (alone_pcm's; called on this player's thread) instead of what the project
+        sounds like; None: the project again. What is queued already is still heard."""
+        self.alone = samples
 
     def set_volume(self, v):
         """預覽音量: the preview's sound times v (linear), apart from the project's master volume."""

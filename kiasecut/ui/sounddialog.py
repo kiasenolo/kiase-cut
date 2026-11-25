@@ -2,7 +2,7 @@
 measures - dragged on the spectrum of the moment the cursor is at - how fast the number rises and
 falls, and the number over the seconds round the cursor, worked out as the project will read it.
 The project goes on playing while the dialog is open (its button, or Space), the cursor with it;
-or only the sound that is measured is played."""
+or only the sound that is measured is played: the channel, through the box's frequencies."""
 import math
 import threading
 import time
@@ -229,8 +229,8 @@ class SoundDialog(QDialog):
 
     def __init__(self, parent, title, root, spec, level, cache_dir, t_us, transport=None):
         """spec: what the parameter listens to now, or None. level: the open level's id.
-        transport: the preview's playback - playing(), time_us(), toggle(), seek(us), alone(mono
-        or None) - or None."""
+        transport: the preview's playback - playing(), time_us(), toggle(), seek(us),
+        alone(samples(a, b) or None) - or None."""
         super().__init__(parent)
         self.setWindowTitle(title)
         self.root, self.cache_dir = root, cache_dir
@@ -332,10 +332,16 @@ class SoundDialog(QDialog):
 
     # -- playing -------------------------------------------------------------------------------------
     def _heard_alone(self):
-        """What is played: the channel that is measured (silence until it is), or the project."""
-        if self.alone is not None:
-            on = self.alone.isChecked()
-            self.transport.alone((self.pcm if self.pcm is not None else np.zeros(0, np.float32)) if on else None)
+        """What is played: what is measured - the channel, only the box's frequencies of it (silence
+        until it is there) - or the project."""
+        if self.alone is None:
+            return
+        if not self.alone.isChecked():
+            self.transport.alone(None)
+            return
+        pcm = self.pcm if self.pcm is not None else np.zeros(0, np.float32)
+        lo, hi = self.spectrum.box["lo_hz"], self.spectrum.box["hi_hz"]
+        self.transport.alone(lambda a, b: soundmeter.band(pcm, a, b, lo, hi))
 
     def _icon(self, playing):
         if self.play.property("playing") != playing:
@@ -473,6 +479,7 @@ class SoundDialog(QDialog):
         if key in box:
             box[key] = self.fields[key][0].value()
             self.spectrum.update()
+            self._heard_alone()
         self.show_numbers()
 
     def _dragged(self, box):
@@ -481,6 +488,7 @@ class SoundDialog(QDialog):
             field.blockSignals(True)
             field.setValue(v)
             field.blockSignals(False)
+        self._heard_alone()
         self.show_numbers()
 
     def _stretch(self, first_s, seconds):

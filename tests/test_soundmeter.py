@@ -126,6 +126,30 @@ class MeterTests(Sounds):
             soundmeter.snapshot(root, "gone", "t1")
 
 
+class BandTests(unittest.TestCase):
+    def amplitude(self, x, hz):
+        t = np.arange(len(x)) / SR
+        return 2 * abs(np.mean(x * np.exp(-2j * np.pi * hz * t)))
+
+    def test_only_the_boxs_frequencies_are_heard(self):
+        t = np.arange(3 * SR) / SR
+        x = sum(0.2 * np.sin(2 * np.pi * f * t) for f in (80, 1000, 6000)).astype(np.float32)
+        for lo, hi, kept in ((40.0, 200.0, (80,)), (500.0, 2000.0, (1000,)), (3000.0, 20000.0, (6000,))):
+            got = soundmeter.band(x, SR, 2 * SR, lo, hi)
+            for f in (80, 1000, 6000):
+                self.assertAlmostEqual(self.amplitude(got, f), 0.2 if f in kept else 0.0, delta=0.005, msg=(lo, hi, f))
+
+    def test_stretches_join_and_stay_in_time(self):
+        x = np.random.default_rng(1).standard_normal(SR).astype(np.float32) * 0.1
+        whole = soundmeter.band(x, 0, 9600, 40.0, 200.0)
+        parts = np.concatenate([soundmeter.band(x, a, a + 1600, 40.0, 200.0) for a in range(0, 9600, 1600)])
+        np.testing.assert_allclose(parts, whole, atol=1e-6)
+        t = np.arange(SR) / SR
+        tone = np.sin(2 * np.pi * 100 * t).astype(np.float32)
+        np.testing.assert_allclose(soundmeter.band(tone, 20000, 24000, 40.0, 200.0), tone[20000:24000], atol=0.01)
+        self.assertEqual(np.abs(soundmeter.band(tone, 3 * SR, 3 * SR + 100, 40.0, 200.0)).max(), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
 

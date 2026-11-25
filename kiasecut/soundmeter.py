@@ -185,6 +185,38 @@ def at(curve, t_us):
     return float(curve[i] + (curve[i + 1] - curve[i]) * (x - i))
 
 
+# -- hearing the box ---------------------------------------------------------------------------------
+BAND_TAPS = 8191            # of the filter that lets the box's frequencies through (about 30 Hz from pass to stop)
+_kernels = {}               # (lo, hi) -> its spectrum
+
+
+def _slice(mono, a, b):
+    """mono[a:b], silent where there is none."""
+    out = np.zeros(b - a, np.float32)
+    lo, hi = max(a, 0), min(b, len(mono))
+    if hi > lo:
+        out[lo - a:hi - a] = mono[lo:hi]
+    return out
+
+
+def band(mono, a, b, lo_hz, hi_hz):
+    """Samples a..b of mono with only lo_hz..hi_hz left in them, not moved in time. Any stretch
+    asked for by itself joins its neighbours: it is worked out from the sound round it."""
+    half = BAND_TAPS // 2
+    sound = _slice(mono, a - half, b + half)
+    size = 1 << (len(sound) + BAND_TAPS - 2).bit_length()
+    kernel = _kernels.get((lo_hz, hi_hz, size))
+    if kernel is None:
+        if len(_kernels) >= 64:
+            _kernels.clear()
+        t = np.arange(BAND_TAPS) - half
+        low, high = 2.0 * lo_hz / RATE, min(1.0, 2.0 * hi_hz / RATE)
+        taps = (high * np.sinc(high * t) - low * np.sinc(low * t)) * np.blackman(BAND_TAPS)
+        kernel = _kernels[lo_hz, hi_hz, size] = np.fft.rfft(taps, size)
+    out = np.fft.irfft(np.fft.rfft(sound, size) * kernel, size)
+    return out[2 * half:2 * half + (b - a)].astype(np.float32)
+
+
 # -- what is listened to ----------------------------------------------------------------------------
 class Snapshot:
     """What a channel's sound is made of, copied out of the project (so it can be measured on

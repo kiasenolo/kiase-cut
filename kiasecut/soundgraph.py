@@ -58,10 +58,11 @@ class Fx:
         self.key, self.entry, self.proc, self.name = key, entry, proc, name
         self.side = None                    # the channel id of its side-chain, if one counts
 
-    def apply(self, t_us, names=None):
+    def apply(self, t_us, names=None, wired=None):
+        """wired: {name: number} wired in a node graph, in place of what the entry holds."""
         if self.proc is not None:
             for name, v in soundfx.values(self.entry, t_us, names).items():
-                self.proc.set(name, v)
+                self.proc.set(name, wired.get(name, v) if wired else v)
 
     @property
     def latency(self):
@@ -78,13 +79,13 @@ class Fx:
         if self.side == channel_id:
             self.side = None
 
-    def run(self, engine, x, pos, latency, t_of, posts, post_latency, top, side=None):
+    def run(self, engine, x, pos, latency, t_of, posts, post_latency, top, side=None, wired=None):
         """x (latency samples late) through the effect; side: a side-chain given as it is (a
         graph's socket). Returns (sound, how late it is now)."""
         if self.proc is None:
             return x, latency
         mixed = (pos - latency) * US / RATE
-        self.apply(t_of(mixed), engine.names(mixed) if self.entry.get("expr") else None)
+        self.apply(t_of(mixed), engine.names(mixed) if self.entry.get("expr") else None, wired)
         if side is None and self.side is not None and self.side in posts:
             side = engine._delayed(self.key + ("side",), posts[self.side], latency - post_latency[self.side])
         x = self.proc.process(x, side, pos - latency)

@@ -18,7 +18,7 @@ from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPainterPath, QPain
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPathItem, QGraphicsProxyWidget, QGraphicsScene, QGraphicsView,
                                QHBoxLayout, QInputDialog, QLabel, QPushButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, rack, soundedit, soundfx, soundnodes
+from .. import curves, edit, rack, soundedit, soundfx, soundnodes, soundnumbers
 from . import sound_follow
 from . import inplace
 from .menukeys import Menu
@@ -28,9 +28,9 @@ from .sound_visuals import Dynamics, Response, Spectrum
 
 WIDTH, WIDE, MIN_W = 210.0, 300.0, 150.0
 VISUAL_H = {"eq": 150, "response": 100, "dynamics": 140, "spectrum": 100}
-SOCKET = {"stereo": "#7438ff", "l": "#e6c84a", "r": "#4ab5e6"}
+SOCKET = {"stereo": "#7438ff", "l": "#e6c84a", "r": "#4ab5e6", "num": "#a1a1a1"}
 HEADS = {"in": "#3f8a5a", "out": "#a8473f", "ext": "#7a55a8", "split": "#b3702f", "merge": "#b3702f", "mix": "#b3702f",
-         "reroute": "#262626"}
+         "reroute": "#262626", **{k: "#4a7a3f" for k in soundnumbers.TYPES}}
 CATEGORY_HEADS = ["#3f6fa8", "#8a5a3f", "#3f7f8a", "#6a5a9a", "#8a3f6f"]     # one per soundfx.CATEGORIES, in order
 BASICS = ["ext", "split", "merge", "mix", "reroute", "frame"]
 US = 1_000_000
@@ -48,6 +48,8 @@ def value_text(p, v):
     if p.get("choices"):
         i = int(round(v))
         return p["choices"][i] if 0 <= i < len(p["choices"]) else str(i)
+    if p.get("free"):
+        return f"{v:.6g}"
     span = p["max"] - p["min"]
     digits = 0 if span >= 1000 and abs(v) >= 100 else 1 if span >= 50 else 2
     return f"{v:.{digits}f}" + (f" {p['unit']}" if p["unit"] else "")
@@ -75,6 +77,8 @@ class Row:
         self.name, self.spec, self.rect = name, spec, rect
         self.value, self.text, self.mark = 0.0, "", ""
         self.own = 0.0                      # the node's own number, where value is what it follows (dragged and typed)
+        self.dot = None                     # where a number can be wired into it (item coordinates)
+        self.wired = False
 
 
 class NodeItem(QGraphicsItem):
@@ -84,6 +88,7 @@ class NodeItem(QGraphicsItem):
         self.kind = node["type"]
         self.spec = soundfx.EFFECTS.get(node.get("effect")) if self.kind == "fx" else None
         self.visual = self.proxy = None
+        self.result = ""
         self.selected_look = False
         self.setZValue(2)
         self.setPos(node.get("x", 0.0), node.get("y", 0.0))
@@ -128,25 +133,36 @@ class NodeItem(QGraphicsItem):
         specs = []
         if self.kind == "ext":
             specs.append(("channel", None))
-        if self.spec:
-            values = soundfx.values(node, self.editor.time())
+        if self.kind == "global":
+            specs.append(("rack", None))
+        elif self.spec or self.kind in soundnumbers.TYPES:
             if visual == "eq":
                 specs.append(("band", None))
-            band = self.editor.bands.get(self.nid, 1)
-            specs += [(p["name"], p) for p in self.spec["params"]
-                      if p.get("band") in (None, band) and ("when" not in p or p["when"](values))]
+            specs += [(p["name"], p) for p in self.editor.shown_params(self.nid, node)]
         if self.kind == "mix":
             specs += [(f"g{i + 1}", soundfx.P(f"g{i + 1}", f"音量 {i + 1}", -60.0, 12.0, 0.0, "dB"))
                       for i in range(len(ins))]
+        wires = self.editor.wired_into(self.nid)
+        wireable = {p["name"] for p in soundnodes.wire_specs(node)}
         for name, spec in specs:
-            self.rows.append(Row(name, spec, QRectF(6, y + 1, self.w - 12, ROW - 2)))
+            row = Row(name, spec, QRectF(6, y + 1, self.w - 12, ROW - 2))
+            if name in wireable:
+                row.dot, row.wired = QPointF(0, y + ROW / 2), name in wires
+            self.rows.append(row)
             y += ROW
         self.h = y + 5
 
     def boundingRect(self):
         return QRectF(-SOCKET_R - 2, -2, self.w + 2 * SOCKET_R + 4, self.h + 4)
 
+    def dot_of(self, socket):
+        """Where the number input socket ("param:<name>") is, or None while its row is not shown."""
+        name = soundnodes.param_of(socket)
+        return next((r.dot for r in self.rows if r.name == name and r.dot is not None), None)
+
     def socket_pos(self, is_input, i):
+        if is_input and soundnodes.is_param(i):
+            return self.pos() + (self.dot_of(i) or QPointF(0, HEAD / 2))
         at = self.in_at if is_input else self.out_at
         if is_input and i == len(at) and getattr(self, "ghost_at", None) is not None:
             return self.pos() + self.ghost_at
@@ -156,8 +172,15 @@ class NodeItem(QGraphicsItem):
         """Bring the rows and the picture up to the node's values now."""
         node, t = self.node, self.editor.time()
         names = self.editor.names() if node.get("expr") else None
+        given = {}                              # what is wired into it
+        if any(r.wired for r in self.rows):
+            given = self.editor.numbers().into(self.nid, soundnodes.wire_specs(node))
         for row in self.rows:
-            if row.name == "channel":
+            if row.name == "rack":              # (全局參數: which one, and what it reads)
+                source = (node.get("expr") or {}).get("value")
+                got = soundfx.followed(node, "value", 0.0, t, names)
+                row.text = f"{sound_follow.said(source)}　{got:.4g}" if source else "（沒有選）"
+            elif row.name == "channel":
                 row.text = self.editor.channel_name(node.get("channel"))
             elif row.name == "band":
                 row.text = str(self.editor.bands.get(self.nid, 1))
@@ -166,12 +189,18 @@ class NodeItem(QGraphicsItem):
                 row.value = row.own = curves.value(held, t)
                 if (node.get("expr") or {}).get(row.name):            # (it follows a global parameter: what it sounds as)
                     row.value = soundfx.followed(node, row.name, float(row.own), t, names)
+                row.value = given.get(row.name, row.value)
                 row.text = value_text(row.spec, row.value)
                 row.mark = ("◆ " if edit.key_at(held, t) is not None else "◈ ") if curves.is_animated(held) else ""
                 if (node.get("expr") or {}).get(row.name):            # (it follows a global parameter)
                     row.mark = "= " + row.mark
+                if row.wired:
+                    row.mark = ""
+        if self.kind in soundnumbers.TYPES:
+            got = self.editor.numbers().of(self.nid)
+            self.result = "" if got is None or self.kind in ("value", "global") else f"{got:.4g}"
         if self.visual is not None and not isinstance(self.visual, Spectrum):
-            self.visual.set_values(soundfx.values(node, t, names))
+            self.visual.set_values(dict(soundfx.values(node, t, names), **given))
         self.update()
 
     def paint(self, p, _option, _widget=None):
@@ -205,6 +234,8 @@ class NodeItem(QGraphicsItem):
         p.setFont(f)
         p.setPen(QColor("#dddddd"))
         for (label, _), at in zip(soundnodes.outputs(self.node), self.out_at):
+            if self.result:                     # (a number node: what it gives, by its output)
+                label = f"{label}　{self.result}"
             p.drawText(QRectF(8, at.y() - ROW / 2, self.w - 18, ROW), Qt.AlignVCenter | Qt.AlignRight, label)
         for (label, _), at in zip(soundnodes.inputs(self.node), self.in_at):
             p.drawText(QRectF(11, at.y() - ROW / 2, self.w - 18, ROW), Qt.AlignVCenter | Qt.AlignLeft, label)
@@ -212,11 +243,11 @@ class NodeItem(QGraphicsItem):
             p.setPen(Qt.NoPen)
             p.setBrush(QColor("#2a2a2e"))
             p.drawRect(row.rect)
-            if row.spec is not None and not row.spec.get("choices"):
+            if row.spec is not None and not row.spec.get("choices") and not row.spec.get("free"):
                 p.setBrush(QColor("#45454e"))
                 p.drawRect(QRectF(row.rect.x(), row.rect.y(), row.rect.width() * fraction(row.spec, row.value),
                                   row.rect.height()))
-            label = {"channel": "來源", "band": "頻段"}.get(row.name) or row.spec["label"]
+            label = {"channel": "來源", "band": "頻段", "rack": "參數"}.get(row.name) or row.spec["label"]
             inner = row.rect.adjusted(5, 0, -5, 0)
             p.setPen(QColor("#e0c060") if row.mark else QColor("#aaaaaa"))
             p.drawText(inner, Qt.AlignVCenter | Qt.AlignLeft, row.mark + label)
@@ -226,6 +257,10 @@ class NodeItem(QGraphicsItem):
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(QRectF(0, 0, self.w, self.h), 4, 4)
         p.setPen(QPen(QColor(0, 0, 0, 160), 1))
+        for row in self.rows:
+            if row.dot is not None:
+                p.setBrush(QColor(SOCKET["num"]))
+                p.drawEllipse(row.dot, SOCKET_R - 1.5, SOCKET_R - 1.5)
         for (_, kind), at in zip(soundnodes.inputs(self.node), self.in_at):
             p.setBrush(QColor(SOCKET[kind]))
             p.drawEllipse(at, SOCKET_R, SOCKET_R)
@@ -318,9 +353,10 @@ class GraphView(QGraphicsView):
     def route(self):
         for (src, out, dst, socket), link in self.links.items():
             a, b = self.nodes[src], self.nodes[dst]
-            if out < len(a.out_at) and socket < len(b.in_at):
+            number = soundnodes.is_param(socket)
+            if out < len(a.out_at) and (b.dot_of(socket) is not None if number else socket < len(b.in_at)):
                 kind = soundnodes.outputs(a.node)[out][1]
-                link.style(SOCKET[kind], SOCKET[soundnodes.inputs(b.node)[socket][1]])
+                link.style(SOCKET[kind], SOCKET["num" if number else soundnodes.inputs(b.node)[socket][1]])
                 link.route(a.socket_pos(False, out), b.socket_pos(True, socket))
 
     def set_selected(self, ids):
@@ -348,6 +384,13 @@ class GraphView(QGraphicsView):
                     d = math.hypot(d.x(), d.y())
                     if d <= radius and (best is None or d < best[0]):
                         best = (d, nid, is_input, i)
+            if want is not False:
+                for row in getattr(item, "rows", ()):
+                    if row.dot is not None:
+                        d = item.pos() + row.dot - pos
+                        d = math.hypot(d.x(), d.y())
+                        if d <= min(radius, SOCKET_R + 4) and (best is None or d < best[0]):
+                            best = (d, nid, True, soundnodes.PARAM + row.name)
         return best[1:] if best else None
 
     def node_at(self, pos, frames=False):
@@ -441,6 +484,10 @@ class GraphView(QGraphicsView):
     def press_row(self, item, row, pos, e):
         if row.name == "channel":
             self.editor.channel_menu(item.nid, e.globalPosition().toPoint())
+        elif row.name == "rack":
+            self.editor.rack_menu(item.nid, e.globalPosition().toPoint())
+        elif row.wired:                             # (the wire's: nothing to set here)
+            self.start_move(item, pos, e.modifiers())
         elif row.name == "band":
             menu = Menu(self)
             for i in range(1, soundfx.EQ_BANDS + 1):
@@ -487,13 +534,21 @@ class GraphView(QGraphicsView):
         graph = self.editor.graph()
         d["to"], end = None, pos
         near = self.socket_near(pos, want=not is_input, radius=SNAP_R / self.zoom())
+        if not near and not is_input and self.nodes[nid].node["type"] in soundnumbers.TYPES:
+            over = self.node_at(pos)            # (a number let go on a row, not just on its dot)
+            row = self.row_at(over, pos) if over is not None else None
+            if row is not None and row.dot is not None:
+                near = (over.nid, True, soundnodes.PARAM + row.name)
         if near:
             other, _, j = near
             link = (other, j, nid, i) if is_input else (nid, i, other, j)
             if soundnodes.can_link(graph, *link):
                 d["to"], end = link, self.nodes[other].socket_pos(not is_input, j)
-        kind = (soundnodes.inputs(item.node) if is_input else soundnodes.outputs(item.node))
-        colour = SOCKET[kind[i][1]] if i < len(kind) else SOCKET["stereo"]
+        if is_input and soundnodes.is_param(i):
+            colour = SOCKET["num"]
+        else:
+            kind = (soundnodes.inputs(item.node) if is_input else soundnodes.outputs(item.node))
+            colour = SOCKET[kind[i][1]] if i < len(kind) else SOCKET["stereo"]
         d["wire"].style(colour, colour)
         d["wire"].route(end, anchor) if is_input else d["wire"].route(anchor, end)
         d["end"] = pos
@@ -537,6 +592,8 @@ class GraphView(QGraphicsView):
             if item.kind != "frame" and soundnodes.inputs(item.node) and soundnodes.outputs(item.node) \
                     and not any(nid in (l[0], l[2]) for l in graph["links"]):
                 d["over"] = self.link_hit(item.pos() + QPointF(item.w / 2, min(item.h / 2, 30)), 24.0, skip=(nid,))
+                if d["over"] and soundnodes.is_param(d["over"][3]):     # (nothing goes into a number's wire)
+                    d["over"] = None
                 if d["over"]:
                     self.links[d["over"]].light(LINK_W)
 
@@ -590,7 +647,10 @@ class GraphView(QGraphicsView):
                 return
             row = d["row"]
             fine = 0.1 if e.modifiers() & Qt.ShiftModifier else 1.0
-            value = at_fraction(row.spec, fraction(row.spec, d["value"]) + dx / 300.0 * fine)
+            if row.spec.get("free"):                # (a step a pixel; bigger numbers go by their size)
+                value = round(d["value"] + dx * fine * max(0.01, abs(d["value"]) / 200.0), 4)
+            else:
+                value = at_fraction(row.spec, fraction(row.spec, d["value"]) + dx / 300.0 * fine)
             d["now"] = value
             row.value = row.own = value
             row.text = value_text(row.spec, value)
@@ -629,6 +689,8 @@ class GraphView(QGraphicsView):
         elif mode in ("cut", "bend"):
             self.scene_.removeItem(d["line"])
             crossed = self.links_crossing(d["path"])
+            if mode == "bend":                          # (a reroute takes sound only)
+                crossed = [k for k in crossed if not soundnodes.is_param(k[3])]
             if crossed and mode == "cut":
                 self.editor.edit("切斷連線", soundedit.disconnect_nodes, [list(k) for k in crossed])
             elif crossed:
@@ -672,7 +734,7 @@ class GraphView(QGraphicsView):
         item = self.node_at(pos)
         if item is not None and e.button() == Qt.LeftButton:
             row = self.row_at(item, pos)
-            if row is not None and row.spec is not None and not row.spec.get("choices"):
+            if row is not None and row.spec is not None and not row.spec.get("choices") and not row.wired:
                 self.drag = None
                 self.editor.type_value(item.nid, row)
                 return
@@ -686,6 +748,9 @@ class GraphView(QGraphicsView):
         item = self.node_at(pos)
         if item is not None:
             row = self.row_at(item, pos)
+            if row is not None and row.name == "rack":
+                self.editor.rack_menu(item.nid, at)
+                return
             if row is not None and row.spec is not None:
                 self.editor.row_menu(item.nid, row, at)
                 return
@@ -699,6 +764,8 @@ class GraphView(QGraphicsView):
             self.editor.node_menu(at)
             return
         link = self.link_hit(pos)
+        if link and soundnodes.is_param(link[3]):
+            link = None
         self.editor.add_menu(at, pos, on_link=list(link) if link else None)
 
     def contextMenuEvent(self, e):
@@ -791,6 +858,7 @@ class SoundNodeEditor(QWidget):
         self.views = {}                     # effect id -> (transform, centre): where each was looked at
         self._graph = None
         self._shape = None
+        self._numbers = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
@@ -850,16 +918,36 @@ class SoundNodeEditor(QWidget):
         found = next((h for h in list(level["tracks"]) + soundedit.buses(level) if h["id"] == channel_id), None)
         return (found.get("name") or channel_id) if found else "（已經不在）"
 
-    def _signature(self, graph):
+    def wired_into(self, nid):
+        """The names of node nid's parameters a number is wired into."""
+        return {soundnodes.param_of(l[3]) for l in self.graph()["links"] if l[2] == nid and soundnodes.is_param(l[3])}
+
+    def shown_params(self, nid, node):
+        """The specs of the parameters an effect or number node shows rows for: those that count as its
+        values are (of an equaliser, the band picked) - and every wired one."""
+        if node["type"] == "fx":
+            specs = (soundfx.EFFECTS.get(node.get("effect")) or {}).get("params", [])
+        else:
+            specs = soundnumbers.SPECS.get(node["type"], [])
+        if not specs:
+            return []
         t = self.time()
+        values = soundfx.values(node, t) if node["type"] == "fx" else soundnumbers.own_values(node, t)
+        wires = self.wired_into(nid)
+        band = self.bands.get(nid, 1)
+        return [p for p in specs if p["name"] in wires or p.get("band") in (None, band)
+                and ("when" not in p or p["when"](values))]
+
+    def numbers(self):
+        """The graph's numbers at the playhead (worked out once a refresh)."""
+        if self._numbers is None:
+            self._numbers = soundnodes.numbers(self.graph(), self.time(), self.names)
+        return self._numbers
+
+    def _signature(self, graph):
         out = []
         for nid, n in graph["nodes"].items():
-            names = ()
-            spec = soundfx.EFFECTS.get(n.get("effect")) if n["type"] == "fx" else None
-            if spec:
-                values = soundfx.values(n, t)
-                names = tuple(p["name"] for p in spec["params"] if p.get("band") in (None, self.bands.get(nid, 1))
-                              and ("when" not in p or p["when"](values)))
+            names = tuple(p["name"] for p in self.shown_params(nid, n)) if n["type"] != "mix" else ()
             out.append((nid, n["type"], n.get("effect"), n.get("x"), n.get("y"), n.get("w"), n.get("h"),
                         n.get("name"), n.get("color"), n.get("channel"), n.get("inputs"), n.get("mute"), names))
         return tuple(out), tuple(tuple(l) for l in graph["links"])
@@ -875,6 +963,7 @@ class SoundNodeEditor(QWidget):
         self.title.setText(f"{self.page.target_name(self.target)}　▸　聲音節點效果")
         if self.view.drag is not None:                      # (not under the hand)
             return True
+        self._numbers = None
         shape = self._signature(graph)
         if shape != self._shape or graph is not self._graph:
             self.selected &= set(graph["nodes"])
@@ -927,13 +1016,19 @@ class SoundNodeEditor(QWidget):
     def type_value(self, nid, row):
         spec = row.spec
         value, ok = QInputDialog.getDouble(self, spec["label"], f"{spec['label']}（{spec['unit']}）" if spec["unit"]
-                                           else spec["label"], row.own, spec["min"], spec["max"], 2)
+                                           else spec["label"], row.own, spec["min"], spec["max"],
+                                           4 if spec.get("free") else 2)
         if ok:
             self.write_params(nid, {row.name: value})
 
     def row_menu(self, nid, row, at):
         menu = Menu(self)
         address = f"{self.eid}/{nid}"
+        if row.wired:
+            wire = soundnodes.link_into(self.graph(), nid, soundnodes.PARAM + row.name)
+            menu.addAction("拆掉連線", lambda: self.edit("拆掉連線", soundedit.disconnect_nodes, [wire]))
+            menu.exec(at)
+            return
         if not row.spec.get("choices"):
             held = (self.graph()["nodes"][nid].get("params") or {}).get(row.name)
             has = curves.is_animated(held) and edit.key_at(held, self.time()) is not None
@@ -943,6 +1038,40 @@ class SoundNodeEditor(QWidget):
             sound_follow.add_items(menu, self.page, self.target, address, row.spec, self.time(), self.refresh)
         menu.addAction("重設為預設值", lambda: (self.page.win.apply(
             "重設參數", soundedit.reset_param, self.target, address, row.name), self.refresh()))
+        menu.exec(at)
+
+    def rack_menu(self, nid, at):
+        """Which global parameter a 全局參數 node reads."""
+        menu = Menu(self)
+        win, address = self.page.win, f"{self.eid}/{nid}"
+
+        def put(source, label="全局參數節點"):
+            win.apply_root(label, lambda root: soundedit.bind(root, win.container(root), self.target, address,
+                                                              "value", source))
+            self.refresh()
+
+        for p in rack.params(win.proj):
+            kind, name = rack.kind_of(p), p["name"]
+            if kind in rack.NUMERIC:
+                menu.addAction(name, lambda name=name: put(name))
+            elif kind in rack.SIZES:
+                parts = menu.addMenu(name)
+                for i, axis in enumerate("XYZ"[:rack.SIZES[kind]]):
+                    part = f"{name}[{i}]"
+                    parts.addAction(f"{axis}　{part}", lambda part=part: put(part))
+
+        def new():
+            made = win.ask_rack_name()
+            if made:
+                def fn(root):
+                    edit.add_rack_param(root, made, 0.0)
+                    soundedit.bind(root, win.container(root), self.target, address, "value", made)
+                win.apply_root("新增全局參數", fn)
+                self.refresh()
+
+        if menu.actions():
+            menu.addSeparator()
+        menu.addAction("新增全局參數…", new)
         menu.exec(at)
 
     def channel_menu(self, nid, at):
@@ -972,14 +1101,19 @@ class SoundNodeEditor(QWidget):
             if made:
                 self.view.set_selected({made})
         box = SearchBox(menu, pick, "搜尋節點…")
-        groups = [("基本", BASICS)] + soundfx.CATEGORIES
+        groups = [("基本", BASICS)] + soundfx.CATEGORIES + [("數值", list(soundnumbers.TYPES))]
+        number_wire = into is not None and soundnodes.is_param(into[1]) or \
+            feed is not None and soundnodes.outputs(self.graph()["nodes"][feed[0]])[feed[1]][1] == "num"
+        if number_wire:                                     # (only number nodes take or give a number by themselves)
+            groups = groups[-1:]
         for title, kinds in groups:
             sub = menu.addMenu(title)
             box.groups.append(sub.menuAction())
             for kind in kinds:
                 name = soundfx.EFFECTS[kind]["title"] if kind in soundfx.EFFECTS else soundnodes.TITLES[kind]
                 sub.addAction(name, lambda kind=kind: pick(kind))
-                box.add(title, name, kind, soundfx.KEYWORDS.get(kind, kind) + " " + name)
+                words = soundnumbers.KEYWORDS.get(kind) or soundfx.KEYWORDS.get(kind, kind)
+                box.add(title, name, kind, words + " " + name)
         if SoundNodeEditor.clipboard:
             sep = menu.addSeparator()
             box.groups.append(sep)

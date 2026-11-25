@@ -92,7 +92,7 @@ EFFECTS = {
         P("knee", "膝部", 0.0, 24.0, 6.0, "dB"), P("mk", "補償增益", -12.0, 24.0, 0.0, "dB")]},
     "limiter": {"title": "限幅器", "visual": "dynamics", "params": [
         P("gain", "預增益（推高音量）", 0.0, 24.0, 0.0, "dB"), P("ceil", "上限", -24.0, 0.0, -1.0, "dB"),
-        P("lk", "前瞻", 0.1, 20.0, 5.0, "ms"), P("at", "啟動", 0.25, 20.0, 5.0, "ms"),
+        P("lk", "前瞻", 0.1, 20.0, 5.0, "ms", nowire=True), P("at", "啟動", 0.25, 20.0, 5.0, "ms"),
         P("rt", "釋放", 0.25, 500.0, 50.0, "ms", log=True), switch("alr", "長釋放 (ALR)"),
         _ms("alr_at", "ALR 啟動", 0.1, 200.0, 5.0, when=_alr), _ms("alr_rt", "ALR 釋放", 10.0, 1000.0, 200.0, when=_alr)]},
     "gate": {"title": "噪音閘", "visual": "dynamics", "side": True, "params": [
@@ -186,6 +186,9 @@ def active(chain):
 
 def spec(e, name):
     """The description of parameter name of an entry (a graph's effect or mix node too), or None."""
+    if e.get("type") in ("value", "global", "math", "maprange", "clamp"):     # (a graph's number node)
+        from . import soundnumbers
+        return soundnumbers.spec(e["type"], name)
     if e.get("type") == "mix" and name[:1] == "g" and name[1:].isdigit():
         return P(name, f"第 {name[1:]} 路音量", -60.0, 12.0, 0.0, "dB")
     kind = EFFECTS.get(e.get("effect"))
@@ -257,6 +260,10 @@ def clip_rows(chain):
             elif one.get("type") == "mix":
                 label = f"{head}·混合"
                 specs = [spec(one, n) for n in sorted(one["params"])]
+            elif one.get("type") != "fx":                   # a number node (全局參數 has nothing of its own)
+                from . import soundnodes
+                label = f"{head}·{soundnodes.title(one)}"
+                specs = [spec(one, n) for n in one["params"]] if one.get("type") != "global" else []
             else:
                 label, specs = f"{head}·{title(one)}", EFFECTS.get(one.get("effect"), {}).get("params", [])
             out += [("sfx:" + path, p["name"], f"聲音 {label}·{p['label']}", 1, p["default"])

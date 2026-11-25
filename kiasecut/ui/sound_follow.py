@@ -39,7 +39,7 @@ def add_items(menu, page, target, address, spec, time, done=lambda: None):
     def ask_mapping(src, source_label, value, values):
         m = have if mapping.is_mapping(have) and have.get("src") == src else mapping.make(src=src)
         return mapdialog.ask_mapping(win, f"綁定：{spec['label']}", m, source_label, value, values,
-                                     (float(spec["min"]), float(spec["max"])))
+                                     (0.0, 1.0) if spec.get("free") else (float(spec["min"]), float(spec["max"])))
 
     def bind(src):
         values = rack.values(win.proj, win.playhead_us())

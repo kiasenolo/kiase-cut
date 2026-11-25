@@ -7,7 +7,7 @@ import copy
 import math
 import uuid
 
-from . import curves, edit, expr, mapping, project, soundfx, soundmeter, soundnodes
+from . import curves, edit, expr, mapping, project, soundfx, soundmeter, soundnodes, soundnumbers
 
 PAN_RANGE = (-1.0, 1.0)
 
@@ -315,9 +315,13 @@ def add_node(g, kind, x, y, feed=None, into=None, on_link=None):
     node = g["nodes"][nid]
     if on_link:
         soundnodes.insert_on_link(g, nid, on_link)
-    if feed and soundnodes.inputs(node):
-        soundnodes.connect(g, feed[0], feed[1], nid, 0)
-    if into and soundnodes.outputs(node):
+    if feed:                    # a number goes into a number node's first number, a sound into a first input
+        number = soundnodes.outputs(g["nodes"][feed[0]])[feed[1]][1] == "num"
+        socket = 0 if not number else \
+            soundnodes.PARAM + soundnumbers.THROUGH[node["type"]] if node["type"] in soundnumbers.THROUGH else None
+        if socket is not None and soundnodes.can_link(g, feed[0], feed[1], nid, socket):
+            soundnodes.connect(g, feed[0], feed[1], nid, socket)
+    if into and soundnodes.outputs(node) and soundnodes.can_link(g, nid, 0, into[0], into[1]):
         soundnodes.connect(g, nid, 0, into[0], into[1])
     return nid
 

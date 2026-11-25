@@ -299,6 +299,25 @@ def upstream(comp, channel):
     return found
 
 
+def _timed(view):
+    """Whether any 聲音節點效果 in a snapshot's view reads 場景時間."""
+    if isinstance(view, dict):
+        return view.get("type") == "scenetime" or any(_timed(v) for v in view.values())
+    return isinstance(view, list) and any(_timed(v) for v in view)
+
+
+def _lengths(root, tracks, copied, into):
+    """Writes into `into` (a copy of a level, its tracks `copied`) and the levels inside it how
+    long they are: the copies leave out what makes no sound, which 場景時間 counts."""
+    into["length_us"] = project.end_us(tracks)
+    for t, mine in zip(tracks, copied):
+        kept = {c["id"]: c for c in mine.get("clips") or ()}
+        for c in t.get("clips") or ():
+            got = _content(root, c) if c.get("id") in kept and "compound" in kept[c["id"]] else None
+            if got is not None:
+                _lengths(root, got[0], kept[c["id"]]["compound"]["tracks"], kept[c["id"]]["compound"])
+
+
 def snapshot(root, level, channel):
     comp = holder(root, level)
     wanted = upstream(comp, channel)
@@ -327,6 +346,8 @@ def snapshot(root, level, channel):
     view = {"fps": root.get("fps", 30.0), "tracks": tracks, "buses": buses, "master": master, "compounds": {},
             "rack": copy.deepcopy(root.get("rack") or []), "meter_channels": True,
             "master_gain": float(root.get("master_gain", 1.0))}
+    if _timed(view):                    # (else a change of length would not matter)
+        _lengths(root, comp.get("tracks") or [], tracks, view)
     return Snapshot(level, channel, view, entries)
 
 

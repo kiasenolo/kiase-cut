@@ -361,7 +361,7 @@ def set_node(g, nid, fields):
     if node is None:
         raise ValueError("找不到這個節點")
     for key, value in fields.items():
-        if key not in ("w", "h", "x", "y", "name", "color", "channel"):
+        if key not in ("w", "h", "x", "y", "name", "color", "channel", "curve", "names"):
             raise ValueError("unknown field " + key)
         node[key] = value
 

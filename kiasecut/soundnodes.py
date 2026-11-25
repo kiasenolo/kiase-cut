@@ -13,9 +13,9 @@ A node is {"type", "x", "y", optional "w", "mute"} and by type:
                     side-chain is a socket of its own)
     reroute         繞線
     frame           框架: "name", "color", "w", "h" - a box drawn behind nodes
-    value, global,  nodes that give a number (soundnumbers.py): 數值, 全局參數, 數學, 映射範圍, 限制
-    math, maprange,
-    clamp
+    value, global,  nodes that give a number (soundnumbers.py, which has the whole list):
+    math, maprange, 數值, 全局參數, 數學, 映射範圍, 限制 and more
+    clamp, ...
     level           電平 → 數值: a sound comes in, how loud a box of its spectrum is goes out as a
                     number
 An input takes one link. Sound sockets carry stereo; a side from split is the same in both.
@@ -72,7 +72,7 @@ def inputs(node):
 def outputs(node):
     t = node["type"]
     if t in soundnumbers.TYPES:
-        return [("數值", "num")]
+        return [(label, "num") for label in soundnumbers.OUTPUTS.get(t, ("數值",))]
     if t == "split":
         return [("L", "l"), ("R", "r")]
     if t in ("out", "frame"):
@@ -88,7 +88,7 @@ def wire_specs(node):
     elif t == "mix":
         specs = [soundfx.spec(node, f"g{i + 1}") for i in range(len(inputs(node)))]
     else:
-        specs = soundnumbers.SPECS.get(t, ()) if t != "value" else ()
+        specs = soundnumbers.specs(node) if t in soundnumbers.TYPES and t not in soundnumbers.CONSTANTS else ()
     return [p for p in specs if not p.get("nowire")]
 
 
@@ -101,14 +101,14 @@ def param_of(socket):
 
 
 def wires(graph, cut=()):
-    """{(node id, parameter name): the node whose number is wired into it}. cut: (from, to) pairs left out."""
-    return {(l[2], param_of(l[3])): l[0] for l in graph["links"]
+    """{(node id, parameter name): (node, output) whose number is wired into it}. cut: (from, to) pairs left out."""
+    return {(l[2], param_of(l[3])): (l[0], l[1]) for l in graph["links"]
             if is_param(l[3]) and l[0] in graph["nodes"] and l[2] in graph["nodes"] and (l[0], l[2]) not in cut}
 
 
-def numbers(graph, t_us, names=None, heard=None):
+def numbers(graph, t_us, names=None, heard=None, length=0):
     """soundnumbers.Numbers of a graph at one moment."""
-    return soundnumbers.Numbers(graph["nodes"], wires(graph, _order(graph)[1]), t_us, names, heard)
+    return soundnumbers.Numbers(graph["nodes"], wires(graph, _order(graph)[1]), t_us, names, heard, length)
 
 
 def new_node(kind, x=0.0, y=0.0, **extra):
@@ -281,9 +281,10 @@ def _order(graph):
 class GraphFx:
     """A graph as one step of a chain (soundgraph.Fx's interface)."""
 
-    def __init__(self, key, entry, make_fx):
-        """make_fx(key, entry, name) -> soundgraph.Fx for an effect node."""
-        self.key, self.entry = key, entry
+    def __init__(self, key, entry, make_fx, length=0):
+        """make_fx(key, entry, name) -> soundgraph.Fx for an effect node. length: of what the
+        chain runs through (the clip, or the timeline), for 場景時間."""
+        self.key, self.entry, self.length = key, entry, length
         graph = entry["graph"]
         self.nodes = graph["nodes"]
         self.order, cut = _order(graph)
@@ -300,7 +301,7 @@ class GraphFx:
             node = self.nodes[nid]
             sources = [self.feeds[(nid, i)][0] for i in range(len(inputs(node))) if (nid, i) in self.feeds]
             # (a number measured from late sound makes what it is wired into wait for it, as a sound path would)
-            numbers_from = [src for (dst, _name), src in self.wires.items() if dst == nid]
+            numbers_from = [src for (dst, _name), (src, _out) in self.wires.items() if dst == nid]
             lat = max([self.after.get(s, 0) for s in sources + numbers_from], default=0)
             if node["type"] == "level":
                 held_ms = soundnumbers.own_values(node, 0.0)
@@ -356,7 +357,8 @@ class GraphFx:
             if at is None:
                 mixed = (pos - late) * 1_000_000 / engine.rate
                 at = moments[late] = soundnumbers.Numbers(self.nodes, self.wires, t_of(mixed),
-                                                          lambda: engine.names(mixed), lambda n: heard(n, late))
+                                                          lambda: engine.names(mixed), lambda n: heard(n, late),
+                                                          self.length)
             return at.into(nid, wire_specs(self.nodes[nid]))
 
         def heard(nid, late):

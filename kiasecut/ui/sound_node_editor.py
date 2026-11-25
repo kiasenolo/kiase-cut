@@ -18,9 +18,10 @@ from PySide6.QtGui import QBrush, QColor, QCursor, QPainter, QPainterPath, QPain
 from PySide6.QtWidgets import (QGraphicsItem, QGraphicsPathItem, QGraphicsProxyWidget, QGraphicsScene, QGraphicsView,
                                QHBoxLayout, QInputDialog, QLabel, QPushButton, QVBoxLayout, QWidget)
 
-from .. import curves, edit, rack, soundedit, soundfx, soundnodes, soundnumbers
+from .. import curves, edit, fx, project, rack, soundedit, soundfx, soundnodes, soundnumbers
 from . import sound_follow
 from . import inplace
+from .curvefield import CurveField
 from .menukeys import Menu
 from .node_editor import GRID, HEAD, HIT_R, LINK_W, ROW, SNAP_R, SOCKET_R, ZOOM_MAX, ZOOM_MIN, Link
 from .searchbox import SearchBox
@@ -28,7 +29,8 @@ from .sound_visuals import Dynamics, Response, Spectrum
 from .sounddialog import BoxSpectrum
 
 WIDTH, WIDE, MIN_W = 210.0, 300.0, 150.0
-VISUAL_H = {"eq": 150, "response": 100, "dynamics": 140, "spectrum": 100, "level": 130}
+VISUAL_H = {"eq": 150, "response": 100, "dynamics": 140, "spectrum": 100, "level": 130, "floatcurve": 178}
+OWN_PICTURE = ("level", "floatcurve")           # number nodes with one in them
 SOCKET = {"stereo": "#7438ff", "l": "#e6c84a", "r": "#4ab5e6", "num": "#a1a1a1"}
 HEADS = {"in": "#3f8a5a", "out": "#a8473f", "ext": "#7a55a8", "split": "#b3702f", "merge": "#b3702f", "mix": "#b3702f",
          "reroute": "#262626", **{k: "#4a7a3f" for k in soundnumbers.TYPES}}
@@ -49,6 +51,8 @@ def value_text(p, v):
     if p.get("choices"):
         i = int(round(v))
         return p["choices"][i] if 0 <= i < len(p["choices"]) else str(i)
+    if p.get("whole"):
+        return str(int(round(v)))
     if p.get("free"):
         return f"{v:.6g}"
     span = p["max"] - p["min"]
@@ -90,7 +94,7 @@ class NodeItem(QGraphicsItem):
         self.kind = node["type"]
         self.spec = soundfx.EFFECTS.get(node.get("effect")) if self.kind == "fx" else None
         self.visual = self.proxy = None
-        self.result = ""
+        self.results = []                   # a number node: what each output gives, as text
         self.selected_look = False
         self.setZValue(2)
         self.setPos(node.get("x", 0.0), node.get("y", 0.0))
@@ -103,7 +107,7 @@ class NodeItem(QGraphicsItem):
             self.w, self.h = 24.0, 24.0
             self.in_at, self.out_at, self.rows = [QPointF(0, 12)], [QPointF(24, 12)], []
             return
-        visual = "level" if self.kind == "level" else (self.spec or {}).get("visual")
+        visual = self.kind if self.kind in OWN_PICTURE else (self.spec or {}).get("visual")
         self.w = float(node.get("w") or (WIDE if visual else WIDTH))
         y = HEAD + 4
         self.out_at, self.in_at, self.rows = [], [], []
@@ -119,10 +123,13 @@ class NodeItem(QGraphicsItem):
             y += ROW
         if visual:
             h = VISUAL_H[visual]
-            cls = BoxSpectrum if visual == "level" else \
+            cls = BoxSpectrum if visual == "level" else CurveField if visual == "floatcurve" else \
                 Dynamics if visual == "dynamics" else Spectrum if visual == "spectrum" else Response
             if cls is BoxSpectrum:
                 self.visual = BoxSpectrum()
+            elif cls is CurveField:
+                self.visual = CurveField(compact=True)
+                self.visual.set_value(node.get("curve"))
             else:
                 self.visual = cls(h) if cls is Spectrum else cls(node["effect"], h)
             self.visual.setMinimumSize(0, 0)
@@ -133,6 +140,9 @@ class NodeItem(QGraphicsItem):
             if cls is BoxSpectrum:                  # (the box's sides are the node's numbers)
                 self.visual.changed.connect(lambda values: self.editor.live_params(self.nid, self.unwired(values)))
                 self.visual.done.connect(lambda values: self.editor.write_params(self.nid, self.unwired(values)))
+            elif cls is CurveField:
+                self.visual.live.connect(lambda keys: self.editor.live_curve(self.nid, keys))
+                self.visual.finished.connect(lambda keys: self.editor.write_curve(self.nid, keys))
             elif cls is not Spectrum:
                 self.visual.live.connect(lambda values: self.editor.live_params(self.nid, values))
                 self.visual.done.connect(lambda values: self.editor.write_params(self.nid, values))
@@ -212,10 +222,13 @@ class NodeItem(QGraphicsItem):
                 if row.wired:
                     row.mark = ""
         if self.kind in soundnumbers.TYPES:
-            got = self.editor.numbers().of(self.nid)
-            self.result = "" if got is None or self.kind in ("value", "global") else f"{got:.4g}"
+            quiet = self.kind in soundnumbers.CONSTANTS + ("global",)      # (their row says it)
+            got = [None if quiet else self.editor.numbers().of(self.nid, i) for i in range(len(self.out_at))]
+            self.results = ["" if v is None else f"{v:.4g}" for v in got]
             if self.kind == "level":
                 self.visual.set_values(dict(soundnumbers.own_values(node, t, names), **given))
+            elif self.kind == "floatcurve":
+                self.visual.set_value(node.get("curve"))
         elif self.visual is not None and not isinstance(self.visual, Spectrum):
             self.visual.set_values(dict(soundfx.values(node, t, names), **given))
         self.update()
@@ -250,9 +263,9 @@ class NodeItem(QGraphicsItem):
         f.setPixelSize(11)
         p.setFont(f)
         p.setPen(QColor("#dddddd"))
-        for (label, _), at in zip(soundnodes.outputs(self.node), self.out_at):
-            if self.result:                     # (a number node: what it gives, by its output)
-                label = f"{label}　{self.result}"
+        for i, ((label, _), at) in enumerate(zip(soundnodes.outputs(self.node), self.out_at)):
+            if i < len(self.results) and self.results[i]:   # (a number node: what it gives, by its output)
+                label = f"{label}　{self.results[i]}"
             p.drawText(QRectF(8, at.y() - ROW / 2, self.w - 18, ROW), Qt.AlignVCenter | Qt.AlignRight, label)
         for (label, _), at in zip(soundnodes.inputs(self.node), self.in_at):
             p.drawText(QRectF(11, at.y() - ROW / 2, self.w - 18, ROW), Qt.AlignVCenter | Qt.AlignLeft, label)
@@ -337,6 +350,7 @@ class GraphView(QGraphicsView):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
         self.drag = None                    # {"mode": ..., ...}
+        self.curve = None                   # the CurveField last pressed: Delete is for its selected keys
         self.nodes = {}                     # nid -> NodeItem / FrameItem
         self.links = {}                     # (from, output, to, input) -> Link
 
@@ -352,9 +366,10 @@ class GraphView(QGraphicsView):
 
     # -- building --------------------------------------------------------------------------------
     def build(self, graph):
+        kept = self.curve_keys_picked()
         self.drag = None
         self.scene_.clear()
-        self.nodes, self.links = {}, {}
+        self.nodes, self.links, self.curve = {}, {}, None
         for nid, node in graph["nodes"].items():
             item = FrameItem(nid, node) if node["type"] == "frame" else NodeItem(self.editor, nid, node)
             item.selected_look = nid in self.editor.selected
@@ -366,6 +381,17 @@ class GraphView(QGraphicsView):
                 self.scene_.addItem(link)
                 self.links[tuple(l)] = link
         self.route()
+        item = self.nodes.get(kept[0]) if kept else None
+        if item is not None and isinstance(item.visual, CurveField):    # (drawn again: its keys stay picked)
+            item.visual.set_value(graph["nodes"][item.nid].get("curve"))
+            item.visual.canvas.sel = kept[1]
+            self.curve = item.visual
+
+    def curve_keys_picked(self):
+        """(node id, keys picked) of the curve last pressed, or None."""
+        nid = next((k for k, i in self.nodes.items() if self.curve is not None
+                    and getattr(i, "visual", None) is self.curve), None)
+        return None if nid is None else (nid, set(self.curve.canvas.sel))
 
     def route(self):
         for (src, out, dst, socket), link in self.links.items():
@@ -470,7 +496,10 @@ class GraphView(QGraphicsView):
         if self._over_picture(e.position().toPoint()):
             super().mousePressEvent(e)                      # (the curve in a node: its own hands)
             self.drag = {"mode": "picture"}
+            proxy = self.itemAt(e.position().toPoint())
+            self.curve = proxy.widget() if isinstance(proxy.widget(), CurveField) else None
             return
+        self.curve = None
         item = self.node_at(pos)
         if item is not None:
             row = self.row_at(item, pos)
@@ -664,10 +693,14 @@ class GraphView(QGraphicsView):
                 return
             row = d["row"]
             fine = 0.1 if e.modifiers() & Qt.ShiftModifier else 1.0
-            if row.spec.get("free"):                # (a step a pixel; bigger numbers go by their size)
+            if row.spec.get("whole") and row.spec.get("free"):
+                value = float(round(d["value"] + dx * fine / 8.0))
+            elif row.spec.get("free"):              # (a step a pixel; bigger numbers go by their size)
                 value = round(d["value"] + dx * fine * max(0.01, abs(d["value"]) / 200.0), 4)
             else:
                 value = at_fraction(row.spec, fraction(row.spec, d["value"]) + dx / 300.0 * fine)
+                if row.spec.get("whole"):
+                    value = float(round(value))
             d["now"] = value
             row.value = row.own = value
             row.text = value_text(row.spec, value)
@@ -844,7 +877,10 @@ class GraphView(QGraphicsView):
         elif which == (Qt.Key_A, ""):
             self.set_selected(set(self.nodes))
         elif which in ((Qt.Key_X, ""), (Qt.Key_Delete, ""), (Qt.Key_Backspace, "")):
-            ed.delete_selected()
+            if self.curve is not None and self.curve.canvas.sel:
+                self.curve.canvas.delete_selected()
+            else:
+                ed.delete_selected()
         elif which == (Qt.Key_X, "ctrl"):
             ed.delete_selected(keep_links=True)
         elif which == (Qt.Key_M, ""):
@@ -928,6 +964,13 @@ class SoundNodeEditor(QWidget):
             return int(self.page.win.clip_time(self.target[1]))
         return self.page.level_time()
 
+    def length(self):
+        """How long what time() runs through is: the clip, or the timeline (場景時間)."""
+        level = self.page.level()
+        if self.target and self.target[0] == "clip":
+            return soundedit.holder(level, self.target)["duration_us"]
+        return project.end_us(level["tracks"])
+
     def channel_name(self, channel_id):
         if not channel_id:
             return "（沒有選）"
@@ -945,7 +988,7 @@ class SoundNodeEditor(QWidget):
         if node["type"] == "fx":
             specs = (soundfx.EFFECTS.get(node.get("effect")) or {}).get("params", [])
         else:
-            specs = soundnumbers.SPECS.get(node["type"], [])
+            specs = soundnumbers.specs(node)
         if not specs:
             return []
         t = self.time()
@@ -959,7 +1002,7 @@ class SoundNodeEditor(QWidget):
         """The graph's numbers at the playhead (worked out once a refresh)."""
         if self._numbers is None:
             self._numbers = soundnodes.numbers(self.graph(), self.time(), self.names,
-                                               lambda nid: self.page.heard(f"{self.eid}/{nid}"))
+                                               lambda nid: self.page.heard(f"{self.eid}/{nid}"), self.length())
         return self._numbers
 
     def _signature(self, graph):
@@ -967,7 +1010,8 @@ class SoundNodeEditor(QWidget):
         for nid, n in graph["nodes"].items():
             names = tuple(p["name"] for p in self.shown_params(nid, n)) if n["type"] != "mix" else ()
             out.append((nid, n["type"], n.get("effect"), n.get("x"), n.get("y"), n.get("w"), n.get("h"),
-                        n.get("name"), n.get("color"), n.get("channel"), n.get("inputs"), n.get("mute"), names))
+                        n.get("name"), n.get("color"), n.get("channel"), n.get("inputs"), n.get("mute"), names,
+                        tuple(sorted((n.get("names") or {}).items()))))
         return tuple(out), tuple(tuple(l) for l in graph["links"])
 
     def refresh(self):
@@ -1001,7 +1045,7 @@ class SoundNodeEditor(QWidget):
     def drawn(self):
         """{meter name: widget} of the pictures in the nodes."""
         return {f"{self.eid}/{nid}": item.visual for nid, item in self.view.nodes.items()
-                if getattr(item, "visual", None) is not None}
+                if getattr(item, "visual", None) is not None and not isinstance(item.visual, CurveField)}
 
     def names(self):
         """What the global parameters read at the playhead."""
@@ -1023,6 +1067,27 @@ class SoundNodeEditor(QWidget):
                             merge=("snode", self.eid, nid, tuple(sorted(values))))
         self.refresh()
 
+    def live_curve(self, nid, keys):
+        self.page.live_target(self.target, soundedit.set_node, self.eid, nid, {"curve": keys})
+
+    def write_curve(self, nid, keys):
+        if fx.curve_keys(self.graph()["nodes"][nid].get("curve")) == keys:
+            return
+        self.page.win.apply("調整浮點曲線", soundedit.set_node, self.target, self.eid, nid, {"curve": keys})
+        self.refresh()
+
+    def rename_option(self, nid, name):
+        """A name of its own for option `name` ("v0" ...) of a 選單切換; empty: numbered again."""
+        node = self.graph()["nodes"][nid]
+        old = soundnumbers.option_names(node)[int(name[1:])]
+        text, ok = QInputDialog.getText(self, "重新命名選項", "名稱", text=old)
+        if not ok or text.strip() == old:
+            return
+        names = {k: v for k, v in (node.get("names") or {}).items() if k != name}
+        if text.strip():
+            names[name] = text.strip()
+        self.edit("重新命名選項", soundedit.set_node, nid, {"names": names})
+
     def pick_band(self, nid, band):
         from PySide6.QtCore import QTimer
         self.bands[nid] = band
@@ -1035,19 +1100,23 @@ class SoundNodeEditor(QWidget):
         spec = row.spec
         value, ok = QInputDialog.getDouble(self, spec["label"], f"{spec['label']}（{spec['unit']}）" if spec["unit"]
                                            else spec["label"], row.own, spec["min"], spec["max"],
-                                           4 if spec.get("free") else 2)
+                                           0 if spec.get("whole") else 4 if spec.get("free") else 2)
         if ok:
             self.write_params(nid, {row.name: value})
 
     def row_menu(self, nid, row, at):
         menu = Menu(self)
         address = f"{self.eid}/{nid}"
+        if self.graph()["nodes"][nid]["type"] == "menuswitch" and row.name[:1] == "v":
+            menu.addAction("重新命名選項…", lambda: self.rename_option(nid, row.name))
         if row.wired:
             wire = soundnodes.link_into(self.graph(), nid, soundnodes.PARAM + row.name)
             menu.addAction("拆掉連線", lambda: self.edit("拆掉連線", soundedit.disconnect_nodes, [wire]))
             menu.exec(at)
             return
-        if not row.spec.get("choices"):
+        if row.spec.get("fixed"):
+            menu.addAction("輸入數值…", lambda: self.type_value(nid, row))
+        elif not row.spec.get("choices"):
             held = (self.graph()["nodes"][nid].get("params") or {}).get(row.name)
             has = curves.is_animated(held) and edit.key_at(held, self.time()) is not None
             menu.addAction("移除這裡的關鍵幀" if has else "在播放頭加關鍵幀", lambda: (self.page.win.apply(
@@ -1113,7 +1182,7 @@ class SoundNodeEditor(QWidget):
         def pick(kind):
             x, y = scene_pos.x(), scene_pos.y() - HEAD / 2
             if into is not None:                            # (it feeds that input: it goes left of the point)
-                x -= WIDE if kind == "level" or (soundfx.EFFECTS.get(kind) or {}).get("visual") else WIDTH
+                x -= WIDE if kind in OWN_PICTURE or (soundfx.EFFECTS.get(kind) or {}).get("visual") else WIDTH
             made = self.edit("新增節點", soundedit.add_node, kind, round(x / GRID) * GRID, round(y / GRID) * GRID,
                              feed, into, on_link)
             if made:

@@ -69,6 +69,83 @@ class CalcTests(unittest.TestCase):
         self.assertEqual(number("clamp", x=5, lo=1, hi=0, mode="範圍"), 1)
 
 
+def one(kind, t_us=0, length=0, output=0, mute=False, names=None, curve=None, **values):
+    node = soundnodes.new_node(kind)
+    node["params"].update(values) if values else None
+    node.update({k: v for k, v in (("mute", mute), ("names", names), ("curve", curve)) if v})
+    return soundnumbers.Numbers({"n": node}, {}, t_us, length=length).of("n", output)
+
+
+class SecondBatchTests(unittest.TestCase):
+    def test_constants(self):
+        self.assertEqual(one("integer", value=2.6), 3)
+        self.assertEqual(one("boolean", value=1), 1)
+        self.assertEqual(one("menu", value=5), 5)
+        for kind in soundnumbers.CONSTANTS:
+            self.assertEqual(soundnodes.wire_specs(soundnodes.new_node(kind)), [], kind)
+            self.assertIsNone(one(kind, mute=True))
+
+    def test_scene_time(self):
+        self.assertEqual(one("scenetime", 3 * US, 12 * US), 3.0)
+        self.assertEqual(one("scenetime", 3 * US, 12 * US, output=1), 0.25)
+        self.assertEqual(one("scenetime", 30 * US, 12 * US, output=1), 1.0)
+        self.assertEqual(one("scenetime", 3 * US, 0, output=1), 0.0)
+        g, (st, gain) = graph("scenetime", "gain")
+        soundnodes.connect(g, st, 1, gain, "param:gain")
+        soundnodes.connect(g, st, 0, gain, "param:gain")      # (in the other's place)
+        soundnodes.connect(g, st, 1, gain, "param:gain")
+        got = soundnodes.numbers(g, 3 * US, length=12 * US).into(gain, soundnodes.wire_specs(g["nodes"][gain]))
+        self.assertEqual(got, {"gain": 0.25})
+
+    def test_float_curve(self):
+        for x in (-0.5, 0.0, 0.3, 1.0, 1.5):                  # (a straight line, extended)
+            self.assertAlmostEqual(one("floatcurve", value=x), x, places=6)
+        flip = [[0, 1, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0]]
+        self.assertAlmostEqual(one("floatcurve", value=0.25, curve=flip), 0.75, places=6)
+        self.assertAlmostEqual(one("floatcurve", value=2.0, curve=flip), -1.0, places=6)
+        self.assertAlmostEqual(one("floatcurve", value=0.25, fac=0.5, curve=flip), 0.5, places=6)
+        self.assertEqual(one("floatcurve", value=0.25, curve=flip, mute=True), 0.25)
+
+    def test_mix_and_switches(self):
+        self.assertEqual(one("valmix", a=10, b=20, fac=0.25), 12.5)
+        self.assertEqual(one("valmix", a=10, b=20, fac=2), 20)
+        self.assertEqual(one("valmix", a=10, b=20, fac=2, clamp_fac=0), 30)
+        self.assertEqual(one("switch", a=3, b=4), 3)
+        self.assertEqual(one("switch", a=3, b=4, use=1), 4)
+        v = {"v0": 5, "v1": 6, "v2": 7}
+        self.assertEqual(one("indexswitch", index=1, **v), 6)
+        self.assertEqual(one("indexswitch", index=2, **v), 0)           # (only two of them)
+        self.assertEqual(one("indexswitch", index=2, count=3, **v), 7)
+        self.assertEqual(one("indexswitch", index=-1, **v), 0)
+        self.assertEqual(one("menuswitch", choice=2, **v), 7)
+        self.assertEqual(one("menuswitch", choice=2, count=2, **v), 6)  # (held to the options there are)
+        self.assertEqual(one("menuswitch", choice=2, mute=True, **v), 5)
+
+    def test_option_names(self):
+        node = soundnodes.new_node("menuswitch")
+        node["names"] = {"v1": "副歌"}
+        self.assertEqual(soundnumbers.spec(node, "choice")["choices"], ["選項 1", "副歌", "選項 3"])
+        self.assertEqual(soundnumbers.spec(node, "v1")["label"], "副歌")
+        self.assertEqual(soundfx.spec(node, "v1")["label"], "副歌")
+        shown = [p["name"] for p in soundnumbers.specs(node) if p["name"] != "choice"]
+        self.assertNotIn("count", [r[1] for r in soundfx.clip_rows(
+            [{"id": "e", "effect": "graph", "graph": {"nodes": {"n1": node}, "links": []}}])])
+        self.assertIn("v7", shown)
+
+    def test_wired_through_two_switches(self):
+        g, (menu, ms, sw, gain) = graph("menu", "menuswitch", "switch", "gain")
+        g["nodes"][menu]["params"]["value"] = 1
+        g["nodes"][ms]["params"]["v1"] = -3.0
+        soundnodes.connect(g, menu, 0, ms, "param:choice")
+        soundnodes.connect(g, ms, 0, sw, "param:b")
+        soundnodes.connect(g, sw, 0, gain, "param:gain")
+        g["nodes"][sw]["params"]["use"] = 1
+        into = lambda: soundnodes.numbers(g, 0).into(gain, soundnodes.wire_specs(g["nodes"][gain]))
+        self.assertEqual(into(), {"gain": -3.0})
+        soundnodes.remove(g, [sw], keep_links=True)           # (what fed its A goes on: nothing here)
+        self.assertEqual(into(), {})
+
+
 class WiringTests(unittest.TestCase):
     def test_numbers_and_sound_never_join(self):
         g, (v, m, gain) = graph("value", "math", "gain")
@@ -211,6 +288,50 @@ class MeterTests(Sounds):
         self.assertEqual(soundmeter.snapshot(root, "tl1", "t2").reads(), {"kick"})
         edit.rename_rack_param(root, "r1", "boom")
         self.assertEqual(soundedit.effect(level, ("track", "t2"), f"{e2}/{n2}")["expr"], {"value": "boom"})
+
+
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class SceneTimeSoundTests(Base):
+    def chain(self):
+        """A gain halved once 場景時間's 進度 is past a half."""
+        g = soundnodes.new_graph()
+        st = soundnodes.add(g, soundnodes.new_node("scenetime"))
+        past = soundnodes.add(g, soundnodes.new_node("math"))
+        g["nodes"][past]["params"].update(op=soundnumbers.MATH_OPS.index("大於"), b=0.5)
+        to = soundnodes.add(g, soundnodes.new_node("valmix"))
+        g["nodes"][to]["params"].update(a=0.0, b=HALF)
+        gain = soundnodes.add(g, soundnodes.new_node("gain"))
+        soundnodes.connect(g, st, 1, past, "param:a")
+        soundnodes.connect(g, past, 0, to, "param:fac")
+        soundnodes.connect(g, to, 0, gain, "param:gain")
+        soundnodes.connect(g, "in", 0, gain, 0)
+        soundnodes.connect(g, gain, 0, "out", 0)
+        return [{"id": "e", "effect": "graph", "graph": g}]
+
+    def check(self, view, first, second):
+        a = self.sound(view)
+        self.assertAlmostEqual(rms(a, 0.15, 0.4), first, delta=0.003)
+        self.assertAlmostEqual(rms(a, 0.65, 0.9), second, delta=0.003)
+
+    def test_on_a_clip_it_is_the_clips_time(self):
+        c = self.clip("a", self.low, sound_effects=self.chain())
+        longer = {"clips": [self.clip("b", self.high, 5.0)]}
+        self.check(self.view([{"clips": [c]}, longer]), REF, REF / 2)
+
+    def test_on_a_track_it_is_the_timelines(self):
+        v = self.view([{"clips": [self.clip("a", self.low)], "sound_effects": self.chain()}])
+        self.check(v, REF, REF / 2)
+        v["tracks"].append({"id": "t2", "kind": "audio", "name": "A2", "clips": [self.clip("b", self.high, 5.0)]})
+        self.check(v, REF, REF)
+
+    def test_a_meter_counts_what_its_copy_leaves_out(self):
+        root = make_root([{"clips": [self.clip("a", self.low)], "sound_effects": self.chain()},
+                          {"clips": [self.clip("b", self.high, 5.0)]}])
+        snap = soundmeter.snapshot(root, "tl1", "t1")
+        self.assertEqual(snap.view["tracks"][1]["clips"], [])       # (not heard, but it makes the timeline longer)
+        self.assertEqual(snap.view["length_us"], 6 * US)
+        plain = make_root([{"clips": [self.clip("a", self.low)]}])
+        self.assertNotIn("length_us", soundmeter.snapshot(plain, "tl1", "t1").view)
 
 
 if __name__ == "__main__":

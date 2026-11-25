@@ -186,9 +186,9 @@ def active(chain):
 
 def spec(e, name):
     """The description of parameter name of an entry (a graph's effect or mix node too), or None."""
-    if e.get("type") in ("level", "value", "global", "math", "maprange", "clamp"):     # (a graph's number node)
-        from . import soundnumbers
-        return soundnumbers.spec(e["type"], name)
+    from . import soundnumbers
+    if e.get("type") in soundnumbers.TYPES:                 # (a graph's number node)
+        return soundnumbers.spec(e, name)
     if e.get("type") == "mix" and name[:1] == "g" and name[1:].isdigit():
         return P(name, f"第 {name[1:]} 路音量", -60.0, 12.0, 0.0, "dB")
     kind = EFFECTS.get(e.get("effect"))
@@ -267,7 +267,7 @@ def clip_rows(chain):
             else:
                 label, specs = f"{head}·{title(one)}", EFFECTS.get(one.get("effect"), {}).get("params", [])
             out += [("sfx:" + path, p["name"], f"聲音 {label}·{p['label']}", 1, p["default"])
-                    for p in specs if p and not p.get("choices")]
+                    for p in specs if p and not p.get("choices") and not p.get("fixed")]
     return out
 
 

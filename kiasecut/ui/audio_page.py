@@ -1353,7 +1353,7 @@ class AudioPage(QWidget):
 
     def _graph_moves(self):
         try:
-            return any(_moves(n) or n["type"] == "level" for n in self.nodes.graph()["nodes"].values())
+            return any(_moves(n) or n["type"] in ("level", "scenetime") for n in self.nodes.graph()["nodes"].values())
         except (edit.EditError, KeyError):
             return False
 

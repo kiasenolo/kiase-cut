@@ -177,11 +177,11 @@ class Compiler:
         made.apply(0.0)                     # (a look-ahead decides how late it is)
         return made
 
-    def chain(self, owner, entries):
+    def chain(self, owner, entries, length=0):
         out = []
         for e in soundfx.active(entries):
             if e["effect"] == soundfx.GRAPH:
-                out.append(soundnodes.GraphFx(owner + (e["id"],), e, self.fx))
+                out.append(soundnodes.GraphFx(owner + (e["id"],), e, self.fx, length))
             else:
                 out.append(self.fx(owner + (e["id"],), e, e["id"]))
         return out
@@ -201,8 +201,9 @@ class Compiler:
             if ch.kind != "master":
                 ch.routes = [(r["to"], r) for r in soundfx.live_routes(ch.holder, chans, ch.id)]
         self._faders(chans, level_ids)
+        length = mix.get("length_us") or project.end_us(tracks)       # (a copy that leaves clips out says it)
         for ch in chans.values():
-            ch.chain = self.chain(key + ("ch", ch.id), ch.holder.get("sound_effects"))
+            ch.chain = self.chain(key + ("ch", ch.id), ch.holder.get("sound_effects"), length)
         for t in tracks:
             chans[t["id"]].clips = self.clips(key, t, level_ids, offset_us, win, rate)
         # who needs whom: what is sent into it, and what its effects listen to
@@ -289,7 +290,8 @@ class Compiler:
                     continue
             else:
                 continue
-            out.append(ClipNode(ck, c, s, rate, (lo, hi), source, sub, self.chain(ck, c.get("sound_effects"))))
+            out.append(ClipNode(ck, c, s, rate, (lo, hi), source, sub,
+                                self.chain(ck, c.get("sound_effects"), c["duration_us"])))
         return out
 
     def _timing(self, lv):

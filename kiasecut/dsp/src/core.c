@@ -2,7 +2,8 @@
 #include "kcdsp.h"
 
 static const kc_type *const types[] = {&kc_gain_type, &kc_highpass_type, &kc_lowpass_type, &kc_eq_type, &kc_filter_type,
-                                      &kc_analyzer_type};
+                                      &kc_analyzer_type, &kc_compressor_type, &kc_expander_type, &kc_gate_type,
+                                      &kc_limiter_type, &kc_clip_type};
 #define NTYPES ((int)(sizeof types / sizeof types[0]))
 
 KC_API int kc_abi(void) { return KC_ABI; }

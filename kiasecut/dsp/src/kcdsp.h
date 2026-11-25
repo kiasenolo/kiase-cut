@@ -78,5 +78,6 @@ double kc_biquad_gain(const kc_coef *c, double sr, double hz);
 static inline double kc_butter_q(int k, int n) { return 1.0 / (2.0 * cos(KC_PI * (2 * k + 1) / (4.0 * n))); }
 
 extern const kc_type kc_gain_type, kc_highpass_type, kc_lowpass_type, kc_eq_type, kc_filter_type, kc_analyzer_type;
+extern const kc_type kc_compressor_type, kc_expander_type, kc_gate_type, kc_limiter_type, kc_clip_type;
 
 #endif

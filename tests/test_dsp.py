@@ -145,5 +145,68 @@ class EqualiserTests(unittest.TestCase):
         self.assertAlmostEqual(float(fx.meters()[0]), 0.5, delta=0.001)
 
 
+@unittest.skipUnless(dsp.available(), f"no sound library: {dsp.error()}")
+class DynamicsTests(unittest.TestCase):
+    def settled(self, kind, amp, side=None, **params):
+        """The level in and out (dB, peak) of a tone once the effect has settled."""
+        fx = dsp.Processor(kind)
+        for k, v in params.items():
+            fx.set(k, v)
+        x = sine(1000, 1.0, amp)
+        y = fx.process(x, side=side)
+        return 20 * np.log10(amp), 20 * np.log10(max(1e-9, np.abs(y[SR // 2:]).max())), fx
+
+    def test_compressor_follows_its_curve(self):
+        for amp in (0.05, 0.25, 0.8):
+            level, out, fx = self.settled("compressor", amp, thr=-20.0, ratio=4.0, knee=0.0, at=1.0, rt=200.0)
+            self.assertAlmostEqual(out, fx.response([level])[0], delta=1.0, msg=amp)
+        self.assertAlmostEqual(fx.response([0.0])[0], -15.0, delta=1e-6)
+        self.assertGreater(float(fx.meters()[2]), 10.0)
+
+    def test_side_chain(self):
+        loud = sine(200, 1.0, 0.9)
+        _, alone, _ = self.settled("compressor", 0.05, thr=-20.0, ratio=10.0)
+        _, ducked, _ = self.settled("compressor", 0.05, side=loud, thr=-20.0, ratio=10.0, at=1.0)
+        self.assertAlmostEqual(alone, -26.0, delta=0.2)
+        self.assertLess(ducked, -38.0)
+        _, shut, _ = self.settled("gate", 0.5, side=sine(200, 1.0, 0.001), thr=-30.0, red=40.0)
+        self.assertLess(shut, -40.0)
+
+    def test_gate_and_expander(self):
+        level, out, _ = self.settled("gate", 0.3, thr=-30.0, red=30.0)
+        self.assertAlmostEqual(out, level, delta=0.1)                           # open
+        level, out, _ = self.settled("gate", 0.01, thr=-30.0, red=30.0)
+        self.assertAlmostEqual(out, level - 30.0, delta=0.5)                    # shut
+        level, out, fx = self.settled("expander", 0.01, thr=-30.0, ratio=3.0, knee=0.0)
+        self.assertAlmostEqual(out, fx.response([level])[0], delta=1.0)
+
+    def test_limiter_never_passes_its_ceiling(self):
+        rng = np.random.default_rng(1)
+        x = (rng.standard_normal((SR, 2)) * 0.4).astype(np.float32)
+        x[1000] = 8.0
+        for extra in ({}, {"alr": 1.0}, {"lk": 0.1, "at": 20.0}, {"lk": 20.0, "at": 0.25, "rt": 0.25}):
+            fx = dsp.Processor("limiter")
+            fx.set("gain", 12.0)
+            fx.set("ceil", -3.0)
+            for k, v in extra.items():
+                fx.set(k, v)
+            y = np.concatenate([fx.process(x[i:i + 512], pos=i) for i in range(0, len(x), 512)])
+            self.assertLessEqual(float(np.abs(y).max()), 10 ** (-3 / 20) + 1e-6, msg=extra)
+            self.assertGreater(float(np.abs(y[SR // 2:]).max()), 0.5)
+
+    def test_limiter_latency_is_what_it_says(self):
+        fx = dsp.Processor("limiter")
+        fx.set("lk", 5.0)
+        self.assertEqual(fx.latency, 239)
+        x = (0.3 * np.random.default_rng(2).standard_normal((4000, 2))).astype(np.float32) * 0.3
+        y = fx.process(x)
+        np.testing.assert_allclose(y[239:], x[:-239], atol=1e-6)                # under the ceiling: only later
+
+    def test_clip(self):
+        fx = dsp.Processor("clip")
+        fx.set("ceil", -6.0206)
+        np.testing.assert_allclose(fx.process(sine(100, 0.5, 1.0)), np.clip(sine(100, 0.5, 1.0), -0.5, 0.5), atol=1e-5)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -24,7 +24,7 @@ from . import curves, dsp, normalize, project, soundfx, stretch
 BLOCK = 512
 RATE = dsp.RATE
 US = 1_000_000
-PREROLL_MIN_S, PREROLL_S = 0.25, 10.0
+PREROLL_MIN_S, PREROLL_S = 1.0, 10.0     # (the least lets compressors and gates settle)
 SILENT = 10 ** (-90 / 20)
 LEVELS_KEPT = 4096                      # blocks of meter history (about 40 s)
 
@@ -151,6 +151,7 @@ class Compiler:
             if proc is not None:
                 self.used[key] = proc
             out.append(Fx(key, e, proc))
+            out[-1].apply(0.0)              # (a look-ahead decides how late it is)
         return out
 
     def level(self, key, tracks, mix, level_ids, offset_us=0.0, win=(0, float("inf")), rate=1.0, only=None):
@@ -348,9 +349,9 @@ class Engine:
         return (max(v[0] for v in got), max(v[1] for v in got)) if got else (0.0, 0.0)
 
     def meters_at(self, effect_id, sample, back=RATE // 30):
-        """The meters of an effect on a track, bus or master around `sample`, or None."""
+        """The most each meter of an effect showed around `sample`, or None."""
         got = self._around(self.meters.get(effect_id, ()), sample, back)
-        return got[-1] if got else None
+        return np.max(got, axis=0) if got else None
 
     def output_before(self, sample, n, effect_id=None):
         """The n samples of the output (mono) before `sample` - or of a watched effect's;
@@ -433,8 +434,7 @@ class Engine:
                 side = self._delayed(f.key + ("side",), posts[f.side], latency - post_latency[f.side])
             x = f.proc.process(x, side, pos - latency)
             latency += f.proc.latency
-            if top:
-                self._remember(self.meters, f.key[-2], pos - latency, f.proc.meters())
+            self._remember(self.meters, f.key[-2], pos - latency, f.proc.meters())
             if f.key[-2] in self.watched:
                 kept = self.watch.setdefault(f.key[-2], [])
                 kept.append((pos - latency, x.mean(axis=1)))

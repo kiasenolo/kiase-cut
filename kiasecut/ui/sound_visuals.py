@@ -304,3 +304,177 @@ class Response(QWidget):
         menu.addSeparator()
         menu.addAction("關掉這個頻段", lambda: self.done.emit({f"o{i}": 0}))
         menu.exec(e.globalPos())
+
+
+class Dynamics(QWidget):
+    """A compressor, limiter, gate, expander or clipper at work: its curve (level out over
+    level in) with a dot where the sound is, and the last seconds of the level in, the level
+    out and how much it is turned down. The threshold (or ceiling) is dragged sideways; the
+    ratio's handle, at the curve's right end, up and down."""
+    live = Signal(dict)
+    done = Signal(dict)
+    LO, HI = -72.0, 6.0
+    KEEP = 150                              # points of history (5 s at 30 a second)
+
+    def __init__(self, kind, height=170):
+        super().__init__()
+        self.kind = kind
+        self.values = {}
+        self.now = None                     # (level in dB, level out dB, turned down dB)
+        self.history = []
+        self.drag = None                    # (what, press position, value then, changed)
+        try:
+            self.fx = dsp.Processor(kind)
+        except dsp.DspError:
+            self.fx = None
+        self.setMinimumHeight(height)
+        self.setAttribute(Qt.WA_OpaquePaintEvent)
+        self.setMouseTracking(True)
+
+    def sizeHint(self):
+        return QSize(320, self.minimumHeight())
+
+    def set_values(self, values):
+        if self.drag is None and values != self.values:
+            self.values = dict(values)
+            self.update()
+
+    def feed_meters(self, meters):
+        """meters: the effect's (None: silent now)."""
+        if meters is None:
+            if self.now is None and not any(h[2] > 0 for h in self.history):
+                return
+            self.now = None
+            self.history.append((self.LO, self.LO, 0.0))
+        else:
+            level = lambda v: 20 * math.log10(max(float(v), 1e-6))
+            self.now = (level(meters[0]), level(meters[1]), float(meters[2]))
+            self.history.append(self.now)
+        del self.history[:-self.KEEP]
+        self.update()
+
+    # -- places ------------------------------------------------------------------------------------
+    def side(self):
+        return min(self.height(), int(self.width() * 0.55))
+
+    def at(self, in_db, out_db):
+        s, k = self.side(), 1.0 / (self.HI - self.LO)
+        return QPointF((in_db - self.LO) * k * s, self.height() - (out_db - self.LO) * k * self.height())
+
+    def threshold_key(self):
+        return "ceil" if self.kind in ("limiter", "clip") else "thr"
+
+    def handle(self):
+        """Where the ratio's handle is, or None."""
+        if "ratio" not in self.values or self.fx is None:
+            return None
+        return self.at(0.0, max(self.LO, min(self.HI, float(self.fx.response([0.0])[0]))))
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        w, h, s = self.width(), self.height(), self.side()
+        p.fillRect(self.rect(), QColor("#0b0b0b"))
+        for db in (-60, -48, -36, -24, -12, 0):
+            p.setPen(QColor(255, 255, 255, 50 if db == 0 else 18))
+            at = self.at(db, db)
+            p.drawLine(QPointF(at.x(), 0), QPointF(at.x(), h))
+            p.drawLine(QPointF(0, at.y()), QPointF(s, at.y()))
+            text(p, 2, at.y() - 2, str(db))
+        if self.fx is not None and self.values:
+            for name, v in self.values.items():
+                self.fx.set(name, v)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(QPen(QColor(255, 255, 255, 50), 1, Qt.DashLine))
+            p.drawLine(self.at(self.LO, self.LO), self.at(self.HI, self.HI))
+            levels = np.linspace(self.LO, self.HI, 160)
+            path = QPainterPath()
+            for n, (x, y) in enumerate(zip(levels, self.fx.response(levels))):
+                point = self.at(x, max(self.LO - 20, min(self.HI + 20, float(y))))
+                path.lineTo(point) if n else path.moveTo(point)
+            p.save()
+            p.setClipRect(QRectF(0, 0, s, h))
+            p.setPen(QPen(QColor("#ffffff"), 1.8))
+            p.drawPath(path)
+            thr = self.values.get(self.threshold_key())
+            if thr is not None:
+                # where the curve bends: for what has a pre gain, the level before it
+                x = self.at(thr - self.values.get("gain", 0.0), 0).x()
+                p.setPen(QPen(QColor("#ffb347"), 1.2, Qt.DashLine))
+                p.drawLine(QPointF(x, 0), QPointF(x, h))
+            handle = self.handle()
+            if handle is not None:
+                p.setPen(QPen(QColor("#000000"), 1))
+                p.setBrush(QColor("#ffb347"))
+                p.drawEllipse(handle, 5.5, 5.5)
+            if self.now is not None:
+                before = self.now[0] - (self.values.get("gain", 0.0) if self.kind != "clip" else 0.0)
+                p.setBrush(QColor("#52ffae"))
+                p.setPen(Qt.NoPen)
+                p.drawEllipse(self.at(max(self.LO, before), max(self.LO, self.now[1])), 4.5, 4.5)
+            p.restore()
+        # the last seconds
+        p.setPen(QColor("#000000"))
+        p.drawLine(s + 1, 0, s + 1, h)
+        span = w - s - 4
+        if span < 30 or not self.history:
+            return
+        y_of = lambda db: h * (self.HI - max(self.LO, min(self.HI, db))) / (self.HI - self.LO)
+        step = span / self.KEEP
+        x0 = w - len(self.history) * step
+        for k, colour in ((0, QColor(255, 255, 255, 70)), (1, QColor("#52ffae"))):
+            path = QPainterPath()
+            for n, entry in enumerate(self.history):
+                point = QPointF(x0 + n * step, y_of(entry[k]))
+                path.lineTo(point) if n else path.moveTo(point)
+            p.setPen(QPen(colour, 1.2))
+            p.drawPath(path)
+        path = QPainterPath(QPointF(x0, 0))
+        for n, entry in enumerate(self.history):
+            path.lineTo(QPointF(x0 + n * step, min(h, entry[2] / 36.0 * h)))
+        path.lineTo(QPointF(w, 0))
+        p.setPen(QPen(QColor("#ff6b6b"), 1))
+        p.setBrush(QColor(255, 107, 107, 60))
+        p.drawPath(path)
+        if self.now is not None and self.now[2] > 0.05:
+            text(p, w - 54, h - 6, f"-{self.now[2]:.1f} dB", "#ff8f8f", 11)
+
+    # -- hands -------------------------------------------------------------------------------------
+    def _what(self, pos):
+        handle = self.handle()
+        if handle is not None and (handle - pos).manhattanLength() <= 16:
+            return "ratio"
+        thr = self.values.get(self.threshold_key())
+        if thr is not None and pos.x() <= self.side() and \
+                abs(self.at(thr - self.values.get("gain", 0.0), 0).x() - pos.x()) <= 7:
+            return self.threshold_key()
+        return None
+
+    def mousePressEvent(self, e):
+        what = self._what(e.position())
+        if what and e.button() == Qt.LeftButton:
+            self.drag = (what, e.position(), self.values[what], {})
+
+    def mouseMoveEvent(self, e):
+        if self.drag is None:
+            what = self._what(e.position())
+            self.setCursor(Qt.SizeVerCursor if what == "ratio" else Qt.SizeHorCursor if what else Qt.ArrowCursor)
+            return
+        what, start, was, changed = self.drag
+        d = e.position() - start
+        spec = next(p for p in soundfx.EFFECTS[self.kind]["params"] if p["name"] == what)
+        if what == "ratio":                  # up: a steeper expander, a gentler compressor
+            sign = 1 if self.kind == "expander" else -1
+            v = was * math.exp(sign * d.y() / 60.0)
+        else:
+            v = was + d.x() / self.side() * (self.HI - self.LO)
+        changed[what] = round(max(spec["min"], min(spec["max"], v)), 2)
+        self.values.update(changed)
+        self.update()
+        self.live.emit(dict(changed))
+
+    def mouseReleaseEvent(self, _e):
+        if self.drag is not None:
+            changed = self.drag[3]
+            self.drag = None
+            if changed:
+                self.done.emit(dict(changed))

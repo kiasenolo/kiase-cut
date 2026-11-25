@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxL
 
 from .. import curves, dsp, edit, project, soundedit, soundfx
 from . import icons, inplace
-from .sound_visuals import BAND_COLORS, Response, Spectrum
+from .sound_visuals import BAND_COLORS, Dynamics, Response, Spectrum
 from .inspector import SpinBox
 from .menukeys import Menu
 from .meter import FADER_HI, FADER_LO, Bars, Fader, to_db
@@ -161,6 +161,12 @@ class EffectBox(QFrame):
                                                               page.time()))
             self.visual.bandPicked.connect(lambda i: page.pick_band(self.eid, i))
             lay.addWidget(self.visual)
+        elif visual == "dynamics":
+            self.visual = Dynamics(self.kind)
+            self.visual.live.connect(lambda values: page.live(soundedit.set_params, self.eid, values, page.time()))
+            self.visual.done.connect(lambda values: page.edit("調整聲音效果", soundedit.set_params, self.eid, values,
+                                                              page.time()))
+            lay.addWidget(self.visual)
         elif visual == "spectrum":
             self.visual = Spectrum(150)
             lay.addWidget(self.visual)
@@ -174,6 +180,17 @@ class EffectBox(QFrame):
                 bands.addWidget(b)
                 self.band_buttons.append(b)
             lay.addLayout(bands)
+        self.side = None
+        if self.spec.get("side"):
+            row = QHBoxLayout()
+            row.addWidget(QLabel("側鏈來源"))
+            self.side = QComboBox()
+            self.side.setFocusPolicy(Qt.NoFocus)
+            self.side.setToolTip("偵測哪裡的音量（例如：選人聲，讓這裡在人聲出現時壓低）")
+            self.side.activated.connect(lambda i: page.edit("側鏈來源", soundedit.set_side, self.eid,
+                                                            self.side.itemData(i)))
+            row.addWidget(self.side, 1)
+            lay.addLayout(row)
         grid = QGridLayout()
         grid.setHorizontalSpacing(5)
         grid.setVerticalSpacing(2)
@@ -240,8 +257,17 @@ class EffectBox(QFrame):
             return
         t = self.page.time()
         values = soundfx.values(effect, t or 0) if self.spec["params"] else {}
-        if isinstance(self.visual, Response):
+        if isinstance(self.visual, (Response, Dynamics)):
             self.visual.set_values(values)
+        if getattr(self, "side", None) is not None:
+            entries = [("", "自己")] + soundedit.side_sources(self.page.level(), self.page.target)
+            if [self.side.itemData(i) for i in range(self.side.count())] != [i for i, _ in entries] or \
+                    [self.side.itemText(i) for i in range(self.side.count())] != [n for _, n in entries]:
+                self.side.clear()
+                for ident, name in entries:
+                    self.side.addItem(name, ident)
+            chosen = (effect.get("side") or {}).get("id") or ""
+            self.side.setCurrentIndex(max(0, self.side.findData(chosen)))
         if self.spec.get("visual") == "eq" and self.eid not in self.page.folded:
             band = self.page.bands.get(self.eid, 1)
             for i, b in enumerate(self.band_buttons, 1):
@@ -315,7 +341,7 @@ class ChainPanel(QWidget):
             self.warning.setText("聲音效果函式庫無法使用，效果不會作用：" + why.splitlines()[0])
         shape = (target, tuple((e["id"], e.get("effect"), e["id"] in page.folded,
                                 tuple(p["name"] for p in page.visible_params(e))) for e in entries))
-        dragging = any(isinstance(b.visual, Response) and b.visual.drag is not None for b in self.boxes.values())
+        dragging = any(getattr(b.visual, "drag", None) is not None for b in self.boxes.values())
         if shape != self.shape and not dragging:   # (rebuilt only when it changes shape: a value being dragged keeps its widget)
             self.shape = shape
             clear_layout(self.list)
@@ -937,6 +963,9 @@ class AudioPage(QWidget):
                            if engine is not None and playing else quiet)
         drawn = self.chain.drawn()
         if engine is not None:
-            engine.watched = frozenset(drawn)           # (what the next blocks keep)
+            engine.watched = frozenset(i for i, w in drawn.items() if not isinstance(w, Dynamics))     # (what the next blocks keep)
         for effect_id, widget in drawn.items():
+            if isinstance(widget, Dynamics):
+                widget.feed_meters(engine.meters_at(effect_id, sample) if engine is not None and playing else None)
+                continue
             widget.feed(engine.output_before(sample + n // 2, n, effect_id) if engine is not None and playing else quiet)

@@ -193,6 +193,22 @@ class GraphTests(Base):
         self.assertTrue(soundfx.used(v))
         self.assertAlmostEqual(rms(self.sound(v)), REF / 4, delta=0.002)
 
+    def test_side_chain_between_tracks(self):
+        duck = dict(fx("compressor", "c", thr=-30.0, ratio=20.0, at=1.0), side={"id": "t2"})
+        v = self.view([{"clips": [self.clip("a", self.low)], "sound_effects": [duck]},
+                       {"clips": [self.clip("b", self.high, 0.5, 0.5)], "pan": 1.0}])
+        a = self.sound(v)[:, 0]                                    # the left side: the first track only
+        self.assertGreater(rms(a, 0.2, 0.4), REF * 0.5)            # alone: under no threshold of its own tone...
+        self.assertLess(rms(a, 0.7, 0.9), rms(a, 0.2, 0.4) * 0.5)  # ...and ducked while the other sounds
+
+    def test_a_limiter_stays_in_time(self):
+        v = self.view([{"clips": [self.clip("a", self.high)]}, {"clips": [self.clip("b", self.high)], "gain": 1.0}])
+        plain = self.sound(v)
+        v["tracks"][0]["sound_effects"] = [fx("limiter", "l", ceil=0.0, lk=15.0)]
+        m = self.mixer(v)
+        self.assertEqual(m.engine.latency, 719)
+        np.testing.assert_allclose(self.sound(v, mixer=m), plain, atol=2e-3)
+
     def test_delay_is_made_up_for(self):
         """A path that is late (as a limiter's look-ahead makes it) is matched by the others."""
 

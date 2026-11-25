@@ -60,6 +60,18 @@ def _eq_params():
     return out + [P("out", "輸出增益", -24.0, 24.0, 0.0, "dB")]
 
 
+def _pre():                          # before the detector: the threshold is of the level after it
+    return P("gain", "預增益", -24.0, 24.0, 0.0, "dB")
+
+
+def _ms(name, label, lo, hi, default, **kw):
+    return P(name, label, lo, hi, default, "ms", log=True, **kw)
+
+
+def _alr(v):
+    return v["alr"] > 0.5
+
+
 # key: {title, params, optional visual: what the panel draws above them, optional side: it takes a side-chain}; the key names the C effect too
 EFFECTS = {
     "gain": {"title": "增益", "params": [P("gain", "增益", -60.0, 24.0, 0.0, "dB")]},
@@ -72,10 +84,30 @@ EFFECTS = {
                "params": [C("mode", "模式", FILTER_MODES, 1), P("freq", "頻率", 20.0, 20000.0, 2000.0, "Hz", log=True),
                           P("res", "共振", 0.71, 32.0, 0.7071, log=True)]},
     "analyzer": {"title": "頻譜分析器", "visual": "spectrum", "params": []},
+    "compressor": {"title": "壓縮器", "visual": "dynamics", "side": True, "params": [
+        _pre(), P("thr", "閾值", -60.0, 0.0, -18.0, "dB"), P("ratio", "壓縮比", 1.0, 20.0, 4.0, ": 1"),
+        _ms("at", "啟動", 0.1, 2000.0, 20.0), _ms("rt", "釋放", 1.0, 5000.0, 100.0),
+        P("knee", "膝部", 0.0, 24.0, 6.0, "dB"), P("mk", "補償增益", -12.0, 24.0, 0.0, "dB")]},
+    "limiter": {"title": "限幅器", "visual": "dynamics", "params": [
+        P("gain", "預增益（推高音量）", 0.0, 24.0, 0.0, "dB"), P("ceil", "上限", -24.0, 0.0, -1.0, "dB"),
+        P("lk", "前瞻", 0.1, 20.0, 5.0, "ms"), P("at", "啟動", 0.25, 20.0, 5.0, "ms"),
+        P("rt", "釋放", 0.25, 500.0, 50.0, "ms", log=True), switch("alr", "長釋放 (ALR)"),
+        _ms("alr_at", "ALR 啟動", 0.1, 200.0, 5.0, when=_alr), _ms("alr_rt", "ALR 釋放", 10.0, 1000.0, 200.0, when=_alr)]},
+    "gate": {"title": "噪音閘", "visual": "dynamics", "side": True, "params": [
+        _pre(), P("thr", "閾值", -72.0, 0.0, -40.0, "dB"), P("red", "衰減量", 0.0, 60.0, 24.0, "dB"),
+        _ms("at", "啟動", 0.1, 2000.0, 10.0), _ms("hold", "保持", 0.1, 1000.0, 20.0), _ms("rt", "釋放", 1.0, 5000.0, 100.0)]},
+    "expander": {"title": "擴展器", "visual": "dynamics", "side": True, "params": [
+        _pre(), P("thr", "閾值", -72.0, 0.0, -36.0, "dB"), P("ratio", "比例", 1.0, 20.0, 2.0, ": 1"),
+        _ms("at", "啟動", 0.1, 2000.0, 20.0), _ms("rt", "釋放", 1.0, 5000.0, 100.0), P("knee", "膝部", 0.0, 24.0, 6.0, "dB")]},
+    "clip": {"title": "硬限幅 (Clip)", "visual": "dynamics",
+             "params": [P("ceil", "上限", -30.0, 0.0, -1.0, "dB")]},
 }
-CATEGORIES = [("增益、EQ 與濾波", ["gain", "eq", "highpass", "lowpass", "filter", "analyzer"])]
+CATEGORIES = [("增益、EQ 與濾波", ["gain", "eq", "highpass", "lowpass", "filter", "analyzer"]),
+              ("動態", ["compressor", "limiter", "gate", "expander", "clip"])]
 KEYWORDS = {"gain": "volume 音量", "highpass": "高通 low cut", "lowpass": "低通 high cut", "eq": "equalizer 等化 均衡",
-            "filter": "濾波 lowpass highpass bandpass 帶通 帶阻", "analyzer": "spectrum 頻譜 meter"}
+            "filter": "濾波 lowpass highpass bandpass 帶通 帶阻", "analyzer": "spectrum 頻譜 meter",
+            "compressor": "壓縮 dynamics 側鏈 sidechain ducking", "limiter": "限幅 loudness", "gate": "噪音閘 noise",
+            "expander": "擴展 downward", "clip": "clipper 削波"}
 
 
 def new_effect(kind, effect_id):

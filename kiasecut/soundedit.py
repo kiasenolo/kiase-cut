@@ -180,6 +180,30 @@ def toggle_key(level, target, effect_id, name, t):
     _toggle_number(e.setdefault("params", {}), name, _spec(e, name)["default"], t)
 
 
+def channel_of(level, target):
+    """The track or bus a target's sound is on (a clip's: its track), or None (the master)."""
+    if target[0] == "clip":
+        return edit.find(level, target[1])[0]["id"]
+    return target[1] if target[0] in ("track", "bus") else None
+
+
+def side_sources(level, target):
+    """[(id, name)] of the channels an effect of target can listen to: not its own, none its
+    own sound goes on into (that would be a loop). The master's effects: any."""
+    channels = {t["id"]: t for t in level["tracks"]}
+    channels.update({b["id"]: b for b in buses(level)})
+    own = channel_of(level, target)
+    downstream, stack = {own}, [own] if own else []
+    while stack:
+        h = channels.get(stack.pop())
+        for d in ([h.get("output")] + [s.get("bus") for s in h.get("sends") or ()] if h else []):
+            if d and d not in downstream:
+                downstream.add(d)
+                stack.append(d)
+    sounds = lambda i, h: not (h.get("kind") == "video" and not any(sounding(c) for c in h.get("clips", ())))
+    return [(i, h.get("name") or i) for i, h in channels.items() if i not in downstream and sounds(i, h)]
+
+
 # -- channels: tracks, buses, the master ------------------------------------------------------------
 def destinations(level, target):
     """The buses target (a track or bus) may send to: not itself, none that would make a loop."""

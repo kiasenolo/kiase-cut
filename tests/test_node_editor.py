@@ -1,4 +1,5 @@
 """The node editor widget (ui/node_editor.py): it shows a node effect's graph and turns mouse and keys into requests."""
+import copy
 import os
 import sys
 import json
@@ -18,7 +19,7 @@ from PySide6.QtGui import QColor, QDropEvent, QImage  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLineEdit  # noqa: E402
 
-from kiasecut import fx, nodegraph as ng  # noqa: E402
+from kiasecut import assets, fx, nodegraph as ng  # noqa: E402
 from kiasecut.ui.node_editor import NodeEditor  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
@@ -41,6 +42,105 @@ def fx_ghost():
 
 
 NEW_SOCKET = "\0newsocket"
+
+
+class ShownClipTests(unittest.TestCase):
+    """The editor is shown the project's own clip. What is typed or dragged in it reaches the project through its signals
+    only: written there directly, the undo history's "before" would already hold the new value."""
+
+    def make(self):
+        from kiasecut import edit, project
+        p = project.new(320, 180, 30)
+        p["tracks"].append({"id": "vid", "kind": "video", "name": "V", "clips": [
+            {"id": "pic", "type": "image", "name": "g", "start_us": 0, "duration_us": 4_000_000, "source_start_us": 0,
+             "media": {"path": "g.png", "width": 320, "height": 180},
+             "transform": {"x": 0.0, "y": 0.0, "scale": 1.0, "rotation": 0.0, "opacity": 1.0}}]})
+        eid = edit.add_effect(p, "pic", fx.GRAPH)["id"]
+        add = lambda node: edit.add_graph_node(p, "pic", eid, node)
+        ids = {"exposure": add({"type": ng.FILTER, "ref": "builtin:nodes/exposure"}), "shape": add({"type": ng.SOURCE, "kind": "shape", "asset": {"key": next(a.key for a in assets.ASSETS if a.cat == "shape")}}),
+               "curve": add({"type": ng.FILTER, "ref": "builtin:nodes/float_curve"}), "words": add({"type": ng.STRING})}
+        history = edit.History(p)
+        clip = lambda: edit.find(history.proj, "pic")[1]
+        ed = NodeEditor()
+        ed.resize(900, 500)
+        ed.show()
+        show = lambda: ed.show_clip(clip())
+        do = lambda fn, *a: (history.do("調整", fn, *a), show())
+        ed.paramEdited.connect(lambda _eid, key, v: do(edit.set_param, "pic", "fx:" + eid, key, v, 0))
+        ed.placeEdited.connect(lambda _eid, nid, key, v: do(edit.set_param, "pic", f"fxsrc:{eid}:{nid}", key, v, 0))
+        ed.linesEdited.connect(lambda _eid, nid, n: do(edit.set_graph_node_lines, "pic", eid, nid, n))
+        show()
+        APP.processEvents()
+        return ed, history, (lambda: clip()["effects"][0]), ids, show
+
+    def row(self, ed, nid, name):
+        return next(r for r in ed.view.items_by_id[nid].rows if r["kind"] == "param" and r["p"].name == name)
+
+    def check_number(self, which, name, read, scrub):
+        ed, history, eff, ids, show = self.make()
+        nid = ids[which]
+        row = self.row(ed, nid, name)
+        before = read(eff(), nid)
+        if scrub:
+            ed.set_number(nid, row, 0, 0.25, final=False)
+            self.assertEqual(read(eff(), nid), before)                  # (only the editor and the preview follow so far)
+            show()                                                      # (a tick of the playhead while it is held)
+            self.assertEqual(ed.node_values(nid).get(name), 0.25)
+            ed.commit_scrub()
+        else:
+            ed.set_number(nid, row, 0, 0.25)
+        self.assertEqual(read(eff(), nid), 0.25)
+        self.assertEqual(ed.node_values(nid).get(name), 0.25)
+        history.undo()
+        self.assertEqual(read(eff(), nid), before)
+        show()
+        self.assertEqual(ed.node_values(nid).get(name), before)
+
+    def test_a_number_typed_or_dragged_can_be_undone(self):
+        read = lambda e, nid: e["params"][nid + ".exposure"]
+        for scrub in (False, True):
+            self.check_number("exposure", "exposure", read, scrub)
+
+    def test_where_a_node_sits_can_be_undone(self):
+        read = lambda e, nid: e["sources"][nid]["cx"]
+        for scrub in (False, True):
+            self.check_number("shape", "cx", read, scrub)
+
+    def test_a_curve_dragged_in_its_node_can_be_undone(self):
+        ed, history, eff, ids, _show = self.make()
+        nid = ids["curve"]
+        q = next(q for q in ng.node_def(eff()["graph"]["nodes"][nid]).params if q.type == "curve")
+        key = ng.param_key(nid, q.name)
+        before = copy.deepcopy(eff()["params"][key])
+        keys = [[0.0, 0.2, -0.1, 0.0, 0.1, 0.0], [1.0, 0.8, -0.1, 0.0, 0.1, 0.0]]
+        ed.curve_live(nid, q, keys)
+        self.assertEqual(eff()["params"][key], before)
+        self.assertEqual(ed.node_values(nid).get(q.name), keys)
+        ed.curve_done(nid, q, keys)
+        changed = copy.deepcopy(eff()["params"][key])
+        self.assertNotEqual(changed, before)
+        history.undo()
+        self.assertEqual(eff()["params"][key], before)
+
+    def test_a_words_box_dragged_taller_can_be_undone(self):
+        from types import SimpleNamespace
+        from kiasecut.ui.node_editor import ROW
+        ed, history, eff, ids, _show = self.make()
+        nid = ids["words"]
+        item = ed.view.items_by_id[nid]
+        item.grip = {"y0": 0.0, "lines": item.lines(), "now": item.lines()}
+        item.mouseMoveEvent(SimpleNamespace(scenePos=lambda: QPointF(0.0, 3 * ROW)))
+        self.assertEqual((item.lines(), eff()["graph"]["nodes"][nid].get("lines")), (4, None))
+        item.mouseReleaseEvent(None)
+        self.assertEqual(eff()["graph"]["nodes"][nid]["lines"], 4)
+        history.undo()
+        self.assertIsNone(eff()["graph"]["nodes"][nid].get("lines"))
+
+    def test_an_opened_panel_is_still_kept_in_the_project(self):
+        ed, _history, eff, ids, _show = self.make()
+        ed.set_panel_opened(ids["shape"], "位置", False)
+        self.assertFalse(eff()["graph"]["nodes"][ids["shape"]]["open"]["位置"])
+        self.assertFalse(ed.panel_opened(ids["shape"], "位置", True))
 
 
 class NodeEditorTests(unittest.TestCase):

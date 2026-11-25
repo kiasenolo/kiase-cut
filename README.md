@@ -248,6 +248,17 @@ python -m kiasecut draft_content.dec.json  # 匯入解密後的剪映草稿
 python -m kiasecut project.kiasecut.json   # 開啟存好的專案
 ```
 
+不開視窗渲染（給腳本用 專案檔只會讀不會改 全部參數看 `python -m kiasecut render -h`）：
+
+```
+python -m kiasecut marks 專案.kiasecut.json      # 列出標記
+python -m kiasecut render 專案.kiasecut.json -f png_seq --from 循環 --to 結尾 -o 輸出/loop
+```
+
+`--from` / `--to` 填標記名稱 範圍不含 `--to` 那一格 所以共用同一個標記的兩段不會重疊也不會漏格  
+圖片序列的 `-o` 是資料夾 檔名是 `loop_00000.png` 起跳 重新渲染會換掉同名的舊畫格 其他檔案不動  
+渲染失敗、素材找不到或有片段畫不出來時 原本的輸出會保留（`--allow-errors` 可以照樣輸出）  
+
 不想裝 Python 的話：`./build_exec.sh`（Linux）或 `build_exec.bat`（Windows）
 會用 PyInstaller（`packaging/kiasecut.spec`）在 `app-build-exec/kiasecut/` 做出執行檔 整個資料夾複製走 裡面的 `kiasecut` / `kiasecut.exe` 就是程式  
 MLT 和 ffmpeg 不包在裡面 找法同上：MLT 的外掛要用它自己編譯時的 Qt 和 FFmpeg 所以渲染引擎（`engine/`）是獨立的程式 不會碰到編輯器的 Qt 和 FFmpeg  

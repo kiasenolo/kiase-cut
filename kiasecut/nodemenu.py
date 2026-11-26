@@ -72,8 +72,8 @@ KEYING = ["chroma_key", "value_key"]
 
 MASK = ["nodes/rounded_square_mask"]
 
-TEXTURE = ["nodes/tex_brick", "nodes/tex_checker", "nodes/tex_gabor", "nodes/tex_gradient", "nodes/tex_magic", "nodes/tex_noise",
-           "nodes/tex_voronoi", "nodes/tex_wave", "nodes/tex_white_noise", "blender_sensor_noise"]
+TEXTURE = ["nodes/tex_brick", "nodes/tex_checker", "nodes/tex_fractal_noise", "nodes/tex_gabor", "nodes/tex_gradient",
+           "nodes/tex_magic", "nodes/tex_noise", "nodes/tex_voronoi", "nodes/tex_wave", "nodes/tex_white_noise", "blender_sensor_noise"]
 
 TRANSFORM = ["nodes/rotate", "scale", "nodes/transform", "translate", SEP, "nodes/crop", SEP, "nodes/flip", "nodes/map_uv", SEP, "blender_lens_distortion"]
 
@@ -134,6 +134,7 @@ ALIASES = {
     "blender_color_ramp": "gradient colorramp color ramp 色彩漸變 色階 漸變 漸層",
     "nodes/tex_gradient": "gradient ramp 漸變 漸層",
     "nodes/tex_noise": "noise perlin fbm cloud 雜訊 噪訊 噪點 雲",
+    "nodes/tex_fractal_noise": "noise value simplex perlin fbm turbulence ridged ridge fractal fire lightning 雜訊 噪聲 分形 湍流 山脊 火焰 閃電",
     "nodes/tex_white_noise": "noise random 白雜訊 隨機 噪點",
     "nodes/tex_voronoi": "cell worley 細胞 沃羅諾伊",
     "nodes/tex_checker": "checkerboard chess 棋盤",
@@ -182,6 +183,7 @@ ALIASES = {
 # The choices of a menu parameter that the search lists one by one (as Blender's does: Math > Floor), the node made with that choice
 # set. ref: (the parameter, the choices' English names in the order of the parameter's menu).
 PRESETS = {
+    "nodes/tex_fractal_noise": ("basis", "value|simplex|perlin"),
     "nodes/math": ("op", "add|subtract|multiply|divide|multiply add|power|logarithm|square root|inverse square root|absolute|exponent|minimum|maximum|"
                          "less than|greater than|sign|compare|smooth minimum|smooth maximum|round|floor|ceil ceiling|truncate|fraction|truncated modulo|"
                          "floored modulo|wrap|snap|ping pong|sine sin|cosine cos|tangent tan|arcsine arcsin|arccosine arccos|arctangent arctan|"

@@ -73,7 +73,7 @@ KEYING = ["chroma_key", "value_key"]
 MASK = ["nodes/rounded_square_mask"]
 
 TEXTURE = ["nodes/tex_brick", "nodes/tex_checker", "nodes/tex_fractal_noise", "nodes/tex_gabor", "nodes/tex_gradient",
-           "nodes/tex_magic", "nodes/tex_noise", "nodes/tex_voronoi", "nodes/tex_wave", "nodes/tex_white_noise", "blender_sensor_noise"]
+           "nodes/tex_magic", "nodes/tex_noise", "nodes/tex_voronoi", "nodes/tex_voronoi_edge", "nodes/tex_wave", "nodes/tex_white_noise", "blender_sensor_noise"]
 
 TRANSFORM = ["nodes/rotate", "scale", "nodes/transform", "translate", SEP, "nodes/crop", SEP, "nodes/flip", "nodes/map_uv", SEP, "blender_lens_distortion"]
 
@@ -137,6 +137,7 @@ ALIASES = {
     "nodes/tex_fractal_noise": "noise value simplex perlin fbm turbulence ridged ridge fractal fire lightning 雜訊 噪聲 分形 湍流 山脊 火焰 閃電",
     "nodes/tex_white_noise": "noise random 白雜訊 隨機 噪點",
     "nodes/tex_voronoi": "cell worley 細胞 沃羅諾伊",
+    "nodes/tex_voronoi_edge": "voronoi worley cell crack f2 f1 edge 細胞 裂紋 龜裂 龜甲 邊緣",
     "nodes/tex_checker": "checkerboard chess 棋盤",
     "nodes/tex_brick": "tile wall 磚 瓷磚",
     "nodes/tex_wave": "wave band ring 波 條紋",

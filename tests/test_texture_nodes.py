@@ -20,7 +20,7 @@ def tearDownModule():
     fx.BIG = _BIG                      # (set at import, it held for every module of a run that loads them all first: test_glrender's big filter failed)
 
 W, H = 64, 40
-NAMES = ["brick", "checker", "fractal_noise", "gabor", "gradient", "magic", "noise", "voronoi", "wave", "white_noise"]
+NAMES = ["brick", "checker", "fractal_noise", "gabor", "gradient", "magic", "noise", "voronoi", "voronoi_edge", "wave", "white_noise"]
 PTS = [(3, 5), (12, 40), (27, 17), (35, 58)]              # (row, column) of the 64 x 40 picture, top down
 
 # What Blender 5.2 renders for the node at these pixels (its settings are the node's defaults unless the case says): [(red, green, blue)]

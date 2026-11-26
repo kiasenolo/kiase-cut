@@ -289,6 +289,7 @@ vec4 effect(vec2 uv) {
 | `// @show 參數或輸入 條件` | 節點上只在條件成立時才顯示這一列（參數或 `@input` 的插槽，也可以是 `@output`）。用不上的運算就不佔位置（像 Blender 的「數學」）。參數在面板上同時也會變灰 |
 | `// @use 輸入或 src 條件` | 條件不成立時，這張圖不會被運算（節點圖裡就當作沒接），像 Blender 的「切換」只算用到的那一邊。範例：`nodes/switch.glsl`、`nodes/menu_switch.glsl` |
 | `// @bake 參數…` | 這些選單、整數、勾選參數會當常數寫進 shader（每個設定編譯一次，驅動程式會丟掉用不到的分支）。要在 `if` 裡擋掉很貴的程式時用 |
+| `// @data 名字` | 讀一張在 CPU 預先算好的資料貼圖，shader 裡是 `sampler2D data_名字_`（用 `texelFetch` 讀）。目前只有 `blue_noise`（64×64 格，每格：點在格子裡的 x、y、順序 0～1、有沒有點），見 `noisedata.py`。一個濾鏡最多一個 |
 | `// @dynamic 名稱` | 這個濾鏡的插槽和選單選項由節點自己的資料決定（`node["items"]`），不是寫死在檔頭：`kiasecut/dynamic.py` 裡同名的產生器照節點的選項寫出濾鏡文字。範例：`nodes/menu_switch.glsl`（選單切換：選項可以新增、改名、刪除）。檔案本身留著預設的三個選項 |
 
 ### 多個輸出

@@ -73,7 +73,7 @@ KEYING = ["chroma_key", "value_key"]
 MASK = ["nodes/rounded_square_mask"]
 
 TEXTURE = ["nodes/tex_brick", "nodes/tex_checker", "nodes/tex_curl", "nodes/tex_fractal_noise", "nodes/tex_gabor", "nodes/tex_gradient",
-           "nodes/tex_magic", "nodes/tex_noise", "nodes/tex_voronoi", "nodes/tex_voronoi_edge", "nodes/tex_wave", "nodes/tex_white_noise", "blender_sensor_noise"]
+           "nodes/tex_magic", "nodes/tex_noise", "nodes/tex_points", "nodes/tex_voronoi", "nodes/tex_voronoi_edge", "nodes/tex_wave", "nodes/tex_white_noise", "blender_sensor_noise"]
 
 TRANSFORM = ["nodes/rotate", "scale", "nodes/transform", "translate", SEP, "nodes/crop", SEP, "nodes/flip", "nodes/map_uv", SEP, "blender_lens_distortion"]
 
@@ -139,6 +139,7 @@ ALIASES = {
     "nodes/tex_voronoi": "cell worley 細胞 沃羅諾伊",
     "nodes/tex_voronoi_edge": "voronoi worley cell crack f2 f1 edge 細胞 裂紋 龜裂 龜甲 邊緣",
     "nodes/tex_curl": "curl noise flow streamline lic velocity fluid 流線 流場 速度場 煙 流體 扭曲",
+    "nodes/tex_points": "points dots scatter stars dust poisson blue noise white noise 撒點 噪點 星星 星空 灰塵 藍噪聲 白噪聲 藍雜訊",
     "nodes/tex_checker": "checkerboard chess 棋盤",
     "nodes/tex_brick": "tile wall 磚 瓷磚",
     "nodes/tex_wave": "wave band ring 波 條紋",
@@ -185,6 +186,7 @@ ALIASES = {
 # The choices of a menu parameter that the search lists one by one (as Blender's does: Math > Floor), the node made with that choice
 # set. ref: (the parameter, the choices' English names in the order of the parameter's menu).
 PRESETS = {
+    "nodes/tex_points": ("distribution", "white noise points|blue noise points"),
     "nodes/tex_fractal_noise": ("basis", "value|simplex|perlin"),
     "nodes/math": ("op", "add|subtract|multiply|divide|multiply add|power|logarithm|square root|inverse square root|absolute|exponent|minimum|maximum|"
                          "less than|greater than|sign|compare|smooth minimum|smooth maximum|round|floor|ceil ceiling|truncate|fraction|truncated modulo|"

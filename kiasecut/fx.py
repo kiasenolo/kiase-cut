@@ -23,7 +23,7 @@ import time
 
 import numpy as np
 
-from . import curves, gpusync, sysmem
+from . import curves, gpusync, noisedata, sysmem
 
 PKG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "filters")
 DOC_PATH = os.path.join(PKG, "FORMAT.md")
@@ -83,6 +83,7 @@ class FilterDef:
         self.dynamic = None                      # @dynamic: the name of the generator that makes this filter's text from a node's items (dynamic.py)
         self.input_use = {}                      # @use: {input or "src": conditions}: the picture is read only while they hold (else it is not worked out at all)
         self.inputs = []                         # @input: [(name, label)] more pictures the filter reads, input_<name>(uv) (a node's sockets)
+        self.data = None                         # @data: the numbers (noisedata.TABLES) its shader reads as data_<name>_
         self.particles = 0                       # @particles: the most particles the filter draws (0: it is no particle filter); the last pass is followed by one instanced draw of them
         self.particle_param = None               # ... and the int parameter that says how many of them there are
         self.sprite = None                       # @sprite: the colour parameter whose picture (a picture, video or compound set on it) is what a particle looks like: sprite_picture(q)
@@ -298,6 +299,7 @@ def _num(text):
         return None
 
 
+DATA_UNIT = 15                    # the texture unit of a filter's @data (its @input pictures are at 8 and up)
 SOCKET_TYPES = ("image", "float", "int", "bool", "vector", "color", "menu")       # what a socket can carry (@socket)
 SOCKET_LABELS = {"image": "圖像", "float": "數值", "int": "整數", "bool": "布林", "vector": "向量", "color": "顏色", "menu": "選單"}
 
@@ -358,6 +360,10 @@ def parse(text, ref, fallback_name="濾鏡"):
                 head["particles"] = (int(words[0]), *(counted.groups() if counted else (None, None, None)))
             elif key == "sprite":                         # @sprite name: a colour parameter whose picture the particles are drawn with
                 head["sprite"] = rest.strip()
+            elif key == "data":                           # @data name: numbers worked out on the CPU that the shader reads: data_<name>_ (noisedata.py)
+                if rest not in noisedata.TABLES or head.get("data"):
+                    raise ValueError("@data 要寫一個：" + " / ".join(noisedata.TABLES))
+                head["data"] = rest
             elif key == "shared":
                 head["shared"] = True
             elif key == "nodes":                          # made for the node editor: not in the filter library or a clip's 新增效果
@@ -454,6 +460,9 @@ def parse(text, ref, fallback_name="濾鏡"):
                   head.get("description", ""), n, error, head.get("precise", False), panels, levels, level_param,
                   head.get("extras", []), fixed)
     d.inputs = inputs
+    d.data = head.get("data")
+    if d.data and len(inputs) > DATA_UNIT - 8:
+        d.error = d.error or f"@data：@input 最多 {DATA_UNIT - 8} 個"
     d.particles, d.particle_param, d.particle_copies, d.particle_children = head.get("particles", (0, None, None, None))
     d.sprite = head.get("sprite")
     d.input_show = input_show
@@ -989,6 +998,8 @@ def _declarations(d, sampled=(), baked=()):
         if p.name in consts:
             decl += f"\nconst {GLSL_TYPES[p.type]} {p.name} = " + ("true" if consts[p.name] else "false") * (p.type == "bool") + \
                     str(consts[p.name]) * (p.type != "bool") + ";"
+    if d.data:
+        decl += f"\nuniform sampler2D data_{d.data}_;"
     for name, _label in d.inputs:
         decl += (f"\nuniform sampler2D inp_{name}_;\nuniform bool inp_{name}_on_;\n"
                  f"bool has_input_{name}() {{ return inp_{name}_on_; }}\n"
@@ -1193,6 +1204,7 @@ class Engine:
         self.quad = self.ctx.buffer(quad.tobytes())
         self.programs = {}
         self.particle_progs = {}     # the same keys -> (Prog, vertex array) that draws a particle filter's particles
+        self.data_textures = {}      # @data name -> texture
         self.targets = {}            # (w, h) -> [(texture, fbo)] x 3
         self.mid_targets = {}        # (w, h) -> [(texture, fbo)] x 2, 16-bit floats (@precision float)
         self.level_targets = {}      # (filter key, pass, w, h) -> (texture, fbo): a pass of @levels (16-bit floats, kept)
@@ -1240,6 +1252,15 @@ class Engine:
         t = getattr(self, "_blank", None)
         if t is None:
             t = self._blank = self.ctx.texture((1, 1), 4, bytes(4))
+            t.filter = (self.mgl.NEAREST, self.mgl.NEAREST)
+        return t
+
+    def data_texture(self, name):
+        """The texture of the numbers @data name asks for (noisedata.py), read a texel at a time; made once."""
+        t = self.data_textures.get(name)
+        if t is None:
+            table = noisedata.TABLES[name]()
+            t = self.data_textures[name] = self.ctx.texture((table.shape[1], table.shape[0]), 4, table.tobytes(), dtype="f4")
             t.filter = (self.mgl.NEAREST, self.mgl.NEAREST)
         return t
 
@@ -1386,6 +1407,9 @@ class Engine:
                 tex.use(8 + k)
                 prog.put("inp_" + name + "_", 8 + k)
                 prog.put("inp_" + name + "_on_", (inputs or {}).get(name) is not None)
+            if d.data:
+                self.data_texture(d.data).use(DATA_UNIT)
+                prog.put("data_" + d.data + "_", DATA_UNIT)
             prog.put("src_on_", bool(src_on))
             prog.put("extra_", 7)
         fill(prog)

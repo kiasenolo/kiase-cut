@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from kiasecut import fx, nodegraph as ng, nodemenu  # noqa: E402
+from kiasecut import fx, nodegraph as ng, nodemenu, noisedata  # noqa: E402
 
 _BIG = fx.BIG
 
@@ -20,7 +20,7 @@ def tearDownModule():
     fx.BIG = _BIG                      # (set at import, it held for every module of a run that loads them all first: test_glrender's big filter failed)
 
 W, H = 64, 40
-NAMES = ["brick", "checker", "curl", "fractal_noise", "gabor", "gradient", "magic", "noise", "voronoi", "voronoi_edge", "wave", "white_noise"]
+NAMES = ["brick", "checker", "curl", "fractal_noise", "gabor", "gradient", "magic", "noise", "points", "voronoi", "voronoi_edge", "wave", "white_noise"]
 PTS = [(3, 5), (12, 40), (27, 17), (35, 58)]              # (row, column) of the 64 x 40 picture, top down
 
 # What Blender 5.2 renders for the node at these pixels (its settings are the node's defaults unless the case says): [(red, green, blue)]
@@ -124,6 +124,29 @@ class TextureNodeTests(unittest.TestCase):
         self.assertEqual(outs(dims="4D"), ["distance", "color", "position", "wout"])
         self.assertEqual(outs(feature="到邊緣距離"), ["distance"])
         self.assertEqual(outs(feature="N 球半徑"), ["radius"])
+
+
+class BlueNoiseTests(unittest.TestCase):
+    def test_the_first_points_of_the_tile_are_spread_out(self):
+        t = noisedata.blue_noise_tile()
+        n = noisedata.BLUE_CELLS
+        self.assertEqual(int(t[..., 3].sum()), noisedata.BLUE_POINTS)
+        ys, xs = np.nonzero(t[..., 3])
+        at = np.stack([xs + t[ys, xs, 0], ys + t[ys, xs, 1]], axis=1)
+        for share in (0.1, 0.5, 1.0):                                       # (every density: the points kept are the first ones)
+            kept = at[t[ys, xs, 2] < share]
+            d = np.abs(kept[:, None] - kept[None])
+            d = np.sqrt((np.minimum(d, n - d) ** 2).sum(axis=2))
+            np.fill_diagonal(d, np.inf)
+            apart = np.sqrt(n * n / len(kept))                              # (the side of the square each point has)
+            self.assertGreater(d.min(), 0.55 * apart, share)
+
+    def test_the_points_are_drawn(self):
+        t = TextureNodeTests("test_pixels_match_blender")
+        t.eng = engine()
+        for kind in ("白雜訊", "藍雜訊"):
+            pic = t.draw("points", 0, {"distribution": kind, "radius": 0.9, "density": 1.0})
+            self.assertGreater(int((pic[..., 0] > 128).sum()), 0, kind)
 
 
 class LinkedVectorTests(unittest.TestCase):
